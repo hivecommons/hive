@@ -3026,19 +3026,27 @@ onEl('clanker-list','click',function(e){
   if(role!=='revoke'&&role!=='remove'&&role!=='requeue')return;
   var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
   if(role==='requeue'){
-    // #2568: manual requeue — release the in-flight task back to the ready queue.
-    // Explicitly NOT destructive to the contributor (no revoke/remove); the task is
-    // returned to the queue and booked for the same short cooldown as an auto-release,
-    // so it is not instantly re-handed to a stale worker. Uses the existing
-    // POST /api/contributors/{id}/requeue endpoint (owner/read-write only).
-    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, and the assignment generation is bumped so a stale worker cannot later overwrite the new owner. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
-      // #2568: let the operator attach an optional reason. It is recorded in the
-      // audit + activity log and pushed to the still-connected worker on task_revoke.
-      var reason=(window.prompt('Reason for releasing this task (optional):','wedged: no progress')||'').trim();
+    // Reassign (kubestellar/hive#2568 + follow-up): take the clanker off its in-flight
+    // task and immediately hand it its next-priority item, so it keeps working instead of
+    // idling. The released task goes back to the ready queue for someone else. Not
+    // destructive to the contributor (no revoke/remove). The released task is booked for
+    // the same short cooldown as an auto-release and briefly not re-offered to THIS same
+    // clanker, so it moves to different work. Uses the existing
+    // POST /api/contributors/{id}/requeue endpoint (owner/read-write only), whose handler
+    // now performs the release + reassignment.
+    adminConfirm('Reassign '+user,'Take '+user+' off their current task and hand them their next-priority item; that task goes back to the ready queue for someone else. The released task won&rsquo;t be re-offered to '+user+' for a short window. If nothing else is available the clanker is simply released and idle. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Reassign',function(){
+      // Let the operator attach an optional reason. It is recorded in the audit +
+      // activity log and pushed to the still-connected worker on task_revoke.
+      var reason=(window.prompt('Reason for reassigning this clanker (optional):','wedged: moving to different work')||'').trim();
       fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
         .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
-        .then(function(x){if(x.ok){toast('Task requeued for '+user,true);opsPoll();}else{toast((x.d&&x.d.error)||'Requeue failed',false);}})
-        .catch(function(){toast('Requeue failed',false);});
+        .then(function(x){
+          if(x.ok){
+            var msg=(x.d&&x.d.reassigned)?('Reassigned '+user+' &rarr; '+x.d.assigned_repo+'#'+x.d.assigned_number):('Reassigned '+user+' (released; no other work available, now idle)');
+            toast(msg,true);opsPoll();
+          }else{toast((x.d&&x.d.error)||'Reassign failed',false);}
+        })
+        .catch(function(){toast('Reassign failed',false);});
     });
     return;
   }
@@ -3173,10 +3181,16 @@ function renderClankers(list){
       var opts=['newcomer','contributor','trusted','advisor'].map(function(t){
         return '<option value="'+t+'"'+(t===tier?' selected':'')+'>'+t+'</option>';
       }).join('');
-      // #2568: manual requeue is only meaningful while the clanker is HOLDING a
-      // task — an operator releases work they can see is wedged. Hidden when idle.
+      // Reassign (kubestellar/hive#2568 + follow-up) is only meaningful while the clanker
+      // is HOLDING a task — an operator moves work they can see is wedged. Hidden when
+      // idle. It reuses the existing requeue endpoint/role; its handler now releases the
+      // task AND immediately reassigns this clanker its next-priority item. An ⓘ marker
+      // (same info-btn affordance as the cooldown explainer) states the outcome on hover,
+      // so the operator understands it WITHOUT opening the confirm dialog.
+      var reassignInfo='Reassign takes this clanker off its current task and immediately hands it the next-priority item, so it keeps working. The released task goes back to the ready queue for another contributor, and isn&rsquo;t re-offered to this clanker for a short window.';
       var requeueBtn=c.current_task
-        ?('<button type="button" class="admin-act" title="Release this clanker&rsquo;s in-flight task back to the ready queue (books the same short cooldown as an auto-release, so it is not instantly re-handed out)" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Requeue task</button>')
+        ?('<span class="info-affordance"><button type="button" class="admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
+          '<button type="button" class="info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
         :'';
       actions='<div class="admin-actions">'+
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
@@ -5295,25 +5309,31 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, map[string]any{"ok": true})
 }
 
-// handleContributorRequeue is the operator MANUAL requeue / release action
-// (kubestellar/hive#2568, the tractable slice). It lets an owner/read-write operator
-// who can SEE a connected clanker is wedged — holding a task but not making progress —
-// release that task back to the ready queue. It is a CONTROL, so it is owner/read-
-// write ONLY, enforced server-side by requireContributorWrite (a read/anon caller
-// gets 403), exactly like trust/revoke/remove.
+// handleContributorRequeue is the operator YANK action — the manual release of a
+// wedged clanker's in-flight task, repurposed (kubestellar/hive#2568 + the yank
+// follow-up) to ALSO immediately reassign that clanker its next-priority item so it
+// keeps working instead of idling. It is a CONTROL, so it is owner/read-write ONLY,
+// enforced server-side by requireContributorWrite (a read/anon caller gets 403),
+// exactly like trust/revoke/remove.
 //
-// It intentionally reuses the SAME release+cooldown machinery the automatic
-// disconnect-release (#2356/#2435) and ready-abandon (#2545) paths use — see
-// ContributeWSHub.RequeueContributorTask — so a manual requeue can NOT recreate the
-// duplicate-assignment race #2492/#2557 closed: the released issue books the same
-// short failure cooldown and is therefore not instantly re-handed to a stale worker.
+// It still reuses the SAME release+cooldown machinery the automatic disconnect-release
+// (#2356/#2435) and ready-abandon (#2545) paths use — see
+// ContributeWSHub.RequeueContributorTask — so the release can NOT recreate the
+// duplicate-assignment race #2492/#2557 closed: the released issue books the same short
+// failure cooldown and is therefore not instantly re-handed to a stale worker, and the
+// connection's assignment generation is BUMPED so a stale worker's later completion is
+// fenced out (the Gate).
 //
-// #2568 completion: the release now BUMPS the connection's assignment generation, so a
-// stale worker that later reports completion is fenced out (the Gate — the automatic
-// lease-TTL backstop lives in the hub's cleanupLoop/reclaimExpiredLeases). The operator
-// may pass a REASON (JSON body {"reason":...} or ?reason=), which is recorded in the
-// audit + activity log and pushed to the still-connected worker on task_revoke.
-// Requeuing a contributor with no in-flight task is a 404 (nothing to release).
+// The YANK addition: after that release, the hub immediately calls selectTask for the
+// SAME clanker and hands it its next-priority item (honouring the operator-pinned → own
+// work → label-affinity → fewer-failures → rest order), and the just-released issue is
+// briefly self-excluded from THIS clanker (yankSelfExcludeSeconds) so it moves to
+// genuinely DIFFERENT work — while the released issue is immediately offerable to every
+// OTHER contributor. When nothing else is admissible the clanker is simply released +
+// idle (the old requeue-only outcome, now the fallback). The operator may pass a REASON
+// (JSON body {"reason":...} or ?reason=), recorded in the audit + activity log and
+// pushed to the still-connected worker on task_revoke. A contributor with no in-flight
+// task is a 404 (nothing to release/reassign).
 func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request) {
 	if !s.requireContributorWrite(w, r) {
 		return
@@ -5340,16 +5360,26 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 			reason = strings.TrimSpace(body.Reason)
 		}
 	}
-	// Key the live release by the registered ContributorID (what the ops tab passes),
-	// matching how the hub tracks connections. GitHubUsername is only used for logs.
-	released := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
+	// Key the live release+reassign by the registered ContributorID (what the ops tab
+	// passes), matching how the hub tracks connections. GitHubUsername is only for logs.
+	released, assigned := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
 	if released == 0 {
-		jsonError(w, "That contributor has no in-flight task to requeue.", http.StatusNotFound)
+		jsonError(w, "That contributor has no in-flight task to yank.", http.StatusNotFound)
 		return
 	}
 	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername, "reason", reason), "")
-	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released, "reason", reason)
-	jsonResponse(w, map[string]any{"ok": true, "released": released})
+	// Report whether the clanker was reassigned (and to what) so the ops tab can show
+	// the clanker was moved to different work. reassigned==false means it was released
+	// but nothing else was admissible right now — a legitimate "released, now idle" state.
+	resp := map[string]any{"ok": true, "released": released, "reassigned": false}
+	if assigned != nil && assigned.Type == "task_assign" {
+		resp["reassigned"] = true
+		resp["assigned_repo"] = assigned.Repo
+		resp["assigned_number"] = assigned.Number
+		resp["assigned_title"] = assigned.Title
+	}
+	s.logger.Info("contributor task yanked by operator", "username", p.GitHubUsername, "sessions_released", released, "reassigned", resp["reassigned"], "reason", reason)
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {

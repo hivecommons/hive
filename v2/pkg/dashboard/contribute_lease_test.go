@@ -153,7 +153,7 @@ func TestRequeue_RecordsReasonAndBumpsGeneration(t *testing.T) {
 	hub.connections["conn-w"] = held
 	hub.mu.Unlock()
 
-	if hub.RequeueContributorTask("c-w", "wedged: no progress for an hour") != 1 {
+	if released, _ := hub.RequeueContributorTask("c-w", "wedged: no progress for an hour"); released != 1 {
 		t.Fatalf("expected 1 released")
 	}
 
@@ -197,7 +197,9 @@ func TestRequeue_BlankReasonFallsBack(t *testing.T) {
 	hub.activityMu.RLock()
 	found := false
 	for _, e := range hub.activity {
-		if strings.Contains(e.Action, defaultRequeueReason) {
+		// The yank release records "yanked by operator: <defaultYankReason>" when the
+		// operator passes a blank reason, so the release stays auditable.
+		if strings.Contains(e.Action, defaultYankReason) {
 			found = true
 			break
 		}
@@ -317,7 +319,7 @@ func TestStaleGeneration_RevokedWorkerCannotOverwriteNewOwner(t *testing.T) {
 	staleTaskID := assign.TaskID
 
 	// Operator revokes the task: this bumps the connection's generation past staleGen.
-	if s.contributeHub.RequeueContributorTask(reg["contributor_id"], "wedged: no progress") != 1 {
+	if released, _ := s.contributeHub.RequeueContributorTask(reg["contributor_id"], "wedged: no progress"); released != 1 {
 		t.Fatalf("expected the operator revoke to release the held task")
 	}
 	// The relay would receive a task_revoke here; drain it so it doesn't confuse reads.
