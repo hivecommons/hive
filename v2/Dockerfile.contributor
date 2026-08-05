@@ -4,19 +4,34 @@ FROM debian:bookworm-slim
 
 ARG NODE_MAJOR=24
 
+# Layering below is deliberately stable-to-mutable (issue #2613, Observation 2):
+# base apt packages change rarely, Node changes occasionally, and each agent
+# CLI is pinned/bumped independently and far more often. Splitting them into
+# separate RUNs means a single CLI version bump only invalidates (and a
+# contributor only re-pulls) that CLI's own layer, instead of also re-pulling
+# the base packages and Node toolchain underneath it. Total image size is
+# unchanged; only the update/re-pull cost per bump is reduced.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux python3 ca-certificates gnupg openssh-client \
-  && mkdir -p /etc/apt/keyrings \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /etc/apt/keyrings \
   && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update && apt-get install -y nodejs \
-  # codex is pinned for reproducibility (matching the copilot pin convention
-  # in v2/Dockerfile): its model catalog is baked into the binary per version,
-  # and the dashboard's static fallback list tracks 0.146.0.
-  && npm install -g @anthropic-ai/claude-code @github/copilot @openai/codex@0.146.0 \
   && rm -rf /var/lib/apt/lists/*
+
+# codex is pinned for reproducibility (matching the copilot pin convention
+# in v2/Dockerfile): its model catalog is baked into the binary per version,
+# and the dashboard's static fallback list tracks 0.146.0.
+#
+# npm cache is cleaned in the same layer it's populated (issue #2613,
+# Observation 2 "also minor") so the cache doesn't linger in this layer's
+# diff, mirroring the cleanup already done for the bobshell install below.
+RUN npm install -g @anthropic-ai/claude-code @github/copilot @openai/codex@0.146.0 \
+  && npm cache clean --force
 
 # Install bobshell (IBM "bob"). Mirrors Layer 9 of v2/Dockerfile so the
 # containerized contributor relay can actually run the bob backend — without
