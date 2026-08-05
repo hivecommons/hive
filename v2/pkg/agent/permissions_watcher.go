@@ -163,6 +163,15 @@ func fixPermissions(logger *slog.Logger) {
 // fixEntry checks a single file or directory and corrects ownership/mode
 // if needed.
 func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
+	// filepath.Walk reports symlink metadata from Lstat. os.Chown and os.Chmod,
+	// however, follow the link on Unix. Trying to "repair" a root-owned link
+	// such as /data/home/.config/github-copilot therefore mutates its target
+	// while leaving the link root-owned, so every watcher tick repeats the same
+	// write and misleading log entry. Entry-point-managed links already point at
+	// explicitly prepared persistent directories; never follow them here.
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return
+	}
 	uid, gid, ok := fileOwnership(fi)
 	if !ok {
 		return
