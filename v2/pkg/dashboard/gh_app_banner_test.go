@@ -168,3 +168,56 @@ func TestGitHubAppBannerStartTagIsClosed(t *testing.T) {
 		t.Errorf("expected the warning <span> to follow the banner div start tag, got: %.80s", strings.TrimSpace(afterTag))
 	}
 }
+
+// TestInstallIdHintPopoverHasViewportCollisionHandling is the regression
+// guard for the reported bug: the install-ID help popover (".gh-idhint-pop")
+// defaults to `bottom: 100%`, anchoring itself above the "?" button. When the
+// GitHub-App-install banner sits near the top of the viewport there isn't
+// enough room above the anchor and the popover overflowed off the top of the
+// browser window, clipping its lead text. The fix adds JS collision handling
+// that measures the anchor via getBoundingClientRect() and flips the popover
+// below the anchor (via the .gh-idhint-pop-below class) when it doesn't fit
+// above, plus a horizontal clamp for left/right edges. This test locks that
+// the flip/clamp machinery — not just the popover markup — is present.
+func TestInstallIdHintPopoverHasViewportCollisionHandling(t *testing.T) {
+	html := spokeIndexHTML(t)
+
+	required := []struct {
+		snippet string
+		why     string
+	}{
+		{"gh-idhint-pop-below", "CSS needs a flip class the JS can toggle to render the popover below its anchor"},
+		{"function positionInstallIdHint", "the collision-handling function must exist"},
+		{"getBoundingClientRect", "positioning must measure the real anchor/popover geometry, not assume it fits"},
+		{"classList.toggle('gh-idhint-pop-below'", "the function must flip the popover by toggling the CSS class"},
+		{"pop.style.left", "the function must also clamp horizontally so it can't run off the left/right edge"},
+	}
+	for _, r := range required {
+		if !strings.Contains(html, r.snippet) {
+			t.Errorf("static/index.html is missing %q — %s", r.snippet, r.why)
+		}
+	}
+
+	// The click/keyboard toggle must trigger positioning when opening the
+	// popover — a flip/clamp function that exists but is never called on
+	// show would leave the original clipping bug in place.
+	i := strings.Index(html, "function toggleInstallIdHint(event)")
+	if i < 0 {
+		t.Fatal("static/index.html has no toggleInstallIdHint function")
+	}
+	end := strings.Index(html[i:], "\n    }")
+	if end < 0 {
+		t.Fatal("could not find the end of toggleInstallIdHint")
+	}
+	body := html[i : i+end]
+	if !strings.Contains(body, "positionInstallIdHint") {
+		t.Error("toggleInstallIdHint does not call positionInstallIdHint — opening the popover via click/keyboard would skip collision handling")
+	}
+
+	// The popover is also shown by pure CSS on hover/focus-within with no
+	// click involved, so hover/focus triggers must run the same positioning
+	// logic or hover users would still see the clipped popover.
+	if !strings.Contains(html, "mouseenter") || !strings.Contains(html, "focusin") {
+		t.Error("expected hover (mouseenter) and keyboard-focus (focusin) listeners that also trigger positionInstallIdHint")
+	}
+}

@@ -739,6 +739,17 @@
       box-shadow: var(--shadow-raised); z-index: 10002;
       text-align: left; white-space: normal; cursor: default;
     }
+    /* Viewport-edge collision handling. When the banner sits near the top of
+       the page there isn't 8px + the panel's own height of room above the
+       anchor, so the default `bottom: 100%` placement pushes the panel off
+       the top of the browser window and clips its first lines. gh-idhint.js
+       (positionInstallIdHint) measures the anchor and the panel on every
+       show and, when it doesn't fit above, adds this class to flip the
+       panel below the anchor instead — same panel, same content, just
+       flipped to the side that has room. */
+    .gh-idhint-pop.gh-idhint-pop-below {
+      bottom: auto; top: calc(100% + 8px);
+    }
     .gh-idhint:hover .gh-idhint-pop,
     .gh-idhint:focus-within .gh-idhint-pop,
     .gh-idhint-btn[aria-expanded="true"] + .gh-idhint-pop { display: block; }
@@ -5549,6 +5560,67 @@
       pop.innerHTML = ghAppInstallIdHintHtml(data);
     }
 
+    /* Viewport-edge collision handling for the install-ID hint popover.
+       The panel's default CSS position is `bottom: 100%` — anchored above
+       the `?` button. That's fine when the banner has room above it, but
+       when the banner sits near the top of the page (e.g. right under the
+       page header) there isn't 8px + the panel's rendered height of space,
+       and the panel overflows off the top of the browser window: its first
+       lines ("...this number") render above y=0 and are clipped.
+
+       This measures the anchor via getBoundingClientRect() on every show
+       and, when there isn't enough room above, toggles
+       .gh-idhint-pop-below (see CSS) to flip the panel to render BELOW the
+       anchor instead — the side that has room. It also clamps the panel
+       horizontally so it can't run off the left/right edge on a narrow
+       viewport or when the banner is near a side edge, the same way the
+       account-menu at #oc-gh-user-menu already clamps via max-width.
+
+       Dependency-free: no popover/positioning library, just
+       getBoundingClientRect + inline style overrides of the CSS defaults. */
+    function positionInstallIdHint() {
+      var pop = document.getElementById('gh-app-install-id-hint-pop');
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (!pop || !wrap) return;
+      var POPOVER_EDGE_MARGIN_PX = 8; // matches the `bottom: calc(100% + 8px)` gap in CSS
+      var anchorRect = wrap.getBoundingClientRect();
+      var popRect = pop.getBoundingClientRect();
+      var popHeight = popRect.height || pop.offsetHeight || 0;
+      var viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+
+      /* Flip below when there isn't room above the anchor for the panel
+         plus its margin. getBoundingClientRect() returns 0-height while
+         `display:none`, so read it while CSS already shows it (hover /
+         focus-within / aria-expanded all apply before this runs on the
+         relevant events) — a 0 height then just falls through to "fits". */
+      var fitsAbove = (anchorRect.top - POPOVER_EDGE_MARGIN_PX - popHeight) >= 0;
+      pop.classList.toggle('gh-idhint-pop-below', !fitsAbove);
+
+      /* Horizontal clamp: the panel is centered on the anchor by default
+         (`left: 50%; transform: translateX(-50%)`). If that would push
+         either edge past the viewport, override with a fixed left offset
+         instead of the centered transform so the whole panel stays
+         visible on screen. */
+      var popWidth = popRect.width || pop.offsetWidth || 0;
+      var anchorCenter = anchorRect.left + (anchorRect.width / 2);
+      var idealLeft = anchorCenter - (popWidth / 2);
+      var minLeft = POPOVER_EDGE_MARGIN_PX;
+      var maxLeft = viewportWidth - popWidth - POPOVER_EDGE_MARGIN_PX;
+      if (maxLeft < minLeft) maxLeft = minLeft; // panel wider than viewport minus margins
+      var clampedLeft = Math.min(Math.max(idealLeft, minLeft), maxLeft);
+      if (clampedLeft !== idealLeft) {
+        /* Reposition relative to the anchor, not the viewport, since the
+           panel is `position: absolute` inside `.gh-idhint` (`position:
+           relative`). Convert the clamped viewport-space left back into
+           anchor-space and drop the centering transform. */
+        pop.style.left = (clampedLeft - anchorRect.left) + 'px';
+        pop.style.transform = 'none';
+      } else {
+        pop.style.left = '';
+        pop.style.transform = '';
+      }
+    }
+
     /* Click/keyboard toggle. Enter and Space activate a <button> natively, so
        this one handler serves mouse, touch, and keyboard alike — the panel is
        never hover-only. */
@@ -5558,7 +5630,39 @@
       if (!btn) return;
       var open = btn.getAttribute('aria-expanded') === 'true';
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!open) {
+        /* Panel is about to become visible (CSS reacts to aria-expanded
+           synchronously) — measure and position it now. requestAnimationFrame
+           ensures layout has settled before we read getBoundingClientRect(). */
+        requestAnimationFrame(positionInstallIdHint);
+      }
     }
+
+    /* The panel is also shown by pure CSS on hover/focus-within (see
+       .gh-idhint:hover / :focus-within in the stylesheet), with no JS in the
+       loop at all. Hook those same triggers here so hover users get the same
+       collision handling as click/keyboard users, not just a clipped panel. */
+    (function () {
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (!wrap) return;
+      wrap.addEventListener('mouseenter', function () {
+        requestAnimationFrame(positionInstallIdHint);
+      });
+      wrap.addEventListener('focusin', function () {
+        requestAnimationFrame(positionInstallIdHint);
+      });
+      /* The popover's own content is swapped in asynchronously by
+         renderGitHubAppInstallIdHint() (host/org arrive from /api/config
+         after boot), which can change its rendered height. Re-measure on
+         window resize too, since a narrower/shorter viewport can change
+         whether the panel still fits above the anchor. */
+      window.addEventListener('resize', function () {
+        var btn = document.getElementById('gh-app-install-id-hint-btn');
+        if (btn && btn.getAttribute('aria-expanded') === 'true') {
+          positionInstallIdHint();
+        }
+      });
+    })();
 
     /* Dismissal: a click anywhere outside the hint, or Escape, closes it.
        Without this a tapped panel on touch would have no way to close, since
