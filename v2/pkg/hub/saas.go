@@ -10876,7 +10876,12 @@ const dashboardHTML = `<!DOCTYPE html>
         }
       }
 
-      if (!hivesWithDrift) {
+      // Hide the strip only when there is nothing to attend to AND no attention
+      // filter is currently applied. If a filter IS active (e.g. the user clicked
+      // "upgrading" and the count has since dropped to 0), the strip MUST stay so
+      // its chip + "Show all" escape remain reachable — otherwise the filter keeps
+      // narrowing the list with no visible way to turn it off.
+      if (!hivesWithDrift && !_dashDriftFilter) {
         el.style.display = 'none';
         el.innerHTML = '';
         return;
@@ -10893,6 +10898,15 @@ const dashboardHTML = `<!DOCTYPE html>
         if (kindCounts[b] !== kindCounts[a]) return kindCounts[b] - kindCounts[a];
         return driftKindLabel(a).localeCompare(driftKindLabel(b));
       });
+      // Keep the ACTIVE filter's chip listed even after its count falls to 0, so
+      // it can always be clicked off (mirrors renderFailingCheckFacetGroup). Without
+      // this the chip vanishes the moment its last hive clears while the filter is
+      // still applied, stranding the user on an empty, un-clearable filtered view.
+      if (_dashDriftFilter && kinds.indexOf(_dashDriftFilter) === -1) {
+        kinds.unshift(_dashDriftFilter);
+        if (kindCounts[_dashDriftFilter] == null) kindCounts[_dashDriftFilter] = 0;
+        if (kindWorst[_dashDriftFilter] == null) kindWorst[_dashDriftFilter] = 'info';
+      }
 
       var chips = kinds.map(function(k) {
         var color = DRIFT_SEVERITY_COLORS[kindWorst[k]] || DRIFT_SEVERITY_COLORS.info;
