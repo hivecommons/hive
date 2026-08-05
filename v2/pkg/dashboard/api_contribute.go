@@ -2733,6 +2733,27 @@ async function initAdmin(){
   if(typeof ccRenderQueue==='function')ccRenderQueue();
 }
 
+// capabilityLine renders the client-declared runtime posture (#2547 DECLARE half)
+// as a compact, READ-ONLY sub-line: "declares: podman &middot; linux/arm64 &middot;
+// cli 1.2.3 &middot; proto 1.1 &middot; cred:app". It returns '' when the client
+// declared nothing (an unversioned relay), so those rows look exactly as before.
+// The literal "declares:" prefix and the title tooltip keep the SELF-REPORTED
+// nature visible at the point of use: this data is advisory only and is never used
+// to route, gate, or trust — a client can claim anything (see kubestellar/hive#2547
+// risk section). Purely display; nothing here feeds a dispatch or permission
+// decision.
+function capabilityLine(caps){
+  if(!caps)return '';
+  var parts=[];
+  if(caps.container_runtime)parts.push(esc(caps.container_runtime));
+  var osArch=[caps.os,caps.arch].filter(Boolean).map(esc).join('/');
+  if(osArch)parts.push(osArch);
+  if(caps.agent_cli_version)parts.push('cli '+esc(caps.agent_cli_version));
+  if(caps.relay_protocol_version)parts.push('proto '+esc(caps.relay_protocol_version));
+  if(caps.credential_type)parts.push('cred:'+esc(caps.credential_type));
+  if(!parts.length)return '';
+  return '<div class="clanker-sub clanker-declares" title="Self-declared by the client. Advisory only — the hub records and shows it but never routes, gates, or trusts work on it.">declares: '+parts.join(' &middot; ')+'</div>';
+}
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
@@ -2766,6 +2787,11 @@ function renderClankers(list){
     var task=c.current_task
       ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
       :(c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'');
+    // #2547 (DECLARE half): the client-declared runtime posture, surfaced READ-ONLY
+    // exactly like cli_backend/model/role above. It is a self-report and is NEVER
+    // used to route or gate work — see capabilityLine() for the "self-declared" note
+    // that keeps that visible at the point of use (per the issue's risk section).
+    var capsLine=capabilityLine(c.capabilities);
     // #2534: owner/read-write get per-contributor admin actions wired to the
     // EXISTING endpoints — set trust tier / promote (PUT /api/contributors/{id}/trust),
     // revoke (POST .../revoke), remove (DELETE .../{id}). Hidden for read viewers.
@@ -2802,7 +2828,7 @@ function renderClankers(list){
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
-      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }
