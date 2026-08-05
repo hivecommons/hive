@@ -2729,8 +2729,29 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	//   reviewed/blocking own-PR ahead of a merely-own issue. Guard gracefully when
 	//   that data is absent, exactly as the ownWork fallback does now.
 	ownUsername := ""
+	var ownInterests []string
 	if c.profile != nil {
 		ownUsername = c.profile.GitHubUsername
+		ownInterests = c.profile.LabelInterests
+	}
+	// interestMatchesLabels reports whether any of the issue's labels matches one of
+	// the contributor's opt-in label interests (#2637), case-insensitively. Empty
+	// interests → never a match (the affinity tier is then a no-op). This is the
+	// SOFT routing signal: a contributor with interests set is offered matching work
+	// first (see the sort below), but still receives non-matching work when none
+	// matches, so a willing contributor never sits idle.
+	interestMatchesLabels := func(labels []string) bool {
+		if len(ownInterests) == 0 || len(labels) == 0 {
+			return false
+		}
+		for _, want := range ownInterests {
+			for _, have := range labels {
+				if strings.EqualFold(strings.TrimSpace(want), strings.TrimSpace(have)) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 
 	type candidate struct {
@@ -2740,6 +2761,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		url      string
 		labels   []string
 		isOwn    bool
+		// interestMatch is true when the issue carries a label the contributor has
+		// opted into (#2637). It is a SOFT priority tier below own-work: matching
+		// work is offered first, but a contributor with no match still gets other
+		// work. Off entirely when the contributor set no interests.
+		interestMatch bool
 		// recentFailures is the issue's current consecutive-failure count (#2435).
 		// It is a stable tie-break in the ordering below: among equally-admissible
 		// candidates, fewer-recent-failures first. Issues in an active failure
@@ -2846,7 +2872,8 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// candidate was authored by the connected contributor. When the
 				// username is unknown (empty), nothing is own → we keep today's
 				// ordering untouched.
-				isOwn: ownUsername != "" && strings.EqualFold(author, ownUsername),
+				isOwn:         ownUsername != "" && strings.EqualFold(author, ownUsername),
+				interestMatch: interestMatchesLabels(labels),
 				// #2435: carry any lingering failure history so the ordering below
 				// can deprioritise a recently-failed issue within its bucket.
 				recentFailures: h.recentFailureCount(repo.Full, number),
@@ -2906,6 +2933,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		}
 		if ownFirst[i].isOwn != ownFirst[j].isOwn {
 			return ownFirst[i].isOwn // own work sorts ahead of non-own
+		}
+		if ownFirst[i].interestMatch != ownFirst[j].interestMatch {
+			return ownFirst[i].interestMatch // label-affinity matches ahead of non-matches (#2637)
 		}
 		if ownFirst[i].recentFailures != ownFirst[j].recentFailures {
 			return ownFirst[i].recentFailures < ownFirst[j].recentFailures // fewer failures first
