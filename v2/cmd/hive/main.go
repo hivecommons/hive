@@ -4121,7 +4121,12 @@ func runEvalCycle(
 		dashSrv.SetAdvisoryDigest(digest)
 		statusPayload.AdvisoryDigest = digest
 
-		if digest.TotalCount > 0 {
+		// Post whenever there is something CURRENT to say: open findings, or
+		// recently resolved ones. The latter matters for healing (#2575): when
+		// the last finding resolves, TotalCount drops to 0 but the pinned
+		// digest comment must still be rewritten — otherwise it freezes on its
+		// last non-empty state and keeps showing the healed finding forever.
+		if digest.TotalCount > 0 || len(digest.RecentlyResolved) > 0 {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -4241,6 +4246,19 @@ func runEvalCycle(
 						dashSrv.SetGitHubAppPermIssue("")
 						dashSrv.SetGitHubAppRequired(false)
 						dashSrv.ClearPendingGitHubAppInstall()
+						// The same proof retires stale ACCESS findings (#2575):
+						// an advisory bead like "Insufficient repo permissions"
+						// created while the App genuinely could not write was
+						// never re-validated, so it stayed in the digest forever
+						// after the App was correctly installed. A successful
+						// App-authenticated digest post is the strongest
+						// possible evidence the condition has healed, so close
+						// those beads now; the next cycle's digest moves them to
+						// "Recently Resolved" and rewrites the pinned comment.
+						if healed := advisory.CloseHealedAppAuthFindings(beadStores); len(healed) > 0 {
+							logger.Info("closed healed GitHub App access findings after successful App digest post",
+								"count", len(healed), "titles", strings.Join(healed, "; "))
+						}
 					}
 				}
 			}
