@@ -151,7 +151,11 @@ func TestStart_LaunchCodexUsesUnattendedBeadsSandbox(t *testing.T) {
 	if !tmuxAvailable() {
 		t.Skip("tmux not available")
 	}
-	workDir := t.TempDir()
+	workDir, err := os.MkdirTemp("", "hive-agent-launch-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 	beadsDir := filepath.Join(t.TempDir(), "shared beads")
 	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -202,7 +206,12 @@ func TestStart_LaunchCodexUsesUnattendedBeadsSandbox(t *testing.T) {
 		"--ask-for-approval", "never",
 	}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("Codex argv = %#v, want %#v", args, want)
+		status, _ := m.GetStatus("quality")
+		agent := m.agents["quality"]
+		paneState, paneStateErr := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession,
+			"#{pane_pid} #{pane_current_command} #{pane_dead} #{pane_dead_status}").CombinedOutput()
+		t.Fatalf("Codex argv = %#v, want %#v; state=%s last_error=%q pane=%q pane_state=%q pane_state_err=%v",
+			args, want, status.State, status.LastError, m.captureTmuxPaneForAgent(agent), paneState, paneStateErr)
 	}
 }
 
