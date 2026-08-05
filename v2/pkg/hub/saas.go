@@ -7552,6 +7552,12 @@ const dashboardHTML = `<!DOCTYPE html>
     .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
     .online-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(116,223,154,0.5); }
     .online-dot.off { background: #6b7280; }
+    /* Upgrading state: replace the normal health dot with a 50%-bigger (12px) blue
+       dot that glows and blinks slowly, so a rollout-in-progress reads at a glance
+       and is unmistakable versus the ok/degraded/critical/unknown health colors. */
+    .online-dot.upgrading { width: 12px; height: 12px; background: #58a6ff; box-shadow: 0 0 8px rgba(88,166,255,0.9), 0 0 3px rgba(88,166,255,0.7); animation: hiveUpgradePulse 1.8s ease-in-out infinite; }
+    @keyframes hiveUpgradePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(88,166,255,1), 0 0 4px rgba(88,166,255,0.8); } 50% { opacity: 0.4; box-shadow: 0 0 4px rgba(88,166,255,0.4); } }
+    @media (prefers-reduced-motion: reduce) { .online-dot.upgrading { animation: none; } }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: 0.75rem; color: var(--muted); }
 
@@ -12129,7 +12135,13 @@ const dashboardHTML = `<!DOCTYPE html>
       syncBulkSelection(hives);
       var repoPath = function(h) { return h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : h.primaryRepo || ''; };
       var buildRow = function(h, i, section) {
-        var dot = h.online ? healthBadge(h) : '<span class="online-dot off"></span>';
+        // While a rollout is in flight, the status dot becomes the distinct
+        // blue glowing/slow-blinking "upgrading" dot (see .online-dot.upgrading) —
+        // it outranks the normal online/offline health dot so an upgrade reads at
+        // a glance and is never mistaken for the ok/degraded/critical/unknown state.
+        var dot = h.upgrading
+          ? '<span class="online-dot upgrading" title="Upgrading \u2014 a rollout is in progress"></span>'
+          : (h.online ? healthBadge(h) : '<span class="online-dot off"></span>');
         var rp = repoPath(h);
         // Link on the hive's own GitHub instance (github_host) so a GHE repo
         // points at github.ibm.com, not 404 on github.com.
