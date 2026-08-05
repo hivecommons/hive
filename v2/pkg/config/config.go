@@ -1894,11 +1894,23 @@ type HubConfig struct {
 	// same Config.Hub.* mechanism as the other admission settings so it survives
 	// restart, and edited only through the authenticated PUT /api/contribute/queue/order
 	// endpoint (owner/read-write only).
-	ContributeQueueOrder []string            `yaml:"contribute_queue_order,omitempty"`
-	DisabledRepos        []string            `yaml:"disabled_repos"`
-	DisabledTiers        []string            `yaml:"disabled_tiers"`
-	TierLimits           map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin  int                 `yaml:"snapshot_interval_min"`
+	ContributeQueueOrder []string `yaml:"contribute_queue_order,omitempty"`
+	// ContributeQueueHold is the OPERATOR HOLD set for the ready-work queue: an
+	// unordered list of "owner/repo#number" keys the operator parked from the
+	// Operations tab. A held issue is NEVER offered — it is excluded from BOTH the
+	// queue display's offer-eligible set (ReadyQueue) and selectTask's candidate
+	// selection — and it stays parked INDEFINITELY until the operator Resumes it.
+	// This is DISTINCT from cooldown (time-based, self-clearing): a hold is a
+	// manual, persistent operator decision. Held rows remain VISIBLE on the
+	// Operations tab (rendered greyed with an "on hold" badge) so the operator can
+	// always see and Resume them. Persisted through the same Config.Hub.* mechanism
+	// as ContributeQueueOrder so it survives restart, and edited only through the
+	// authenticated POST /api/contribute/queue/hold endpoint (owner/read-write only).
+	ContributeQueueHold []string            `yaml:"contribute_queue_hold,omitempty"`
+	DisabledRepos       []string            `yaml:"disabled_repos"`
+	DisabledTiers       []string            `yaml:"disabled_tiers"`
+	TierLimits          map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin int                 `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the

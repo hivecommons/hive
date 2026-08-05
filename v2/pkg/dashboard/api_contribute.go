@@ -259,6 +259,11 @@ func (s *Server) registerContributeRoutes() {
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
 	s.mux.HandleFunc("PUT /api/contribute/queue/order", s.handleContributeQueueOrder)
+	// Operator HOLD toggle for the ready-work queue. Owner/read-write only, gated
+	// exactly like queue/order above (in-handler requireContributorWrite). Parks an
+	// issue so it is never offered until Resumed — a persistent hold DISTINCT from
+	// the time-based cooldown. Body: {"key":"owner/repo#number","held":true|false}.
+	s.mux.HandleFunc("POST /api/contribute/queue/hold", s.handleContributeQueueHold)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
@@ -939,10 +944,21 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-menu-sep{height:1px;background:#21262d;margin:5px 2px}
 .cc-q-moverow{display:flex;align-items:center;gap:6px;padding:7px 9px}
 .cc-q-moverow label{font-size:.78rem;color:#8b949e;flex:1}
-.cc-q-moverow input{width:56px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.8rem;padding:4px 6px;outline:none}
+/* color-scheme:dark makes the native number-input spinner arrows theme-aware, so
+   they render light-on-dark and are VISIBLE against the #0d1117 field + the dark
+   #161b22 menu — previously they were black-on-black and effectively invisible.
+   The explicit background/color are kept as a belt-and-braces fallback for engines
+   that don't honour color-scheme on the control. */
+.cc-q-moverow input[type=number]{width:56px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.8rem;padding:4px 6px;outline:none;color-scheme:dark}
 .cc-q-moverow input:focus{border-color:#1f6feb}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
+/* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
+   not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
+   Never hidden, so the operator can always see and Resume it. */
+.cc-q-item.cc-q-held{opacity:.55}
+.cc-q-item.cc-q-held:hover{opacity:.8}
+.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
    heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
@@ -3213,15 +3229,21 @@ function ccRenderQueue(flip){
     // Per-row "⋯" context menu — Apple-Music style. Owner/read-write ONLY (rendered
     // only when adminEnabled). Carries move-to-top + move-to-position, both keyed on
     // this row's qkey so they act on the right item in the FULL order.
-    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
+    // Held (#queue-hold): the server tags a manually-parked issue with held:true. It
+    // stays VISIBLE in the queue (never hidden) but rendered greyed with an "on hold"
+    // badge so the operator can see and Resume it. The ⋯ menu shows Resume for it.
+    var isHeld=!!q.held;
+    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total,isHeld):'';
     // Label-affinity (#2637): the server sets matches_interest per VIEWER when one
     // of the issue's labels matches a label this contributor subscribed to. Tag the
     // row so CSS can highlight it; a small "for you" pill makes the reason explicit.
     var mine=!!q.matches_interest;
     var mineCls=mine?' cc-q-mine':'';
     var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
-    return '<div class="cc-q-item'+mineCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+'</div>'+
+    var heldCls=isHeld?' cc-q-held':'';
+    var heldTag=isHeld?'<span class="cc-q-held-tag" title="On hold — parked by the operator; not offered until resumed">&#x23F8; on hold</span>':'';
+    return '<div class="cc-q-item'+mineCls+heldCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
   }).join('');
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
@@ -3237,12 +3259,24 @@ function ccRenderQueue(flip){
 // ccQueueMenuHTML renders the per-row ⋯ menu markup (owner/read-write only). pos is
 // the row's ZERO-based position in the full queue; total is the queue length. The
 // move-to-position input is pre-filled with the row's current 1-based position.
-function ccQueueMenuHTML(key,pos,total){
+function ccQueueMenuHTML(key,pos,total,isHeld){
   var atTop=(pos===0);
+  // A held item is at the bottom of the visible queue by construction (held rows
+  // trail all offerable ones), and Move-to-bottom on it is a no-op anyway; the
+  // atBottom guard below disables it whenever pos is the last slot.
+  var atBottom=(pos===total-1);
+  // Hold/Resume toggles the persistent operator hold. "Resume" is shown when the
+  // item is already held (play glyph), "Hold" otherwise (pause glyph). data-act
+  // carries the CURRENT held state so the click handler knows which way to flip.
+  var holdLabel=isHeld?'Resume':'Hold';
+  var holdIcon=isHeld?'&#x25B6;':'&#x23F8;'; // ▶ resume / ⏸ hold
   return '<span class="cc-q-menu-wrap">'+
     '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
     '<div class="cc-q-menu" role="menu">'+
       '<button type="button" class="cc-q-act" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
+      '<div class="cc-q-menu-sep"></div>'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
       '<div class="cc-q-menu-sep"></div>'+
       '<div class="cc-q-moverow">'+
         '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
@@ -3295,6 +3329,14 @@ function ccBindQueueMenus(root){
   for(var a=0;a<acts.length;a++){(function(act){
     act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToTop(act.getAttribute('data-qkey'));});
   })(acts[a]);}
+  var bots=root.querySelectorAll('.cc-q-act[data-act=bottom]');
+  for(var b2=0;b2<bots.length;b2++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToBottom(act.getAttribute('data-qkey'));});
+  })(bots[b2]);}
+  var holds=root.querySelectorAll('.cc-q-act[data-act=hold]');
+  for(var h2=0;h2<holds.length;h2++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccToggleHold(act.getAttribute('data-qkey'),act.getAttribute('data-held')!=='1');});
+  })(holds[h2]);}
   var gos=root.querySelectorAll('.cc-q-act-go');
   for(var g=0;g<gos.length;g++){(function(go){
     var key=go.getAttribute('data-qkey');
@@ -3324,6 +3366,7 @@ function ccQueueIndexOf(key){
   return -1;
 }
 function ccMoveToTop(key){ccMoveToPosition(key,1);}
+function ccMoveToBottom(key){ccMoveToPosition(key,ccQueue.length);}
 function ccMoveToPosition(key,n){
   var from=ccQueueIndexOf(key);if(from<0)return;
   // Validate N (1..len). Clamp rather than reject so an out-of-range value lands at
@@ -3428,6 +3471,24 @@ function ccPersistQueueOrder(){
   fetch('/api/contribute/queue/order',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})})
     .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
     .catch(function(){/* a read viewer would 403 here, but the UI never shows handles to them */});
+}
+// ccToggleHold parks (held=true) or resumes (held=false) one ready-work issue via
+// the authenticated POST /api/contribute/queue/hold endpoint. A held issue is never
+// offered until resumed — a persistent operator hold, distinct from cooldown. On
+// success it re-fetches the queue so the held/offerable split (which the SERVER
+// computes) is reflected: a newly-held row re-appears greyed at the bottom, a
+// resumed row rejoins the offerable list. Owner/read-write only; a read viewer 403s
+// here, but the Hold/Resume action is never rendered for them (adminEnabled gate).
+function ccToggleHold(key,held){
+  if(!key)return;
+  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,held:!!held})})
+    .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+    .then(function(){
+      // Re-hydrate from the server so held tagging + offer-eligibility are authoritative.
+      return fetch('/api/contribute/queue').then(function(r){return r.json();});
+    })
+    .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}})
+    .catch(function(){/* a read viewer would 403; the UI never shows the action to them */});
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
   // Drive BOTH the queue-head pill (#cc-live, unchanged) and the mirror pill that
@@ -4664,6 +4725,73 @@ func (s *Server) handleContributeQueueOrder(w http.ResponseWriter, r *http.Reque
 	s.refreshAndPersist()
 	s.logger.Info("contribute queue order updated", "keys", len(cleaned))
 	jsonResponse(w, map[string]any{"ok": true, "order": cleaned})
+}
+
+// maxQueueHoldKeys caps how many issues the operator may hold at once. Mirrors
+// maxQueueOrderKeys: generous (the whole visible queue could conceivably be
+// parked) yet bounds a hostile payload so the hold set can neither bloat hive.yaml
+// nor slow the per-selectTask membership lookup.
+const maxQueueHoldKeys = 512
+
+// handleContributeQueueHold toggles the OPERATOR HOLD on one ready-work issue.
+// A held issue is parked INDEFINITELY — never offered — until the operator Resumes
+// it; this is DISTINCT from the time-based cooldown, which self-clears. It is a
+// CONTROL, so owner/read-write ONLY, gated exactly like handleContributeQueueOrder
+// via requireContributorWrite (a read/anon caller gets 403). The hold set lives in
+// Config.Hub.ContributeQueueHold and persists through the SAME refreshAndPersist
+// path as ContributeQueueOrder, so it survives restart. Body:
+// {"key":"owner/repo#number","held":true|false} — held=true adds the key, false
+// removes it. The key MUST be the canonical "owner/repo#number" form (validated
+// against the same queueOrderKeyPattern) so it matches selectTask's exclusion key
+// exactly (the #2648 class of silent miss).
+func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var body struct {
+		Key  string `json:"key"`
+		Held bool   `json:"held"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(body.Key)
+	if key == "" || !queueOrderKeyPattern.MatchString(key) {
+		jsonError(w, "invalid issue key", http.StatusBadRequest)
+		return
+	}
+	// Rebuild the hold set: drop the target key (and any malformed/duplicate
+	// stragglers) first, then re-add it when held=true. This keeps the stored list
+	// well-formed and unique regardless of prior state, and makes the toggle
+	// idempotent (holding an already-held issue, or resuming an already-free one, is
+	// a clean no-op that still persists the canonical set).
+	seen := make(map[string]struct{})
+	cleaned := make([]string, 0, len(s.deps.Config.Hub.ContributeQueueHold)+1)
+	for _, k := range s.deps.Config.Hub.ContributeQueueHold {
+		k = strings.TrimSpace(k)
+		if k == "" || k == key || !queueOrderKeyPattern.MatchString(k) {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		cleaned = append(cleaned, k)
+	}
+	if body.Held {
+		if len(cleaned) >= maxQueueHoldKeys {
+			jsonError(w, "too many held issues", http.StatusBadRequest)
+			return
+		}
+		cleaned = append(cleaned, key)
+	}
+	s.deps.Config.Hub.ContributeQueueHold = cleaned
+	s.auditFromRequest(r, "contribute_queue_hold", auditDetail("key", key, "held", strconv.FormatBool(body.Held)), "")
+	s.refreshAndPersist()
+	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned))
+	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned})
 }
 
 // ── Contributor management ─────────────────────────────────────────────────

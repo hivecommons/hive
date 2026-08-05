@@ -2213,8 +2213,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.logger.Info("[contribute-ws] selectTask scanning", "repos", len(status.Repos), "totalIssues", totalAvailable, "cooldown", len(h.completedTasks), "active", len(activeIssues))
 
 	var disabledRepos []string
+	var heldIssues map[string]struct{}
 	if h.server.deps != nil && h.server.deps.Config != nil {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
+		// Operator HOLD (#queue-hold): a manually-parked issue must never be offered,
+		// indefinitely, until the operator Resumes it. Built once per selectTask from
+		// the same canonical "%s#%d" keys the cooldown/active/failure checks use, so
+		// the exclusion cannot miss on a repo-name spelling mismatch (#2648).
+		heldIssues = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
 	}
 
 	// --- Collect the eligible candidates, then order them (#2390) ---------------
@@ -2302,6 +2308,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			}
 			if number == 0 {
 				h.logger.Info("[contribute-ws] skip: number=0", "repo", repo.Full)
+				continue
+			}
+			// Operator HOLD (#queue-hold): skip a manually-parked issue outright. This
+			// is a persistent operator decision, DISTINCT from the time-based cooldown
+			// below — a held issue never becomes a candidate until the operator Resumes
+			// it. Keyed on the same canonical "%s#%d" as every other exclusion.
+			if _, isHeld := heldIssues[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
 				continue
 			}
 			if h.isTaskInCooldown(repo.Full, number) {
