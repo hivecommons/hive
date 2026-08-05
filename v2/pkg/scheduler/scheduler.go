@@ -258,18 +258,21 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 		if shown >= maxIssuesPerKick {
 			break
 		}
-		// The issue title is untrusted external text about to be injected into an
-		// agent kick. Gate it through ioscan (opt-in via ioscan.enabled): a blocked
-		// title is redacted/annotated rather than injected raw, and the block is
-		// recorded to the dashboard audit log. Disabled → strict no-op passthrough.
+		// The issue title AND labels are untrusted external text about to be
+		// injected into an agent kick, and labels additionally drive classification
+		// routing (pkg/classify). Gate both through ioscan (F11): a blocked
+		// title/label is redacted/annotated rather than injected raw, and the block
+		// is recorded to the dashboard audit log. Disabled → strict no-op
+		// passthrough. Default is now ON (fail-safe).
 		title := s.enforceIssueText(issue.Title)
 		const maxTitleRunes = 60
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
+		labels := s.enforceLabels(issue.Labels)
 		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s] %s\n",
 			issue.AgeMinutes, issue.Repo, issue.Number,
-			strings.Join(issue.Labels, ","), title))
+			strings.Join(labels, ","), title))
 		shown++
 	}
 	return b.String()
@@ -281,12 +284,18 @@ func (s *Scheduler) formatPRList(actionable *github.ActionableResult) string {
 	}
 	var b strings.Builder
 	for _, pr := range actionable.PRs.Items {
-		title := pr.Title
+		// The PR title and author login are untrusted external text about to be
+		// injected into an agent kick (F11). PR titles in particular drive
+		// classification routing, and an attacker controls both the title and their
+		// own fork/login. Gate both through ioscan: a blocked value is redacted
+		// rather than injected raw. Disabled → strict no-op. Default is now ON.
+		title := s.enforceIssueText(pr.Title)
 		const maxPRTitleRunes = 70
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, pr.Author, title))
+		author := s.enforceIssueText(pr.Author)
+		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, author, title))
 	}
 	return b.String()
 }
@@ -634,7 +643,7 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 - Writes are authored by the App bot identity, not a personal account. Do not
   set git user.name/user.email to a human, and do not pass 'gh pr create' or
   'git commit' an explicit --author: let the App identity stand.
-- To OPEN A PULL REQUEST, use ` + "`hive-open-pr`" + ` — the hive opens it with the
+- To OPEN A PULL REQUEST, use `+"`hive-open-pr`"+` — the hive opens it with the
   App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
     hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
@@ -1004,14 +1013,14 @@ func keywordSample(keywords []string) string {
 }
 
 var noiseLabels = map[string]bool{
-	"triage/accepted":   true,
-	"ai-fix-requested":  true,
-	"kind/bug":          true,
-	"kind/feature":      true,
-	"kind/task":         true,
-	"good first issue":  true,
-	"help wanted":       true,
-	"hold":              true,
+	"triage/accepted":  true,
+	"ai-fix-requested": true,
+	"kind/bug":         true,
+	"kind/feature":     true,
+	"kind/task":        true,
+	"good first issue": true,
+	"help wanted":      true,
+	"hold":             true,
 }
 
 func isNoiseLabel(label string) bool {

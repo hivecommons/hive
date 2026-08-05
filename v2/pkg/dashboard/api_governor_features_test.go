@@ -46,7 +46,7 @@ func TestCovGov_Features(t *testing.T) {
 	}
 
 	cfg := s.deps.Config
-	if !cfg.Ioscan.Enabled {
+	if !cfg.Ioscan.IsEnabled() {
 		t.Errorf("ioscan not enabled")
 	}
 	if !cfg.Tracing.Enabled {
@@ -88,7 +88,7 @@ func TestCovGov_Features(t *testing.T) {
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("partial update ok: %d", rec.Code)
 	}
-	if cfg.Ioscan.Enabled {
+	if cfg.Ioscan.IsEnabled() {
 		t.Errorf("ioscan should be disabled after partial update")
 	}
 	// Tracing endpoint set earlier must survive the partial update.

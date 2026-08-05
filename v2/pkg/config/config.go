@@ -132,17 +132,28 @@ type MintConfig struct {
 }
 
 // IoscanConfig gates the pkg/ioscan input/output security scanner (prompt-
-// injection + secret/dangerous-directive detection). It is additive and
-// DISABLED by default: an absent `ioscan:` block, or Enabled=false, leaves the
-// kick/eval path byte-identical to before. When enabled, untrusted external
-// text (issue titles/bodies) is scanned before it is injected into an agent
-// kick, and blocked text is redacted/annotated rather than passed through. The
-// scanner is pure (no I/O, no network) and enforcement fails safe — a scan is
-// only ever advisory to the caller, never a reason to crash a kick.
+// injection + secret/dangerous-directive detection). It is additive and, per
+// audit rec #7 (F11, CWE-693), now ENABLED by default: untrusted external text
+// (issue/PR titles, labels, bodies) is scanned before it is injected into an
+// agent kick, and only text the input block policy trips (Critical, or High-
+// severity injection) is redacted/annotated — benign text passes through
+// byte-identically. The scanner is pure (no I/O, no network) and enforcement
+// fails safe: a scan is only ever advisory to the caller, never a reason to
+// crash a kick. Defaulting on is therefore safe — a running hive sees no change
+// for ordinary titles, only genuine injection payloads are withheld.
 type IoscanConfig struct {
-	// Enabled turns input/output scanning on. Default false (opt-in) so it can
-	// never destabilize a running hive until an operator asks for it.
-	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Enabled turns input/output scanning on. Pointer so an omitted `enabled:`
+	// key (nil) is distinguishable from an explicit false: nil DEFAULTS ON
+	// (fail-safe — scan by default), while an operator can still opt out with an
+	// explicit `enabled: false`. Read via IsEnabled(), never dereferenced raw.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether input/output scanning is active. Absent (nil)
+// defaults to true (fail-safe): scanning is on unless an operator explicitly
+// sets `enabled: false`.
+func (c IoscanConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // PlanningConfig gates the Phase 4 planning entry points that fire automatically

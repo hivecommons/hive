@@ -63,13 +63,25 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if secret := loadWebhookSecret(); secret != "" {
-		sig := r.Header.Get("X-Hub-Signature-256")
-		if !verifyWebhookSignature(body, sig, secret) {
-			s.logger.Warn("webhook signature verification failed")
-			http.Error(w, `{"error":"invalid signature"}`, http.StatusUnauthorized)
-			return
-		}
+	// SECURITY (F10, CWE-345): webhook signature verification FAILS CLOSED. A
+	// forged installation.created event can queue an attacker-chosen GitHub
+	// installation ID for a victim hive (adopted by the spoke via
+	// nextInstallationID), silently breaking repo auth. Verification is therefore
+	// unconditional: a missing/empty secret means we cannot authenticate the
+	// sender, so the webhook is REJECTED rather than accepted unsigned. Operators
+	// enable the webhook path by configuring GITHUB_WEBHOOK_SECRET (or
+	// /data/saas/webhook-secret.key) with the same secret set on the GitHub App.
+	secret := loadWebhookSecret()
+	if secret == "" {
+		s.logger.Warn("webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)")
+		http.Error(w, `{"error":"webhooks disabled: no secret configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !verifyWebhookSignature(body, sig, secret) {
+		s.logger.Warn("webhook signature verification failed")
+		http.Error(w, `{"error":"invalid signature"}`, http.StatusUnauthorized)
+		return
 	}
 
 	switch event {

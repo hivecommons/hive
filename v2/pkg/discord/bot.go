@@ -720,17 +720,23 @@ func (b *Bot) routeMessage(ctx context.Context, msg discordMessage) {
 		return
 	}
 
-	// SECURITY: when an allowlist is configured, only those Discord user IDs may
-	// drive the agents (!kick / agent commands inject prompts). This is OPT-IN to
-	// avoid breaking an existing Discord workflow that relies on the bot: an empty
-	// allowlist preserves the prior behavior (any channel member can command).
-	// Operators exposing the bot to an untrusted guild should set allowed_users.
-	if len(b.allowedUsers) > 0 {
-		if _, ok := b.allowedUsers[msg.Author.ID]; !ok {
-			b.logger.Warn("discord: ignoring command from non-allowlisted user",
-				"user_id", msg.Author.ID, "content", content)
-			return
-		}
+	// SECURITY (F8, CWE-862): command dispatch is gated on the allowlist and FAILS
+	// CLOSED. Commands (!kick / agent commands) inject prompts and can reach
+	// dashboardKick, which POSTs attacker-supplied text with the privileged
+	// dashboard bearer — so an unconfigured allowlist must mean "no one is
+	// authorized", not "everyone is authorized". This matches the documented
+	// contract on Config.AllowedUsers ("Empty = commands disabled (fail closed)").
+	// An empty allowlist rejects every command; operators enable command control
+	// by populating allowed_users with the specific Discord user IDs they trust.
+	if len(b.allowedUsers) == 0 {
+		b.logger.Warn("discord: ignoring command — allowlist is empty (commands disabled; set allowed_users to enable)",
+			"user_id", msg.Author.ID, "content", content)
+		return
+	}
+	if _, ok := b.allowedUsers[msg.Author.ID]; !ok {
+		b.logger.Warn("discord: ignoring command from non-allowlisted user",
+			"user_id", msg.Author.ID, "content", content)
+		return
 	}
 
 	content = content[1:]

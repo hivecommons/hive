@@ -41,10 +41,13 @@ func (s *Scheduler) auditLogger() AuditFunc {
 }
 
 // ioscanEnabled reports whether input/output scanning is turned on for this
-// hive. Default false — an absent `ioscan:` block leaves the kick path
-// byte-identical.
+// hive. Per F11 (audit rec #7) scanning now defaults ON (fail-safe): an absent
+// `ioscan:` block, or an omitted `enabled:` key, scans by default. Only text
+// the input block policy trips (Critical / High-severity injection) is
+// redacted, so ordinary titles pass through byte-identically. An operator can
+// still opt out with an explicit `ioscan.enabled: false`.
 func (s *Scheduler) ioscanEnabled() bool {
-	return s.cfg != nil && s.cfg.Ioscan.Enabled
+	return s.cfg != nil && s.cfg.Ioscan.IsEnabled()
 }
 
 // enforceIssueText runs ioscan over one piece of untrusted external text (an
@@ -64,6 +67,24 @@ func (s *Scheduler) enforceIssueText(text string) string {
 		s.recordIoscanBlock(v)
 	}
 	return sanitized
+}
+
+// enforceLabels runs ioscan over each untrusted label before it is joined into
+// a kick line. Labels are attacker-controllable on public issues/PRs and drive
+// classification routing (pkg/classify), so a crafted label must not reach an
+// agent prompt raw. Like enforceIssueText it is a strict no-op when ioscan is
+// disabled (returns the input slice unchanged, no allocation). When enabled,
+// each label is scanned independently and a blocked label is annotated rather
+// than emitted raw. Fail-safe: never errors, never drops a label.
+func (s *Scheduler) enforceLabels(labels []string) []string {
+	if !s.ioscanEnabled() || len(labels) == 0 {
+		return labels
+	}
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		out[i] = s.enforceIssueText(l)
+	}
+	return out
 }
 
 // recordIoscanBlock writes one audit entry per blocked verdict, one line per

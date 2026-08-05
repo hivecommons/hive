@@ -89,12 +89,31 @@ func TestHandleGitHubWebhookBadSignature(t *testing.T) {
 	}
 }
 
-func TestHandleGitHubWebhookIgnoredEvent(t *testing.T) {
+// TestHandleGitHubWebhookNoSecretRejected asserts F10 fail-closed: with no
+// webhook secret configured, ANY webhook (even a validly-shaped one) is rejected
+// rather than accepted unsigned. This prevents a forged installation.created
+// from queuing an attacker-chosen installation ID for a victim hive.
+func TestHandleGitHubWebhookNoSecretRejected(t *testing.T) {
 	t.Setenv(webhookSecretEnvVar, "")
 	s := newWebhookHub()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/github/webhook", nil)
+	req.Header.Set("X-GitHub-Event", "installation")
+	s.handleGitHubWebhook(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (webhooks disabled: no secret)", rec.Code)
+	}
+}
+
+func TestHandleGitHubWebhookIgnoredEvent(t *testing.T) {
+	const secret = "s3cr3t"
+	t.Setenv(webhookSecretEnvVar, secret)
+	s := newWebhookHub()
+	rec := httptest.NewRecorder()
+	body := []byte("{}")
+	req := httptest.NewRequest(http.MethodPost, "/api/github/webhook", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", signWebhook(secret, body))
 	s.handleGitHubWebhook(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -102,7 +121,8 @@ func TestHandleGitHubWebhookIgnoredEvent(t *testing.T) {
 }
 
 func TestHandleGitHubWebhookInstallationNoMatch(t *testing.T) {
-	t.Setenv(webhookSecretEnvVar, "")
+	const secret = "s3cr3t"
+	t.Setenv(webhookSecretEnvVar, secret)
 	s := newWebhookHub()
 	evt := installationEvent{Action: "created"}
 	evt.Installation.ID = 42
@@ -112,6 +132,7 @@ func TestHandleGitHubWebhookInstallationNoMatch(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/github/webhook", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-Hub-Signature-256", signWebhook(secret, body))
 	s.handleGitHubWebhook(rec, req)
 
 	if rec.Code != http.StatusOK {

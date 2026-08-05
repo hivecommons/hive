@@ -506,20 +506,21 @@ func TestRouteMessage_NonAllowlistedUserBlocked(t *testing.T) {
 	}
 }
 
-func TestRouteMessage_EmptyAllowlistAllowsAll(t *testing.T) {
+func TestRouteMessage_EmptyAllowlistBlocksAll(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
 	t.Cleanup(ts.Close)
-	// No AllowedUsers -> opt-in: the allowlist is not enforced, preserving the
-	// prior behavior so an existing Discord workflow is not broken. (Operators
-	// exposing the bot to an untrusted guild opt in by setting allowed_users,
-	// covered by TestRouteMessage_NonAllowlistedUserBlocked.)
+	// SECURITY (F8, CWE-862): an empty AllowedUsers FAILS CLOSED — no one is
+	// authorized to drive commands, matching the documented contract ("Empty =
+	// commands disabled"). Commands reach dashboardKick with the privileged
+	// dashboard bearer, so an unconfigured allowlist must deny, not accept every
+	// channel member. Operators enable command control by populating allowed_users.
 	b := NewBot(Config{Token: "t", ChannelID: "c"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	b.client = &http.Client{Transport: &redirectTransport{target: ts.URL}, Timeout: httpTimeoutS * time.Second}
 	called := false
 	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { called = true; return "pong", nil })
 	b.routeMessage(context.Background(), makeMsg("1", "!ping", false))
-	if !called {
-		t.Error("empty allowlist should allow commands (opt-in, backward compatible)")
+	if called {
+		t.Error("empty allowlist must block all commands (fail closed), but the handler ran")
 	}
 }
 

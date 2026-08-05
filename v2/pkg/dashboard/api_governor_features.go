@@ -19,7 +19,7 @@ const (
 // handleGovernorFeatures toggles four already-functional opt-in features from
 // the Governor config dialog so operators do not have to hand-edit hive.yaml:
 //
-//   - ioscan            (Config.Ioscan.Enabled)
+//   - ioscan            (Config.Ioscan.Enabled — *bool, nil defaults ON)
 //   - tracing           (Config.Tracing.Enabled + Endpoint + SampleRatio)
 //   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
 //     key is a secret/PEM path and the dashboard overlay is deliberately
@@ -72,7 +72,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// --- apply ---
 	cfg := s.deps.Config
 	if body.IoscanEnabled != nil {
-		cfg.Ioscan.Enabled = *body.IoscanEnabled
+		v := *body.IoscanEnabled
+		cfg.Ioscan.Enabled = &v
 	}
 	if body.TracingEnabled != nil {
 		cfg.Tracing.Enabled = *body.TracingEnabled
@@ -116,7 +117,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		planFromLabel = *cfg.Planning.PlanFromLabel
 	}
 	return map[string]interface{}{
-		"ioscanEnabled":      cfg.Ioscan.Enabled,
+		"ioscanEnabled":      cfg.Ioscan.IsEnabled(),
 		"tracingEnabled":     cfg.Tracing.Enabled,
 		"tracingEndpoint":    cfg.Tracing.Endpoint,
 		"tracingSampleRatio": cfg.Tracing.SampleRatio,
