@@ -743,23 +743,42 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     fi
 
     if [ -n "$IPT" ]; then
-      # Self-exemption is by PACKET MARK only. The Go proxy stamps SO_MARK
-      # (HIVE_PROXY_EGRESS_MARK, exported above) on its own upstream :443 dials,
-      # and this rule RETURNs marked packets before the redirect so the proxy's
-      # traffic is not looped back into itself.
+      # Self-exemption uses BOTH owner-UID and packet-mark RETURNs, because the
+      # two platforms we run on each support a DIFFERENT one, and a single
+      # mechanism is not enough for both:
       #
-      # We deliberately DROP the previous `-m owner --uid-owner` exemptions:
-      # the owner match requires the xt_owner kernel module, which is ABSENT on
-      # OpenShift/OVN nodes. There, `-A ... -m owner` fails (non-zero), which —
-      # because the whole chain build is gated on success below — would flip the
-      # F5 fatal check and crash-loop every OpenShift hive. SO_MARK covers the
-      # self-exemption on BOTH platforms with no owner match, so the ruleset now
-      # succeeds on a host WITHOUT xt_owner.
+      #   - OKE: the `-m owner --uid-owner` match works (xt_owner is present) and
+      #     is the RELIABLE exemption. The proxy's own upstream :443 dials matched
+      #     by UID are RETURNed before the redirect.
+      #   - OpenShift/OVN: xt_owner is ABSENT, so the `-m owner` `-A` lines FAIL to
+      #     load — but the PACKET MARK (SO_MARK / HIVE_PROXY_EGRESS_MARK, stamped
+      #     by the Go proxy's markDialer, exported above) works there and exempts
+      #     the proxy's traffic.
+      #
+      # REGRESSION HISTORY: PR #2678 replaced the working owner-UID exemption with
+      # a MARK-ONLY exemption. That was verified only on OpenShift/vllm-d. On the
+      # LIVE OKE console hive the SO_MARK did NOT reliably stick on the proxy's
+      # outbound sockets, so its OWN :443 to api.github.com hit the REDIRECT rule,
+      # looped back into itself (:18443) → EPERM/ECONNREFUSED/EOF → no GitHub App
+      # token minting → no repo enumeration → the whole L6 loop went dead
+      # (refs #2678, #2674). Restoring the owner-UID RETURNs immediately fixed OKE.
+      #
+      # FIX: keep ALL THREE exemptions, in order, BEFORE the redirect. Each
+      # platform is covered by whichever mechanism works there; neither breaks.
+      # The owner `-A` lines are appended DEFENSIVELY with `|| true` so that on a
+      # host WITHOUT xt_owner their failure does NOT abort the ruleset or flip the
+      # F5 fatal `_iptables_ok` flag — the mark exemption + redirect still
+      # establish, and `_iptables_ok=true` is set as long as the chain is built.
       if $IPT -t nat -N HIVE_PROXY 2>/dev/null; then
+        # OKE: owner-match exemption (reliable where xt_owner is present).
+        # `|| true` keeps a failed append non-fatal on OpenShift (no xt_owner).
+        $IPT -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN || true
+        $IPT -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN || true
+        # OpenShift/OVN: packet-mark exemption (works with no xt_owner).
         $IPT -t nat -A HIVE_PROXY -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
         $IPT -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
         $IPT -t nat -A OUTPUT -j HIVE_PROXY
-        echo "[entrypoint] iptables ($IPT): outbound :443 -> :${PROXY_PORT} (proxy egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
+        echo "[entrypoint] iptables ($IPT): outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
         _iptables_ok=true
         # Update uid-map to record iptables active
         python3 -c "
