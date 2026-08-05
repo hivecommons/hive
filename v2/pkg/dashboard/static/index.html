@@ -757,23 +757,36 @@
     .gh-idhint-pop .gh-idhint-foot { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; line-height: 1.45; }
     /* The URL mock: a rendered browser address bar, not a screenshot.
        .gh-idhint-url is the pill-shaped chrome (rounded ends, lock glyph);
-       .gh-idhint-urltext is the scrollable URL row inside it, and the caret
-       callout sits below as its own line so it keeps pointing at the ID
-       segment even while the URL row scrolls horizontally. */
+       .gh-idhint-urlcol is the horizontally-scrollable column holding the URL
+       row (.gh-idhint-urltext) and, on a second line, the caret callout. Both
+       live in the SAME scroll container so the arrows stay pinned under the
+       trailing ID segment (seg-id, the last segment on the URL line) even when
+       a long org name scrolls the URL — the arrows point at the END of the
+       URL, where the installation ID actually is, not at the start. */
     .gh-idhint-url {
-      display: flex; align-items: center; gap: 7px;
+      display: flex; align-items: flex-start; gap: 7px;
       background: var(--bg-soft); border: 1px solid var(--line-strong);
       border-radius: 999px; padding: 6px 12px;
     }
     /* Lock glyph stands in for the browser's HTTPS padlock. Shrink-to-fit so
-       it never gets squeezed by the scrolling URL text next to it. */
+       it never gets squeezed by the scrolling URL text next to it. Nudge down
+       to baseline-align with the first (URL) line now that the row is
+       top-aligned to accommodate the caret's second line. */
     .gh-idhint-url .seg-lock {
       flex: 0 0 auto; color: var(--green); font-size: 0.72rem; opacity: 0.9;
+      margin-top: 2px;
+    }
+    /* Scroll container. inline-block/fit-content so its content width is the
+       URL line's width, which lets the caret (a right-aligned block) land under
+       the trailing ID segment rather than under the URL start. */
+    .gh-idhint-urlcol {
+      flex: 1 1 auto; min-width: 0;
+      overflow-x: auto; white-space: nowrap;
     }
     .gh-idhint-urltext {
-      flex: 1 1 auto; min-width: 0;
+      display: block;
       font-family: var(--font-mono); font-size: 0.66rem; line-height: 1.6;
-      color: var(--muted); overflow-x: auto; white-space: nowrap;
+      color: var(--muted); white-space: nowrap;
     }
     .gh-idhint-url .seg-host { color: var(--text); }
     /* The highlighted segment. Digits are MASKED (see ghAppInstallIdHintHtml)
@@ -784,12 +797,17 @@
       border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
       border-radius: 3px; padding: 1px 4px;
     }
-    /* Caret callout under the bar, pointing up at the ID segment. Own line
-       (not inside the scrolling pill) so it never gets clipped by
-       overflow-x when a long org name scrolls the URL row. */
+    /* Caret callout on its own line directly beneath the URL, pointing up at
+       the trailing ID segment. It lives inside the same scroll column as the
+       URL text (.gh-idhint-urlcol) and is right-aligned to that column's
+       content width; because seg-id is the LAST segment on the URL line, this
+       lands the arrows under the ID at the END of the URL — the actual install
+       ID location — rather than under the start of the URL (the old defect).
+       The caret width tracks the mask length so the arrow run is the width of
+       the ID segment. */
     .gh-idhint-caret {
-      display: block; color: var(--amber); font-size: 0.6rem;
-      font-family: var(--font-mono); margin-top: 4px; padding-left: 12px;
+      display: block; text-align: right; color: var(--amber); font-size: 0.6rem;
+      font-family: var(--font-mono); margin-top: 2px;
     }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
@@ -5545,22 +5563,32 @@
     function ghAppInstallIdHintHtml(data) {
       var host = escapeHtml(ghAppHintHost(data));
       var org = escapeHtml(ghAppHintOrg());
-      return '<span class="gh-idhint-lead">Your Installation ID is the <strong>last part of the URL</strong> '
-        + 'in your browser’s address bar on your org’s installed-app settings page:</span>'
+      return '<span class="gh-idhint-lead">Your Installation ID is the <strong>trailing number</strong> '
+        + 'at the <strong>end</strong> of the URL — the segment after '
+        + '<code>/installations/</code> — in your browser’s address bar on your org’s '
+        + 'installed-app settings page:</span>'
+        /* The URL row and the caret callout share one horizontally-scrollable
+           column so the arrows stay pinned under the trailing ID segment even
+           when a long org name scrolls the URL. The caret line is right-aligned
+           to the column's content width, which — because seg-id is the LAST
+           segment on the URL line — lands the arrows directly beneath the ID,
+           not under the start of the URL (the original defect). */
         + '<span class="gh-idhint-url">'
         +   '<span class="seg-lock" aria-hidden="true">🔒</span>'
-        +   '<span class="gh-idhint-urltext">'
-        +     'https://<span class="seg-host">' + host + '</span>/organizations/'
-        +     org + '/settings/installations/'
-        +     '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
+        +   '<span class="gh-idhint-urlcol">'
+        +     '<span class="gh-idhint-urltext">'
+        +       'https://<span class="seg-host">' + host + '</span>/organizations/'
+        +       org + '/settings/installations/'
+        +       '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
+        +     '</span>'
+        +     '<span class="gh-idhint-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
+        +       ' this number</span>'
         +   '</span>'
         + '</span>'
-        + '<span class="gh-idhint-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
-        +   ' this number</span>'
         + '<span class="gh-idhint-foot">Open <strong>' + host + '</strong> → your org → '
-        + 'Settings → GitHub Apps → the Hive app → <em>Configure</em>, then copy the digits '
-        + 'shown in your browser’s address bar. The circles above are a placeholder — '
-        + 'they are not a real ID.</span>';
+        + 'Settings → GitHub Apps → the Hive app → <em>Configure</em>. That lands you on the '
+        + '<code>…/settings/installations/&lt;id&gt;</code> URL — copy the digits at the very end. '
+        + 'The circles above are a placeholder — they are not a real ID.</span>';
     }
 
     /* Refreshes the hint content for the hive's current host/org. Safe to call
