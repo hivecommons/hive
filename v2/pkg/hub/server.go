@@ -93,6 +93,13 @@ type RegistryEntry struct {
 	Name  string   `json:"name"`
 	Org   string   `json:"org"`
 	Repos []string `json:"repos"`
+	// ProjectName is the hive's operator-editable display name, overlaid onto the
+	// registry entry from the authoritative SaaSHive record (sh.ProjectName) on
+	// the heartbeat path — NOT reported by the spoke. It is what the My Hives row
+	// renders as the editable top line; when empty the client falls back to the
+	// org/repo-derived label (see hiveLabel in the dashboard JS), exactly as
+	// before this field existed. handleRenameHive is the only writer.
+	ProjectName string `json:"projectName,omitempty"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
 	// without blanking it, and it is the author the fleet-stats counts are
@@ -1208,6 +1215,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
+		// The SaaS store is authoritative for the operator-editable display name
+		// (handleRenameHive persists it here), so overlay it onto the registry
+		// entry the dashboard renders. The spoke never reports this, so a blank
+		// ProjectName simply leaves the client on its org/repo fallback label.
+		entry.ProjectName = sh.ProjectName
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
