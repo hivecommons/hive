@@ -45,10 +45,10 @@ func deepHealthAgentsCheck(t *testing.T, deep map[string]any) map[string]any {
 func TestStatusPayloadCarriesDeepHealth(t *testing.T) {
 	srv := newFullServer(t)
 	srv.MarkReady()
-	// Age readiness past the health grace period so the agents check judges
-	// the fleet for real instead of skipping it as "just booted".
+	// Age process start past the boot-grace window so the agents check judges
+	// the fleet for real instead of suppressing it as "just booted".
 	srv.statusMu.Lock()
-	srv.readyAt = time.Now().Add(-2 * healthGracePeriod)
+	srv.startedAt = time.Now().Add(-2 * healthBootGrace)
 	srv.statusMu.Unlock()
 
 	srv.UpdateStatus(minimalPayload())

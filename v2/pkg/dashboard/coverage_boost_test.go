@@ -671,13 +671,15 @@ func TestHandleHealthDeep_NotReady(t *testing.T) {
 
 func TestInHealthGrace(t *testing.T) {
 	srv := newFullServer(t)
-	// Not ready yet
-	if srv.inHealthGrace() {
-		t.Error("should not be in grace before MarkReady")
+	// Freshly constructed: startedAt is ~now, so the boot-grace window is open.
+	if inGrace, age := srv.inHealthGrace(); !inGrace {
+		t.Errorf("should be in grace immediately after construction, age=%s", age)
 	}
-	srv.MarkReady()
-	if !srv.inHealthGrace() {
-		t.Error("should be in grace immediately after MarkReady")
+	// Push startedAt past the boot-grace window: a long-lived process must no
+	// longer be graced, so a persisting need-login/down condition can degrade.
+	srv.startedAt = time.Now().Add(-2 * healthBootGrace)
+	if inGrace, age := srv.inHealthGrace(); inGrace {
+		t.Errorf("should not be in grace long after startup, age=%s", age)
 	}
 }
 
