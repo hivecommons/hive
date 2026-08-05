@@ -6,6 +6,17 @@ export HIVE_API_PORT="${HIVE_API_PORT:-3002}"
 export HIVE_PROXY_PORT="${HIVE_PROXY_PORT:-3001}"
 export HIVE_STATIC_DIR="${HIVE_STATIC_DIR:-/opt/hive/proxy/public}"
 
+# Packet mark (fwmark / SO_MARK) used to exempt the MITM proxy's OWN upstream
+# :443 dials from the forced-egress redirect, so its traffic is not looped back
+# into itself. This is the SINGLE SOURCE OF TRUTH: it is exported here (in both
+# the root and the re-exec'd dev pass) so the iptables `-m mark --mark` exemption
+# below and the Go proxy (which reads HIVE_PROXY_EGRESS_MARK, defaulting to this
+# same 0x1112) stay in lockstep. Unlike `-m owner --uid-owner`, a packet mark
+# needs no xt_owner kernel module, so the exemption works on BOTH OKE and
+# OpenShift/OVN (where xt_owner is absent). Value is arbitrary but must match the
+# Go default (proxy.defaultProxyEgressMark).
+export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
+
 # ── Config backup/restore across container recreation ─────────────────
 # When Watchtower recreates the container (pull new image, stop old, start
 # new), the Go binary's config.Save() may write an empty/default config to
@@ -709,13 +720,37 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     PROXY_PORT=18443
     PROXY_ADVISORY_OK="${HIVE_PROXY_ADVISORY_OK:-false}"
     _iptables_ok=false
-    if command -v iptables >/dev/null 2>&1; then
-      if iptables -t nat -N HIVE_PROXY 2>/dev/null; then
-        iptables -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN
-        iptables -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN
-        iptables -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
-        iptables -t nat -A OUTPUT -j HIVE_PROXY
-        echo "[entrypoint] iptables: outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} exempt)"
+
+    # Select the iptables binary. Both OKE and OpenShift/RHEL9 hosts run the
+    # kernel in nft mode, where the legacy `iptables` (xtables-legacy) backend
+    # cannot write the nat table the node actually consults. Prefer the explicit
+    # nft binary; fall back to plain `iptables` (which on these images is a
+    # symlink to xtables-nft-multi anyway, so it resolves to nft).
+    IPT=""
+    if command -v iptables-nft >/dev/null 2>&1; then
+      IPT="iptables-nft"
+    elif command -v iptables >/dev/null 2>&1; then
+      IPT="iptables"
+    fi
+
+    if [ -n "$IPT" ]; then
+      # Self-exemption is by PACKET MARK only. The Go proxy stamps SO_MARK
+      # (HIVE_PROXY_EGRESS_MARK, exported above) on its own upstream :443 dials,
+      # and this rule RETURNs marked packets before the redirect so the proxy's
+      # traffic is not looped back into itself.
+      #
+      # We deliberately DROP the previous `-m owner --uid-owner` exemptions:
+      # the owner match requires the xt_owner kernel module, which is ABSENT on
+      # OpenShift/OVN nodes. There, `-A ... -m owner` fails (non-zero), which —
+      # because the whole chain build is gated on success below — would flip the
+      # F5 fatal check and crash-loop every OpenShift hive. SO_MARK covers the
+      # self-exemption on BOTH platforms with no owner match, so the ruleset now
+      # succeeds on a host WITHOUT xt_owner.
+      if $IPT -t nat -N HIVE_PROXY 2>/dev/null; then
+        $IPT -t nat -A HIVE_PROXY -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
+        $IPT -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
+        $IPT -t nat -A OUTPUT -j HIVE_PROXY
+        echo "[entrypoint] iptables ($IPT): outbound :443 -> :${PROXY_PORT} (proxy egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
         _iptables_ok=true
         # Update uid-map to record iptables active
         python3 -c "

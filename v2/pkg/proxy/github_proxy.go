@@ -19,8 +19,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -32,7 +34,62 @@ const (
 	InferenceTranslatePort = 18444
 	modeFilePrefix         = "/tmp/.hive-mode-"
 	maxViolationLog        = 1000
+
+	// defaultProxyEgressMark is the fwmark (SO_MARK) the proxy stamps onto its
+	// OWN upstream :443 dials so the forced-egress iptables redirect can exempt
+	// them (via `-m mark --mark <mark> -j RETURN`) and avoid looping the proxy's
+	// traffic back into itself.
+	//
+	// This replaces the `-m owner --uid-owner` self-exemption, which needs the
+	// xt_owner kernel module — absent on OpenShift/OVN nodes. A packet mark works
+	// on both OKE and OpenShift. The value is arbitrary but MUST match the mark
+	// the entrypoint exempts; entrypoint.sh is the single source of truth and
+	// exports HIVE_PROXY_EGRESS_MARK (defaulting to this same value) into the
+	// proxy process, which reads it via proxyEgressMark().
+	defaultProxyEgressMark = 0x1112
+
+	// proxyEgressMarkEnv is the env var the entrypoint exports to keep the proxy
+	// and the iptables rule in sync from one source of truth.
+	proxyEgressMarkEnv = "HIVE_PROXY_EGRESS_MARK"
 )
+
+// proxyEgressMark returns the fwmark to stamp on the proxy's upstream dials,
+// read from HIVE_PROXY_EGRESS_MARK (set by entrypoint.sh) so the Go proxy and
+// the iptables exemption stay in lockstep. Accepts hex (0x1112) or decimal.
+// Falls back to defaultProxyEgressMark when unset or unparseable — that default
+// matches the entrypoint default, so an accidental drift fails safe by staying
+// on the agreed value rather than silently disabling the exemption.
+func proxyEgressMark() int {
+	raw := strings.TrimSpace(os.Getenv(proxyEgressMarkEnv))
+	if raw == "" {
+		return defaultProxyEgressMark
+	}
+	// ParseInt with base 0 honours a 0x prefix (hex) and plain decimal.
+	if v, err := strconv.ParseInt(raw, 0, 64); err == nil && v > 0 {
+		return int(v)
+	}
+	return defaultProxyEgressMark
+}
+
+// markDialer returns a *net.Dialer whose Control hook stamps the proxy egress
+// fwmark (SO_MARK) on the outbound socket before connect. On non-Linux builds
+// setSockMark is a no-op, so the dialer is portable. The optional timeout is
+// applied when non-zero.
+func markDialer(timeout time.Duration) *net.Dialer {
+	mark := proxyEgressMark()
+	return &net.Dialer{
+		Timeout: timeout,
+		Control: func(_, _ string, c syscall.RawConn) error {
+			var sockErr error
+			if err := c.Control(func(fd uintptr) {
+				sockErr = setSockMark(fd, mark)
+			}); err != nil {
+				return err
+			}
+			return sockErr
+		},
+	}
+}
 
 // CACertPath and caKeyPath are the PVC locations of the persisted MITM CA.
 // They are vars rather than consts solely so tests can redirect the CA
@@ -91,7 +148,10 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 	if p.copilotDial != nil {
 		return p.copilotDial(host)
 	}
-	return tls.Dial("tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
+	// SO_MARK the outbound socket so the forced-egress redirect exempts the
+	// proxy's own upstream traffic (see proxyEgressMark). The override hook above
+	// still wins when set, so tests are unaffected.
+	return tls.DialWithDialer(markDialer(0), "tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
 }
 
 // SetTokenSink wires the inference token sink so the translator can record
@@ -289,8 +349,9 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 
 	if !IsGitHubHost(host) || !NeedsMITM(host) {
-		// Non-GitHub or non-API GitHub host: tunnel directly.
-		upstream, err := net.DialTimeout("tcp", host+":443", transparentProxyTimeout)
+		// Non-GitHub or non-API GitHub host: tunnel directly. SO_MARK the socket
+		// so the forced-egress redirect exempts this proxy-originated dial.
+		upstream, err := markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 		if err != nil {
 			return
 		}
@@ -327,7 +388,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer tlsClientConn.Close()
 
-	upstreamConn, err := tls.Dial("tcp", host+":443", &tls.Config{ServerName: host})
+	upstreamConn, err := tls.DialWithDialer(markDialer(0), "tcp", host+":443", &tls.Config{ServerName: host})
 	if err != nil {
 		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
 		return
@@ -562,8 +623,9 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	}
 	defer tlsClientConn.Close()
 
-	// Connect to the real GitHub server.
-	upstreamConn, err := tls.Dial("tcp", r.Host, &tls.Config{
+	// Connect to the real GitHub server. SO_MARK the socket so the forced-egress
+	// redirect exempts this proxy-originated dial (see proxyEgressMark).
+	upstreamConn, err := tls.DialWithDialer(markDialer(0), "tcp", r.Host, &tls.Config{
 		ServerName: host,
 	})
 	if err != nil {
@@ -709,7 +771,9 @@ func isGitPath(path string) bool {
 // tunnelDirect creates a raw TCP tunnel for non-GitHub CONNECT requests.
 func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 	const tunnelDialTimeout = 10 * time.Second
-	upstream, err := net.DialTimeout("tcp", r.Host, tunnelDialTimeout)
+	// SO_MARK the socket so the forced-egress redirect exempts this
+	// proxy-originated tunnel dial (CONNECT targets include :443).
+	upstream, err := markDialer(tunnelDialTimeout).Dial("tcp", r.Host)
 	if err != nil {
 		p.logger.Warn("proxy: CONNECT dial failed", "host", r.Host, "error", err)
 		fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nconnection failed\n")
