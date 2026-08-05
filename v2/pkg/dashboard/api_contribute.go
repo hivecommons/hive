@@ -4870,9 +4870,11 @@ a{color:#58a6ff}
 
 <div class="endpoint">
 <span class="method">POST</span><span class="path">/api/contribute/register</span>
-<div class="desc">Register (or re-register with <code>force:true</code> to reissue token)</div>
-<pre>curl -X POST -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
+<div class="desc">Register a new contributor (open), or re-register an existing one with <code>force:true</code> to reissue its token. Reissuing an existing token requires proving you own that identity — send <code>Authorization: Bearer &lt;gh-token&gt;</code> — or use <code>/api/contribute/reissue-token</code>.</div>
+<pre>curl -X POST -d '{"github_username":"you"}' %s/api/contribute/register
+# reissue an existing token (authenticated):
+curl -X POST -H "Authorization: Bearer $GH_TOKEN" -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
 </div>
 
-</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
+</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }
