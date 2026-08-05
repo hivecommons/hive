@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,7 +29,18 @@ import (
 const (
 	wsHeartbeatInterval = 30 * time.Second
 	wsHeartbeatTimeout  = 90 * time.Second
-	wsTaskTimeout       = 30 * time.Minute
+	// wsTaskTimeout is the hub-owned LEASE TTL on task ownership (kubestellar/hive
+	// #2568). A task's lease is renewed on assignment and on every task_progress
+	// report; if a connection holds a task but the lease has not been renewed within
+	// this window the cleanupLoop auto-releases it through the SAME cooldown path the
+	// disconnect/ready-abandon/manual-requeue releases use, so a wedged-but-connected
+	// worker cannot hold an issue forever. It is deliberately CONSERVATIVE (option 4
+	// in the issue: manual operator recovery is the primary path, auto-expiry is only
+	// the backstop) so a task that is legitimately "working slowly" — but still
+	// reporting progress — is never falsely reclaimed. Matches the relay's own
+	// 30-minute MAX_TASK_DURATION_MS watchdog so the hub backstop fires no earlier
+	// than the relay's own give-up point.
+	wsTaskTimeout = 30 * time.Minute
 	// wsTokenTTL is how long a minted scoped GitHub token stays valid. It must
 	// match the token_expires_at we advertise to the relay so both sides agree
 	// on when the token dies.
@@ -66,8 +78,25 @@ type ContributorConnection struct {
 	role        string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
 	connectedAt time.Time
 	currentTask *WSTaskAssign
-	lastPong    time.Time
-	tmuxOutput  []string
+	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
+	// hive#2568, the Gate). It is a monotonically increasing token minted per
+	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
+	// It is shipped to the relay in task_assign and echoed back on task_progress /
+	// task_complete / task_failed. When a task is released (disconnect, ready-abandon,
+	// operator requeue, or lease-TTL expiry) this is bumped, so a STALE worker that
+	// later wakes and reports completion/progress carrying the OLD generation is
+	// FENCED OUT: its message is rejected and cannot overwrite the new owner's state.
+	// Zero when no task is active (and a client that never learned a generation — an
+	// unversioned relay — reports 0, which is treated as "unstamped" and falls back to
+	// the pre-existing TaskID match, preserving backward compatibility).
+	currentTaskGen uint64
+	// lastLeaseRenew is when currentTask's hub-owned lease was last renewed
+	// (kubestellar/hive#2568): set on assignment and refreshed on every task_progress.
+	// cleanupLoop auto-releases a task whose lease has not been renewed within
+	// wsTaskTimeout. Zero when no task is active.
+	lastLeaseRenew time.Time
+	lastPong       time.Time
+	tmuxOutput     []string
 	// tokenMintedAt is when the scoped GitHub token for currentTask was last
 	// minted. The heartbeat loop uses it to re-mint and push a token_refresh
 	// once wsTokenRefreshPeriod has elapsed, before the token expires. Zero when
@@ -96,7 +125,23 @@ type ContributorConnection struct {
 	// client). Stored read-only and surfaced on FleetClanker; NEVER used to route
 	// or gate work.
 	capabilities *ContributorCapabilities
-	mu           sync.Mutex
+	// pendingToken is the scoped, expiring GitHub credential minted for currentTask
+	// but NOT yet delivered to the relay (kubestellar/hive#2537). The credential no
+	// longer travels inside task_assign; it is held here until the task's acceptance
+	// decision is made, then shipped via deliverTaskCredential (which reuses the
+	// token_refresh wire shape). In auto-accept mode (the default) it is delivered
+	// immediately after task_assign is sent; in explicit-accept mode it is held
+	// until a task_accepted arrives. Cleared to "" once delivered (or when the task
+	// ends without acceptance). It is a credential — NEVER logged or previewed.
+	pendingToken string
+	// credentialDelivered records that the scoped credential for currentTask has
+	// already been handed to the relay, so a duplicate task_accepted (the relay
+	// re-asserts one on reconnect) does not re-deliver, and the auto-accept and
+	// explicit-accept paths cannot both fire. Reset when a task ends. This is the
+	// single flag that makes "the credential arrived AFTER acceptance" observable
+	// and idempotent.
+	credentialDelivered bool
+	mu                  sync.Mutex
 }
 
 type WSMessage struct {
@@ -111,15 +156,30 @@ type WSMessage struct {
 	CLIBackend        string   `json:"cli_backend,omitempty"`
 	Model             string   `json:"model,omitempty"`
 	TaskID            string   `json:"task_id,omitempty"`
-	Kind              string   `json:"kind,omitempty"`
-	Repo              string   `json:"repo,omitempty"`
-	Number            int      `json:"number,omitempty"`
-	Title             string   `json:"title,omitempty"`
-	URL               string   `json:"url,omitempty"`
-	Labels            []string `json:"labels,omitempty"`
-	Prompt            string   `json:"prompt,omitempty"`
-	GitHubToken       string   `json:"github_token,omitempty"`
-	TokenExpiresAt    string   `json:"token_expires_at,omitempty"`
+	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
+	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
+	// on task_progress / task_complete / task_failed. The hub rejects any completion or
+	// progress carrying a generation older than the currently-held one, so a worker
+	// whose task was revoked and reassigned cannot later overwrite the new owner's
+	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
+	// pre-existing TaskID match for those clients. Never a credential.
+	TaskGen uint64   `json:"task_gen,omitempty"`
+	Kind    string   `json:"kind,omitempty"`
+	Repo    string   `json:"repo,omitempty"`
+	Number  int      `json:"number,omitempty"`
+	Title   string   `json:"title,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
+	Prompt  string   `json:"prompt,omitempty"`
+	// GitHubToken carries the scoped, expiring credential. As of #2537 it is
+	// NEVER populated on task_assign — the credential is split OUT of the
+	// assignment message and delivered only AFTER the task's acceptance decision,
+	// via a token_refresh (see deliverTaskCredential). It still travels on
+	// token_refresh (post-acceptance delivery + the #2393 mid-task re-mint). The
+	// token itself is unchanged: same per-tier mint, same wsTokenTTL expiry — only
+	// its timing relative to acceptance moved.
+	GitHubToken    string `json:"github_token,omitempty"`
+	TokenExpiresAt string `json:"token_expires_at,omitempty"`
 	// Restrictions is RESERVED and intentionally not populated by the server yet:
 	// the contributor command restrictions are enforced server-side (gh-wrapper /
 	// contributor-default.json), so shipping the policy to the client would be
@@ -191,10 +251,21 @@ type ActivityEntry struct {
 }
 
 type ContributeWSHub struct {
-	connections    map[string]*ContributorConnection
-	mu             sync.RWMutex
-	logger         *slog.Logger
-	seq            int
+	connections map[string]*ContributorConnection
+	mu          sync.RWMutex
+	logger      *slog.Logger
+	seq         int
+	// taskGen is the monotonically increasing source of assignment GENERATION tokens
+	// (kubestellar/hive#2568, the Gate). nextTaskGen() hands out a fresh value for
+	// every assignment and every release, so a generation is never reused across the
+	// life of the hub — a stale worker's old generation can never coincidentally match
+	// a later assignment's. It is an atomic counter (NOT guarded by mu) precisely so
+	// nextTaskGen() can be called from paths that ALREADY hold h.mu (e.g.
+	// RequeueContributorTask and reclaimExpiredLeases iterate connections under
+	// h.mu.RLock): a mu-guarded counter would deadlock (RLock-then-Lock on the same
+	// RWMutex). Lock-free is also what the -race coverage job wants — see the standing
+	// "never re-lock m.mu from a path that holds it" rule.
+	taskGen        atomic.Uint64
 	activityMu     sync.RWMutex
 	activity       []ActivityEntry
 	server         *Server
@@ -316,6 +387,17 @@ const quarantineCooldownHours = 6
 // failure. With a weight of 3 and a threshold of 3, a single permanent failure
 // quarantines the issue immediately.
 const permanentFailureWeight = 3
+
+// defaultRequeueReason is the fallback reason recorded and pushed to the client when
+// an operator requeues a held task without supplying one (kubestellar/hive#2568). A
+// non-empty reason is always recorded so the release stays auditable.
+const defaultRequeueReason = "requeued by operator"
+
+// leaseExpiredReason is the reason pushed to a relay whose task lease expired without
+// progress (kubestellar/hive#2568). It is distinct from the operator-requeue reason so
+// an operator reading the activity log can tell a manual release from the automatic
+// backstop.
+const leaseExpiredReason = "task lease expired (no progress within lease TTL)"
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	if logger == nil {
@@ -847,17 +929,34 @@ func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
 //     it clears its local currentTask, stops progress reporting, and sends "ready")
 //     so the wedged relay stops cleanly and re-asks for work.
 //
-// It does NOT mint or rotate any token, does NOT change trust, and does NOT
-// implement the deferred lease/generation-token guarantee (a truly stale worker that
-// later reconnects and reports completion is out of scope for this slice — the
-// cooldown is the safe interim). Synthetic pr-review tasks carry Number == 0 and are
-// released without booking an issue-key cooldown, exactly like the disconnect path.
+// It does NOT mint or rotate any token and does NOT change trust. It DOES now bump
+// the connection's assignment generation on release (the deferred lease/generation
+// guarantee, delivered here — see step 4 below), so a truly stale worker that later
+// reports completion on the same socket is fenced out. Synthetic pr-review tasks
+// carry Number == 0 and are released without booking an issue-key cooldown, exactly
+// like the disconnect path.
+//
+//  4. bump the connection's currentTaskGen (kubestellar/hive#2568, the Gate) so a
+//     late completion/progress from the revoked worker echoing the OLD generation is
+//     rejected by the task_complete/task_progress/task_failed guards and cannot
+//     overwrite the new owner's state.
 //
 // It returns the number of held sessions that were released so the caller can 404 a
 // contributor that has no in-flight task (nothing to requeue) versus report success.
-func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
+//
+// #2568 completion: each release now BUMPS the connection's assignment generation
+// (the Gate), so a revoked worker that later wakes and reports completion/progress
+// carrying the OLD generation is fenced out and cannot overwrite the new owner's
+// state. The operator-supplied reason is recorded in the activity log and pushed to
+// the (still-connected) client on the task_revoke message so the worker learns WHY
+// its task was released. A blank reason falls back to the default recovery label.
+func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) int {
 	if contributorID == "" {
 		return 0
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = defaultRequeueReason
 	}
 	// Collect the connections + their held tasks under the connection lock, but do
 	// the network send (task_revoke) OUTSIDE h.mu to avoid holding the hub lock
@@ -877,6 +976,14 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
 			c.currentPrompt = ""
 			c.currentLabels = nil
 			c.tokenMintedAt = time.Time{}
+			// #2537: drop any credential that was pending/held for the released task
+			// so it cannot leak to the (now task-less) connection.
+			c.pendingToken = ""
+			c.credentialDelivered = false
+			// #2568 (the Gate): fence the revoked worker — bump the generation so its
+			// later completion/progress echoing the old generation is rejected.
+			c.currentTaskGen = h.nextTaskGen()
+			c.lastLeaseRenew = time.Time{}
 			targets = append(targets, releaseTarget{conn: c, task: released})
 		}
 		c.mu.Unlock()
@@ -899,17 +1006,22 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
 			"task", tgt.task.TaskID,
 			"repo", tgt.task.Repo,
 			"number", tgt.task.Number,
+			"reason", reason,
 		)
-		h.addActivity(username, "requeued by operator", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		// #2568: record the operator's reason in the activity log so the release is
+		// auditable (the reason rides in the Task field alongside the task id).
+		h.addActivity(username, "requeued by operator: "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
-		// has (or will) release it anyway; the cooldown above is already booked.
+		// has (or will) release it anyway; the cooldown above is already booked. The
+		// operator's reason travels on Reason so a still-connected worker learns WHY
+		// its task was released (kubestellar/hive#2568).
 		if tgt.conn.ws != nil {
 			_ = sendJSON(tgt.conn.ws, WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
-				Reason: "requeued by operator",
+				Reason: reason,
 			})
 		}
 	}
@@ -922,6 +1034,40 @@ func (h *ContributeWSHub) nextSeq() int {
 	s := h.seq
 	h.mu.Unlock()
 	return s
+}
+
+// nextTaskGen hands out a fresh, never-reused assignment GENERATION token
+// (kubestellar/hive#2568, the Gate). It is minted for every task_assign, every
+// task-adopting task_progress RESUME, and every release (disconnect, ready-abandon,
+// operator requeue, lease-TTL expiry) — bumping on release is what fences a
+// stale worker: the connection's currentTaskGen advances past whatever the stale
+// worker still believes it holds. Monotonic (atomic, lock-free — see the taskGen
+// field), so generations are strictly increasing across the life of the hub.
+func (h *ContributeWSHub) nextTaskGen() uint64 {
+	// Lock-free: atomic increment so this is safe to call from paths that already hold
+	// h.mu (RequeueContributorTask / reclaimExpiredLeases run under h.mu.RLock). See
+	// the taskGen field comment for why a mu-guarded counter would deadlock here.
+	return h.taskGen.Add(1)
+}
+
+// generationAccepted reports whether a client message carrying clientGen (the
+// TaskGen it echoed) may act on a connection whose current task generation is
+// currentGen (kubestellar/hive#2568, the Gate). The rule:
+//
+//   - clientGen == 0 → an UNVERSIONED relay that never learned a generation. Accept
+//     it and let the caller's pre-existing TaskID match decide, preserving backward
+//     compatibility with relays that predate the lease token.
+//   - clientGen == currentGen → the current owner. Accept.
+//   - clientGen != currentGen → a STALE worker whose task was released/reassigned
+//     (the connection's generation was bumped past it). REJECT, so its completion or
+//     progress cannot overwrite the new owner's state.
+//
+// The caller MUST hold c.mu (currentTaskGen is read under it).
+func generationAccepted(clientGen, currentGen uint64) bool {
+	if clientGen == 0 {
+		return true
+	}
+	return clientGen == currentGen
 }
 
 func (h *ContributeWSHub) ActiveCount() int {
@@ -1039,6 +1185,14 @@ type FleetClanker struct {
 	// Surfaced read-only exactly like CLIBackend/Model/Role so the Operations tab
 	// COULD display it; it is NEVER used to route or gate work.
 	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
+	// LabelInterests (#2677) mirrors the contributor's own OPT-IN label-affinity
+	// list (#2637, ContributorProfile.LabelInterests) so an operator can see
+	// fleet-wide who prefers what without cross-referencing each profile
+	// separately. Strictly READ-ONLY here: an operator never sets or edits this
+	// through the fleet view — it stays contributor-owned via the existing
+	// PUT /api/contribute/interests. Omitted when the contributor has declared
+	// none.
+	LabelInterests []string `json:"label_interests,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -1103,6 +1257,11 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			fc.ContributorID = c.profile.ContributorID
 			fc.GitHubUsername = c.profile.GitHubUsername
 			fc.TrustTier = c.profile.TrustTier
+			// #2677: mirror the contributor's own label interests read-only (a copy
+			// so the snapshot never aliases the live profile slice).
+			if len(c.profile.LabelInterests) > 0 {
+				fc.LabelInterests = append([]string(nil), c.profile.LabelInterests...)
+			}
 		}
 		var task *WSTaskAssign
 		var promptPreview string
@@ -1157,6 +1316,42 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		return snap.Work[i].Number < snap.Work[j].Number
 	})
 	return snap
+}
+
+// CooldownCounts returns two read-only tallies the Operations/Management tabs
+// surface next to the ready queue (see handleContributeFleet):
+//
+//   - cooldown: how many completed issues are STILL within their cooldown window
+//     and therefore held out of selection. It counts only NON-expired entries in
+//     completedTasks (an entry past its cooldownForLocked() period is expired-but-
+//     not-yet-swept and must not inflate the count — it matches what
+//     isTaskInCooldown would actually gate). When cooldown is disabled by the
+//     operator kill-switch (cooldownEnabled()==false), nothing is gated, so this
+//     is 0.
+//   - inFlight: how many distinct issues are currently held by a live
+//     connection — reuses activeIssueKeys(), the SAME set selectTask uses as its
+//     double-assign guard and ReadyQueue uses to exclude in-flight work.
+//
+// Read-only: it mutates nothing (unlike isTaskInCooldown it does not sweep
+// expired entries) and adds no enforcement.
+func (h *ContributeWSHub) CooldownCounts() (cooldown, inFlight int) {
+	// cooldown: count non-expired completedTasks under the completion lock. When the
+	// operator kill-switch disables cooldown, nothing is gated, so the count is 0.
+	if h.cooldownEnabled() {
+		h.completedMu.Lock()
+		for key, t := range h.completedTasks {
+			if time.Since(t) <= h.cooldownForLocked(key) {
+				cooldown++
+			}
+		}
+		h.completedMu.Unlock()
+	}
+
+	// inFlight: distinct issues held by a live connection — the same activeIssues
+	// set selectTask's guard and ReadyQueue use, so the header count matches what is
+	// actually excluded from "ready".
+	inFlight = len(h.activeIssueKeys())
+	return cooldown, inFlight
 }
 
 func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
@@ -1222,7 +1417,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.mu.Lock()
 			abandonedTask := contributor.currentTask
 			contributor.currentTask = nil
+			// #2568: bump the generation on release so any late message from this
+			// now-defunct socket carrying the old generation is fenced.
+			contributor.currentTaskGen = h.nextTaskGen()
+			contributor.lastLeaseRenew = time.Time{}
 			contributor.tokenMintedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			contributor.pendingToken = ""
+			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
@@ -1413,7 +1615,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.mu.Lock()
 			abandoned := contributor.currentTask
 			contributor.currentTask = nil
+			// #2568: bump the generation on release so a re-`ready` abandon fences any
+			// later message echoing the old generation for the just-abandoned task.
+			contributor.currentTaskGen = h.nextTaskGen()
+			contributor.lastLeaseRenew = time.Time{}
 			contributor.tokenMintedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			contributor.pendingToken = ""
+			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
 			if abandoned != nil {
 				h.logger.Warn("[contribute-ws] task abandoned without completion",
@@ -1484,14 +1693,58 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"repo", task.Repo,
 					"number", task.Number,
 				)
+				// #2537: the credential was withheld from the task_assign above and is
+				// delivered only AFTER acceptance. In the DEFAULT trusted-source
+				// auto-accept mode, the task already cleared admission and the per-tier
+				// trust gate in selectTask, so acceptance is automatic HERE — after the
+				// assignment is committed and sent — and the scoped credential is
+				// delivered immediately. This preserves an unattended fleet's timing
+				// (credential arrives right after task_assign) while making the ordering
+				// provable: the credential leaves the hub only once acceptance is
+				// recorded, never bundled with the metadata. In EXPLICIT-accept mode the
+				// hub withholds here and waits for a task_accepted (handled below).
+				if !h.requireExplicitAccept() {
+					h.deliverTaskCredential(contributor, "auto_accept")
+				} else {
+					h.logger.Info("[contribute-ws] credential withheld pending explicit acceptance",
+						"username", contributor.profile.GitHubUsername, "task", task.TaskID)
+				}
 			}
 
 		case "task_accepted":
-			// acknowledged
+			// #2537: a task_accepted is the client's explicit acceptance of the
+			// assigned task. In EXPLICIT-accept mode the hub withheld the scoped
+			// credential from task_assign and waits for exactly this message before
+			// delivering it — so a task that is never accepted (declined, timed out,
+			// or reconnected away) never receives a credential. acceptTaskCredential
+			// delivers only when the acceptance is for the task this connection
+			// currently holds; a stale/mismatched task_id is ignored. It is idempotent
+			// via deliverTaskCredential, so in auto-accept mode (where the credential
+			// already went out) this is a no-op, and a relay that re-asserts
+			// task_accepted on reconnect cannot re-deliver.
+			if contributor != nil {
+				h.acceptTaskCredential(contributor, msg.TaskID)
+			}
 
 		case "task_progress":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate): a worker still holding a task whose progress carries
+				// a STALE generation was revoked/reassigned — its currentTaskGen was
+				// bumped past what it echoes. Reject its progress so it cannot renew a
+				// lease it no longer owns or resurrect ownership state. An unversioned
+				// relay echoes 0 and is accepted (generationAccepted falls back to the
+				// TaskID identity below).
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				contributor.tmuxOutput = msg.TmuxOutput
 				// resumed is true only when this task_progress REBUILT currentTask
 				// from nothing — i.e. the relay is re-asserting a task the hub had
@@ -1515,6 +1768,16 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						Title:  msg.Title,
 					}
 					resumed = true
+					// #2568: a RESUME adopts the task under a FRESH generation so the
+					// hub, not the client, owns the authoritative token from here on.
+					contributor.currentTaskGen = h.nextTaskGen()
+				}
+				// #2568: renew the hub-owned lease on every progress report. This is
+				// what distinguishes "working slowly but alive" (lease keeps renewing,
+				// never reclaimed) from "connected but wedged" (lease goes stale and
+				// cleanupLoop reclaims it after wsTaskTimeout).
+				if contributor.currentTask != nil {
+					contributor.lastLeaseRenew = time.Now()
 				}
 				contributor.mu.Unlock()
 
@@ -1536,6 +1799,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_complete":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate, critical guarantee): a worker whose task was revoked
+				// and reassigned — but that later wakes and reports completion carrying
+				// the OLD generation — must NOT overwrite the new owner's state. Its
+				// currentTaskGen was bumped past what it echoes, so reject the message
+				// WITHOUT clearing currentTask (which may now hold the NEW owner's task).
+				// An unversioned relay echoes 0 and is accepted, falling back to the
+				// TaskID identity match below. Checked before any mutation.
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_complete rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				completedTask := contributor.currentTask
 				contributor.currentTask = nil
@@ -1544,6 +1824,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.currentPrompt = ""
 				contributor.currentLabels = nil
 				contributor.tokenMintedAt = time.Time{}
+				// #2537: clear any pending/delivered credential state with the task.
+				contributor.pendingToken = ""
+				contributor.credentialDelivered = false
 				contributor.tmuxOutput = msg.TmuxOutput
 				contributor.mu.Unlock()
 
@@ -1624,10 +1907,29 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_failed":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate): reject a STALE worker's failure the same way as its
+				// completion — its currentTaskGen was bumped past the generation it
+				// echoes. Left unguarded, a revoked worker's late task_failed would book
+				// a spurious failure cooldown against the NEW owner's issue. Do not clear
+				// currentTask (it may now be the new owner's task). Unversioned relays
+				// echo 0 and fall back to the TaskID match below.
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_failed rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				failedTask := contributor.currentTask
 				contributor.currentTask = nil
 				contributor.tokenMintedAt = time.Time{}
+				// #2537: clear any pending/delivered credential state with the task.
+				contributor.pendingToken = ""
+				contributor.credentialDelivered = false
 				contributor.mu.Unlock()
 
 				if hasTask {
@@ -1801,6 +2103,95 @@ func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string)
 	return nil
 }
 
+// requireExplicitAccept reports whether this hive is in the opt-in EXPLICIT
+// (human/manual) acceptance mode (#2537). A hub without a Config (direct-in-test
+// construction) or an unset toggle resolves to FALSE — the trusted-source
+// auto-accept default — so existing deployments keep delivering credentials to
+// admitted tasks without a wait state.
+func (h *ContributeWSHub) requireExplicitAccept() bool {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return false
+	}
+	return h.server.deps.Config.Hub.IsContributeRequireExplicitAccept()
+}
+
+// deliverTaskCredential ships the scoped credential the hub minted for the
+// connection's current task but deliberately withheld from task_assign (#2537).
+// It is the single post-acceptance delivery point: both the auto-accept path (in
+// the ready handler, right after task_assign is sent) and the explicit-accept path
+// (the task_accepted handler) funnel through here, so the credential provably
+// leaves the hub only AFTER an acceptance decision was recorded — never bundled
+// with the task metadata.
+//
+// It reuses the token_refresh wire shape (github_token + token_expires_at) that
+// every existing relay already understands, so an old client that never learned a
+// new "credential" message still ends up holding a working token: it processes
+// task_assign (metadata) then a token_refresh (credential) exactly as it already
+// handles a mid-task re-mint. The token itself is unchanged — the same per-tier
+// scoped, wsTokenTTL-expiring token selectTask minted — only its timing moved.
+//
+// It is idempotent and safe to call more than once: it delivers only while a
+// pending token is held and not yet delivered, then sets credentialDelivered and
+// clears pendingToken. A task_accepted that arrives in auto-accept mode after the
+// credential already went out is therefore a no-op, and a duplicate acceptance
+// cannot double-send. It NEVER logs the token value. Returns true when it actually
+// delivered (an assignment→acceptance→credential ordering point for tests/audit).
+func (h *ContributeWSHub) deliverTaskCredential(c *ContributorConnection, reason string) bool {
+	c.mu.Lock()
+	if c.currentTask == nil || c.credentialDelivered || c.pendingToken == "" {
+		c.mu.Unlock()
+		return false
+	}
+	tok := c.pendingToken
+	taskID := c.currentTask.TaskID
+	username := ""
+	if c.profile != nil {
+		username = c.profile.GitHubUsername
+	}
+	c.mu.Unlock()
+
+	// sendTokenRefresh writes the github_token + token_expires_at frame and
+	// re-stamps tokenMintedAt on success, anchoring the #2393 refresh cycle on when
+	// the relay actually received the credential.
+	if err := h.sendTokenRefresh(c, tok); err != nil {
+		// Delivery failed (socket gone): leave the token PENDING and undelivered so
+		// a reconnect/resume or a retried acceptance can deliver it. Never log the
+		// token value.
+		h.logger.Info("[contribute-ws] task credential delivery failed, will retry",
+			"username", username, "task", taskID, "accept_reason", reason, "error", err)
+		return false
+	}
+
+	c.mu.Lock()
+	c.credentialDelivered = true
+	c.pendingToken = ""
+	c.mu.Unlock()
+
+	h.logger.Info("[contribute-ws] task credential delivered after acceptance",
+		"username", username, "task", taskID, "accept_reason", reason)
+	return true
+}
+
+// acceptTaskCredential is the explicit-acceptance entry point (#2537): a client
+// task_accepted for taskID accepts the assigned task, releasing the credential the
+// hub withheld from task_assign. It delivers only when taskID matches the task this
+// connection currently holds — a stale or mismatched task_id (e.g. a late
+// task_accepted for a task that already ended) is ignored, so a credential is never
+// delivered for work this connection is not actually on. It returns whether a
+// credential was delivered (an assignment→acceptance→credential ordering point).
+func (h *ContributeWSHub) acceptTaskCredential(c *ContributorConnection, taskID string) bool {
+	if c == nil || taskID == "" {
+		return false
+	}
+	c.mu.Lock()
+	match := c.currentTask != nil && c.currentTask.TaskID == taskID
+	c.mu.Unlock()
+	if !match {
+		return false
+	}
+	return h.deliverTaskCredential(c, "explicit_accept")
+}
+
 func (h *ContributeWSHub) checkModelAllowed(model string) (bool, []string) {
 	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
 		return true, nil
@@ -1825,6 +2216,13 @@ func (h *ContributeWSHub) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		// #2568: reclaim wedged-but-connected task leases first (the backstop). A
+		// connection whose lastPong is still fresh (so the heartbeat sweep below will
+		// NOT remove it) but that has stopped renewing its task lease is exactly the
+		// "connected but wedged" case the issue describes; this releases its task
+		// through the SAME cooldown+generation-bump path a manual requeue uses.
+		h.reclaimExpiredLeases(time.Now())
+
 		h.mu.Lock()
 		for id, c := range h.connections {
 			c.mu.Lock()
@@ -1836,12 +2234,86 @@ func (h *ContributeWSHub) cleanupLoop() {
 			c.mu.Unlock()
 			if stale {
 				h.logger.Info("[contribute-ws] cleanup: removing stale connection", "username", username, "conn", id)
-				c.ws.Close()
+				// Nil-guard the close: a connection may carry no live socket (e.g. a
+				// test-injected in-flight entry, or a connection torn down elsewhere),
+				// and cleanupLoop iterates ALL registered connections. Mirrors the
+				// existing guard in RequeueContributorTask so a ws-less entry is pruned
+				// rather than nil-dereferenced.
+				if c.ws != nil {
+					c.ws.Close()
+				}
 				delete(h.connections, id)
 			}
 		}
 		h.mu.Unlock()
 	}
+}
+
+// reclaimExpiredLeases is the hub-owned LEASE-TTL backstop (kubestellar/hive#2568,
+// option 4). A connection that is still HELD by its socket (heartbeat alive) but has
+// not renewed its task lease within wsTaskTimeout is presumed wedged — connected but
+// no longer progressing — and its task is auto-released. It reuses EXACTLY the manual
+// requeue machinery: it books the same short failure cooldown (so the released issue
+// is not instantly re-admissible and can't recreate the #2492 dup-assign race), bumps
+// the assignment generation (the Gate — so the wedged worker, if it later wakes, is
+// fenced), and pushes task_revoke with an auto-expiry reason so a still-listening
+// relay stops cleanly. It is deliberately CONSERVATIVE: a task that keeps reporting
+// task_progress renews lastLeaseRenew every report and is therefore NEVER reclaimed,
+// so "working slowly but alive" is not confused with "wedged". `now` is injected so
+// tests can drive expiry deterministically.
+func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
+	type expiredTarget struct {
+		conn *ContributorConnection
+		task WSTaskAssign
+	}
+	var targets []expiredTarget
+	h.mu.RLock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		// Only a connection actively holding a task with a started lease clock can
+		// expire; a zero lastLeaseRenew means no active lease (idle or just released).
+		expired := c.currentTask != nil && !c.lastLeaseRenew.IsZero() &&
+			now.Sub(c.lastLeaseRenew) > wsTaskTimeout
+		if expired {
+			released := *c.currentTask
+			c.currentTask = nil
+			c.currentPrompt = ""
+			c.currentLabels = nil
+			c.tokenMintedAt = time.Time{}
+			c.currentTaskGen = h.nextTaskGen()
+			c.lastLeaseRenew = time.Time{}
+			targets = append(targets, expiredTarget{conn: c, task: released})
+		}
+		c.mu.Unlock()
+	}
+	h.mu.RUnlock()
+
+	for _, tgt := range targets {
+		if tgt.task.Number > 0 {
+			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
+		}
+		username := ""
+		if tgt.conn.profile != nil {
+			username = tgt.conn.profile.GitHubUsername
+		}
+		h.logger.Warn("[contribute-ws] task lease expired, auto-released",
+			"username", username,
+			"task", tgt.task.TaskID,
+			"repo", tgt.task.Repo,
+			"number", tgt.task.Number,
+			"lease_ttl", wsTaskTimeout.String(),
+		)
+		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		if tgt.conn.ws != nil {
+			_ = sendJSON(tgt.conn.ws, WSMessage{
+				Type:   "task_revoke",
+				Seq:    h.nextSeq(),
+				TaskID: tgt.task.TaskID,
+				Reason: leaseExpiredReason,
+			})
+		}
+	}
+	return len(targets)
 }
 
 // mintScopedToken produces a scoped GitHub token for the given trust tier via
@@ -2216,8 +2688,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.logger.Info("[contribute-ws] selectTask scanning", "repos", len(status.Repos), "totalIssues", totalAvailable, "cooldown", len(h.completedTasks), "active", len(activeIssues))
 
 	var disabledRepos []string
+	var heldIssues map[string]struct{}
 	if h.server.deps != nil && h.server.deps.Config != nil {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
+		// Operator HOLD (#queue-hold): a manually-parked issue must never be offered,
+		// indefinitely, until the operator Resumes it. Built once per selectTask from
+		// the same canonical "%s#%d" keys the cooldown/active/failure checks use, so
+		// the exclusion cannot miss on a repo-name spelling mismatch (#2648).
+		heldIssues = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
 	}
 
 	// --- Collect the eligible candidates, then order them (#2390) ---------------
@@ -2305,6 +2783,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			}
 			if number == 0 {
 				h.logger.Info("[contribute-ws] skip: number=0", "repo", repo.Full)
+				continue
+			}
+			// Operator HOLD (#queue-hold): skip a manually-parked issue outright. This
+			// is a persistent operator decision, DISTINCT from the time-based cooldown
+			// below — a held issue never becomes a candidate until the operator Resumes
+			// it. Keyed on the same canonical "%s#%d" as every other exclusion.
+			if _, isHeld := heldIssues[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
 				continue
 			}
 			if h.isTaskInCooldown(repo.Full, number) {
@@ -2465,6 +2950,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
 	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
 
+	// #2568: mint a fresh assignment generation for this task. It is stamped on the
+	// connection, shipped in task_assign below, and echoed back by the relay so a
+	// later stale-worker completion carrying an older generation is fenced out.
+	gen := h.nextTaskGen()
+
 	c.mu.Lock()
 	c.currentTask = &WSTaskAssign{
 		TaskID: taskID,
@@ -2473,11 +2963,25 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		Number: chosen.number,
 		Title:  chosen.title,
 	}
+	c.currentTaskGen = gen
+	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
+	// auto-releases the task if it is not renewed within wsTaskTimeout.
+	c.lastLeaseRenew = time.Now()
 	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539),
 	// and clear any stale idle reason now that this connection has real work.
 	c.currentPrompt = prompt
 	c.currentLabels = chosen.labels
 	c.lastIdleReason = ""
+	// #2537: hold the minted scoped token as PENDING rather than shipping it in the
+	// task_assign below. It is delivered only AFTER the acceptance decision — see
+	// the ready-handler (auto-accept default) and the task_accepted handler
+	// (explicit-accept mode) — via deliverTaskCredential. A fresh assignment resets
+	// the delivered flag so the new task's credential is (re)delivered post-accept.
+	// tokenMintedAt is set here so the #2393 refresh cycle is armed for the token we
+	// hand out; deliverTaskCredential re-stamps it on actual delivery to anchor the
+	// 50-minute refresh on when the relay truly received the credential.
+	c.pendingToken = ghToken
+	c.credentialDelivered = false
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
 
@@ -2490,17 +2994,23 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.recordAssignment(identityOf(c), time.Now())
 
 	return &WSMessage{
-		Type:           "task_assign",
-		Seq:            h.nextSeq(),
-		TaskID:         taskID,
-		Kind:           "issue",
-		Repo:           chosen.repoFull,
-		Number:         chosen.number,
-		Title:          chosen.title,
-		URL:            chosen.url,
-		GitHubToken:    ghToken,
-		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
-		Prompt:         prompt,
+		Type:    "task_assign",
+		Seq:     h.nextSeq(),
+		TaskID:  taskID,
+		TaskGen: gen,
+		Kind:    "issue",
+		Repo:    chosen.repoFull,
+		Number:  chosen.number,
+		Title:   chosen.title,
+		URL:     chosen.url,
+		// #2537: NO github_token / token_expires_at here. The scoped credential is
+		// split out of task_assign and delivered only after acceptance (see
+		// pendingToken / deliverTaskCredential). task_assign now carries exactly the
+		// metadata needed to DECIDE — repo/number/title/url/labels/prompt — plus the
+		// #2568 TaskGen lease token, and no credential, so nothing an agent could act
+		// on is authenticated until the task's source has been accepted under the
+		// operator/contributor policy.
+		Prompt: prompt,
 		// The chosen issue's own labels — the Labels envelope field was declared
 		// but never populated, so a client reading it got nothing (kubestellar/
 		// hive#2393 item 8). Carried on the candidate from the scan above.

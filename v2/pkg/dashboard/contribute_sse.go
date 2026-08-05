@@ -79,6 +79,15 @@ type ReadyQueueItem struct {
 	// shared/anonymous queue snapshot (no viewer identity there) and NEVER used to
 	// exclude an item. omitempty so the anonymous payload is byte-for-byte unchanged.
 	MatchesInterest bool `json:"matches_interest,omitempty"`
+	// Held is set true when the operator has manually parked this issue via the
+	// queue HOLD control (Config.Hub.ContributeQueueHold). A held item is NEVER
+	// offered — selectTask excludes it outright and ReadyQueue never sorts it into
+	// the offer-eligible set — but it is still SURFACED here (appended after the
+	// offerable items) so the Operations tab can render it greyed with an "on hold"
+	// badge, letting the operator see and Resume it. Distinct from cooldown: a hold
+	// is persistent and only clears when the operator Resumes it. omitempty so a
+	// snapshot with no holds is byte-for-byte unchanged.
+	Held bool `json:"held,omitempty"`
 }
 
 // sseSubscriber is one connected browser. events is the fan-out channel; done is
@@ -189,9 +198,19 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	active := h.activeIssueKeys()
 
 	var disabledRepos []string
+	var held map[string]struct{}
 	if h.server.deps != nil && h.server.deps.Config != nil {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
+		held = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
 	}
+
+	// heldItems collects issues the operator parked. They are NEVER offered — kept
+	// out of `out` (the offer-eligible set that the queue-order sort ranks) — but
+	// they are still SURFACED, appended after ordering with Held:true, so the
+	// Operations tab renders them greyed with an "on hold" badge and the operator
+	// can Resume them. A held key uses the SAME canonical "%s#%d" form selectTask's
+	// exclusion uses, so the two stay in lock-step.
+	var heldItems []ReadyQueueItem
 
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
@@ -217,6 +236,24 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 				number = n
 			}
 			if number == 0 {
+				continue
+			}
+			// Operator HOLD (#queue-hold): a parked issue is never offered, so it is
+			// kept OUT of the offer-eligible `out` set. It is still collected into
+			// heldItems (tagged Held) so it stays visible-but-dimmed for the operator.
+			// Checked before cooldown/active so a held-AND-cooled issue still shows as
+			// held (the operator's manual decision is the stronger, persistent signal).
+			if _, isHeld := held[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
+				title, _ := issue["title"].(string)
+				url, _ := issue["url"].(string)
+				heldItems = append(heldItems, ReadyQueueItem{
+					Repo:   repo.Full,
+					Number: number,
+					Title:  title,
+					URL:    url,
+					Labels: stringSliceFromAny(issue["labels"]),
+					Held:   true,
+				})
 				continue
 			}
 			if h.isTaskInCooldown(repo.Full, number) {
@@ -278,6 +315,13 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	if len(out) > limit {
 		out = out[:limit]
 	}
+
+	// Held items (#queue-hold) trail ALL offerable work: they are never offered, so
+	// they carry no offer priority and sit at the bottom of the display, greyed with
+	// a badge. Appended after the cap so a large offerable queue never squeezes the
+	// operator's parked rows off-screen — the operator must always be able to see and
+	// Resume what they held.
+	out = append(out, heldItems...)
 	return out
 }
 
@@ -302,6 +346,28 @@ func queueOrderIndex(order []string) map[string]int {
 		}
 	}
 	return idx
+}
+
+// queueHoldSet builds a "owner/repo#number" -> struct{} membership set from the
+// operator's HOLD list (Config.Hub.ContributeQueueHold). A key present here means
+// the issue is manually parked and must never be OFFERED. The keys use the SAME
+// canonical "%s#%d" (repo.Full # number) form every other admission check builds
+// (cooldown / active / failure), so the exclusion cannot silently miss on a
+// repo-name spelling mismatch (the #2648 class of bug). nil-safe to range over
+// (returns nil for an empty list); membership on a nil map is a clean false.
+func queueHoldSet(hold []string) map[string]struct{} {
+	if len(hold) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(hold))
+	for _, key := range hold {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		set[key] = struct{}{}
+	}
+	return set
 }
 
 // applyQueueOrder stably reorders items so any whose "repo#number" key appears in
