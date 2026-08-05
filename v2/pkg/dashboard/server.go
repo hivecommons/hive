@@ -1866,12 +1866,35 @@ func (s *Server) MarkReady() {
 	s.logger.Info("dashboard marked ready")
 }
 
-const healthGracePeriod = 90 * time.Second
+// healthBootGrace bounds how long after process start the agents health check
+// suppresses the *boot-transient* degraded conditions — agents still launching
+// (0 running), a running agent sitting at a login prompt, or a non-running
+// agent whose CLI has not re-authenticated yet. On a fresh start or a pod roll
+// these are all expected: the supervisor relaunches each agent's tmux pane, the
+// Copilot/Claude CLIs re-run their device-login handshake, and the MITM
+// proxy/CA settles — none of which has completed in the first few minutes.
+//
+// Measured from s.startedAt (process construction), mirroring livezStartupGrace
+// so both startup windows share one clock. Set to 5 minutes: an operator (Mike
+// Spreitzer) saw the console hive flip to "Degraded — 4 agents need login"
+// seconds after a legitimate pod roll and self-recover within ~5 minutes, so
+// the window must cover the observed agent-relaunch + CLI-reauth settling time.
+// It is deliberately longer than the original readyAt-based 90s grace, which
+// was too short to outlast Copilot re-auth. Genuinely-persistent failures (a stale
+// hub heartbeat, a 30-min output stall, a real repo/workflow failure) are NOT
+// gated by this — they live outside the agents-coming-up path and keep
+// degrading throughout, so a real problem is never masked by boot grace.
+const healthBootGrace = 5 * time.Minute
 
-func (s *Server) inHealthGrace() bool {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-	return !s.readyAt.IsZero() && time.Since(s.readyAt) < healthGracePeriod
+// inHealthGrace reports whether the process is still inside the post-boot
+// settling window, and how long it has been up. The age is surfaced in the
+// agents check detail so an operator inspecting the health JSON sees WHY a
+// not-yet-degraded hive is being graced, and can tell it apart from a healthy
+// one. Once healthBootGrace elapses, a persisting need-login/down condition
+// flips to the real "degraded" verdict.
+func (s *Server) inHealthGrace() (bool, time.Duration) {
+	age := time.Since(s.startedAt)
+	return !s.startedAt.IsZero() && age < healthBootGrace, age
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -2321,7 +2344,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 
 	// 3. Agents
 	if s.deps != nil && s.deps.AgentMgr != nil {
-		grace := s.inHealthGrace()
+		grace, bootAge := s.inHealthGrace()
 		const staleOutputThreshold = 30 * time.Minute
 		running := 0
 		paused := 0
@@ -2414,6 +2437,17 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		if down > 0 || needLogin > 0 {
 			st = "fail"
 			fails++
+		}
+		// During the boot-grace window the transient conditions above (agents
+		// still launching, running-at-login-prompt, CLI not re-authenticated)
+		// have been suppressed from the down/need-login counts, so the check
+		// reads "pass" instead of the false "degraded" that scared operators
+		// after a legitimate pod roll. Make the suppression observable rather
+		// than silent: an operator reading the health JSON must see that grace
+		// is the reason it is not degraded, and that it will flip to a real
+		// verdict once the window elapses if the condition persists.
+		if grace {
+			detail += fmt.Sprintf(" — within boot grace (agents re-authenticating), age=%s", bootAge.Round(time.Second))
 		}
 		checks = append(checks, check{Name: "agents", Status: st, Detail: detail})
 
