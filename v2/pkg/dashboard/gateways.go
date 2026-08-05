@@ -32,6 +32,18 @@ import (
 // dashboard request. Independent of the probe's own HTTP timeout.
 const watsonxProbeMintTimeout = 10 * time.Second
 
+// watsonxEndpointForRegion builds the watsonx model-gateway base URL for a
+// region slug, falling back to the default region when blank. Mirrors how the
+// UI preset fills the endpoint; kept server-side too so the region template has
+// one source of truth.
+func watsonxEndpointForRegion(region string) string {
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = watsonxDefaultRegion
+	}
+	return fmt.Sprintf(watsonxBaseURLTemplate, region)
+}
+
 // gatewayProbeAuth resolves the bearer + extra request headers a /v1/models
 // probe (or model discovery) should present for a gateway. For every kind
 // except watsonx this is just the resolved key as the Bearer and no extra
@@ -60,6 +72,18 @@ const (
 	// openRouterBaseURL is the OpenAI-compatible base URL for OpenRouter. Used
 	// as the preset endpoint when the UI picks the OpenRouter gateway kind.
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
+
+	// watsonxBaseURLTemplate is the watsonx model-gateway base URL with a
+	// %s placeholder for the region slug (us-south, eu-de, jp-tok, …). hive
+	// appends /v1/models and /v1/chat/completions to reach watsonx's
+	// OpenAI-compatible surface (.../ml/gateway/v1/...). Used as the preset
+	// endpoint when the UI picks the watsonx gateway kind. Mirrors
+	// openRouterBaseURL for consistency.
+	watsonxBaseURLTemplate = "https://%s.ml.cloud.ibm.com/ml/gateway"
+
+	// watsonxDefaultRegion is the region the preset offers when none is chosen,
+	// so the endpoint template resolves to a concrete URL out of the box.
+	watsonxDefaultRegion = "us-south"
 
 	// gatewaySecretFileMode / gatewaySecretDirMode keep gateway key files
 	// owner-only, matching the LiteLLM key store (litellmKeyFileMode).
@@ -175,6 +199,16 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	}
 
 	endpoint := strings.TrimSpace(body.Endpoint)
+	// A watsonx gateway may be configured by REGION alone (the guided form can
+	// send a region, not a URL): derive the model-gateway base from the region
+	// template so the user never has to hand-type the endpoint.
+	if endpoint == "" && kind == config.GatewayKindWatsonx {
+		region := ""
+		if body.Region != nil {
+			region = strings.TrimSpace(*body.Region)
+		}
+		endpoint = watsonxEndpointForRegion(region)
+	}
 	if endpoint == "" {
 		jsonError(w, "endpoint is required", http.StatusBadRequest)
 		return

@@ -192,6 +192,55 @@ func TestGatewayProbeAuthNonWatsonxPassthrough(t *testing.T) {
 	}
 }
 
+// The region template builds the watsonx model-gateway base URL, and a blank
+// region falls back to the default so the endpoint always resolves.
+func TestWatsonxEndpointForRegion(t *testing.T) {
+	if got := watsonxEndpointForRegion("eu-de"); got != "https://eu-de.ml.cloud.ibm.com/ml/gateway" {
+		t.Fatalf("eu-de endpoint = %q", got)
+	}
+	if got := watsonxEndpointForRegion("  "); got != "https://us-south.ml.cloud.ibm.com/ml/gateway" {
+		t.Fatalf("blank region should fall back to the default region, got %q", got)
+	}
+}
+
+// A watsonx gateway configured by REGION alone (no endpoint URL) derives its
+// endpoint from the region template — the guided form can send just region +
+// project + key.
+func TestWatsonxUpsert_DerivesEndpointFromRegion(t *testing.T) {
+	srv := newFullServer(t)
+	dir := t.TempDir()
+	orig := gatewaySecretsDir
+	gatewaySecretsDir = dir
+	t.Cleanup(func() { gatewaySecretsDir = orig })
+
+	// Point the shared minter + gateway at a fake so the save-time probe never
+	// hits the network.
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/identity/token") {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"access_token": "IAM-JWT", "expires_in": 3600})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]string{}})
+	}))
+	defer fake.Close()
+	origMinter := watsonx.DefaultMinter
+	watsonx.DefaultMinter = watsonx.NewTokenMinterForTest(fake.URL+"/identity/token", nil)
+	t.Cleanup(func() { watsonx.DefaultMinter = origMinter })
+
+	body := `{"name":"watsonx","kind":"watsonx","endpoint":"","region":"eu-de","project_id":"p","api_key":"ibm-cloud-key-1234567890"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysUpsert(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	gw := srv.deps.Config.Governor.Gateways[0]
+	if gw.Endpoint != "https://eu-de.ml.cloud.ibm.com/ml/gateway" {
+		t.Fatalf("endpoint = %q, want the region-derived URL", gw.Endpoint)
+	}
+}
+
 // The static Granite fallback list is non-empty and carries current granite ids,
 // so a watsonx model dropdown is never empty when live discovery cannot run.
 func TestGraniteFallbackNonEmpty(t *testing.T) {

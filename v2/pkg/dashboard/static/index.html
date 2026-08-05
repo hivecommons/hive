@@ -6443,9 +6443,9 @@
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
     // Model Gateway is configured — the user picks it, then funds/configures it.
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
-    const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter'];
+    const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     // Names of Model Gateways configured under Governor Config → Model Gateways
     // (e.g. 'openrouter'). Agent routing already resolves a gateway name, but
     // the backend pickers only listed KNOWN_BACKENDS — so a configured gateway
@@ -12334,7 +12334,7 @@ function burnAreaChart() {
     // methods need a Model Gateway configured FOR THAT method (Governor
     // Config → Model Gateways). The check is per-method — an openrouter
     // gateway does not satisfy a vllm selection.
-    const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d'];
+    const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d', 'watsonx'];
 
     // maybeOpenMethodConfig runs AFTER a method switch is saved: the choice is
     // never blocked, but when the selected method's backing config is absent
@@ -12369,6 +12369,10 @@ function burnAreaChart() {
         const has = (d.gateways || []).some(g => g && (g.kind === backend || g.name === backend));
         if (!has) {
           showToast('No ' + backend + ' gateway configured — opening Governor Config → Model Gateways', 'info');
+          // Guided jump: land the user directly on a NEW gateway form pre-set to
+          // this method's kind (endpoint/preset already filled) instead of an
+          // empty list they must then "+ Add" from. Consumed by loadGateways().
+          _pendingGatewayPresetKind = backend;
           openConfigDialog('governor', null, 'Model Gateways');
         }
       } catch (e) { /* presence check is best-effort; never surface as a switch error */ }
@@ -14431,6 +14435,10 @@ function burnAreaChart() {
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Set by maybeOpenMethodConfig when a method switch jumps the user here to
+    // configure a missing gateway; consumed once by loadGateways to auto-open a
+    // preset add-form. null when the tab was opened normally.
+    let _pendingGatewayPresetKind = null;
 
     function gatewayKindMeta(kind) {
       return GATEWAY_KIND_META[kind] || GATEWAY_KIND_META.custom;
@@ -14711,6 +14719,16 @@ function burnAreaChart() {
           .map(g => g.name)
           .filter(name => name && !KNOWN_BACKENDS.includes(name));
         renderGatewaysList();
+        // Guided jump from a method switch (maybeOpenMethodConfig): if we were
+        // sent here to configure a specific kind, open a fresh add-form already
+        // preset to it (endpoint/preset filled) so the user lands on the form,
+        // not the empty list. One-shot: cleared after consuming.
+        if (_pendingGatewayPresetKind) {
+          const presetKind = _pendingGatewayPresetKind;
+          _pendingGatewayPresetKind = null;
+          openGatewayForm(null);
+          applyGatewayPreset(presetKind);
+        }
       } catch (e) {
         if (host) host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load gateways: ${esc(e.message)}</div>`;
       }
@@ -14871,6 +14889,14 @@ function burnAreaChart() {
       // Only overwrite the endpoint when the preset carries one, so switching
       // to Custom doesn't wipe a URL the user already typed.
       if (epEl && preset.endpoint) epEl.value = preset.endpoint;
+      // Default the (still-empty) name to the kind so a guided add-form is
+      // ready to save — a gateway named after its kind is exactly what an
+      // agent whose backend is that method resolves to. Never clobbers a name
+      // the user already typed, nor the readonly name in edit mode.
+      const nameEl = document.getElementById('gw-name');
+      if (nameEl && !nameEl.readOnly && !nameEl.value.trim() && preset.kind !== 'custom') {
+        nameEl.value = preset.kind;
+      }
       // The watsonx project-id field is only relevant for the watsonx kind.
       const projField = document.getElementById('gw-project-id-field');
       if (projField) projField.style.display = (preset.kind === 'watsonx') ? 'block' : 'none';
@@ -15001,6 +15027,12 @@ function burnAreaChart() {
         // omitempty on the server keeps it out of hive.yaml when blank.
         project_id: projectId.trim(),
       };
+      // Persist the watsonx region (the preset derives the endpoint from it and
+      // the server can too when the endpoint is blank).
+      if (kind === 'watsonx') {
+        const regionForEndpoint = (endpoint.trim().match(/^https:\/\/([^.]+)\.ml\.cloud\.ibm\.com/) || [])[1];
+        if (regionForEndpoint) payload.region = regionForEndpoint;
+      }
       // Only send api_key when the user typed one (empty = keep existing key).
       if (apiKey.trim()) payload.api_key = apiKey.trim();
       try {
