@@ -733,6 +733,12 @@ type HubServer struct {
 	// the time after which kubectl may be retried.
 	clusterUnreachableUntil map[string]time.Time
 	clusterUnreachableMu    sync.Mutex
+	// lastNetAdminReconcile throttles the NET_ADMIN securityContext-drift
+	// reconcile (netadmin_reconcile.go). The SHA poller ticks every 2 min, but
+	// the drift is static remediation, not a hot path, so we run the sweep at
+	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
+	// (both are poller-loop-only state; no need for a separate mutex).
+	lastNetAdminReconcile time.Time
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
