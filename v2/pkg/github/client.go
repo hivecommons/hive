@@ -194,8 +194,10 @@ const slaThresholdMinutes = 30
 // from the default (https://api.github.com), the client's BaseURL and
 // UploadURL are overridden for GitHub Enterprise compatibility.
 func NewClient(token string, org string, repos []string, logger *slog.Logger, apiURL string) *Client {
-	client := gh.NewClient(nil).WithAuthToken(token)
-	setBaseURL(client, apiURL)
+	// Proxy-trusting transport: ordinary API traffic is also MITM'd by the
+	// in-process proxy under forced egress, so it must trust the proxy CA
+	// (see proxytrust.go).
+	client := newTokenClient(token, apiURL)
 	return &Client{
 		client: client,
 		org:    org,

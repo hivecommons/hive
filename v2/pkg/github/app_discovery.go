@@ -130,7 +130,8 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 	}
 	// Per-request Timeout (belt-and-suspenders with the discoveryTimeout ctx
 	// above): keeps a single hung request against an unreachable GHE endpoint
-	// from consuming the whole discovery budget.
+	// from consuming the whole discovery budget. Its transport also trusts the
+	// proxy CA (see proxytrust.go) so this call succeeds on a fresh-PVC boot.
 	jwtClient := a.newJWTClient(jwtToken)
 
 	// Preferred: direct per-org lookup.

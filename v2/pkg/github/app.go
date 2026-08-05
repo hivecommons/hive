@@ -112,10 +112,12 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 // the live token-mint calls. Unlike gh.NewClient(nil) (which serves the
 // timeout-less http.DefaultClient), this client carries tokenMintTimeout so a
 // mint against an unreachable / firewalled GHE endpoint cannot hang past that
-// bound even if the caller passed an undeadlined context.
+// bound even if the caller passed an undeadlined context. Its transport also
+// trusts the proxy CA (see proxytrust.go): on a fresh-PVC boot with forced
+// egress this call is MITM'd by the in-process proxy, whose CA must be
+// trusted for the mint to succeed, independent of entrypoint launch ordering.
 func (a *AppAuth) newJWTClient(jwtToken string) *gh.Client {
-	httpClient := &http.Client{Timeout: tokenMintTimeout}
-	client := gh.NewClient(httpClient).WithAuthToken(jwtToken)
+	client := gh.NewClient(proxyTrustingHTTPClient(tokenMintTimeout)).WithAuthToken(jwtToken)
 	setBaseURL(client, a.apiURL)
 	return client
 }
@@ -213,6 +215,8 @@ func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expi
 	// Bound the mint end to end: a firewalled/uninstalled GHE endpoint would
 	// otherwise hang for the full TCP/TLS connect (minutes) and freeze whatever
 	// loop reached this — the first heartbeat, readiness, the eval cycle (#2439).
+	// The client's transport also trusts the proxy CA (see proxytrust.go) so a
+	// fresh-PVC boot's MITM'd mint succeeds independent of entrypoint ordering.
 	mintCtx, cancel := mintContext(ctx)
 	defer cancel()
 	jwtClient := a.newJWTClient(jwtToken)

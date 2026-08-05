@@ -328,6 +328,8 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 
 	// Bound the probe: a firewalled/uninstalled GHE endpoint must not hang this
 	// diagnosis (it runs on the startup path before MarkReady, and on Re-check).
+	// Its transport also trusts the proxy CA (see proxytrust.go) so this probe
+	// succeeds on a fresh-PVC boot.
 	probeCtx, cancel := mintContext(ctx)
 	defer cancel()
 	jwtClient := a.newJWTClient(jwtToken)
