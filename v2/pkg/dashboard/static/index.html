@@ -15110,9 +15110,16 @@ function burnAreaChart() {
     }
 
     function fetchQueueCount() {
-      fetch('/api/contribute/status').then(function(r) { return r.json(); }).then(function(d) {
+      // Use the same source as the Operations tab's Ready-work queue
+      // (/api/contribute/queue) rather than /api/contribute/status'
+      // actionable_items, which is the raw pre-filter pool and does not
+      // apply the Labels/Titles/Authors admission filters configured in
+      // this dialog. Showing actionable_items here misleadingly implied
+      // that many items were queued when only the filtered subset is
+      // actually admissible.
+      fetch('/api/contribute/queue').then(function(r) { return r.json(); }).then(function(d) {
         var el = document.getElementById('hub-queue-count');
-        if (el) el.textContent = (d.actionable_items || 0) + ' items in queue';
+        if (el) el.textContent = ((d.queue || []).length) + ' items in queue';
       }).catch(function() {
         var el = document.getElementById('hub-queue-count');
         if (el) el.textContent = '—';
