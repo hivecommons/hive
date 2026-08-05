@@ -1531,6 +1531,14 @@ func main() {
 	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
 	go fleetStatsCollector.Start(ctx)
 
+	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
+	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
+	// store loads any prior 7-day history from the /data PVC on first use and the
+	// rollup goroutine samples + buckets hourly, so a rolling upgrade resumes the
+	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
+	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
+	dashSrv.StartContributeMetrics(ctx)
+
 	var lastActionable atomic.Pointer[github.ActionableResult]
 	refreshDashboard := func() {
 		actionable := lastActionable.Load()

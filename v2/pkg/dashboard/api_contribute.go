@@ -239,6 +239,12 @@ func (s *Server) registerContributeRoutes() {
 	// block is resolved server-side from the session / X-Hive-User header (never a
 	// client-supplied username) so a viewer only ever sees their OWN usage.
 	s.mux.HandleFunc("GET /api/contribute/limits", s.handleContributeLimits)
+	// Read-only persistent hourly metrics (7-day, 168 buckets) feeding the
+	// Operations + Leaderboard sparklines: queue depth, tasks/hour, fleet size,
+	// and per-contributor completions. Public like the other /api/contribute*
+	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
+	// no side effects. See contribute_metrics.go.
+	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
 	// Operator priority override for the ready-work queue. Owner/read-write only —
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
@@ -586,7 +592,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .policy-key{color:#8b949e}
 .policy-val{color:#e6edf3;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
 .ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
-.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
+.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
@@ -934,6 +940,21 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Me-card quota variant — sits inside a me-sec, so it inherits the card padding. */
 .me-quota .quota__lbl{color:#8b949e}
 @media(prefers-reduced-motion:reduce){.quota__fill{transition:none!important}}
+/* Sparklines (#persistent-history): tiny dependency-free inline-SVG trend charts
+   fed by /api/contribute/metrics (7-day hourly history). Muted stroke to sit
+   quietly in the dark theme; static — no animation, so nothing to gate behind
+   prefers-reduced-motion. The SVG scales to its slot via width/height attrs. */
+.spark{display:inline-block;vertical-align:middle;line-height:0}
+.spark svg{display:block;overflow:visible}
+.spark-inline{margin-left:8px}
+/* Header-adjacent sparkline sits next to a panel title/count without shoving it. */
+.ops-card-head .spark{margin-left:auto}
+/* Leaderboard per-row sparkline: occupies its own narrow column, muted so the
+   numerals stay the focus. */
+.lb-spark{display:flex;align-items:center;justify-content:flex-end}
+/* Hive-wide trend strip pinned above the standings. */
+.lb-trend{display:flex;align-items:center;gap:10px;padding:8px 20px 12px;color:#8b949e;font-size:.76rem;border-bottom:1px solid #21262d}
+.lb-trend .spark{margin-left:auto}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
 .cc-page-foot{padding:26px 48px 34px;border-top:1px solid #21262d;margin-top:28px;display:flex;justify-content:center}
@@ -1503,7 +1524,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-grid">
 <div>
 <div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected clankers, last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:#e6edf3;font-weight:600">Your army</span>
@@ -1514,7 +1535,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
 </div>
 <div class="ops-card" style="margin-top:20px">
-<div class="ops-card-head"><h3>Pipeline &amp; policy</h3></div>
+<div class="ops-card-head"><h3>Pipeline &amp; policy</h3><!-- Tasks-completed/hour throughput trend (#persistent-history) --><span class="spark spark-inline" id="spark-throughput" title="Tasks completed per hour, last 7 days"></span></div>
 <div style="padding:16px 20px">
 <div class="pipeline">
 <span class="pipe-node">opened</span><span class="pipe-arrow">&rarr;</span>
@@ -1546,7 +1567,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
 <!-- #queue-suspend-btn is the SAME logical control as the Management "Suspend
      contributions" switch (#admin-suspend-switch) — not a related toggle, the
      identical Config.Hub.ContributeSuspended state surfaced a second place. Both
@@ -1815,6 +1836,10 @@ function loadLeaderboard(){
     // human + donated-compute contributors are not buried under the bots.
     var contribs=(d&&d.leaderboard)||[];
     renderLeaderboard(contribs);
+    // Ensure the per-row + hive-wide sparklines have data even when the Ops tab
+    // was never opened (opsPoll never ran). Reuses this hive's metrics endpoint;
+    // Ops-only spark slots simply no-op when absent. See #persistent-history.
+    ccMetricsPoll();
   }).catch(function(){
     var el=document.getElementById('leaderboard-list');
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
@@ -1857,6 +1882,11 @@ function lbRow(e,rank){
     +'<div class="lb-stat lb-primary">'+done+'</div>'
     +'<div class="lb-stat">'+failed+'</div>'
     +'<div class="lb-stat">'+findings+'</div>'
+    // Per-contributor completion sparkline (#persistent-history). Filled in by
+    // ccRenderLeaderboardSparklines from this hive's /api/contribute/metrics
+    // per_user_done, matched on github_username via data-user. Empty until metrics
+    // load (renders a flat baseline), never fabricated.
+    +'<div class="lb-spark" data-user="'+esc(uname)+'"></div>'
     +'</div>';
 }
 var lbLastData=null; // cache the last standings so a late username resolve can re-mark the me-row
@@ -1874,10 +1904,17 @@ function renderLeaderboard(contribs){
   if(cnt)cnt.textContent=total+(total===1?' contributor':' contributors');
   if(!el)return;
   if(total===0){el.innerHTML='<div class="ops-empty">No contributors yet — be the first to contribute!</div>';return;}
-  var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
+  // Hive-wide total-tasks trend (#persistent-history) pinned above the standings —
+  // the sum of tasks_done per hour over the last 7 days. Hydrated by
+  // ccRenderLeaderboardSparklines; empty (flat) until metrics load.
+  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span><span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
+  var html=trend+'<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div><div class="lb-stat">Trend</div></div>';
   var rank=0,i;
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
   el.innerHTML=html;
+  // Paint sparklines now that the rows exist (metrics may already be cached from a
+  // prior opsPoll tick; if not, the next tick fills them in).
+  ccRenderLeaderboardSparklines();
 }
 
 // ── Personal "Me" card ───────────────────────────────────────────────────────
@@ -2132,6 +2169,93 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
 });});
 
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+// ── Sparklines (#persistent-history) ───────────────────────────────────────────
+// A dependency-free, CSP-safe inline-SVG trend renderer. Given an array of
+// numbers it returns an <svg> polyline string sized w x h in the given colour.
+// No external library, no canvas, no animation (static by nature — nothing to
+// gate behind prefers-reduced-motion). Degrades gracefully: an empty or single-
+// point array renders a flat baseline rather than a NaN path, so a brand-new hive
+// with no history yet shows a calm flat line instead of a broken chart.
+var SPARK_W=64;   // default sparkline width in px
+var SPARK_H=18;   // default sparkline height in px
+var SPARK_PAD=2;  // top/bottom padding so the stroke is not clipped at extremes
+function sparkline(values,w,h,color){
+  values=values||[];
+  w=w||SPARK_W;h=h||SPARK_H;color=color||'#8b949e';
+  var innerH=h-SPARK_PAD*2;
+  if(innerH<1)innerH=1;
+  var pts=[];
+  // Flat baseline for empty / single-point series: a centred horizontal line.
+  if(values.length<2){
+    var y=SPARK_PAD+innerH/2;
+    pts=[[0,y],[w,y]];
+  }else{
+    var min=values[0],max=values[0],i;
+    for(i=1;i<values.length;i++){if(values[i]<min)min=values[i];if(values[i]>max)max=values[i];}
+    var range=max-min;
+    var stepX=w/(values.length-1);
+    for(i=0;i<values.length;i++){
+      var x=i*stepX;
+      // Invert Y (SVG origin is top-left) and flatten a zero-range series to the
+      // vertical centre so a constant value reads as a steady line, not a spike.
+      var norm=range>0?(values[i]-min)/range:0.5;
+      var yy=SPARK_PAD+(1-norm)*innerH;
+      pts.push([x,yy]);
+    }
+  }
+  var d='';
+  for(var j=0;j<pts.length;j++){
+    d+=(j===0?'M':'L')+pts[j][0].toFixed(1)+' '+pts[j][1].toFixed(1);
+  }
+  return '<span class="spark" aria-hidden="true"><svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
+    '<path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '</svg></span>';
+}
+// setSpark injects a sparkline into the element with the given id, if present.
+function setSpark(id,values,w,h,color){
+  var el=document.getElementById(id);
+  if(el)el.innerHTML=sparkline(values,w,h,color);
+}
+// ccMetrics caches the last /api/contribute/metrics payload so the leaderboard
+// render (which runs independently of opsPoll) can read per-user history without
+// its own fetch. Null until the first successful poll.
+var ccMetrics=null;
+// ccMetricsPoll fetches the persistent hourly series and paints the four Ops-tab
+// sparklines. Called from opsPoll() on its existing cadence — hourly data does
+// not need a fast dedicated timer, so every opsPoll tick is more than enough.
+function ccMetricsPoll(){
+  return fetch('/api/contribute/metrics').then(function(r){return r.json();}).then(function(d){
+    ccMetrics=d||{};
+    // (a) Ready-work queue header → queue-depth trend.
+    setSpark('spark-queue',ccMetrics.queue_depth,SPARK_W,SPARK_H,'#388bfd');
+    // (b) Tasks-completed / hour throughput.
+    setSpark('spark-throughput',ccMetrics.tasks_done,SPARK_W,SPARK_H,'#3fb950');
+    // (c) Connected-clanker fleet-size trend.
+    setSpark('spark-fleet',ccMetrics.fleet_size,SPARK_W,SPARK_H,'#d29922');
+    // (d) Your daily-quota usage trend — the viewer's own per-hour completions.
+    if(ccMeUsername&&ccMetrics.per_user_done&&ccMetrics.per_user_done[ccMeUsername]){
+      setSpark('spark-quota',ccMetrics.per_user_done[ccMeUsername],SPARK_W,SPARK_H,'#388bfd');
+    }
+    // Leaderboard hive-wide trend + per-row sparklines, if the tab is rendered.
+    ccRenderLeaderboardSparklines();
+  }).catch(function(e){console.error('metrics poll failed',e);});
+}
+// ccRenderLeaderboardSparklines paints the hive-wide total-tasks trend strip and
+// each per-contributor row sparkline from the cached metrics. Safe to call any
+// time — it no-ops when the leaderboard is not on screen or metrics are absent.
+function ccRenderLeaderboardSparklines(){
+  if(!ccMetrics)return;
+  var trend=document.getElementById('spark-lb-trend');
+  if(trend)trend.innerHTML=sparkline(ccMetrics.tasks_done,120,20,'#3fb950');
+  var pud=ccMetrics.per_user_done||{};
+  var rows=document.querySelectorAll('.lb-spark[data-user]');
+  for(var i=0;i<rows.length;i++){
+    var u=rows[i].getAttribute('data-user');
+    var series=(u&&pud[u])?pud[u]:[];
+    rows[i].innerHTML=sparkline(series,60,16,'#8b949e');
+  }
+}
 
 // ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
 // The Operations tab shows plenty of "repo#number" references (ready-work queue,
@@ -2739,6 +2863,10 @@ async function opsPoll(){
     // fall through to reschedule so a transient failure self-heals on the next poll.
     console.error('opsPoll fetch failed',e);
   }
+  // Persistent hourly sparklines (#persistent-history). Independent of the fleet
+  // fetch above (its own try/catch inside ccMetricsPoll) so a metrics hiccup never
+  // stalls the panels. Hourly data on the opsPoll cadence is plenty — no fast timer.
+  ccMetricsPoll();
   var tab=document.getElementById('tab-ops');
   if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);
 }
@@ -3465,6 +3593,11 @@ function ccQuotaHTML(variant){
   var remaining=Math.max(0,max-used);
   return '<div class="quota '+(variant||'')+'">'+
     '<div class="quota__head"><span class="quota__lbl">Your daily quota ('+esc(ccTierLabel(you.tier))+' set)</span><span class="quota__val">'+used+' / '+max+' tasks</span></div>'+
+    // Your usage trend (#persistent-history): the viewer's own per-hour completions
+    // over the last 7 days, hydrated by ccMetricsPoll once metrics + identity load.
+    // Only on the end-of-queue variant (variant==='') so the id stays unique — the
+    // Me-card renders the same quota widget with a different variant.
+    ((variant||'')===''?'<div class="quota__sub" style="text-align:right;margin-top:2px"><span class="spark" id="spark-quota" title="Your completions per hour, last 7 days"></span></div>':'')+
     '<div class="quota__bar"><div class="quota__fill '+cls+'" style="width:'+pct+'%%"></div></div>'+
     '<div class="quota__sub">'+(remaining>0?(remaining+' left in your allowance today.'):'You&rsquo;ve used your daily allowance — it refreshes on a rolling 24h window.')+'</div>'+
   '</div>';
