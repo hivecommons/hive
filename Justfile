@@ -147,8 +147,18 @@ contribute-check-backend backend="claude":
         echo "  Claude Code will run with ANTHROPIC_BASE_URL=${HIVE_LITELLM_ENDPOINT}"
         echo "  Set the model your proxy serves: export AGENT_MODEL=<model>"
         ;;
+      agy)
+        if command -v agy &>/dev/null; then
+          echo "agy CLI detected ($(agy --version 2>&1 | head -1))"
+          echo "  Models: gemini-3.6-flash, claude-sonnet-4-6, gpt-oss-120b, and more"
+          echo "  Set model: --model gemini-3.6-flash-high"
+        else
+          echo "ERROR: agy CLI not found. Install: https://antigravity.dev"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, litellm"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm"
         exit 1
         ;;
     esac
@@ -531,6 +541,9 @@ contribute-hive backend="" mode="docker": check-version
           ;;
         codex)
           [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex${VOLSUF}"
+          ;;
+        agy)
+          [ -d "${HOME}/.antigravitycli" ] && CLI_MOUNTS="-v ${HOME}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
           ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"

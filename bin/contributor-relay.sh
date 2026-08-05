@@ -218,6 +218,10 @@ function getCLIState() {
       if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
       if (/pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text)) return 'ready';
+    } else if (BACKEND === 'agy') {
+      // agy shows "? for shortcuts" at the bottom when its interactive prompt
+      // is ready. The generic />\s*$/ fires too early (during the splash).
+      if (/\? for shortcuts/.test(text)) return 'ready';
     } else {
       if (/>\s*$|❯|\$\s*$/.test(text)) return 'ready';
     }
@@ -577,6 +581,12 @@ function checkTmuxIdle() {
       hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
       hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
       isWorking = /Reading|Writing|Bash|Editing|thinking|running/i.test(text);
+    } else if (BACKEND === 'agy') {
+      // agy shows "? for shortcuts" at its idle prompt and a model name in
+      // the status line. When working it shows tool names and progress.
+      hasIdlePrompt = /\? for shortcuts/.test(text);
+      hasCompletionMarker = true;
+      isWorking = /Running|Searching|Reading|Writing|Editing/i.test(text);
     } else {
       hasIdlePrompt = />\s*$|\$\s*$/.test(text);
       hasCompletionMarker = /completed|done|finished/i.test(text);
