@@ -188,6 +188,71 @@ func TestWS_OmittedCapabilitiesUnaffected(t *testing.T) {
 	}
 }
 
+// TestWS_DeclaredCapabilitiesInFleetAPIPayload asserts the #2547 declare half is
+// visible where an operator actually reads it: the /api/contribute/fleet HTTP JSON
+// payload (what the Operations tab hydrates from), not just the in-process
+// FleetSnapshot(). A connected client that declared capabilities has them present
+// under clankers[].capabilities in the served JSON.
+func TestWS_DeclaredCapabilitiesInFleetAPIPayload(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+	token, cid := registerWSUser(t, s, "fleetapi-user")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	readMsg(t, conn) // challenge
+	conn.WriteJSON(WSMessage{
+		Type:              "auth_response",
+		RegistrationToken: token,
+		CLIBackend:        "claude",
+		Capabilities: &ContributorCapabilities{
+			ContainerRuntime: "podman",
+			OS:               "linux",
+			CredentialType:   "pat",
+		},
+	})
+	if authOK := readMsg(t, conn); authOK.Type != "auth_ok" {
+		t.Fatalf("expected auth_ok, got %s: %s", authOK.Type, authOK.Reason)
+	}
+
+	// Poll the real HTTP endpoint until the connection is registered, then assert
+	// the served JSON carries the declared capabilities under this clanker.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest(http.MethodGet, "/api/contribute/fleet", nil)
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("fleet endpoint: got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Clankers []FleetClanker `json:"clankers"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("invalid fleet JSON: %v", err)
+		}
+		for i := range resp.Clankers {
+			if resp.Clankers[i].ContributorID != cid {
+				continue
+			}
+			caps := resp.Clankers[i].Capabilities
+			if caps == nil {
+				t.Fatal("declared capabilities missing from /api/contribute/fleet payload")
+			}
+			if caps.ContainerRuntime != "podman" || caps.OS != "linux" || caps.CredentialType != "pat" {
+				t.Fatalf("fleet payload capabilities mismatch: %+v", caps)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("clanker not found in /api/contribute/fleet payload")
+}
+
 // TestWS_ProtocolVersionOnlyClientFoldsIn asserts a version-only client (sends a
 // top-level protocol_version but no capabilities object) still has its protocol
 // version stored + surfaced, so an intentionally-degrading newer client is
@@ -229,6 +294,68 @@ func TestWS_ProtocolVersionOnlyClientFoldsIn(t *testing.T) {
 	}
 	if fc.Capabilities.RelayProtocolVersion != "9.9" {
 		t.Fatalf("relay_protocol_version: want 9.9, got %q", fc.Capabilities.RelayProtocolVersion)
+	}
+}
+
+// TestWS_DeclaredCapabilitiesDoNotAlterTrust is the load-bearing guarantee of the
+// #2547 declare half: a self-declared capability map is ADDITIVE and is NEVER a
+// trust signal. A client can claim anything (a privileged-looking credential_type,
+// any runtime), and the hub must grant EXACTLY the trust tier and permissions it
+// would grant a client that declared nothing — the auth_ok tier/permissions derive
+// solely from the persisted profile (TrustTier), never from a client-supplied
+// capability field. This asserts the declaration does not elevate (or change at
+// all) the permission decision.
+func TestWS_DeclaredCapabilitiesDoNotAlterTrust(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	// authOnce connects a freshly-registered newcomer, optionally declaring rich
+	// capabilities, and returns the trust tier + permissions the hub granted.
+	authOnce := func(username string, caps *ContributorCapabilities) (tier string, perms []string) {
+		t.Helper()
+		token, _ := registerWSUser(t, s, username)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+		readMsg(t, conn) // challenge
+		conn.WriteJSON(WSMessage{
+			Type:              "auth_response",
+			RegistrationToken: token,
+			CLIBackend:        "claude",
+			Capabilities:      caps,
+		})
+		authOK := readMsg(t, conn)
+		if authOK.Type != "auth_ok" {
+			t.Fatalf("expected auth_ok, got %s: %s", authOK.Type, authOK.Reason)
+		}
+		return authOK.TrustTier, authOK.Permissions
+	}
+
+	// Baseline: a client that declares nothing (an unversioned relay).
+	baseTier, basePerms := authOnce("notrust-plain", nil)
+
+	// A client that declares a rich, deliberately privileged-LOOKING posture —
+	// "app" credential type, a container runtime, etc. None of this may buy trust.
+	richTier, richPerms := authOnce("notrust-rich", &ContributorCapabilities{
+		ContainerRuntime:     "docker",
+		OS:                   "linux",
+		Arch:                 "amd64",
+		AgentCLIVersion:      "9.9.9",
+		RelayProtocolVersion: "1.1",
+		CredentialType:       "app",
+	})
+
+	if richTier != baseTier {
+		t.Fatalf("declared capabilities altered trust tier: declared=%q, undeclared=%q", richTier, baseTier)
+	}
+	if strings.Join(richPerms, ",") != strings.Join(basePerms, ",") {
+		t.Fatalf("declared capabilities altered permissions: declared=%v, undeclared=%v", richPerms, basePerms)
+	}
+	// Both must be the unprivileged newcomer default — declaring did not elevate.
+	if baseTier != "newcomer" {
+		t.Fatalf("expected a freshly-registered contributor to be newcomer, got %q", baseTier)
 	}
 }
 

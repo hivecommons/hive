@@ -185,3 +185,72 @@ func TestPromptPreview_SurfacesPromptAndMetadata_NoToken(t *testing.T) {
 		t.Fatalf("prompt-preview snapshot leaked a github_token:\n%s", blob)
 	}
 }
+
+// --- #2677: fleet-wide operator visibility into per-contributor label
+// interests (#2637) ----------------------------------------------------------
+
+// TestFleetSnapshot_LabelInterestsSurfaced (#2677) asserts a connected
+// contributor's own opt-in label interests are mirrored onto their
+// FleetClanker entry, so the operator fleet view (GET /api/contribute/fleet)
+// carries the same data the contributor already sees on themselves — without
+// requiring a second lookup against /api/contributors.
+func TestFleetSnapshot_LabelInterestsSurfaced(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	conn := &ContributorConnection{
+		profile: &ContributorProfile{
+			GitHubUsername: "priya", ContributorID: "c-priya", TrustTier: "contributor",
+			LabelInterests: []string{"nvidia", "gpu"},
+		},
+		lastPong: time.Now(),
+	}
+	hub.mu.Lock()
+	hub.connections["conn-priya"] = conn
+	hub.mu.Unlock()
+
+	snap := hub.FleetSnapshot()
+	if len(snap.Clankers) != 1 {
+		t.Fatalf("expected 1 clanker, got %d", len(snap.Clankers))
+	}
+	fc := snap.Clankers[0]
+	if len(fc.LabelInterests) != 2 || fc.LabelInterests[0] != "nvidia" || fc.LabelInterests[1] != "gpu" {
+		t.Fatalf("label_interests mismatch: got %+v", fc.LabelInterests)
+	}
+
+	raw, err := json.Marshal(fc)
+	if err != nil {
+		t.Fatalf("marshal clanker: %v", err)
+	}
+	if !strings.Contains(string(raw), `"label_interests":["nvidia","gpu"]`) {
+		t.Fatalf("marshaled clanker missing label_interests: %s", raw)
+	}
+}
+
+// TestFleetSnapshot_LabelInterestsOmittedWhenEmpty (#2677) asserts a
+// contributor with no declared interests produces no label_interests field
+// (omitempty) rather than an empty array, matching how capabilities/idle_reason
+// already omit themselves when there is nothing to show.
+func TestFleetSnapshot_LabelInterestsOmittedWhenEmpty(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	conn := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "quinn", ContributorID: "c-quinn", TrustTier: "newcomer"},
+		lastPong: time.Now(),
+	}
+	hub.mu.Lock()
+	hub.connections["conn-quinn"] = conn
+	hub.mu.Unlock()
+
+	snap := hub.FleetSnapshot()
+	if len(snap.Clankers) != 1 {
+		t.Fatalf("expected 1 clanker, got %d", len(snap.Clankers))
+	}
+	if len(snap.Clankers[0].LabelInterests) != 0 {
+		t.Fatalf("expected no label interests, got %+v", snap.Clankers[0].LabelInterests)
+	}
+	raw, err := json.Marshal(snap.Clankers[0])
+	if err != nil {
+		t.Fatalf("marshal clanker: %v", err)
+	}
+	if strings.Contains(string(raw), "label_interests") {
+		t.Fatalf("label_interests should be omitted when empty: %s", raw)
+	}
+}

@@ -327,12 +327,27 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin := username == hubAdminUsername
-	data, err := json.Marshal(map[string]any{
+	// Fold impersonation status into the auth payload the dashboard already
+	// fetches, so the "Viewing as … read-only" banner renders without a second
+	// round-trip. When an admin is impersonating, report the effective identity
+	// as the target (that is what every per-user view is rendering as) but keep
+	// hub_admin FALSE — during impersonation the admin is deliberately a normal
+	// user, so admin-only affordances hide via the existing role checks.
+	payload := map[string]any{
 		"authenticated": true,
 		"login":         username,
 		"avatar_url":    fmt.Sprintf("https://github.com/%s.png", username),
 		"hub_admin":     isAdmin,
-	})
+	}
+	if grant, ok := s.activeImpersonationGrant(r); ok {
+		payload["login"] = grant.Target
+		payload["avatar_url"] = fmt.Sprintf("https://github.com/%s.png", grant.Target)
+		payload["hub_admin"] = false
+		payload["impersonating"] = true
+		payload["viewing_as"] = grant.Target
+		payload["real_user"] = username
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
