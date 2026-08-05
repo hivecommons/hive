@@ -83,6 +83,11 @@ type FleetStatsSnapshot struct {
 	Hives        int `json:"hives"`
 	Reporting    int `json:"reporting"`
 	Eligible     int `json:"eligible"`
+	// ContributorsTotal carries the registered-contributor total (see
+	// FleetStats.ContributorsTotal) into the last-known-good fallback so a
+	// recollecting fleet still serves a stable figure instead of dropping to
+	// 0 while coverage is below the publish threshold.
+	ContributorsTotal int `json:"contributors_total"`
 	// CollectedAt is when this aggregate was computed, i.e. what "as of" means
 	// on the public page.
 	CollectedAt time.Time `json:"collected_at"`
@@ -93,6 +98,13 @@ type RegistryEntry struct {
 	Name  string   `json:"name"`
 	Org   string   `json:"org"`
 	Repos []string `json:"repos"`
+	// ProjectName is the hive's operator-editable display name, overlaid onto the
+	// registry entry from the authoritative SaaSHive record (sh.ProjectName) on
+	// the heartbeat path — NOT reported by the spoke. It is what the My Hives row
+	// renders as the editable top line; when empty the client falls back to the
+	// org/repo-derived label (see hiveLabel in the dashboard JS), exactly as
+	// before this field existed. handleRenameHive is the only writer.
+	ProjectName string `json:"projectName,omitempty"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
 	// without blanking it, and it is the author the fleet-stats counts are
@@ -512,6 +524,49 @@ func repoRefHost(s string) string {
 	return ""
 }
 
+// repoDisplayLine derives the human-readable "owner/repo" project line shown in
+// My Hives (the name-cell second line) and in audit/timeline strings, from a
+// hive's org + primary repo. It is the doubling-safe replacement for the naive
+// org + "/" + primaryRepo join.
+//
+// Why a join is not enough: primaryRepo is stored VERBATIM and, for some hives,
+// already carries a full "owner/repo" path rather than a bare repo name. Live
+// fleet evidence: a GitHub Pages / GHE hive was recorded with
+//
+//	org         = "castrojo.github.io"   (a HOST wrongly parsed into the org field)
+//	primaryRepo = "castrojo/endusers"    (already owner/repo)
+//
+// so org + "/" + primaryRepo rendered "castrojo.github.io/castrojo/endusers" —
+// the host masquerading as an org, with the owner doubled. When primaryRepo
+// already contains a slash it is a complete path and is returned as-is; only a
+// bare repo name is qualified with the org. The result never contains a
+// dangling slash: with one half known it returns that half alone, with neither
+// it returns "".
+//
+//	repoDisplayLine("myorg", "repo")               -> "myorg/repo"
+//	repoDisplayLine("castrojo.github.io", "castrojo/endusers") -> "castrojo/endusers"
+//	repoDisplayLine("myorg", "")                   -> "myorg"
+//	repoDisplayLine("", "owner/repo")              -> "owner/repo"
+//	repoDisplayLine("", "")                        -> ""
+//
+// The dashboard JS hiveLabel() mirrors this logic; keep the two in sync.
+func repoDisplayLine(org, primaryRepo string) string {
+	org = strings.TrimSpace(org)
+	primaryRepo = strings.TrimSpace(primaryRepo)
+	if primaryRepo == "" {
+		return org
+	}
+	// A primaryRepo that already carries an "owner/repo" path is complete;
+	// prefixing the org would double the owner (the github.io/GHE defect).
+	if strings.Contains(primaryRepo, "/") {
+		return primaryRepo
+	}
+	if org == "" {
+		return primaryRepo
+	}
+	return org + "/" + primaryRepo
+}
+
 // sameGitHubHost reports whether two host labels refer to the same GitHub. Both
 // "" and "github.com" mean public GitHub, so they are equal; a GHE host
 // ("github.ibm.com") equals only itself. Case-insensitive.
@@ -646,6 +701,14 @@ type HubServer struct {
 	// beating drops out on its own rather than staying "live" forever.
 	liveHiveUsers   map[string]time.Time
 	liveHiveUsersMu sync.RWMutex
+	// engagedHiveUsers is the same shape as liveHiveUsers but for ENGAGED
+	// presence: username → last time any hive reported the user's browser as
+	// focused with recent input (heartbeat EngagedSessionUsers). The gap
+	// between the two sets is exactly the idle-open-tab crowd. Guarded by
+	// liveHiveUsersMu (always touched on the same paths), freshness-gated on
+	// read like liveHiveUsers. Old spokes never report engaged users, so this
+	// map simply stays empty for them — optional data, never an error.
+	engagedHiveUsers map[string]time.Time
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -1200,6 +1263,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
+		// The SaaS store is authoritative for the operator-editable display name
+		// (handleRenameHive persists it here), so overlay it onto the registry
+		// entry the dashboard renders. The spoke never reports this, so a blank
+		// ProjectName simply leaves the client on its org/repo fallback label.
+		entry.ProjectName = sh.ProjectName
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1418,7 +1486,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// it does per-user load-modify-write file I/O and must not serialize behind
 	// the registry write lock. hadPrev==false (a brand-new hive) credits nothing —
 	// there is no prior sample point to measure an interval against.
-	s.creditActiveSessionTime(&prevEntry, hadPrev, payload.ActiveSessionUsers)
+	s.creditActiveSessionTime(&prevEntry, hadPrev, payload.ActiveSessionUsers, payload.EngagedSessionUsers)
+
+	// Fold the spoke's per-user last-real-action timestamps into the user
+	// records. Unlike time crediting this needs no prior beat — a timestamp is
+	// absolute — so it runs even on a hive's first heartbeat. Also after
+	// Unlock(): per-user file I/O.
+	s.applyUserLastActions(payload.UserLastActions)
 
 	// Store heartbeat-reported cluster health so the hub can use it as a
 	// fallback when it cannot reach the cluster directly via kubectl.
@@ -1695,13 +1769,21 @@ const (
 //   - unknown users (no SaaSUser record) are skipped, never auto-created.
 //   - load-modify-write per user so a concurrent contact/quota edit is not clobbered.
 //
+// engagedUsers is the subset of activeUsers whose browser reported focused,
+// recent-input presence (heartbeat EngagedSessionUsers). Those users are
+// additionally credited EngagedSeconds and stamped LastEngagedAt — the honest
+// engagement signals — while SessionSeconds keeps its back-compat open-tab
+// meaning. A nil/empty engagedUsers (old spoke, or genuinely nobody engaged)
+// credits engaged time to no one and is never an error.
+//
 // It runs post-unlock and does its own file I/O; callers must NOT hold s.mu.
-func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bool, activeUsers []string) {
+func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bool, activeUsers, engagedUsers []string) {
 	// Mark everyone reported active as live NOW, independent of the time-credit
 	// path below: the "logged in right now" avatar treatment must light up on the
 	// FIRST beat that sees a session (there is no prior sample yet), and must not
 	// depend on a valid prevEntry. Freshness is applied on read.
 	s.markUsersLive(activeUsers)
+	s.markUsersEngaged(engagedUsers)
 	if !hadPrev || prevEntry == nil || prevEntry.LastHeartbeat == "" || len(activeUsers) == 0 {
 		return
 	}
@@ -1722,6 +1804,11 @@ func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bo
 	}
 	// Dedupe + validate the reported usernames with the same gate the leaderboard
 	// path uses, and bound the work.
+	engaged := make(map[string]struct{}, len(engagedUsers))
+	for _, name := range engagedUsers {
+		engaged[name] = struct{}{}
+	}
+	nowRFC3339 := time.Now().UTC().Format(time.RFC3339)
 	seen := make(map[string]struct{}, len(activeUsers))
 	for _, name := range activeUsers {
 		if len(seen) >= maxActiveSessionUsers {
@@ -1739,8 +1826,54 @@ func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bo
 			continue // an active session for a user the hub has no record of — skip.
 		}
 		u.SessionSeconds += creditSecs
+		// Engaged time accrues ONLY for users whose browser proved a human is
+		// there this beat. An idle/hidden tab therefore keeps accumulating
+		// session_seconds (back-compat) but never engaged_seconds.
+		if _, isEngaged := engaged[name]; isEngaged {
+			u.EngagedSeconds += creditSecs
+			u.LastEngagedAt = nowRFC3339
+		}
 		if err := saveSaaSUser(u); err != nil {
 			s.logger.Warn("creditActiveSessionTime: save failed", "user", name, "error", err)
+		}
+	}
+}
+
+// applyUserLastActions folds a heartbeat's per-user last-real-action
+// timestamps (spoke audit log; see HeartbeatPayload.UserLastActions) into the
+// user records, keeping the MAXIMUM per user so an older spoke's replayed log,
+// a spoke restart, or a second hive can never move a user's LastActionAt
+// backwards. Unknown users are skipped, never auto-created. nil/empty input
+// (old spoke) is a no-op. Does per-user file I/O; callers must NOT hold s.mu.
+func (s *HubServer) applyUserLastActions(lastActions map[string]string) {
+	if len(lastActions) == 0 {
+		return
+	}
+	applied := 0
+	for name, ts := range lastActions {
+		if applied >= maxActiveSessionUsers {
+			break
+		}
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, ts)
+		if err != nil {
+			continue
+		}
+		applied++
+		u := loadSaaSUser(name)
+		if u == nil {
+			continue
+		}
+		if u.LastActionAt != "" {
+			if prev, err := time.Parse(time.RFC3339, u.LastActionAt); err == nil && !t.After(prev) {
+				continue
+			}
+		}
+		u.LastActionAt = t.UTC().Format(time.RFC3339)
+		if err := saveSaaSUser(u); err != nil {
+			s.logger.Warn("applyUserLastActions: save failed", "user", name, "error", err)
 		}
 	}
 }
@@ -1770,6 +1903,27 @@ func (s *HubServer) markUsersLive(activeUsers []string) {
 	s.liveHiveUsersMu.Unlock()
 }
 
+// markUsersEngaged is markUsersLive's twin for the ENGAGED set (focused tab +
+// recent input, per the spoke's presence report). Same mutex, same validation,
+// same freshness-on-read model.
+func (s *HubServer) markUsersEngaged(engagedUsers []string) {
+	if len(engagedUsers) == 0 {
+		return
+	}
+	now := time.Now()
+	s.liveHiveUsersMu.Lock()
+	if s.engagedHiveUsers == nil {
+		s.engagedHiveUsers = make(map[string]time.Time)
+	}
+	for _, name := range engagedUsers {
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		s.engagedHiveUsers[name] = now
+	}
+	s.liveHiveUsersMu.Unlock()
+}
+
 // liveHiveUsernames returns the usernames with a live hive session seen within
 // the staleness window, and opportunistically prunes stale entries so the map
 // cannot grow without bound. Admin-facing (presence data) — the caller gates it.
@@ -1787,6 +1941,36 @@ func (s *HubServer) liveHiveUsernames() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// engagedHiveUsernames returns the usernames reported ENGAGED (focused +
+// recent input) within the staleness window — liveHiveUsernames' honest
+// subset. Same pruning-on-read; admin-facing, the caller gates it.
+func (s *HubServer) engagedHiveUsernames() []string {
+	cutoff := time.Now().Add(-liveHiveUserStaleness)
+	s.liveHiveUsersMu.Lock()
+	defer s.liveHiveUsersMu.Unlock()
+	out := make([]string, 0, len(s.engagedHiveUsers))
+	for name, seen := range s.engagedHiveUsers {
+		if seen.Before(cutoff) {
+			delete(s.engagedHiveUsers, name)
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isUserEngagedNow reports whether username has a fresh engaged-presence
+// report — the "connected AND a human is actually there" gate for the `live`
+// status tier.
+func (s *HubServer) isUserEngagedNow(username string) bool {
+	cutoff := time.Now().Add(-liveHiveUserStaleness)
+	s.liveHiveUsersMu.RLock()
+	defer s.liveHiveUsersMu.RUnlock()
+	seen, ok := s.engagedHiveUsers[username]
+	return ok && !seen.Before(cutoff)
 }
 
 func (s *HubServer) storePendingGitHubAppConfig(hiveID string, cfg *HeartbeatGitHubAppConfig) {
@@ -1968,7 +2152,16 @@ type FleetStats struct {
 	// owner or URL is derivable from them.
 	AgentsRunning int    `json:"agents_running"`
 	Contributors  int    `json:"contributors"`
-	UpdatedAt     string `json:"updated_at"`
+	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
+	// contributors, summed from each hive's ContributorCount rather than
+	// ActiveContributors. Contributors above tracks who is CURRENTLY active,
+	// which legitimately drops to 0 whenever nobody happens to be connected —
+	// on the hub landing page that reads as "this fleet has no
+	// contributors", which is false. ContributorsTotal is stable across quiet
+	// periods because a contributor stays registered whether or not they are
+	// active right now, so the public tile should prefer it.
+	ContributorsTotal int    `json:"contributors_total"`
+	UpdatedAt         string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
 	// Without this pair the totals are indistinguishable from a healthy fleet:
@@ -2096,6 +2289,9 @@ func (s *HubServer) computeFleetStats() FleetStats {
 		fs.Hives++
 		fs.AgentsRunning += h.AgentCount
 		fs.Contributors += h.ActiveContributors
+		// Registered (not active) so the total does not crater to 0 whenever
+		// nobody happens to be connected at collection time.
+		fs.ContributorsTotal += h.ContributorCount
 		for _, r := range h.Repos {
 			if r == "" {
 				continue
@@ -2193,14 +2389,15 @@ func (s *HubServer) fleetStatsLKG() *FleetStatsSnapshot {
 func (s *HubServer) recordFleetStatsLKG(fs FleetStats, collectedAt time.Time) {
 	s.mu.Lock()
 	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
-		ReposManaged: fs.ReposManaged,
-		PRsMerged:    fs.PRsMerged,
-		PRsRejected:  fs.PRsRejected,
-		CVEsClosed:   fs.CVEsClosed,
-		Hives:        fs.Hives,
-		Reporting:    fs.Reporting,
-		Eligible:     fs.Eligible,
-		CollectedAt:  collectedAt.UTC(),
+		ReposManaged:      fs.ReposManaged,
+		PRsMerged:         fs.PRsMerged,
+		PRsRejected:       fs.PRsRejected,
+		CVEsClosed:        fs.CVEsClosed,
+		Hives:             fs.Hives,
+		Reporting:         fs.Reporting,
+		Eligible:          fs.Eligible,
+		ContributorsTotal: fs.ContributorsTotal,
+		CollectedAt:       collectedAt.UTC(),
 	}
 	s.mu.Unlock()
 	s.requestSave()
@@ -2234,6 +2431,7 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 		fs.PRsMerged = lkg.PRsMerged
 		fs.PRsRejected = lkg.PRsRejected
 		fs.CVEsClosed = lkg.CVEsClosed
+		fs.ContributorsTotal = lkg.ContributorsTotal
 		fs.StaleData = true
 		fs.AsOf = lkg.CollectedAt.UTC().Format(time.RFC3339)
 		s.logger.Warn("fleet stats: serving last-known-good totals; live coverage is below the publish threshold",

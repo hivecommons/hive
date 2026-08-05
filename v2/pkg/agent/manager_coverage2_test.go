@@ -1501,12 +1501,12 @@ func TestIsBufferNoise_PromptChars(t *testing.T) {
 
 func TestACMMLevelNames(t *testing.T) {
 	expected := map[int]string{
-		1: "Idea",
-		2: "Development",
-		3: "CI/CD",
-		4: "Managed",
-		5: "Guarded Autonomy",
-		6: "Full Autonomy",
+		1: "Inception",
+		2: "Advisory",
+		3: "Quality-Gated",
+		4: "Security-Aware",
+		5: "Semi-Autonomous",
+		6: "Fully Autonomous",
 	}
 	for level, name := range expected {
 		if acmmLevelNames[level] != name {

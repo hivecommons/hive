@@ -105,7 +105,7 @@ The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
 |---|---|
 | `org`, `repos` | **Required, non-empty.** `repos` is comma-separated. |
 | `primary_repo` | Hosts the advisory issue and default markings. |
-| `acmm_level` | Starting autonomy. **Default new hives to `2`** (Instructed / advisory-only). |
+| `acmm_level` | Starting autonomy. **Default new hives to `2`** (Advisory (Instructed) / advisory-only). |
 | `cluster_id` | `hive-oke` (the `defaultClusterID`). |
 | `auth_method` | `app` or a token. |
 | `app_id` / `installation_id` / `app_private_key` | Three auth shapes: **token** (`github_token` starts `ghp_`/`github_pat_`); **app now** (all three set); **app later** — `app_id` set, `installation_id` **and** `app_private_key` **empty**. The last is the placeholder case: pass the sentinel `app_id: 999999999` (see [Placeholder `app_id`](#placeholder-app_id)) and the hive provisions into dashboard-only mode until the owner installs the App from the dashboard. |

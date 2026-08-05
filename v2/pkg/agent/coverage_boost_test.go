@@ -594,7 +594,7 @@ func TestBuildProjectPreamble_FormatContainsOrgAndRepos(t *testing.T) {
 	if !strings.Contains(got, "L3") {
 		t.Error("should contain ACMM level")
 	}
-	if !strings.Contains(got, "CI/CD") {
+	if !strings.Contains(got, "Quality-Gated") {
 		t.Error("should contain level name")
 	}
 }

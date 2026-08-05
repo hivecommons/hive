@@ -593,6 +593,25 @@ type GovernorConfig struct {
 	// gateway named "litellm" is synthesized from the legacy LiteLLM block above
 	// so existing hives keep working with zero config change. See ResolveGateway.
 	Gateways []GatewayConfig `yaml:"gateways"`
+	// AttributionTrailer controls the VISIBLE invocation-attribution line
+	// ("— hive: agent=… backend=… model=…") appended at creation time to the
+	// body of PRs the hive opens for agents (the PR-request watcher) and issues
+	// the hive itself creates. It is a *bool so absent (nil) is distinct from an
+	// explicit false: default is ON (see AttributionTrailerEnabled), matching
+	// the github.app_authored_prs convention. It gates ONLY the visible trailer
+	// — the audit-log entry for every such creation is written unconditionally,
+	// so turning this off never removes the operator's ability to answer "which
+	// backend/model produced this PR?".
+	AttributionTrailer *bool `yaml:"attribution_trailer,omitempty"`
+}
+
+// AttributionTrailerEnabled reports whether the visible attribution trailer on
+// hive-created PRs/issues is on for this hive. Default ON: a hive that says
+// nothing gets the trailer; set `governor.attribution_trailer: false` to hide
+// it. The audit-log entry for each creation is unconditional and is NOT gated
+// by this.
+func (g *GovernorConfig) AttributionTrailerEnabled() bool {
+	return g.AttributionTrailer == nil || *g.AttributionTrailer
 }
 
 // GatewayConfig is one named, OpenAI-compatible model gateway. A hive may
@@ -1854,11 +1873,86 @@ type HubConfig struct {
 	// contributor requesting work. An issue assigned to the contributor
 	// themselves (or unassigned) is still eligible. Default false preserves the
 	// prior behavior of handing out issues regardless of assignment (#2357).
-	ContributeSkipAssignedToOthers bool                `yaml:"contribute_skip_assigned_to_others"`
-	DisabledRepos                  []string            `yaml:"disabled_repos"`
-	DisabledTiers                  []string            `yaml:"disabled_tiers"`
-	TierLimits                     map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin            int                 `yaml:"snapshot_interval_min"`
+	ContributeSkipAssignedToOthers bool `yaml:"contribute_skip_assigned_to_others"`
+	// ContributeCooldownEnabled toggles the POST-COMPLETION cooldown that keeps a
+	// just-worked issue out of the /contribute queue for a while (see
+	// contribute_ws.go markTaskCompleted / isTaskInCooldown). It is a POINTER so
+	// that an absent value (older on-disk config that predates this toggle) means
+	// "unset" and defaults to ENABLED — the prior, backward-compatible behavior.
+	// A non-nil false explicitly DISABLES cooldown gating (no completed issue is
+	// ever excluded from the queue for cooldown; failure quarantine is unaffected
+	// and stays on). Use IsContributeCooldownEnabled() to resolve the effective
+	// value rather than reading the pointer directly.
+	ContributeCooldownEnabled *bool `yaml:"contribute_cooldown_enabled,omitempty"`
+	// ContributeCooldownHours is the WITH-PR completion cooldown period in hours —
+	// the operator-tunable replacement for the hardcoded default of
+	// contributeCooldownDefaultHours (168h / one week). 0 or unset means "use the
+	// default"; any positive value is clamped to
+	// [contributeCooldownMinHours, contributeCooldownMaxHours] in Normalize.
+	// Resolve with ContributeCooldownHoursOrDefault(), never by reading the raw
+	// field (which may legitimately be 0 == default). The short NO-PR cooldown is
+	// left as its own const and is not tuned here (the operator specifically asked
+	// for the week-long period to be adjustable).
+	ContributeCooldownHours int `yaml:"contribute_cooldown_hours,omitempty"`
+	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
+	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
+	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
+	// both in the queue display (ReadyQueue) and in selectTask's candidate ordering
+	// — in exactly this order; everything else follows in the established default
+	// order. It only reorders OFFER PRIORITY: a key here that is filtered out by
+	// admission / cooldown / disabled-repo / in-flight rules is still excluded, and
+	// a stale key (no longer actionable) is simply skipped. Persisted through the
+	// same Config.Hub.* mechanism as the other admission settings so it survives
+	// restart, and edited only through the authenticated PUT /api/contribute/queue/order
+	// endpoint (owner/read-write only).
+	ContributeQueueOrder []string            `yaml:"contribute_queue_order,omitempty"`
+	DisabledRepos        []string            `yaml:"disabled_repos"`
+	DisabledTiers        []string            `yaml:"disabled_tiers"`
+	TierLimits           map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin  int                 `yaml:"snapshot_interval_min"`
+}
+
+// Contribute completion-cooldown defaults and clamp bounds. These live in the
+// config package because both the resolver methods below and the Normalize path
+// reference them; the dashboard keeps its own equal DEFAULT const
+// (completedTaskCooldownHours) as the runtime fallback for hubs built without a
+// Config (e.g. direct-in-test construction).
+const (
+	// contributeCooldownDefaultHours is the with-PR completion cooldown used when
+	// ContributeCooldownHours is unset/0 — one week, matching the historical
+	// hardcoded default.
+	contributeCooldownDefaultHours = 168
+	// contributeCooldownMinHours / contributeCooldownMaxHours clamp an
+	// operator-supplied period to a sane range (one hour .. one year) so a stray
+	// value cannot park an issue effectively forever or disable the cooldown by
+	// rounding to zero.
+	contributeCooldownMinHours = 1
+	contributeCooldownMaxHours = 8760
+)
+
+// IsContributeCooldownEnabled resolves the effective on/off state of the
+// post-completion cooldown. A nil pointer (unset, older config) defaults to
+// ENABLED for backward compatibility; an explicit false disables it.
+func (h HubConfig) IsContributeCooldownEnabled() bool {
+	return h.ContributeCooldownEnabled == nil || *h.ContributeCooldownEnabled
+}
+
+// ContributeCooldownHoursOrDefault resolves the with-PR cooldown PERIOD in
+// hours. A value <= 0 (unset) yields the default (contributeCooldownDefaultHours);
+// a positive value is returned as-is (Normalize has already clamped any stored
+// value to the valid range, and this method re-clamps defensively for callers
+// that build a Hub without running Normalize, e.g. tests).
+func (h HubConfig) ContributeCooldownHoursOrDefault() int {
+	if h.ContributeCooldownHours <= 0 {
+		return contributeCooldownDefaultHours
+	}
+	if h.ContributeCooldownHours < contributeCooldownMinHours {
+		return contributeCooldownMinHours
+	}
+	if h.ContributeCooldownHours > contributeCooldownMaxHours {
+		return contributeCooldownMaxHours
+	}
+	return h.ContributeCooldownHours
 }
 
 type TierRate struct {
@@ -2740,6 +2834,17 @@ func (c *Config) applyDefaults() {
 	c.Hub.ContributeTitlesMode = NormalizeFilterMode(c.Hub.ContributeTitlesMode)
 	c.Hub.ContributeAuthorsMode = NormalizeFilterMode(c.Hub.ContributeAuthorsMode)
 	c.Hub.ContributeLabelsMode = NormalizeFilterMode(c.Hub.ContributeLabelsMode)
+
+	// Contribute completion-cooldown period: leave 0 (== "use default") alone, but
+	// clamp any explicitly-set value to [min,max] so a stray input cannot park an
+	// issue effectively forever or round down to disable the cooldown.
+	if c.Hub.ContributeCooldownHours != 0 {
+		if c.Hub.ContributeCooldownHours < contributeCooldownMinHours {
+			c.Hub.ContributeCooldownHours = contributeCooldownMinHours
+		} else if c.Hub.ContributeCooldownHours > contributeCooldownMaxHours {
+			c.Hub.ContributeCooldownHours = contributeCooldownMaxHours
+		}
+	}
 
 	// One-time migration of the old dual label lists into the single list+mode.
 	// If a legacy allow list was set (and no new label list/mode has been chosen

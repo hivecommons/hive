@@ -26,9 +26,11 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true } = {}) {
+function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null } = {}) {
   const commands = [];
   const sent = [];
+  // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
+  const execFileCalls = [];
   let stateIdx = 0;
   // Guard against a runaway loop in the code under test eating all memory.
   const MAX_RECORDED_COMMANDS = 10000;
@@ -53,10 +55,27 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
     return '';
   };
 
+  // Headless mode drives the CLI through execFile (one-shot), not tmux. The stub
+  // records the invocation and synchronously fires the completion callback with
+  // the outcome the test asked for (default: exit 0). It returns a fake child
+  // with a kill() so revoke/shutdown paths can be exercised.
+  const fakeExecFile = (bin, args, opts, cb) => {
+    const callback = typeof opts === 'function' ? opts : cb;
+    execFileCalls.push({ bin, args, opts: typeof opts === 'function' ? {} : opts });
+    const child = { killed: false, kill() { this.killed = true; } };
+    const r = execFileResult || {};
+    if (callback) {
+      // Mirror execFile's async contract closely enough for the relay's logic:
+      // callback(err, stdout, stderr).
+      callback(r.err || null, r.stdout || '', r.stderr || '');
+    }
+    return child;
+  };
+
   const stubs = {
     child_process: {
       execSync: fakeExecSync,
-      execFile: () => {},
+      execFile: fakeExecFile,
     },
     ws: class FakeWebSocket {
       static get OPEN() { return 1; }
@@ -81,9 +100,14 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
   process.env.AGENT_MODEL = model;
   process.env.GOOSE_MODEL = '';
   process.env.HIVE_AGENT_SESSION = 'contributor';
+  process.env.CONTRIBUTOR_MODE = mode;
 
   // Keep the relay's task-file write out of the real /tmp path used in prod.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-test-'));
+  // Point the headless status file at the test's tmp dir so probe writes don't
+  // clobber a real one and can be asserted on.
+  const headlessStatusFile = statusFile || path.join(tmpDir, 'headless-status.json');
+  process.env.HIVE_HEADLESS_STATUS_FILE = headlessStatusFile;
 
   // node refuses to require a .sh file with the default extension handlers;
   // register .sh as JavaScript. This must happen BEFORE require.resolve(), and
@@ -108,6 +132,11 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
   relay.__commands = commands;
   relay.__sent = sent;
   relay.__tmpDir = tmpDir;
+  relay.__execFileCalls = execFileCalls;
+  relay.__headlessStatusFile = headlessStatusFile;
+  relay.__readHeadlessStatus = () => {
+    try { return JSON.parse(fs.readFileSync(headlessStatusFile, 'utf8')); } catch (_) { return null; }
+  };
   relay.__tmuxSends = () => commands.filter(c => /send-keys/.test(c));
   return relay;
 }
@@ -251,6 +280,122 @@ test('relaunch clears a wedged bash PS2 line before sending the command', () => 
 });
 
 // ---------------------------------------------------------------------------
+// Issue #2596 — the periodic memory-cleanup restart must fire ONCE per
+// threshold crossing, then deliver the next task. Before the fix, the #2203
+// readiness guard re-entered tmuxSendKeys() at the same, unchanged
+// tasksCompletedCount, the "count % RESET_EVERY_N === 0" predicate stayed true,
+// and a non-claude CLI restarted forever after task 3, never delivering task 4.
+// ---------------------------------------------------------------------------
+
+// Number of completed tasks that triggers the memory-cleanup restart. Mirrors
+// RESET_EVERY_N in the relay; the loop only manifests at a multiple of it.
+const RESET_EVERY_N = 3;
+
+// Count the queued-and-then-flushed prompt through the full re-entry cycle the
+// same way production does: tmuxSendKeys() queues + relaunches, the readiness
+// callback flushes, and flushPendingTask() calls tmuxSendKeys() again. A fixed
+// relay restarts once and delivers; the buggy relay restarts on every re-entry.
+function cycleReadyAndFlush(relay, maxCycles) {
+  // Each iteration models "CLI came back ready -> flush the queued prompt".
+  // If flushPendingTask() drains the queue and delivers, we're done. If the
+  // restart predicate re-fires it re-queues the same prompt, and we loop.
+  for (let i = 0; i < maxCycles; i++) {
+    if (!relay.getPendingTask()) return i; // delivered, queue drained
+    relay.setCliReady(true);
+    relay.flushPendingTask();
+  }
+  return maxCycles; // never drained within the budget -> infinite loop
+}
+
+test('non-claude periodic reset fires once at count 3 and then delivers the next task', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N); // just finished task 3
+    relay.setLastResetAtCount(-1);
+
+    const before = relay.__tmuxSends().length;
+    const NEXT_PROMPT = 'Work on the next task foo/bar#4.';
+
+    // First delivery attempt of task 4: the restart predicate is true, so this
+    // queues the prompt, relaunches, and returns without typing it.
+    relay.tmuxSendKeys(NEXT_PROMPT);
+    assert.strictEqual(relay.getPendingTask(), NEXT_PROMPT,
+      'the restart should queue the next prompt for the readiness callback');
+
+    // Drive the readiness-callback re-entry. A finite budget: if the reset is
+    // not one-shot this never drains and we hit the ceiling.
+    const REENTRY_BUDGET = 20;
+    const cycles = cycleReadyAndFlush(relay, REENTRY_BUDGET);
+    assert.ok(cycles < REENTRY_BUDGET,
+      `the periodic reset re-triggered indefinitely (issue #2596): the queued task was never delivered within ${REENTRY_BUDGET} readiness cycles`);
+
+    // Exactly one memory-cleanup restart happened for this crossing: the latch
+    // records the serviced count so re-entry cannot restart again.
+    assert.strictEqual(relay.getLastResetAtCount(), RESET_EVERY_N,
+      'the reset must latch the count it serviced so it does not re-fire');
+
+    // The next task was actually delivered as literal keystrokes.
+    const literalSends = relay.__tmuxSends().slice(before).filter(c => / -l /.test(c));
+    assert.ok(literalSends.some(c => c.includes('foo/bar#4')),
+      `task 4 must be delivered after the single reset; literal sends: ${JSON.stringify(literalSends)}`);
+    assert.strictEqual(relay.getPendingTask(), null, 'queue must be drained once the task is delivered');
+  } finally { teardown(relay); }
+});
+
+test('the periodic reset does not re-fire while the completed-task count is unchanged', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N);
+    relay.setLastResetAtCount(RESET_EVERY_N); // reset already serviced for count 3
+
+    const before = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    relay.tmuxSendKeys('Deliver me directly, no restart.');
+
+    const after = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    assert.strictEqual(after, before,
+      'no additional CLI restart may happen once the reset is latched for the current count');
+    const literalSends = relay.__tmuxSends().filter(c => / -l /.test(c));
+    assert.ok(literalSends.some(c => c.includes('Deliver me directly')),
+      'the prompt must be delivered directly when the reset is already latched');
+  } finally { teardown(relay); }
+});
+
+test('a later crossing (count 6) resets again after count 3 was latched', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(2 * RESET_EVERY_N); // count 6 — a new crossing
+    relay.setLastResetAtCount(RESET_EVERY_N);        // last reset was at count 3
+
+    relay.tmuxSendKeys('Task at the second crossing.');
+    assert.strictEqual(relay.getLastResetAtCount(), 2 * RESET_EVERY_N,
+      'a genuinely new threshold crossing must trigger the periodic reset again');
+  } finally { teardown(relay); }
+});
+
+test('claude backend never takes the periodic-reset path', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N);
+    relay.setLastResetAtCount(-1);
+
+    const beforeCc = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    relay.tmuxSendKeys('Claude task, no memory-cleanup restart.');
+    const afterCc = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    assert.strictEqual(afterCc, beforeCc, 'the periodic CLI restart must never apply to the claude backend');
+    assert.strictEqual(relay.getLastResetAtCount(), -1,
+      'claude must not touch the reset latch');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // Bug 3 — bounded retries, permanent give-up, and the relay staying available.
 // ---------------------------------------------------------------------------
 
@@ -362,6 +507,156 @@ test('restart backoff grows and is capped', () => {
     assert.ok(b2 > b1 && b3 > b2, `backoff must grow: ${b1}, ${b2}, ${b3}`);
     assert.strictEqual(relay.restartBackoffMs(50), relay.restartBackoffMs(60),
       'backoff must saturate at the cap');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#2538 — headless (non-interactive) delivery mode.
+//
+// A task must reach the backend CLI through a one-shot invocation (execFile),
+// never tmux send-keys; the exit status must drive task_complete / task_failed;
+// mode selection must be honoured; an error must be reported, never hung on.
+// ---------------------------------------------------------------------------
+
+function assignHeadlessTask(relay, overrides = {}) {
+  relay.handleMessage(JSON.stringify(Object.assign({
+    type: 'task_assign',
+    task_id: 'ct-h-1',
+    kind: 'issue',
+    repo: 'foo/bar',
+    number: 7,
+    title: 'headless task',
+    prompt: "Work on foo/bar#7. Fork with 'gh repo fork foo/bar' first.",
+  }, overrides)));
+}
+
+test('interactive is the default mode; headless is opt-in via CONTRIBUTOR_MODE', () => {
+  const def = loadRelay({ backend: 'claude' });
+  try {
+    assert.strictEqual(def.CONTRIBUTOR_MODE, def.MODE_INTERACTIVE,
+      'absent CONTRIBUTOR_MODE must select the interactive path');
+  } finally { teardown(def); }
+
+  const head = loadRelay({ backend: 'claude', mode: 'headless' });
+  try {
+    assert.strictEqual(head.CONTRIBUTOR_MODE, head.MODE_HEADLESS,
+      'CONTRIBUTOR_MODE=headless must select the headless path');
+  } finally { teardown(head); }
+});
+
+test('headless dispatch runs a one-shot execFile and never types into tmux', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless' });
+  try {
+    assignHeadlessTask(relay);
+
+    // The prompt went to a one-shot CLI invocation...
+    assert.strictEqual(relay.__execFileCalls.length, 1, 'expected exactly one one-shot invocation');
+    const call = relay.__execFileCalls[0];
+    assert.strictEqual(call.bin, 'claude', 'claude backend should run the claude binary');
+    assert.ok(call.args.includes('-p'), `claude headless must use print mode: ${JSON.stringify(call.args)}`);
+    assert.ok(call.args[call.args.length - 1].includes('foo/bar#7'),
+      'the prompt must be the trailing argv element (passed to execFile, never shell-quoted)');
+
+    // ...and NOT into a tmux pane. No literal send-keys on the headless path.
+    const literalSends = relay.__tmuxSends().filter(c => / -l /.test(c));
+    assert.deepStrictEqual(literalSends, [], `headless mode must not send-keys into tmux: ${literalSends}`);
+  } finally { teardown(relay); }
+});
+
+test('a successful headless run reports task_complete then ready, and status=done', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { stdout: 'opened https://github.com/foo/bar/pull/9\n' } });
+  try {
+    assignHeadlessTask(relay);
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'exit 0 must report task_complete');
+    assert.strictEqual(complete.task_id, 'ct-h-1');
+    assert.strictEqual(complete.pr_url, 'https://github.com/foo/bar/pull/9',
+      'a PR URL in the captured output should be reported');
+    assert.ok(relay.__sent.some(m => m.type === 'ready'), 'a completed headless task must free the relay for more work');
+    assert.strictEqual(relay.getCurrentTask(), null, 'currentTask must clear on completion');
+
+    const status = relay.__readHeadlessStatus();
+    assert.ok(status, 'a headless status file must be written for probes');
+    assert.strictEqual(status.state, relay.HEADLESS_STATE_WAITING,
+      'after completion the runner returns to the waiting state');
+  } finally { teardown(relay); }
+});
+
+test('a failing headless run reports task_failed rather than hanging', () => {
+  const err = new Error('boom'); err.code = 2;
+  const relay = loadRelay({ backend: 'copilot', mode: 'headless', execFileResult: { err, stderr: 'fatal: something\n' } });
+  try {
+    assignHeadlessTask(relay);
+    const failure = relay.__sent.find(m => m.type === 'task_failed');
+    assert.ok(failure, 'a non-zero exit must report task_failed (never a silent stall)');
+    assert.match(failure.reason, /exited with error|code 2/i);
+    assert.ok(relay.__sent.some(m => m.type === 'ready'), 'the relay must stay available after a failed headless task');
+    assert.strictEqual(relay.getCurrentTask(), null, 'currentTask must clear on failure');
+
+    const status = relay.__readHeadlessStatus();
+    assert.strictEqual(status.state, relay.HEADLESS_STATE_FAILED, 'status must record the failure for a probe');
+  } finally { teardown(relay); }
+});
+
+test('a headless timeout kill is reported as a failure, not a completion', () => {
+  const err = new Error('timeout'); err.killed = true; err.signal = 'SIGKILL';
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { err } });
+  try {
+    assignHeadlessTask(relay);
+    const failure = relay.__sent.find(m => m.type === 'task_failed');
+    assert.ok(failure, 'a timed-out headless child must report task_failed');
+    assert.match(failure.reason, /exceeded.*min|killed/i);
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete'), 'a killed task must never look completed');
+  } finally { teardown(relay); }
+});
+
+test('headless refuses an unsupported backend loudly instead of stalling', () => {
+  const relay = loadRelay({ backend: 'goose', mode: 'headless' });
+  try {
+    assert.strictEqual(relay.headlessSupportsBackend(), false, 'goose has no one-shot mode');
+    assignHeadlessTask(relay);
+    // No CLI was ever spawned...
+    assert.strictEqual(relay.__execFileCalls.length, 0, 'an unsupported backend must not spawn a CLI');
+    // ...and the task was failed permanently rather than left hanging.
+    const failure = relay.__sent.find(m => m.type === 'task_failed');
+    assert.ok(failure, 'an unsupported backend must fail the task, not silently accept it');
+    assert.strictEqual(failure.permanent, true, 'no other contributor with this backend can run it either');
+    assert.match(failure.reason, /no headless|non-interactive/i);
+  } finally { teardown(relay); }
+});
+
+test('buildHeadlessArgv maps each supported backend to its one-shot invocation', () => {
+  const claude = loadRelay({ backend: 'claude', mode: 'headless' });
+  try {
+    const a = claude.buildHeadlessArgv('do the thing');
+    assert.strictEqual(a.bin, 'claude');
+    assert.ok(a.args.includes('-p') && a.args[a.args.length - 1] === 'do the thing');
+  } finally { teardown(claude); }
+
+  const codex = loadRelay({ backend: 'codex', mode: 'headless' });
+  try {
+    const a = codex.buildHeadlessArgv('do the thing');
+    assert.strictEqual(a.bin, 'codex');
+    assert.ok(a.args.includes('exec') && a.args[a.args.length - 1] === 'do the thing',
+      `codex must use 'exec' one-shot: ${JSON.stringify(a.args)}`);
+  } finally { teardown(codex); }
+
+  const goose = loadRelay({ backend: 'goose', mode: 'headless' });
+  try {
+    assert.strictEqual(goose.buildHeadlessArgv('x'), null, 'unsupported backend has no argv');
+  } finally { teardown(goose); }
+});
+
+test('interactive mode still delivers via tmux send-keys (unchanged default path)', () => {
+  const relay = loadRelay({ backend: 'copilot' }); // default interactive
+  try {
+    relay.setCliReady(true);
+    assignHeadlessTask(relay); // reuse the task shape; mode is interactive here
+    // Interactive path uses tmux, not execFile.
+    assert.strictEqual(relay.__execFileCalls.length, 0, 'interactive mode must not use the one-shot runner');
+    const literalSends = relay.__tmuxSends().filter(c => / -l /.test(c));
+    assert.ok(literalSends.some(c => c.includes('foo/bar#7')),
+      'interactive mode must still type the prompt into tmux');
   } finally { teardown(relay); }
 });
 

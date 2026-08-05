@@ -150,6 +150,12 @@ type Server struct {
 
 	audit *AuditLog
 
+	// presenceEngagedAt maps a username to the last time their browser
+	// reported ENGAGED presence (tab visible + recent input; see presence.go).
+	// Lazily initialized under presenceMu, freshness-pruned on read.
+	presenceMu        sync.Mutex
+	presenceEngagedAt map[string]time.Time
+
 	// promptHistory stores the fully-expanded kick prompts delivered to each
 	// agent, so an owner can review what their agents were actually told.
 	promptHistory *PromptHistory
@@ -160,6 +166,14 @@ type Server struct {
 	cachedLatestAt      time.Time
 
 	contributeHub *ContributeWSHub
+
+	// contributeMetrics holds the persistent hourly time-series behind the
+	// Operations + Leaderboard sparklines (queue depth, tasks/hour, fleet size,
+	// per-user completions). Lazily built via contributeMetricsStore() so the
+	// zero-value Server needs no constructor change; the rollup goroutine is
+	// started by StartContributeMetrics(ctx). See contribute_metrics.go.
+	contributeMetricsOnce sync.Once
+	contributeMetrics     *metricsStore
 
 	inferenceMu        sync.RWMutex
 	inferenceEndpoints map[string][]string // backend id → list of base URLs

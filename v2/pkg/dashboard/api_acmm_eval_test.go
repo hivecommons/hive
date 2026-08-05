@@ -36,7 +36,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 	}{
 		{
 			// codebaseLevel is 0 with no results, and acmmLevelNames[0] is
-			// "Prerequisites" -- the "None" fallback only fires when a level
+			// "Prerequisites not met" -- the "None" fallback only fires when a level
 			// has no name entry at all, which level 0 always has.
 			name:           "zero criteria",
 			results:        nil,
@@ -44,7 +44,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 			wantPassed:     0,
 			wantLevelCount: 0,
 			wantCodebase:   0,
-			wantLevelName:  "Prerequisites",
+			wantLevelName:  "Prerequisites not met",
 		},
 		{
 			name: "all pass single level promotes L0 to L1",
@@ -56,7 +56,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 			wantPassed:     2,
 			wantLevelCount: 1,
 			wantCodebase:   1,
-			wantLevelName:  "Foundational",
+			wantLevelName:  "Inception",
 		},
 		{
 			name: "all fail stays at level 0, not promoted",
@@ -68,7 +68,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 			wantPassed:     0,
 			wantLevelCount: 2,
 			wantCodebase:   0,
-			wantLevelName:  "Prerequisites",
+			wantLevelName:  "Prerequisites not met",
 		},
 		{
 			name: "mixed: L0 passes, L2 fails -> stop climb at L1",
@@ -81,7 +81,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 			wantPassed:     1,
 			wantLevelCount: 2,
 			wantCodebase:   1,
-			wantLevelName:  "Foundational",
+			wantLevelName:  "Inception",
 		},
 		{
 			name: "mixed: L0 and L2 both pass, L3 fails -> climbs to L2",
@@ -94,7 +94,7 @@ func TestScoreResults_TableDriven(t *testing.T) {
 			wantPassed:     2,
 			wantLevelCount: 3,
 			wantCodebase:   2,
-			wantLevelName:  "Instructed",
+			wantLevelName:  "Advisory",
 		},
 	}
 
@@ -507,7 +507,7 @@ func TestHandleACMMEvaluation_PrimedCacheHitSkipsReEvaluation(t *testing.T) {
 
 	primed := &ACMMEvaluation{
 		CodebaseLevel:     3,
-		CodebaseLevelName: "Measured",
+		CodebaseLevelName: "Quality-Gated",
 		CriteriaTotal:     10,
 		CriteriaPassed:    8,
 		LastEvaluatedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -665,7 +665,7 @@ func TestHandleACMMCreateIssue_BodyFormattingAndLabels(t *testing.T) {
 	issueBody := body["body"].(string)
 	for _, want := range []string{
 		"## ACMM Gap: " + criterion.Name,
-		"**Level:** L0 Prerequisites",
+		"**Level:** L0 Prerequisites not met",
 		"**Category:** prerequisite",
 		"**Criterion ID:** `" + criterion.ID + "`",
 		"Opened by Hive ACMM Evaluation",

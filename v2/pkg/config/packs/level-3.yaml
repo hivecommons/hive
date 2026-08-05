@@ -1,6 +1,6 @@
 level: 3
-name: Measured
-description: 'Feedback becomes visible. Quality opens issues AND hold-gated PRs about
+name: Quality-Gated
+description: 'Feedback becomes visible (formerly ''Measured''). Quality opens issues AND hold-gated PRs about
   testing gaps. All PRs get ''hold'' label; no agent merges. All other agents remain
   advisory (beads only). CI-maintainer joins to monitor build health.
 
