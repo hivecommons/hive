@@ -524,6 +524,49 @@ func repoRefHost(s string) string {
 	return ""
 }
 
+// repoDisplayLine derives the human-readable "owner/repo" project line shown in
+// My Hives (the name-cell second line) and in audit/timeline strings, from a
+// hive's org + primary repo. It is the doubling-safe replacement for the naive
+// org + "/" + primaryRepo join.
+//
+// Why a join is not enough: primaryRepo is stored VERBATIM and, for some hives,
+// already carries a full "owner/repo" path rather than a bare repo name. Live
+// fleet evidence: a GitHub Pages / GHE hive was recorded with
+//
+//	org         = "castrojo.github.io"   (a HOST wrongly parsed into the org field)
+//	primaryRepo = "castrojo/endusers"    (already owner/repo)
+//
+// so org + "/" + primaryRepo rendered "castrojo.github.io/castrojo/endusers" —
+// the host masquerading as an org, with the owner doubled. When primaryRepo
+// already contains a slash it is a complete path and is returned as-is; only a
+// bare repo name is qualified with the org. The result never contains a
+// dangling slash: with one half known it returns that half alone, with neither
+// it returns "".
+//
+//	repoDisplayLine("myorg", "repo")               -> "myorg/repo"
+//	repoDisplayLine("castrojo.github.io", "castrojo/endusers") -> "castrojo/endusers"
+//	repoDisplayLine("myorg", "")                   -> "myorg"
+//	repoDisplayLine("", "owner/repo")              -> "owner/repo"
+//	repoDisplayLine("", "")                        -> ""
+//
+// The dashboard JS hiveLabel() mirrors this logic; keep the two in sync.
+func repoDisplayLine(org, primaryRepo string) string {
+	org = strings.TrimSpace(org)
+	primaryRepo = strings.TrimSpace(primaryRepo)
+	if primaryRepo == "" {
+		return org
+	}
+	// A primaryRepo that already carries an "owner/repo" path is complete;
+	// prefixing the org would double the owner (the github.io/GHE defect).
+	if strings.Contains(primaryRepo, "/") {
+		return primaryRepo
+	}
+	if org == "" {
+		return primaryRepo
+	}
+	return org + "/" + primaryRepo
+}
+
 // sameGitHubHost reports whether two host labels refer to the same GitHub. Both
 // "" and "github.com" mean public GitHub, so they are equal; a GHE host
 // ("github.ibm.com") equals only itself. Case-insensitive.
