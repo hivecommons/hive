@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -141,6 +142,36 @@ func clearAssignedRequestForHive(hiveID string) string {
 	return ""
 }
 
+// hiveHasAssignedIdentity reports whether a placeholder has been handed a REAL
+// tenant identity — a non-placeholder org or any primary_repo. A clean available
+// slot carries only the synthetic "available-<id>" org (placeholderOrgPrefix) and
+// an empty primary_repo, so it returns false. This is the exact mirror of the
+// enrichFromSaaSMeta / dashboard AssignedUnclaimed gate, kept here so the handler
+// and the self-heal sweep accept precisely the states the UI offers Reset for.
+func hiveHasAssignedIdentity(h *SaaSHive) bool {
+	hasRealOrg := h.Org != "" && !strings.HasPrefix(h.Org, placeholderOrgPrefix)
+	return hasRealOrg || h.PrimaryRepo != ""
+}
+
+// isResettableWedge reports whether a placeholder is in the assigned-but-unclaimed
+// wedge that Reset assignment targets: NOT a delivered claim (a delivered claim is
+// a LIVE hive) AND NOT a clean available slot, but either explicitly
+// Status=statusAssigned OR carrying a real assigned identity (org/primary_repo)
+// under any/no status. It broadens the original Status==statusAssigned gate to
+// also cover the null-Status-but-org-set legacy wedge (the live vllmd-13 class),
+// while still refusing a delivered claim and a genuinely-clean available slot.
+func isResettableWedge(h *SaaSHive) bool {
+	if h.ClaimDelivered {
+		return false
+	}
+	hasIdentity := hiveHasAssignedIdentity(h)
+	isCleanAvailable := h.Status == statusAvailable && !hasIdentity
+	if isCleanAvailable {
+		return false
+	}
+	return h.Status == statusAssigned || hasIdentity
+}
+
 // handleResetAssignment returns an assigned-but-unclaimed placeholder to the
 // AVAILABLE pool (admin-only). It is the escape hatch for a placeholder wedged
 // between the two claim paths: handleApproveProvision requires a PENDING request
@@ -148,11 +179,13 @@ func clearAssignedRequestForHive(hiveID string) string {
 // (this one is statusAssigned), so an assignment whose spoke never reports the
 // project back — ClaimDelivered stuck false — has no other way out.
 //
-// GUARD: it only ever touches a hive at Status=statusAssigned && !ClaimDelivered.
-// A delivered claim (ClaimDelivered==true) is a LIVE hive and is refused (409):
-// resetting it would disrupt a working tenant. An already-available slot is a
-// no-op (409). Both are the conservative choice — reset is strictly for the
-// wedged middle state.
+// GUARD: it accepts a hive in the assigned-but-unclaimed wedge (isResettableWedge)
+// — Status=statusAssigned OR a real org/primary_repo written under any/no status
+// (the null-Status legacy wedge, e.g. vllmd-13), and always !ClaimDelivered. A
+// delivered claim (ClaimDelivered==true) is a LIVE hive and is refused (409):
+// resetting it would disrupt a working tenant. A genuinely-clean available slot
+// (no real identity) is a no-op (409). Both refusals are the conservative choice —
+// reset is strictly for the wedged middle state.
 func (s *HubServer) handleResetAssignment(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	admin := s.getAuthUser(r) // requireAdmin-gated
@@ -162,15 +195,18 @@ func (s *HubServer) handleResetAssignment(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Status == statusAvailable {
-		http.Error(w, `{"error":"hive is already an available placeholder — nothing to reset"}`, http.StatusConflict)
-		return
-	}
 	if h.ClaimDelivered {
 		http.Error(w, `{"error":"hive claim already delivered — reset would disrupt a live hive; deprovision instead"}`, http.StatusConflict)
 		return
 	}
-	if h.Status != statusAssigned {
+	// A clean available slot (statusAvailable with no real assigned identity) has
+	// nothing to reset. A hive that is neither the wedge nor clean-available (e.g.
+	// provisioning/error with no identity) is likewise not a reset target.
+	if !isResettableWedge(h) {
+		if h.Status == statusAvailable {
+			http.Error(w, `{"error":"hive is already an available placeholder — nothing to reset"}`, http.StatusConflict)
+			return
+		}
 		http.Error(w, `{"error":"only an assigned-but-unclaimed placeholder can be reset"}`, http.StatusConflict)
 		return
 	}
@@ -210,11 +246,21 @@ func (s *HubServer) handleResetAssignment(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// sweepStuckAssignments auto-resets any placeholder stuck at
-// Status=statusAssigned && !ClaimDelivered for longer than
-// assignStuckResetTimeout, so an assigned-but-unclaimed slot can never dead-end
-// silently. It is the automatic counterpart to handleResetAssignment and applies
-// the identical guard and field transitions. Every reset is logged.
+// sweepStuckAssignments auto-resets any placeholder stuck in the
+// assigned-but-unclaimed wedge (isResettableWedge && !ClaimDelivered) for longer
+// than assignStuckResetTimeout, so an assigned-but-unclaimed slot can never
+// dead-end silently. It is the automatic counterpart to handleResetAssignment and
+// applies the identical guard and field transitions. Every reset is logged.
+//
+// AGE SOURCE. A proper assign stamps AssignedAt, so its age is the time since that
+// stamp. The null-Status legacy wedge (real org/repo, Status=="", the vllmd-13
+// class) typically has NO AssignedAt — its age is genuinely unknowable. Rather
+// than reset it on a guessed age (which risks yanking a brand-new,
+// legitimately-mid-assignment slot before its first heartbeat), the sweep uses
+// CreatedAt as a conservative floor for such identity-bearing wedges: only a slot
+// created longer ago than the timeout is auto-reset, and a fresh assign always
+// carries an AssignedAt anyway so it takes the precise path. A wedge with neither
+// stamp is left for the operator's manual Reset (still reachable via the UI/API).
 func (s *HubServer) sweepStuckAssignments() {
 	now := time.Now()
 
@@ -226,16 +272,23 @@ func (s *HubServer) sweepStuckAssignments() {
 	var done []reset
 
 	for _, sh := range listSaaSHives() {
-		if sh.Status != statusAssigned || sh.ClaimDelivered {
+		shCopy := sh
+		if !isResettableWedge(&shCopy) {
 			continue
 		}
-		// A hive with no AssignedAt stamp predates the stamp (or was written by an
-		// older path); its age is unknowable, so leave it for the operator's manual
-		// reset rather than reset it on a guessed age.
-		if sh.AssignedAt == "" {
+		// Determine the wedge's age. Prefer AssignedAt (stamped by the current
+		// assign paths); for a null-Status identity wedge that predates the stamp,
+		// fall back to CreatedAt as a conservative floor. A wedge with neither stamp
+		// has an unknowable age, so leave it for the operator's manual reset rather
+		// than reset it on a guessed age.
+		ageStamp := sh.AssignedAt
+		if ageStamp == "" {
+			ageStamp = sh.CreatedAt
+		}
+		if ageStamp == "" {
 			continue
 		}
-		assignedAt, err := time.Parse(time.RFC3339, sh.AssignedAt)
+		assignedAt, err := time.Parse(time.RFC3339, ageStamp)
 		if err != nil {
 			continue
 		}
@@ -245,7 +298,7 @@ func (s *HubServer) sweepStuckAssignments() {
 		}
 
 		h := loadSaaSHive(sh.ID) // reload to mutate the authoritative record
-		if h == nil || h.Status != statusAssigned || h.ClaimDelivered {
+		if h == nil || !isResettableWedge(h) {
 			continue
 		}
 		prevOwner := h.Owner

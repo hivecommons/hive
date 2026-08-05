@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -319,5 +320,235 @@ func TestSweepStuckAssignments(t *testing.T) {
 	}
 	if got := loadSaaSHive("hosted-unstamped"); got.Status != statusAssigned {
 		t.Errorf("unstamped hive Status = %q, want left assigned (unknowable age)", got.Status)
+	}
+}
+
+// nullStatusWedge returns the vllmd-13 class: a placeholder handed a REAL org and
+// primary_repo (org=z-innersource, repo=AutoIPL) but with Status left NULL/"" and
+// ClaimDelivered false — the exact live wedge whose Reset button was HIDDEN before
+// the predicate was broadened, because Status != statusAssigned.
+func nullStatusWedge(id string) *SaaSHive {
+	return &SaaSHive{
+		ID:             id,
+		Owner:          "z-owner",
+		Org:            "z-innersource",
+		Repos:          []string{"AutoIPL"},
+		PrimaryRepo:    "AutoIPL",
+		ProjectName:    "AutoIPL",
+		ACMMLevel:      2,
+		Status:         "", // never persisted as "assigned" — the whole bug
+		ClaimDelivered: false,
+		ClusterID:      "hive-oke",
+		// No AssignedAt (the wedge never got the stamp); CreatedAt is what the sweep
+		// ages it by.
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// cleanAvailablePlaceholder returns a seeded pool slot: statusAvailable, admin
+// owner, the synthetic "available-<id>" org and no primary_repo. Reset must NEVER
+// offer / act on this — there is nothing to reset.
+func cleanAvailablePlaceholder(id string) *SaaSHive {
+	return &SaaSHive{
+		ID:        id,
+		Owner:     hubAdminUsername,
+		Org:       placeholderOrgPrefix + id,
+		Status:    statusAvailable,
+		ClusterID: "hive-oke",
+	}
+}
+
+// TestAssignedUnclaimedPredicate covers the broadened enrichFromSaaSMeta gate:
+// TRUE for a Status==assigned wedge, a null-Status-but-real-org wedge, and a
+// (defensive) available-status-but-real-org wedge; FALSE for a clean available
+// slot and for a delivered claim.
+func TestAssignedUnclaimedPredicate(t *testing.T) {
+	// The predicate as shipped in enrichFromSaaSMeta, extracted so the test asserts
+	// the exact boolean rather than routing through a full dashboard render.
+	assignedUnclaimed := func(sh *SaaSHive) bool {
+		hasRealOrg := sh.Org != "" && !strings.HasPrefix(sh.Org, placeholderOrgPrefix)
+		notClaimed := !sh.ClaimDelivered
+		hasAssignedIdentity := hasRealOrg || sh.PrimaryRepo != ""
+		isAssignedStatus := sh.Status == statusAssigned
+		isCleanAvailable := sh.Status == statusAvailable && !hasAssignedIdentity
+		return notClaimed && !isCleanAvailable && (isAssignedStatus || hasAssignedIdentity)
+	}
+
+	cases := []struct {
+		name string
+		hive *SaaSHive
+		want bool
+	}{
+		{"assigned+!claim", stuckPlaceholder("a"), true},
+		{"nullStatus+realOrg+!claim", nullStatusWedge("b"), true},
+		{
+			"available-status+realOrg+!claim",
+			&SaaSHive{ID: "c", Org: "z-innersource", PrimaryRepo: "AutoIPL", Status: statusAvailable},
+			true,
+		},
+		{"cleanAvailable", cleanAvailablePlaceholder("d"), false},
+		{
+			"cleanAvailable-emptyOrg",
+			&SaaSHive{ID: "e", Owner: hubAdminUsername, Status: statusAvailable},
+			false,
+		},
+		{
+			"claimDelivered",
+			func() *SaaSHive { h := stuckPlaceholder("f"); h.ClaimDelivered = true; return h }(),
+			false,
+		},
+	}
+	for _, tc := range cases {
+		if got := assignedUnclaimed(tc.hive); got != tc.want {
+			t.Errorf("%s: AssignedUnclaimed = %v, want %v (hive=%+v)", tc.name, got, tc.want, tc.hive)
+		}
+	}
+}
+
+// TestIsResettableWedge asserts the handler/sweep gate matches the UI predicate:
+// same TRUE set, same FALSE set.
+func TestIsResettableWedge(t *testing.T) {
+	cases := []struct {
+		name string
+		hive *SaaSHive
+		want bool
+	}{
+		{"assigned+!claim", stuckPlaceholder("a"), true},
+		{"nullStatus+realOrg+!claim", nullStatusWedge("b"), true},
+		{"cleanAvailable", cleanAvailablePlaceholder("d"), false},
+		{
+			"cleanAvailable-emptyOrg",
+			&SaaSHive{ID: "e", Owner: hubAdminUsername, Status: statusAvailable},
+			false,
+		},
+		{
+			"claimDelivered",
+			func() *SaaSHive { h := stuckPlaceholder("f"); h.ClaimDelivered = true; return h }(),
+			false,
+		},
+	}
+	for _, tc := range cases {
+		if got := isResettableWedge(tc.hive); got != tc.want {
+			t.Errorf("%s: isResettableWedge = %v, want %v (hive=%+v)", tc.name, got, tc.want, tc.hive)
+		}
+	}
+}
+
+// TestResetAssignmentNullStatusWedge is the core fix: the handler now SUCCEEDS on
+// the null-Status-but-real-org wedge and returns it to the clean available shape.
+func TestResetAssignmentNullStatusWedge(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, hubAdminUsername)
+	s := newResetTestHub()
+
+	const id = "hosted-available-vllmd-13"
+	if err := saveSaaSHive(nullStatusWedge(id)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser(http.MethodPost, "/reset-assignment", "", hubAdminUsername), "id", id)
+	s.handleResetAssignment(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset of null-Status wedge status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	got := loadSaaSHive(id)
+	if got == nil {
+		t.Fatal("hive vanished after reset")
+	}
+	// Ends up clean/available regardless of the prior NULL status.
+	if got.Status != statusAvailable {
+		t.Errorf("Status = %q, want %q", got.Status, statusAvailable)
+	}
+	if !strings.HasPrefix(got.Org, placeholderOrgPrefix) {
+		t.Errorf("Org = %q, want %q-prefixed", got.Org, placeholderOrgPrefix)
+	}
+	if got.PrimaryRepo != "" || len(got.Repos) != 0 {
+		t.Errorf("repos not cleared: PrimaryRepo=%q Repos=%v", got.PrimaryRepo, got.Repos)
+	}
+	if got.Owner != hubAdminUsername {
+		t.Errorf("Owner = %q, want admin", got.Owner)
+	}
+	if !isReassignable(id) {
+		t.Error("null-Status wedge not re-assignable after reset")
+	}
+}
+
+// TestResetAssignmentRefusedCleanAvailable: a clean available placeholder (real
+// available shape, no assigned identity) is still a 409 no-op after broadening.
+func TestResetAssignmentRefusedCleanAvailable(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, hubAdminUsername)
+	s := newResetTestHub()
+
+	const id = "hosted-clean-available"
+	if err := saveSaaSHive(cleanAvailablePlaceholder(id)); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser(http.MethodPost, "/reset-assignment", "", hubAdminUsername), "id", id)
+	s.handleResetAssignment(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("reset of clean-available status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if got := loadSaaSHive(id); !strings.HasPrefix(got.Org, placeholderOrgPrefix) {
+		t.Errorf("clean-available slot mutated: %+v", got)
+	}
+}
+
+// TestSweepStuckAssignmentsNullStatusWedge: the self-heal sweep resets a
+// null-Status wedge once it is older than the timeout (aged by CreatedAt), and
+// leaves a fresh one, a clean-available slot, and a delivered claim alone.
+func TestSweepStuckAssignmentsNullStatusWedge(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, hubAdminUsername)
+	s := newResetTestHub()
+
+	// Null-status wedge created long ago -> reset (aged by CreatedAt).
+	old := nullStatusWedge("hosted-vllmd-old")
+	old.CreatedAt = time.Now().Add(-2 * assignStuckResetTimeout).UTC().Format(time.RFC3339)
+	if err := saveSaaSHive(old); err != nil {
+		t.Fatal(err)
+	}
+
+	// Null-status wedge created just now -> left alone (within the window). Guards
+	// against yanking a brand-new, legitimately-mid-assignment slot.
+	fresh := nullStatusWedge("hosted-vllmd-fresh")
+	fresh.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSaaSHive(fresh); err != nil {
+		t.Fatal(err)
+	}
+
+	// Clean available slot -> never a sweep target.
+	clean := cleanAvailablePlaceholder("hosted-clean")
+	if err := saveSaaSHive(clean); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delivered claim (real org, old CreatedAt) -> a live hive, left alone.
+	live := nullStatusWedge("hosted-live-null")
+	live.ClaimDelivered = true
+	live.CreatedAt = time.Now().Add(-2 * assignStuckResetTimeout).UTC().Format(time.RFC3339)
+	if err := saveSaaSHive(live); err != nil {
+		t.Fatal(err)
+	}
+
+	s.sweepStuckAssignments()
+
+	if got := loadSaaSHive("hosted-vllmd-old"); got.Status != statusAvailable || !strings.HasPrefix(got.Org, placeholderOrgPrefix) {
+		t.Errorf("old null-status wedge not auto-reset: %+v", got)
+	}
+	if got := loadSaaSHive("hosted-vllmd-fresh"); got.Org != "z-innersource" {
+		t.Errorf("fresh null-status wedge was swept within window: %+v", got)
+	}
+	if got := loadSaaSHive("hosted-clean"); !strings.HasPrefix(got.Org, placeholderOrgPrefix) || got.Status != statusAvailable {
+		t.Errorf("clean-available slot was swept: %+v", got)
+	}
+	if got := loadSaaSHive("hosted-live-null"); !got.ClaimDelivered || got.Org != "z-innersource" {
+		t.Errorf("delivered claim was swept: %+v", got)
 	}
 }
