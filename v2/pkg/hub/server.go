@@ -1304,7 +1304,25 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					entry.UpgradeFailedAt = h.UpgradeFailedAt
 				}
 			}
-			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
+			// A floating-tag deployment (…-latest) pulls the tag on every
+			// rollout and therefore CANNOT land on a specific historical
+			// commit — it lands on whatever CI last published. So its reported
+			// GitHash chases an ever-advancing branch HEAD and may equal
+			// neither the armed target NOR the poller's registryLatestSHA at the
+			// instant this beat arrives (the two caches can be a commit apart
+			// while CI is active). Comparing SHAs at all is the wrong test for
+			// these hives: a non-upgrading heartbeat is itself proof the rollout
+			// finished onto the latest tag. Treat that as complete, or the hive
+			// stays latched "Upgrading" and the stale-upgrade sweep re-arms and
+			// re-rolls its pod every staleUpgradeTimeout forever. Commit-pinned
+			// hives keep the exact-SHA test below — their tag resolves to one
+			// build, so "did it reach the target" is a meaningful question.
+			floatingAtLatest := h.Upgrading && !payload.Upgrading && imageTagIsMutable(payload.ImageRef)
+			if floatingAtLatest {
+				entry.Upgrading = false
+				entry.UpgradeTarget = ""
+				entry.OrphanedUpgradeSweeps = 0
+			} else if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
 				// upgrade completed (image may have advanced past the
 				// original target before the spoke pulled it). sameCommit

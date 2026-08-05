@@ -4135,7 +4135,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 	hives := listSaaSHives()
 	for _, h := range hives {
 		s.mu.RLock()
-		var currentSHA, branch, upgradeTarget string
+		var currentSHA, branch, upgradeTarget, imageRef string
 		var alreadyUpgrading bool
 		var upgradeStartedAt time.Time
 		for _, reg := range s.registry.Hives {
@@ -4145,6 +4145,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				alreadyUpgrading = reg.Upgrading
 				upgradeTarget = reg.UpgradeTarget
 				upgradeStartedAt = reg.UpgradeStartedAt
+				imageRef = reg.ImageRef
 				break
 			}
 		}
@@ -4153,6 +4154,34 @@ func (s *HubServer) triggerAutoUpgrades() {
 			branch = "v2"
 		}
 		if alreadyUpgrading {
+			// Floating-tag convergence. A hive whose Deployment tracks a MUTABLE
+			// tag (…-latest) has no stable target commit: a restart re-pulls the
+			// tag and lands on whatever CI last published, so its reported GitHash
+			// chases an ever-moving branch HEAD and can never equal the SPECIFIC
+			// commit the hub armed. Left to the stale-recovery path below, that
+			// hive is re-armed and rolled every staleUpgradeTimeout forever —
+			// restarting the spoke pod each cycle for no benefit. Once such a hive
+			// reports it is running the image-verified latest for its branch, it IS
+			// up to date; clear the latch here instead of advancing the target.
+			// Commit-pinned hives are unaffected — their tag resolves to exactly
+			// one build, so the specific-target check still governs them.
+			registryLatestSHA := getLatestSHAForBranch(branch)
+			if imageTagIsMutable(imageRef) && registryLatestSHA != "" &&
+				sameCommit(currentSHA, registryLatestSHA) {
+				s.mu.Lock()
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == h.ID {
+						s.registry.Hives[i].Upgrading = false
+						s.registry.Hives[i].UpgradeTarget = ""
+						break
+					}
+				}
+				delete(s.heartbeatUpgrade, h.ID)
+				s.mu.Unlock()
+				s.logger.Info("clearing upgrade latch — floating-tag hive is at latest",
+					"hive", h.ID, "branch", branch, "sha", currentSHA, "image_ref", imageRef)
+				continue
+			}
 			// Latched-upgrade recovery runs for EVERY hive, deliberately BEFORE
 			// the AutoUpgrade gate below (#2476). The registry latch
 			// (Upgrading/UpgradeTarget/UpgradeStartedAt) is durable, but

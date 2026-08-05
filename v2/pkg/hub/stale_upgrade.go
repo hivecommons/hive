@@ -70,7 +70,17 @@ type upgradeAttemptEvidence struct {
 // Elapsed time alone is NOT sufficient and is not used alone here: a slow image
 // pull looks identical to an orphan if you only look at the clock. Both
 // conditions must hold.
-func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttemptEvidence {
+// latestSHA is the image-verified latest short SHA for entry's branch (empty
+// when unknown). It exists solely to recognise a FLOATING-TAG hive that has
+// already converged: such a hive tracks a mutable …-latest tag, so a restart
+// re-pulls the tag and it can only ever land on the newest build — never on the
+// SPECIFIC historical commit the hub armed as UpgradeTarget. Judged by the
+// exact-target test below, it would look orphaned on every sweep, get re-armed
+// and re-rolled (restarting its pod) up to maxOrphanedUpgradeSweeps, then be
+// wrongly reported as a permanent UpgradeFailed — while it was up to date the
+// whole time. Passing latestSHA lets the evaluation see "floating tag already
+// at latest" and treat it as converged, not orphaned.
+func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA string) upgradeAttemptEvidence {
 	var ev upgradeAttemptEvidence
 
 	if !entry.Upgrading {
@@ -80,6 +90,15 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttempt
 	// heartbeat path, which clears Upgrading and records the cause. Leave that
 	// terminal state alone — it carries a known reason this sweep would erase.
 	if entry.UpgradeFailed {
+		return ev
+	}
+	// Floating-tag hive already on the latest build for its branch: converged,
+	// not orphaned. A mutable tag has no stable target commit, so the exact
+	// UpgradeTarget test further down can never confirm it and would keep
+	// sweeping/re-rolling it forever. The heartbeat completion path clears the
+	// latch, so leave it alone here.
+	if imageTagIsMutable(entry.ImageRef) && latestSHA != "" &&
+		sameCommit(entry.GitHash, latestSHA) {
 		return ev
 	}
 	// A zero UpgradeStartedAt with Upgrading still latched is not a fresh
@@ -169,7 +188,14 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
-		ev := evaluateOrphanedUpgrade(h, now)
+		// Resolve the image-verified latest for this hive's branch so the
+		// evaluation can recognise a floating-tag hive that is already at latest
+		// (and must not be swept/re-rolled toward a specific historical target).
+		branch := h.GitBranch
+		if branch == "" {
+			branch = "v2"
+		}
+		ev := evaluateOrphanedUpgrade(h, now, getLatestSHAForBranch(branch))
 		if !ev.orphaned {
 			continue
 		}

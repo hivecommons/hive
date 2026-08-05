@@ -218,11 +218,18 @@ const selfUpgradeTargetAnnotation = "hive.kubestellar.io/upgrade-target-sha"
 //
 // This narrows but does not eliminate the race: if CI republishes the tag
 // between the hub choosing a target and the kubelet pulling, the pod still
-// lands on the newer build. That is benign and self-correcting — the hub
-// accepts "at target OR at registry-latest" as success (server.go), so an
-// overshoot completes the upgrade rather than wedging it. What it must never do
-// again is silently land on the WRONG build with no record of what was asked
-// for; the annotation is that record.
+// lands on the newer build. That overshoot is benign only because the hub no
+// longer judges a floating-tag hive by whether it reached a SPECIFIC commit —
+// a floating tag has no stable target, so that test could never converge while
+// the branch kept moving (the pod would report a SHA that is neither the old
+// nor the requested one, stay latched "Upgrading", and be re-armed and
+// re-rolled by the stale-upgrade sweep every staleUpgradeTimeout). Instead the
+// hub treats a floating-tag hive's non-upgrading heartbeat as completion
+// (server.go completion check) and, in the sweep, clears the latch once such a
+// hive reports the image-verified latest for its branch rather than advancing
+// the target (saas.go triggerAutoUpgrades). What this function must never do is
+// silently land on the WRONG build with no record of what was asked for; the
+// annotation is that record.
 func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (needsRestart bool, err error) {
 	if targetSHA == "" {
 		// No target to record. Fall back to the historical behaviour rather

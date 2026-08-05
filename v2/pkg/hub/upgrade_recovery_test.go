@@ -176,6 +176,48 @@ func TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule(t *testing.
 	}
 }
 
+// TestTriggerAutoUpgradesClearsFloatingTagAtLatest is the triggerAutoUpgrades
+// half of the floating-tag fix. A floating-tag hive that is already on its
+// branch-latest build but latched Upgrading toward an older specific target
+// must have the latch CLEARED — not advanced to a newer target and re-rolled.
+// This is the branch of the arm→stale→advance→rollout loop that kept restarting
+// the spoke pod: the target advance and rolloutRestartHive lived here.
+func TestTriggerAutoUpgradesClearsFloatingTagAtLatest(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
+	saveSaaSHive(&SaaSHive{ID: "floating-1", Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "remote"})
+	resetSHACaches(t)
+	latestSHAMu.Lock()
+	latestSHAByBranch["v4"] = branchSHAInfo{SHA: "9999abc"}
+	latestSHAMu.Unlock()
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "floating-1", GitBranch: "v4", GitHash: "9999abc", // already at branch-latest
+		ImageRef:      "ghcr.io/kubestellar/hive:v4-latest",
+		Upgrading:     true,
+		UpgradeTarget: "fc32ae4", // older armed target the floating tag never lands on
+		// Stale on purpose: without the fix this triggers the advance+rollout.
+		UpgradeStartedAt: time.Now().Add(-30 * time.Minute),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.registry.Hives[0].Upgrading {
+		t.Error("floating-tag hive at latest must have its Upgrading latch cleared")
+	}
+	if s.registry.Hives[0].UpgradeTarget != "" {
+		t.Errorf("cleared floating-tag hive must drop its stale target, got %q", s.registry.Hives[0].UpgradeTarget)
+	}
+	if got, armed := s.heartbeatUpgrade["floating-1"]; armed {
+		t.Errorf("floating-tag hive at latest must NOT be re-armed for a rollout, got %q", got)
+	}
+}
+
 // TestTriggerAutoUpgradesNotStaleManualRepopulates covers the hub-restart case
 // before the stale threshold: a latched manual upgrade on a remote cluster is
 // re-populated into heartbeatUpgrade even when it is not yet stale, exactly as
