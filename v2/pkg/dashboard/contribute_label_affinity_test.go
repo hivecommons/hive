@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -295,6 +297,111 @@ func TestQueueEndpoint_PersonalisedForViewer(t *testing.T) {
 	}
 	if len(ar.Interests) != 0 {
 		t.Errorf("anon response must not echo interests, got %v", ar.Interests)
+	}
+}
+
+// seedInterestProfileAtFile writes a contributor profile to an EXPLICIT filename
+// that need not equal the GitHubUsername. This is what lets a test force a
+// fast-path (exact-filename) miss in findContributor on ANY filesystem —
+// including case-insensitive ones like macOS APFS where a plain case-mismatched
+// filename would still be found by the O(1) file read — so the case-insensitive
+// slow-path match is genuinely exercised.
+func seedInterestProfileAtFile(t *testing.T, fileBase, githubUsername string, interests []string) {
+	t.Helper()
+	p := &ContributorProfile{
+		GitHubUsername: githubUsername,
+		ContributorID:  "c-" + fileBase,
+		TrustTier:      "newcomer",
+		RegisteredAt:   time.Now().UTC().Format(time.RFC3339),
+		LabelInterests: interests,
+	}
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal profile: %v", err)
+	}
+	ensureDir(getContributorsDir())
+	if err := os.WriteFile(filepath.Join(getContributorsDir(), fileBase+".json"), data, 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+}
+
+// TestQueueEndpoint_InterestsAttachedCaseInsensitiveViewer proves the queue
+// endpoint attaches the "interests" array (which un-hides the "My label
+// interests" editor client-side) for a signed-in contributor even when the
+// viewer's resolved GitHub login differs in CASE from the stored profile's
+// GitHubUsername. The Leaderboard's "YOU" badge already matches the viewer
+// case-insensitively, so a leaderboard-present contributor whose OAuth login
+// case differs must still get their interests echoed here — otherwise the
+// editor stays invisible for exactly the users who have a profile. It also
+// re-asserts the anonymous viewer gets NO interests key (editor stays hidden).
+//
+// The profile is written to a filename ("c-clubanderson.json") that does NOT
+// case-fold-match the resolved viewer ("clubanderson"), guaranteeing the
+// findContributor fast path (exact-filename file read) MISSES on every
+// filesystem — so only the case-insensitive GitHubUsername slow-path match can
+// resolve the profile. Without that match, interests are never attached.
+func TestQueueEndpoint_InterestsAttachedCaseInsensitiveViewer(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	s.statusMu.Lock()
+	s.status = seedLabeledActionable("projectbluefin/common", map[int][]string{
+		1: {"amd"},
+		2: {"nvidia"},
+		3: {},
+	})
+	s.statusMu.Unlock()
+
+	// Profile GitHubUsername is "ClubAnderson" (the case that first registered),
+	// stored at file "c-clubanderson.json" so the fast-path exact-filename lookup
+	// for the resolved viewer "clubanderson" misses. The viewer is resolved as
+	// "clubanderson" — only a case-insensitive username match can find them.
+	seedInterestProfileAtFile(t, "c-clubanderson", "ClubAnderson", []string{"nvidia"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/queue", nil)
+	req.Header.Set("X-Hive-User", "clubanderson")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Queue     []ReadyQueueItem `json:"queue"`
+		Interests *[]string        `json:"interests"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	// The interests KEY must be present (a real array) — that is what un-hides
+	// the editor client-side (ccApplyInterestsFromResponse returns early unless
+	// interests is an array).
+	if resp.Interests == nil {
+		t.Fatalf("interests must be attached for a case-mismatched signed-in contributor; got body %s", w.Body.String())
+	}
+	if len(*resp.Interests) != 1 || (*resp.Interests)[0] != "nvidia" {
+		t.Fatalf("interests must echo the stored set: got %v", *resp.Interests)
+	}
+	// Personalisation still applies: the nvidia issue floats first and is tagged.
+	if len(resp.Queue) != 3 {
+		t.Fatalf("no item may be dropped by personalisation: got %d want 3", len(resp.Queue))
+	}
+	if resp.Queue[0].Number != 2 || !resp.Queue[0].MatchesInterest {
+		t.Fatalf("nvidia issue must float first and be tagged; got %+v", resp.Queue[0])
+	}
+
+	// Anonymous viewer: NO interests key at all, so the editor stays hidden.
+	anon := httptest.NewRequest(http.MethodGet, "/api/contribute/queue", nil)
+	aw := httptest.NewRecorder()
+	s.mux.ServeHTTP(aw, anon)
+	var ar struct {
+		Interests *[]string `json:"interests"`
+	}
+	if err := json.Unmarshal(aw.Body.Bytes(), &ar); err != nil {
+		t.Fatalf("invalid anon JSON: %v", err)
+	}
+	if ar.Interests != nil {
+		t.Errorf("anonymous viewer must not receive an interests key (editor must stay hidden), got %v", *ar.Interests)
 	}
 }
 

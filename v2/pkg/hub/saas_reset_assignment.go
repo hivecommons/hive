@@ -20,6 +20,28 @@ import (
 // slow-to-reconcile spoke is never reset out from under a claim in progress.
 const assignStuckResetTimeout = 15 * time.Minute
 
+// assignmentInFlight reports whether a hive is mid-claim: it has been ASSIGNED
+// to an owner but the spoke has not yet reported the project back
+// (ClaimDelivered still false). During this window the placeholder is being
+// wired up — org/repos/ACMM are being delivered to the spoke over successive
+// heartbeats — and an auto-upgrade that rolls the spoke pod partway through can
+// wedge it: the pod restarts onto a new image before the claim completes, the
+// in-flight delivery is lost, and the slot dead-ends assigned-but-unclaimed.
+// This was a root cause of the EPM wedge (task #94). triggerAutoUpgrades uses
+// it as a LATCH to DEFER (never cancel) an auto-upgrade until the claim lands.
+//
+// SELF-LIMITING — this latch cannot hold forever. It releases the instant the
+// claim completes (ClaimDelivered flips true; see saas.go where org/repos/
+// primary match) OR the slot is returned to the pool. The slot cannot stay
+// wedged either: sweepStuckAssignments auto-resets any placeholder still at
+// Status=statusAssigned && !ClaimDelivered after assignStuckResetTimeout
+// (measured from AssignedAt), which clears Status back to statusAvailable and
+// so also clears this predicate. Every hive this returns true for is therefore
+// on a bounded path to false.
+func assignmentInFlight(h *SaaSHive) bool {
+	return h.Status == statusAssigned && !h.ClaimDelivered
+}
+
 // syncRegistryProvStatus updates the in-memory registry entry's ProvStatus for
 // hiveID under the registry lock, and requests a save. The dashboard's My Hives
 // enrichment re-copies ProvStatus from meta.json on every read, but mirroring it

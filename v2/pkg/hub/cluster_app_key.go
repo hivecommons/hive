@@ -799,12 +799,22 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 		hive = hiveOpt[0]
 	}
 	identity := s.appIdentityForHive(hive, clusterID)
-	// Does this cluster's App live on a GitHub Enterprise host? Read from cluster
-	// config, never inferred from the App ID — an App ID is an opaque number and
-	// carries no forge information. Empty github_base_url means public github.com.
+	// Does this cluster's DEFAULT App live on a GitHub Enterprise host? Read from
+	// cluster config, never inferred from the App ID — an App ID is an opaque
+	// number and carries no forge information.
+	//
+	// Judged on clusterDefaultForge, NOT on a bare `github_base_url != ""`. The
+	// flat github_base_url is only one of the two shapes a GHE cluster can take:
+	// the 2026-07-31 rework lets a cluster declare `default_forge` +　a `forges`
+	// map and leave the flat URL blank. A flat-only read then reported such a
+	// cluster as PUBLIC, so the wrong-forge app_id repair below (gated on
+	// clusterIsGHE) never fired for it and a spoke stuck on the public app_id
+	// against github.ibm.com stayed broken — the EPM symptom, on the delivery
+	// side. clusterDefaultForge honours default_forge, so a GHE default is
+	// recognised however it is written.
 	clusterIsGHE := false
 	if c, ok := s.clusters[clusterID]; ok {
-		clusterIsGHE = strings.TrimSpace(c.GitHubBaseURL) != ""
+		clusterIsGHE = !isPublicForgeHost(clusterDefaultForge(&c))
 	}
 	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, clusterIsGHE, spokeAppID, identity)
 	// A spoke carrying the sentinel is broken and must be legible even when the
@@ -1157,7 +1167,21 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 	hivePublicPinned := false
 	if sh != nil {
 		if c, ok := s.clusters[clusterID]; ok {
-			hivePublicPinned = effectiveGitHubBaseURL(sh, &c) == "" && c.GitHubBaseURL != ""
+			// "cluster defaults to GHE" is judged on clusterDefaultForge, not the
+			// flat github_base_url alone, so a GHE cluster written in the
+			// default_forge/forges-map shape is recognised as GHE here too.
+			clusterGHEDefault := !isPublicForgeHost(clusterDefaultForge(&c))
+			// The hive is public-pinned only when it ELECTED public. Judge that on
+			// electedForgeForHive, which reads github_host FIRST (then the
+			// github_base_url "public" sentinel) — NOT on effectiveGitHubBaseURL,
+			// which reads only github_base_url and returns "" for a GHE hive whose
+			// forge lives in github_host with a blank base_url. That blind spot
+			// wrongly flagged every GHE hive on a forge-map cluster as public-pinned
+			// (its base_url is blank there), suppressing the very GHE identity
+			// delivery this reconcile exists to make.
+			elected := electedForgeForHive(sh, &c)
+			hiveElectedPublic := elected != "" && isPublicForgeHost(elected)
+			hivePublicPinned = hiveElectedPublic && clusterGHEDefault
 		}
 	}
 	// The hub does not track installation IDs, and this reconcile is about the

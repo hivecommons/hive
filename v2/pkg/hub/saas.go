@@ -1992,6 +1992,20 @@ type MyHiveEntry struct {
 	// admin-only action in the row menu.
 	AssignedUnclaimed bool `json:"assignedUnclaimed,omitempty"`
 
+	// AssignedAt is the RFC3339 timestamp the placeholder was last assigned/claimed
+	// (SaaSHive.AssignedAt). It rides the row payload ONLY for a hive that is still
+	// AssignedUnclaimed, so the dashboard can render a live "claim pending" counter
+	// measuring how long the slot has been wedged. It is the same clock the
+	// assign-stuck self-heal sweep measures against, so the row's amber "stuck"
+	// threshold cannot drift from the reset timeout. Empty for every other row.
+	AssignedAt string `json:"assignedAt,omitempty"`
+
+	// AssignStuckSeconds is assignStuckResetTimeout expressed in whole seconds, so
+	// the dashboard's "stuck / about to auto-reset" tint reuses the SAME threshold
+	// the self-heal sweep enforces rather than hardcoding a duplicate in JS. Sent
+	// only alongside AssignedAt (i.e. for an assigned-but-unclaimed row).
+	AssignStuckSeconds int `json:"assignStuckSeconds,omitempty"`
+
 	// Migration tracking (Phase 7).
 	MigrationStatus string `json:"migrationStatus,omitempty"`
 	MigrationFrom   string `json:"migrationFrom,omitempty"`
@@ -2159,6 +2173,16 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		isAssignedStatus := sh.Status == statusAssigned
 		isCleanAvailable := sh.Status == statusAvailable && !hasAssignedIdentity
 		entry.AssignedUnclaimed = notClaimed && !isCleanAvailable && (isAssignedStatus || hasAssignedIdentity)
+		// Ride the assignment clock and the self-heal threshold ONLY on an
+		// assigned-but-unclaimed row, so the dashboard can tick a "claim pending"
+		// counter and tint it amber as it nears the auto-reset the sweep enforces.
+		// Both stay zero/empty otherwise so the counter self-suppresses. Uses the
+		// broadened AssignedUnclaimed above, so the counter also covers null-Status
+		// wedges — the same rows the Reset action now reaches.
+		if entry.AssignedUnclaimed {
+			entry.AssignedAt = sh.AssignedAt
+			entry.AssignStuckSeconds = int(assignStuckResetTimeout / time.Second)
+		}
 		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
 			entry.ACMMLevel = sh.ACMMLevel
 		}
@@ -4687,6 +4711,23 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// Everything below STARTS a new upgrade, which only auto-upgrade hives
 		// opt into. The recovery above must stay ahead of this gate — see #2476.
 		if !h.AutoUpgrade {
+			continue
+		}
+		// Claim-in-flight latch (#95). A placeholder that has just been ASSIGNED
+		// but whose claim has not yet been delivered (Status==assigned &&
+		// !ClaimDelivered) is mid-wiring: the spoke is receiving its org/repos/
+		// ACMM over successive heartbeats. Rolling its pod onto a new image now
+		// can wedge it — the classic EPM dead-end (task #94). DEFER (do not
+		// cancel) the auto-upgrade until the claim lands. This is self-limiting:
+		// it releases the moment ClaimDelivered flips true, and if the claim
+		// never completes, sweepStuckAssignments returns the slot to available
+		// after assignStuckResetTimeout — either way this latch clears and the
+		// next cycle upgrades normally. A hard image pin is unaffected: pins are
+		// delivered via UpgradeTarget through the recovery path ABOVE this gate,
+		// not started here, so a pin still wins.
+		if assignmentInFlight(&h) {
+			s.logger.Debug("auto-upgrade deferred — claim in flight",
+				"hive_id", h.ID, "status", h.Status, "assigned_at", h.AssignedAt)
 			continue
 		}
 		// Scheduling gate. Instant-mode hives (and every legacy record, whose
@@ -8547,6 +8588,81 @@ const dashboardHTML = `<!DOCTYPE html>
         : 'Process uptime since the last restart';
       return '<span title="' + esc(title) + '" style="font-size:0.72rem;color:' + c + ';cursor:help">' + esc(label) + '</span>';
     }
+    /* ---- Assignment / claim-pending counter --------------------------------
+       When a placeholder is ASSIGNED but its spoke has never reported the
+       project back (h.assignedUnclaimed, i.e. Status==assigned &&
+       !ClaimDelivered), the operator has no cue how long the slot has been
+       wedged. fmtAssignAge renders a compact human-friendly elapsed label from
+       h.assignedAt, and claimPendingPill wraps it in a subtle muted pill that
+       tints amber once the age crosses h.assignStuckSeconds — the SAME threshold
+       the self-heal sweep uses to auto-reset the slot — so a stuck assignment is
+       obvious at a glance and clearly "about to be auto-reset". Both self-suppress
+       (return '') for any row that is not assigned-but-unclaimed or lacks a
+       timestamp, so a claimed/available row shows nothing. The pill carries a
+       data-assign-since attribute so a 1s ticker (startAssignCounterTicker) can
+       live-update it between the 30s row refreshes without a full re-render. */
+    function fmtAssignAge(secs) {
+      var MIN = 60, HOUR = 3600;
+      if (secs < MIN) return Math.floor(secs) + 's';
+      if (secs < HOUR) {
+        var m = Math.floor(secs / MIN), s = Math.floor(secs % MIN);
+        return s > 0 ? m + 'm' + s + 's' : m + 'm';
+      }
+      var h = Math.floor(secs / HOUR), rem = Math.floor((secs % HOUR) / MIN);
+      return rem > 0 ? h + 'h ' + rem + 'm' : h + 'h';
+    }
+    /* Render the inner span for a claim-pending pill given an assignedAt epoch
+       (ms) and the stuck threshold (secs). Returns the muted-or-amber styled
+       markup, or '' when there is no valid timestamp. Shared by the initial
+       server-driven render and the live ticker so both stay in lockstep. */
+    function claimPendingInner(sinceMs, stuckSecs) {
+      if (!isFinite(sinceMs) || sinceMs <= 0) return '';
+      var secs = (Date.now() - sinceMs) / 1000;
+      if (!isFinite(secs) || secs < 0) secs = 0;
+      var stuck = stuckSecs > 0 && secs >= stuckSecs;
+      var color = stuck ? '#d29922' : 'var(--muted)';
+      var title = stuck
+        ? 'This assignment has exceeded the auto-reset threshold — the self-heal sweep will return this slot to the pool.'
+        : 'Assigned but the spoke has not reported the project back yet — waiting for the claim to complete.';
+      return '<span title="' + esc(title) + '" style="color:' + color + '">'
+        + (stuck ? '⚠ ' : '')
+        + 'claim pending · ' + esc(fmtAssignAge(secs)) + '</span>';
+    }
+    function claimPendingPill(h) {
+      if (!h.assignedUnclaimed || !h.assignedAt) return '';
+      var sinceMs = new Date(h.assignedAt).getTime();
+      if (!isFinite(sinceMs) || sinceMs <= 0) return '';
+      var stuckSecs = h.assignStuckSeconds || 0;
+      var inner = claimPendingInner(sinceMs, stuckSecs);
+      if (!inner) return '';
+      /* data-* attributes let the 1s ticker recompute in place. The outer span
+         keeps the pill styling; only the inner span's text/colour changes. */
+      return '<span class="claim-pending-pill" data-assign-since="' + sinceMs
+        + '" data-assign-stuck="' + stuckSecs
+        + '" style="display:inline-block;margin-left:6px;padding:1px 7px;border-radius:9px;'
+        + 'background:rgba(255,255,255,0.04);border:1px solid var(--border);font-size:0.68rem;white-space:nowrap;vertical-align:middle">'
+        + inner + '</span>';
+    }
+    /* Live-tick every claim-pending pill once a second so the counter advances
+       between the 30s row polls. Each tick re-derives colour+label from the
+       pill's own data-* attributes, so a re-render that replaces the pill is
+       picked up automatically (no per-pill timer to leak). Runs unconditionally
+       and is a no-op when no pills are present. */
+    var _assignCounterTimer = null;
+    function tickAssignCounters() {
+      var pills = document.querySelectorAll('.claim-pending-pill');
+      for (var i = 0; i < pills.length; i++) {
+        var el = pills[i];
+        var sinceMs = parseFloat(el.getAttribute('data-assign-since'));
+        var stuckSecs = parseInt(el.getAttribute('data-assign-stuck'), 10) || 0;
+        var inner = claimPendingInner(sinceMs, stuckSecs);
+        if (inner) el.innerHTML = inner;
+      }
+    }
+    function startAssignCounterTicker() {
+      if (_assignCounterTimer) return;
+      _assignCounterTimer = setInterval(tickAssignCounters, 1000);
+    }
     /* ---- Per-check health detail -------------------------------------------
        Health.checks[] arrives over the heartbeat as free-form JSON decoded into
        map[string]any on the hub (RegistryEntry.Health, server.go). It may be
@@ -12312,6 +12428,10 @@ const dashboardHTML = `<!DOCTYPE html>
           : h.migrationStatus === 'failed'
           ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ Migration failed</span>'
           : modeBadge(h.governorMode);
+        /* A placeholder wedged at assigned && !claim_delivered gets a subtle
+           live-ticking "claim pending · Nm" pill so a stuck assignment is
+           obvious. Self-suppresses (empty) for every other row. */
+        modeCell += claimPendingPill(h);
         var rb = resolvedBase(h);
         var contributeUrl = rb ? rb + '/contribute' : '';
         var actions = '';
@@ -14511,6 +14631,9 @@ const dashboardHTML = `<!DOCTYPE html>
     init();
     var POLL_INTERVAL_MS = 30000;
     setInterval(loadHives, POLL_INTERVAL_MS);
+    /* Live-tick any claim-pending counters once a second so an assigned-but-
+       unclaimed row's "claim pending · Nm" advances between the 30s polls. */
+    startAssignCounterTicker();
     setInterval(loadAdminUsers, POLL_INTERVAL_MS);
     setInterval(loadClusterHealth, CLUSTER_HEALTH_POLL_MS);
     var _refreshTimer = null;

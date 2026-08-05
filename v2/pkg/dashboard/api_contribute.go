@@ -403,10 +403,21 @@ func findContributor(id string) *ContributorProfile {
 	if p, err := loadContributorProfile(id); err == nil {
 		return p
 	}
-	// Slow path: scan all profiles to match by contributor_id
+	// Slow path: scan all profiles to match by contributor_id OR by GitHub
+	// username case-insensitively. The fast path above is an exact-case file
+	// lookup, but a GitHub login's case is not stable across the surfaces that
+	// call us: the profile file is written under whatever case first registered
+	// it, while a viewer resolved from the OAuth session (resolveViewerUsername)
+	// can arrive in a different case. The Leaderboard's "YOU" badge already
+	// matches the viewer to their row case-insensitively (uname.toLowerCase()
+	// === ccMeUsername.toLowerCase()), so the interests attach on the queue
+	// endpoint must resolve the SAME contributor the SAME way — otherwise a
+	// signed-in, leaderboard-present contributor whose stored filename differs
+	// only in case gets a nil profile and the "My label interests" editor never
+	// un-hides (issue #2637 follow-up). EqualFold mirrors the leaderboard match.
 	profiles := listContributorProfiles()
 	for i := range profiles {
-		if profiles[i].ContributorID == id {
+		if profiles[i].ContributorID == id || strings.EqualFold(profiles[i].GitHubUsername, id) {
 			return &profiles[i]
 		}
 	}
