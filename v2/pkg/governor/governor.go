@@ -161,6 +161,22 @@ const (
 	kickHistoryCapacity = 500
 )
 
+// Cadence sentinel values the config layer emits. "pause"/"paused" mark an
+// agent the operator does not want timer-kicked in a mode; "off" is the
+// dashboard's spelling for the same thing. Kept as named constants so the
+// governor and the dashboard's display logic agree on the exact strings.
+const (
+	cadenceValuePause  = "pause"
+	cadenceValuePaused = "paused"
+	cadenceValueOff    = "off"
+)
+
+// idleModeKey is the mode whose cadence entries serve as the per-agent
+// fallback when the current mode defines none. This mirrors the dashboard's
+// display chain (current mode → idle), so the interval the governor actually
+// kicks on is always the interval the agent card shows.
+const idleModeKey = "idle"
+
 type Governor struct {
 	cfg    config.GovernorConfig
 	agents map[string]config.AgentConfig
@@ -172,6 +188,12 @@ type Governor struct {
 	evalHistory []EvalSnapshot
 	kickHistory []KickRecord
 	budget      BudgetInfo
+
+	// resumeKicks records the last crash-recovery resume kick granted per
+	// agent (see AllowResumeKick). In-memory only: after a process restart
+	// the startup path re-kicks every eligible agent anyway, so persisting
+	// this would not tighten the bound.
+	resumeKicks map[string]time.Time
 
 	// One-shot alert flags for the current budget window; reset when the
 	// window rolls so each window alerts at most once per threshold.
@@ -200,6 +222,7 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 		modeHistory: []ModeChange{initialChange},
 		evalHistory: make([]EvalSnapshot, 0, evalHistoryCapacity),
 		kickHistory: make([]KickRecord, 0, kickHistoryCapacity),
+		resumeKicks: make(map[string]time.Time),
 		budget: BudgetInfo{
 			ByAgent: make(map[string]int64),
 			ByModel: make(map[string]int64),
@@ -329,21 +352,32 @@ func (g *Governor) thresholdFor(modeName string) int {
 	}
 }
 
+// updateCadences recomputes every agent's effective cadence for the current
+// mode. Resolution chain per agent: current-mode entry → idle-mode entry →
+// none (no timer kicks) — the same chain the dashboard uses to display the
+// agent's interval, so kick timing and the "next run" card always agree.
+//
+// The result REPLACES the previous cadence state. Before #2573 an agent
+// missing from the current mode's cadence map silently KEPT the interval
+// from whichever mode last defined one, so a hive leaving a short-cadence
+// mode kept kicking on the short interval while the dashboard displayed the
+// configured (longer) one — burning backend tokens faster than any cadence
+// the operator could see or set.
 func (g *Governor) updateCadences() {
 	modeName := modeToConfigKey(g.state.Mode)
-	modeConfig, ok := g.cfg.Modes[modeName]
-	if !ok {
-		return
-	}
+	cadences := make(map[string]AgentCadence, len(g.agents))
 
 	for agentName := range g.agents {
-		cadenceStr, ok := modeConfig.Cadences[agentName]
-		if !ok {
+		cadenceStr, ok := g.resolveCadence(modeName, agentName)
+		if !ok || cadenceStr == cadenceValueOff {
+			// No cadence configured for this agent in this mode (or an
+			// explicit "off"): no timer kicks. Leaving the agent out of the
+			// map — rather than keeping a stale entry — is the fix.
 			continue
 		}
 
-		if cadenceStr == "pause" || cadenceStr == "paused" {
-			g.state.Cadences[agentName] = AgentCadence{
+		if cadenceStr == cadenceValuePause || cadenceStr == cadenceValuePaused {
+			cadences[agentName] = AgentCadence{
 				Agent:  agentName,
 				Paused: true,
 			}
@@ -352,7 +386,7 @@ func (g *Governor) updateCadences() {
 
 		dur, err := time.ParseDuration(cadenceStr)
 		if err != nil {
-			g.logger.Warn("invalid cadence duration",
+			g.logger.Warn("invalid cadence duration — agent will receive no timer kicks until fixed",
 				"agent", agentName,
 				"mode", g.state.Mode,
 				"value", cadenceStr,
@@ -361,11 +395,32 @@ func (g *Governor) updateCadences() {
 			continue
 		}
 
-		g.state.Cadences[agentName] = AgentCadence{
+		cadences[agentName] = AgentCadence{
 			Agent:    agentName,
 			Interval: dur,
 		}
 	}
+
+	g.state.Cadences = cadences
+}
+
+// resolveCadence returns the configured cadence string for one agent in one
+// mode, falling back to the idle mode's entry when the mode defines none.
+func (g *Governor) resolveCadence(modeName, agentName string) (string, bool) {
+	if mode, ok := g.cfg.Modes[modeName]; ok {
+		if c, ok := mode.Cadences[agentName]; ok {
+			return c, true
+		}
+	}
+	if modeName == idleModeKey {
+		return "", false
+	}
+	if mode, ok := g.cfg.Modes[idleModeKey]; ok {
+		if c, ok := mode.Cadences[agentName]; ok {
+			return c, true
+		}
+	}
+	return "", false
 }
 
 // budgetExhausted reports whether the weekly budget gate is closed.
@@ -469,6 +524,60 @@ func (g *Governor) AgentEligibleForCELKick(agentName string) bool {
 		}
 	}
 
+	return true
+}
+
+// budgetExempt reports whether the named agent is on the budget exemption
+// list (kicked even when the weekly budget is exhausted). Caller must hold g.mu.
+func (g *Governor) budgetExempt(agentName string) bool {
+	for _, name := range g.budget.IgnoredAgents {
+		if name == agentName {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowResumeKick reports whether a crash-restarted agent may receive an
+// immediate "resume" kick ahead of its scheduled cadence slot, and records
+// the grant. The early kick exists so an agent whose CLI crashed mid-task
+// resumes promptly instead of idling until the next scheduled kick.
+//
+// Before #2573 this was UNCONDITIONAL: every crash restart earned a kick, so
+// a crash-looping CLI was restarted AND kicked on every governor eval cycle
+// (default 5 minutes) — burning backend tokens ("Bob coins") continuously on
+// agents the operator had set to multi-hour cadences, and bypassing the
+// budget gate as well. The gates, in order:
+//
+//   - the agent must have an active cadence in the current mode: a mode
+//     "pause"/"off" (or no cadence at all) means the operator wants no timer
+//     work, and a crash must not override that;
+//   - on-demand and non-kick-channel agents never get resume kicks (they are
+//     never timer-kicked at all);
+//   - the budget gate must be open for the agent, with the same exemption
+//     list as scheduled kicks;
+//   - at most ONE resume kick per cadence interval: a crash loop gets its
+//     first resume, then waits for the next scheduled slot, bounding worst-
+//     case kick frequency at two per interval (one scheduled + one resume)
+//     instead of one per eval cycle.
+func (g *Governor) AllowResumeKick(agentName string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	cadence, ok := g.state.Cadences[agentName]
+	if !ok || cadence.Paused || cadence.Interval <= 0 {
+		return false
+	}
+	if ac, ok := g.agents[agentName]; ok && (ac.OnDemand || !ac.UsesGovernorKick()) {
+		return false
+	}
+	if g.budgetExhausted() && !g.budgetExempt(agentName) {
+		return false
+	}
+	if last, ok := g.resumeKicks[agentName]; ok && time.Since(last) < cadence.Interval {
+		return false
+	}
+	g.resumeKicks[agentName] = time.Now()
 	return true
 }
 

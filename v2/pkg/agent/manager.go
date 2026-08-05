@@ -1730,14 +1730,15 @@ func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
 	}
 }
 
-// acmmLevelNames maps ACMM level numbers to human-readable names.
+// acmmLevelNames maps ACMM level numbers to human-readable names. Kept in
+// sync with the canonical pack definitions in v2/pkg/config/packs/level-*.yaml.
 var acmmLevelNames = map[int]string{
-	1: "Idea",
-	2: "Development",
-	3: "CI/CD",
-	4: "Managed",
-	5: "Guarded Autonomy",
-	6: "Full Autonomy",
+	1: "Inception",
+	2: "Advisory",
+	3: "Quality-Gated",
+	4: "Security-Aware",
+	5: "Semi-Autonomous",
+	6: "Fully Autonomous",
 }
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
@@ -4691,6 +4692,27 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
+}
+
+// InvocationMetadata reports the effective backend and model the hive invokes
+// for the named agent, accounting for runtime overrides — the launch-time
+// truth the invocation-attribution trail records (see pkg/github/attribution
+// .go). ok=false when the agent is unknown to the manager (the caller then
+// falls back to static config). Read-only under RLock; called from the
+// PR-request watcher goroutine, never from the launch path.
+func (m *Manager) InvocationMetadata(agentName string) (backend, model string, ok bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, exists := m.agents[agentName]
+	if !exists {
+		return "", "", false
+	}
+	backend = effectiveBackend(agent)
+	model = agent.Config.Model
+	if agent.ModelOverride != "" {
+		model = agent.ModelOverride
+	}
+	return backend, model, true
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.

@@ -10,6 +10,8 @@ You are the **scanner** agent. Your job is to fix bugs and implement enhancement
 2. **Dispatch background agents** to fix issues in parallel
 3. **Final merge sweep** at the end
 
+> **Starvation guard (why merge-sweep goes first):** a single hard/blocked fix-target — e.g. a `CONFLICTING`/`DIRTY` PR that can never be made merge-ready — must NEVER be allowed to consume the whole session and starve the merge of PRs that are *already* eligible. Draining ready merges is cheap and unconditional; deep fix-work is not. So the merge-sweep of the MERGE-ELIGIBLE list ALWAYS runs to completion **before** any CI-repair / fix-work, and CI-repair must time-box each PR and skip non-progressing hard targets rather than retrying them indefinitely. (See #2638.)
+
 ## Rules
 
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
@@ -117,7 +119,15 @@ For each PR in CI_FAILING:
 3. **Fix it** — push a fixup commit to the PR branch using MCP `create_or_update_file` or by checking out the branch in a worktree, fixing, and pushing
 4. **Move on** — do NOT wait for CI to re-run. The next kick cycle will check again.
 
-If a PR has failed CI **3 or more times** (check commit count on the PR), close it as unfixable and reopen the linked issue.
+### Hard-target skip (starvation guard for #2638)
+
+CI-repair runs AFTER the merge sweep (see Workflow) and must NEVER monopolize the session. Before spending effort on a CI_FAILING or PR_LIST entry, classify it and **skip hard targets so the cycle keeps moving**:
+
+- **`CONFLICTING` / `DIRTY` mergeable state** (check via MCP `get_pull_request` → `mergeable` / `mergeStateStatus`): a true merge conflict that `update_pull_request_branch` cannot resolve. Do NOT retry it kick after kick. Add/refresh a `needs-rebase` (or `do-not-merge`) label, leave a one-line comment noting the conflict, and **DEFER — move to the next PR**. A conflicted PR like the one in #2638 (`scanner/fix-<n>` gone `DIRTY`) escalates/holds; it does not get re-attempted indefinitely.
+- **No forward progress across kicks**: if a PR is still failing the same check after **3 or more** attempts (commit count on the PR, or the same failing check across cycles), close it as unfixable and reopen the linked issue.
+- **Session time-box**: never let a single fix-target consume the whole session. Make at most ONE repair attempt per PR per kick, then fall through to the rest of the workflow. The next kick re-checks; a target that never progresses stays deferred.
+
+Deferring a hard target is the whole point: it guarantees the merge sweep of already-eligible PRs and the dispatch of new fixes still run, instead of the session dead-ending on one unfixable PR.
 
 **NEVER run `npm run build`, `npm run lint`, `tsc`, or any build/lint command locally** — only read CI logs to learn what failed.
 
@@ -140,9 +150,11 @@ This prevents the cyclical failure pattern where 5 PRs touch the same files, eac
 
 ## Workflow
 
-1. **CI repair** — fix PRs in CI_FAILING list first (they're blocking the pipeline)
+> **Order matters — merge before fix.** The merge-sweep of the MERGE-ELIGIBLE list runs FIRST, before any CI-repair or fix-work. This prevents the starvation bug (#2638) where the session parked on a single hard `CONFLICTING`/`DIRTY` fix-target and burned every kick there, so PRs that were already `mergeable=yes`/`dco=yes` sat unmerged indefinitely. Ready merges are cheap and unconditional; drain them before touching anything that can block.
+
+1. **Merge sweep FIRST** — process the MERGE-ELIGIBLE list (respecting overlap ordering; sequential for overlapping groups). Every PR here is already CI-passing and merge-ready. Sweep them to completion NOW — do NOT defer this behind CI-repair or fix-work.
 2. **File-overlap scan** — build a file map across all open PRs
-3. **Merge sweep** — process MERGE-ELIGIBLE list, respecting overlap ordering (sequential for overlapping groups)
+3. **CI repair (time-boxed, skip hard targets)** — fix PRs in CI_FAILING list. **Time-box each PR: if it is `CONFLICTING`/`DIRTY` or shows no forward progress, DEFER it (skip for this session) and move on — never let one PR consume the session.** See "CI Repair" below for the skip criteria.
 4. **Group + dispatch fixes** — group related issues, check file overlaps against open PRs, launch one background agent per group using the Agent tool with `run_in_background: true`
 5. **Final merge sweep** — re-check MERGE-ELIGIBLE plus any new PRs from sub-agents
 6. **Beads + summary** — create beads, report PRs opened/merged/pending

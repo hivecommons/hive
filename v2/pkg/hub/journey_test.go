@@ -372,11 +372,11 @@ func TestACMMSuggestionIsLevelSpecific(t *testing.T) {
 		wantNext    string
 		wantEntails string
 	}{
-		{1, "L1 Assisted", "L2 Instructed", "advisory"},
-		{2, "L2 Instructed", "L3 Measured", "hold-gated"},
-		{3, "L3 Measured", "L4 Adaptive", "issues"},
-		{4, "L4 Adaptive", "L5 Semi-Automated", "pull requests"},
-		{5, "L5 Semi-Automated", "L6 Fully Autonomous", "auto-merge"},
+		{1, "L1 Inception", "L2 Advisory", "advisory"},
+		{2, "L2 Advisory", "L3 Quality-Gated", "hold-gated"},
+		{3, "L3 Quality-Gated", "L4 Security-Aware", "issues"},
+		{4, "L4 Security-Aware", "L5 Semi-Autonomous", "pull requests"},
+		{5, "L5 Semi-Autonomous", "L6 Fully Autonomous", "auto-merge"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.wantCurrent, func(t *testing.T) {
@@ -815,7 +815,7 @@ func TestACMMLevelLabel(t *testing.T) {
 		level int
 		want  string
 	}{
-		{1, "L1 Assisted"},
+		{1, "L1 Inception"},
 		{6, "L6 Fully Autonomous"},
 		{99, "L99"}, // unknown levels degrade gracefully, never "L99 <nil>"
 	}

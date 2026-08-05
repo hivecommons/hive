@@ -334,6 +334,24 @@ type HeartbeatPayload struct {
 	// spoke too old to report it, or one with no live sessions, sends nothing —
 	// which the hub reads as "credit no one this beat", never as an error.
 	ActiveSessionUsers []string `json:"active_session_users,omitempty"`
+	// EngagedSessionUsers is the subset of ActiveSessionUsers whose browser
+	// reported ENGAGED presence recently — tab visible AND input within the
+	// idle window (spoke: EngagedSessionUsernames, fed by /api/presence). It is
+	// what separates a human actually using their hive from an idle open tab.
+	// The hub credits these users engaged time and marks them engaged-now.
+	// Non-secret: bare usernames only. omitempty + optional everywhere: a spoke
+	// too old to report it sends nothing, which the hub reads as "no engagement
+	// DATA this beat" — never as an error and never as "everyone idle forever"
+	// (legacy fields keep accumulating regardless).
+	EngagedSessionUsers []string `json:"engaged_session_users,omitempty"`
+	// UserLastActions maps username → RFC3339 timestamp of that user's most
+	// recent audit-logged REAL action on this hive (config save, agent
+	// restart, ACMM change, login, …; pseudo-users like "system" are never
+	// included — spoke: UserLastActions). The hub folds each into the user
+	// record's LastActionAt, keeping the maximum, so spoke restarts and
+	// multi-hive users resolve to the newest action anywhere. Non-secret:
+	// usernames and timestamps only. omitempty/optional for old spokes.
+	UserLastActions map[string]string `json:"user_last_actions,omitempty"`
 	// StartedAt is the spoke process start time (RFC3339). The hub renders it
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking

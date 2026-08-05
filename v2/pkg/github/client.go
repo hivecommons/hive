@@ -40,6 +40,12 @@ type Client struct {
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance. nil fails
 	// closed. Set by StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// attribution holds the invocation-attribution hooks (trailer gate,
+	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
+	// attribMu because the hooks are installed in stages during startup while
+	// the PR-request watcher goroutine may already be reading them.
+	attribMu    sync.RWMutex
+	attribution AttributionHooks
 }
 
 // GoGitHub returns the underlying go-github client for direct API access.

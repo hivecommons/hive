@@ -45,6 +45,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
 	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
+	s.mux.HandleFunc("POST /api/presence", s.handlePresence)
 	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
 	// Self-service, owner-only spoke backup (encrypted; includes the bead
@@ -120,6 +121,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
+	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
@@ -3600,6 +3602,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
 		"classifier": classifierSectionResponse(),
 		"features":   featuresSectionResponse(cfg),
+		"attribution": map[string]interface{}{
+			// Effective value (default ON when unset) — the UI renders the
+			// switch from this, so an untouched hive shows it on.
+			"attributionTrailer": cfg.Governor.AttributionTrailerEnabled(),
+		},
 		"hub": map[string]interface{}{
 			"enabled": cfg.Hub.Enabled,
 			// namespace is read-only, runtime-derived display info (never
@@ -3609,29 +3616,70 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// service-account-file fallback chain. Omitted (empty string)
 			// outside a cluster, which the Hub tab renders by skipping the
 			// line rather than showing a blank/"undefined" value.
-			"namespace":                        podNamespace(),
-			"url":                              cfg.Hub.URL,
-			"dashboard_url":                    cfg.Hub.DashboardURL,
-			"snapshot_url":                     cfg.Hub.SnapshotURL,
-			"is_public":                        cfg.Hub.IsPublic,
-			"auto_snapshot":                    cfg.Hub.AutoSnapshot,
-			"auto_upgrade":                     cfg.Hub.AutoUpgrade,
-			"snapshot_interval_min":            cfg.Hub.SnapshotIntervalMin,
-			"contribute_suspended":             cfg.Hub.ContributeSuspended,
-			"contribute_titles_mode":           cfg.Hub.ContributeTitlesMode,
-			"contribute_authors_mode":          cfg.Hub.ContributeAuthorsMode,
-			"contribute_labels_mode":           cfg.Hub.ContributeLabelsMode,
-			"contribute_allow_labels":          cfg.Hub.ContributeAllowLabels,
-			"contribute_deny_labels":           cfg.Hub.ContributeDenyLabels,
-			"contribute_deny_titles":           cfg.Hub.ContributeDenyTitles,
-			"contribute_deny_authors":          cfg.Hub.ContributeDenyAuthors,
-			"contribute_allow_models":          cfg.Hub.ContributeAllowModels,
-			"contribute_reject_unknown_models": cfg.Hub.ContributeRejectUnknownModels,
-			"disabled_repos":                   cfg.Hub.DisabledRepos,
-			"disabled_tiers":                   cfg.Hub.DisabledTiers,
-			"tier_limits":                      cfg.Hub.TierLimits,
+			"namespace":                          podNamespace(),
+			"url":                                cfg.Hub.URL,
+			"dashboard_url":                      cfg.Hub.DashboardURL,
+			"snapshot_url":                       cfg.Hub.SnapshotURL,
+			"is_public":                          cfg.Hub.IsPublic,
+			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
+			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
+			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
+			"contribute_suspended":               cfg.Hub.ContributeSuspended,
+			"contribute_titles_mode":             cfg.Hub.ContributeTitlesMode,
+			"contribute_authors_mode":            cfg.Hub.ContributeAuthorsMode,
+			"contribute_labels_mode":             cfg.Hub.ContributeLabelsMode,
+			"contribute_allow_labels":            cfg.Hub.ContributeAllowLabels,
+			"contribute_deny_labels":             cfg.Hub.ContributeDenyLabels,
+			"contribute_deny_titles":             cfg.Hub.ContributeDenyTitles,
+			"contribute_deny_authors":            cfg.Hub.ContributeDenyAuthors,
+			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
+			"contribute_reject_unknown_models":   cfg.Hub.ContributeRejectUnknownModels,
+			"contribute_skip_assigned_to_others": cfg.Hub.ContributeSkipAssignedToOthers,
+			// Cooldown toggle + period. contribute_cooldown_enabled is the RESOLVED
+			// on/off (nil pointer -> true) so both UI surfaces render a concrete
+			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
+			// 168h default surfaces when unset) so the number input shows the value
+			// actually in force.
+			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
+			"disabled_repos":              cfg.Hub.DisabledRepos,
+			"disabled_tiers":              cfg.Hub.DisabledTiers,
+			"tier_limits":                 cfg.Hub.TierLimits,
+			// available_repos is the READ-ONLY list of repo full-names the hive knows
+			// about (from the live status snapshot), so the Management tab can render
+			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
+			// list. A repo is ENABLED unless it appears in disabled_repos.
+			"available_repos": s.contributeAvailableRepos(),
 		},
 	})
+}
+
+// contributeAvailableRepos returns the sorted, de-duplicated set of repo full-names
+// the hive currently knows about (from the status snapshot). Read-only; used to
+// render the "Repos for Contribute" enable toggles in the Management tab mirror.
+func (s *Server) contributeAvailableRepos() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	s.statusMu.RLock()
+	if s.status != nil {
+		for _, repo := range s.status.Repos {
+			name := repo.Full
+			if name == "" {
+				name = repo.Name
+			}
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	s.statusMu.RUnlock()
+	sort.Strings(out)
+	return out
 }
 
 func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
@@ -3973,28 +4021,55 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorAttribution updates the hive-wide attribution-trailer toggle.
+// One boolean, applied to ALL agents (no per-agent granularity): it gates ONLY
+// the visible "— hive: …" trailer appended to hive-created PRs and issues.
+// The audit-log entry for every such creation is written unconditionally, so
+// turning the trailer off never loses the invocation record.
+func (s *Server) handleGovernorAttribution(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AttributionTrailer *bool `json:"attributionTrailer"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.AttributionTrailer != nil {
+		s.deps.Config.Governor.AttributionTrailer = body.AttributionTrailer
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after attribution update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_attribution", auditDetail("section", "attribution"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Enabled                       *bool                      `json:"enabled"`
-		URL                           string                     `json:"url"`
-		DashboardURL                  string                     `json:"dashboard_url"`
-		SnapshotURL                   string                     `json:"snapshot_url"`
-		IsPublic                      *bool                      `json:"is_public"`
-		AutoSnapshot                  *bool                      `json:"auto_snapshot"`
-		AutoUpgrade                   *bool                      `json:"auto_upgrade"`
-		ContributeSuspended           *bool                      `json:"contribute_suspended"`
-		ContributeTitlesMode          *string                    `json:"contribute_titles_mode"`
-		ContributeAuthorsMode         *string                    `json:"contribute_authors_mode"`
-		ContributeLabelsMode          *string                    `json:"contribute_labels_mode"`
-		ContributeAllowLabels         []string                   `json:"contribute_allow_labels"`
-		ContributeDenyLabels          []string                   `json:"contribute_deny_labels"`
-		ContributeDenyTitles          []string                   `json:"contribute_deny_titles"`
-		ContributeDenyAuthors         []string                   `json:"contribute_deny_authors"`
-		ContributeAllowModels         []string                   `json:"contribute_allow_models"`
-		ContributeRejectUnknownModels *bool                      `json:"contribute_reject_unknown_models"`
-		DisabledRepos                 []string                   `json:"disabled_repos"`
-		DisabledTiers                 []string                   `json:"disabled_tiers"`
-		TierLimits                    map[string]config.TierRate `json:"tier_limits"`
+		Enabled                        *bool                      `json:"enabled"`
+		URL                            string                     `json:"url"`
+		DashboardURL                   string                     `json:"dashboard_url"`
+		SnapshotURL                    string                     `json:"snapshot_url"`
+		IsPublic                       *bool                      `json:"is_public"`
+		AutoSnapshot                   *bool                      `json:"auto_snapshot"`
+		AutoUpgrade                    *bool                      `json:"auto_upgrade"`
+		ContributeSuspended            *bool                      `json:"contribute_suspended"`
+		ContributeTitlesMode           *string                    `json:"contribute_titles_mode"`
+		ContributeAuthorsMode          *string                    `json:"contribute_authors_mode"`
+		ContributeLabelsMode           *string                    `json:"contribute_labels_mode"`
+		ContributeAllowLabels          []string                   `json:"contribute_allow_labels"`
+		ContributeDenyLabels           []string                   `json:"contribute_deny_labels"`
+		ContributeDenyTitles           []string                   `json:"contribute_deny_titles"`
+		ContributeDenyAuthors          []string                   `json:"contribute_deny_authors"`
+		ContributeAllowModels          []string                   `json:"contribute_allow_models"`
+		ContributeRejectUnknownModels  *bool                      `json:"contribute_reject_unknown_models"`
+		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
+		ContributeCooldownEnabled      *bool                      `json:"contribute_cooldown_enabled"`
+		ContributeCooldownHours        *int                       `json:"contribute_cooldown_hours"`
+		DisabledRepos                  []string                   `json:"disabled_repos"`
+		DisabledTiers                  []string                   `json:"disabled_tiers"`
+		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -4049,6 +4124,23 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeRejectUnknownModels != nil {
 		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
+	}
+	if body.ContributeSkipAssignedToOthers != nil {
+		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
+	}
+	// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
+	// is round-tripped exactly (nil would default back to enabled). A client that
+	// omits the field leaves the current value untouched.
+	if body.ContributeCooldownEnabled != nil {
+		v := *body.ContributeCooldownEnabled
+		cfg.Hub.ContributeCooldownEnabled = &v
+	}
+	// Cooldown period (hours): stored as-is; the config resolver
+	// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
+	// applyDefaults clamps any persisted value, so a stray input can never park an
+	// issue forever. A client sending 0 means "use the default".
+	if body.ContributeCooldownHours != nil {
+		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
 	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = body.DisabledRepos

@@ -742,6 +742,17 @@
       box-shadow: var(--shadow-raised); z-index: 10002;
       text-align: left; white-space: normal; cursor: default;
     }
+    /* Viewport-edge collision handling. When the banner sits near the top of
+       the page there isn't 8px + the panel's own height of room above the
+       anchor, so the default `bottom: 100%` placement pushes the panel off
+       the top of the browser window and clips its first lines. gh-idhint.js
+       (positionInstallIdHint) measures the anchor and the panel on every
+       show and, when it doesn't fit above, adds this class to flip the
+       panel below the anchor instead — same panel, same content, just
+       flipped to the side that has room. */
+    .gh-idhint-pop.gh-idhint-pop-below {
+      bottom: auto; top: calc(100% + 8px);
+    }
     .gh-idhint:hover .gh-idhint-pop,
     .gh-idhint:focus-within .gh-idhint-pop,
     .gh-idhint-btn[aria-expanded="true"] + .gh-idhint-pop { display: block; }
@@ -2775,7 +2786,14 @@
       <div class="gh-app-title">GitHub App Not Installed</div>
       <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.</div>
     </div>
+    <!-- autocomplete=off + name-less: Firefox form history would otherwise
+         offer/refill a stored value and, on Linux, could clear the field on a
+         re-render. Enter also submits (onkeydown) so entry works even if the
+         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
+         Firefox — matching Safari, where the flow already worked instantly. -->
     <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();submitGitHubInstallationID();}"
       title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
       style="width:120px;padding:6px 8px;margin-right:6px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);font-size:0.8rem" />
     <!-- Where-do-I-find-this hint. Content is injected by
@@ -2789,8 +2807,13 @@
         onclick="toggleInstallIdHint(event)">?</button>
       <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
     </span>
-    <button onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
-    <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
+    <!-- type=button is explicit: with no type a <button> defaults to
+         type=submit, and if this banner were ever wrapped in a form (or Firefox
+         treated an ancestor as one), the click would trigger an implicit submit
+         that navigates/resets the page and clears the input before the handler
+         ran — a Firefox-vs-Safari difference. type=button removes that path. -->
+    <button type="button" onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
+    <button type="button" onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
   <div id="hub-banner" style="display:none"></div>
@@ -3026,8 +3049,8 @@
         <p style="margin:0 0 8px"><strong>Change to L3 whenever you like — there is no gate.</strong> No quota, no checklist,
         no criteria that must go green first. The only criterion is your own judgement: <em>do you trust the advisory findings
         you have been reading?</em> That is what L2 is for. Once you believe the beads, you are ready.</p>
-        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Instructed</em>) the only thing the hive touches in
-        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) introduces the <strong>quality agent</strong>, and
+        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Advisory (Instructed)</em>) the only thing the hive touches in
+        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Quality-Gated (Measured)</em>) introduces the <strong>quality agent</strong>, and
         its job is building test cases — making your repo resilient to code changes from <em>any</em> contributor that would
         destabilise it, break it, or violate patterns you prefer. That is the next step in gaining trust: not more findings,
         but a safety net. Concretely, the quality agent may open GitHub issues
@@ -3056,15 +3079,15 @@
         below it. The end-to-end journey: <strong>L2 shows you what Hive would find; L3 builds the safety net that makes acting
         on those findings safe; L4–L6 progressively hand over more of the acting.</strong> Nothing is fully autonomous until L6:</p>
         <ul style="margin:0 0 16px;padding-left:20px">
-          <li><strong>L1 Assisted</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
-          <li><strong>L2 Instructed</strong> — the trust level. Advisory beads only; the sole GitHub write is the
+          <li><strong>L1 — Inception (Assisted)</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
+          <li><strong>L2 — Advisory (Instructed)</strong> — the trust level. Advisory beads only; the sole GitHub write is the
               🐝 Hive Advisory Report issue and its digest comment.</li>
-          <li><strong>L3 Measured</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
+          <li><strong>L3 — Quality-Gated (Measured)</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
               safeguard everything above depends on.</li>
-          <li><strong>L4 Adaptive</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
+          <li><strong>L4 — Security-Aware (Adaptive)</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
               issues and PRs remain hold-gated for human review.</li>
-          <li><strong>L5 Semi-Automated</strong> — PRs carry a hold label, reviewed in batches.</li>
-          <li><strong>L6 Autonomous</strong> — auto-merge once CI is green.</li>
+          <li><strong>L5 — Semi-Autonomous (Semi-Automated)</strong> — PRs carry a hold label, reviewed in batches.</li>
+          <li><strong>L6 — Fully Autonomous</strong> — auto-merge once CI is green.</li>
         </ul>
         <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
 
@@ -5699,6 +5722,67 @@
       pop.innerHTML = ghAppInstallIdHintHtml(data);
     }
 
+    /* Viewport-edge collision handling for the install-ID hint popover.
+       The panel's default CSS position is `bottom: 100%` — anchored above
+       the `?` button. That's fine when the banner has room above it, but
+       when the banner sits near the top of the page (e.g. right under the
+       page header) there isn't 8px + the panel's rendered height of space,
+       and the panel overflows off the top of the browser window: its first
+       lines ("...this number") render above y=0 and are clipped.
+
+       This measures the anchor via getBoundingClientRect() on every show
+       and, when there isn't enough room above, toggles
+       .gh-idhint-pop-below (see CSS) to flip the panel to render BELOW the
+       anchor instead — the side that has room. It also clamps the panel
+       horizontally so it can't run off the left/right edge on a narrow
+       viewport or when the banner is near a side edge, the same way the
+       account-menu at #oc-gh-user-menu already clamps via max-width.
+
+       Dependency-free: no popover/positioning library, just
+       getBoundingClientRect + inline style overrides of the CSS defaults. */
+    function positionInstallIdHint() {
+      var pop = document.getElementById('gh-app-install-id-hint-pop');
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (!pop || !wrap) return;
+      var POPOVER_EDGE_MARGIN_PX = 8; // matches the `bottom: calc(100% + 8px)` gap in CSS
+      var anchorRect = wrap.getBoundingClientRect();
+      var popRect = pop.getBoundingClientRect();
+      var popHeight = popRect.height || pop.offsetHeight || 0;
+      var viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+
+      /* Flip below when there isn't room above the anchor for the panel
+         plus its margin. getBoundingClientRect() returns 0-height while
+         `display:none`, so read it while CSS already shows it (hover /
+         focus-within / aria-expanded all apply before this runs on the
+         relevant events) — a 0 height then just falls through to "fits". */
+      var fitsAbove = (anchorRect.top - POPOVER_EDGE_MARGIN_PX - popHeight) >= 0;
+      pop.classList.toggle('gh-idhint-pop-below', !fitsAbove);
+
+      /* Horizontal clamp: the panel is centered on the anchor by default
+         (`left: 50%; transform: translateX(-50%)`). If that would push
+         either edge past the viewport, override with a fixed left offset
+         instead of the centered transform so the whole panel stays
+         visible on screen. */
+      var popWidth = popRect.width || pop.offsetWidth || 0;
+      var anchorCenter = anchorRect.left + (anchorRect.width / 2);
+      var idealLeft = anchorCenter - (popWidth / 2);
+      var minLeft = POPOVER_EDGE_MARGIN_PX;
+      var maxLeft = viewportWidth - popWidth - POPOVER_EDGE_MARGIN_PX;
+      if (maxLeft < minLeft) maxLeft = minLeft; // panel wider than viewport minus margins
+      var clampedLeft = Math.min(Math.max(idealLeft, minLeft), maxLeft);
+      if (clampedLeft !== idealLeft) {
+        /* Reposition relative to the anchor, not the viewport, since the
+           panel is `position: absolute` inside `.gh-idhint` (`position:
+           relative`). Convert the clamped viewport-space left back into
+           anchor-space and drop the centering transform. */
+        pop.style.left = (clampedLeft - anchorRect.left) + 'px';
+        pop.style.transform = 'none';
+      } else {
+        pop.style.left = '';
+        pop.style.transform = '';
+      }
+    }
+
     /* Click/keyboard toggle. Enter and Space activate a <button> natively, so
        this one handler serves mouse, touch, and keyboard alike — the panel is
        never hover-only. */
@@ -5708,7 +5792,39 @@
       if (!btn) return;
       var open = btn.getAttribute('aria-expanded') === 'true';
       btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!open) {
+        /* Panel is about to become visible (CSS reacts to aria-expanded
+           synchronously) — measure and position it now. requestAnimationFrame
+           ensures layout has settled before we read getBoundingClientRect(). */
+        requestAnimationFrame(positionInstallIdHint);
+      }
     }
+
+    /* The panel is also shown by pure CSS on hover/focus-within (see
+       .gh-idhint:hover / :focus-within in the stylesheet), with no JS in the
+       loop at all. Hook those same triggers here so hover users get the same
+       collision handling as click/keyboard users, not just a clipped panel. */
+    (function () {
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (!wrap) return;
+      wrap.addEventListener('mouseenter', function () {
+        requestAnimationFrame(positionInstallIdHint);
+      });
+      wrap.addEventListener('focusin', function () {
+        requestAnimationFrame(positionInstallIdHint);
+      });
+      /* The popover's own content is swapped in asynchronously by
+         renderGitHubAppInstallIdHint() (host/org arrive from /api/config
+         after boot), which can change its rendered height. Re-measure on
+         window resize too, since a narrower/shorter viewport can change
+         whether the panel still fits above the anchor. */
+      window.addEventListener('resize', function () {
+        var btn = document.getElementById('gh-app-install-id-hint-btn');
+        if (btn && btn.getAttribute('aria-expanded') === 'true') {
+          positionInstallIdHint();
+        }
+      });
+    })();
 
     /* Dismissal: a click anywhere outside the hint, or Escape, closes it.
        Without this a tapped panel on touch would have no way to close, since
@@ -5731,8 +5847,17 @@
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      /* This render runs on EVERY status poll. It updates title/desc/link only
+         and must never disturb what the user is typing into the install-ID
+         field: in Firefox on Linux a value that "doesn't stick" is consistent
+         with the field being cleared mid-entry. Snapshot the value before the
+         render and restore it after if anything cleared it, unless the user has
+         since typed something new. Harmless in Safari/Chrome (value unchanged). */
+      var idInput = document.getElementById('gh-app-install-id-input');
+      var priorIdValue = idInput ? idInput.value : null;
       /* Keep the hint's host/org in step with whatever this render knows. */
       renderGitHubAppInstallIdHint(data);
+      if (idInput && priorIdValue && !idInput.value) idInput.value = priorIdValue;
       var appState = data ? String(data.githubAppState || '').trim() : '';
       var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
 
@@ -12865,7 +12990,7 @@ function burnAreaChart() {
 
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
-    const ACMM_LEVEL_NAMES = {0:'Prerequisites',1:'Foundational',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
       2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
@@ -13271,8 +13396,8 @@ function burnAreaChart() {
         2: 'Agents follow explicit instructions (CLAUDE.md, copilot-instructions) but require human initiation.',
         3: 'Observability in place — metrics, dashboards, and review rubrics track agent quality.',
         4: 'Self-tuning — agents adapt their behavior based on feedback loops and compliance checks.',
-        5: 'Fully automated — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
-        6: 'Autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
+        5: 'Semi-autonomous — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
+        6: 'Fully autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
       };
       const desc = opsDescriptions[d.operational_level] || 'Level not recognized.';
       acmmShowDialog('Operational Autonomy — L' + d.operational_level + ' ' + escapeHtml(name),
@@ -13976,7 +14101,7 @@ function burnAreaChart() {
       const errEl = document.getElementById('acmm-apply-error');
       errEl.style.display = 'none';
 
-      const levelNames = ['', 'Assisted', 'Instructed', 'Measured', 'Adaptive', 'Semi-Automated', 'Autonomous'];
+      const levelNames = ['', 'Inception', 'Advisory', 'Quality-Gated', 'Security-Aware', 'Semi-Autonomous', 'Fully Autonomous'];
       const name = levelNames[level] || 'Level ' + level;
       if (!(await hiveConfirm(`Preview ACMM Level ${level} (${name})?\n\nThis changes the dashboard display to show what this level looks like. Running agents are not affected — use Apply to create agents and change their state.`))) return;
 
@@ -14006,10 +14131,10 @@ function burnAreaChart() {
       }
     }
 
-    // Short "L3 Measured"-style label for an ACMM pack level. Shared by the
+    // Short "L3 Quality-Gated"-style label for an ACMM pack level. Shared by the
     // badges, the level dialog subtitle, and the Governor config General tab.
     function acmmLevelLabel(level) {
-      const levelNames = ['', 'L1 Assisted', 'L2 Instructed', 'L3 Measured', 'L4 Adaptive', 'L5 Semi-Automated', 'L6 Autonomous'];
+      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Fully Autonomous'];
       return levelNames[level] || 'L' + level;
     }
 
@@ -15520,6 +15645,20 @@ function burnAreaChart() {
           <span class="config-toggle-label" style="${hub.contribute_suspended ? 'color:var(--red);font-weight:600' : ''}">Suspend Contributions <span class="config-info">i<span class="config-tooltip">Temporarily stop assigning tasks to contributors. Connected contributors stay online but idle.</span></span></span>
         </div>
 
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.contribute_skip_assigned_to_others ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_skip_assigned_to_others"></div>
+          <span class="config-toggle-label">Skip Issues Assigned to Others <span class="config-info">i<span class="config-tooltip">When on, the contribute queue never serves an issue that is already assigned to a different GitHub user, so contributors don't pick up work a maintainer has claimed. Mirrored on the /contribute Management &amp; Operations tab.</span></span></span>
+        </div>
+
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.contribute_cooldown_enabled ? 'on' : ''}" onclick="toggleCooldownEnabled(this)" data-section="hub" data-key="contribute_cooldown_enabled"></div>
+          <span class="config-toggle-label">Task Cooldown <span class="config-info">i<span class="config-tooltip">After a task completes WITH a merged/verified PR, keep that issue out of the queue for the period below (default 168h = one week) so it isn't immediately re-offered. Turn off to disable cooldown gating entirely. Failure quarantine is separate and always on. Mirrored on the /contribute Management tab.</span></span></span>
+        </div>
+        <div class="config-field" style="margin-left:44px" ${hub.contribute_cooldown_enabled ? '' : 'title="Enable Task Cooldown to edit the period"'}>
+          <label>Cooldown Period (hours) <span class="config-info">i<span class="config-tooltip">The with-PR completion cooldown, in hours. 168 = one week (default). Range 1–8760.</span></span></label>
+          <input type="number" id="hub-cooldown-hours" min="1" max="8760" value="${hub.contribute_cooldown_hours || 168}" onchange="markDirty('hub','contribute_cooldown_hours',parseInt(this.value,10)||168)" ${hub.contribute_cooldown_enabled ? '' : 'disabled style="opacity:0.5"'}>
+        </div>
+
         ${renderFilterWithMode({
           label: 'Titles', noun: 'title', unit: 'issue',
           modeKey: 'contribute_titles_mode', listKey: 'contribute_deny_titles',
@@ -15592,9 +15731,16 @@ function burnAreaChart() {
     }
 
     function fetchQueueCount() {
-      fetch('/api/contribute/status').then(function(r) { return r.json(); }).then(function(d) {
+      // Use the same source as the Operations tab's Ready-work queue
+      // (/api/contribute/queue) rather than /api/contribute/status'
+      // actionable_items, which is the raw pre-filter pool and does not
+      // apply the Labels/Titles/Authors admission filters configured in
+      // this dialog. Showing actionable_items here misleadingly implied
+      // that many items were queued when only the filtered subset is
+      // actually admissible.
+      fetch('/api/contribute/queue').then(function(r) { return r.json(); }).then(function(d) {
         var el = document.getElementById('hub-queue-count');
-        if (el) el.textContent = (d.actionable_items || 0) + ' items in queue';
+        if (el) el.textContent = ((d.queue || []).length) + ' items in queue';
       }).catch(function() {
         var el = document.getElementById('hub-queue-count');
         if (el) el.textContent = '—';
@@ -15618,6 +15764,20 @@ function burnAreaChart() {
             markDirty('hub', 'snapshot_url', snapUrl);
           }
         }
+      }
+    }
+
+    // toggleCooldownEnabled flips the Task Cooldown switch and live-enables/disables
+    // the paired period input (mirrors toggleAutoSnapshot). Marks the section dirty so
+    // Save PUTs contribute_cooldown_enabled through /api/config/governor/hub.
+    function toggleCooldownEnabled(el) {
+      el.classList.toggle('on');
+      var isOn = el.classList.contains('on');
+      markDirty('hub', 'contribute_cooldown_enabled', isOn);
+      var hoursInput = document.getElementById('hub-cooldown-hours');
+      if (hoursInput) {
+        hoursInput.disabled = !isOn;
+        hoursInput.style.opacity = isOn ? '1' : '0.5';
       }
     }
 
@@ -16783,6 +16943,8 @@ function burnAreaChart() {
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
+      const attrib = (_configState.data || {}).attribution || {};
+      const attribOn = attrib.attributionTrailer !== false; // default on
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -16812,6 +16974,10 @@ function burnAreaChart() {
             <button class="btn" onclick="closeConfigDialog();openACMMDialog()" title="Open the ACMM maturity level selector">Change&hellip;</button>
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
+        </div>
+        <div class="config-toggle" style="margin-top:14px">
+          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="attribution" data-key="attributionTrailer"></div>
+          <span class="config-toggle-label">Attribution Trailer <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
         </div>
         <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -19484,6 +19650,50 @@ function burnAreaChart() {
     });
 
     connect();
+
+    // Focus-aware presence reporting. An open tab is NOT engagement: the spoke
+    // only learns "a human is actually here" from these pings, which fire on a
+    // fixed cadence and ONLY while the tab is visible AND input (mouse/key/
+    // scroll/touch) happened within the idle window. No ping = idle — there is
+    // no explicit idle message. The spoke's engaged set rides the heartbeat to
+    // the hub, which accumulates honest engaged_seconds next to the legacy
+    // open-tab session_seconds. Failures are swallowed: presence is advisory
+    // and must never surface an error to the user.
+    (function initPresenceReporting() {
+      var PRESENCE_PING_MS = 30000;           // engaged-ping cadence; must match presencePingIntervalSecs (presence.go)
+      var PRESENCE_IDLE_WINDOW_MS = 60000;    // no input for this long => idle, stop pinging
+      var PRESENCE_INPUT_THROTTLE_MS = 5000;  // rate-limit input bookkeeping (mousemove fires constantly)
+      var _presenceLastInput = Date.now();
+      function notePresenceInput() {
+        var now = Date.now();
+        if (now - _presenceLastInput >= PRESENCE_INPUT_THROTTLE_MS) _presenceLastInput = now;
+      }
+      ['mousemove', 'mousedown', 'keydown', 'scroll', 'wheel', 'touchstart'].forEach(function(ev) {
+        window.addEventListener(ev, notePresenceInput, { passive: true, capture: true });
+      });
+      function presenceEngaged() {
+        return document.visibilityState === 'visible' &&
+          (Date.now() - _presenceLastInput) < PRESENCE_IDLE_WINDOW_MS;
+      }
+      function sendPresencePing() {
+        if (!presenceEngaged()) return;
+        fetch('/api/presence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engaged: true })
+        }).catch(function() {});
+      }
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+          // Returning to the tab is itself input — restart the idle clock and
+          // report immediately so presence recovers without waiting a cadence.
+          _presenceLastInput = Date.now();
+          sendPresencePing();
+        }
+      });
+      setInterval(sendPresencePing, PRESENCE_PING_MS);
+      sendPresencePing();
+    })();
 
     // Deferred initialization — non-critical fetches staggered after first paint.
     // Each entry returns a promise so anchor scrolling can wait for layout to settle.
