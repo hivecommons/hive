@@ -2720,7 +2720,14 @@
       <div class="gh-app-title">GitHub App Not Installed</div>
       <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.</div>
     </div>
+    <!-- autocomplete=off + name-less: Firefox form history would otherwise
+         offer/refill a stored value and, on Linux, could clear the field on a
+         re-render. Enter also submits (onkeydown) so entry works even if the
+         Set-ID button is obscured (e.g. the ? popover) or its click is flaky in
+         Firefox — matching Safari, where the flow already worked instantly. -->
     <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();submitGitHubInstallationID();}"
       title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
       style="width:120px;padding:6px 8px;margin-right:6px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);font-size:0.8rem" />
     <!-- Where-do-I-find-this hint. Content is injected by
@@ -2734,8 +2741,13 @@
         onclick="toggleInstallIdHint(event)">?</button>
       <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
     </span>
-    <button onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
-    <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
+    <!-- type=button is explicit: with no type a <button> defaults to
+         type=submit, and if this banner were ever wrapped in a form (or Firefox
+         treated an ancestor as one), the click would trigger an implicit submit
+         that navigates/resets the page and clears the input before the handler
+         ran — a Firefox-vs-Safari difference. type=button removes that path. -->
+    <button type="button" onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
+    <button type="button" onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
   <div id="hub-banner" style="display:none"></div>
@@ -5685,8 +5697,17 @@
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      /* This render runs on EVERY status poll. It updates title/desc/link only
+         and must never disturb what the user is typing into the install-ID
+         field: in Firefox on Linux a value that "doesn't stick" is consistent
+         with the field being cleared mid-entry. Snapshot the value before the
+         render and restore it after if anything cleared it, unless the user has
+         since typed something new. Harmless in Safari/Chrome (value unchanged). */
+      var idInput = document.getElementById('gh-app-install-id-input');
+      var priorIdValue = idInput ? idInput.value : null;
       /* Keep the hint's host/org in step with whatever this render knows. */
       renderGitHubAppInstallIdHint(data);
+      if (idInput && priorIdValue && !idInput.value) idInput.value = priorIdValue;
       var appState = data ? String(data.githubAppState || '').trim() : '';
       var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
 

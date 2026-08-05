@@ -221,3 +221,68 @@ func TestInstallIdHintPopoverHasViewportCollisionHandling(t *testing.T) {
 		t.Error("expected hover (mouseenter) and keyboard-focus (focusin) listeners that also trigger positionInstallIdHint")
 	}
 }
+
+// TestInstallIdInputIsCrossBrowserHardened is the regression guard for the
+// user report that entering the installation ID and clicking "Set ID" worked
+// instantly in Safari but "did not stick" in Firefox on Linux. Since the same
+// backend serves both (Safari proves the API works), the cause is a Firefox
+// client-side input/event/DOM difference. This locks the defensive hardening:
+//
+//   - The Set-ID button is type="button". A <button> with no type defaults to
+//     type=submit; if the banner were ever wrapped in a form (or Firefox
+//     treated an ancestor as one) the click would trigger an implicit submit
+//     that resets the page and clears the field before the handler ran.
+//   - The input has autocomplete="off" so Firefox form history cannot
+//     offer/refill/clear the value.
+//   - Enter in the input also submits, so entry works even if the Set-ID
+//     button is obscured (e.g. the "?" popover) or its click is flaky.
+//   - renderGitHubAppBanner (which runs on every poll) preserves a value the
+//     user is mid-typing, so a background re-render can never wipe it.
+func TestInstallIdInputIsCrossBrowserHardened(t *testing.T) {
+	html := spokeIndexHTML(t)
+
+	// Isolate the Set-ID button's start tag and require an explicit
+	// type="button" — the exact fix for the implicit-submit reset.
+	const setBtnID = `id="gh-app-set-id-btn"`
+	bi := strings.Index(html, setBtnID)
+	if bi < 0 {
+		t.Fatalf("static/index.html no longer contains %s", setBtnID)
+	}
+	btnOpen := strings.LastIndex(html[:bi], "<button")
+	if btnOpen < 0 {
+		t.Fatalf("could not find the opening <button for the Set-ID control")
+	}
+	btnEnd := strings.Index(html[btnOpen:], ">")
+	btnTag := html[btnOpen : btnOpen+btnEnd+1]
+	if !strings.Contains(btnTag, `type="button"`) {
+		t.Errorf("Set-ID button must be type=\"button\" (a default <button> is type=submit and an implicit form submit resets the field in Firefox before submitGitHubInstallationID runs):\n%s", btnTag)
+	}
+
+	// Isolate the install-ID input's start tag: it must disable autocomplete
+	// and wire an Enter-key submit.
+	const inputID = `id="gh-app-install-id-input"`
+	ii := strings.Index(html, inputID)
+	if ii < 0 {
+		t.Fatalf("static/index.html no longer contains %s", inputID)
+	}
+	inOpen := strings.LastIndex(html[:ii], "<input")
+	inEnd := strings.Index(html[inOpen:], ">")
+	inTag := html[inOpen : inOpen+inEnd+1]
+	if !strings.Contains(inTag, `autocomplete="off"`) {
+		t.Errorf("install-ID input must set autocomplete=\"off\" so Firefox form history can't clear/refill the value:\n%s", inTag)
+	}
+	if !strings.Contains(inTag, "submitGitHubInstallationID()") || !strings.Contains(inTag, "Enter") {
+		t.Errorf("install-ID input must submit on Enter so entry works even if the Set-ID button is obscured or its click is flaky in Firefox:\n%s", inTag)
+	}
+
+	// The per-poll banner render must not clobber a value the user is typing.
+	ri := strings.Index(html, "function renderGitHubAppBanner(data)")
+	if ri < 0 {
+		t.Fatal("static/index.html has no renderGitHubAppBanner function")
+	}
+	end := strings.Index(html[ri:], "\n    }")
+	body := html[ri : ri+end]
+	if !strings.Contains(body, "priorIdValue") {
+		t.Error("renderGitHubAppBanner must snapshot/restore the install-ID input value so a background poll re-render can't wipe what the user typed (the Firefox \"doesn't stick\" symptom)")
+	}
+}
