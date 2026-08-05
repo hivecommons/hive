@@ -542,6 +542,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex${VOLSUF}"
           ;;
+        pi)
+          [ -d "${HOME}/.pi" ] && CLI_MOUNTS="-v ${HOME}/.pi:/home/dev/.pi${VOLSUF}"
+          ;;
         agy)
           [ -d "${HOME}/.antigravitycli" ] && CLI_MOUNTS="-v ${HOME}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
           ;;

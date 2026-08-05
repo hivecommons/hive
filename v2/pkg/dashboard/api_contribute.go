@@ -1100,7 +1100,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <h1>🐝 Contribute to %s</h1>
 <div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
-<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog.</p>
+<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
 <div class="stat-row">
 <div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
 %s
