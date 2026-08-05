@@ -594,6 +594,17 @@ type SaaSHive struct {
 	MigrationFrom      string `json:"migration_from,omitempty"`       // source cluster ID
 	MigrationTo        string `json:"migration_to,omitempty"`         // target cluster ID
 	MigrationStartedAt string `json:"migration_started_at,omitempty"` // RFC3339 timestamp
+
+	// AssignedAt (RFC3339) records WHEN this placeholder was last claimed — set by
+	// both claim paths (handleApproveProvision, handleAssignHive) the moment they
+	// flip Status to statusAssigned. It exists so the self-heal sweep can measure
+	// how long a placeholder has been stuck at Status=statusAssigned &&
+	// !ClaimDelivered and reset one that never completed its claim (a spoke frozen
+	// on an old image never reports the org/repos back, so ClaimDelivered stays
+	// false forever). Empty on records claimed before this field existed and on
+	// unclaimed placeholders; a zero/absent stamp makes the sweep skip the hive
+	// rather than reset it on an unknowable age.
+	AssignedAt string `json:"assigned_at,omitempty"`
 }
 
 type CreateHiveRequest struct {

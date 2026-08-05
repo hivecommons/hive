@@ -276,6 +276,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/admin/impersonate/{username}", s.requireAdmin(s.handleImpersonateStart))
 	s.mux.HandleFunc("GET /api/saas/impersonation-status", s.requireAuth(s.handleImpersonationStatus))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/assign", s.requireAuth(s.handleAssignHive))
+	// Escape hatch: return an assigned-but-unclaimed placeholder to the available
+	// pool so it can be re-armed. Admin-only, and guarded to the wedged middle
+	// state (assigned && !claim_delivered) inside the handler.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	// Acknowledging a fleet alert is an operator action on the operator's own
@@ -1979,6 +1983,15 @@ type MyHiveEntry struct {
 	Assigning   bool   `json:"assigning,omitempty"`
 	AssigningTo string `json:"assigningTo,omitempty"`
 
+	// AssignedUnclaimed marks a placeholder wedged at Status=statusAssigned &&
+	// !ClaimDelivered: a claim was stamped but the spoke never reported the
+	// project back. Unlike Assigning — which is true only while a REACHABLE spoke
+	// is actively reporting a DIFFERENT project — this is true even when the spoke
+	// is offline or silent (the frozen-image / heartbeat-only case), which is
+	// exactly the dead-end the Reset assignment action exists for. It gates that
+	// admin-only action in the row menu.
+	AssignedUnclaimed bool `json:"assignedUnclaimed,omitempty"`
+
 	// Migration tracking (Phase 7).
 	MigrationStatus string `json:"migrationStatus,omitempty"`
 	MigrationFrom   string `json:"migrationFrom,omitempty"`
@@ -2117,6 +2130,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
+		// A placeholder wedged between the two claim paths: assigned but the spoke
+		// never reported the project back. Computed from meta (not the live
+		// registry) so it is true even for an offline/silent spoke — the exact
+		// dead-end the Reset assignment action targets.
+		entry.AssignedUnclaimed = sh.Status == statusAssigned && !sh.ClaimDelivered
 		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
 			entry.ACMMLevel = sh.ACMMLevel
 		}
@@ -4376,6 +4394,9 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// only ever considers hives with AutoUpgrade enabled, while the flag is set
 	// by the admin and bulk upgrade paths for any hive.
 	s.sweepOrphanedUpgrades()
+	// Auto-reset any placeholder wedged at assigned && !claim_delivered past the
+	// timeout, so an assigned-but-unclaimed slot can never dead-end silently.
+	s.sweepStuckAssignments()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4396,6 +4417,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
 		s.sweepOrphanedUpgrades()
+		s.sweepStuckAssignments()
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -6078,6 +6100,9 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// does above. (The assign path — handleAssignHive — already does this.)
 	h.ClaimDelivered = false
 	h.Status = statusAssigned
+	// Stamp when this claim began so the self-heal sweep can age it out if the
+	// spoke never reports the project back (ClaimDelivered stuck false).
+	h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
 	// resolution below (host backfill uses s.clusterForHive(h), which silently
@@ -6901,6 +6926,9 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
 	h.Status = statusAssigned
+	// Stamp when this claim began so the self-heal sweep can age it out if the
+	// spoke never reports the project back (ClaimDelivered stuck false).
+	h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
 	h.Error = ""
 	// A (re)assignment is a new claim payload: reset delivery so the hub pushes
 	// this project to the spoke until it reports the new org/repos back, before
@@ -7773,6 +7801,18 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <!-- Register-your-own-hive: for a user who self-installed a standalone
+             hive and wants to attach it to THIS hub. Points at the existing
+             self-host guide (get-started.html #self-host) whose key step is to
+             set HIVE_HUB_URL — no new backend, no new content. Always available. -->
+        <a class="btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (set HIVE_HUB_URL)">Register your own hive</a>
+        <!-- Request-a-hive: routes to the EXISTING Request-a-Hive wizard at
+             /get-started (files a provision request via POST
+             /api/saas/request-provision). Shown when the user has NO hosted
+             quota (cannot self-create); hidden otherwise. No new modal. -->
+        <a class="btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
+        <!-- Self-create path, for users who DO have hosted quota. Hidden when the
+             user has no quota (the Request-a-hive link above takes over). -->
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
       </div>
     </div>
@@ -11664,9 +11704,17 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         var canCreate = _userQuota < 0 || _userQuota > _userUsed;
         var addBtn = document.getElementById('btn-add-hive');
+        var requestBtn = document.getElementById('btn-request-hive');
         if (addBtn) {
           addBtn.disabled = !canCreate;
           addBtn.title = canCreate ? '' : 'No hosted quota — contact hub admin';
+          /* No hosted quota: hide the dead-end self-create button entirely and
+             surface the active "Request a hive" link in its place. With quota,
+             keep the working + Add Hosted Hive button and hide the request link. */
+          addBtn.style.display = canCreate ? '' : 'none';
+        }
+        if (requestBtn) {
+          requestBtn.style.display = canCreate ? 'none' : '';
         }
         /* Render through sortedDashHives() rather than the raw payload so an
            active sort — whether the operator clicked a column or restored a
@@ -11769,21 +11817,29 @@ const dashboardHTML = `<!DOCTYPE html>
           var repoLink = repoPath ? (repoHref ? '<a href="' + repoHref + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '<span class="repo-link">' + esc(h.primaryRepo) + '</span>') : '';
           var actionCell = '';
           var access = accessMap[h.id];
+          // /contribute is a PUBLIC endpoint (see publicPaths) — lending compute
+          // does NOT require access — so Contribute is the PRIMARY action for
+          // EVERYONE on a public hive, regardless of access status. Use the
+          // hive's heartbeat-reported dashboard URL (resolvedBase), NOT a
+          // hardcoded <id>.hive.kubestellar.io host. Firewalled spokes (e.g.
+          // vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a different
+          // domain, so the hardcoded host 503'd/failed to resolve.
+          var cBase = resolvedBase(h);
+          var contributeAction = cBase
+            ? '<a href="' + cBase + '/contribute" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>'
+            : '<span style="padding:3px 10px;color:var(--muted);font-size:0.7rem" title="hive has not reported its dashboard URL yet">Contribute unavailable</span>';
+          // Access is the SECONDARY, less-prominent action: a small link for the
+          // user who genuinely wants sign-in / manage access. Pending state is
+          // preserved (no re-request while one is outstanding).
+          var accessSecondary;
           if (access && access.status === 'accepted') {
-            // Use the hive's heartbeat-reported dashboard URL (resolvedBase),
-            // NOT a hardcoded <id>.hive.kubestellar.io host. Firewalled spokes
-            // (e.g. vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a
-            // different domain, so the hardcoded host 503'd/failed to resolve.
-            var cBase = resolvedBase(h);
-            var actionCell2 = cBase
-              ? '<a href="' + cBase + '/contribute" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>'
-              : '<span style="padding:3px 10px;color:var(--muted);font-size:0.7rem" title="hive has not reported its dashboard URL yet">Contribute unavailable</span>';
-            actionCell = actionCell2;
+            accessSecondary = '<span style="font-size:0.65rem;color:var(--green)" title="you have access to this hive">✓ access</span>';
           } else if (access && access.status === 'pending') {
-            actionCell = '<span style="padding:3px 10px;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:4px;font-size:0.7rem">Pending</span>';
+            accessSecondary = '<span style="font-size:0.65rem;color:#fbbf24" title="access request pending">Pending</span>';
           } else {
-            actionCell = '<button onclick="dashRequestAccess(\'' + esc(h.id) + '\',this)" style="padding:3px 10px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;cursor:pointer;border:1px solid rgba(59,130,246,0.3)">Request Access</button>';
+            accessSecondary = '<a href="#" onclick="dashRequestAccess(\'' + esc(h.id) + '\',this);return false" style="font-size:0.65rem;color:#60a5fa;text-decoration:none" title="request sign-in / manage access to this hive">Request access</a>';
           }
+          actionCell = '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">' + contributeAction + accessSecondary + '</div>';
           return '<tr>' +
             '<td style="text-align:left">' + esc(h.name || h.id) + '</td>' +
             '<td>' + repoLink + '</td>' +
@@ -12171,7 +12227,16 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives yet</p>' +
-          '<p>Log in to a local hive dashboard to see it here, or create a hosted hive.</p>' +
+          '<p style="margin-bottom:16px">Get started in one of two ways:</p>' +
+          '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px">' +
+          /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
+             (POST /api/saas/request-provision). We host it for you. */
+          '<a class="btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
+          /* Register-your-own-hive → the EXISTING self-host guide at
+             /get-started#self-host (set HIVE_HUB_URL, hive auto-appears). */
+          '<a class="btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
+          '</div>' +
+          '<p style="color:var(--muted);font-size:0.85rem">…or contribute to a public hive below.</p>' +
           '</div>';
         return;
       }
@@ -12244,6 +12309,13 @@ const dashboardHTML = `<!DOCTYPE html>
         var menuItems = [];
         var mi = 'display:block;padding:7px 14px;color:#c9d1d9;text-decoration:none;font-size:0.78rem;cursor:pointer';
         if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
+        /* Reset assignment: escape hatch for a placeholder wedged at
+           assigned && !claim_delivered (assignedUnclaimed) — its spoke never
+           reported the project back, so it can be neither re-approved (needs a
+           pending request) nor re-assigned (needs an available slot). This
+           returns the slot to the pool so it can be re-armed. Admin-only,
+           mirroring the endpoint's own guard. */
+        if (_isAdmin && h.assignedUnclaimed) menuItems.push('<div onclick="resetAssignment(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + ';color:#d29922;font-weight:600">Reset assignment</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" style="' + mi + '">Contribute</a>');
         if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" style="' + mi + '">Preview</a>');
         var apiBase = rb ? esc(rb) : '';
@@ -13210,6 +13282,30 @@ const dashboardHTML = `<!DOCTYPE html>
         await hiveNotify('Forge App reset armed',
           'Hive: ' + hiveName + '\n' +
           'The spoke clears its installation on the next heartbeat (about 30 seconds), then shows the install prompt.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        await hiveNotify('Reset failed', String(e));
+      }
+    }
+
+    /* Reset assignment: returns an assigned-but-unclaimed placeholder to the
+       available pool so it can be re-armed. Shown only on a wedged row
+       (assigned && !claim_delivered), matching the endpoint's guard — a
+       delivered claim is a live hive and the server refuses to reset it. */
+    async function resetAssignment(hiveId, hiveName) {
+      var ok = await hiveConfirm('Reset the assignment for "' + hiveName + '"?\n\n' +
+        'This slot was assigned but its spoke never reported the project back, so it is stuck "Assigning" and cannot be re-approved or re-assigned. ' +
+        'Resetting returns it to the available pool — its project, owner and org are cleared — so it can be assigned again cleanly. ' +
+        'A live, fully-claimed hive is never affected.');
+      if (!ok) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-assignment', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { await hiveNotify('Reset failed', String(data.error || resp.status)); return; }
+        var extra = data.reopened_request_for ? '\nThe provision request for ' + data.reopened_request_for + ' was reopened so you can re-approve it.' : '';
+        await hiveNotify('Assignment reset',
+          'Hive: ' + hiveName + '\n' +
+          'The slot is back in the available pool and can be assigned again.' + extra);
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         await hiveNotify('Reset failed', String(e));

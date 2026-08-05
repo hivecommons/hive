@@ -325,6 +325,46 @@ func TestContributeLandingHasKubernetesMode(t *testing.T) {
 	}
 }
 
+// TestContributeLandingHasWatsonxOption pins the clanker-side watsonx.ai
+// onboarding option: a contributor bringing their own watsonx OpenAI-compatible
+// endpoint + key gets a labeled, guided CLI choice (instead of "Other"), and
+// the backend is headless-capable so it does not trip the Kubernetes-mode
+// no-headless-mode warning. This is onboarding UX only — the hub never sees
+// the contributor's watsonx endpoint or key.
+func TestContributeLandingHasWatsonxOption(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		// The CLI select option: labeled, guided, own-endpoint-and-key.
+		`value="watsonx"`,
+		`watsonx.ai (IBM Granite + your key)`,
+		// The env block routes through the OpenAI-compatible gateway, same
+		// pattern as vllm/llm-d, and stays local (never sent to the hive).
+		`ml.cloud.ibm.com/ml/gateway/v1`,
+		`WATSONX_PROJECT_ID`,
+		`never sent to the hive`,
+		// CLIENTS metadata tile.
+		`watsonx:{name:'watsonx.ai',tag:'IBM'}`,
+		// Headless-capable: must be registered so Kubernetes mode does not warn.
+		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/contribute watsonx onboarding surface missing %q", want)
+		}
+	}
+}
+
 // TestContributeFleet pins the read-only fleet endpoint JSON shape.
 func TestContributeFleet(t *testing.T) {
 	setupContributeEnv(t)
