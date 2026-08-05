@@ -3976,17 +3976,28 @@ func runEvalCycle(
 		actionable.Issues.SLAViolations,
 	)
 
-	// Restarted agents need a kick even if the governor wouldn't schedule one this cycle.
+	// Crash-restarted agents may get a "resume" kick ahead of their cadence
+	// slot so work interrupted mid-task resumes promptly — but ONLY through
+	// the governor's gate (#2573). Unconditionally kicking every restarted
+	// agent meant a crash-looping CLI was kicked on every eval cycle,
+	// burning backend tokens far faster than any configured cadence and
+	// bypassing the budget gate; AllowResumeKick bounds resume kicks to one
+	// per cadence interval and respects mode pauses and the budget.
 	if len(restartedAgents) > 0 {
 		dueSet := make(map[string]bool, len(agentsDue))
 		for _, a := range agentsDue {
 			dueSet[a] = true
 		}
 		for _, a := range restartedAgents {
-			if !dueSet[a] {
-				agentsDue = append(agentsDue, a)
-				logger.Info("adding restarted agent to kick list", "agent", a)
+			if dueSet[a] {
+				continue
 			}
+			if !gov.AllowResumeKick(a) {
+				logger.Info("restarted agent NOT resume-kicked (cadence/budget gate); it will be kicked at its next scheduled slot", "agent", a)
+				continue
+			}
+			agentsDue = append(agentsDue, a)
+			logger.Info("adding restarted agent to kick list", "agent", a)
 		}
 	}
 
@@ -4010,6 +4021,14 @@ func runEvalCycle(
 			continue
 		}
 		if onDemandSet[name] {
+			continue
+		}
+		// Operator-paused agents must consume NOTHING (#2573). SendKick
+		// would reject the kick anyway (paused ⇒ not running), but skipping
+		// here keeps paused agents out of BuildKickMessages and the audit
+		// log, and avoids a spurious "failed to send kick" error every eval
+		// cycle for a deliberate pause.
+		if agentMgr.IsPaused(name) {
 			continue
 		}
 		filteredDue = append(filteredDue, name)
