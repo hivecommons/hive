@@ -1182,6 +1182,14 @@ type FleetClanker struct {
 	// Surfaced read-only exactly like CLIBackend/Model/Role so the Operations tab
 	// COULD display it; it is NEVER used to route or gate work.
 	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
+	// LabelInterests (#2677) mirrors the contributor's own OPT-IN label-affinity
+	// list (#2637, ContributorProfile.LabelInterests) so an operator can see
+	// fleet-wide who prefers what without cross-referencing each profile
+	// separately. Strictly READ-ONLY here: an operator never sets or edits this
+	// through the fleet view — it stays contributor-owned via the existing
+	// PUT /api/contribute/interests. Omitted when the contributor has declared
+	// none.
+	LabelInterests []string `json:"label_interests,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -1246,6 +1254,11 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			fc.ContributorID = c.profile.ContributorID
 			fc.GitHubUsername = c.profile.GitHubUsername
 			fc.TrustTier = c.profile.TrustTier
+			// #2677: mirror the contributor's own label interests read-only (a copy
+			// so the snapshot never aliases the live profile slice).
+			if len(c.profile.LabelInterests) > 0 {
+				fc.LabelInterests = append([]string(nil), c.profile.LabelInterests...)
+			}
 		}
 		var task *WSTaskAssign
 		var promptPreview string

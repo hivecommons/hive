@@ -920,6 +920,14 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
 .cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
 .cc-interest-x:hover{opacity:1}
+/* #2677: read-only mirror of a contributor's OWN label interests, shown on their
+   row in the operator "Connected clankers" fleet list (Operations tab). Reuses
+   the .cc-interest-chip visual (same green affinity color) in a compact, non-
+   interactive line so an owner gets a fleet-wide view without editing anything
+   here — editing stays contributor-owned via My label interests above. */
+.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
+.clanker-interests-label{color:#6e7681}
+.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
 .cc-interests-add{display:flex;gap:6px}
 .cc-interests-add input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-interests-add input::placeholder{color:#6e7681}
@@ -2874,6 +2882,18 @@ function idleReasonLabel(r){
     tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
   return m[r]||String(r).replace(/_/g,' ');
 }
+// clankerInterestsLine (#2677) renders one contributor's OWN label interests as
+// a compact read-only chip line for the operator fleet view. Purely
+// observability: an owner sees who prefers what, but this never offers a way
+// to set/edit another contributor's interests — that stays contributor-owned
+// via PUT /api/contribute/interests (see the "My label interests" editor
+// above). Returns '' when the contributor has none declared, matching how
+// capabilityLine() omits itself for an unversioned client.
+function clankerInterestsLine(interests){
+  if(!interests||!interests.length)return '';
+  var chips=interests.map(function(l){return '<span class="clanker-interest-chip">'+esc(l)+'</span>';}).join('');
+  return '<div class="clanker-interests" title="This contributor&rsquo;s own opt-in label interests. Read-only here &mdash; they set these themselves."><span class="clanker-interests-label">prefers:</span>'+chips+'</div>';
+}
 function renderClankers(list){
   list=list||[];
   var el=document.getElementById('clanker-list');
@@ -2904,6 +2924,10 @@ function renderClankers(list){
     // used to route or gate work — see capabilityLine() for the "self-declared" note
     // that keeps that visible at the point of use (per the issue's risk section).
     var capsLine=capabilityLine(c.capabilities);
+    // #2677: this contributor's own label interests, read-only, so the operator
+    // gets a fleet-wide view of who prefers what without cross-referencing each
+    // profile separately (the data already travels in this same fleet snapshot).
+    var interestsLine=clankerInterestsLine(c.label_interests);
     // #2534: owner/read-write get per-contributor admin actions wired to the
     // EXISTING endpoints — set trust tier / promote (PUT /api/contributors/{id}/trust),
     // revoke (POST .../revoke), remove (DELETE .../{id}). Hidden for read viewers.
@@ -2940,7 +2964,7 @@ function renderClankers(list){
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
-      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+interestsLine+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }
