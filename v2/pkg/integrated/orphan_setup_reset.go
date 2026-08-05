@@ -199,7 +199,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 	}
 	defer os.RemoveAll(preparationRoot)
 	preparationCheckout := filepath.Join(preparationRoot, "checkout")
-	checkout := filepath.Join(options.StateDir, "checkout")
+	checkout := orphanSetupResetCheckoutDir(options.StateDir)
 	ctx = gittransport.WithControllerToken(ctx, options.GitTransportToken)
 	defaultBranch, err := ensureCheckout(ctx, plan.Repository, preparationCheckout)
 	if err != nil {
@@ -235,6 +235,10 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 	return RunManagement(ctx, ManagementOptions{
 		Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, GitTransportToken: options.GitTransportToken,
 	})
+}
+
+func orphanSetupResetCheckoutDir(stateDir string) string {
+	return filepath.Join(stateDir, "integrated", "checkout")
 }
 
 func orphanRecoveryConfigMatchesPlan(config Config, plan OrphanSetupResetPlan, stateDir string) bool {

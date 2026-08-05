@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,19 @@ func TestOrphanSetupResetPlanDigestBindsPreimages(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("changing the exact preimage did not change the reset plan digest")
+	}
+}
+
+func TestOrphanSetupResetCheckoutUsesManagedIntegratedLeaf(t *testing.T) {
+	stateDir := t.TempDir()
+	checkout := orphanSetupResetCheckoutDir(stateDir)
+	want := path.Join(stateDir, "integrated", "checkout")
+	if filepath.Clean(checkout) != filepath.Clean(want) {
+		t.Fatalf("checkout = %q, want %q", checkout, want)
+	}
+	exists, err := validateManagedCheckoutBeforeGit(checkout, "owner/repo")
+	if err != nil || exists {
+		t.Fatalf("managed checkout validation = %t, %v", exists, err)
 	}
 }
 
