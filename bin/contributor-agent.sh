@@ -281,9 +281,22 @@ GOOSECFG
     ;;
 esac
 
+# Prepare a concrete workspace directory for the agent (kubestellar/hive#2545).
+# Previously the tmux session inherited the bare $HOME (/home/dev in the stock
+# container) with no working directory prepared, while the assignment prompt's
+# only repository instruction was a fork WITHOUT a clone
+# ('gh repo fork ... --clone=false'). Nothing on either side promised the agent
+# a real checkout, so a session could sit fully idle — no repo on disk, task
+# slot still held — until a human intervened. HIVE_WORKSPACE_DIR gives the
+# agent (and the assignment prompt built in contribute_ws.go) one fixed,
+# known-to-exist directory to clone into; the tmux session itself is started
+# rooted there via -c so any 'cd ~/workspace' step is redundant, not required.
+export HIVE_WORKSPACE_DIR="${HIVE_WORKSPACE_DIR:-${HOME}/workspace}"
+mkdir -p "$HIVE_WORKSPACE_DIR"
+
 # Create tmux session for the agent
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50
+tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
 
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."

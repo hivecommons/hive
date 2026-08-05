@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 const acmmEvalTTL = time.Hour
@@ -212,6 +215,15 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 		acmmCriterionWhyItMatters(criterion.Level, criterion.Category),
 	)
 
+	// Invocation-attribution trail: this issue is created by the hive on an
+	// operator's dashboard action — stamp the (config-gated) visible trailer
+	// and, after creation, record the (unconditional) audit entry: the same
+	// two layers the PR-request watcher applies (see pkg/github/attribution.go).
+	meta := github.InvocationMeta{Agent: github.AttributionAgentDashboard}
+	if s.deps.Config.Governor.AttributionTrailerEnabled() {
+		body = github.AppendTrailer(body, meta)
+	}
+
 	issueReq := &gh.IssueRequest{
 		Title: gh.Ptr(title),
 		Body:  gh.Ptr(body),
@@ -225,6 +237,13 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("failed to create issue: %v", err), http.StatusInternalServerError)
 		return
 	}
+	// Unconditional audit entry — written even with the trailer toggled off.
+	s.auditFromRequest(r, github.AuditActionHiveIssueCreated,
+		meta.AuditDetail(
+			"repo", owner+"/"+req.Repo,
+			"number", strconv.Itoa(issue.GetNumber()),
+			"url", issue.GetHTMLURL(),
+			"flow", "acmm-eval"), "")
 
 	jsonResponse(w, map[string]interface{}{
 		"issue_number": issue.GetNumber(),
@@ -359,9 +378,9 @@ func (s *Server) prefetchDirectories(ctx context.Context, owner, repo string) ma
 	cache := make(map[string]map[string]bool)
 
 	dirs := []string{
-		"",                   // root
-		".github",            // templates, configs
-		".github/workflows",  // CI workflows
+		"",                  // root
+		".github",           // templates, configs
+		".github/workflows", // CI workflows
 		".github/ISSUE_TEMPLATE",
 		".github/prompts",
 		".github/agents",

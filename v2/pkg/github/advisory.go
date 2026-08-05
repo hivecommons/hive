@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -57,6 +58,15 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		"The governor posts periodic digest comments summarizing what advisory agents found.\n\n" +
 		"**Do not close this issue.** It is a living document."
 
+	// Invocation-attribution trail (attribution.go): this issue is created by
+	// the hive itself, so the "agent" is the governor flow — backend/model are
+	// genuinely unknown here and are omitted rather than guessed. Trailer is
+	// config-gated; the audit entry below is unconditional.
+	meta := InvocationMeta{Agent: AttributionAgentGovernor}
+	if c.attributionTrailerOn() {
+		body = AppendTrailer(body, meta)
+	}
+
 	req := &gh.IssueRequest{
 		Title: gh.Ptr(advisoryTitle),
 		Body:  gh.Ptr(body),
@@ -68,6 +78,11 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("creating advisory issue: %w", err)
 	}
+	c.recordCreationAudit(AuditActionHiveIssueCreated, meta,
+		"repo", owner+"/"+repo,
+		"number", strconv.Itoa(issue.GetNumber()),
+		"url", issue.GetHTMLURL(),
+		"flow", "advisory")
 
 	c.logger.Info("created advisory issue — pin it manually for visibility", slog.String("repo", repo), slog.Int("number", issue.GetNumber()))
 	return issue.GetNumber(), nil

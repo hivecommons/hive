@@ -251,6 +251,122 @@ test('relaunch clears a wedged bash PS2 line before sending the command', () => 
 });
 
 // ---------------------------------------------------------------------------
+// Issue #2596 — the periodic memory-cleanup restart must fire ONCE per
+// threshold crossing, then deliver the next task. Before the fix, the #2203
+// readiness guard re-entered tmuxSendKeys() at the same, unchanged
+// tasksCompletedCount, the "count % RESET_EVERY_N === 0" predicate stayed true,
+// and a non-claude CLI restarted forever after task 3, never delivering task 4.
+// ---------------------------------------------------------------------------
+
+// Number of completed tasks that triggers the memory-cleanup restart. Mirrors
+// RESET_EVERY_N in the relay; the loop only manifests at a multiple of it.
+const RESET_EVERY_N = 3;
+
+// Count the queued-and-then-flushed prompt through the full re-entry cycle the
+// same way production does: tmuxSendKeys() queues + relaunches, the readiness
+// callback flushes, and flushPendingTask() calls tmuxSendKeys() again. A fixed
+// relay restarts once and delivers; the buggy relay restarts on every re-entry.
+function cycleReadyAndFlush(relay, maxCycles) {
+  // Each iteration models "CLI came back ready -> flush the queued prompt".
+  // If flushPendingTask() drains the queue and delivers, we're done. If the
+  // restart predicate re-fires it re-queues the same prompt, and we loop.
+  for (let i = 0; i < maxCycles; i++) {
+    if (!relay.getPendingTask()) return i; // delivered, queue drained
+    relay.setCliReady(true);
+    relay.flushPendingTask();
+  }
+  return maxCycles; // never drained within the budget -> infinite loop
+}
+
+test('non-claude periodic reset fires once at count 3 and then delivers the next task', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N); // just finished task 3
+    relay.setLastResetAtCount(-1);
+
+    const before = relay.__tmuxSends().length;
+    const NEXT_PROMPT = 'Work on the next task foo/bar#4.';
+
+    // First delivery attempt of task 4: the restart predicate is true, so this
+    // queues the prompt, relaunches, and returns without typing it.
+    relay.tmuxSendKeys(NEXT_PROMPT);
+    assert.strictEqual(relay.getPendingTask(), NEXT_PROMPT,
+      'the restart should queue the next prompt for the readiness callback');
+
+    // Drive the readiness-callback re-entry. A finite budget: if the reset is
+    // not one-shot this never drains and we hit the ceiling.
+    const REENTRY_BUDGET = 20;
+    const cycles = cycleReadyAndFlush(relay, REENTRY_BUDGET);
+    assert.ok(cycles < REENTRY_BUDGET,
+      `the periodic reset re-triggered indefinitely (issue #2596): the queued task was never delivered within ${REENTRY_BUDGET} readiness cycles`);
+
+    // Exactly one memory-cleanup restart happened for this crossing: the latch
+    // records the serviced count so re-entry cannot restart again.
+    assert.strictEqual(relay.getLastResetAtCount(), RESET_EVERY_N,
+      'the reset must latch the count it serviced so it does not re-fire');
+
+    // The next task was actually delivered as literal keystrokes.
+    const literalSends = relay.__tmuxSends().slice(before).filter(c => / -l /.test(c));
+    assert.ok(literalSends.some(c => c.includes('foo/bar#4')),
+      `task 4 must be delivered after the single reset; literal sends: ${JSON.stringify(literalSends)}`);
+    assert.strictEqual(relay.getPendingTask(), null, 'queue must be drained once the task is delivered');
+  } finally { teardown(relay); }
+});
+
+test('the periodic reset does not re-fire while the completed-task count is unchanged', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N);
+    relay.setLastResetAtCount(RESET_EVERY_N); // reset already serviced for count 3
+
+    const before = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    relay.tmuxSendKeys('Deliver me directly, no restart.');
+
+    const after = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    assert.strictEqual(after, before,
+      'no additional CLI restart may happen once the reset is latched for the current count');
+    const literalSends = relay.__tmuxSends().filter(c => / -l /.test(c));
+    assert.ok(literalSends.some(c => c.includes('Deliver me directly')),
+      'the prompt must be delivered directly when the reset is already latched');
+  } finally { teardown(relay); }
+});
+
+test('a later crossing (count 6) resets again after count 3 was latched', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(2 * RESET_EVERY_N); // count 6 — a new crossing
+    relay.setLastResetAtCount(RESET_EVERY_N);        // last reset was at count 3
+
+    relay.tmuxSendKeys('Task at the second crossing.');
+    assert.strictEqual(relay.getLastResetAtCount(), 2 * RESET_EVERY_N,
+      'a genuinely new threshold crossing must trigger the periodic reset again');
+  } finally { teardown(relay); }
+});
+
+test('claude backend never takes the periodic-reset path', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    relay.setCliReady(true);
+    relay.setPendingTask(null);
+    relay.setTasksCompletedCount(RESET_EVERY_N);
+    relay.setLastResetAtCount(-1);
+
+    const beforeCc = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    relay.tmuxSendKeys('Claude task, no memory-cleanup restart.');
+    const afterCc = relay.__commands.filter(c => /send-keys/.test(c) && /\bC-c\b/.test(c)).length;
+    assert.strictEqual(afterCc, beforeCc, 'the periodic CLI restart must never apply to the claude backend');
+    assert.strictEqual(relay.getLastResetAtCount(), -1,
+      'claude must not touch the reset latch');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 // Bug 3 — bounded retries, permanent give-up, and the relay staying available.
 // ---------------------------------------------------------------------------
 

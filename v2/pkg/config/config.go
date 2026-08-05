@@ -587,6 +587,25 @@ type GovernorConfig struct {
 	// gateway named "litellm" is synthesized from the legacy LiteLLM block above
 	// so existing hives keep working with zero config change. See ResolveGateway.
 	Gateways []GatewayConfig `yaml:"gateways"`
+	// AttributionTrailer controls the VISIBLE invocation-attribution line
+	// ("— hive: agent=… backend=… model=…") appended at creation time to the
+	// body of PRs the hive opens for agents (the PR-request watcher) and issues
+	// the hive itself creates. It is a *bool so absent (nil) is distinct from an
+	// explicit false: default is ON (see AttributionTrailerEnabled), matching
+	// the github.app_authored_prs convention. It gates ONLY the visible trailer
+	// — the audit-log entry for every such creation is written unconditionally,
+	// so turning this off never removes the operator's ability to answer "which
+	// backend/model produced this PR?".
+	AttributionTrailer *bool `yaml:"attribution_trailer,omitempty"`
+}
+
+// AttributionTrailerEnabled reports whether the visible attribution trailer on
+// hive-created PRs/issues is on for this hive. Default ON: a hive that says
+// nothing gets the trailer; set `governor.attribution_trailer: false` to hide
+// it. The audit-log entry for each creation is unconditional and is NOT gated
+// by this.
+func (g *GovernorConfig) AttributionTrailerEnabled() bool {
+	return g.AttributionTrailer == nil || *g.AttributionTrailer
 }
 
 // GatewayConfig is one named, OpenAI-compatible model gateway. A hive may
@@ -1843,11 +1862,23 @@ type HubConfig struct {
 	// contributor requesting work. An issue assigned to the contributor
 	// themselves (or unassigned) is still eligible. Default false preserves the
 	// prior behavior of handing out issues regardless of assignment (#2357).
-	ContributeSkipAssignedToOthers bool                `yaml:"contribute_skip_assigned_to_others"`
-	DisabledRepos                  []string            `yaml:"disabled_repos"`
-	DisabledTiers                  []string            `yaml:"disabled_tiers"`
-	TierLimits                     map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin            int                 `yaml:"snapshot_interval_min"`
+	ContributeSkipAssignedToOthers bool `yaml:"contribute_skip_assigned_to_others"`
+	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
+	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
+	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
+	// both in the queue display (ReadyQueue) and in selectTask's candidate ordering
+	// — in exactly this order; everything else follows in the established default
+	// order. It only reorders OFFER PRIORITY: a key here that is filtered out by
+	// admission / cooldown / disabled-repo / in-flight rules is still excluded, and
+	// a stale key (no longer actionable) is simply skipped. Persisted through the
+	// same Config.Hub.* mechanism as the other admission settings so it survives
+	// restart, and edited only through the authenticated PUT /api/contribute/queue/order
+	// endpoint (owner/read-write only).
+	ContributeQueueOrder []string            `yaml:"contribute_queue_order,omitempty"`
+	DisabledRepos        []string            `yaml:"disabled_repos"`
+	DisabledTiers        []string            `yaml:"disabled_tiers"`
+	TierLimits           map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin  int                 `yaml:"snapshot_interval_min"`
 }
 
 type TierRate struct {

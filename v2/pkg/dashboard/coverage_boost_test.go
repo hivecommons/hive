@@ -26,9 +26,9 @@ func TestMaskToken(t *testing.T) {
 		want  string
 	}{
 		{"", ""},
-		{"abc", "abc"},              // <= 4 chars, returned as-is
-		{"abcd", "abcd"},            // exactly 4 chars
-		{"abcde", "•bcde"},          // 5 chars, 1 hidden
+		{"abc", "abc"},     // <= 4 chars, returned as-is
+		{"abcd", "abcd"},   // exactly 4 chars
+		{"abcde", "•bcde"}, // 5 chars, 1 hidden
 		{"ghp_1234567890", "••••••••••7890"}, // typical token
 	}
 	for _, tt := range tests {
@@ -46,8 +46,8 @@ func TestMaskToken(t *testing.T) {
 
 func TestRedactTokensInLine(t *testing.T) {
 	tests := []struct {
-		input    string
-		contains string
+		input       string
+		contains    string
 		notContains string
 	}{
 		{"no token here", "no token here", ""},
@@ -1070,8 +1070,8 @@ func TestContributeWSHub_LiveStates(t *testing.T) {
 
 	// Add a mock connection
 	conn := &ContributorConnection{
-		profile:   &ContributorProfile{ContributorID: "cid-1", GitHubUsername: "testuser"},
-		lastPong:  time.Now(),
+		profile:     &ContributorProfile{ContributorID: "cid-1", GitHubUsername: "testuser"},
+		lastPong:    time.Now(),
 		currentTask: &WSTaskAssign{TaskID: "task-1", Kind: "issue", Repo: "org/repo", Number: 42},
 	}
 	hub.connections["conn-1"] = conn
@@ -1155,8 +1155,10 @@ func TestContributeWSHub_SelectTask_NilServer(t *testing.T) {
 		profile: &ContributorProfile{ContributorID: "cid-1"},
 	}
 	result := hub.selectTask(conn)
-	if result != nil {
-		t.Error("expected nil for nil server")
+	// #2546: the no-server-reference path now sends an explicit hub_not_ready
+	// negative-ack instead of a silent nil.
+	if result == nil || result.Type != "task_unavailable" || result.Reason != taskUnavailableHubNotReady {
+		t.Errorf("expected task_unavailable/%s for nil server, got %+v", taskUnavailableHubNotReady, result)
 	}
 }
 
@@ -1175,8 +1177,9 @@ func TestContributeWSHub_SelectTask_Suspended(t *testing.T) {
 		profile: &ContributorProfile{ContributorID: "cid-1"},
 	}
 	result := hub.selectTask(conn)
-	if result != nil {
-		t.Error("expected nil when suspended")
+	// #2546: a suspended queue now sends contribution_suspended, not a silent nil.
+	if result == nil || result.Type != "task_unavailable" || result.Reason != taskUnavailableContributionSuspended {
+		t.Errorf("expected task_unavailable/%s when suspended, got %+v", taskUnavailableContributionSuspended, result)
 	}
 }
 
@@ -1194,8 +1197,9 @@ func TestContributeWSHub_SelectTask_NoStatus(t *testing.T) {
 		profile: &ContributorProfile{ContributorID: "cid-1"},
 	}
 	result := hub.selectTask(conn)
-	if result != nil {
-		t.Error("expected nil when no status")
+	// #2546: no status snapshot now sends hub_not_ready, not a silent nil.
+	if result == nil || result.Type != "task_unavailable" || result.Reason != taskUnavailableHubNotReady {
+		t.Errorf("expected task_unavailable/%s when no status, got %+v", taskUnavailableHubNotReady, result)
 	}
 }
 
@@ -1272,8 +1276,10 @@ func TestContributeWSHub_SelectTask_Cooldown(t *testing.T) {
 		profile: &ContributorProfile{ContributorID: "cid-1", TrustTier: "contributor"},
 	}
 	result := hub.selectTask(conn)
-	if result != nil {
-		t.Error("expected nil for task in cooldown")
+	// #2546: the only candidate is in cooldown, so the candidate set is empty and
+	// selectTask now sends no_matching_work rather than a silent nil.
+	if result == nil || result.Type != "task_unavailable" || result.Reason != taskUnavailableNoMatchingWork {
+		t.Errorf("expected task_unavailable/%s for task in cooldown, got %+v", taskUnavailableNoMatchingWork, result)
 	}
 }
 
@@ -1746,16 +1752,16 @@ func TestLoadAgentStats_FallbackToDefaults(t *testing.T) {
 func TestBuildExportYAML_Basic(t *testing.T) {
 	srv := newFullServer(t)
 	agentCfg := config.AgentConfig{
-		Backend:     "claude",
-		Model:       "sonnet",
-		Role:        "scanner",
-		DisplayName: "Scanner",
-		Description: "Scans issues",
-		Emoji:       "🔍",
-		Color:       "#00ff00",
-		LaneKeywords: []string{"bug", "fix"},
+		Backend:        "claude",
+		Model:          "sonnet",
+		Role:           "scanner",
+		DisplayName:    "Scanner",
+		Description:    "Scans issues",
+		Emoji:          "🔍",
+		Color:          "#00ff00",
+		LaneKeywords:   []string{"bug", "fix"},
 		DetectKeywords: []string{"error"},
-		Aliases:     []string{"scan"},
+		Aliases:        []string{"scan"},
 	}
 	cadences := map[string]string{"idle": "15m", "busy": "5m"}
 	yaml := srv.buildExportYAML("scanner", agentCfg, cadences, true, "# my prompt\nDo stuff.")

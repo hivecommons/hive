@@ -375,3 +375,78 @@ func TestDupePR_DisconnectReleaseIgnoresSyntheticReviewTask(t *testing.T) {
 		t.Fatalf("a synthetic review task (Number==0) must never be parked in a cooldown")
 	}
 }
+
+// TestHeldSlot_ReadyWhileHoldingTaskReleasesAndCoolsDown is the kubestellar/
+// hive#2545 regression: a contributor that never actually starts work on an
+// assigned issue (bare workspace, no checkout, agent idle) but stays connected
+// and eventually sends "ready" again — e.g. because the relay's own
+// MAX_TASK_DURATION_MS watchdog gave up and requeued, or the agent itself asked
+// for something new — used to hold the assignment slot forever: the "ready"
+// handler logged "task abandoned without completion" but left currentTask set
+// and booked no cooldown at all, unlike the disconnect path (#2356) right above
+// it. That kept the abandoned issue out of activeIssues circulation for the
+// life of the connection with no PR, no failure record, and no re-offer ever
+// produced. After the fix, sending "ready" while holding a task clears
+// currentTask (releasing the issue back into activeIssues) and books the same
+// short non-permanent failure cooldown task_failed and disconnect already use,
+// so the issue is not instantly handed straight back to the very next
+// selectTask call — here, the "ready" call that triggers the release itself.
+func TestHeldSlot_ReadyWhileHoldingTaskReleasesAndCoolsDown(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	// Two admissible issues: A (#10, head of scan) and B (#20). If the abandoned
+	// A were still re-admissible, the very next selection (triggered by the same
+	// "ready" that abandons it) would return A again; after the fix it must be
+	// parked and B offered instead.
+	twoIssueStatus(s)
+
+	body := `{"github_username":"held-slot-user"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	var reg map[string]string
+	json.Unmarshal(w.Body.Bytes(), &reg)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	readMsg(t, conn) // challenge
+	conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	readMsg(t, conn) // auth_ok
+
+	// First "ready": get assigned the head-of-scan issue A (#10). Simulate the
+	// stalled contributor: never send task_progress/task_complete/task_failed for
+	// it — just sit there, exactly like a session with no workspace prepared.
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 1})
+	assign := readMsg(t, conn)
+	if assign.Type != "task_assign" || assign.Number != 10 {
+		t.Fatalf("expected task_assign for head-of-scan A (#10), got type=%s number=%d", assign.Type, assign.Number)
+	}
+
+	// The contributor (or its relay's own timeout) asks for work again WITHOUT
+	// ever reporting progress, completion, or failure on A. This is the abandon
+	// path under test, not a disconnect.
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 2})
+	second := readMsg(t, conn)
+	if second.Type != "task_assign" {
+		t.Fatalf("expected a fresh task_assign after abandoning A, got type=%s", second.Type)
+	}
+	if second.Number == 10 {
+		t.Fatalf("held slot: A (#10) was re-offered on the very same ready that abandoned it; expected it released and cooled down (#2545)")
+	}
+	if second.Number != 20 {
+		t.Fatalf("expected the other issue B (#20) to be offered, got #%d", second.Number)
+	}
+
+	// The abandoned issue A must be recorded in the short failure cooldown, the
+	// same ledger entry task_failed and disconnect-release use — proving this is
+	// reused machinery, not a new mechanism.
+	if !s.contributeHub.isTaskInFailureCooldown("myorg/repo1", 10) {
+		t.Fatalf("abandoning a task via ready did not record a failure cooldown for the released issue (#2545)")
+	}
+}
