@@ -239,6 +239,33 @@ func TestPullRequestWorkflowUsesCanonicalAuditedProducer(t *testing.T) {
 	}
 }
 
+func TestGeneratedRawEvidenceArtifactsAreAttemptBoundForReruns(t *testing.T) {
+	config := isolationWorkflowConfig()
+	production := workflow(config)
+	pullRequest := pullRequestWorkflow(config)
+
+	for name, generated := range map[string]string{
+		"production":   production,
+		"pull-request": pullRequest,
+	} {
+		if strings.Contains(generated, "name: visual-hive-raw-${{ github.run_id }}\n") ||
+			strings.Contains(generated, "name: setup-baseline-raw-${{ github.run_id }}\n") ||
+			strings.Contains(generated, "name: visual-hive-pr-raw-${{ github.run_id }}\n") {
+			t.Fatalf("%s workflow can reuse stale raw evidence across rerun attempts", name)
+		}
+	}
+
+	for artifact, generated := range map[string]string{
+		"visual-hive-raw-${{ github.run_id }}-${{ github.run_attempt }}":    production,
+		"setup-baseline-raw-${{ github.run_id }}-${{ github.run_attempt }}": production,
+		"visual-hive-pr-raw-${{ github.run_id }}-${{ github.run_attempt }}": pullRequest,
+	} {
+		if count := strings.Count(generated, "name: "+artifact+"\n"); count != 2 {
+			t.Fatalf("raw evidence artifact %q occurs %d times, want one producer and one consumer", artifact, count)
+		}
+	}
+}
+
 func TestGeneratedWorkflowsUseCanonicalYAMLWhitespace(t *testing.T) {
 	config := isolationWorkflowConfig()
 	workflows := map[string]string{
@@ -695,7 +722,7 @@ func TestGeneratedWorkflowsIsolateTargetProcessesFromLifecycleAuthority(t *testi
 		"sudo chown root:root visual-hive.config.yaml", "sudo chmod 0444 visual-hive.config.yaml",
 		`sudo git -c safe.directory="$GITHUB_WORKSPACE" diff --no-ext-diff --no-textconv --exit-code -- .`, "HIVE_VISUAL_HIVE_CLI_SHA", "test ! -w \"$VISUAL_HIVE_CLI\"",
 		"HIVE_TRUSTED_NODE_SHA", `"$HIVE_TRUSTED_NODE" "$VISUAL_HIVE_CLI" pipeline`, `sudo -u hive-target -- test ! -w "$HIVE_TRUSTED_NODE"`,
-		"hive.visual-runner-outcome.v1", ".visual-hive/hive-runner-outcome.json", "visual-hive-raw-${{ github.run_id }}",
+		"hive.visual-runner-outcome.v1", ".visual-hive/hive-runner-outcome.json", "visual-hive-raw-${{ github.run_id }}-${{ github.run_attempt }}",
 		`runner_pipeline_exit="$RUNNER_TEMP/hive-visual-pipeline-exit-${GITHUB_RUN_ID}.txt"`,
 		`sudo -u hive-evidence -- test ! -e .visual-hive/pipeline-exit-code.txt`,
 		`sudo -u hive-evidence -- test -f .visual-hive/hive-runner-outcome.json`,
@@ -788,7 +815,7 @@ func TestGeneratedWorkflowsIsolateTargetProcessesFromLifecycleAuthority(t *testi
 			t.Fatalf("aggregator step %q could execute proposed code during pull_request_target: if=%q", step.Name, step.If)
 		}
 	}
-	if strings.Count(pullRequest, "visual-hive-pr-raw-${{ github.run_id }}") != 2 || strings.Count(pullRequest, "name: visual-hive-pr\n") != 1 {
+	if strings.Count(pullRequest, "visual-hive-pr-raw-${{ github.run_id }}-${{ github.run_attempt }}") != 2 || strings.Count(pullRequest, "name: visual-hive-pr\n") != 1 {
 		t.Fatal("PR raw and final artifacts are not separated into one producer/consumer boundary")
 	}
 	for _, required := range []string{

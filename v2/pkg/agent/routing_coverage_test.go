@@ -270,26 +270,50 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 
 func TestCodexAgentLaunchCmd_UnattendedWithoutSandboxBypass(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		model string
-		want  string
+		name     string
+		model    string
+		beadsDir string
+		want     string
 	}{
-		{name: "with model", model: "gpt-5.6-sol", want: "codex --model gpt-5.6-sol --ask-for-approval never"},
-		{name: "without model", want: "codex --ask-for-approval never"},
+		{
+			name:     "with model and beads checkout",
+			model:    "gpt-5.6-sol",
+			beadsDir: "/data/shared beads",
+			want:     "codex --model gpt-5.6-sol --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps --add-dir '/data/shared beads' --ask-for-approval never",
+		},
+		{
+			name: "without model or beads checkout",
+			want: "codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps --ask-for-approval never",
+		},
+		{
+			name:     "shell quotes beads checkout",
+			beadsDir: "/data/owner's beads",
+			want:     "codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps --add-dir '/data/owner'\"'\"'s beads' --ask-for-approval never",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := codexAgentLaunchCmd("codex", tc.model)
+			got := codexAgentLaunchCmd("codex", tc.model, tc.beadsDir)
 			if got != tc.want {
 				t.Fatalf("codexAgentLaunchCmd() = %q, want %q", got, tc.want)
 			}
-			if strings.Contains(got, "dangerously") || strings.Contains(got, "sandbox") {
-				t.Fatalf("ordinary Codex launch weakened sandboxing: %q", got)
+			for _, required := range []string{
+				"--sandbox workspace-write",
+				"sandbox_workspace_write.network_access=true",
+				"--disable enable_mcp_apps",
+				"--ask-for-approval never",
+			} {
+				if !strings.Contains(got, required) {
+					t.Fatalf("ordinary Codex launch missing %q: %q", required, got)
+				}
+			}
+			if strings.Contains(got, "dangerously") {
+				t.Fatalf("ordinary Codex launch bypassed sandboxing: %q", got)
 			}
 		})
 	}
 
 	got := toolRulesToLaunchCmd("codex", "gpt-5.6-sol", "codex", &config.ToolsConfig{Preset: "advisory"}, false)
-	if got != "codex --model gpt-5.6-sol --ask-for-approval never" {
+	if got != "codex --model gpt-5.6-sol --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps --ask-for-approval never" {
 		t.Fatalf("Codex tool-rules launch = %q", got)
 	}
 }

@@ -757,10 +757,11 @@ func (controller *Controller) findDispatchLocked(sourceExternalRef string) (*bea
 }
 
 type Result struct {
-	Lifecycle       visualhive.ApplyLifecycleResult
-	Decisions       []governor.WorkAdmissionDecision
-	DispatchPending []DispatchEnvelope
-	Errors          []string
+	Lifecycle                     visualhive.ApplyLifecycleResult
+	Decisions                     []governor.WorkAdmissionDecision
+	DispatchPending               []DispatchEnvelope
+	ReevaluationPendingSourceRefs []string
+	Errors                        []string
 }
 
 type DispatchEnvelope struct {
@@ -1228,6 +1229,9 @@ func (controller *Controller) resumeAppliedWork(
 			}
 		}
 		if !decision.Allowed {
+			if visualTransientDenialCanReevaluate(decision) {
+				result.ReevaluationPendingSourceRefs = append(result.ReevaluationPendingSourceRefs, work.SourceExternalRef)
+			}
 			if decision.Code == "routing_held" {
 				controller.maintainManualIssueLifecycle(ctx, router, store, bead, work, packet, decision, issueAuthorized, &result)
 			}
@@ -1934,7 +1938,7 @@ func visualAdmissionMatchesCurrentWork(decision governor.WorkAdmissionDecision, 
 }
 
 func visualTransientDenialNeedsReevaluation(decision governor.WorkAdmissionDecision, current governor.WorkAdmissionRequest) bool {
-	if decision.Allowed {
+	if !visualTransientDenialCanReevaluate(decision) {
 		return false
 	}
 	var admitted governor.WorkAdmissionRequest
@@ -1954,6 +1958,18 @@ func visualTransientDenialNeedsReevaluation(decision governor.WorkAdmissionDecis
 		return admitted.SafeExecutionReady != current.SafeExecutionReady
 	case "mode_unconfigured", "mode_role_unconfigured":
 		return admitted.GovernorMode != current.GovernorMode || admitted.ConfiguredCadence != current.ConfiguredCadence
+	default:
+		return false
+	}
+}
+
+func visualTransientDenialCanReevaluate(decision governor.WorkAdmissionDecision) bool {
+	if decision.Allowed {
+		return false
+	}
+	switch decision.Code {
+	case "role_unconfigured", "role_paused", "wip_limit", "budget_exhausted", "execution_held", "mode_unconfigured", "mode_role_unconfigured":
+		return true
 	default:
 		return false
 	}

@@ -17,7 +17,131 @@ func useTemporaryHiveHome(t *testing.T) string {
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
 	t.Setenv("HIVE_STATE_DIR", "")
+	t.Setenv("HIVE_ID", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	return root
+}
+
+func useTemporaryHostedHiveState(t *testing.T) string {
+	t.Helper()
+	parent := t.TempDir()
+	prior := hostedIntegratedStateRoot
+	hostedIntegratedStateRoot = filepath.Join(parent, "integrated")
+	t.Cleanup(func() { hostedIntegratedStateRoot = prior })
+	t.Setenv("HIVE_STATE_DIR", "")
+	t.Setenv("HIVE_ID", "hosted-owner-repository")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "127.0.0.1")
+	return parent
+}
+
+func TestHostedRepositoryStateUsesPersistentDataRoot(t *testing.T) {
+	parent := useTemporaryHostedHiveState(t)
+	selected, err := repositoryIntegratedStateDir("owner/repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := filepath.Join(parent, "integrated", "repos") + string(filepath.Separator)
+	if !strings.HasPrefix(filepath.Clean(selected), wantPrefix) {
+		t.Fatalf("hosted repository state escaped persistent data root: got %q want prefix %q", selected, wantPrefix)
+	}
+	if strings.Contains(filepath.ToSlash(selected), "/.hive/") {
+		t.Fatalf("hosted repository state fell back to ephemeral home: %q", selected)
+	}
+}
+
+func TestHostedRepositoryStateRejectsMissingOrSymlinkedDataRoot(t *testing.T) {
+	t.Run("missing parent", func(t *testing.T) {
+		parent := useTemporaryHostedHiveState(t)
+		hostedIntegratedStateRoot = filepath.Join(parent, "missing", "integrated")
+		if _, err := repositoryIntegratedStateDir("owner/repository"); err == nil || !strings.Contains(err.Error(), "persistent state parent") {
+			t.Fatalf("missing hosted parent was not rejected: %v", err)
+		}
+	})
+	t.Run("symlinked root", func(t *testing.T) {
+		parent := useTemporaryHostedHiveState(t)
+		target := filepath.Join(parent, "target")
+		if err := os.Mkdir(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, hostedIntegratedStateRoot); err != nil {
+			if os.IsPermission(err) {
+				t.Skipf("symlink creation unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		if _, err := repositoryIntegratedStateDir("owner/repository"); err == nil || !strings.Contains(err.Error(), "must be a real directory") {
+			t.Fatalf("symlinked hosted root was not rejected: %v", err)
+		}
+	})
+}
+
+func TestExplicitStateDirectoryStillOverridesHostedRoot(t *testing.T) {
+	parent := useTemporaryHostedHiveState(t)
+	explicit := filepath.Join(parent, "explicit", "repository-state")
+	t.Setenv("HIVE_STATE_DIR", explicit)
+	if got := defaultIntegratedStateDir(); filepath.Clean(got) != filepath.Clean(explicit) {
+		t.Fatalf("explicit state directory lost precedence: got %q want %q", got, explicit)
+	}
+	if got := integratedStateRoot(); filepath.Clean(got) != filepath.Clean(explicit) {
+		t.Fatalf("shared hosted state root lost explicit precedence: got %q want %q", got, explicit)
+	}
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		t.Fatalf("persistent explicit state directory was rejected: %v", err)
+	}
+}
+
+func TestHostedExplicitStateDirectoryRejectsEphemeralPath(t *testing.T) {
+	useTemporaryHostedHiveState(t)
+	t.Setenv("HIVE_STATE_DIR", t.TempDir())
+	if err := validateHostedIntegratedStateRoot(); err == nil || !strings.Contains(err.Error(), "must remain on persistent") {
+		t.Fatalf("ephemeral explicit state path was accepted: %v", err)
+	}
+}
+
+func TestHostedContainerReplacementKeepsPersistentRepositorySelection(t *testing.T) {
+	useTemporaryHostedHiveState(t)
+	stateDir, err := repositoryIntegratedStateDir("owner/repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(stateDir, "checkout")
+	store, err := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(integrated.Config{
+		Repository: "owner/repository", RepositoryID: "123", DefaultBranch: "main",
+		StateDir: stateDir, CheckoutDir: checkout, VisualHive: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrated.RememberCurrentState(integratedStateRoot(), stateDir); err != nil {
+		t.Fatal(err)
+	}
+
+	firstHome := t.TempDir()
+	t.Setenv("HOME", firstHome)
+	t.Setenv("USERPROFILE", firstHome)
+	first, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil || !exists {
+		t.Fatalf("container A persistent contract: exists=%t err=%v", exists, err)
+	}
+
+	secondHome := t.TempDir()
+	t.Setenv("HOME", secondHome)
+	t.Setenv("USERPROFILE", secondHome)
+	second, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil || !exists {
+		t.Fatalf("container B persistent contract: exists=%t err=%v", exists, err)
+	}
+	if first.StateDir != stateDir || second.StateDir != stateDir || defaultIntegratedStateDir() != stateDir {
+		t.Fatalf("ephemeral home replacement changed state selection: first=%q second=%q default=%q want=%q", first.StateDir, second.StateDir, defaultIntegratedStateDir(), stateDir)
+	}
+	for _, home := range []string{firstHome, secondHome} {
+		if _, err := os.Stat(filepath.Join(home, ".hive")); !os.IsNotExist(err) {
+			t.Fatalf("hosted state leaked into ephemeral home %s: %v", home, err)
+		}
+	}
 }
 
 func TestDefaultRepositoryStatePathIsBoundedStableAndCollisionResistant(t *testing.T) {

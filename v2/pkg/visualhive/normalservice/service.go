@@ -153,6 +153,7 @@ type Options struct {
 	OnCycleStart     func(time.Time, time.Time)
 	OnCycle          func(error)
 	OnInactive       func()
+	Now              func() time.Time
 }
 
 // Service is a bounded sequential reconciler, not another queue or manager.
@@ -196,6 +197,9 @@ func New(options Options) (*Service, error) {
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
+	}
+	if options.Now == nil {
+		options.Now = time.Now
 	}
 	if err := os.MkdirAll(filepath.Join(root, "normal-service"), 0o700); err != nil {
 		return nil, err
@@ -317,6 +321,37 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 	}()
 
 	var requested *triggerRequest
+	// A completed workflow is a durable cadence checkpoint. Replacement
+	// containers must retain the remaining interval instead of treating process
+	// startup as authority to dispatch the same unchanged head again. An exact
+	// operator trigger still bypasses this delay through the existing trigger
+	// channel and lease epoch.
+	initialDelay, err := service.initialCadenceDelay()
+	if err != nil {
+		service.report(fmt.Errorf("read normal Visual Hive cadence checkpoint: %w", err))
+		waitForContext(ctx, service.options.LeaseRetry)
+		return
+	}
+	if initialDelay > 0 {
+		timer := time.NewTimer(initialDelay)
+		select {
+		case <-ctx.Done():
+			stopTimer(timer)
+			service.inactive()
+			return
+		case status, ok := <-result:
+			stopTimer(timer)
+			service.inactive()
+			if ok && status.err != nil {
+				service.report(fmt.Errorf("monitor normal Visual Hive quiescence: %w", status.err))
+			}
+			return
+		case request := <-service.trigger:
+			stopTimer(timer)
+			requested = &request
+		case <-timer.C:
+		}
+	}
 	for {
 		requested = service.beginLeaseCycle(requested)
 		if requested != nil && requested.context.Err() != nil {
@@ -386,6 +421,20 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 		case <-timer.C:
 		}
 	}
+}
+
+func (service *Service) initialCadenceDelay() (time.Duration, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	ledger, exists, err := service.loadLedger()
+	if err != nil || !exists || !ledger.Consumed || ledger.CycleCompletedAt.IsZero() {
+		return 0, err
+	}
+	remaining := ledger.CycleCompletedAt.Add(service.options.PollInterval).Sub(service.options.Now().UTC())
+	if remaining <= 0 {
+		return 0, nil
+	}
+	return remaining, nil
 }
 
 // beginLeaseCycle closes the race between an automatic cadence cycle and an
@@ -531,7 +580,7 @@ func (service *Service) RunCycle(ctx context.Context) error {
 		if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
 			return err
 		}
-		ledger.Consumed = true
+		service.markConsumed(&ledger)
 		if err := service.saveLedger(ledger); err != nil {
 			return err
 		}
@@ -585,9 +634,17 @@ func (service *Service) RunCycle(ctx context.Context) error {
 			return err
 		}
 		if !found {
-			// A green report or a current pause/WIP/policy hold creates no model or
-			// PR. Retire this exact workflow and let the ordinary cadence produce a
-			// fresh report after state changes.
+			if len(result.ReevaluationPendingSourceRefs) > 0 {
+				// A transient Governor hold must keep the exact verified packet
+				// available. A later cadence can deterministically re-evaluate the
+				// durable denial after pause, role, WIP, budget, mode, or execution
+				// readiness changes without redispatching the workflow.
+				refs := append([]string(nil), result.ReevaluationPendingSourceRefs...)
+				sort.Strings(refs)
+				return fmt.Errorf("%w: transient Governor re-evaluation pending for %s", ErrNoDispatch, strings.Join(refs, ", "))
+			}
+			// A green report or a durable non-transient policy hold creates no
+			// model or PR. Retire this exact workflow.
 			ledger.ConsumeStarted = true
 			if err := service.saveLedger(ledger); err != nil {
 				return err
@@ -595,7 +652,7 @@ func (service *Service) RunCycle(ctx context.Context) error {
 			if err := service.options.Source.Consume(work.Workflow, true); err != nil {
 				return err
 			}
-			ledger.Consumed = true
+			service.markConsumed(&ledger)
 			if err := service.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -759,7 +816,7 @@ func (service *Service) RetireRepair(ctx context.Context, expected *RepairRetire
 		if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
 			return err
 		}
-		ledger.Consumed = true
+		service.markConsumed(&ledger)
 		if err := service.saveLedger(ledger); err != nil {
 			return err
 		}
@@ -854,8 +911,13 @@ func (service *Service) finish(_ context.Context, ledger workLedger) error {
 	if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
 		return err
 	}
-	ledger.Consumed = true
+	service.markConsumed(&ledger)
 	return service.saveLedger(ledger)
+}
+
+func (service *Service) markConsumed(ledger *workLedger) {
+	ledger.Consumed = true
+	ledger.CycleCompletedAt = service.options.Now().UTC()
 }
 
 func selectDispatchSet(values []visualcontroller.DispatchEnvelope) (visualcontroller.DispatchEnvelope, []string, bool, error) {
@@ -1036,6 +1098,7 @@ type workLedger struct {
 	CompletionRecorded         bool                           `json:"completion_recorded,omitempty"`
 	ConsumeStarted             bool                           `json:"consume_started,omitempty"`
 	Consumed                   bool                           `json:"consumed,omitempty"`
+	CycleCompletedAt           time.Time                      `json:"cycle_completed_at,omitempty"`
 	RepairRetirement           *RepairRetirementPlan          `json:"repair_retirement,omitempty"`
 }
 
@@ -1166,6 +1229,9 @@ func validateWorkLedger(ledger workLedger) error {
 	if ledger.Consumed && !ledger.ConsumeStarted {
 		return errors.New("workflow is consumed without a durable consume checkpoint")
 	}
+	if !ledger.CycleCompletedAt.IsZero() && !ledger.Consumed {
+		return errors.New("cycle completion time exists without a consumed workflow")
+	}
 	if ledger.RepairRetirement != nil {
 		if ledger.SchemaVersion == legacyLedgerSchemaV4 {
 			return errors.New("legacy normal-service ledger cannot contain repair retirement state")
@@ -1184,6 +1250,7 @@ func ledgerWithoutRetirement(ledger workLedger) workLedger {
 		// checkpoint; validate against the original unconsumed proposal.
 		ledger.ConsumeStarted = false
 		ledger.Consumed = false
+		ledger.CycleCompletedAt = time.Time{}
 	}
 	return ledger
 }

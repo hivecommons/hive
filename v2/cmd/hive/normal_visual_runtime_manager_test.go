@@ -172,6 +172,9 @@ func TestNormalVisualRuntimeManagerHotActivatesExactlyOnce(t *testing.T) {
 	if (*instances)[0].triggers.Load() != 1 {
 		t.Fatalf("triggers=%d", (*instances)[0].triggers.Load())
 	}
+	if binding, active := manager.ActiveBinding(); !active || binding.Repository == "" || binding.Digest == "" {
+		t.Fatalf("active binding was not observable: binding=%+v active=%t", binding, active)
+	}
 }
 
 func TestNormalVisualRuntimeManagerFailsClosedOnBindingDrift(t *testing.T) {

@@ -138,6 +138,18 @@ func TestIntegratedControlPlanAndApplyUseClosedTypedContract(t *testing.T) {
 	if retire.Code != http.StatusOK || len(requests) != 3 || requests[2].Action != "repair-retire" {
 		t.Fatalf("repair-retire status=%d requests=%+v body=%s", retire.Code, requests, retire.Body.String())
 	}
+	reset := doIntegratedPost(server, "/api/integrated/control/plan", map[string]any{
+		"operation":  "setup-reset",
+		"request_id": "proof-cycle-a-reset-001",
+	})
+	finalize := doIntegratedPost(server, "/api/integrated/control/plan", map[string]any{
+		"operation":  "setup-reset-finalize",
+		"request_id": "proof-cycle-a-reset-finalize-001",
+	})
+	if reset.Code != http.StatusOK || finalize.Code != http.StatusOK || len(requests) != 5 ||
+		requests[3].Action != "setup-reset" || requests[4].Action != "setup-reset-finalize" {
+		t.Fatalf("setup reset status=%d finalize=%d requests=%+v", reset.Code, finalize.Code, requests)
+	}
 
 	unknown := doIntegratedPost(server, "/api/integrated/control/plan", map[string]any{
 		"operation":  "shell",

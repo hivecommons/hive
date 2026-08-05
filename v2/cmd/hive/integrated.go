@@ -19,6 +19,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/kubestellar/hive/v2/pkg/automation"
+	"github.com/kubestellar/hive/v2/pkg/config"
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hostedbootstrap"
 	"github.com/kubestellar/hive/v2/pkg/hostedcontrol"
@@ -30,7 +31,13 @@ import (
 
 const defaultVisualHiveRepository = "DavidDiaz0317/visual-hive"
 
+var hostedIntegratedStateRoot = filepath.Clean("/data/integrated")
+
 func runIntegratedCommand(command string, args []string) int {
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		fmt.Fprintln(os.Stderr, "hosted integrated state validation failed:", err)
+		return 1
+	}
 	switch command {
 	case "setup":
 		return runSetupCommand(args)
@@ -2335,6 +2342,16 @@ func defaultIntegratedStateDir() string {
 }
 
 func integratedStateRoot() string {
+	if configured := strings.TrimSpace(os.Getenv("HIVE_STATE_DIR")); configured != "" {
+		absolute, err := filepath.Abs(configured)
+		if err == nil {
+			return filepath.Clean(absolute)
+		}
+		return filepath.Clean(configured)
+	}
+	if config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "" {
+		return hostedIntegratedStateRoot
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		absolute, absoluteErr := filepath.Abs(".hive")
@@ -2346,7 +2363,55 @@ func integratedStateRoot() string {
 	return filepath.Join(home, ".hive")
 }
 
+func validateHostedIntegratedStateRoot() error {
+	if !(config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "") {
+		return nil
+	}
+	root := filepath.Clean(hostedIntegratedStateRoot)
+	parent := filepath.Dir(root)
+	if configured := strings.TrimSpace(os.Getenv("HIVE_STATE_DIR")); configured != "" {
+		absolute, err := filepath.Abs(configured)
+		if err != nil {
+			return fmt.Errorf("resolve explicit hosted HIVE_STATE_DIR: %w", err)
+		}
+		root = filepath.Clean(absolute)
+		relative, relErr := filepath.Rel(parent, root)
+		if relErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return fmt.Errorf("explicit hosted HIVE_STATE_DIR %s must remain on persistent %s", root, parent)
+		}
+	}
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf("hosted Visual Hive persistent state parent %s is unavailable: %w", parent, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("hosted Visual Hive persistent state parent %s must be a real directory", parent)
+	}
+	relative, _ := filepath.Rel(parent, root)
+	cursor := parent
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		cursor = filepath.Join(cursor, component)
+		rootInfo, rootErr := os.Lstat(cursor)
+		if os.IsNotExist(rootErr) {
+			continue
+		}
+		if rootErr != nil {
+			return fmt.Errorf("inspect hosted Visual Hive persistent state path %s: %w", cursor, rootErr)
+		}
+		if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+			return fmt.Errorf("hosted Visual Hive persistent state path %s must be a real directory", cursor)
+		}
+	}
+	return nil
+}
+
 func repositoryIntegratedStateDir(repository string) (string, error) {
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		return "", err
+	}
 	legacy := legacyRepositoryIntegratedStateDir(repository)
 	prior, exists, err := loadExistingSetupConfig(legacy)
 	if err != nil {

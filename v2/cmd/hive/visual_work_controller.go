@@ -49,6 +49,9 @@ func loadCurrentVisualWorkContract(normal *config.Config) (integrated.Config, bo
 }
 
 func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		return integrated.Config{}, false, err
+	}
 	stateDir := strings.TrimSpace(os.Getenv("HIVE_STATE_DIR"))
 	exists := stateDir != ""
 	var err error
@@ -57,12 +60,19 @@ func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
 		if err != nil {
 			return integrated.Config{}, false, fmt.Errorf("resolve HIVE_STATE_DIR: %w", err)
 		}
-		info, statErr := os.Stat(stateDir)
-		if statErr != nil || !info.IsDir() {
-			if statErr == nil {
-				statErr = errors.New("path is not a directory")
-			}
+		info, statErr := os.Lstat(stateDir)
+		if os.IsNotExist(statErr) {
+			// A successful managed uninstall removes the exact repository state
+			// while the long-running dashboard retains its explicit selection.
+			// The persistent root was already validated above, so absence here is
+			// the authoritative dormant state, not an ephemeral fallback.
+			return integrated.Config{}, false, nil
+		}
+		if statErr != nil {
 			return integrated.Config{}, false, fmt.Errorf("HIVE_STATE_DIR %s is unavailable: %w", stateDir, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return integrated.Config{}, false, fmt.Errorf("HIVE_STATE_DIR %s is unavailable: path must be a real directory", stateDir)
 		}
 	} else {
 		stateDir, exists, err = integrated.CurrentState(integratedStateRoot())
@@ -70,7 +80,13 @@ func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
 			return integrated.Config{}, exists, err
 		}
 	}
-	store, err := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+	storeDir := filepath.Join(stateDir, "integrated")
+	if _, statErr := os.Lstat(storeDir); os.IsNotExist(statErr) {
+		return integrated.Config{}, false, nil
+	} else if statErr != nil {
+		return integrated.Config{}, false, fmt.Errorf("inspect authoritative Visual Hive state: %w", statErr)
+	}
+	store, err := integrated.NewStore(storeDir)
 	if err != nil {
 		return integrated.Config{}, false, err
 	}

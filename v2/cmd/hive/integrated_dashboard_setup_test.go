@@ -56,13 +56,24 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
 	planBytes := []byte("{\"applied\":false}\n")
 	var calls [][]string
-	dashboardSetupCLIRunner = func(_ context.Context, args []string, token string) (map[string]any, []byte, error) {
+	caller, cancelCaller := context.WithCancel(context.Background())
+	dashboardSetupCLIRunner = func(ctx context.Context, args []string, token string) (map[string]any, []byte, error) {
 		if token != "owner-token" {
 			t.Fatalf("runner received unexpected token")
 		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("setup mutation has no bounded deadline")
+		}
 		calls = append(calls, append([]string(nil), args...))
 		if args[len(args)-1] == "--plan" {
+			cancelCaller()
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("durable setup plan inherited caller cancellation: %v", err)
+			}
 			return map[string]any{"applied": false}, planBytes, nil
+		}
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("durable setup apply inherited caller cancellation: %v", err)
 		}
 		return map[string]any{"applied": true}, []byte("{\"applied\":true}\n"), nil
 	}
@@ -78,7 +89,7 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.ExpectedPlanSHA256 = planDigest
-	result, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
+	result, err := runDashboardIntegratedSetup(caller, request, "owner-token")
 	if err != nil {
 		t.Fatal(err)
 	}

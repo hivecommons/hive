@@ -455,6 +455,54 @@ func TestWorkerNoChangeRetryPreservesOpenBranchAndPullRequest(t *testing.T) {
 	}
 }
 
+func TestWorkerStartsFreshAttemptAfterExactRepairRetirement(t *testing.T) {
+	t.Parallel()
+	repository, remote := seedGitRepository(t)
+	state, _ := NewStore(filepath.Join(t.TempDir(), "state"))
+	provider := &fakeProvider{}
+	lifecycle := &fakeLifecycle{}
+	pulls := &fakePRClient{state: state}
+	worker := &Worker{
+		Config: Config{
+			RepositoryDir: repository, WorktreeRoot: filepath.Join(t.TempDir(), "worktrees"), BaseBranch: "main", ExpectedRemoteURL: remote,
+			Policy:             automation.Policy{ACMMLevel: 5, Mode: automation.ModeRepairPR, AllowedRepositories: []string{"owner/repo"}, MaxRepairAttempts: 3},
+			AllowedRepairPaths: []string{"src/**"}, ValidationCommands: []Command{{Name: "git", Args: []string{"diff", "--check"}}},
+			ModelTimeout: time.Minute, CommandTimeout: time.Minute,
+		},
+		Provider: provider, State: state, Lifecycle: lifecycle, GitHub: pulls,
+	}
+	finding := visualhive.FindingLifecycle{
+		Repository: "owner/repo", RepositoryID: "123", RepositoryFingerprint: "owner/repo:retired-pr", Status: visualhive.StatusIssueOpen,
+		Title: "Repair the value", Body: "Value should be fixed.", IssueKind: "functional", Severity: "medium",
+		OwningAgentHint: "quality", IssueNumber: 9, IssueURL: "https://example.test/issues/9",
+	}
+	first, err := worker.Run(context.Background(), finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RetirePullRequestForVerification(PullRequestRetirement{
+		RepositoryFingerprint: finding.RepositoryFingerprint, PRNumber: first.PRNumber, PRURL: first.PRURL,
+		Branch: first.Branch, CommitSHA: first.CommitSHA,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), remote, "update-ref", "-d", "refs/heads/"+first.Branch); err != nil {
+		t.Fatal(err)
+	}
+	finding.RepairAttempts = 1
+	second, err := worker.Run(context.Background(), finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Branch == first.Branch || pulls.calls != 2 || provider.runs != 2 || lifecycle.starts != 2 {
+		t.Fatalf("retired PR did not produce one fresh attempt: first=%+v second=%+v pulls=%d runs=%d lifecycle=%+v", first, second, pulls.calls, provider.runs, lifecycle)
+	}
+	current, exists := state.Get(finding.RepositoryFingerprint)
+	if !exists || current.Stage != StagePROpen || !current.LifecyclePROpen || current.Attempt != 2 || current.Branch != second.Branch {
+		t.Fatalf("fresh post-retirement checkpoint = %+v, exists=%t", current, exists)
+	}
+}
+
 func TestWorkerStartsFreshBranchAfterMergedFixNeedsRevision(t *testing.T) {
 	t.Parallel()
 	repository, remote := seedGitRepository(t)
