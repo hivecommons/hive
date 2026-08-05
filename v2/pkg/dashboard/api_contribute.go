@@ -1614,6 +1614,19 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </footer>
 <script>
 (function(){
+// ── Init-order hoist (fixes the #2603/#2604/#2606 merge-interleaving regression) ──
+// These were declared FAR below their first use. var hoists the name but not the
+// value, so ADMIN_TIER_ORDER.map / ccActivitySeen[k] / ccActivity.length ran against
+// undefined and threw. Declaring+initializing them here — before any function that
+// uses them can run — makes the ordering explicit and regression-proof.
+var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+var ccActivity=[];       // chronological (oldest→newest) activity backlog for the rail
+var ccActivitySeen={};   // dedupe set keyed by ccActivityKey(); shared by poll + SSE
+// Null-guarded addEventListener: a missing element (not yet parsed, or a markup
+// change) must never throw at script-eval time — an uncaught throw here aborts the
+// rest of this inline block and un-initializes everything below it (the exact crash
+// this file is fixing). Returns silently if the id is absent.
+function onEl(id,ev,fn,opts){var el=document.getElementById(id);if(el)el.addEventListener(ev,fn,opts);}
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
@@ -2112,8 +2125,22 @@ function adminConfirm(title,msg,okLabel,cb){
   _confirmCb=cb;
   document.getElementById('admin-confirm-back').classList.add('show');
 }
-document.getElementById('admin-confirm-cancel').addEventListener('click',function(){document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;});
-document.getElementById('admin-confirm-ok').addEventListener('click',function(){var cb=_confirmCb;document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;if(cb)cb();});
+// The confirm-modal buttons (#admin-confirm-cancel / #admin-confirm-ok) are
+// emitted AFTER this <script> block closes (see #admin-confirm-back near the end
+// of the page), so at script-eval time getElementById returns null here. The old
+// code called .addEventListener on that null directly, which THREW and ABORTED
+// the rest of this inline block — which is where ADMIN_TIER_ORDER, ccActivity and
+// ccActivitySeen are initialized — leaving them undefined for the whole page
+// (empty Live Activity rail + Done-filter throwing every poll). Wire the buttons
+// once the DOM has fully parsed (so the elements actually exist), and null-guard
+// besides, so this block can never again abort mid-way.
+function _wireConfirmModal(){
+  var cancel=document.getElementById('admin-confirm-cancel');
+  if(cancel)cancel.addEventListener('click',function(){var b=document.getElementById('admin-confirm-back');if(b)b.classList.remove('show');_confirmCb=null;});
+  var ok=document.getElementById('admin-confirm-ok');
+  if(ok)ok.addEventListener('click',function(){var cb=_confirmCb;var b=document.getElementById('admin-confirm-back');if(b)b.classList.remove('show');_confirmCb=null;if(cb)cb();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireConfirmModal);else _wireConfirmModal();
 
 // Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
 // dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
@@ -2173,7 +2200,8 @@ function renderAdminModels(){
 // disabled_repos list (the field the backend + Governor Hub both use). available_
 // repos comes from the config GET (the live repo set). Owner/RW only (gated by the
 // enclosing admin controls); persists via the same PUT as the other filters.
-var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+// NOTE: ADMIN_TIER_ORDER is declared+initialized at the top of this IIFE (init-order
+// hoist) so renderAdminTierLimits() can never see it undefined.
 function renderAdminRepos(){
   var el=document.getElementById('admin-repos');
   if(!el||!adminHub)return;
@@ -2244,7 +2272,7 @@ function bindImmediateToggle(id){
 
 // Delegated handlers for the filter editors (mode switch, add, remove) — mark
 // dirty so nothing is sent until the operator clicks Save.
-document.getElementById('ops-admin').addEventListener('click',function(e){
+onEl('ops-admin','click',function(e){
   var t=e.target;
   var seg=t.closest?t.closest('.admin-modeseg button'):null;
   if(seg){var mk=seg.parentNode.getAttribute('data-mode-key');adminHub[mk]=seg.getAttribute('data-mode');adminDirty=true;renderAdminControls();return;}
@@ -2279,7 +2307,7 @@ document.getElementById('ops-admin').addEventListener('click',function(e){
 // Tier rate-limit numeric edits: update tier_limits[tier][field] and mark dirty. A
 // separate 'input' handler (numbers change on input, not click). Non-negative ints;
 // blank/NaN coerces to 0 (== unlimited), matching the backend's "<=0 = unlimited".
-document.getElementById('ops-admin').addEventListener('input',function(e){
+onEl('ops-admin','input',function(e){
   var t=e.target;
   if(!t.getAttribute||t.getAttribute('data-tier-field')===null||!adminHub)return;
   var tier=t.getAttribute('data-tier'),field=t.getAttribute('data-tier-field');
@@ -2289,12 +2317,12 @@ document.getElementById('ops-admin').addEventListener('input',function(e){
   var save=document.getElementById('admin-save-btn');if(save)save.disabled=false;
 });
 
-document.getElementById('admin-add-model').addEventListener('click',function(){
+onEl('admin-add-model','click',function(){
   var inp=document.getElementById('admin-allow-model-input');
   if(inp&&inp.value.trim()){adminHub.contribute_allow_models=(adminHub.contribute_allow_models||[]).concat([inp.value.trim()]);inp.value='';adminDirty=true;renderAdminControls();}
 });
 
-document.getElementById('admin-save-btn').addEventListener('click',function(){
+onEl('admin-save-btn','click',function(){
   if(!adminDirty||!adminHub)return;
   // Persist the mode + the CANONICAL list field (contribute_deny_*) for each filter.
   // The mode decides allow vs deny; the list lives in the deny-named field in BOTH
@@ -2322,7 +2350,7 @@ document.getElementById('admin-save-btn').addEventListener('click',function(){
 
 // Per-contributor actions (delegated on the clanker list). Each calls an EXISTING
 // endpoint; destructive ones go through the themed confirm.
-document.getElementById('clanker-list').addEventListener('change',function(e){
+onEl('clanker-list','change',function(e){
   var sel=e.target;
   if(!adminEnabled||sel.getAttribute('data-role')!=='tier')return;
   var cid=sel.getAttribute('data-cid'),tier=sel.value;
@@ -2331,7 +2359,7 @@ document.getElementById('clanker-list').addEventListener('change',function(e){
     .then(function(x){if(x.ok){toast('Trust tier set to '+tier,true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to set tier',false);}})
     .catch(function(){toast('Failed to set tier',false);});
 });
-document.getElementById('clanker-list').addEventListener('click',function(e){
+onEl('clanker-list','click',function(e){
   var b=e.target;
   if(!adminEnabled||b.tagName!=='BUTTON')return;
   var role=b.getAttribute('data-role');
@@ -2984,8 +3012,9 @@ function ccTravel(e){
 // shared deduped store. ccActivity is chronological (oldest→newest); ccActivitySeen
 // keys events by timestamp+username+action+task so an event arriving via BOTH poll
 // and SSE is counted once.
-var ccActivity=[];
-var ccActivitySeen={};
+// NOTE: ccActivity + ccActivitySeen are declared+initialized at the top of this
+// IIFE (init-order hoist) so ccIngestActivity()/ccCompletedWorkItems() — which run
+// via opsPoll long before this line — can never see them undefined.
 var ccActivityCap=200;
 var ccActivityPollTimer=null;
 var ccSSEDelivered=false;
