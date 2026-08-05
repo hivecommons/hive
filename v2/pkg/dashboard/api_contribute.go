@@ -4067,17 +4067,6 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 			jsonError(w, "Account revoked — contact the hive administrator to reinstate", http.StatusForbidden)
 			return
 		}
-		// MERGE-REVIEW (v2→v4 sync): v4 and v2 fixed the same account-takeover
-		// primitive DIFFERENTLY on this unauthenticated register endpoint. This
-		// resolution KEPT v4's stricter posture (force:true is IGNORED entirely;
-		// reissue must go through the authenticated POST /api/contribute/reissue
-		// -token). v2's alternative (#2610) instead KEPT force:true but gated it
-		// behind a server-verified caller identity via resolveContributeCaller.
-		// v2's force-rotation-via-register path (and its test
-		// api_contribute_force_rotation_test.go) is therefore NOT active here.
-		// A maintainer must confirm v4 intends to drop the force-register path
-		// rather than adopt v2's gated version. resolveContributeCaller and
-		// reissueContributorToken remain used by the reissue-token endpoint.
 		// SECURITY: this endpoint is unauthenticated (username is self-asserted),
 		// so it must NEVER reissue and return an existing contributor's token —
 		// that was an account-takeover primitive (POST any known username with

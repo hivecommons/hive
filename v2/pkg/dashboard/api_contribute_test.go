@@ -707,12 +707,6 @@ func TestRegisterForceReissue(t *testing.T) {
 		t.Error("should not return token without force")
 	}
 
-	// MERGE-REVIEW (v2→v4 sync): this test was aligned to v4's kept source
-	// behavior (force:true ignored). The v2-only test file
-	// api_contribute_force_rotation_test.go (brought in by this merge) asserts
-	// v2's #2610 gated-force-rotation behavior instead and may FAIL against v4's
-	// code — a maintainer must decide whether to delete/adapt that file or adopt
-	// v2's source behavior. See the matching MERGE-REVIEW note in api_contribute.go.
 	// SECURITY (F5): the unauthenticated register endpoint must NOT reissue an
 	// existing contributor's token, even with force:true — that was an account
 	// takeover primitive (POST any known username → receive their live token).
