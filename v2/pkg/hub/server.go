@@ -733,6 +733,12 @@ type HubServer struct {
 	// the time after which kubectl may be retried.
 	clusterUnreachableUntil map[string]time.Time
 	clusterUnreachableMu    sync.Mutex
+	// lastNetAdminReconcile throttles the NET_ADMIN securityContext-drift
+	// reconcile (netadmin_reconcile.go). The SHA poller ticks every 2 min, but
+	// the drift is static remediation, not a hot path, so we run the sweep at
+	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
+	// (both are poller-loop-only state; no need for a separate mutex).
+	lastNetAdminReconcile time.Time
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
@@ -2168,8 +2174,8 @@ type FleetStats struct {
 	// public). Computing them here counts every hive while disclosing none: like
 	// every other field on this struct they are scalars, and no name, org, repo,
 	// owner or URL is derivable from them.
-	AgentsRunning int    `json:"agents_running"`
-	Contributors  int    `json:"contributors"`
+	AgentsRunning int `json:"agents_running"`
+	Contributors  int `json:"contributors"`
 	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
 	// contributors, summed from each hive's ContributorCount rather than
 	// ActiveContributors. Contributors above tracks who is CURRENTLY active,

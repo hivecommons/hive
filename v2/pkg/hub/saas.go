@@ -4399,6 +4399,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// only ever considers hives with AutoUpgrade enabled, while the flag is set
 	// by the admin and bulk upgrade paths for any hive.
 	s.sweepOrphanedUpgrades()
+	// Repair pre-#1222 NET_ADMIN securityContext drift so the F5 fatal-egress
+	// image (#2664) can't crash-loop drifted hives. Throttled internally to
+	// netAdminReconcileInterval — this poller ticks far more often than the
+	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
+	s.reconcileNetAdminIfDue()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4419,6 +4424,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
 		s.sweepOrphanedUpgrades()
+		s.reconcileNetAdminIfDue()
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
