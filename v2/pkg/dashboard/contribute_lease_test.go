@@ -83,6 +83,74 @@ func TestLeaseExpiry_WedgedTaskAutoReleasedAndCooledDown(t *testing.T) {
 	}
 }
 
+// TestLeaseExpiry_ClearsPendingCredential proves that lease expiry clears the
+// pendingToken and credentialDelivered state, matching the cleanup in
+// RequeueContributorTask. Without this, a stale credential could leak to a
+// now-idle connection. (kubestellar/hive#2675)
+func TestLeaseExpiry_ClearsPendingCredential(t *testing.T) {
+	hub, _ := covK2Hub(t)
+
+	now := time.Now()
+	wedged := &ContributorConnection{
+		profile:            &ContributorProfile{GitHubUsername: "cred-leak", ContributorID: "c-cred", TrustTier: "contributor"},
+		currentTask:        &WSTaskAssign{TaskID: "t-cred", Repo: "myorg/repo1", Number: 55},
+		currentTaskGen:     9,
+		lastLeaseRenew:     now.Add(-(wsTaskTimeout + time.Minute)),
+		lastPong:           now,
+		pendingToken:       "ghp_LEAKED_TOKEN_12345",
+		credentialDelivered: false,
+	}
+	hub.mu.Lock()
+	hub.connections["conn-cred"] = wedged
+	hub.mu.Unlock()
+
+	released := hub.reclaimExpiredLeases(now)
+	if released != 1 {
+		t.Fatalf("expected 1 expired lease reclaimed, got %d", released)
+	}
+
+	wedged.mu.Lock()
+	tok := wedged.pendingToken
+	delivered := wedged.credentialDelivered
+	wedged.mu.Unlock()
+
+	if tok != "" {
+		t.Fatalf("pendingToken not cleared on lease expiry: %q (credential leak)", tok)
+	}
+	if delivered {
+		t.Fatalf("credentialDelivered not cleared on lease expiry")
+	}
+}
+
+// TestLeaseExpiry_ClearsDeliveredCredentialFlag ensures credentialDelivered=true is
+// also reset on expiry, so a subsequent task assignment starts clean.
+func TestLeaseExpiry_ClearsDeliveredCredentialFlag(t *testing.T) {
+	hub, _ := covK2Hub(t)
+
+	now := time.Now()
+	wedged := &ContributorConnection{
+		profile:            &ContributorProfile{GitHubUsername: "delivered", ContributorID: "c-del", TrustTier: "contributor"},
+		currentTask:        &WSTaskAssign{TaskID: "t-del", Repo: "myorg/repo1", Number: 56},
+		currentTaskGen:     4,
+		lastLeaseRenew:     now.Add(-(wsTaskTimeout + 2*time.Minute)),
+		lastPong:           now,
+		pendingToken:       "",
+		credentialDelivered: true,
+	}
+	hub.mu.Lock()
+	hub.connections["conn-del"] = wedged
+	hub.mu.Unlock()
+
+	hub.reclaimExpiredLeases(now)
+
+	wedged.mu.Lock()
+	delivered := wedged.credentialDelivered
+	wedged.mu.Unlock()
+	if delivered {
+		t.Fatalf("credentialDelivered not cleared — next task would skip credential delivery")
+	}
+}
+
 // TestLeaseExpiry_ProgressingTaskNotReclaimed is the NO-FALSE-RECLAIM guarantee: a
 // task that is "working slowly" but still renewing its lease (recent lastLeaseRenew)
 // is NEVER auto-released. This is what keeps the conservative backstop from stealing a
