@@ -1895,6 +1895,18 @@ type HubConfig struct {
 	// restart, and edited only through the authenticated PUT /api/contribute/queue/order
 	// endpoint (owner/read-write only).
 	ContributeQueueOrder []string `yaml:"contribute_queue_order,omitempty"`
+	// ContributeQueueHold is the OPERATOR HOLD set for the ready-work queue: an
+	// unordered list of "owner/repo#number" keys the operator parked from the
+	// Operations tab. A held issue is NEVER offered — it is excluded from BOTH the
+	// queue display's offer-eligible set (ReadyQueue) and selectTask's candidate
+	// selection — and it stays parked INDEFINITELY until the operator Resumes it.
+	// This is DISTINCT from cooldown (time-based, self-clearing): a hold is a
+	// manual, persistent operator decision. Held rows remain VISIBLE on the
+	// Operations tab (rendered greyed with an "on hold" badge) so the operator can
+	// always see and Resume them. Persisted through the same Config.Hub.* mechanism
+	// as ContributeQueueOrder so it survives restart, and edited only through the
+	// authenticated POST /api/contribute/queue/hold endpoint (owner/read-write only).
+	ContributeQueueHold []string `yaml:"contribute_queue_hold,omitempty"`
 	// ContributeRequireExplicitAccept gates HOW a contributor's scoped GitHub
 	// credential is delivered relative to task acceptance (kubestellar/hive#2537).
 	// The credential is ALWAYS delivered only AFTER an acceptance decision — it no

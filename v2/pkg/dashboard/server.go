@@ -168,6 +168,14 @@ type Server struct {
 	contributeMetricsOnce sync.Once
 	contributeMetrics     *metricsStore
 
+	// contributePRLink is the live, best-effort PR→issue link projection behind the
+	// Operations triage view + queue PR badges (#2612 part c). It memoises "does a
+	// Fixes/Closes PR exist for owner/repo#number, open or merged?" behind a short
+	// TTL over the hive's existing GitHub client — NO new persistent store. Lazily
+	// built via contributePRLinkResolver(); see contribute_prlink.go.
+	contributePRLinkOnce sync.Once
+	contributePRLink     *prLinkResolver
+
 	inferenceMu        sync.RWMutex
 	inferenceEndpoints map[string][]string // backend id → list of base URLs
 
