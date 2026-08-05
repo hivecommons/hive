@@ -32,7 +32,7 @@ Each agent runs in one of four modes, controlling what actions it can take on Gi
 
 ## ACMM Levels
 
-### L1 — Assisted (2 agents)
+### L1 — Inception (Assisted) (2 agents)
 
 A single interactive advisor helps with repo setup and architecture decisions. Guide agent makes advisory beads. Brainstorm agent handles project inception — turning raw ideas into structured KB facts and scaffold. No feedback loops.
 
@@ -41,7 +41,7 @@ A single interactive advisor helps with repo setup and architecture decisions. G
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-inception.md` |
 
-### L2 — Instructed (5 agents)
+### L2 — Advisory (Instructed) (5 agents)
 
 Agents observe and report findings as advisory beads on the dashboard and tracking issue. No GitHub issues or PRs created. Humans decide what to act on.
 
@@ -53,7 +53,7 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L3 — Measured (6 agents)
+### L3 — Quality-Gated (Measured) (6 agents)
 
 Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure.
 
@@ -66,7 +66,7 @@ Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI w
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L4 — Adaptive (7 agents)
+### L4 — Security-Aware (Adaptive) (7 agents)
 
 All agents open GitHub issues — bugs, docs gaps, CI problems, security vulnerabilities. Only Quality, sec-check, and ci-maintainer may open PRs. Security agent joins. Closed-loop feedback: agents act on their own findings.
 
@@ -80,7 +80,7 @@ All agents open GitHub issues — bugs, docs gaps, CI problems, security vulnera
 | **sec-check** | **holdgated** | `sec-check-holdgated.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L5 — Semi-Automated (9 agents)
+### L5 — Semi-Autonomous (Semi-Automated) (9 agents)
 
 Agents open issues AND pull requests. All PRs get a hold label — humans batch-review and approve. Architect produces RFCs, strategist coordinates across agents. The system proposes; it does not merge autonomously.
 

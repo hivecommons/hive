@@ -132,7 +132,7 @@ const (
 
 // ACMM level bounds for a SELF-SERVICE provision request (the get-started
 // wizard). Narrower than the assign bounds above on purpose: nobody starts a
-// hive above L3 Measured. L4 Adaptive and higher are reached after
+// hive above L3 Quality-Gated. L4 Security-Aware and higher are reached after
 // provisioning, from the hive's own dashboard, once the project's test
 // coverage and CI history have earned the extra automation. The wizard renders
 // levels up to maxRequestACMMLevel as radios and lists the rest as "available

@@ -164,12 +164,21 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 			if b.Title == "" {
 				continue
 			}
-			if b.Status == beads.StatusClosed {
-				if b.ClosedAt != nil && b.ClosedAt.After(cutoff) {
+			// Both closed AND done beads are resolved: agents retire findings
+			// with either status, and a "done" finding lingering in the digest
+			// as if still open is exactly the staleness #2575 is about.
+			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+				// Done beads carry no ClosedAt (only Close sets it); their
+				// UpdatedAt is when the agent marked them done.
+				resolvedAt := b.UpdatedAt.Time
+				if b.ClosedAt != nil {
+					resolvedAt = b.ClosedAt.Time
+				}
+				if resolvedAt.After(cutoff) {
 					resolved = append(resolved, ResolvedFinding{
 						Agent:    agentName,
 						Title:    b.Title,
-						ClosedAt: b.ClosedAt.Time,
+						ClosedAt: resolvedAt,
 						File:     b.ExternalRef,
 					})
 				}
@@ -357,7 +366,21 @@ func repoHintFromTitle(title string, num int, org string) (string, string, bool)
 // into working links, and may be empty to skip linkification.
 func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	if d.TotalCount == 0 {
-		return ""
+		// No open findings. If nothing was recently resolved either, there is
+		// nothing to say — return "" so no digest comment is created. But when
+		// findings WERE just resolved, an updated digest must still be posted:
+		// otherwise the pinned comment freezes on its last non-empty state and
+		// keeps showing healed findings forever (#2575).
+		if len(d.RecentlyResolved) == 0 {
+			return ""
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("## 🐝 Advisory Digest — %s\n\n", d.GeneratedAt.Format("2006-01-02 15:04 MST")))
+		b.WriteString("> Automated code review findings from [Hive](https://github.com/kubestellar/hive) agents. ")
+		b.WriteString("This comment is updated periodically.\n\n")
+		b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
+		writeRecentlyResolved(&b, d, org, primaryRepo)
+		return b.String()
 	}
 
 	var all []Finding
@@ -412,14 +435,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		b.WriteString("\n")
 	}
 
-	if len(d.RecentlyResolved) > 0 {
-		b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
-		for _, r := range d.RecentlyResolved {
-			loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
-			b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(r.Title, org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
-		}
-		b.WriteString("\n")
-	}
+	writeRecentlyResolved(&b, d, org, primaryRepo)
 
 	return b.String()
 }
@@ -437,6 +453,20 @@ func findingSortKey(f Finding) string {
 		strconv.Itoa(f.Line),
 		f.Detail,
 	}, "\x00")
+}
+
+// writeRecentlyResolved renders the "Recently Resolved" digest section. Shared
+// by the normal and the zero-findings ("all clear") digest renderings.
+func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo string) {
+	if len(d.RecentlyResolved) == 0 {
+		return
+	}
+	b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
+	for _, r := range d.RecentlyResolved {
+		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
+		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(r.Title, org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
+	}
+	b.WriteString("\n")
 }
 
 // SetLatestDigest stores the most recent digest for dashboard access.
@@ -482,6 +512,15 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 		existing := store.List(beads.ListFilter{})
 		dup := false
 		for _, b := range existing {
+			// Only OPEN beads suppress a duplicate. A resolved (closed/done)
+			// bead must not: if the underlying condition recurs after healing —
+			// e.g. repo permissions were fixed, the finding auto-closed, and
+			// the permissions later regressed — the re-reported finding has to
+			// become a fresh open bead or the digest would stay silent about a
+			// genuinely-failing condition (#2575).
+			if b.Status == beads.StatusClosed || b.Status == beads.StatusDone {
+				continue
+			}
 			if b.Title == f.Title && b.Type == beads.TypeAdvisory {
 				dup = true
 				break

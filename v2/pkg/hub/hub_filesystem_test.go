@@ -1005,7 +1005,7 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 }
 
 // TestHandleRequestProvisionClampsAboveOnboardingCeiling pins the rule that a
-// self-service request can never provision a hive above L3 Measured. The
+// self-service request can never provision a hive above L3 Quality-Gated. The
 // get-started wizard and the Request-a-Hive modal both only offer L1-L3, but
 // they are clients: this asserts the SERVER refuses to record L4-L6 from a
 // crafted body, so the UI is not the only gate.

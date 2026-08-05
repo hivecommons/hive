@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -126,11 +127,48 @@ func TestContributeLanding(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte("Contribute to")) {
 		t.Error("landing page missing expected content")
 	}
+
+	body := w.Body.Bytes()
+
+	// #2536/#2540a: Copilot must carry a real host-mode install command, not
+	// an empty data-host-install that falls through to a comment-only line.
+	if !bytes.Contains(body, []byte(`data-host-install="npm install -g @github/copilot`)) {
+		t.Error("copilot option missing a non-empty data-host-install")
+	}
+
+	// #2536: an OS selector must exist so install guidance isn't macOS-only,
+	// and macOS must remain the default selection with the unchanged
+	// brew-based prerequisite line.
+	if !bytes.Contains(body, []byte(`id="os-select"`)) {
+		t.Error("landing page missing OS selector")
+	}
+	if !bytes.Contains(body, []byte(`<option value="macos" selected>macOS</option>`)) {
+		t.Error("OS selector must default to macOS")
+	}
+	if !bytes.Contains(body, []byte("brew install just gh")) {
+		t.Error("macOS default prerequisite line (brew install just gh) missing")
+	}
+
+	// #2536/#2540b: the "don't see your CLI?" prefill link must not reference
+	// the non-existent "contribute" label — only "enhancement" exists.
+	if bytes.Contains(body, []byte("labels=contribute")) {
+		t.Error("CLI request link must not reference the non-existent 'contribute' label")
+	}
+	if !bytes.Contains(body, []byte("labels=enhancement")) {
+		t.Error("CLI request link missing labels=enhancement")
+	}
+
+	// #2536/#2540: the server-rendered (no-JS) fallback command block must be
+	// self-labeling as a default.
+	if !bytes.Contains(body, []byte("Default shown: macOS + Claude Code + containerized mode")) {
+		t.Error("server-rendered fallback command block missing default marker comment")
+	}
 }
 
 // TestContributeLandingHasOpsTab pins the additive tab chrome: the landing page
-// must now render the Onboarding / Management & Operations tab bar, the new ops
-// panel, AND still carry the existing onboarding content unchanged.
+// must now render the Onboarding / Management / Operations tab bar (the former
+// single "Management & Operations" tab is split in two), the Operations panel,
+// AND still carry the existing onboarding content unchanged.
 func TestContributeLandingHasOpsTab(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
@@ -145,21 +183,84 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	// New tab chrome.
+	// New tab chrome: FOUR tabs now — Onboarding, Management, Operations,
+	// Leaderboard (the leaderboard was folded in from its standalone page).
 	for _, want := range []string{
 		`class="page-tabs"`,
 		`data-panel="tab-onboarding"`,
+		`data-panel="tab-manage"`,
 		`data-panel="tab-ops"`,
-		`Management &amp; Operations`,
+		`data-panel="tab-leaderboard"`,
+		`id="ptab-manage"`,
+		`id="ptab-ops"`,
+		`id="ptab-leaderboard"`,
+		`>Management<`,  // Management tab label (controls only)
+		`>Operations<`,  // Operations tab label (monitoring)
+		`>Leaderboard<`, // Leaderboard tab label (inline rankings)
+		`id="tab-manage"`,
 		`id="tab-ops"`,
+		`id="tab-leaderboard"`,
 		`Connected clankers`,
 		`id="work-list"`,
 		`/api/contribute/fleet`,
 		`opened`, // pipeline node
+		// Leaderboard tab is hydrated client-side from the reused API endpoint,
+		// through the same show/hide mechanism the Operations tab uses.
+		`/api/leaderboard`,
+		`id="leaderboard-list"`,
+		`function loadLeaderboard`,
+		`function renderLeaderboard`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("ops tab chrome missing %q", want)
+			t.Errorf("tab chrome missing %q", want)
 		}
+	}
+
+	// The old "View Leaderboard" link navigated AWAY to the standalone page.
+	// It must no longer be an <a href="/leaderboard"> — the leaderboard is now a
+	// tab on THIS page. (The /leaderboard route still exists as a redirect shim,
+	// referenced by the Leaderboard tab's descriptive copy, but the onboarding CTA
+	// must open the tab in place, not navigate away.)
+	if strings.Contains(body, `href="/leaderboard"`) {
+		t.Error(`navigate-away href="/leaderboard" link still present; leaderboard is now an inline tab`)
+	}
+	if !strings.Contains(body, `id="goto-leaderboard-tab"`) {
+		t.Error("onboarding CTA should be a button that opens the Leaderboard tab in place")
+	}
+
+	// The Leaderboard panel must render AFTER the Operations panel (it is the
+	// 4th tab), and its show/hide must run through the same tab JS — verify the
+	// hydration is wired on tab-leaderboard open without any admin/role gate.
+	iLbPanel := strings.Index(body, `id="tab-leaderboard"`)
+	iOpsPanel := strings.Index(body, `id="tab-ops"`)
+	if iLbPanel < 0 || iOpsPanel < 0 || !(iOpsPanel < iLbPanel) {
+		t.Errorf("Leaderboard panel must render after Operations: ops=%d leaderboard=%d", iOpsPanel, iLbPanel)
+	}
+	if !strings.Contains(body, `dp==='tab-leaderboard'&&!lbStarted`) {
+		t.Error("Leaderboard tab must hydrate on first open via the shared tab-switch JS")
+	}
+
+	// The single "Management & Operations" tab was split; that combined label
+	// must no longer appear.
+	if strings.Contains(body, "Management &amp; Operations") {
+		t.Error(`combined "Management & Operations" tab label still present after the split`)
+	}
+
+	// The split must place the admin CONTROLS block under Management and the
+	// monitoring panels (clankers list / my work / pipeline) under Operations.
+	// Verify ordering: ops-admin appears inside tab-manage, before tab-ops opens.
+	iManage := strings.Index(body, `id="tab-manage"`)
+	iAdmin := strings.Index(body, `id="ops-admin"`)
+	iOps := strings.Index(body, `id="tab-ops"`)
+	iClankers := strings.Index(body, `<h3>Connected clankers</h3>`)
+	if iManage < 0 || iAdmin < 0 || iOps < 0 || iClankers < 0 {
+		t.Fatalf("missing anchors: manage=%d admin=%d ops=%d clankers=%d", iManage, iAdmin, iOps, iClankers)
+	}
+	if !(iManage < iAdmin && iAdmin < iOps) {
+		t.Errorf("admin controls must render under Management (before Operations): manage=%d admin=%d ops=%d", iManage, iAdmin, iOps)
+	}
+	if !(iOps < iClankers) {
+		t.Errorf("Connected clankers must render under Operations (after tab-ops opens): ops=%d clankers=%d", iOps, iClankers)
 	}
 
 	// Existing onboarding content must still be present and unchanged.
@@ -212,6 +313,53 @@ func TestContributeFleet(t *testing.T) {
 	}
 	if resp.Policy.TrustedAt != contributorTrustedAt {
 		t.Errorf("trusted_at = %d, want %d", resp.Policy.TrustedAt, contributorTrustedAt)
+	}
+}
+
+// TestTrustTierTableMatchesConstants (#2544): the on-page trust-tier table must
+// describe what the promotion code actually does — auto-promotion counts tasks
+// that PRODUCED A PR (TasksWithPR), not bare completed tasks — and must render
+// its numbers from contributorAutoPromoteAt / contributorTrustedAt so the page
+// cannot drift from the code again. The old over-promising wording ("5 completed
+// tasks", "maintainer voucher" + "Merge PRs") must be gone.
+func TestTrustTierTableMatchesConstants(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	// A missing format arg would render as %!s(MISSING); the whole page must be
+	// clean (this also guards the spliced tier-table %s verb).
+	if strings.Contains(body, "%!") {
+		t.Fatalf("landing page has a format error (%%! present) — verb/arg mismatch")
+	}
+
+	// Corrected, constant-sourced wording is present.
+	wantAutoPromote := fmt.Sprintf("%d tasks that produced a PR", contributorAutoPromoteAt)
+	if !strings.Contains(body, wantAutoPromote) {
+		t.Errorf("tier table missing corrected contributor row %q", wantAutoPromote)
+	}
+	wantTrusted := fmt.Sprintf("~%d PR tasks, then granted by a maintainer", contributorTrustedAt)
+	if !strings.Contains(body, wantTrusted) {
+		t.Errorf("tier table missing corrected trusted row %q", wantTrusted)
+	}
+
+	// The old inaccurate wording must be gone.
+	for _, gone := range []string{
+		"5 completed tasks",
+		"20 tasks + maintainer voucher",
+		"<td>Merge PRs</td>",
+	} {
+		if strings.Contains(body, gone) {
+			t.Errorf("tier table still contains inaccurate wording %q", gone)
+		}
 	}
 }
 
@@ -375,7 +523,14 @@ func TestLeaderboardAPISorted(t *testing.T) {
 	}
 }
 
-func TestLeaderboardPageHTML(t *testing.T) {
+// TestLeaderboardPageRedirect pins the deep-link shim behaviour: the standalone
+// leaderboard page was folded into the /contribute Leaderboard tab, so
+// GET /leaderboard now redirects to the canonical path-style tab URL
+// /contribute/leaderboard (which the tab JS reads from location.pathname on load
+// to open the Leaderboard tab). Data still comes from the reused
+// /api/leaderboard endpoint (asserted by TestLeaderboardAPISorted), so the
+// redirect must hold regardless of whether any contributors exist.
+func TestLeaderboardPageRedirect(t *testing.T) {
 	setupContributeEnv(t)
 
 	seedContributor(t, "alice", 10, 2)
@@ -387,42 +542,18 @@ func TestLeaderboardPageHTML(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect, got %d: %s", w.Code, w.Body.String())
 	}
-
-	contentType := w.Header().Get("Content-Type")
-	if !strings.Contains(contentType, "text/html") {
-		t.Errorf("expected text/html content-type, got %s", contentType)
-	}
-
-	body := w.Body.String()
-	checks := map[string]string{
-		"gradient-text":        "animated gradient header text",
-		"Leaderboard":          "page heading",
-		"alice":                "contributor username",
-		"github.com/alice.png": "avatar URL",
-		"github.com/alice":     "GitHub profile link",
-		"search":               "search input",
-		"sort-completed":       "sortable completed column",
-		"Trust Tiers":          "trust tiers reference section",
-		"bg-stars":             "starfield background",
-		"var AGENTS":           "JavaScript agent entries data",
-		"var CONTRIBUTORS":     "JavaScript contributor entries data",
-		"toggleSort":           "sort toggle function",
-		"renderRows":           "row rendering function",
-		"hover-card":           "contributor hover card CSS",
-		"hc-header":            "hover card header",
-		"hc-bar":               "hover card success rate bar",
-	}
-	for needle, desc := range checks {
-		if !strings.Contains(body, needle) {
-			t.Errorf("page missing %s (looked for %q)", desc, needle)
-		}
+	if loc := w.Header().Get("Location"); loc != "/contribute/leaderboard" {
+		t.Errorf("Location = %q, want /contribute/leaderboard", loc)
 	}
 }
 
-func TestLeaderboardPageEmpty(t *testing.T) {
+// TestLeaderboardPageRedirectEmpty confirms the redirect holds with no
+// contributors seeded (the tab hydrates client-side, so there is no empty-state
+// server render to special-case any more).
+func TestLeaderboardPageRedirectEmpty(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
 	s.registerContributeRoutes()
@@ -431,20 +562,11 @@ func TestLeaderboardPageEmpty(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect, got %d", w.Code)
 	}
-
-	body := w.Body.String()
-	// Empty entries arrays should be passed to JS
-	if !strings.Contains(body, "var AGENTS = []") {
-		t.Error("empty page should pass empty AGENTS array")
-	}
-	if !strings.Contains(body, "var CONTRIBUTORS = []") {
-		t.Error("empty page should pass empty CONTRIBUTORS array")
-	}
-	if !strings.Contains(body, "/contribute") {
-		t.Error("empty page should link to /contribute")
+	if loc := w.Header().Get("Location"); loc != "/contribute/leaderboard" {
+		t.Errorf("Location = %q, want /contribute/leaderboard", loc)
 	}
 }
 
@@ -585,10 +707,15 @@ func TestRegisterForceReissue(t *testing.T) {
 		t.Error("should not return token without force")
 	}
 
-	// Third registration with force — should reissue a new token
+	// Third registration with force — should reissue a new token, but ONLY for
+	// the authenticated owner (#2610). Supply the owner's identity via the
+	// hub-injected X-Hive-User header, which resolveContributeCaller honors
+	// server-side. Unauthenticated force rotation is covered (and rejected) in
+	// api_contribute_force_rotation_test.go.
 	body = `{"github_username":"force-user","force":true}`
 	req = httptest.NewRequest(http.MethodPost, "/api/contribute/register", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-User", "force-user")
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -880,5 +1007,93 @@ func TestBodySizeLimit(t *testing.T) {
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for huge body, got %d", w.Code)
+	}
+}
+
+// TestContributeTabPathServesLanding pins the path-style deep links introduced
+// with URL-addressable tabs: GET /contribute/<tab> must serve the SAME landing
+// HTML as /contribute (the client JS reads location.pathname on load and
+// activates the matching tab). Every accepted slug — clean names and legacy
+// short ids — must 200 with the page body, so Operations/Leaderboard hydrate on
+// direct load exactly as a click would (activateTab is the single choke point).
+func TestContributeTabPathServesLanding(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	paths := []string{
+		"/contribute",
+		"/contribute/onboarding",
+		"/contribute/management",
+		"/contribute/manage",
+		"/contribute/operations",
+		"/contribute/ops",
+		"/contribute/leaderboard",
+	}
+	for _, p := range paths {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200, got %d", p, w.Code)
+			continue
+		}
+		// The same landing page (not a redirect / empty body): the ClankeR
+		// heading and the tab strip must be present.
+		if !bytes.Contains(w.Body.Bytes(), []byte("Contribute to")) {
+			t.Errorf("GET %s: landing page content missing", p)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte(`data-panel="tab-ops"`)) {
+			t.Errorf("GET %s: tab strip missing (page not fully rendered)", p)
+		}
+	}
+}
+
+// TestContributeTabURLWiring asserts the client-side URL-addressable-tab plumbing
+// is present in the served HTML: the path/param reader (tabFromLocation), the
+// address-bar reflection via history.pushState, the Back/Forward popstate handler,
+// and the friendly-name -> panel mapping. These are runtime behaviours we can't
+// execute in a Go test, so we pin their presence to guard against silent removal.
+func TestContributeTabURLWiring(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, needle := range []string{
+		"function tabFromLocation",   // reads location.pathname + ?tab= on load
+		"history.pushState",          // address-bar reflection on tab switch
+		"popstate",                   // Back/Forward navigation
+		"'operations'",               // clean name accepted for Operations
+		"'management'",               // clean name accepted for Management
+		"/contribute/'+slug",         // path-style URL construction
+	} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("served page missing tab-URL wiring: %q", needle)
+		}
+	}
+}
+
+// TestContributeSubpathsArePublic guards that the path-style tab URLs stay
+// anonymous-accessible: isPublicPath already prefixes /contribute/, but the tabs
+// depend on it, so pin it. A regression here would 401 shared/bookmarked tab URLs.
+func TestContributeSubpathsArePublic(t *testing.T) {
+	for _, p := range []string{
+		"/contribute",
+		"/contribute/onboarding",
+		"/contribute/management",
+		"/contribute/operations",
+		"/contribute/leaderboard",
+	} {
+		if !isPublicPath(p) {
+			t.Errorf("isPublicPath(%q) = false, want true (shared tab URLs must be public)", p)
+		}
 	}
 }

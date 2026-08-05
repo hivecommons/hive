@@ -373,9 +373,10 @@
 
       <!-- Step 3: ACMM level + submit.
            Options are rendered by renderAcmmOptions() from ACMM_LEVELS so the
-           names match the hub dashboard and the spoke. They previously read
-           "L1 Advisory / L2 Measured / L4 Auto PR", which named the levels
-           wrongly AND described L4 as auto-merging — it does not. -->
+           capability names (Inception → Fully Autonomous) match the hub
+           dashboard and the spoke. An older revision read "L1 Advisory /
+           L2 Measured / L4 Auto PR", which named the levels wrongly AND
+           described L4 as auto-merging — it does not. -->
       <div class="wizard-panel" id="panel-3">
         <h2>Choose autonomy level</h2>
         <p>How much should the agents do on their own? Start low and increase as you build confidence. This only controls the mundane work &mdash; security patches, dependency updates, issue triage, test fixes &mdash; so your team can focus on what matters: innovation, outreach, and strategy.</p>
@@ -519,14 +520,14 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
        step — a requester must not be shown one name here and another one on
        the dashboard of the hive they receive. */
     var ACMM_LEVELS = [
-      {level: 1, label: 'L1 Assisted',       desc: 'Start a new feature with spec-driven tooling. Agents look, plan and report; they never write to your repo.'},
-      {level: 2, label: 'L2 Instructed',     desc: 'Advisory beads, no GitHub writes. Agents follow the house rules you set for the project.'},
-      {level: 3, label: 'L3 Measured',       desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
-      {level: 4, label: 'L4 Adaptive',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
-      {level: 5, label: 'L5 Semi-Automated', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
-      {level: 6, label: 'L6 Autonomous',     desc: 'Auto-merge on green CI. Only for repos with CI you already trust.'}
+      {level: 1, label: 'L1 — Inception (Assisted)',            desc: 'Start a new feature with spec-driven tooling. Agents look, plan and report; they never write to your repo.'},
+      {level: 2, label: 'L2 — Advisory (Instructed)',           desc: 'Advisory beads, no GitHub writes. Agents follow the house rules you set for the project.'},
+      {level: 3, label: 'L3 — Quality-Gated (Measured)',        desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
+      {level: 4, label: 'L4 — Security-Aware (Adaptive)',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
+      {level: 5, label: 'L5 — Semi-Autonomous (Semi-Automated)', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
+      {level: 6, label: 'L6 — Fully Autonomous',                desc: 'Auto-merge on green CI. Only for repos with CI you already trust.'}
     ];
-    /* L3 Measured is the recommended entry point: it is the first level that
+    /* L3 Quality-Gated is the recommended entry point: it is the first level that
        produces useful work (test-coverage PRs) while still gating every merge
        on a human. */
     var DEFAULT_ACMM_LEVEL = 3;

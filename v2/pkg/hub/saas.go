@@ -83,6 +83,23 @@ type SaaSUser struct {
 	// sum of inter-beat intervals, so it is accurate to roughly the beat interval,
 	// not to the second.
 	SessionSeconds int64 `json:"session_seconds,omitempty"`
+	// EngagedSeconds is the honest subset of SessionSeconds: time accumulated
+	// only on beats where the user's browser reported ENGAGED presence — tab
+	// visible AND input within the idle window (heartbeat EngagedSessionUsers).
+	// An idle open tab grows SessionSeconds but never this. omitempty, and
+	// absent on records that predate the field or whose spokes don't report
+	// presence yet — absence means NO DATA, never "provably unengaged".
+	EngagedSeconds int64 `json:"engaged_seconds,omitempty"`
+	// LastEngagedAt is the RFC3339 time of the most recent beat that credited
+	// EngagedSeconds — when a human was last actually behind this user's
+	// session. Feeds the `active` status tier. Same absence semantics as
+	// EngagedSeconds.
+	LastEngagedAt string `json:"last_engaged_at,omitempty"`
+	// LastActionAt is the RFC3339 time of the user's most recent REAL audited
+	// action on any of their hives (config save, agent restart, ACMM change,
+	// login, …), folded hub-ward from the spoke audit logs (heartbeat
+	// UserLastActions) keeping the per-user maximum. Same absence semantics.
+	LastActionAt string `json:"last_action_at,omitempty"`
 }
 
 // Length caps for the admin-editable contact fields. These are free text
@@ -208,6 +225,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
+	// Rename a hive's display name (its ProjectName). requireAuth plus an inner
+	// owner-or-admin check, exactly like visibility/auto-upgrade above — the
+	// gate is the security boundary, not just the hidden UI affordance.
+	s.mux.HandleFunc("PUT /api/saas/hives/{id}/name", s.requireAuth(s.handleRenameHive))
 	// Move a hive between forges (github.com <-> a GitHub Enterprise host).
 	// requireAuth plus an inner owner-or-admin check, exactly like
 	// switch-branch and auto-upgrade above.
@@ -529,11 +550,34 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	users := listAllSaaSUsers()
+	// status_tier is computed HUB-side (it needs the hub's live/engaged
+	// presence view and the tier windows) so the dashboard renders and sorts a
+	// server-decided classification instead of re-deriving policy in JS.
+	// See userStatusTier for the tier rules.
+	live := make(map[string]bool)
+	for _, name := range s.liveHiveUsernames() {
+		live[name] = true
+	}
+	engaged := make(map[string]bool)
+	for _, name := range s.engagedHiveUsernames() {
+		engaged[name] = true
+	}
+	now := time.Now()
+	type adminUserView struct {
+		SaaSUser
+		StatusTier string `json:"status_tier"`
+	}
+	views := make([]adminUserView, 0, len(users))
 	for i := range users {
 		users[i].EncryptedToken = ""
+		name := users[i].GitHubUsername
+		views = append(views, adminUserView{
+			SaaSUser:   users[i],
+			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"users": users})
+	json.NewEncoder(w).Encode(map[string]any{"users": views})
 }
 
 // handleAdminUpdateUser applies a partial admin edit to one hub user record.
@@ -1812,7 +1856,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	//     downgraded live hives to L0 on the dashboard.
 	//   - For an unclaimed PLACEHOLDER (status: available), there is no
 	//     meaningful live level (the slot reports L0), so the INTENDED level from
-	//     meta ("L2 Instructed") is what should show, and it also gates the
+	//     meta ("L2 Advisory") is what should show, and it also gates the
 	//     "Assign" menu (provStatus === 'available').
 	// Rule: take the meta level only for placeholders, or as a fallback when the
 	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
@@ -2183,6 +2227,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// treatment. Presence data about other users → admin-only, same as the
 		// engagement stats it complements.
 		resp["live_hive_users"] = s.liveHiveUsernames()
+		// The honest subset of live_hive_users: users whose browser reported
+		// focused, recent-input presence. live minus engaged = idle open tabs.
+		resp["live_engaged_users"] = s.engagedHiveUsernames()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -3249,6 +3296,101 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"is_public":%t}`, body.IsPublic)
+}
+
+// maxHiveDisplayNameLen bounds a hive's operator-set display name (ProjectName).
+// It matches maxContactNameLen's order of magnitude — a human-readable label,
+// not a document — and guards both the persisted meta.json and the vanity-host
+// label derived from it (hiveNameHostLabel truncates to a DNS label anyway, so
+// this only stops an absurdly long value from ever being stored).
+const maxHiveDisplayNameLen = 100
+
+// handleRenameHive renames a hive by rewriting its persisted ProjectName. The
+// operator explicitly accepted that ProjectName is load-bearing — it feeds the
+// namespace identity annotation and (at claim time) the vanity host — so this
+// is a rename of the hive's real identity, NOT a separate display_name field.
+//
+// AUTHORIZATION mirrors handleToggleVisibility exactly: requireAuth on the
+// route, then an owner-or-admin check here that is the true security boundary
+// (a non-owner is rejected 403 regardless of what the UI shows).
+//
+// Derived-surface handling on rename:
+//   - Namespace identity is RE-STAMPED here (idempotent, best-effort) so the
+//     hive.kubestellar.io/display-name annotation tracks the new name.
+//   - The vanity host is NOT recomputed. It is set-once at claim time (the
+//     assign path only mints one when VanityURL is empty) and doubles as the
+//     "placeholder is claimed" marker; minting a fresh random host on every
+//     rename would churn URLs and orphan routes. So the vanity host keeps its
+//     original label — a known, documented staleness, not a silent one.
+func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if isTrustedOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	}
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	id := r.PathValue("id")
+	username := s.getAuthUser(r)
+
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found — only hosted hives can be renamed from here"}`, http.StatusNotFound)
+		return
+	}
+	if h.Owner != username && username != hubAdminUsername {
+		http.Error(w, `{"error":"only the owner can rename this hive"}`, http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		ProjectName string `json:"project_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Trim and cap. A blank value is a legitimate "clear the custom name" — the
+	// dashboard then falls back to today's org/repo-derived label (hiveLabel).
+	name := strings.TrimSpace(body.ProjectName)
+	if len(name) > maxHiveDisplayNameLen {
+		http.Error(w, `{"error":"name too long"}`, http.StatusBadRequest)
+		return
+	}
+	name = sanitizeField(name)
+
+	h.ProjectName = name
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Overlay the new name onto the in-memory registry immediately so the change
+	// is visible before the next heartbeat re-overlays it from the SaaS store.
+	s.mu.Lock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
+			s.registry.Hives[i].ProjectName = name
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	// Re-stamp namespace identity so the display-name annotation tracks the
+	// rename. Best-effort — see stampHostedNamespaceIdentity's doc comment; a
+	// failed cosmetic patch must not fail the rename.
+	stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
+
+	s.logger.Info("audit: hive renamed", "hive_id", id, "project_name", name, "by", username)
+	s.recordTimeline(id, TimelineRenamed, fmt.Sprintf("hive renamed to %q", name), username)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "project_name": name})
 }
 
 // pushVisibilityToSpoke best-effort notifies a hosted hive's own governor
@@ -4621,6 +4763,10 @@ type HiveAccessEntry struct {
 	// with no stats round-trips as today's handle — role tooltip.
 	LoginCount     int   `json:"login_count,omitempty"`
 	SessionSeconds int64 `json:"session_seconds,omitempty"`
+	// Honest engagement signals (see SaaSUser for semantics) — admin-only like
+	// the stats above, and omitempty/absent for records without data yet.
+	EngagedSeconds int64  `json:"engaged_seconds,omitempty"`
+	LastActionAt   string `json:"last_action_at,omitempty"`
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -4646,6 +4792,8 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 				entry.Notes = u.Notes
 				entry.LoginCount = u.LoginCount
 				entry.SessionSeconds = u.SessionSeconds
+				entry.EngagedSeconds = u.EngagedSeconds
+				entry.LastActionAt = u.LastActionAt
 			}
 			access = append(access, entry)
 		}
@@ -5490,7 +5638,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// A hive is never REQUESTED above L3 Measured. L4-L6 are real levels, but
+	// A hive is never REQUESTED above L3 Quality-Gated. L4-L6 are real levels, but
 	// they are reached after provisioning, from the hive's own dashboard, once
 	// the project has the coverage and CI history to justify them. The
 	// get-started wizard only offers L1-L3, but the wizard is one client: clamp
@@ -6612,7 +6760,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		"app_creds_delivered", appDelivered,
 	)
 	s.recordTimeline(hiveID, TimelineOwnership,
-		fmt.Sprintf("hive assigned to %s (%s/%s, ACMM %d)", h.Owner, h.Org, h.PrimaryRepo, h.ACMMLevel),
+		fmt.Sprintf("hive assigned to %s (%s, ACMM %d)", h.Owner, repoDisplayLine(h.Org, h.PrimaryRepo), h.ACMMLevel),
 		s.getAuthUser(r))
 
 	w.Header().Set("Content-Type", "application/json")
@@ -7517,11 +7665,46 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* Round avatar <img> for a github.com login, at the given rendered size in
        CSS pixels. Requests 2x from GitHub so the face stays sharp on HiDPI.
-       onerror hides a 404 avatar rather than leaving a broken-image glyph — an
-       especially important detail now that the image sits inside a link, where
-       a broken icon would read as a dead control. extraStyle appends to the
-       inline style (borders, flex sizing) and defaults to nothing. */
+       github.com/<login>.png is a redirect to GitHub's CDN and returns 403 when
+       the request is unauthenticated or rate-limited — common for a hub visited
+       by a browser without an active GitHub session. onerror used to just hide
+       the broken image (visibility:hidden), which left the face's OWN size/shape
+       box empty; inside a live-ring wrapper that reads as an empty dashed ring
+       with nobody home. onerror now swaps to a same-size, same-shape initials
+       avatar instead, so a failed load never leaves a hole. this.onerror=null
+       before the swap stops a data: URI (which cannot itself 403) from ever
+       re-triggering onerror and looping. extraStyle appends to the inline style
+       (borders, flex sizing) and defaults to nothing. */
     var AVATAR_HIDPI_SCALE = 2;
+    /* avatarInitialsSVG builds a self-contained data: URI — no network request,
+       so it always renders and is exempt from the CSP's img-src allowance for
+       https: (the CSP already allows img-src data:, so no policy change is
+       needed). The background color is deterministic from the username (a
+       simple string hash into a fixed hue set) so the same person gets the same
+       color every time rather than a random one on every failed load. */
+    var AVATAR_FALLBACK_HUES = [0, 25, 50, 145, 175, 200, 230, 260, 290, 330];
+    function avatarInitials(username) {
+      var clean = String(username || '').replace(/[^A-Za-z0-9]/g, '');
+      if (!clean) return '?';
+      return clean.length === 1 ? clean.charAt(0).toUpperCase() : (clean.charAt(0) + clean.charAt(clean.length - 1)).toUpperCase();
+    }
+    function avatarFallbackHue(username) {
+      var s = String(username || '');
+      var hash = 0;
+      for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+      return AVATAR_FALLBACK_HUES[hash % AVATAR_FALLBACK_HUES.length];
+    }
+    function avatarInitialsSVG(username, px) {
+      var initials = avatarInitials(username);
+      var hue = avatarFallbackHue(username);
+      var r = px / 2;
+      var fontSize = Math.round(px * 0.42);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 ' + px + ' ' + px + '">' +
+        '<circle cx="' + r + '" cy="' + r + '" r="' + r + '" fill="hsl(' + hue + ',45%,32%)"/>' +
+        '<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="system-ui,sans-serif" ' +
+        'font-size="' + fontSize + '" font-weight="600" fill="#fff">' + initials + '</text></svg>';
+      return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    }
     /* A user LOGGED INTO THEIR HIVE right now gets a thick green dashed ring, so
        "who is active this moment" reads at a glance wherever a face appears. The
        border is drawn on a wrapper (a border on the round <img> itself would clip
@@ -7535,7 +7718,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
         'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
         (extraStyle || '') + '" ' +
-        'onerror="this.style.visibility=\'hidden\'">';
+        'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
       if (isUserLive(username)) {
         // Concentric green dashed ring. The wrapper is a fixed square exactly the
         // face's size plus the ring gap+width on every side (px + 2*(gap+border)),
@@ -7564,6 +7747,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var PANEL_ACCESS_AVATAR_PX = 18;   /* rows inside the status-dot hover panel */
     var LIST_AVATAR_PX = 20;           /* compact request/access lists */
     var TABLE_AVATAR_PX = 24;          /* admin Users table + provision cards */
+    var NAV_AVATAR_PX = 28;            /* top nav viewer avatar; mirrors .nav-avatar CSS */
 
     // ghRepoURL builds the URL for an org/repo on the RIGHT GitHub instance.
     // Hives are not all on public github.com: a provision request carries a
@@ -7641,7 +7825,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
     });
 
-    var ACMM_LABELS = {1:'L1 Assisted',2:'L2 Instructed',3:'L3 Measured',4:'L4 Adaptive',5:'L5 Semi-Automated',6:'L6 Autonomous'};
+    var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Fully Autonomous'};
     /* One-line "what this level actually does" per ACMM level, hoisted out of
        acmmBadge so the badge tooltip and the Request-a-Hive level picker read
        from the SAME strings. They used to be a local inside acmmBadge, and the
@@ -7649,7 +7833,7 @@ const dashboardHTML = `<!DOCTYPE html>
        plain wrong ("L3 CI/CD", "L4 Auto PR", "L6 Fully Autonomous") — L4 in
        particular is NOT fully autonomous, it opens hold-gated PRs for human
        review. Anything describing a level must use this object. */
-    var ACMM_TIPS = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
+    var ACMM_TIPS = {1:'L1 Inception — Advisory only.',2:'L2 Advisory — Advisory beads, no GitHub writes.',3:'L3 Quality-Gated — Hold-gated PRs, CI gates.',4:'L4 Security-Aware — Agents open issues, sec-check.',5:'L5 Semi-Autonomous — PRs with hold label, batch review.',6:'L6 Fully Autonomous — Auto-merge on green CI.'};
     /* The tip strings above lead with the level label; the picker renders the
        label separately, so strip the redundant "Lx Name — " prefix there. */
     function acmmTipDetail(level) {
@@ -7855,6 +8039,8 @@ const dashboardHTML = `<!DOCTYPE html>
       // Engagement stats (admin-only; absent → these lines are simply skipped).
       if (a.login_count) lines.push('Logins: ' + a.login_count);
       if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));
+      if (a.engaged_seconds) lines.push('Engaged time: ' + fmtHours(a.engaged_seconds));
+      if (a.last_action_at) lines.push('Last real action: ' + fmtUserTS(a.last_action_at));
       var act = userTaskActivity(uname);
       if (act.done || act.failed) lines.push('Tasks: ' + act.done + ' done / ' + act.failed + ' failed');
       // The lifecycle verdict, from the same helper the admin card uses. It reads
@@ -7863,7 +8049,7 @@ const dashboardHTML = `<!DOCTYPE html>
       // the ACMM-graduation refinement is unavailable here. Shown only when there
       // is some signal to classify (any stat present), so a bare face stays bare.
       if (a.login_count || a.session_seconds || act.done) {
-        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, []);
+        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0, engaged_seconds: a.engaged_seconds || 0, last_action_at: a.last_action_at || ''}, act, []);
         if (verdict && verdict.label) lines.push(verdict.label);
       }
       return lines.join('\n');
@@ -8419,6 +8605,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'app-id-placeholder': 'Placeholder App ID (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
+      'upgrading':       'Upgrading',
       'acmm-unset':      'ACMM level unset',
       'no-agents':       'No agents running',
       'duplicate-spoke': 'Duplicate spoke instances',
@@ -8611,12 +8798,14 @@ const dashboardHTML = `<!DOCTYPE html>
           /* The viewer's own face links to their own profile, like every other
              face in the dashboard. avatar_url comes from the auth payload (it is
              GitHub's CDN URL, not derivable from the login), so this one builds
-             its <img> directly rather than via avatarImg — but the anchor and
-             the role tooltip are the shared ones. */
+             its <img> directly rather than via avatarImg — but the anchor, the
+             role tooltip, and the initials fallback on load failure are shared.
+             NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
+             the fallback SVG matches the box it is replacing. */
           document.getElementById('nav-user').innerHTML =
             avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
               '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
-              'onerror="this.style.visibility=\'hidden\'">') +
+              'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }
@@ -9138,8 +9327,8 @@ const dashboardHTML = `<!DOCTYPE html>
     /* saveCurrentView names and stores the current group-by + filters + sort.
        Saving over an existing name overwrites it, which is what "save" means
        when the picker already shows that name. */
-    function saveCurrentView() {
-      var raw = window.prompt('Name this view:', '');
+    async function saveCurrentView() {
+      var raw = await hivePrompt('Name this view', '');
       if (raw === null) return;
       var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
       if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
@@ -9147,7 +9336,7 @@ const dashboardHTML = `<!DOCTYPE html>
       state.name = name;
       var existing = findSavedView(name);
       if (existing) {
-        if (!window.confirm('A view named "' + name + '" already exists. Overwrite it?')) return;
+        if (!await hiveConfirm('A view named "' + name + '" already exists. Overwrite it?')) return;
         existing.groupBy = state.groupBy;
         existing.filters = state.filters;
         existing.sortKey = state.sortKey;
@@ -9194,11 +9383,11 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* renameSavedView renames a view in place, keeping the default-view pointer
        in sync so a renamed default stays the default. */
-    function renameSavedView() {
+    async function renameSavedView() {
       if (!_dashActiveView) { hiveToast('Select a view to rename', 'error'); return; }
       var v = findSavedView(_dashActiveView);
       if (!v) return;
-      var raw = window.prompt('Rename view:', v.name);
+      var raw = await hivePrompt('Rename view', v.name);
       if (raw === null) return;
       var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
       if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
@@ -9216,9 +9405,9 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* deleteSavedView removes the selected view, clearing the default pointer
        if it pointed at the deleted view. */
-    function deleteSavedView() {
+    async function deleteSavedView() {
       if (!_dashActiveView) { hiveToast('Select a view to delete', 'error'); return; }
-      if (!window.confirm('Delete view "' + _dashActiveView + '"?')) return;
+      if (!await hiveConfirm('Delete view "' + _dashActiveView + '"?')) return;
       var kept = [];
       for (var i = 0; i < (_dashSavedViews || []).length; i++) {
         if (_dashSavedViews[i].name !== _dashActiveView) kept.push(_dashSavedViews[i]);
@@ -10576,6 +10765,48 @@ const dashboardHTML = `<!DOCTYPE html>
       });
     }
 
+    /* nameEditAffordance renders the inline pencil that lets an OWNER (or the hub
+       admin) rename a hive from its top line. It is a display-only convenience —
+       the server's owner-or-admin gate on PUT /name is the real boundary — so a
+       non-owner simply gets no pencil, and even if they forged the request the
+       handler rejects it 403. Empty string for anyone who cannot rename, so those
+       rows are pixel-identical to today. Gated the same way as the row's other
+       owner-only actions (h.role === 'owner' || _isAdmin — see isBulkEligible).
+       stopPropagation keeps the click from triggering the row's own open/SSO. */
+    function canRenameHive(h) {
+      return !!h && (h.role === 'owner' || _isAdmin);
+    }
+    function nameEditAffordance(h) {
+      if (!canRenameHive(h)) return '';
+      return ' <span onclick="event.stopPropagation();dashRenameHive(' + jsArg(h.id) + ')" ' +
+        'title="Rename this hive" role="button" tabindex="0" ' +
+        'style="cursor:pointer;opacity:0.45;font-size:0.75rem;vertical-align:middle;margin-left:2px">' +
+        '&#9998;</span>';
+    }
+
+    /* dashRenameHive prompts for a new name and PUTs it to the rename endpoint.
+       A blank submission clears the custom name (the row falls back to the
+       org/repo label), which the server accepts deliberately. Cancel (null)
+       leaves the hive untouched. On success we reload so every viewer-derived
+       surface (label, sort value) re-renders from the fresh registry. */
+    async function dashRenameHive(id) {
+      var h = (_allDashHives || []).reduce(function(m, x) { return x && x.id === id ? x : m; }, null) || {};
+      var current = (h.projectName || h.project_name || '');
+      var next = await hivePrompt('Rename hive', current, {ok: 'Rename'});
+      if (next === null) return; /* cancelled */
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/name', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({project_name: next})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Failed to rename hive', 'error'); loadHives(); return; }
+        hiveToast(next ? ('Renamed to ' + next) : 'Name cleared', 'success');
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadHives(); }
+    }
+
     /* hiveLabel derives the two-line name-cell label from the hive's PROJECT
        (org + primary repo) rather than by splitting h.name.
 
@@ -10607,12 +10838,38 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!h) return { line1: '', line2: '' };
       var org = h.org || '';
       var repo = h.primaryRepo || '';
-      if (org && repo) return { line1: org, line2: repo };
-      /* Exactly one half of the project is known — show it alone, on the
-         bold line, rather than emitting 'org/' or '/repo'. */
-      if (org || repo) return { line1: org || repo, line2: '' };
-      /* No project at all. Fall back to whatever identity the row carries. */
-      return { line1: h.name || h.id || '', line2: '' };
+      /* Second line is the PRIMARY REPO rendered as a real GitHub path, so the
+         row states the full project. Fall back to repos[0] when primaryRepo is
+         unset, and never emit a dangling slash: with only one half known, show
+         that half alone; with neither, leave line2 empty.
+
+         DOUBLING GUARD (mirrors Go repoDisplayLine): primaryRepo is stored
+         verbatim and, for some hives, already carries a full 'owner/repo' path.
+         Live fleet evidence: a github.io/GHE hive was recorded with
+         org='castrojo.github.io' (a HOST wrongly parsed into the org field) and
+         primaryRepo='castrojo/endusers' (already owner/repo). Joining org + '/' +
+         repo produced 'castrojo.github.io/castrojo/endusers' — the host posing as
+         an org, owner doubled. When repo already contains a slash it is a
+         complete path and is used as-is; only a bare repo name is qualified with
+         the org. Keep this in sync with hub.repoDisplayLine. */
+      var repoLine = '';
+      var fallbackRepo = repo || ((h.repos || [])[0] || '');
+      if (fallbackRepo && fallbackRepo.indexOf('/') !== -1) { repoLine = fallbackRepo; }
+      else if (org && fallbackRepo) { repoLine = org + '/' + fallbackRepo; }
+      else if (org || fallbackRepo) { repoLine = org || fallbackRepo; }
+      /* Top line is the operator-editable hive name (project_name / projectName)
+         when set. Blank keeps EXACTLY today's fallback: the org, else the repo,
+         else the synthesized name, else the id — so an un-renamed hive is
+         pixel-identical to before this feature. */
+      var custom = String(h.projectName || h.project_name || '').trim();
+      if (custom) return { line1: custom, line2: repoLine };
+      var fallback = org || repo || h.name || h.id || '';
+      /* When line1 falls back to the org/repo identity, avoid repeating org on
+         both lines: if the fallback IS the org and we already have a repoLine,
+         line1 keeps the org and line2 shows org/repo — the same two facts the
+         old label showed (org on top, repo below), just with the repo now
+         qualified by its org. */
+      return { line1: fallback, line2: (repoLine === fallback ? '' : repoLine) };
     }
 
     /* hiveNameSortValue is the value the Hive column SORTS on. It must track
@@ -10964,6 +11221,7 @@ const dashboardHTML = `<!DOCTYPE html>
            the green-dashed avatar border. A Set of lowercased usernames so the
            avatar lookup is case-insensitive, matching GitHub handle semantics. */
         _liveHiveUsers = new Set((data.live_hive_users || []).map(function(n) { return String(n).toLowerCase(); }));
+        _liveEngagedUsers = new Set((data.live_engaged_users || []).map(function(n) { return String(n).toLowerCase(); }));
         /* Alerts ride along on the same payload — see handleMyHives. Normalise
            to the empty summary so every consumer can iterate without guarding. */
         _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
@@ -11018,14 +11276,27 @@ const dashboardHTML = `<!DOCTYPE html>
             // so the badge flips to "Upgrading" immediately on click, before the
             // next /api/saas/my-hives poll reports "upgrading".
             var hubIsUpgrading = hubState === 'upgrading' || _hubUpgrading;
-            var hubQueued = !hubIsUpgrading && (hubState === 'queued' ||
+            // The container image for the latest hub SHA can still be building
+            // (same signal the per-hive rows use). While it builds there is nothing
+            // to upgrade TO yet, so the pill must read "queued" (matching the per-hive
+            // "building image…" state) rather than offer a clickable green "Upgrade"
+            // that would pull the PREVIOUS image. Only "Upgrading" (an active rollout)
+            // outranks it.
+            var hubImageBuilding = (_latestImageStatus[hubBranch] || '') === 'building';
+            var hubQueued = !hubIsUpgrading && (hubState === 'queued' || hubImageBuilding ||
               (hubState === '' && !isCurrent && hubBranchLatest && _hubAutoUpgrade));
             if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading && !hubQueued) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(hubBranchLatest || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
             } else if (hubQueued) {
-              hubUpgradeBtn = ' <span title="Auto-upgrade will apply ' + esc(hubBranchLatest || '?') + ' shortly' + (_isAdmin ? ' — click to upgrade now' : '') + '"' + (_isAdmin ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
+              // While the image is still building we do NOT offer click-to-upgrade-now
+              // (there is no built image to roll to); once built, an admin can click.
+              var hubQueuedTitle = hubImageBuilding
+                ? 'Image for ' + esc(hubBranchLatest || '?') + ' is still building — upgrade will be available once it is published'
+                : 'Auto-upgrade will apply ' + esc(hubBranchLatest || '?') + ' shortly' + (_isAdmin ? ' — click to upgrade now' : '');
+              var hubQueuedClickable = _isAdmin && !hubImageBuilding;
+              hubUpgradeBtn = ' <span title="' + hubQueuedTitle + '"' + (hubQueuedClickable ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
             } else if (hubLatestUnknown && _isAdmin) {
               hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
             }
@@ -11904,7 +12175,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '">' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var rpHref = ghRepoURL(h.github_host, h.org, h.primaryRepo); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + iaPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + iaPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(h.github_host, rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + iaPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + iaPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           /* No white-space:nowrap on the cell itself: the stacked lines each
@@ -12576,15 +12847,18 @@ const dashboardHTML = `<!DOCTYPE html>
        owner a re-install, and the reset is delivered on the spoke's next
        heartbeat rather than immediately. */
     async function resetHiveApp(hiveId, hiveName) {
-      if (!confirm('Reset the Forge App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
+      var ok = await hiveConfirm('Reset the Forge App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.');
+      if (!ok) return;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-app', {method: 'POST'});
         var data = await resp.json().catch(function() { return {}; });
-        if (!resp.ok) { alert('Reset failed: ' + (data.error || resp.status)); return; }
-        alert('Forge App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
+        if (!resp.ok) { await hiveNotify('Reset failed', String(data.error || resp.status)); return; }
+        await hiveNotify('Forge App reset armed',
+          'Hive: ' + hiveName + '\n' +
+          'The spoke clears its installation on the next heartbeat (about 30 seconds), then shows the install prompt.');
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
-        alert('Reset failed: ' + e);
+        await hiveNotify('Reset failed', String(e));
       }
     }
 
@@ -12592,15 +12866,17 @@ const dashboardHTML = `<!DOCTYPE html>
        reporting as this hive on their next heartbeats (bounded window). Used
        to shed a stale duplicate instance the hub cannot delete directly. */
     async function restartHiveSpoke(hiveId, hiveName) {
-      if (!confirm('Restart the spoke for "' + hiveName + '"?\n\nEvery instance reporting as this hive rolling-restarts on its next heartbeat (up to 5 minutes). The image and configuration are unchanged.')) return;
+      if (!await hiveConfirm('Restart the spoke for "' + hiveName + '"?\n\nEvery instance reporting as this hive rolling-restarts on its next heartbeat (up to 5 minutes). The image and configuration are unchanged.')) return;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/restart-spoke', {method: 'POST'});
         var data = await resp.json().catch(function() { return {}; });
-        if (!resp.ok) { alert('Restart failed: ' + (data.error || resp.status)); return; }
-        alert('Spoke restart armed for "' + hiveName + '".\n\nInstances restart on their next heartbeat within the 5-minute window.');
+        if (!resp.ok) { await hiveNotify('Restart failed', String(data.error || resp.status)); return; }
+        await hiveNotify('Spoke restart armed',
+          'Hive: ' + hiveName + '\n' +
+          'Instances restart on their next heartbeat within the 5-minute window.');
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
-        alert('Restart failed: ' + e);
+        await hiveNotify('Restart failed', String(e));
       }
     }
 
@@ -13779,6 +14055,9 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Lowercased usernames with a live hive session right now (admin payload).
        Drives the green-dashed avatar border via avatarImg. Empty for non-admins. */
     var _liveHiveUsers = new Set();
+    /* The honest subset of _liveHiveUsers: focused tab + recent input, per the
+       spokes' presence reports. live minus engaged = idle open tabs. */
+    var _liveEngagedUsers = new Set();
     var _userSortKey = 'created_at', _userSortAsc = false;
 
     /* --- Collapsible "Hub Admin — Users" section ---
@@ -13879,8 +14158,8 @@ const dashboardHTML = `<!DOCTYPE html>
           va = Object.keys(a.hives || {}).filter(function(h) { return regIds.has(h); }).length;
           vb = Object.keys(b.hives || {}).filter(function(h) { return regIds.has(h); }).length;
         } else if (key === 'status') {
-          va = a.blocked ? 1 : 0;
-          vb = b.blocked ? 1 : 0;
+          va = userTierRank(a);
+          vb = userTierRank(b);
         } else {
           va = a[key] || ''; vb = b[key] || '';
         }
@@ -14463,9 +14742,45 @@ const dashboardHTML = `<!DOCTYPE html>
        journey snooze/nudge, de-provision) — it changes no state. All inputs are
        admin-only (this table is requireAdmin, and leaderboard is scrubbed for
        non-admins server-side). */
-    var USERSTAT_ACTIVE_LOGIN_MIN = 3;        // logins that count as "engaged"
-    var USERSTAT_ACTIVE_HOURS_MIN = 1;        // hive-hours that count as "engaged"
+    var USERSTAT_ACTIVE_LOGIN_MIN = 3;        // legacy fallback: logins that count as "engaged"
+    var USERSTAT_ACTIVE_HOURS_MIN = 1;        // hive-hours (engaged when available) that count as "engaged"
     var USERSTAT_SECS_PER_HOUR = 3600;
+    var USERSTAT_ACTIVE_WINDOW_MS = 7 * 24 * 3600 * 1000;  // mirrors engagementActiveWindow (7 days) hub-side
+    var USERSTAT_DORMANT_HOURS_MAX = 0.25;    // under this much hive time still reads as "basically none"
+
+    /* Status tier presentation. The tier ITSELF (u.status_tier) is computed
+       hub-side by userStatusTier from the honest signals - last audited real
+       action, focus-engaged presence, live/engaged-now sets - so this map only
+       styles and explains it. Keys mirror the Go tier constants. */
+    var USER_TIER_META = {
+      live:    {color: 'var(--green)', weight: 700, tip: 'Connected right now AND engaged: tab focused with input in the last minute.'},
+      active:  {color: 'var(--green)', weight: 600, tip: 'A real audited action or focus-engaged time within the last 7 days.'},
+      idle:    {color: 'var(--amber)', weight: 600, tip: 'Has logins/sessions - often just an open tab - but nothing real within the last 7 days.'},
+      dormant: {color: 'var(--muted)', weight: 600, tip: 'No signal at all (no login, session, or action) within the last 30 days.'},
+      never:   {color: 'var(--muted)', weight: 400, tip: 'Never completed a hub login.'},
+      blocked: {color: 'var(--red)',   weight: 600, tip: 'Blocked by an admin - cannot sign in. Unblock to restore access.'}
+    };
+    /* Sort order for the Status column: most engaged first on ascending. */
+    var USER_TIER_RANK = {live: 0, active: 1, idle: 2, dormant: 3, never: 4, blocked: 5};
+
+    /* userTier resolves a user's tier with a fallback for a payload that
+       predates status_tier (or a mid-rollout hub): blocked stays blocked and
+       everyone else reads as idle - the honest default when we cannot prove
+       engagement - never as "active". */
+    function userTier(u) {
+      return u.status_tier || (u.blocked ? 'blocked' : 'idle');
+    }
+    function userTierRank(u) {
+      var r = USER_TIER_RANK[userTier(u)];
+      return (r == null) ? USER_TIER_RANK.idle : r;
+    }
+    function statusTierBadge(u) {
+      var tier = userTier(u);
+      var meta = USER_TIER_META[tier] || USER_TIER_META.idle;
+      var label = (tier === 'blocked') ? 'BLOCKED' : tier;
+      return '<span title="' + escAttr(meta.tip) + '" style="color:' + meta.color +
+        ';font-weight:' + meta.weight + ';cursor:help">' + esc(label) + '</span>';
+    }
 
     /* userTaskActivity sums this user's per-hive leaderboard entries across every
        hive in _hiveRegistry, matching on github_username. leaderboard is present
@@ -14509,11 +14824,25 @@ const dashboardHTML = `<!DOCTYPE html>
     function userVerdict(u, act, hives) {
       var logins = u.login_count || 0;
       var hours = (u.session_seconds || 0) / USERSTAT_SECS_PER_HOUR;
+      /* Honest signals, when the record has them: engaged_seconds accrues only
+         while the tab was focused with recent input, and last_action_at is the
+         newest audit-logged real action. Records that predate these fields (or
+         whose spokes do not report presence yet) have NEITHER - for them fall
+         back to the old open-tab inputs rather than treating absence as
+         zero-engagement-now. */
+      var engagedHours = (u.engaged_seconds || 0) / USERSTAT_SECS_PER_HOUR;
+      var lastActionMs = u.last_action_at ? Date.parse(u.last_action_at) : NaN;
+      var actedRecently = !isNaN(lastActionMs) && (Date.now() - lastActionMs) <= USERSTAT_ACTIVE_WINDOW_MS;
+      var hasHonestData = !!(u.engaged_seconds || u.last_action_at);
       var anyDeprovision = hives.some(function(h) { return h.journey && h.journey.severity === 'deprovision-warning'; });
       var anyEarlyStage = hives.some(function(h) { return h.journey && (h.journey.stage === 'github-app' || h.journey.stage === 'method-model'); });
       var anyRestingACMM = hives.some(function(h) { return h.journey && h.journey.stage === 'acmm-level'; });
-      var engaged = logins >= USERSTAT_ACTIVE_LOGIN_MIN && hours >= USERSTAT_ACTIVE_HOURS_MIN;
-      var dormant = hives.length > 0 && logins <= 1 && hours < 0.25 && act.done === 0;
+      var engaged = hasHonestData
+        ? (actedRecently || engagedHours >= USERSTAT_ACTIVE_HOURS_MIN)
+        : (logins >= USERSTAT_ACTIVE_LOGIN_MIN && hours >= USERSTAT_ACTIVE_HOURS_MIN);
+      var dormant = hives.length > 0 && act.done === 0 && (hasHonestData
+        ? (!actedRecently && engagedHours < USERSTAT_DORMANT_HOURS_MAX)
+        : (logins <= 1 && hours < USERSTAT_DORMANT_HOURS_MAX));
 
       if (dormant || anyDeprovision) {
         return {key: 'at-risk', label: 'At risk — pressure or de-provision', color: 'var(--red)',
@@ -14550,9 +14879,20 @@ const dashboardHTML = `<!DOCTYPE html>
       var liveDot = act.activeNow
         ? '<span title="active on a task now" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:6px;vertical-align:middle"></span>'
         : '';
+      /* "Time in hive" is the legacy open-tab total; the two rows after it are
+         the honest signals - focus-engaged time and the last audit-logged real
+         action - so an admin reading the card sees exactly why the tier is
+         what it is. Presence distinguishes "engaged now" from a merely-open
+         idle tab (the old signal's blind spot). */
+      var unameLower = String(u.github_username || '').toLowerCase();
+      var presenceNow = (_liveEngagedUsers && _liveEngagedUsers.has(unameLower)) ? 'engaged now'
+        : ((_liveHiveUsers && _liveHiveUsers.has(unameLower)) ? 'tab open (idle)' : '—');
       var stats =
         row('Hub logins', esc(String(u.login_count || 0)) + (u.last_login ? ' <span style="color:var(--muted)">(last ' + esc(fmtUserTS(u.last_login)) + ')</span>' : '')) +
         row('Time in hive', esc(fmtHours(u.session_seconds))) +
+        row('Engaged time', esc(fmtHours(u.engaged_seconds))) +
+        row('Last real action', esc(u.last_action_at ? fmtUserTS(u.last_action_at) : '—')) +
+        row('Presence', esc(presenceNow)) +
         row('Joined', esc(fmtUserTS(u.created_at))) +
         row('Tasks', esc(String(act.done)) + ' done / ' + esc(String(act.failed)) + ' failed' + liveDot);
 
@@ -14596,7 +14936,11 @@ const dashboardHTML = `<!DOCTYPE html>
       _lastUsersJSON = sig;
       if (!users.length) { document.getElementById('users-container').innerHTML = '<div class="loading">No users found</div>'; return; }
       var rows = users.map(function(u) {
-        var blocked = u.blocked ? '<span style="color:var(--red);font-weight:600">BLOCKED</span>' : '<span style="color:var(--green)">active</span>';
+        /* Engagement tier, hub-computed (see statusTierBadge / userStatusTier).
+           The old cell rendered "active" for EVERY non-blocked user - an idle
+           open tab, a never-logged-in user, and a daily driver all looked the
+           same. */
+        var statusCell = statusTierBadge(u);
         var avatar = linkedAvatar(u.github_username, TABLE_AVATAR_PX,
           u.github_username + ' — GitHub profile', 'margin-right:6px');
         var isAdmin = u.github_username === 'clubanderson';
@@ -14649,7 +14993,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
-          '<td>' + blocked + '</td>' +
+          '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
           '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
@@ -14856,6 +15200,96 @@ const dashboardHTML = `<!DOCTYPE html>
        placeholders (optional) turns the fixed hive id into a dropdown, so that
        user-first entry point can retarget without backing out to the hive list.
        Both are omitted by the original ⋮ → "Assign / Claim" call site. */
+    /* hiveNotify (below) and hivePrompt replace the native alert and prompt
+       dialogs; the native confirm dialog is replaced by the existing hiveConfirm
+       defined earlier. Native dialogs are jarring in a themed dashboard, cannot
+       be styled, and block the whole tab; they also read as a browser warning
+       rather than as part of the product. These follow the same overlay pattern
+       the assign, access and timeline modals already use.
+
+       Promise-based so they drop into the existing await-style call sites
+       without restructuring them. Escape and a backdrop click both resolve
+       false, matching what a user expects from a dismissable dialog. */
+    function _hiveDialog(opts) {
+      return new Promise(function(resolve) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+        var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+        var body = (opts.body || '').split('\n').map(function(line) {
+          return line ? '<p style="margin:0 0 8px 0;color:var(--muted);font-size:0.85rem;line-height:1.5">' + esc(line) + '</p>' : '';
+        }).join('');
+        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:460px;width:90%">' +
+          '<h3 style="margin:0 0 10px 0;font-size:1rem">' + esc(opts.title || '') + '</h3>' + body +
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
+          (opts.cancel ? '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
+          '<button data-act="yes" style="' + btn + ';background:' + (opts.danger ? '#da3633' : 'var(--accent,#3fb950)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
+          '</div></div>';
+        function done(v) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(v);
+        }
+        function onKey(e) { if (e.key === 'Escape') done(false); }
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) { done(false); return; }
+          var act = e.target.getAttribute && e.target.getAttribute('data-act');
+          if (act) done(act === 'yes');
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        var y = overlay.querySelector('[data-act="yes"]');
+        if (y) y.focus();
+      });
+    }
+    /* hiveConfirm already exists above (msg, rawHTML) -> Promise<bool>, added by
+       the themed-overlay work this dashboard already relies on; this feature
+       reuses it rather than redefining it. hiveNotify below is the native-alert
+       replacement, following the same overlay pattern. */
+    function hiveNotify(title, body) {
+      return _hiveDialog({title: title, body: body, ok: 'OK'});
+    }
+    /* hivePrompt replaces window.prompt(). Resolves to the trimmed string, or
+       null when cancelled — same contract as the native call it replaces, so
+       existing null checks keep working. */
+    function hivePrompt(title, defaultValue, opts) {
+      opts = opts || {};
+      return new Promise(function(resolve) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+        var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:420px;width:90%">' +
+          '<h3 style="margin:0 0 12px 0;font-size:1rem">' + esc(title || '') + '</h3>' +
+          '<input id="_hive-prompt-input" type="text" value="' + esc(defaultValue || '') + '" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box;font-size:0.85rem">' +
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+          '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
+          '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
+          '</div></div>';
+        function done(v) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(v);
+        }
+        function submit() {
+          var el = document.getElementById('_hive-prompt-input');
+          done(el ? el.value.trim() : null);
+        }
+        function onKey(e) {
+          if (e.key === 'Escape') done(null);
+          if (e.key === 'Enter') submit();
+        }
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) { done(null); return; }
+          var act = e.target.getAttribute && e.target.getAttribute('data-act');
+          if (act === 'yes') submit();
+          else if (act === 'no') done(null);
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        var inp = document.getElementById('_hive-prompt-input');
+        if (inp) { inp.focus(); inp.select(); }
+      });
+    }
+
     function openAssignModal(hiveId, prefillOwner, placeholders) {
       var h = (_allDashHives || []).reduce(function(m, x) { return x.id === hiveId ? x : m; }, null) || {};
       var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
@@ -15320,11 +15754,11 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="flex:1">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
           <select id="f-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="1">L1 — Assisted</option>
-            <option value="2">L2 — Instructed</option>
-            <option value="3" selected>L3 — CI/CD</option>
-            <option value="4">L4 — Auto PR</option>
-            <option value="5">L5 — Self-Governing</option>
+            <option value="1">L1 — Inception (Assisted)</option>
+            <option value="2">L2 — Advisory (Instructed)</option>
+            <option value="3" selected>L3 — Quality-Gated (Measured)</option>
+            <option value="4">L4 — Security-Aware (Adaptive)</option>
+            <option value="5">L5 — Semi-Autonomous (Semi-Automated)</option>
             <option value="6">L6 — Fully Autonomous</option>
           </select>
         </div>

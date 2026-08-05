@@ -1,6 +1,6 @@
 level: 4
-name: Adaptive
-description: 'Closed-loop feedback. All agents open GitHub issues — not just quality.
+name: Security-Aware
+description: 'Closed-loop feedback (formerly ''Adaptive''). All agents open GitHub issues — not just quality.
   Scanner files bug reports, guide files documentation gaps, ci-maintainer files workflow
   issues, sec-check files vulnerabilities. No PRs yet — issues only. Adds security
   agent (+sec-check). Six agents total.

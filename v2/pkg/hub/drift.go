@@ -98,8 +98,19 @@ const (
 	DriftKindIdentitySplit  = "identity-split"
 	DriftKindHealthDegraded = "health-degraded"
 	DriftKindUpgradeStuck   = "upgrade-stuck"
-	DriftKindACMMUnset      = "acmm-unset"
-	DriftKindNoAgents       = "no-agents"
+	// DriftKindUpgrading marks a hive whose upgrade is ACTIVELY in progress:
+	// Upgrading set, a real (non-zero) start stamp within staleUpgradeTimeout,
+	// and no terminal failure recorded. Informational by design — it is status,
+	// not alarm. The pill exists so an operator can separate "being fixed right
+	// now" from "needs attention": during an upgrade wave, mid-upgrade hives
+	// otherwise pollute the version-differs breakdown with drift that is the
+	// expected state. Complementary to upgrade-stuck — past staleUpgradeTimeout
+	// (or with no usable stamp) that signal takes over, so a hive can never
+	// show as harmlessly "Upgrading" forever off a zero or stale timestamp
+	// (the same bound #2517 made the elapsed counter and orphan sweep honor).
+	DriftKindUpgrading = "upgrading"
+	DriftKindACMMUnset = "acmm-unset"
+	DriftKindNoAgents  = "no-agents"
 )
 
 // DriftSignal is one detected deviation. Reason is a complete, human-readable
@@ -430,6 +441,15 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 	// Upgrade wedged. Reuses staleUpgradeTimeout, the same bound the hub's own
 	// upgrade-state machine uses to call an in-flight upgrade stuck, so the
 	// drift badge and the row's upgrade spinner agree on when to give up.
+	//
+	// activelyUpgrading is true only in the healthy remainder: a real start
+	// stamp, within the timeout, and no recorded failure. It raises the
+	// informational "upgrading" signal and suppresses the fleet-relative
+	// version/branch signals below — mid-upgrade drift from the fleet is the
+	// expected state, not a deviation. The zero-stamp and past-timeout arms
+	// keep firing upgrade-stuck instead, so this signal can never pin a hive
+	// as "Upgrading" forever off a lost or stale timestamp (#2517).
+	activelyUpgrading := false
 	if h.Upgrading {
 		started, ok := parseRFC3339OrTime(h.UpgradeStartedAt, "")
 		if !ok || started.IsZero() {
@@ -442,6 +462,19 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 			}
 			add(DriftKindUpgradeStuck, DriftCritical,
 				fmt.Sprintf("Upgrade to %s has been in flight for %s (limit %s) — it is stuck, not progressing",
+					target, driftHumanDuration(age), driftHumanDuration(staleUpgradeTimeout)))
+		} else if !h.UpgradeFailed && h.UpgradeFailedAt.IsZero() {
+			// A reported failure is terminal, not in-flight (the heartbeat
+			// handler clears Upgrading when a spoke reports one), so a row
+			// carrying failure state is defensively excluded here rather than
+			// shown as making progress it is not making.
+			activelyUpgrading = true
+			target := h.UpgradeTarget
+			if target == "" {
+				target = "an unrecorded target"
+			}
+			add(DriftKindUpgrading, DriftInfo,
+				fmt.Sprintf("Upgrade to %s has been in flight for %s — version drift from the fleet is expected until it lands (called stuck after %s)",
 					target, driftHumanDuration(age), driftHumanDuration(staleUpgradeTimeout)))
 		}
 	}
@@ -597,8 +630,14 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 	//
 	// Skipped entirely when no norm could be derived, and skipped for offline
 	// hives (whose last-reported version is not evidence of current state) and
-	// placeholders (which track the pool image, not the fleet).
-	if norm.Branch != "" && h.Online && !placeholder {
+	// placeholders (which track the pool image, not the fleet). Also skipped
+	// while the hive is ACTIVELY upgrading — mid-upgrade version and branch
+	// drift is the expected state the upgrade exists to resolve, and flagging
+	// it would file "being fixed" under "needs attention" (same suppression
+	// discipline as status-flipping yielding to duplicate-spoke above). The
+	// moment the upgrade lands, fails, or exceeds staleUpgradeTimeout,
+	// activelyUpgrading drops and any remaining drift is flagged again.
+	if norm.Branch != "" && h.Online && !placeholder && !activelyUpgrading {
 		hiveBranch := strings.TrimSpace(h.GitBranch)
 		if hiveBranch != "" && !strings.EqualFold(hiveBranch, norm.Branch) {
 			add(DriftKindBranchMismatch, DriftWarn,

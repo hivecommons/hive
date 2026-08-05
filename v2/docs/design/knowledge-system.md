@@ -136,7 +136,7 @@ Org fact (universal best practice)
 
 Hive guides (not does) the work at lower levels, progressively increasing autonomy as the project matures.
 
-### Level 1 — Idea (No repo, no code)
+### Level 1 — Inception (No repo, no code)
 
 **What Hive does**: Guides the user through project scaffolding.
 
@@ -150,7 +150,7 @@ Hive guides (not does) the work at lower levels, progressively increasing autono
 - **Knowledge**: Community patterns only (no project-specific facts yet)
 - **Agents**: None running. Hive is interactive/advisory.
 
-### Level 2 — Development (Code exists, PRs are manual)
+### Level 2 — Advisory (Code exists, PRs are manual)
 
 **What Hive does**: Acts as reviewer/advisor, not autonomous.
 
@@ -166,7 +166,7 @@ Hive guides (not does) the work at lower levels, progressively increasing autono
   - User corrections ("no, we use X not Y") become high-confidence facts
 - **Agents**: Scanner in advisory mode (suggests, doesn't act). No governor.
 
-### Level 3 — CI/CD (Automated builds, tests running)
+### Level 3 — Quality-Gated (Automated builds, tests running)
 
 **What Hive does**: Scanner and reviewer active, governor in QUIET/IDLE mode.
 
@@ -183,7 +183,7 @@ Hive guides (not does) the work at lower levels, progressively increasing autono
   - Regression patterns accumulate: "changing webhook port breaks envtest — update `testenv.Environment.WebhookInstallOptions`"
 - **Agents**: Scanner + reviewer. Governor in QUIET/IDLE. Architect opportunistic.
 
-### Level 4 — Managed (5 agents, 24/7, self-healing)
+### Level 4 — Security-Aware (5 agents, 24/7, self-healing)
 
 **What Hive does**: Governor scales dynamically, all agents active.
 
@@ -208,10 +208,10 @@ Hive guides (not does) the work at lower levels, progressively increasing autono
 
 | Level | Test Approach | Coverage Gate | Who Writes Tests | Trust Model |
 |-------|--------------|---------------|-----------------|-------------|
-| **1 — Idea** | Acceptance criteria as test stubs (`TODO` bodies) | None | User (guided by Hive) | Human judgment |
-| **2 — Dev** | Tests alongside features, no hard gate | Tracked, not enforced | User + Hive suggests | Human review + test results |
-| **3 — CI/CD** | Coverage threshold in CI, nightly integration | 70%+ (ratcheting) | User + scanner fixes include tests | CI pass = trust |
-| **4 — Full Auto** | Full TDD, regression on every bug fix | 90%+ enforced | Agents (scanner, architect) | Green test suite = trust |
+| **1 — Inception** | Acceptance criteria as test stubs (`TODO` bodies) | None | User (guided by Hive) | Human judgment |
+| **2 — Advisory** | Tests alongside features, no hard gate | Tracked, not enforced | User + Hive suggests | Human review + test results |
+| **3 — Quality-Gated** | Coverage threshold in CI, nightly integration | 70%+ (ratcheting) | User + scanner fixes include tests | CI pass = trust |
+| **4 — Security-Aware** | Full TDD, regression on every bug fix | 90%+ enforced | Agents (scanner, architect) | Green test suite = trust |
 
 ### The feedback loop
 

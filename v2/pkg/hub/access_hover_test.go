@@ -98,8 +98,10 @@ func TestAccessAvatarTitleCarriesStats(t *testing.T) {
 	for _, snippet := range []string{
 		"if (a.login_count) lines.push('Logins: ' + a.login_count);",
 		"if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));",
+		"if (a.engaged_seconds) lines.push('Engaged time: ' + fmtHours(a.engaged_seconds));",
+		"if (a.last_action_at) lines.push('Last real action: ' + fmtUserTS(a.last_action_at));",
 		"var act = userTaskActivity(uname);",
-		"userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, [])",
+		"userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0, engaged_seconds: a.engaged_seconds || 0, last_action_at: a.last_action_at || ''}, act, [])",
 		// The "logged in now" line rides in the avatar's own tooltip, not the ring
 		// wrapper, so a live user's identity+stats aren't shadowed.
 		"if (isUserLive(uname)) title = title + '\\n● Logged into their hive now';",

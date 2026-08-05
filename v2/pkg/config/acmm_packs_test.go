@@ -66,8 +66,8 @@ func TestACMMPackByLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.Name != "Adaptive" {
-		t.Errorf("L4 name = %q, want 'Adaptive'", p.Name)
+	if p.Name != "Security-Aware" {
+		t.Errorf("L4 name = %q, want 'Security-Aware'", p.Name)
 	}
 
 	_, err = ACMMPackByLevel(99)
