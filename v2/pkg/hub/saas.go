@@ -27,7 +27,30 @@ import (
 
 var saasUsersDir = "/data/saas/users"
 
-const hubAdminUsername = "clubanderson"
+// defaultHubAdminUsername is the compile-time fallback fleet-superuser
+// GitHub login, used when HIVE_HUB_ADMIN_USERNAME is not set in the
+// environment. Keeping the historical value as the default preserves
+// backward compatibility for existing deployments.
+const defaultHubAdminUsername = "clubanderson"
+
+// hubAdminUsername is the GitHub login treated as the fleet superuser. It is
+// resolved once at package init from HIVE_HUB_ADMIN_USERNAME (falling back to
+// defaultHubAdminUsername), rather than being a hardcoded constant (audit F12,
+// CWE-798). This lets a deployment override the admin login via config and
+// removes the fragility where a GitHub username rename or release would silently
+// transfer — or forfeit — fleet-superuser privilege. It is set once at startup
+// and treated as read-only thereafter (never mutated at runtime).
+var hubAdminUsername = resolveHubAdminUsername()
+
+// resolveHubAdminUsername reads the admin login from the environment, trimming
+// surrounding whitespace, and falls back to defaultHubAdminUsername when the
+// env var is unset or blank.
+func resolveHubAdminUsername() string {
+	if v := strings.TrimSpace(os.Getenv("HIVE_HUB_ADMIN_USERNAME")); v != "" {
+		return v
+	}
+	return defaultHubAdminUsername
+}
 
 // hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
 // restarts. The behind-latest check runs every SHA-poll cycle, so without this

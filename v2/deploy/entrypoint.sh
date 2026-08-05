@@ -692,7 +692,23 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
 
     # Set up iptables: redirect all outbound :443 to the MITM proxy port,
     # except traffic from the proxy itself (UID 1001 / dev user).
+    #
+    # ── Fail-closed egress enforcement (security-critical: audit F5, CWE-693) ──
+    # The ACMM capability model's binding control is FORCED egress: agents hold
+    # tier-scoped tokens, but the *forced* redirect of outbound :443 to the MITM
+    # proxy is what actually confines a raw token to the proxy's policy. If that
+    # redirect is not established (iptables missing, or NET_ADMIN unavailable),
+    # an agent holding a raw token can reach api.github.com directly and the
+    # entire capability model degrades to advisory-only — a fail-OPEN control.
+    #
+    # Therefore: a failure to establish the redirect is FATAL by default. The
+    # container refuses to start rather than run with unenforced egress. The
+    # ONLY escape hatch is an EXPLICIT operator opt-in via
+    # HIVE_PROXY_ADVISORY_OK=true, for deliberate advisory deployments (local
+    # dev, platforms without NET_ADMIN). We never silently continue.
     PROXY_PORT=18443
+    PROXY_ADVISORY_OK="${HIVE_PROXY_ADVISORY_OK:-false}"
+    _iptables_ok=false
     if command -v iptables >/dev/null 2>&1; then
       if iptables -t nat -N HIVE_PROXY 2>/dev/null; then
         iptables -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN
@@ -700,6 +716,7 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
         iptables -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
         iptables -t nat -A OUTPUT -j HIVE_PROXY
         echo "[entrypoint] iptables: outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} exempt)"
+        _iptables_ok=true
         # Update uid-map to record iptables active
         python3 -c "
 import json
@@ -710,10 +727,20 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
     json.dump(m, f, indent=2)
 " 2>/dev/null || true
       else
-        echo "[entrypoint] WARN: iptables chain creation failed (need NET_ADMIN capability)"
+        echo "[entrypoint] ERROR: iptables chain creation failed (need NET_ADMIN capability)"
       fi
     else
-      echo "[entrypoint] WARN: iptables not found, proxy enforcement is advisory-only"
+      echo "[entrypoint] ERROR: iptables not found — cannot force proxy egress"
+    fi
+
+    if [ "$_iptables_ok" != "true" ]; then
+      if [ "$PROXY_ADVISORY_OK" = "true" ]; then
+        echo "[entrypoint] WARN: proxy egress enforcement is ADVISORY-ONLY (HIVE_PROXY_ADVISORY_OK=true set). Agents can bypass the MITM proxy — capability model is NOT enforced."
+      else
+        echo "[entrypoint] FATAL: could not establish forced proxy egress (iptables redirect). The ACMM capability model would be advisory-only, allowing agents with raw tokens to bypass the MITM proxy." >&2
+        echo "[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode." >&2
+        exit 1
+      fi
     fi
   fi
 
