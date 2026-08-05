@@ -1119,8 +1119,16 @@ func TestAlertAcksPersistRoundTrip(t *testing.T) {
 	h := baseHive("h1")
 	h.ProvStatus = alertProvStatusError
 
-	evaluateAlerts(s.alerts, []alertHive{h}, nil, fixedNow)
-	if !s.alerts.setAck("h1", AlertTypeProvisionError, "admin", fixedNow) {
+	// The restart path (loadAlertAcks) prunes acks older than alertAckMaxAge
+	// against the real wall clock (time.Now). Anchor the whole scenario to
+	// time.Now so the freshly-created ack is genuinely recent from the load
+	// path's point of view. Using the frozen fixedNow here made the test a
+	// time bomb: once wall time drifted past fixedNow+alertAckMaxAge, load
+	// treated this brand-new ack as expired and dropped it.
+	now := time.Now()
+
+	evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+	if !s.alerts.setAck("h1", AlertTypeProvisionError, "admin", now) {
 		t.Fatal("setAck failed")
 	}
 	s.saveAlertAcks()
@@ -1132,7 +1140,7 @@ func TestAlertAcksPersistRoundTrip(t *testing.T) {
 	// A fresh server (i.e. a hub restart) must honor the persisted ack.
 	s2 := newTestAlertServer()
 	s2.loadAlertAcks()
-	got := evaluateAlerts(s2.alerts, []alertHive{h}, nil, fixedNow.Add(time.Minute))
+	got := evaluateAlerts(s2.alerts, []alertHive{h}, nil, now.Add(time.Minute))
 	a, ok := findAlert(got.Alerts, "h1", AlertTypeProvisionError)
 	if !ok {
 		t.Fatal("condition should still fire after restart")
