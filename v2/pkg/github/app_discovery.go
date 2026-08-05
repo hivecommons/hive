@@ -128,8 +128,7 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 	if err != nil {
 		return 0, fmt.Errorf("generating JWT: %w", err)
 	}
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	jwtClient := newJWTClient(jwtToken, a.apiURL)
 
 	// Preferred: direct per-org lookup.
 	inst, resp, err := jwtClient.Apps.FindOrganizationInstallation(ctx, org)

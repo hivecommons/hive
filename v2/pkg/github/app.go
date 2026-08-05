@@ -173,8 +173,10 @@ func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expi
 		return "", time.Time{}, fmt.Errorf("generating JWT: %w", err)
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	// Proxy-trusting client: on a fresh-PVC boot with forced egress this call is
+	// MITM'd by the in-process proxy, whose CA must be trusted for the mint to
+	// succeed. See proxytrust.go for the chicken-and-egg this breaks.
+	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("creating installation token: %w", err)
@@ -227,8 +229,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 	}
 
 	opts := &gh.InstallationTokenOptions{Permissions: perms}
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, opts)
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
@@ -332,8 +333,7 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 		return nil, fmt.Errorf("generating JWT: %w", err)
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	inst, _, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
 	if err != nil {
 		return nil, fmt.Errorf("resolving installation %d: %w", a.installationID, err)
