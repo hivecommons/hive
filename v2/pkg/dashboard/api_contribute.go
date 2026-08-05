@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
@@ -160,10 +161,20 @@ type ContributorProfile struct {
 	LastActive        string                `json:"last_active,omitempty"`
 	LastCompletedTask *WSTaskAssign         `json:"last_completed_task,omitempty"`
 	RateLimits        ContributorRateLimits `json:"rate_limits"`
-	Active            bool                  `json:"active,omitempty"`
-	CurrentTask       *WSTaskAssign         `json:"current_task,omitempty"`
-	ActiveTasks       []WSTaskAssign        `json:"active_tasks,omitempty"`
-	Sessions          int                   `json:"sessions,omitempty"`
+	// LabelInterests is the contributor's OPT-IN list of GitHub issue labels they
+	// want to help with (issue #2637) — e.g. a contributor with an NVIDIA machine
+	// subscribes to "nvidia" so nvidia-labelled work surfaces first for them. It is
+	// a SOFT signal only: the Operations ready-work queue highlights and sorts
+	// matching issues to the front FOR THIS VIEWER, but never hard-filters the
+	// queue, so a contributor with no interests set (or an issue with no labels) is
+	// never starved of work. Matching is exact on the label NAME, case-insensitive.
+	// Stored here (the existing per-contributor profile store) rather than in a new
+	// subsystem; empty/omitted for contributors who set none.
+	LabelInterests []string       `json:"label_interests,omitempty"`
+	Active         bool           `json:"active,omitempty"`
+	CurrentTask    *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks    []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions       int            `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
@@ -229,10 +240,32 @@ func (s *Server) registerContributeRoutes() {
 	// Read-only ready-work QUEUE snapshot (the admissible issues waiting to be
 	// picked off). Also public; a JSON fallback for the SSE hello payload.
 	s.mux.HandleFunc("GET /api/contribute/queue", s.handleContributeQueue)
+	// Read-only OPPORTUNISTIC WORK list (#2592): a small, curated set of admissible
+	// issues NOT already at the front of the ready queue, ranked by a light recency
+	// heat proxy. Public like the other /api/contribute* reads; cheap to compute.
+	s.mux.HandleFunc("GET /api/contribute/opportunistic", s.handleContributeOpportunistic)
+	// Read-only HIVE LIMITS (#2595): the per-tier managed-queue rate limits + the
+	// viewer's own daily usage when we can identify them. Public read; the "you"
+	// block is resolved server-side from the session / X-Hive-User header (never a
+	// client-supplied username) so a viewer only ever sees their OWN usage.
+	s.mux.HandleFunc("GET /api/contribute/limits", s.handleContributeLimits)
+	// Read-only persistent hourly metrics (7-day, 168 buckets) feeding the
+	// Operations + Leaderboard sparklines: queue depth, tasks/hour, fleet size,
+	// and per-contributor completions. Public like the other /api/contribute*
+	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
+	// no side effects. See contribute_metrics.go.
+	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
 	// Operator priority override for the ready-work queue. Owner/read-write only —
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
 	s.mux.HandleFunc("PUT /api/contribute/queue/order", s.handleContributeQueueOrder)
+	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
+	// GitHub labels they can help with, used to surface/prioritise matching issues
+	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
+	// never a client param), so a contributor reads/writes only their OWN interests;
+	// it is a preference, not an operator control. GET reads, PUT replaces.
+	s.mux.HandleFunc("GET /api/contribute/interests", s.handleContributeInterests)
+	s.mux.HandleFunc("PUT /api/contribute/interests", s.handleContributeInterests)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -522,6 +555,18 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .work-item:hover{background:rgba(88,166,255,.04)}
 .work-item.selected{background:rgba(88,166,255,.08)}
 .work-repo{font-size:.75rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
+   Shared affordance for every repo#number reference on the Operations tab (ready
+   queue, my-work, opportunistic-work, dev-log). Deliberately more visible than
+   the surrounding muted-grey monospace text — link-blue + underline-on-hover +
+   a small external-link glyph — so it reads as an obvious "open on GitHub"
+   action, not decoration. Inherits the host element's font (monospace repo#num,
+   or inline log text) so it drops into any of those contexts unchanged. */
+.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:#58a6ff;text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
+.cc-issue-link:hover,.cc-issue-link:focus-visible{color:#79c0ff;text-decoration:underline}
+.cc-issue-link:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.cc-issue-link-ic{flex-shrink:0;opacity:.85}
+.cc-issue-link:hover .cc-issue-link-ic{opacity:1}
 .work-title{font-size:.9rem;color:#e6edf3;margin:2px 0 6px}
 .work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:#8b949e}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
@@ -564,7 +609,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .policy-key{color:#8b949e}
 .policy-val{color:#e6edf3;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
 .ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
-.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
+.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
@@ -771,7 +816,28 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:#3fb950}
 .cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
 .cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
-.cc-live.stale .cc-live-dot{background:#d29922;animation:none}
+/* Polling (stale) dot: a very slow, gentle breathe rather than the brisk live
+   pulse — signals "still watching, just on the calmer poll cadence". */
+.cc-live.stale .cc-live-dot{background:#d29922;animation:cc-slowpulse 2.8s ease-in-out infinite}
+@keyframes cc-slowpulse{0%%,100%%{opacity:1}50%%{opacity:.45}}
+@media(prefers-reduced-motion:reduce){.cc-live .cc-live-dot,.cc-live.stale .cc-live-dot{animation:none!important}}
+/* Ready-work queue play/pause — the SAME contribute_suspended control as the
+   Management "Suspend contributions" switch, surfaced on the queue header.
+   Quiet by default (bordered ghost button); the danger tint only appears once
+   paused, matching .admin-switch.on.danger's accent so the two placements read
+   as one state. Left of #cc-live so status (queue live/stale) and posture
+   (active/paused) sit as a pair. */
+#queue-suspend-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:999px;border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;line-height:0;transition:background .15s,color .15s,border-color .15s}
+/* SVG glyph is centered by the flex-box; currentColor tracks the button state.
+   Using an SVG (not a &#10074; bar glyph) so the pause bars sit dead-center —
+   the light-vertical-bar character carries font side-bearing that pushed the
+   pair off-center inside the circle. */
+.queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
+.queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:#c9d1d9}
+.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
+.queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
+.queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
 /* Army roster header line under the clanker card */
 .cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.78rem;color:#8b949e}
 .cc-army b{color:#e6edf3;font-weight:600}
@@ -818,6 +884,131 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    inverse transform (see ccFlipQueue) then eased back to translateY(0). Subtle —
    an SRE ops tool, not a game — so no bounce/overshoot, just a smooth glide. */
 .cc-q-item.cc-q-flip{transition:transform .26s ease}
+/* ── Playlist-style queue controls (#2592 power-up) — Apple-Music register ──────
+   A clean search field on the queue card and a subtle per-row "⋯" menu with
+   move-to-top / move-to-position actions. Deliberately sober (an SRE ops tool):
+   muted greys, the page's blue accent only on focus/hover, no game-y flourish.
+   The search bar is read-only filtering so it shows for everyone; the per-row
+   ACTIONS live inside the row menu, which is only rendered for owner/read-write. */
+.cc-q-search{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d}
+.cc-q-search-ic{color:#6e7681;font-size:.85rem;flex-shrink:0;line-height:1}
+.cc-q-search input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-q-search input::placeholder{color:#6e7681}
+.cc-q-search input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-q-search-clear{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
+.cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
+.cc-q-search-clear:hover{color:#c9d1d9}
+.cc-q-filternote{padding:6px 20px;font-size:.72rem;color:#6e7681;border-bottom:1px solid #21262d}
+/* ── My label interests (#2637) — contributor-declared label affinity ───────────
+   A quiet self-service editor on the queue card: chips for the labels this viewer
+   subscribed to, plus an add field. Shown only to a signed-in contributor. Matching
+   queue rows are highlighted (.cc-q-mine) and a small "for you" tag explains why.
+   Sober palette to match the SRE ops register; the page's green accent marks a
+   personal match without shouting. */
+.cc-interests{padding:10px 20px;border-bottom:1px solid #21262d}
+.cc-interests-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:6px}
+.cc-interests-title{font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#8b949e}
+.cc-interests-hint{font-size:.68rem;color:#6e7681}
+.cc-interests-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
+.cc-interests-empty{font-size:.72rem;color:#6e7681}
+.cc-interests-empty code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:0 4px;font-size:.9em}
+.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
+.cc-interest-x:hover{opacity:1}
+.cc-interests-add{display:flex;gap:6px}
+.cc-interests-add input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-interests-add input::placeholder{color:#6e7681}
+.cc-interests-add input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-interests-add button{background:#161b22;border:1px solid #30363d;border-radius:7px;color:#c9d1d9;cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
+.cc-interests-add button:hover{border-color:#3fb950;color:#3fb950}
+/* A queue row matching one of the viewer's label interests: a soft green rail on
+   the leading edge + faint tint. Never hides the row — pure emphasis. */
+.cc-q-item.cc-q-mine{background:rgba(46,160,67,.06);box-shadow:inset 3px 0 0 0 #2ea043}
+.cc-q-item.cc-q-mine:first-child{background:rgba(46,160,67,.1)}
+.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#3fb950;background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+/* Per-row "⋯" context affordance — owner/read-write only (rendered only when
+   adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
+.cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
+.cc-q-menu-btn{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
+.cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:#e6edf3;background:#21262d}
+.cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:#161b22;border:1px solid #30363d;border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
+.cc-q-menu.open{display:block}
+.cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:#c9d1d9;font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
+.cc-q-menu button.cc-q-act:hover{background:#21262d;color:#e6edf3}
+.cc-q-menu-ic{color:#6e7681;flex-shrink:0;width:16px;text-align:center}
+.cc-q-menu-sep{height:1px;background:#21262d;margin:5px 2px}
+.cc-q-moverow{display:flex;align-items:center;gap:6px;padding:7px 9px}
+.cc-q-moverow label{font-size:.78rem;color:#8b949e;flex:1}
+.cc-q-moverow input{width:56px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.8rem;padding:4px 6px;outline:none}
+.cc-q-moverow input:focus{border-color:#1f6feb}
+.cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
+.cc-q-moverow button:hover{background:#388bfd}
+/* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
+   quiet: no loud "recommended!" chrome, just a short curated list with a subtle
+   heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
+.opp-list{padding:2px 0}
+.opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d}
+.opp-item:last-child{border-bottom:none}
+.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.14)}
+.opp-heat.warm{background:#d29922;box-shadow:0 0 0 3px rgba(210,153,34,.14)}
+.opp-heat.cool{background:#6e7681;box-shadow:none}
+.opp-body{flex:1;min-width:0}
+.opp-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.opp-title{font-size:.86rem;color:#e6edf3;margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.opp-reason{font-size:.7rem;color:#6e7681}
+.opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid #30363d;color:#c9d1d9;font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.opp-add:hover{border-color:#1f6feb;color:#fff;background:rgba(31,111,235,.15)}
+.opp-add:disabled{opacity:.55;cursor:default;border-color:#30363d;color:#8b949e;background:none}
+/* ── End-of-queue + hive-settings (#2595) — turn a short queue into an intentional,
+   reassuring moment: a calm "all caught up" marker, the managed-queue rate limits
+   presented readably, and the viewer's own daily quota. Sober, ranked-family styling. */
+.cc-q-end{padding:18px 20px 6px;text-align:center}
+.cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:#8b949e;background:#0d1117;border:1px solid #21262d;border-radius:999px;padding:7px 16px}
+.cc-q-end-badge .cc-q-end-ic{color:#3fb950;font-size:.95rem;line-height:1}
+.hive-settings{margin:14px 20px 4px;background:#0d1117;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
+.hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8b949e}
+.hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:#c9d1d9;line-height:1.5}
+.hs-tiers{display:flex;flex-wrap:wrap;gap:8px}
+.hs-tier{flex:1 1 130px;min-width:120px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:9px 11px}
+.hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:#e6edf3;display:flex;align-items:center;gap:6px}
+.hs-tier__lim{font-size:.74rem;color:#8b949e;margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hs-tier.is-you{border-color:#1f6feb;box-shadow:0 0 0 2px rgba(31,111,235,.18)}
+.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff}
+/* Daily quota widget — a slim progress meter, calm. Used at end-of-queue AND on
+   the Me card. Fill width is set inline from the REAL used/limit ratio. */
+.quota{margin-top:12px}
+.quota__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
+.quota__lbl{font-size:.76rem;color:#8b949e}
+.quota__val{font-size:.82rem;color:#e6edf3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.quota__bar{height:7px;border-radius:999px;background:#21262d;overflow:hidden}
+.quota__fill{height:100%%;border-radius:999px;background:linear-gradient(90deg,#1f6feb,#388bfd);transition:width .4s ease}
+.quota__fill.near{background:linear-gradient(90deg,#d29922,#e3b341)}
+.quota__fill.full{background:linear-gradient(90deg,#f85149,#ff7b72)}
+.quota__sub{font-size:.7rem;color:#6e7681;margin-top:5px}
+/* Me-card quota variant — sits inside a me-sec, so it inherits the card padding. */
+.me-quota .quota__lbl{color:#8b949e}
+@media(prefers-reduced-motion:reduce){.quota__fill{transition:none!important}}
+/* Sparklines (#persistent-history): tiny dependency-free inline-SVG trend charts
+   fed by /api/contribute/metrics (7-day hourly history). Muted stroke to sit
+   quietly in the dark theme; static — no animation, so nothing to gate behind
+   prefers-reduced-motion. The SVG scales to its slot via width/height attrs. */
+.spark{display:inline-block;vertical-align:middle;line-height:0}
+.spark svg{display:block;overflow:visible}
+.spark-inline{margin-left:8px}
+/* Header-adjacent sparkline sits next to a panel title/count without shoving it. */
+.ops-card-head .spark{margin-left:auto}
+/* Leaderboard per-row sparkline: occupies its own narrow column, muted so the
+   numerals stay the focus. */
+.lb-spark{display:flex;align-items:center;justify-content:flex-end}
+/* Hive-wide trend strip pinned above the standings. */
+.lb-trend{display:flex;align-items:center;gap:10px;padding:8px 20px 12px;color:#8b949e;font-size:.76rem;border-bottom:1px solid #21262d}
+.lb-trend .spark{margin-left:auto}
+/* "File an issue on this page" link (#2594) — a subtle footer affordance present
+   on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
+.cc-page-foot{padding:26px 48px 34px;border-top:1px solid #21262d;margin-top:28px;display:flex;justify-content:center}
+.cc-report-link{display:inline-flex;align-items:center;gap:7px;color:#8b949e;font-size:.8rem;text-decoration:none;border:1px solid #30363d;border-radius:8px;padding:7px 14px;transition:color .15s,border-color .15s,background .15s}
+.cc-report-link:hover{color:#e6edf3;border-color:#484f58;background:#161b22}
+.cc-report-link .cc-report-ic{font-size:.9rem;line-height:1}
 /* The travelling token that flies from the queue to a clanker on task_assign */
 .cc-token{position:fixed;z-index:1200;pointer-events:none;background:#1f6feb;color:#fff;font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:999px;box-shadow:0 6px 20px rgba(31,111,235,.5);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:transform .9s cubic-bezier(.5,0,.2,1),opacity .9s ease;will-change:transform,opacity}
 /* Dev-log — a running chat log of the development */
@@ -830,6 +1021,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-log-body b{color:#e6edf3}
 .cc-log-body .who{color:#58a6ff;font-weight:600}
 .cc-log-body .ref{color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+.cc-log-body a.ref.cc-issue-link{color:#58a6ff}
+.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:#79c0ff}
 .cc-log-time{flex-shrink:0;color:#6e7681;font-size:.72rem;white-space:nowrap;padding-top:1px}
 /* Achievement pops — tasteful badge toast, top-right, debounced */
 .cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -898,11 +1091,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
 .client-tile .ct-name small{display:block;font-weight:400;color:#8b949e;font-size:.7rem}
-/* Name + First-class badge stack vertically: the badge gets its OWN line below the
-   name/subtitle so it never overlaps them (the #2602 tiles overlapped at narrow
-   widths). min-width:0 keeps the name ellipsising instead of shoving the badge. */
+/* min-width:0 keeps the name ellipsising rather than overflowing the tile. */
 .client-tile .ct-body{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
-.client-tile .ct-parity{align-self:flex-start;font-size:.62rem;color:#3fb950;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:1px 6px;white-space:nowrap}
 /* "Open in <tool>" onboarding affordance — deliberately understated and clearly a
    SETUP helper, never a "contributing" surface. Only rendered for a client with a
    real, vendor-documented deep-link scheme. */
@@ -954,7 +1144,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <h1>🐝 Contribute to %s</h1>
 <div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
-<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog.</p>
+<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog. Bring your own inference &mdash; how you want to contribute is up to you.</p>
 <div class="stat-row">
 <div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
 %s
@@ -1170,7 +1360,8 @@ var promptEdited=false;   // once the user edits, don't clobber on same client
 var promptForClient='';   // which client the current prompt text was generated for
 function tileOrder(){
   // Peers (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter) first, in select order, then
-  // the rest — so the first-class tools lead the grid rather than being afterthoughts.
+  // the rest — so these tools lead the grid rather than being afterthoughts. This
+  // is an ORDERING signal only; peer status is no longer shown as a visible badge.
   var peers=[],rest=[];
   for(var i=0;i<sel.options.length;i++){
     var v=sel.options[i].value;var c=CLIENTS[v]||{name:v,tag:''};
@@ -1183,13 +1374,9 @@ function buildTiles(){
   tilesEl.innerHTML=tileOrder().map(function(v){
     var c=CLIENTS[v]||{name:v,tag:''};
     var emb=EMB[v]||EMB.other;
-    // First-class badge sits on its OWN line BELOW the name/subtitle (a sibling
-    // block in a flex column), never absolutely positioned over the text — so it
-    // can't overlap the tool name or the vendor subtitle at narrow tile widths.
-    var parity=c.peer?'<span class="ct-parity">First-class</span>':'';
     return '<button type="button" class="client-tile" role="option" data-cli="'+v+'" aria-selected="false" title="'+c.name+'">'+
       '<span class="ct-emblem">'+emb+'</span>'+
-      '<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</span></button>';
+      '<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span></span></button>';
   }).join('');
 }
 function defaultPromptFor(v){
@@ -1332,6 +1519,14 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-switch" id="admin-skip-switch" data-key="contribute_skip_assigned_to_others"></div>
 <div><div class="admin-toggle-label">Skip issues assigned to others</div><div class="admin-toggle-sub">Never serve an issue already assigned to a different GitHub user.</div></div>
 </div>
+<div class="admin-toggle">
+<div class="admin-switch" id="admin-cooldown-switch" data-key="contribute_cooldown_enabled"></div>
+<div><div class="admin-toggle-label">Task cooldown</div><div class="admin-toggle-sub">After a task completes with a verified PR, keep that issue out of the queue for the period below. Off = no cooldown gating. Failure quarantine is separate and always on.</div></div>
+</div>
+<div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
+<label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
+<input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
+</div>
 
 <hr class="admin-hr">
 <h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Admission filters</h3>
@@ -1385,7 +1580,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-grid">
 <div>
 <div class="ops-card card-accent">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span><!-- 7-day fleet-size trend (#persistent-history) --><span class="spark spark-inline" id="spark-fleet" title="Connected clankers, last 7 days (hourly)"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:#e6edf3;font-weight:600">Your army</span>
@@ -1396,7 +1591,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
 </div>
 <div class="ops-card" style="margin-top:20px">
-<div class="ops-card-head"><h3>Pipeline &amp; policy</h3></div>
+<div class="ops-card-head"><h3>Pipeline &amp; policy</h3><!-- Tasks-completed/hour throughput trend (#persistent-history) --><span class="spark spark-inline" id="spark-throughput" title="Tasks completed per hour, last 7 days"></span></div>
 <div style="padding:16px 20px">
 <div class="pipeline">
 <span class="pipe-node">opened</span><span class="pipe-arrow">&rarr;</span>
@@ -1428,9 +1623,59 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
+<!-- #queue-suspend-btn is the SAME logical control as the Management "Suspend
+     contributions" switch (#admin-suspend-switch) — not a related toggle, the
+     identical Config.Hub.ContributeSuspended state surfaced a second place. Both
+     read/write through setContributeSuspended(), which is the single source of
+     truth for the PUT + both render updates (see below). Hidden until initAdmin()
+     resolves owner/read-write; a read viewer still sees the status pill next to it
+     (#queue-suspend-pill), which is read-only info. -->
+<span id="queue-suspend-wrap">
+<span class="pill pill-passed" id="queue-suspend-pill" style="display:none">active</span>
+<button type="button" class="queue-suspend-btn" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
+</span>
+<span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
+     (repo / number / title / label, case-insensitive, live) — it never changes
+     the persisted order, only what is shown. Read-only, so visible to everyone. -->
+<div class="cc-q-search" id="cc-q-search-wrap">
+  <span class="cc-q-search-ic" aria-hidden="true">&#x1F50D;</span>
+  <input type="text" id="cc-q-search" placeholder="Filter queue by repo, number, title, or label&hellip;" aria-label="Filter the ready-work queue" autocomplete="off" spellcheck="false">
+  <button type="button" class="cc-q-search-clear" id="cc-q-search-clear" aria-label="Clear filter" title="Clear filter">&times;</button>
+</div>
+<div class="cc-q-filternote" id="cc-q-filternote" style="display:none"></div>
+<!-- My label interests (#2637): a signed-in contributor's OPT-IN set of labels they
+     can help with. Matching issues are highlighted and floated to the top of THIS
+     viewer's queue. Soft signal — nothing is filtered out, so leaving it empty just
+     shows the shared queue. Hidden until the viewer is known to have a contributor
+     profile (populated by ccApplyInterests from the /api/contribute/queue response). -->
+<div class="cc-interests" id="cc-interests" style="display:none">
+  <div class="cc-interests-head">
+    <span class="cc-interests-title">My label interests</span>
+    <span class="cc-interests-hint">Issues with these labels are highlighted and shown first for you. Soft signal &mdash; nothing else is hidden.</span>
+  </div>
+  <div class="cc-interests-chips" id="cc-interests-chips"></div>
+  <div class="cc-interests-add">
+    <input type="text" id="cc-interests-input" placeholder="e.g. nvidia" aria-label="Add a label interest" autocomplete="off" spellcheck="false">
+    <button type="button" id="cc-interests-add-btn">Add</button>
+  </div>
+</div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
+<!-- End-of-queue block (#2595): a calm "all caught up" marker + the hive's managed
+     rate-limit settings + the viewer's daily quota. Rendered by ccRenderQueueEnd()
+     only when the FULL queue is shown (no active filter). Hidden until hydrated. -->
+<div id="cc-q-end" style="display:none"></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
+</div>
+<!-- Opportunistic Work (#2592): a small, CALM discovery panel of admissible
+     issues NOT already at the top of the queue, ranked by a light recency heat
+     proxy. Read-only for everyone; the per-item "add to queue" pins it into the
+     operator order (owner/read-write only, rendered only when adminEnabled). -->
+<div class="ops-card" id="opp-card" style="margin-top:20px">
+<div class="ops-card-head"><h3>Opportunistic work</h3><span class="ops-card-count" id="opp-count"></span></div>
+<div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
 </div>
 </div>
@@ -1484,8 +1729,40 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </div>
 </div>
+<!-- "File an issue on this page" (#2594). A subtle footer present on EVERY tab.
+     Just an outbound link (CSP-safe, no fetch) to GitHub's new-issue form, pre-
+     filled TAB-AWARE with which /contribute surface and the current URL so the
+     maintainer knows exactly where the report is about. href is (re)built in JS on
+     load + tab change; a static fallback href points at the bare new-issue form so
+     the link works even if JS never runs. Public — everyone can file an issue. -->
+<footer class="cc-page-foot">
+  <a id="cc-report-link" class="cc-report-link" target="_blank" rel="noopener noreferrer"
+     href="https://github.com/kubestellar/hive/issues/new?labels=enhancement">
+    <span class="cc-report-ic" aria-hidden="true">&#x1F41B;</span>
+    <span>Report an issue with this page</span>
+  </a>
+</footer>
 <script>
 (function(){
+// ── Init-order hoist (fixes the #2603/#2604/#2606 merge-interleaving regression) ──
+// These were declared FAR below their first use. var hoists the name but not the
+// value, so ADMIN_TIER_ORDER.map / ccActivitySeen[k] / ccActivity.length ran against
+// undefined and threw. Declaring+initializing them here — before any function that
+// uses them can run — makes the ordering explicit and regression-proof.
+var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+// ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
+// 168h = one week) so the period input shows the effective default when unset.
+// ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
+var ADMIN_COOLDOWN_DEFAULT_HOURS=168;
+var ADMIN_COOLDOWN_MIN_HOURS=1;
+var ADMIN_COOLDOWN_MAX_HOURS=8760;
+var ccActivity=[];       // chronological (oldest→newest) activity backlog for the rail
+var ccActivitySeen={};   // dedupe set keyed by ccActivityKey(); shared by poll + SSE
+// Null-guarded addEventListener: a missing element (not yet parsed, or a markup
+// change) must never throw at script-eval time — an uncaught throw here aborts the
+// rest of this inline block and un-initializes everything below it (the exact crash
+// this file is fixing). Returns silently if the id is absent.
+function onEl(id,ev,fn,opts){var el=document.getElementById(id);if(el)el.addEventListener(ev,fn,opts);}
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
@@ -1568,6 +1845,27 @@ function activateTab(t,push){
       try{window.history.pushState({tab:dp},'',url);}catch(e){/* pushState may throw on file:// etc. */}
     }
   }
+  // Keep the "file an issue" link TAB-AWARE: refresh its prefill so the report names
+  // the surface the user is now on. Guarded — a missing link never blocks tab logic.
+  try{ccUpdateReportLink(dp);}catch(e){}
+}
+// ── "File an issue on this page" (#2594) ───────────────────────────────────────
+// Build a github.com/kubestellar/hive/issues/new URL pre-filled with WHICH tab the
+// report is about + the current page URL, so the maintainer knows the exact
+// surface. Uses ONLY the existing enhancement label (never a non-existent
+// "contribute" label — the #2536/#2540 regression). Rebuilt on load + every tab
+// change. Pure link building; no fetch, CSP-safe.
+var REPORT_TAB_NAME={'tab-onboarding':'onboarding','tab-ops':'operations','tab-manage':'management','tab-leaderboard':'leaderboard'};
+function ccUpdateReportLink(dp){
+  var a=document.getElementById('cc-report-link');if(!a)return;
+  var tabName=REPORT_TAB_NAME[dp]||'onboarding';
+  var title='contribute: '+tabName+' — ';
+  var href='';try{href=window.location.href;}catch(e){href='';}
+  var body='Reporting an issue with the /contribute page.\n\nPage/tab: '+tabName+'\nURL: '+href+'\n\n---\n\nWhat happened / what would you like to see?\n';
+  var url='https://github.com/kubestellar/hive/issues/new?labels=enhancement'+
+    '&title='+encodeURIComponent(title)+
+    '&body='+encodeURIComponent(body);
+  a.setAttribute('href',url);
 }
 // Click never needs to be told to push (default push===true).
 tabs.forEach(function(t){t.addEventListener('click',function(){activateTab(t);});});
@@ -1593,6 +1891,9 @@ function tabFromLocation(){
   if(target)activateTab(target,false);
   // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
   try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
+  // Build the tab-aware "file an issue" link on load even when we DON'T activate
+  // (bare /contribute = onboarding, no activateTab call). Guarded.
+  try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
 })();
 // Back/Forward: re-derive the tab from the (now-updated) location and activate it
 // WITHOUT pushing — popstate already moved history, a push here would loop. When
@@ -1613,6 +1914,10 @@ function loadLeaderboard(){
     // human + donated-compute contributors are not buried under the bots.
     var contribs=(d&&d.leaderboard)||[];
     renderLeaderboard(contribs);
+    // Ensure the per-row + hive-wide sparklines have data even when the Ops tab
+    // was never opened (opsPoll never ran). Reuses this hive's metrics endpoint;
+    // Ops-only spark slots simply no-op when absent. See #persistent-history.
+    ccMetricsPoll();
   }).catch(function(){
     var el=document.getElementById('leaderboard-list');
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
@@ -1655,6 +1960,11 @@ function lbRow(e,rank){
     +'<div class="lb-stat lb-primary">'+done+'</div>'
     +'<div class="lb-stat">'+failed+'</div>'
     +'<div class="lb-stat">'+findings+'</div>'
+    // Per-contributor completion sparkline (#persistent-history). Filled in by
+    // ccRenderLeaderboardSparklines from this hive's /api/contribute/metrics
+    // per_user_done, matched on github_username via data-user. Empty until metrics
+    // load (renders a flat baseline), never fabricated.
+    +'<div class="lb-spark" data-user="'+esc(uname)+'"></div>'
     +'</div>';
 }
 var lbLastData=null; // cache the last standings so a late username resolve can re-mark the me-row
@@ -1672,10 +1982,17 @@ function renderLeaderboard(contribs){
   if(cnt)cnt.textContent=total+(total===1?' contributor':' contributors');
   if(!el)return;
   if(total===0){el.innerHTML='<div class="ops-empty">No contributors yet — be the first to contribute!</div>';return;}
-  var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
+  // Hive-wide total-tasks trend (#persistent-history) pinned above the standings —
+  // the sum of tasks_done per hour over the last 7 days. Hydrated by
+  // ccRenderLeaderboardSparklines; empty (flat) until metrics load.
+  var trend='<div class="lb-trend"><span>Hive throughput &middot; last 7 days</span><span class="spark" id="spark-lb-trend" title="Total tasks completed per hour, last 7 days"></span></div>';
+  var html=trend+'<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div><div class="lb-stat">Trend</div></div>';
   var rank=0,i;
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
   el.innerHTML=html;
+  // Paint sparklines now that the rows exist (metrics may already be cached from a
+  // prior opsPoll tick; if not, the next tick fills them in).
+  ccRenderLeaderboardSparklines();
 }
 
 // ── Personal "Me" card ───────────────────────────────────────────────────────
@@ -1892,6 +2209,7 @@ function renderMeCard(mount,p){
     +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_with_pr||0)+'</div><div class="me-stat__lbl">With PR</div></div>'
     +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_failed||0)+'</div><div class="me-stat__lbl">Failed</div></div>'
   +'</div>'
+  +'<div class="me-sec"><div class="me-sec__title">Daily quota</div><div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note" style="margin:0">Loading your quota&hellip;</div></div></div>'
   +'<div class="me-sec"><div class="me-sec__title">Milestones unlocked</div><div class="me-chips">'+meMilestoneChips(p)+'</div></div>'
   +'<div class="me-sec"><div class="me-sec__title">My hives</div><div class="me-hives">'+meHivesRows(p)+'</div></div>'
   +'<div class="me-sec"><div class="me-sec__title">Badges <span class="me-soon">Credly · coming soon</span></div><div class="me-chips">'+meCredlyChips(p)+'</div>'
@@ -1905,6 +2223,10 @@ function renderMeCard(mount,p){
   mount.innerHTML=html;
 
   wireMeInvite();
+  // #2595 daily-quota widget on the Me card: hydrate from the shared limits read
+  // (viewer's real used_day vs their tier's max_per_day). Load lazily if not cached.
+  if(typeof ccLimits!=='undefined'&&ccLimits!==null){try{ccRenderMeQuota();}catch(e){}}
+  else if(typeof ccLoadLimits==='function'){try{ccLoadLimits();}catch(e){}}
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
@@ -1925,6 +2247,129 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
 });});
 
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+// ── Sparklines (#persistent-history) ───────────────────────────────────────────
+// A dependency-free, CSP-safe inline-SVG trend renderer. Given an array of
+// numbers it returns an <svg> polyline string sized w x h in the given colour.
+// No external library, no canvas, no animation (static by nature — nothing to
+// gate behind prefers-reduced-motion). Degrades gracefully: an empty or single-
+// point array renders a flat baseline rather than a NaN path, so a brand-new hive
+// with no history yet shows a calm flat line instead of a broken chart.
+var SPARK_W=64;   // default sparkline width in px
+var SPARK_H=18;   // default sparkline height in px
+var SPARK_PAD=2;  // top/bottom padding so the stroke is not clipped at extremes
+function sparkline(values,w,h,color){
+  values=values||[];
+  w=w||SPARK_W;h=h||SPARK_H;color=color||'#8b949e';
+  var innerH=h-SPARK_PAD*2;
+  if(innerH<1)innerH=1;
+  var pts=[];
+  // Flat baseline for empty / single-point series: a centred horizontal line.
+  if(values.length<2){
+    var y=SPARK_PAD+innerH/2;
+    pts=[[0,y],[w,y]];
+  }else{
+    var min=values[0],max=values[0],i;
+    for(i=1;i<values.length;i++){if(values[i]<min)min=values[i];if(values[i]>max)max=values[i];}
+    var range=max-min;
+    var stepX=w/(values.length-1);
+    for(i=0;i<values.length;i++){
+      var x=i*stepX;
+      // Invert Y (SVG origin is top-left) and flatten a zero-range series to the
+      // vertical centre so a constant value reads as a steady line, not a spike.
+      var norm=range>0?(values[i]-min)/range:0.5;
+      var yy=SPARK_PAD+(1-norm)*innerH;
+      pts.push([x,yy]);
+    }
+  }
+  var d='';
+  for(var j=0;j<pts.length;j++){
+    d+=(j===0?'M':'L')+pts[j][0].toFixed(1)+' '+pts[j][1].toFixed(1);
+  }
+  return '<span class="spark" aria-hidden="true"><svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'+
+    '<path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '</svg></span>';
+}
+// setSpark injects a sparkline into the element with the given id, if present.
+function setSpark(id,values,w,h,color){
+  var el=document.getElementById(id);
+  if(el)el.innerHTML=sparkline(values,w,h,color);
+}
+// ccMetrics caches the last /api/contribute/metrics payload so the leaderboard
+// render (which runs independently of opsPoll) can read per-user history without
+// its own fetch. Null until the first successful poll.
+var ccMetrics=null;
+// ccMetricsPoll fetches the persistent hourly series and paints the four Ops-tab
+// sparklines. Called from opsPoll() on its existing cadence — hourly data does
+// not need a fast dedicated timer, so every opsPoll tick is more than enough.
+function ccMetricsPoll(){
+  return fetch('/api/contribute/metrics').then(function(r){return r.json();}).then(function(d){
+    ccMetrics=d||{};
+    // (a) Ready-work queue header → queue-depth trend.
+    setSpark('spark-queue',ccMetrics.queue_depth,SPARK_W,SPARK_H,'#388bfd');
+    // (b) Tasks-completed / hour throughput.
+    setSpark('spark-throughput',ccMetrics.tasks_done,SPARK_W,SPARK_H,'#3fb950');
+    // (c) Connected-clanker fleet-size trend.
+    setSpark('spark-fleet',ccMetrics.fleet_size,SPARK_W,SPARK_H,'#d29922');
+    // (d) Your daily-quota usage trend — the viewer's own per-hour completions.
+    if(ccMeUsername&&ccMetrics.per_user_done&&ccMetrics.per_user_done[ccMeUsername]){
+      setSpark('spark-quota',ccMetrics.per_user_done[ccMeUsername],SPARK_W,SPARK_H,'#388bfd');
+    }
+    // Leaderboard hive-wide trend + per-row sparklines, if the tab is rendered.
+    ccRenderLeaderboardSparklines();
+  }).catch(function(e){console.error('metrics poll failed',e);});
+}
+// ccRenderLeaderboardSparklines paints the hive-wide total-tasks trend strip and
+// each per-contributor row sparkline from the cached metrics. Safe to call any
+// time — it no-ops when the leaderboard is not on screen or metrics are absent.
+function ccRenderLeaderboardSparklines(){
+  if(!ccMetrics)return;
+  var trend=document.getElementById('spark-lb-trend');
+  if(trend)trend.innerHTML=sparkline(ccMetrics.tasks_done,120,20,'#3fb950');
+  var pud=ccMetrics.per_user_done||{};
+  var rows=document.querySelectorAll('.lb-spark[data-user]');
+  for(var i=0;i<rows.length;i++){
+    var u=rows[i].getAttribute('data-user');
+    var series=(u&&pud[u])?pud[u]:[];
+    rows[i].innerHTML=sparkline(series,60,16,'#8b949e');
+  }
+}
+
+// ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
+// The Operations tab shows plenty of "repo#number" references (ready-work queue,
+// my-work, opportunistic-work, dev-log) but until now they were plain monospace
+// text — Jorge's ask is to make them real, obvious links to GitHub so this page
+// can actually be used to manage work, not just read about it.
+//
+// ccIssueURL prefers the item's own "url" field (the backend's canonical
+// issue/PR link — ReadyQueueItem/OpportunisticItem both carry it) and only
+// constructs a fallback when it's absent. GitHub's /issues/<n> route redirects
+// to /pull/<n> automatically when the number is actually a PR, so the
+// constructed fallback works for both without knowing which one it is.
+function ccIssueURL(item){
+  if(item&&item.url)return item.url;
+  if(item&&item.repo&&item.number)return 'https://github.com/'+item.repo+'/issues/'+item.number;
+  return '';
+}
+// ccIssueLinkHTML renders the repo#number reference as an <a> with an obvious
+// "go to GitHub" affordance: link-blue text, an external-link glyph, and a
+// title tooltip. stopPropagation on click/mousedown keeps the click from ever
+// reaching a row's drag/select handlers (queue drag-reorder in particular) —
+// opening the issue must never start a drag. Opens in a new tab; rel carries
+// noopener+noreferrer since target=_blank hands the new tab a window.opener
+// handle otherwise. Returns a plain esc'd span (no link) when no URL can be
+// produced, so a malformed item never renders a dead/empty link.
+function ccIssueLinkHTML(item,label,extraClass){
+  var url=ccIssueURL(item);
+  if(!url)return '<span class="'+(extraClass||'')+'">'+esc(label)+'</span>';
+  return '<a class="cc-issue-link '+(extraClass||'')+'" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" '+
+    'title="Open on GitHub" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">'+
+    esc(label)+
+    '<svg class="cc-issue-link-ic" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'+
+    '<path fill="currentColor" d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>'+
+    '<path fill="currentColor" d="M3.75 3A1.75 1.75 0 0 0 2 4.75v7.5c0 .966.784 1.75 1.75 1.75h7.5A1.75 1.75 0 0 0 13 12.25v-3.5a.75.75 0 0 0-1.5 0v3.5a.25.25 0 0 1-.25.25h-7.5a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/>'+
+    '</svg></a>';
+}
 function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s ago';var m=Math.floor(s/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
 
 // ── #2534 Operator admin controls (mirror of the Governor Hub config) ──────────
@@ -1955,8 +2400,22 @@ function adminConfirm(title,msg,okLabel,cb){
   _confirmCb=cb;
   document.getElementById('admin-confirm-back').classList.add('show');
 }
-document.getElementById('admin-confirm-cancel').addEventListener('click',function(){document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;});
-document.getElementById('admin-confirm-ok').addEventListener('click',function(){var cb=_confirmCb;document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;if(cb)cb();});
+// The confirm-modal buttons (#admin-confirm-cancel / #admin-confirm-ok) are
+// emitted AFTER this <script> block closes (see #admin-confirm-back near the end
+// of the page), so at script-eval time getElementById returns null here. The old
+// code called .addEventListener on that null directly, which THREW and ABORTED
+// the rest of this inline block — which is where ADMIN_TIER_ORDER, ccActivity and
+// ccActivitySeen are initialized — leaving them undefined for the whole page
+// (empty Live Activity rail + Done-filter throwing every poll). Wire the buttons
+// once the DOM has fully parsed (so the elements actually exist), and null-guard
+// besides, so this block can never again abort mid-way.
+function _wireConfirmModal(){
+  var cancel=document.getElementById('admin-confirm-cancel');
+  if(cancel)cancel.addEventListener('click',function(){var b=document.getElementById('admin-confirm-back');if(b)b.classList.remove('show');_confirmCb=null;});
+  var ok=document.getElementById('admin-confirm-ok');
+  if(ok)ok.addEventListener('click',function(){var cb=_confirmCb;var b=document.getElementById('admin-confirm-back');if(b)b.classList.remove('show');_confirmCb=null;if(cb)cb();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireConfirmModal);else _wireConfirmModal();
 
 // Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
 // dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
@@ -2016,7 +2475,8 @@ function renderAdminModels(){
 // disabled_repos list (the field the backend + Governor Hub both use). available_
 // repos comes from the config GET (the live repo set). Owner/RW only (gated by the
 // enclosing admin controls); persists via the same PUT as the other filters.
-var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+// NOTE: ADMIN_TIER_ORDER is declared+initialized at the top of this IIFE (init-order
+// hoist) so renderAdminTierLimits() can never see it undefined.
 function renderAdminRepos(){
   var el=document.getElementById('admin-repos');
   if(!el||!adminHub)return;
@@ -2052,6 +2512,60 @@ function renderAdminTierLimits(){
   }).join('');
 }
 
+// renderQueueSuspendControl paints the Ready-work queue's play/pause button +
+// status pill from the SAME contribute_suspended value the Management "Suspend
+// contributions" switch reads (adminHub.contribute_suspended when available, or
+// the read-only policy snapshot as a fallback for a viewer with no adminHub).
+// There is no separate queue-local state — this is a pure render of one shared
+// value, called from every place that value can change (renderAdminControls
+// after a toggle/hub load, and renderPolicy on every opsPoll tick so a change
+// made on the OTHER surface — or by another operator — shows up here too).
+function renderQueueSuspendControl(suspended){
+  var pill=document.getElementById('queue-suspend-pill');
+  if(pill){
+    pill.style.display='';
+    pill.className='pill '+(suspended?'pill-blocked':'pill-passed');
+    pill.textContent=suspended?'paused':'active';
+  }
+  var btn=document.getElementById('queue-suspend-btn');
+  if(!btn)return;
+  if(!adminEnabled){btn.style.display='none';return;} // read viewer: status pill only, no control
+  btn.style.display='';
+  btn.classList.toggle('paused',!!suspended);
+  btn.title=suspended?'Resume contributions':'Pause contributions';
+  btn.setAttribute('aria-label',btn.title);
+  var icon=document.getElementById('queue-suspend-icon');
+  // SVG glyphs (not bar/triangle chars) so both stay dead-center in the circle.
+  if(icon)icon.innerHTML=suspended
+    ?'<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>' // play triangle
+    :'<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>'; // pause bars
+}
+
+// setContributeSuspended is the SINGLE handler for the contribute_suspended
+// toggle, shared by the Management "Suspend contributions" switch and the
+// Ready-work queue play/pause button — they are the same logical control
+// surfaced twice, not two independent toggles. It PUTs through the existing
+// governor-hub endpoint (adminSaveHub) and, on success, updates adminHub and
+// re-renders BOTH surfaces so they can never drift apart.
+var contributeSuspendBusy=false;
+function setContributeSuspended(next,source){
+  if(contributeSuspendBusy)return;
+  contributeSuspendBusy=true;
+  adminSaveHub({contribute_suspended:next},next?'Contributions paused':'Contributions resumed').then(function(ok){
+    contributeSuspendBusy=false;
+    if(!ok)return;
+    if(adminHub)adminHub.contribute_suspended=next;
+    renderAdminControls();
+    renderQueueSuspendControl(next);
+  });
+}
+
+onEl('queue-suspend-btn','click',function(){
+  if(!adminEnabled)return;
+  var next=!(adminHub&&adminHub.contribute_suspended);
+  setContributeSuspended(next,'queue');
+});
+
 function renderAdminControls(){
   if(!adminEnabled||!adminHub)return;
   // Immediate toggles.
@@ -2059,6 +2573,19 @@ function renderAdminControls(){
   document.getElementById('admin-suspend-switch').classList.toggle('danger',!!adminHub.contribute_suspended);
   document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
   document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
+  // Task cooldown: the GET resolves contribute_cooldown_enabled to a concrete
+  // bool (unset -> true), and contribute_cooldown_hours to the EFFECTIVE period
+  // (168 default surfaces when unset), so we render both directly. The period
+  // input is disabled while cooldown is off.
+  var cdOn=(adminHub.contribute_cooldown_enabled!==false);
+  document.getElementById('admin-cooldown-switch').classList.toggle('on',cdOn);
+  var cdHours=document.getElementById('admin-cooldown-hours');
+  if(cdHours){
+    if(document.activeElement!==cdHours)cdHours.value=adminHub.contribute_cooldown_hours||ADMIN_COOLDOWN_DEFAULT_HOURS;
+    cdHours.disabled=!cdOn;
+    cdHours.style.opacity=cdOn?'1':'0.5';
+  }
+  renderQueueSuspendControl(!!adminHub.contribute_suspended);
   // Filters (mirror Governor Hub: titles/authors/labels + modes, allow-models).
   renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
   renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
@@ -2078,6 +2605,10 @@ function bindImmediateToggle(id){
   sw.addEventListener('click',function(){
     var key=sw.getAttribute('data-key');
     var next=!(adminHub&&adminHub[key]);
+    // contribute_suspended is the SAME control as the queue play/pause button —
+    // route both through the one shared handler so there is exactly one code
+    // path that PUTs this field and exactly one place that renders both surfaces.
+    if(key==='contribute_suspended'){setContributeSuspended(next,'management');return;}
     var patch={};patch[key]=next;
     adminSaveHub(patch,next?'Enabled '+key.replace(/_/g,' '):'Disabled '+key.replace(/_/g,' ')).then(function(ok){
       if(ok){adminHub[key]=next;renderAdminControls();}
@@ -2085,9 +2616,32 @@ function bindImmediateToggle(id){
   });
 }
 
+// bindCooldownHoursInput persists the Task Cooldown PERIOD immediately on change
+// (like the immediate toggles, not the deferred filter Save), through the same
+// governor-hub PUT. The value is clamped client-side to [min,max]; the server
+// clamps again. On success adminHub is updated and both surfaces re-rendered so
+// the Governor Hub tab picks up the new value on its next poll.
+var cooldownHoursBusy=false;
+function bindCooldownHoursInput(){
+  var inp=document.getElementById('admin-cooldown-hours');
+  if(!inp)return;
+  inp.addEventListener('change',function(){
+    if(cooldownHoursBusy||!adminHub)return;
+    var v=parseInt(inp.value,10);
+    if(isNaN(v)||v<ADMIN_COOLDOWN_MIN_HOURS)v=ADMIN_COOLDOWN_MIN_HOURS;
+    if(v>ADMIN_COOLDOWN_MAX_HOURS)v=ADMIN_COOLDOWN_MAX_HOURS;
+    inp.value=v;
+    cooldownHoursBusy=true;
+    adminSaveHub({contribute_cooldown_hours:v},'Cooldown period set to '+v+'h').then(function(ok){
+      cooldownHoursBusy=false;
+      if(ok){adminHub.contribute_cooldown_hours=v;renderAdminControls();}
+    });
+  });
+}
+
 // Delegated handlers for the filter editors (mode switch, add, remove) — mark
 // dirty so nothing is sent until the operator clicks Save.
-document.getElementById('ops-admin').addEventListener('click',function(e){
+onEl('ops-admin','click',function(e){
   var t=e.target;
   var seg=t.closest?t.closest('.admin-modeseg button'):null;
   if(seg){var mk=seg.parentNode.getAttribute('data-mode-key');adminHub[mk]=seg.getAttribute('data-mode');adminDirty=true;renderAdminControls();return;}
@@ -2122,7 +2676,7 @@ document.getElementById('ops-admin').addEventListener('click',function(e){
 // Tier rate-limit numeric edits: update tier_limits[tier][field] and mark dirty. A
 // separate 'input' handler (numbers change on input, not click). Non-negative ints;
 // blank/NaN coerces to 0 (== unlimited), matching the backend's "<=0 = unlimited".
-document.getElementById('ops-admin').addEventListener('input',function(e){
+onEl('ops-admin','input',function(e){
   var t=e.target;
   if(!t.getAttribute||t.getAttribute('data-tier-field')===null||!adminHub)return;
   var tier=t.getAttribute('data-tier'),field=t.getAttribute('data-tier-field');
@@ -2132,12 +2686,12 @@ document.getElementById('ops-admin').addEventListener('input',function(e){
   var save=document.getElementById('admin-save-btn');if(save)save.disabled=false;
 });
 
-document.getElementById('admin-add-model').addEventListener('click',function(){
+onEl('admin-add-model','click',function(){
   var inp=document.getElementById('admin-allow-model-input');
   if(inp&&inp.value.trim()){adminHub.contribute_allow_models=(adminHub.contribute_allow_models||[]).concat([inp.value.trim()]);inp.value='';adminDirty=true;renderAdminControls();}
 });
 
-document.getElementById('admin-save-btn').addEventListener('click',function(){
+onEl('admin-save-btn','click',function(){
   if(!adminDirty||!adminHub)return;
   // Persist the mode + the CANONICAL list field (contribute_deny_*) for each filter.
   // The mode decides allow vs deny; the list lives in the deny-named field in BOTH
@@ -2165,7 +2719,7 @@ document.getElementById('admin-save-btn').addEventListener('click',function(){
 
 // Per-contributor actions (delegated on the clanker list). Each calls an EXISTING
 // endpoint; destructive ones go through the themed confirm.
-document.getElementById('clanker-list').addEventListener('change',function(e){
+onEl('clanker-list','change',function(e){
   var sel=e.target;
   if(!adminEnabled||sel.getAttribute('data-role')!=='tier')return;
   var cid=sel.getAttribute('data-cid'),tier=sel.value;
@@ -2174,7 +2728,7 @@ document.getElementById('clanker-list').addEventListener('change',function(e){
     .then(function(x){if(x.ok){toast('Trust tier set to '+tier,true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to set tier',false);}})
     .catch(function(){toast('Failed to set tier',false);});
 });
-document.getElementById('clanker-list').addEventListener('click',function(e){
+onEl('clanker-list','click',function(e){
   var b=e.target;
   if(!adminEnabled||b.tagName!=='BUTTON')return;
   var role=b.getAttribute('data-role');
@@ -2223,6 +2777,8 @@ async function initAdmin(){
   bindImmediateToggle('admin-suspend-switch');
   bindImmediateToggle('admin-skip-switch');
   bindImmediateToggle('admin-reject-switch');
+  bindImmediateToggle('admin-cooldown-switch');
+  bindCooldownHoursInput();
   try{
     // The Governor config GET is what carries the hub.contribute_* fields the
     // Governor Hub dialog edits (GET /api/config, by contrast, is a thin summary
@@ -2342,6 +2898,8 @@ function statusPill(s){
 }
 function renderWork(list){
   lastWork=list;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_WORK_KEY,lastWork);
   // "Done" is special: the fleet work array holds ONLY in-flight tasks, so a naive
   // status filter is always empty. Instead, source "Done" from the completed activity
   // events (the real completion history). All/Active/Review keep filtering the
@@ -2357,6 +2915,15 @@ function renderWork(list){
       :('No work items in flight'+(currentFilter!=='all'?' for this filter.':'.'));
     el.innerHTML='<div class="ops-empty">'+msg+'</div>';return;
   }
+  // opsPoll re-renders this list every 4s. Without preserving state, an open
+  // "Prompt preview" <details> would slam shut on the next tick (the "opens then
+  // closes ~2s later" bug). Snapshot which previews the user has expanded — keyed
+  // by a stable data-wkey (repo#number, or title as a fallback) — and re-apply
+  // the open attribute to the matching ones after the innerHTML swap. Stays open
+  // until the user clicks the summary to close it, surviving every poll.
+  var openKeys={};
+  var priorDetails=el.querySelectorAll('details.prompt-preview[open]');
+  for(var p=0;p<priorDetails.length;p++){var pk=priorDetails[p].getAttribute('data-wkey');if(pk)openKeys[pk]=true;}
   el.innerHTML=shown.map(function(w){
     var who=w.github_username?('<span class="feed-role">'+esc(w.github_username)+'</span>'):'';
     var cli=w.cli_backend?(' &middot; '+esc(w.cli_backend)):'';
@@ -2364,12 +2931,15 @@ function renderWork(list){
     // task metadata (repo/number/title). The server never puts the github_token in
     // prompt_preview, so this can never leak the credential.
     var labels=(w.labels&&w.labels.length)?('<div class="prompt-labels">'+w.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join(' ')+'</div>'):'';
+    var repoLabel=(w.repo||'')+(w.number?('#'+w.number):'');
+    var wkey=repoLabel||(w.title||'');
+    var wasOpen=openKeys[wkey]?' open':'';
     var preview=w.prompt_preview
-      ?('<details class="prompt-preview"><summary>Prompt preview</summary>'+labels+
+      ?('<details class="prompt-preview" data-wkey="'+esc(wkey)+'"'+wasOpen+'><summary>Prompt preview</summary>'+labels+
         '<pre class="prompt-text">'+esc(w.prompt_preview)+'</pre>'+
         '<p class="ops-note">Read-only. This is the instruction the agent receives; the scoped GitHub token is delivered separately and is never shown here.</p></details>')
       :'';
-    return '<div class="work-item"><div class="work-repo">'+esc(w.repo||'')+(w.number?('#'+esc(w.number)):'')+'</div>'+
+    return '<div class="work-item"><div class="work-repo">'+ccIssueLinkHTML(w,repoLabel)+'</div>'+
       '<div class="work-title">'+esc(w.title||'(untitled task)')+'</div>'+
       '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div>'+preview+'</div>';
   }).join('');
@@ -2377,6 +2947,13 @@ function renderWork(list){
 function renderPolicy(p){
   var el=document.getElementById('policy-body');
   if(!p){el.innerHTML='<div class="ops-empty">Policy unavailable.</div>';return;}
+  // Keep the queue play/pause in sync every poll tick — this is what makes the
+  // two surfaces converge even when the change came from elsewhere (the other
+  // tab, another operator, a page that hasn't loaded adminHub yet). If adminHub
+  // is already loaded, prefer it (freshest, updated synchronously on toggle);
+  // otherwise fall back to this read-only policy snapshot so a read viewer (who
+  // never loads adminHub) still sees the correct paused/active status.
+  renderQueueSuspendControl(adminHub?!!adminHub.contribute_suspended:!!p.suspended);
   function list(a){return (a&&a.length)?a.map(esc).join(', '):'&mdash;';}
   var rows=[
     ['Contribute queue',p.suspended?'<span class="pill pill-blocked">suspended</span>':'<span class="pill pill-passed">active</span>'],
@@ -2414,6 +2991,10 @@ async function opsPoll(){
     // fall through to reschedule so a transient failure self-heals on the next poll.
     console.error('opsPoll fetch failed',e);
   }
+  // Persistent hourly sparklines (#persistent-history). Independent of the fleet
+  // fetch above (its own try/catch inside ccMetricsPoll) so a metrics hiccup never
+  // stalls the panels. Hourly data on the opsPoll cadence is plenty — no fast timer.
+  ccMetricsPoll();
   var tab=document.getElementById('tab-ops');
   if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);
 }
@@ -2433,42 +3014,301 @@ var ccKnownClankers={};    // username -> true, for enter/leave detection
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
 
+// ── Label-affinity (#2637): the viewer's own label interests ───────────────────
+// ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
+// from /api/contribute/queue's "interests" echo (and the dedicated interests GET)
+// when the viewer has a contributor profile; null means "not a known contributor"
+// (or not loaded yet) so we hide the editor. It is a SOFT signal: we re-tag the
+// queue client-side so matches highlight/float even on the anonymous SSE snapshot,
+// but we NEVER drop a row — a viewer with no interests sees the shared queue as-is.
+var ccInterests=null;
+// ccInterestSet mirrors ccInterests as a lookup set for O(1) per-label matching.
+var ccInterestSet={};
+function ccRebuildInterestSet(){
+  ccInterestSet={};
+  (ccInterests||[]).forEach(function(l){var n=(l||'').trim().toLowerCase();if(n)ccInterestSet[n]=true;});
+}
+// ccItemMatchesInterests tags one queue item with matches_interest by comparing its
+// labels (exact, case-insensitive) against the viewer's interest set. Mirrors the
+// server rule so the client view agrees with a personalised /api/contribute/queue.
+function ccItemMatchesInterests(q){
+  var labels=q.labels||[];
+  for(var i=0;i<labels.length;i++){
+    if(ccInterestSet[(labels[i]||'').trim().toLowerCase()])return true;
+  }
+  return false;
+}
+// ccApplyInterestsToQueue re-tags every item's matches_interest and STABLY floats
+// matches to the front — mirroring the server's personalizeQueueByInterests so the
+// view is identical whether the queue arrived via the personalised poll or the
+// anonymous SSE snapshot. No-op (order untouched) when the viewer set no interests:
+// the anti-starvation guarantee holds client-side too.
+function ccApplyInterestsToQueue(){
+  for(var i=0;i<ccQueue.length;i++){ccQueue[i].matches_interest=ccItemMatchesInterests(ccQueue[i]);}
+  var keys=Object.keys(ccInterestSet);
+  if(!keys.length)return; // nothing to promote; leave order exactly as-is
+  // Stable partition: matches first, keeping each group's relative order.
+  var matched=[],rest=[];
+  for(var j=0;j<ccQueue.length;j++){(ccQueue[j].matches_interest?matched:rest).push(ccQueue[j]);}
+  ccQueue=matched.concat(rest);
+}
+
+// ── My-label-interests editor (#2637) ──────────────────────────────────────────
+// The editor is shown ONLY to a viewer with a contributor profile (ccInterests is
+// a real array, even if empty). ccApplyInterestsFromResponse is called with the
+// "interests" field the personalised /api/contribute/queue returns; a present array
+// means "known contributor" → show + render the editor.
+function ccApplyInterestsFromResponse(interests){
+  if(!Array.isArray(interests))return; // anonymous / no profile: leave hidden
+  ccInterests=interests.slice();
+  ccRebuildInterestSet();
+  ccRenderInterests();
+}
+function ccRenderInterests(){
+  var wrap=document.getElementById('cc-interests');if(!wrap)return;
+  if(ccInterests===null){wrap.style.display='none';return;}
+  wrap.style.display='';
+  var chips=document.getElementById('cc-interests-chips');
+  if(chips){
+    if(!ccInterests.length){
+      chips.innerHTML='<span class="cc-interests-empty">No interests yet &mdash; add a label (like <code>nvidia</code>) to have matching issues surfaced first for you.</span>';
+    }else{
+      chips.innerHTML=ccInterests.map(function(l){
+        return '<span class="cc-interest-chip">'+esc(l)+'<span class="cc-interest-x" data-label="'+esc(l)+'" title="Remove" role="button" aria-label="Remove '+esc(l)+'">&times;</span></span>';
+      }).join('');
+      var xs=chips.querySelectorAll('.cc-interest-x');
+      for(var i=0;i<xs.length;i++){(function(x){x.addEventListener('click',function(){ccRemoveInterest(x.getAttribute('data-label'));});})(xs[i]);}
+    }
+  }
+}
+function ccAddInterestFromInput(){
+  var inp=document.getElementById('cc-interests-input');if(!inp)return;
+  var v=(inp.value||'').trim().toLowerCase();
+  inp.value='';
+  if(!v||ccInterests===null)return;
+  if(ccInterests.indexOf(v)>=0)return; // already present
+  var next=ccInterests.concat([v]);
+  ccSaveInterests(next);
+}
+function ccRemoveInterest(label){
+  if(ccInterests===null)return;
+  var next=ccInterests.filter(function(l){return l!==label;});
+  ccSaveInterests(next);
+}
+// ccSaveInterests PUTs the new set and, on success, adopts the server-sanitised
+// result (the server is the authority on normalisation/dedupe/cap), then re-renders
+// the editor AND the queue so highlights/order update immediately.
+function ccSaveInterests(next){
+  fetch('/api/contribute/interests',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({interests:next})})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      if(d&&Array.isArray(d.interests)){ccInterests=d.interests.slice();}
+      else{ccInterests=next;} // optimistic fallback if the body was unexpected
+      ccRebuildInterestSet();
+      ccRenderInterests();
+      ccRenderQueue(); // re-tag + re-float with the new interests
+    })
+    .catch(function(){});
+}
+function ccInitInterestsEditor(){
+  var btn=document.getElementById('cc-interests-add-btn');
+  if(btn)btn.addEventListener('click',ccAddInterestFromInput);
+  var inp=document.getElementById('cc-interests-input');
+  if(inp)inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();ccAddInterestFromInput();}});
+  // Seed interests from the personalised queue endpoint (which echoes them for a
+  // known contributor). A dedicated GET is unnecessary — the queue we already poll
+  // carries them — but this initial fetch guarantees the editor appears even before
+  // the first SSE/poll render.
+  fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
+    if(d)ccApplyInterestsFromResponse(d.interests);
+  }).catch(function(){});
+}
+
 function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
+// ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
+// is SHOWN — never the persisted order. Empty = show all. The reorder ACTIONS below
+// always operate on the FULL ccQueue by qkey, so acting on a filtered row moves the
+// RIGHT item in the real order, not the filtered index.
+var ccQueueSearch='';
+// ccQueueMatches: does an item pass the current search? Case-insensitive over repo,
+// number, title and every label — the fields the row shows.
+function ccQueueMatches(q){
+  if(!ccQueueSearch)return true;
+  var hay=((q.repo||'')+' #'+(q.number||'')+' '+(q.title||'')+' '+((q.labels||[]).join(' '))).toLowerCase();
+  return hay.indexOf(ccQueueSearch)>=0;
+}
 function ccRenderQueue(flip){
-  var el=document.getElementById('cc-queue');if(!el)return;
   // Item count badge, same style as "My work"'s #work-count — kept in sync on
-  // every render (initial load, SSE queue push, poll fallback, drag-reorder).
+  // every render path. Populated FIRST so it stays set even if the container is absent.
+  // (The interest re-float below only reorders ccQueue, never changes its length.)
   var qc=document.getElementById('queue-count');
   if(qc)qc.textContent=ccQueue.length+' ready';
-  // flip=true (set only from the drag-drop handler) records each row's rect BEFORE
-  // the rebuild so ccFlipPlay can glide displaced rows to their new slots instead of
-  // a hard jump. Every other caller (initial load, SSE queue push, poll fallback)
-  // omits it and gets the plain re-render — no glide on data refreshes, only on the
-  // operator's own drag.
+  // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
+  // when no interests are set (order preserved); skipped mid-drag so an operator
+  // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
+  if(!flip){try{ccApplyInterestsToQueue();}catch(e){}}
+  var el=document.getElementById('cc-queue');if(!el)return;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_QUEUE_KEY,ccQueue);
+  // flip=true (set only from the drag-drop / move handlers) records each row's rect
+  // BEFORE the rebuild so ccFlipPlay can glide displaced rows to their new slots
+  // instead of a hard jump. Every other caller (initial load, SSE queue push, poll
+  // fallback) omits it and gets the plain re-render — glide only on operator moves.
   var first=flip?ccFlipFirst(el):null;
   // Drag-reorder is an operator CONTROL: only owner/read-write viewers get grab
   // bars. adminEnabled is set true by initAdmin ONLY after /api/role reports owner
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
   // The server enforces the same boundary independently (403 on the order endpoint).
   el.classList.toggle('cc-q-draggable',!!adminEnabled);
-  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';return;}
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);return;}
+  var shown=0,total=ccQueue.length;
+  // Render over the FULL model, tagging each row with its TRUE position (i) so the
+  // shown index and the move-to menu reflect the real queue position even while a
+  // search filter hides other rows. Filtered-out rows are simply skipped from the
+  // HTML — the model is untouched, so a subsequent action still targets the right
+  // qkey in the full order. Drag-reorder is DISABLED while a filter is active (a
+  // drag over a partial list would be ambiguous); the ⋯ menu is the filtered path.
+  var filtering=!!ccQueueSearch;
   el.innerHTML=ccQueue.map(function(q,i){
+    if(!ccQueueMatches(q))return '';
+    shown++;
     // Show ALL of the issue's gh labels as pills (the backend already carries the
     // full label set). "My work" items render every label the same way, so the
     // queue is consistent with them. esc() guards each label.
     var labels=(q.labels&&q.labels.length)?('<div class="cc-q-labels">'+q.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join('')+'</div>'):'';
     var next=(i===0)?'<span class="cc-q-next">next up</span>':'';
     // The grab bar is always in the DOM but only VISIBLE via CSS when the queue
-    // root carries .cc-q-draggable (owner/read-write). draggable is likewise gated
-    // so a read viewer's markup is inert. aria-hidden: purely a mouse/pointer affordance.
+    // root carries .cc-q-draggable (owner/read-write). draggable is disabled while a
+    // filter is active so a partial-list drop can't misplace an item. aria-hidden:
+    // purely a mouse/pointer affordance.
+    var canDrag=adminEnabled&&!filtering;
     var grip=adminEnabled?'<span class="cc-q-grip" aria-hidden="true" title="Drag to reprioritise">&#x283F;</span>':'';
-    return '<div class="cc-q-item"'+(adminEnabled?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+esc(q.repo||'')+'#'+esc(q.number||'')+'</div>'+
-      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+'</div>';
+    // Per-row "⋯" context menu — Apple-Music style. Owner/read-write ONLY (rendered
+    // only when adminEnabled). Carries move-to-top + move-to-position, both keyed on
+    // this row's qkey so they act on the right item in the FULL order.
+    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
+    // Label-affinity (#2637): the server sets matches_interest per VIEWER when one
+    // of the issue's labels matches a label this contributor subscribed to. Tag the
+    // row so CSS can highlight it; a small "for you" pill makes the reason explicit.
+    var mine=!!q.matches_interest;
+    var mineCls=mine?' cc-q-mine':'';
+    var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
+    return '<div class="cc-q-item'+mineCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+'</div>'+
+      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
   }).join('');
-  if(adminEnabled)ccBindQueueDrag(el);
+  if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
+  ccUpdateFilterNote(shown,total);
+  // Drag binding only when NOT filtering (a partial list would drop ambiguously).
+  if(adminEnabled&&!filtering)ccBindQueueDrag(el);
+  if(adminEnabled)ccBindQueueMenus(el);
   if(first)ccFlipPlay(el,first);
+  // End-of-queue block (#2595): the "all caught up" marker + hive settings + quota.
+  // Only when the full list is shown (a filtered view isn't "the end of the queue").
+  ccRenderQueueEnd(!filtering);
+}
+// ccQueueMenuHTML renders the per-row ⋯ menu markup (owner/read-write only). pos is
+// the row's ZERO-based position in the full queue; total is the queue length. The
+// move-to-position input is pre-filled with the row's current 1-based position.
+function ccQueueMenuHTML(key,pos,total){
+  var atTop=(pos===0);
+  return '<span class="cc-q-menu-wrap">'+
+    '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
+    '<div class="cc-q-menu" role="menu">'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
+      '<div class="cc-q-menu-sep"></div>'+
+      '<div class="cc-q-moverow">'+
+        '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
+        '<input type="number" id="mv-'+esc(key)+'" min="1" max="'+total+'" value="'+(pos+1)+'" data-qkey="'+esc(key)+'" aria-label="Target position">'+
+        '<button type="button" class="cc-q-act-go" data-qkey="'+esc(key)+'">Go</button>'+
+      '</div>'+
+    '</div>'+
+  '</span>';
+}
+// ccUpdateFilterNote shows a small "showing N of M" line while a filter is active,
+// and hides it when the filter is clear. Purely informational.
+function ccUpdateFilterNote(shown,total){
+  var n=document.getElementById('cc-q-filternote');if(!n)return;
+  if(!ccQueueSearch){n.style.display='none';n.textContent='';return;}
+  n.style.display='';
+  n.textContent='Showing '+shown+' of '+total+' — filter is a view only; the queue order is unchanged.';
+}
+// ── Per-row ⋯ menu wiring (owner/read-write only) ──────────────────────────────
+// A single open menu at a time; clicking the ⋯ toggles it, clicking elsewhere or
+// pressing Escape closes it. Actions read data-qkey so they target the right item
+// in the FULL ccQueue regardless of any active search filter.
+function ccCloseQueueMenus(){
+  var open=document.querySelectorAll('.cc-q-menu.open');
+  for(var i=0;i<open.length;i++)open[i].classList.remove('open');
+  var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
+  for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
+}
+function ccBindQueueMenus(root){
+  // Clicks INSIDE an open menu (the number input, its label, whitespace) must not
+  // bubble to the global document dismiss handler — otherwise focusing the
+  // "Move to #" field instantly closes the menu before Go can run. Swallow the
+  // bubble on the menu container itself; the ⋯/top/Go handlers still fire because
+  // they run in the same bubble phase before it reaches this element.
+  var menus=root.querySelectorAll('.cc-q-menu');
+  for(var m=0;m<menus.length;m++){(function(menu){
+    menu.addEventListener('mousedown',function(e){e.stopPropagation();});
+    menu.addEventListener('click',function(e){e.stopPropagation();});
+  })(menus[m]);}
+  var btns=root.querySelectorAll('.cc-q-menu-btn');
+  for(var i=0;i<btns.length;i++){(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var menu=btn.parentNode.querySelector('.cc-q-menu');
+      var isOpen=menu.classList.contains('open');
+      ccCloseQueueMenus();
+      if(!isOpen){menu.classList.add('open');btn.setAttribute('aria-expanded','true');}
+    });
+  })(btns[i]);}
+  var acts=root.querySelectorAll('.cc-q-act[data-act=top]');
+  for(var a=0;a<acts.length;a++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToTop(act.getAttribute('data-qkey'));});
+  })(acts[a]);}
+  var gos=root.querySelectorAll('.cc-q-act-go');
+  for(var g=0;g<gos.length;g++){(function(go){
+    var key=go.getAttribute('data-qkey');
+    // cssEscId already returns the escaped FULL id ('mv-'+key), so only the '#'
+    // selector prefix is added here. (Prepending '#mv-' would double the 'mv-' and
+    // never match — the bug that made "Move to #" silently no-op.)
+    var input=root.querySelector('#'+cssEscId(key));
+    function apply(){ccCloseQueueMenus();ccMoveToPosition(key,input?parseInt(input.value,10):NaN);}
+    go.addEventListener('click',function(e){e.stopPropagation();apply();});
+    if(input)input.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();apply();}});
+  })(gos[g]);}
+}
+// cssEscId escapes a qkey for use in a querySelector id lookup (the key contains
+// '/' and '#'). Prefer CSS.escape when present; fall back to a manual escape.
+function cssEscId(id){
+  var raw='mv-'+id;
+  if(window.CSS&&CSS.escape)return CSS.escape(raw);
+  return raw.replace(/([^a-zA-Z0-9_-])/g,'\\$1');
+}
+// ── Move-to-top / move-to-position (playlist actions) ──────────────────────────
+// Both operate on the FULL ccQueue by qkey (never the filtered index), reorder the
+// model, re-render with the FLIP glide, and persist the SAME ContributeQueueOrder
+// via the existing PUT endpoint — so all four controls (drag, search+act, top,
+// position) write the one authoritative order and only change OFFER PRIORITY.
+function ccQueueIndexOf(key){
+  for(var i=0;i<ccQueue.length;i++){if(ccQueueKey(ccQueue[i])===key)return i;}
+  return -1;
+}
+function ccMoveToTop(key){ccMoveToPosition(key,1);}
+function ccMoveToPosition(key,n){
+  var from=ccQueueIndexOf(key);if(from<0)return;
+  // Validate N (1..len). Clamp rather than reject so an out-of-range value lands at
+  // the nearest valid edge instead of silently no-op'ing.
+  if(isNaN(n))return;
+  if(n<1)n=1;if(n>ccQueue.length)n=ccQueue.length;
+  var to=n-1;if(to===from)return;
+  var moved=ccQueue.splice(from,1)[0];
+  ccQueue.splice(to,0,moved);
+  ccRenderQueue(true); // FLIP glide so the row visibly travels to its new slot.
+  ccPersistQueueOrder();
 }
 
 // ── Operator drag-reorder (grab bars) — owner/read-write only ──────────────────
@@ -2585,6 +3425,58 @@ var OPS_RAIL_KEY='hive.ops.devlog.collapsed';
 var opsRailInit=false;
 function ccRailRead(){try{return localStorage.getItem(OPS_RAIL_KEY)==='1';}catch(e){return false;}}
 function ccRailWrite(collapsed){try{if(collapsed)localStorage.setItem(OPS_RAIL_KEY,'1');else localStorage.removeItem(OPS_RAIL_KEY);}catch(e){}}
+
+// ── Ops panel reload-bridge cache ───────────────────────────────────────────────
+// On a page refresh the ready-work queue, opportunistic work, and my-work panels
+// sit on their "Loading…" placeholders until the first poll/SSE frame returns,
+// which reads as a flash of empty. To bridge that gap we mirror each panel's DATA
+// (the arrays, never rendered HTML) into localStorage as it renders and hydrate
+// from it on load. The cache is ONLY a reload bridge: the very next successful
+// poll overwrites both the DOM and the cache — INCLUDING overwriting to a
+// genuinely-empty result — so stale work can never persist. Fresh window is short
+// (OPS_CACHE_TTL_MS) so a long-closed tab does not resurrect ancient state.
+var OPS_CACHE_QUEUE_KEY='hive.ops.cache.queue';
+var OPS_CACHE_WORK_KEY='hive.ops.cache.work';
+var OPS_CACHE_OPP_KEY='hive.ops.cache.opp';
+var OPS_CACHE_TTL_MS=5*60*1000; // 5 minutes: the cache is a reload bridge, not a store
+// ccOpsCacheWrite stores an array under key with a timestamp. Guarded like the
+// rail helpers: private mode / quota errors degrade silently. Called on every
+// render, so an empty array is persisted too (the next poll's empty overwrites the
+// previous non-empty cache — no phantom work).
+function ccOpsCacheWrite(key,arr){
+  try{localStorage.setItem(key,JSON.stringify({t:new Date().getTime(),d:arr||[]}));}catch(e){}
+}
+// ccOpsCacheRead returns the cached array if present and fresher than the TTL,
+// else null. Any parse/storage error yields null (degrade to placeholders).
+function ccOpsCacheRead(key){
+  try{
+    var raw=localStorage.getItem(key);if(!raw)return null;
+    var o=JSON.parse(raw);
+    if(!o||typeof o.t!=='number'||!o.d)return null;
+    if((new Date().getTime()-o.t)>OPS_CACHE_TTL_MS)return null;
+    return o.d;
+  }catch(e){return null;}
+}
+// ccHydrateOpsFromCache paints the three panels from the reload-bridge cache
+// BEFORE the first poll returns, so a refresh shows the previous content instead
+// of an empty flash. It sets the same state vars the live path uses (ccQueue /
+// lastWork / ccOppItems) then calls the existing render fns, so the next poll
+// overwrites them cleanly (including to empty). Every step is guarded so a bad
+// cache entry can never block the live wiring that follows in ccStart().
+function ccHydrateOpsFromCache(){
+  try{
+    var q=ccOpsCacheRead(OPS_CACHE_QUEUE_KEY);
+    if(q&&q.length){ccQueue=q.slice();ccRenderQueue();}
+  }catch(e){}
+  try{
+    var w=ccOpsCacheRead(OPS_CACHE_WORK_KEY);
+    if(w&&w.length){renderWork(w);}
+  }catch(e){}
+  try{
+    var o=ccOpsCacheRead(OPS_CACHE_OPP_KEY);
+    if(o&&o.length){ccOppItems=o.slice();ccRenderOpportunistic();}
+  }catch(e){}
+}
 function ccRailApply(rail,btn,collapsed){
   rail.classList.toggle('collapsed',collapsed);
   if(btn){
@@ -2607,16 +3499,28 @@ function initOpsRail(){
 }
 
 // ── Dev-log narration: build a human-readable line from an ActivityEntry ───────
+// ccTaskRefLink turns the "picked up" activity's task string — always built
+// server-side as "<kind> <repo>#<number>: <title>" (contribute_ws.go taskDesc)
+// — into a clickable GitHub link when it matches that exact shape. "completed"/
+// "failed" carry an opaque internal task ID (ct-<repo>-<number>-<ts>), not
+// repo#number, so those are deliberately left as plain text rather than risk a
+// wrong/broken link from a shape this code doesn't control.
+function ccTaskRefLink(task){
+  var m=/^\S+\s+([\w.-]+\/[\w.-]+)#(\d+):/.exec(task||'');
+  if(!m)return '<span class="ref">'+esc(task)+'</span>';
+  return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
+}
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
+  var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
   var body;
   switch(e.action){
     case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
     case 'left': body=who+' left the hive'; break;
-    case 'picked up': body=who+' grabbed'+ref; break;
+    case 'picked up': body=who+' grabbed'+pickedRef; break;
     case 'completed': body=who+' completed'+ref; break;
     case 'failed': body=who+' hit a snag on'+ref; break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
@@ -2704,8 +3608,9 @@ function ccTravel(e){
 // shared deduped store. ccActivity is chronological (oldest→newest); ccActivitySeen
 // keys events by timestamp+username+action+task so an event arriving via BOTH poll
 // and SSE is counted once.
-var ccActivity=[];
-var ccActivitySeen={};
+// NOTE: ccActivity + ccActivitySeen are declared+initialized at the top of this
+// IIFE (init-order hoist) so ccIngestActivity()/ccCompletedWorkItems() — which run
+// via opsPoll long before this line — can never see them undefined.
 var ccActivityCap=200;
 var ccActivityPollTimer=null;
 var ccSSEDelivered=false;
@@ -2795,18 +3700,33 @@ function ccHydrate(payload){
 }
 function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
   fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
-    if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+    if(!d)return;
+    // Adopt the viewer's interests the personalised endpoint echoes (#2637) so the
+    // editor + highlights stay current even without a separate fetch.
+    ccApplyInterestsFromResponse(d.interests);
+    if(d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
   }).catch(function(){});
   ccQueuePollTimer=setTimeout(ccQueuePoll,6000);
 }
 function ccStopFallback(){if(ccQueuePollTimer){clearTimeout(ccQueuePollTimer);ccQueuePollTimer=null;}}
 function ccStart(){
   if(ccStarted)return;ccStarted=true;
+  // Paint the queue / opportunistic / my-work panels from the reload-bridge cache
+  // FIRST, before any poll returns, so a refresh shows the previous content instead
+  // of an empty flash. The next successful poll overwrites both DOM and cache
+  // (including to empty), so this is purely a bridge across the reload gap.
+  try{ccHydrateOpsFromCache();}catch(e){console.error('ops cache hydrate failed',e);}
   // Seed + poll the Live Activity rail from the RELIABLE polling endpoint (the same
   // source Onboarding uses) so the rail shows the backlog immediately and stays
   // current even when the SSE stream delivers nothing (hosted spokes). SSE, when it
   // works, layers live updates on top via the shared, deduped activity store.
   try{ccPollActivity();}catch(e){console.error('activity poll init failed',e);}
+  // Wire the playlist-style search filter and start the (light) opportunistic-work
+  // poll. Both are independent of the SSE lifecycle: a throw here must not block the
+  // live queue stream, so each is guarded.
+  try{ccInitQueueSearch();}catch(e){console.error('queue search init failed',e);}
+  try{ccInitInterestsEditor();}catch(e){console.error('interests editor init failed',e);}
+  try{ccStartOpportunistic();}catch(e){console.error('opportunistic init failed',e);}
   if(!('EventSource' in window)){ccSetLive('poll');ccQueuePoll();return;}
   function connect(){
     ccSetLive('connecting');
@@ -2828,6 +3748,207 @@ function ccStart(){
   }
   connect();
 }
+// ── Playlist SEARCH wiring (#2592) ─────────────────────────────────────────────
+// Live, case-insensitive VIEW filter. Updates ccQueueSearch and re-renders; it does
+// NOT touch ccQueue's order, so clearing restores the full list unchanged. Guarded
+// so a missing node never throws.
+function ccInitQueueSearch(){
+  var input=document.getElementById('cc-q-search');
+  var wrap=document.getElementById('cc-q-search-wrap');
+  var clear=document.getElementById('cc-q-search-clear');
+  if(!input)return;
+  input.addEventListener('input',function(){
+    ccQueueSearch=input.value.trim().toLowerCase();
+    if(wrap)wrap.classList.toggle('has-text',!!input.value);
+    ccRenderQueue();
+  });
+  if(clear)clear.addEventListener('click',function(){
+    input.value='';ccQueueSearch='';if(wrap)wrap.classList.remove('has-text');
+    ccRenderQueue();input.focus();
+  });
+  // Escape clears the filter (and closes any open row menu).
+  input.addEventListener('keydown',function(e){if(e.key==='Escape'&&input.value){input.value='';ccQueueSearch='';if(wrap)wrap.classList.remove('has-text');ccRenderQueue();}});
+}
+
+// ── Opportunistic Work (#2592): fetch, render, add-to-queue ─────────────────────
+// A light poll of the read-only discovery endpoint. Calm cadence (30s) — this is a
+// chill panel, not a live ticker. Each item's "add to queue" pins it to the FRONT
+// of ContributeQueueOrder via the SAME PUT endpoint the queue controls use; if the
+// item is not currently admissible the server simply won't offer it, and we surface
+// that gracefully rather than pretending it's queued.
+var ccOppItems=[];
+var ccOppTimer=null;
+function ccStartOpportunistic(){
+  ccOppPoll();
+}
+function ccOppPoll(){
+  fetch('/api/contribute/opportunistic').then(function(r){return r.json();}).then(function(d){
+    ccOppItems=(d&&d.opportunistic)||[];
+    ccRenderOpportunistic();
+  }).catch(function(){/* leave the last render; a transient failure self-heals next poll */});
+  var tab=document.getElementById('tab-ops');
+  if(tab&&tab.classList.contains('active'))ccOppTimer=setTimeout(ccOppPoll,30000);
+}
+// heatClass buckets the light heat score into a calm 3-step dot (hot/warm/cool).
+// Thresholds are gentle — this is a mood indicator, not a precise gauge.
+function ccOppHeatClass(h){h=h||0;if(h>=6)return '';if(h>=3)return 'warm';return 'cool';}
+function ccRenderOpportunistic(){
+  var el=document.getElementById('opp-list');if(!el)return;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_OPP_KEY,ccOppItems);
+  var cnt=document.getElementById('opp-count');
+  if(cnt)cnt.textContent=ccOppItems.length?(ccOppItems.length+' found'):'';
+  if(!ccOppItems.length){el.innerHTML='<div class="ops-empty">Nothing fresh to surface right now &mdash; the backlog is quiet.</div>';return;}
+  el.innerHTML=ccOppItems.map(function(o){
+    var key=(o.repo||'')+'#'+(o.number||'');
+    var reason=o.reason?('<div class="opp-reason">'+esc(o.reason)+'</div>'):'';
+    // "Add to queue" is an owner/read-write ACTION — rendered only when adminEnabled.
+    // A read/anon viewer sees the item but no add control (server also 403s the PUT).
+    var add=adminEnabled?('<button type="button" class="opp-add" data-oppkey="'+esc(key)+'" title="Add to the top of the ready-work queue">Add to queue</button>'):'';
+    return '<div class="opp-item">'+
+      '<span class="opp-heat '+ccOppHeatClass(o.heat)+'" aria-hidden="true"></span>'+
+      '<div class="opp-body"><div class="opp-repo">'+ccIssueLinkHTML(o,key)+'</div>'+
+      '<div class="opp-title" title="'+esc(o.title||'')+'">'+esc(o.title||'(untitled)')+'</div>'+reason+'</div>'+
+      add+'</div>';
+  }).join('');
+  if(adminEnabled)ccBindOppAdd(el);
+}
+function ccBindOppAdd(root){
+  var btns=root.querySelectorAll('.opp-add');
+  for(var i=0;i<btns.length;i++){(function(btn){
+    btn.addEventListener('click',function(){ccOppAddToQueue(btn.getAttribute('data-oppkey'),btn);});
+  })(btns[i]);}
+}
+// ccOppAddToQueue pins an opportunistic item to the FRONT of the persisted order.
+// It builds the new order = [key, ...existing order minus key] and PUTs it through
+// the same endpoint. On success it nudges the queue to refresh so the item appears
+// (if admissible). If the item is not currently admissible it won't show in the
+// queue — we tell the operator so rather than implying it was force-queued.
+function ccOppAddToQueue(key,btn){
+  if(!key)return;
+  // Current authoritative order = the live queue's keys (the server stores exactly
+  // this on every reorder). Prepend the new key, drop any existing copy.
+  var order=[key];
+  for(var i=0;i<ccQueue.length;i++){var k=ccQueueKey(ccQueue[i]);if(k!==key)order.push(k);}
+  if(btn){btn.disabled=true;btn.textContent='Adding…';}
+  fetch('/api/contribute/queue/order',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})})
+    .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+    .then(function(){
+      // Refresh the queue snapshot so a now-admissible item surfaces at the top.
+      return fetch('/api/contribute/queue').then(function(r){return r.json();});
+    })
+    .then(function(d){
+      if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+      var inQueue=ccQueueIndexOf(key)>=0;
+      if(btn){
+        if(inQueue){btn.textContent='Added ✓';}
+        // Admissible-but-filtered: pinned in the order, but not offered right now.
+        else{btn.textContent='Pinned (not admissible yet)';btn.title='Pinned to the queue order, but this item is not admissible right now (cooldown/filter/in-flight), so it is not offered. It will surface when it becomes admissible.';}
+      }
+    })
+    .catch(function(){if(btn){btn.disabled=false;btn.textContent='Add to queue';}});
+}
+
+// ── Hive settings / rate limits + daily quota (#2595) ──────────────────────────
+// A read of the managed-queue's per-tier rate limits + the viewer's own daily
+// usage. Cached after first load (limits change rarely); the me-card and the
+// end-of-queue block both render from it. Public read — everyone sees the tier
+// table; the "you" quota block appears only when the viewer is identified.
+var ccLimits=null;
+function ccLoadLimits(cb){
+  fetch('/api/contribute/limits').then(function(r){return r.json();}).then(function(d){
+    ccLimits=d||{};
+    if(cb)try{cb();}catch(e){}
+    // Refresh any already-rendered surfaces now that we have the data.
+    try{ccRenderQueueEnd(!ccQueueSearch);}catch(e){}
+    try{ccRenderMeQuota();}catch(e){}
+  }).catch(function(){/* leave ccLimits null; surfaces degrade quietly */});
+}
+// tierLabel — capitalised tier name for display.
+function ccTierLabel(t){t=String(t||'');return t?(t.charAt(0).toUpperCase()+t.slice(1)):'';}
+// limNum renders a limit value, showing "unlimited" for the 0 (== no cap) sentinel.
+function ccLimNum(n){n=n||0;return n>0?String(n):'unlimited';}
+// ccLimitsLead builds the human-friendly "managed queue" sentence from real tiers.
+function ccLimitsLead(){
+  if(!ccLimits||!ccLimits.tiers||!ccLimits.tiers.length)return '';
+  var by={};ccLimits.tiers.forEach(function(t){by[t.tier]=t;});
+  var parts=[];
+  ['newcomer','contributor','trusted'].forEach(function(name){
+    if(by[name]&&by[name].max_per_hour>0)parts.push(ccTierLabel(name)+'s get '+by[name].max_per_hour+'/hour');
+  });
+  if(!parts.length)return 'This hive runs a managed queue with trust-based rate limits.';
+  return 'This hive runs a managed queue: '+parts.join(', ')+' — rate limits scale with your trust tier, so it stays fair, not spammy.';
+}
+// ccTierTableHTML renders the per-tier limit cards, highlighting the viewer's tier.
+function ccTierTableHTML(){
+  if(!ccLimits||!ccLimits.tiers||!ccLimits.tiers.length)return '';
+  var youTier=(ccLimits.you&&ccLimits.you.tier)||'';
+  return '<div class="hs-tiers">'+ccLimits.tiers.map(function(t){
+    var isYou=(t.tier===youTier);
+    return '<div class="hs-tier'+(isYou?' is-you':'')+'">'+
+      '<div class="hs-tier__name">'+esc(ccTierLabel(t.tier))+(isYou?' <span class="hs-tier__youtag">you</span>':'')+'</div>'+
+      '<div class="hs-tier__lim">'+ccLimNum(t.max_per_hour)+'/hr · '+ccLimNum(t.max_per_day)+'/day</div>'+
+    '</div>';
+  }).join('')+'</div>';
+}
+// ccQuotaHTML renders the daily-quota meter from the viewer's REAL used_day count
+// vs their tier's max_per_day. variant: '' (end-of-queue) or 'me-quota' (me-card).
+// Returns '' when we have no identified viewer or no daily cap (unlimited tiers).
+function ccQuotaHTML(variant){
+  var you=ccLimits&&ccLimits.you;
+  if(!you)return '';
+  var max=you.max_per_day||0;
+  var used=(typeof you.used_day==='number')?you.used_day:0;
+  if(max<=0){
+    // Unlimited tier — no meter, just an honest note.
+    return '<div class="quota '+(variant||'')+'"><div class="quota__head"><span class="quota__lbl">Your daily usage ('+esc(ccTierLabel(you.tier))+')</span><span class="quota__val">'+used+' today · no daily cap</span></div></div>';
+  }
+  var pct=Math.max(0,Math.min(100,Math.round(used/max*100)));
+  var cls=pct>=100?'full':(pct>=80?'near':'');
+  var remaining=Math.max(0,max-used);
+  return '<div class="quota '+(variant||'')+'">'+
+    '<div class="quota__head"><span class="quota__lbl">Your daily quota ('+esc(ccTierLabel(you.tier))+' set)</span><span class="quota__val">'+used+' / '+max+' tasks</span></div>'+
+    // Your usage trend (#persistent-history): the viewer's own per-hour completions
+    // over the last 7 days, hydrated by ccMetricsPoll once metrics + identity load.
+    // Only on the end-of-queue variant (variant==='') so the id stays unique — the
+    // Me-card renders the same quota widget with a different variant.
+    ((variant||'')===''?'<div class="quota__sub" style="text-align:right;margin-top:2px"><span class="spark" id="spark-quota" title="Your completions per hour, last 7 days"></span></div>':'')+
+    '<div class="quota__bar"><div class="quota__fill '+cls+'" style="width:'+pct+'%%"></div></div>'+
+    '<div class="quota__sub">'+(remaining>0?(remaining+' left in your allowance today.'):'You&rsquo;ve used your daily allowance — it refreshes on a rolling 24h window.')+'</div>'+
+  '</div>';
+}
+// ccRenderQueueEnd paints the end-of-queue block (#2595). show=false (a filter is
+// active) hides it — a partial view isn't "the end". Loads limits lazily on first
+// need. The block always includes the calm "caught up" marker + hive settings;
+// the quota meter is added only for an identified viewer.
+function ccRenderQueueEnd(show){
+  var el=document.getElementById('cc-q-end');if(!el)return;
+  if(!show){el.style.display='none';return;}
+  if(ccLimits===null){ccLoadLimits();/* will re-call on load */}
+  el.style.display='';
+  var caughtUp='<div class="cc-q-end"><span class="cc-q-end-badge"><span class="cc-q-end-ic" aria-hidden="true">&#x2713;</span>End of queue reached &mdash; you&rsquo;re all caught up</span></div>';
+  var settings='';
+  if(ccLimits&&ccLimits.tiers&&ccLimits.tiers.length){
+    settings='<div class="hive-settings"><h4>Managed queue &amp; rate limits</h4>'+
+      '<p class="hs-lead">'+esc(ccLimitsLead())+'</p>'+
+      ccTierTableHTML()+
+      ccQuotaHTML('')+
+    '</div>';
+  }
+  el.innerHTML=caughtUp+settings;
+}
+// ccRenderMeQuota injects the daily-quota widget into the Me card (#2595) if the
+// card is mounted and we have the viewer's quota. Idempotent — replaces any prior
+// widget. Called after the me-card renders and after limits load.
+function ccRenderMeQuota(){
+  var slot=document.getElementById('me-quota-slot');if(!slot)return;
+  var html=ccQuotaHTML('me-quota');
+  slot.innerHTML=html||'<div class="ops-note" style="margin:0">Ship a task to start tracking your daily quota.</div>';
+}
+
+// ── Global menu-dismiss: click outside or Escape closes any open row menu ───────
+document.addEventListener('click',function(){ccCloseQueueMenus();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')ccCloseQueueMenus();});
 })();
 </script>
 <script>
@@ -2921,6 +4042,22 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if req.Force {
+			// SECURITY (#2610): rotating an EXISTING contributor's token is
+			// exactly what POST /api/contribute/reissue-token does, and that
+			// endpoint 401s without a caller identity it can verify server-side.
+			// force:true must enforce the SAME gate, otherwise the reissue-token
+			// auth check is trivially bypassed by rotating through register.
+			// Resolve the caller server-side (never from the request body) and
+			// require it to be the owner of this contributor profile.
+			caller := s.resolveContributeCaller(r)
+			if caller == "" {
+				jsonError(w, "Sign in with GitHub (or send Authorization: Bearer <gh-token>) to reissue an existing contributor's token, or use POST /api/contribute/reissue-token.", http.StatusUnauthorized)
+				return
+			}
+			if !strings.EqualFold(caller, username) {
+				jsonError(w, "You can only reissue your own contributor token.", http.StatusForbidden)
+				return
+			}
 			// Reissue token: generate a new one and invalidate the old
 			newToken := reissueContributorToken(existing)
 			s.logger.Info("contributor token reissued via force register", "username", username, "id", existing.ContributorID)
@@ -2991,6 +4128,36 @@ func (s *Server) resolveViewerUsername(r *http.Request) string {
 		return ""
 	}
 	return user.Login
+}
+
+// resolveContributeCaller returns the server-verified GitHub identity of the
+// caller for contributor mutations, combining the two auth paths already used
+// elsewhere in this file:
+//   - the session / hub-injected identity (resolveViewerUsername), as the
+//     invite handler uses; and
+//   - an Authorization: Bearer <gh-token> validated against GitHub, exactly as
+//     handleContributeReissueToken does.
+//
+// It returns "" when the caller is anonymous. The identity is never taken from
+// the request body, so it cannot be spoofed by a client. Used to gate the
+// register force:true rotation with the same authority as reissue-token (#2610).
+func (s *Server) resolveContributeCaller(r *http.Request) string {
+	if u := s.resolveViewerUsername(r); u != "" {
+		return u
+	}
+	authz := r.Header.Get("Authorization")
+	var token string
+	if strings.HasPrefix(authz, "Bearer ") {
+		const bearerPrefixLen = 7 // len("Bearer ")
+		token = authz[bearerPrefixLen:]
+	} else if strings.HasPrefix(authz, "token ") {
+		const tokenPrefixLen = 6 // len("token ")
+		token = authz[tokenPrefixLen:]
+	}
+	if token == "" {
+		return ""
+	}
+	return validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 }
 
 // handleContributeInvite mints a trusted, attributed invite link (issue #2598).
@@ -3218,7 +4385,199 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	if s.contributeHub != nil {
 		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
 	}
-	jsonResponse(w, map[string]any{"queue": queue})
+	resp := map[string]any{"queue": queue}
+	// Label-affinity (#2637): if we can identify the viewer server-side and they
+	// have declared label interests, personalise THIS response — tag matching
+	// issues and float them to the front for them. Soft signal only: nothing is
+	// filtered out, so a viewer with no interests (or none identifiable) gets the
+	// exact shared queue. Resolved from session / X-Hive-User (never a client
+	// param), so a viewer only ever personalises with their OWN interests.
+	if username := s.resolveViewerUsername(r); username != "" {
+		if profile := findContributor(username); profile != nil {
+			personalizeQueueByInterests(queue, profile.LabelInterests)
+			// Echo the viewer's own interests so the Operations tab can render the
+			// editor pre-filled without a second round-trip.
+			resp["interests"] = profile.LabelInterests
+		}
+	}
+	jsonResponse(w, resp)
+}
+
+// maxLabelInterests caps how many label interests one contributor may declare. It
+// is generous (a contributor could reasonably follow many hardware/area labels)
+// yet bounds a hostile payload so a single profile file cannot be bloated. A
+// submission over the cap is truncated, not rejected, so the save still succeeds.
+const maxLabelInterests = 64
+
+// maxLabelInterestLen bounds a single label string. GitHub labels are short; this
+// is well above any real label yet stops a pathological entry from bloating the
+// stored profile. Over-length entries are dropped.
+const maxLabelInterestLen = 128
+
+// handleContributeInterests is the contributor-owned read/write for their OWN
+// label interests (#2637). GET returns the caller's current interests; PUT
+// replaces them. Identity is resolved server-side (session / X-Hive-User / owner
+// token / Bearer gh-token) via resolveContributeCaller — NEVER from the body — so
+// a contributor can only ever read or write THEIR OWN interests, and an anonymous
+// caller gets 401. This is a self-service PREFERENCE, not an operator control, so
+// it deliberately does NOT require write-tier; any registered contributor may set
+// what work they want surfaced to them.
+func (s *Server) handleContributeInterests(w http.ResponseWriter, r *http.Request) {
+	username := s.resolveContributeCaller(r)
+	if username == "" {
+		jsonError(w, "Sign in with GitHub to set your label interests.", http.StatusUnauthorized)
+		return
+	}
+	profile := findContributor(username)
+	if profile == nil {
+		jsonError(w, "You need a contributor profile on this hive before you can set label interests.", http.StatusForbidden)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		interests := profile.LabelInterests
+		if interests == nil {
+			interests = []string{}
+		}
+		jsonResponse(w, map[string]any{"interests": interests})
+		return
+	}
+
+	// PUT: replace the caller's interests with the submitted (sanitised) set.
+	var body struct {
+		Interests []string `json:"interests"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	cleaned := sanitizeLabelInterests(body.Interests)
+	profile.LabelInterests = cleaned
+	if err := saveContributorProfile(profile); err != nil {
+		s.logger.Error("failed to save contributor label interests", "username", username, "error", err)
+		jsonError(w, "could not save label interests", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("contributor label interests updated", "username", username, "count", len(cleaned))
+	jsonResponse(w, map[string]any{"interests": cleaned})
+}
+
+// sanitizeLabelInterests normalises a submitted interest list: trims/lower-cases
+// each entry (so matching is predictable and case-insensitive), drops blanks and
+// over-length entries, de-duplicates while preserving first-seen order, and caps
+// the total. It never errors — a hostile or messy payload is cleaned into a safe
+// stored set rather than rejected.
+func sanitizeLabelInterests(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		n := normalizeLabelInterest(raw)
+		if n == "" || len(n) > maxLabelInterestLen {
+			continue
+		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+		if len(out) >= maxLabelInterests {
+			break
+		}
+	}
+	return out
+}
+
+// handleContributeOpportunistic serves the read-only OPPORTUNISTIC WORK list
+// (#2592): a small, curated set of admissible issues surfaced by a light recency
+// heat proxy (see OpportunisticWork). GET only, PUBLIC (the /api/contribute prefix
+// is exempt from the read-only block, and this is a read with no side effects), so
+// anonymous viewers can SEE the discovery list. The "add to queue" ACTION goes
+// through the existing owner/read-write queue-order endpoint, not this read.
+func (s *Server) handleContributeOpportunistic(w http.ResponseWriter, r *http.Request) {
+	items := []OpportunisticItem{}
+	if s.contributeHub != nil {
+		items = s.contributeHub.OpportunisticWork(opportunisticDefaultLimit)
+	}
+	jsonResponse(w, map[string]any{"opportunistic": items})
+}
+
+// tierLimitView is one tier's managed-queue caps, rendered readably by the UI.
+type tierLimitView struct {
+	Tier          string `json:"tier"`
+	MaxPerHour    int    `json:"max_per_hour"`
+	MaxPerDay     int    `json:"max_per_day"`
+	MaxConcurrent int    `json:"max_concurrent"`
+}
+
+// limitsTierOrder is the trust progression, so the UI lists tiers newcomer→advisor
+// rather than in Go map iteration order (non-deterministic).
+var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "advisor"}
+
+// handleContributeLimits serves the hive's per-tier rate limits (#2595) plus the
+// VIEWER's own daily/hourly usage when we can identify them. This makes the managed
+// queue's trust-based rate limiting visible and reassuring — real config values only
+// (Config.Hub.TierLimits, enforced in selectTask). GET only, PUBLIC (read, no side
+// effects). The "you" block is resolved server-side from the session / X-Hive-User
+// header — never a client param — so a viewer only ever sees their OWN usage; an
+// anonymous viewer gets the tier table with no "you" block.
+func (s *Server) handleContributeLimits(w http.ResponseWriter, r *http.Request) {
+	var tiers []tierLimitView
+	limitMap := map[string]config.TierRate{}
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.TierLimits != nil {
+		limitMap = s.deps.Config.Hub.TierLimits
+	}
+	for _, t := range limitsTierOrder {
+		if tr, ok := limitMap[t]; ok {
+			tiers = append(tiers, tierLimitView{Tier: t, MaxPerHour: tr.MaxPerHour, MaxPerDay: tr.MaxPerDay, MaxConcurrent: tr.MaxConcurrent})
+		}
+	}
+	for name, tr := range limitMap {
+		known := false
+		for _, t := range limitsTierOrder {
+			if t == name {
+				known = true
+				break
+			}
+		}
+		if !known {
+			tiers = append(tiers, tierLimitView{Tier: name, MaxPerHour: tr.MaxPerHour, MaxPerDay: tr.MaxPerDay, MaxConcurrent: tr.MaxConcurrent})
+		}
+	}
+
+	resp := map[string]any{"tiers": tiers}
+
+	username := ""
+	if sess := s.sessionFromRequest(r); sess != nil {
+		username = sess.Username
+	} else if hu := r.Header.Get("X-Hive-User"); hu != "" {
+		username = hu
+	}
+	if username != "" {
+		profile := findContributor(username)
+		tier := "newcomer"
+		identity := username
+		if profile != nil {
+			if profile.TrustTier != "" {
+				tier = profile.TrustTier
+			}
+			if profile.ContributorID != "" {
+				identity = profile.ContributorID
+			}
+		}
+		you := map[string]any{"username": username, "tier": tier}
+		if s.contributeHub != nil {
+			hour, day := s.contributeHub.rateWindowCounts(identity, time.Now())
+			you["used_hour"] = hour
+			you["used_day"] = day
+		}
+		if tr, ok := limitMap[tier]; ok {
+			you["max_per_hour"] = tr.MaxPerHour
+			you["max_per_day"] = tr.MaxPerDay
+			you["max_concurrent"] = tr.MaxConcurrent
+		}
+		resp["you"] = you
+	}
+	jsonResponse(w, resp)
 }
 
 // maxQueueOrderKeys caps how many priority keys the operator override may carry.
@@ -4252,9 +5611,11 @@ a{color:#58a6ff}
 
 <div class="endpoint">
 <span class="method">POST</span><span class="path">/api/contribute/register</span>
-<div class="desc">Register (or re-register with <code>force:true</code> to reissue token)</div>
-<pre>curl -X POST -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
+<div class="desc">Register a new contributor (open), or re-register an existing one with <code>force:true</code> to reissue its token. Reissuing an existing token requires proving you own that identity — send <code>Authorization: Bearer &lt;gh-token&gt;</code> — or use <code>/api/contribute/reissue-token</code>.</div>
+<pre>curl -X POST -d '{"github_username":"you"}' %s/api/contribute/register
+# reissue an existing token (authenticated):
+curl -X POST -H "Authorization: Bearer $GH_TOKEN" -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
 </div>
 
-</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
+</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }

@@ -6,15 +6,20 @@ import (
 )
 
 // #2548 — branded client entry points (onboarding, additive). These tests pin the
-// rendered /contribute page: per-client visual identity, first-class parity for
-// Claude/Copilot/Pi/Goose, a documented-only "Open in" deep-link that is labeled as
-// onboarding-not-contribution, and a full copy-pasteable customizable prompt — all
-// without breaking the existing CLI/Mode/Runtime/OS selectors or the copy-block.
-// renderContributePage lives in contribute_devlog_rail_test.go.
+// rendered /contribute page: per-client visual identity, first-class ordering for
+// Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter (they lead the tile grid; the visible
+// "First-class" badge itself was removed per operator request — peer:true is now
+// an ORDERING signal only, not a rendered pill), a documented-only "Open in"
+// deep-link labeled as onboarding-not-contribution, and a full copy-pasteable
+// customizable prompt — all without breaking the existing CLI/Mode/Runtime/OS
+// selectors or the copy-block. renderContributePage lives in
+// contribute_devlog_rail_test.go.
 
 // TestBrandedEntryPoints_IdentityAndParity asserts the find-by-sight tile grid, the
 // per-client inline SVG emblems (CSP-safe, no external images), and first-class
-// parity for Claude/Copilot/Pi/Goose are all present.
+// ORDERING for Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter are all present — and
+// that the visible "First-class" pill is gone (removed per operator request; the
+// tiles themselves — emblem + name + vendor subtitle — stay).
 func TestBrandedEntryPoints_IdentityAndParity(t *testing.T) {
 	body := renderContributePage(t)
 
@@ -23,7 +28,6 @@ func TestBrandedEntryPoints_IdentityAndParity(t *testing.T) {
 		`class="client-tiles`, // its styling hook
 		`class="client-tile`,  // per-client tile
 		`ct-emblem`,           // the inline emblem slot
-		`First-class`,         // the parity badge text
 		`var CLIENTS=`,        // the client metadata table
 		`var EMB=`,            // the inline SVG emblem table
 		`buildTiles`,          // tile renderer
@@ -33,9 +37,18 @@ func TestBrandedEntryPoints_IdentityAndParity(t *testing.T) {
 		}
 	}
 
-	// Parity: each of the SIX first-class clients must be marked peer:true in the
-	// CLIENTS table so it leads the grid with a First-class badge, not as an
-	// afterthought (LiteLLM + OpenRouter joined Claude/Copilot/Pi/Goose).
+	// The visible "First-class" pill/badge must be gone — operator asked for it
+	// to be removed from the tiles entirely.
+	if strings.Contains(body, "First-class") {
+		t.Error("the \"First-class\" badge must be removed from the client tiles")
+	}
+	if strings.Contains(body, "ct-parity") {
+		t.Error("the now-unused .ct-parity badge class must be removed, not left dangling")
+	}
+
+	// Ordering: each of the SIX first-class clients must still be marked
+	// peer:true in the CLIENTS table so it leads the grid (tileOrder() puts
+	// peers first) — this is an ordering signal only now, not a rendered badge.
 	for _, peer := range []string{
 		`claude:{name:'Claude Code'`, `copilot:{name:'GitHub Copilot'`, `pi:{name:'Pi'`,
 		`goose:{name:'Goose'`, `litellm:{name:'LiteLLM'`, `openrouter:{name:'OpenRouter'`,
@@ -45,7 +58,7 @@ func TestBrandedEntryPoints_IdentityAndParity(t *testing.T) {
 		}
 	}
 	if strings.Count(body, "peer:true") < 6 {
-		t.Errorf("expected >=6 peer:true (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter first-class), got %d", strings.Count(body, "peer:true"))
+		t.Errorf("expected >=6 peer:true (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter lead the grid), got %d", strings.Count(body, "peer:true"))
 	}
 
 	// Emblems must be inline SVG (CSP-safe) — no external <img> smuggled into a tile.

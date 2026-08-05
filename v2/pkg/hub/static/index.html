@@ -1185,8 +1185,15 @@
         f && typeof f.agents_running === 'number' ? f.agents_running : agents;
       document.getElementById('stat-repos').textContent =
         f && typeof f.repos_managed === 'number' ? f.repos_managed : repos;
+      // Prefer contributors_total (registered, fleet-wide) over contributors
+      // (currently-active, fleet-wide) — the active count legitimately drops
+      // to 0 whenever nobody happens to be connected at collection time,
+      // which read as "no contributors" on this tile. The registered total
+      // is stable across quiet periods. The public-list active sum remains
+      // the last-resort fallback for an older hub / failed poll.
       document.getElementById('stat-contributors').textContent =
-        f && typeof f.contributors === 'number' ? f.contributors : contributors;
+        (f && typeof f.contributors_total === 'number') ? f.contributors_total :
+        (f && typeof f.contributors === 'number' ? f.contributors : contributors);
     }
 
     var _allMainHives = [];
