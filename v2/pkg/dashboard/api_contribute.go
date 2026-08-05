@@ -532,6 +532,18 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .work-item:hover{background:rgba(88,166,255,.04)}
 .work-item.selected{background:rgba(88,166,255,.08)}
 .work-repo{font-size:.75rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
+   Shared affordance for every repo#number reference on the Operations tab (ready
+   queue, my-work, opportunistic-work, dev-log). Deliberately more visible than
+   the surrounding muted-grey monospace text — link-blue + underline-on-hover +
+   a small external-link glyph — so it reads as an obvious "open on GitHub"
+   action, not decoration. Inherits the host element's font (monospace repo#num,
+   or inline log text) so it drops into any of those contexts unchanged. */
+.cc-issue-link{display:inline-flex;align-items:center;gap:3px;color:#58a6ff;text-decoration:none;font:inherit;border-radius:4px;transition:color .15s}
+.cc-issue-link:hover,.cc-issue-link:focus-visible{color:#79c0ff;text-decoration:underline}
+.cc-issue-link:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.cc-issue-link-ic{flex-shrink:0;opacity:.85}
+.cc-issue-link:hover .cc-issue-link-ic{opacity:1}
 .work-title{font-size:.9rem;color:#e6edf3;margin:2px 0 6px}
 .work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:#8b949e}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
@@ -923,6 +935,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-log-body b{color:#e6edf3}
 .cc-log-body .who{color:#58a6ff;font-weight:600}
 .cc-log-body .ref{color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+.cc-log-body a.ref.cc-issue-link{color:#58a6ff}
+.cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:#79c0ff}
 .cc-log-time{flex-shrink:0;color:#6e7681;font-size:.72rem;white-space:nowrap;padding-top:1px}
 /* Achievement pops — tasteful badge toast, top-right, debounced */
 .cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -2095,6 +2109,42 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
 });});
 
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+// ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
+// The Operations tab shows plenty of "repo#number" references (ready-work queue,
+// my-work, opportunistic-work, dev-log) but until now they were plain monospace
+// text — Jorge's ask is to make them real, obvious links to GitHub so this page
+// can actually be used to manage work, not just read about it.
+//
+// ccIssueURL prefers the item's own "url" field (the backend's canonical
+// issue/PR link — ReadyQueueItem/OpportunisticItem both carry it) and only
+// constructs a fallback when it's absent. GitHub's /issues/<n> route redirects
+// to /pull/<n> automatically when the number is actually a PR, so the
+// constructed fallback works for both without knowing which one it is.
+function ccIssueURL(item){
+  if(item&&item.url)return item.url;
+  if(item&&item.repo&&item.number)return 'https://github.com/'+item.repo+'/issues/'+item.number;
+  return '';
+}
+// ccIssueLinkHTML renders the repo#number reference as an <a> with an obvious
+// "go to GitHub" affordance: link-blue text, an external-link glyph, and a
+// title tooltip. stopPropagation on click/mousedown keeps the click from ever
+// reaching a row's drag/select handlers (queue drag-reorder in particular) —
+// opening the issue must never start a drag. Opens in a new tab; rel carries
+// noopener+noreferrer since target=_blank hands the new tab a window.opener
+// handle otherwise. Returns a plain esc'd span (no link) when no URL can be
+// produced, so a malformed item never renders a dead/empty link.
+function ccIssueLinkHTML(item,label,extraClass){
+  var url=ccIssueURL(item);
+  if(!url)return '<span class="'+(extraClass||'')+'">'+esc(label)+'</span>';
+  return '<a class="cc-issue-link '+(extraClass||'')+'" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" '+
+    'title="Open on GitHub" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">'+
+    esc(label)+
+    '<svg class="cc-issue-link-ic" viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" focusable="false">'+
+    '<path fill="currentColor" d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>'+
+    '<path fill="currentColor" d="M3.75 3A1.75 1.75 0 0 0 2 4.75v7.5c0 .966.784 1.75 1.75 1.75h7.5A1.75 1.75 0 0 0 13 12.25v-3.5a.75.75 0 0 0-1.5 0v3.5a.25.25 0 0 1-.25.25h-7.5a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/>'+
+    '</svg></a>';
+}
 function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s ago';var m=Math.floor(s/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
 
 // ── #2534 Operator admin controls (mirror of the Governor Hub config) ──────────
@@ -2554,7 +2604,8 @@ function renderWork(list){
         '<pre class="prompt-text">'+esc(w.prompt_preview)+'</pre>'+
         '<p class="ops-note">Read-only. This is the instruction the agent receives; the scoped GitHub token is delivered separately and is never shown here.</p></details>')
       :'';
-    return '<div class="work-item"><div class="work-repo">'+esc(w.repo||'')+(w.number?('#'+esc(w.number)):'')+'</div>'+
+    var repoLabel=(w.repo||'')+(w.number?('#'+w.number):'');
+    return '<div class="work-item"><div class="work-repo">'+ccIssueLinkHTML(w,repoLabel)+'</div>'+
       '<div class="work-title">'+esc(w.title||'(untitled task)')+'</div>'+
       '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div>'+preview+'</div>';
   }).join('');
@@ -2676,7 +2727,7 @@ function ccRenderQueue(flip){
     // this row's qkey so they act on the right item in the FULL order.
     var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
     return '<div class="cc-q-item"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+esc(q.repo||'')+'#'+esc(q.number||'')+'</div>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
   }).join('');
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
@@ -2915,16 +2966,28 @@ function initOpsRail(){
 }
 
 // ── Dev-log narration: build a human-readable line from an ActivityEntry ───────
+// ccTaskRefLink turns the "picked up" activity's task string — always built
+// server-side as "<kind> <repo>#<number>: <title>" (contribute_ws.go taskDesc)
+// — into a clickable GitHub link when it matches that exact shape. "completed"/
+// "failed" carry an opaque internal task ID (ct-<repo>-<number>-<ts>), not
+// repo#number, so those are deliberately left as plain text rather than risk a
+// wrong/broken link from a shape this code doesn't control.
+function ccTaskRefLink(task){
+  var m=/^\S+\s+([\w.-]+\/[\w.-]+)#(\d+):/.exec(task||'');
+  if(!m)return '<span class="ref">'+esc(task)+'</span>';
+  return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
+}
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
+  var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
   var body;
   switch(e.action){
     case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
     case 'left': body=who+' left the hive'; break;
-    case 'picked up': body=who+' grabbed'+ref; break;
+    case 'picked up': body=who+' grabbed'+pickedRef; break;
     case 'completed': body=who+' completed'+ref; break;
     case 'failed': body=who+' hit a snag on'+ref; break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
@@ -3199,7 +3262,7 @@ function ccRenderOpportunistic(){
     var add=adminEnabled?('<button type="button" class="opp-add" data-oppkey="'+esc(key)+'" title="Add to the top of the ready-work queue">Add to queue</button>'):'';
     return '<div class="opp-item">'+
       '<span class="opp-heat '+ccOppHeatClass(o.heat)+'" aria-hidden="true"></span>'+
-      '<div class="opp-body"><div class="opp-repo">'+esc(key)+'</div>'+
+      '<div class="opp-body"><div class="opp-repo">'+ccIssueLinkHTML(o,key)+'</div>'+
       '<div class="opp-title" title="'+esc(o.title||'')+'">'+esc(o.title||'(untitled)')+'</div>'+reason+'</div>'+
       add+'</div>';
   }).join('');
