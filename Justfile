@@ -292,7 +292,15 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     CONTRIBUTOR_USERNAME=${GH_USER}
     AGENT_BACKEND={{backend}}
     EOF
+      # contributor.env holds HIVE_REGISTRATION_TOKEN, the sole long-lived
+      # bearer credential for the contributor WebSocket. Match the 0600 perms
+      # of its sibling secret files (gh-auth.env, claude-config.json) so the
+      # token is not left world-readable at the default umask (0644).
+      chmod 600 "{{config_dir}}/contributor.env"
     fi
+    # Re-tighten on every run: existing users may already have a 0644 file
+    # created before this fix. Fix it in place if present.
+    chmod 600 "{{config_dir}}/contributor.env" 2>/dev/null || true
     echo "${MSG} — ${GH_USER} (${CID})"
     echo ""
 
@@ -307,6 +315,9 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       grep -v '^HIVE_LITELLM_ENDPOINT=' "{{config_dir}}/contributor.env" > "{{config_dir}}/contributor.env.tmp" || true
       echo "HIVE_LITELLM_ENDPOINT=${HIVE_LITELLM_ENDPOINT}" >> "{{config_dir}}/contributor.env.tmp"
       mv "{{config_dir}}/contributor.env.tmp" "{{config_dir}}/contributor.env"
+      # The rewrite recreates the file at the default umask (0644), dropping
+      # the 0600 perms. Re-tighten so the token stays owner-only.
+      chmod 600 "{{config_dir}}/contributor.env"
     fi
 
     # Copy CLI config for Docker container (Colima can't bind-mount files)

@@ -707,10 +707,15 @@ func TestRegisterForceReissue(t *testing.T) {
 		t.Error("should not return token without force")
 	}
 
-	// Third registration with force — should reissue a new token
+	// Third registration with force — should reissue a new token, but ONLY for
+	// the authenticated owner (#2610). Supply the owner's identity via the
+	// hub-injected X-Hive-User header, which resolveContributeCaller honors
+	// server-side. Unauthenticated force rotation is covered (and rejected) in
+	// api_contribute_force_rotation_test.go.
 	body = `{"github_username":"force-user","force":true}`
 	req = httptest.NewRequest(http.MethodPost, "/api/contribute/register", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-User", "force-user")
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

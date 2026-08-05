@@ -3400,6 +3400,22 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if req.Force {
+			// SECURITY (#2610): rotating an EXISTING contributor's token is
+			// exactly what POST /api/contribute/reissue-token does, and that
+			// endpoint 401s without a caller identity it can verify server-side.
+			// force:true must enforce the SAME gate, otherwise the reissue-token
+			// auth check is trivially bypassed by rotating through register.
+			// Resolve the caller server-side (never from the request body) and
+			// require it to be the owner of this contributor profile.
+			caller := s.resolveContributeCaller(r)
+			if caller == "" {
+				jsonError(w, "Sign in with GitHub (or send Authorization: Bearer <gh-token>) to reissue an existing contributor's token, or use POST /api/contribute/reissue-token.", http.StatusUnauthorized)
+				return
+			}
+			if !strings.EqualFold(caller, username) {
+				jsonError(w, "You can only reissue your own contributor token.", http.StatusForbidden)
+				return
+			}
 			// Reissue token: generate a new one and invalidate the old
 			newToken := reissueContributorToken(existing)
 			s.logger.Info("contributor token reissued via force register", "username", username, "id", existing.ContributorID)
@@ -3470,6 +3486,36 @@ func (s *Server) resolveViewerUsername(r *http.Request) string {
 		return ""
 	}
 	return user.Login
+}
+
+// resolveContributeCaller returns the server-verified GitHub identity of the
+// caller for contributor mutations, combining the two auth paths already used
+// elsewhere in this file:
+//   - the session / hub-injected identity (resolveViewerUsername), as the
+//     invite handler uses; and
+//   - an Authorization: Bearer <gh-token> validated against GitHub, exactly as
+//     handleContributeReissueToken does.
+//
+// It returns "" when the caller is anonymous. The identity is never taken from
+// the request body, so it cannot be spoofed by a client. Used to gate the
+// register force:true rotation with the same authority as reissue-token (#2610).
+func (s *Server) resolveContributeCaller(r *http.Request) string {
+	if u := s.resolveViewerUsername(r); u != "" {
+		return u
+	}
+	authz := r.Header.Get("Authorization")
+	var token string
+	if strings.HasPrefix(authz, "Bearer ") {
+		const bearerPrefixLen = 7 // len("Bearer ")
+		token = authz[bearerPrefixLen:]
+	} else if strings.HasPrefix(authz, "token ") {
+		const tokenPrefixLen = 6 // len("token ")
+		token = authz[tokenPrefixLen:]
+	}
+	if token == "" {
+		return ""
+	}
+	return validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 }
 
 // handleContributeInvite mints a trusted, attributed invite link (issue #2598).
