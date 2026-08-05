@@ -35,6 +35,17 @@ export HIVE_AGENT_SESSION="$TMUX_SESSION"
 export HIVE_AGENT_ID="contributor"
 export HIVE_CONTRIBUTOR_MODE="true"
 export HIVE_CONTRIBUTOR_CLI="$AGENT_BACKEND"
+
+# Task-delivery mode (kubestellar/hive#2538). "interactive" (default) launches
+# the CLI in a tmux pane and the relay types tasks into it; "headless" skips the
+# tmux/CLI launch entirely and the relay drives a one-shot CLI per task with no
+# TTY — suitable for an unattended / future Kubernetes contributor (#2549).
+# Only the two literals are accepted; anything else falls back to interactive.
+CONTRIBUTOR_MODE="${CONTRIBUTOR_MODE:-interactive}"
+if [[ "$CONTRIBUTOR_MODE" != "headless" ]]; then
+  CONTRIBUTOR_MODE="interactive"
+fi
+export CONTRIBUTOR_MODE
 # Username is extracted from contributor.env (set during registration)
 export HIVE_CONTRIBUTOR_USERNAME="${CONTRIBUTOR_USERNAME:-unknown}"
 
@@ -294,9 +305,14 @@ esac
 export HIVE_WORKSPACE_DIR="${HIVE_WORKSPACE_DIR:-${HOME}/workspace}"
 mkdir -p "$HIVE_WORKSPACE_DIR"
 
-# Create tmux session for the agent
-tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
+# Create the tmux session for the agent — INTERACTIVE mode only. In headless
+# mode (kubestellar/hive#2538) the relay spawns a one-shot CLI per task and
+# there is no persistent pane to attach to or type into, so we skip the session
+# entirely rather than leave an idle tmux CLI sitting at a prompt.
+if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
+  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
+fi
 
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
@@ -361,38 +377,51 @@ PYEOF
   chmod 600 "${HOME}/.claude.json" 2>/dev/null || true
 fi
 
-tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG" Enter
+# Launch the interactive CLI and auto-dismiss its startup prompts — INTERACTIVE
+# mode only. Headless mode (kubestellar/hive#2538) has no persistent pane; the
+# relay launches a one-shot CLI per task, and one-shot invocations do not draw
+# the trust/theme/onboarding dialogs this loop dismisses.
+if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
+  tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG" Enter
 
-# Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
-AUTO_DISMISS_ATTEMPTS=10
-AUTO_DISMISS_INTERVAL=3
-(
-  for i in $(seq 1 $AUTO_DISMISS_ATTEMPTS); do
-    sleep "$AUTO_DISMISS_INTERVAL"
-    PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
-    if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
-      tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
-    elif echo "$PANE" | grep -q "Choose the text style"; then
-      tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
-    elif echo "$PANE" | grep -q "Share anonymous usage data\|help improve goose\|Would you like"; then
-      tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
-    elif echo "$PANE" | grep -q "Choose a provider\|Select.*provider\|Which provider"; then
-      tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
-    elif echo "$PANE" | grep -qi "custom API key"; then
-      # Claude Code asks whether to use ANTHROPIC_API_KEY (litellm backend)
-      tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
-    elif echo "$PANE" | grep -q "bypass permissions\|autopilot\|goose>\|G >\|❯\|/ commands\|> *$"; then
-      break
-    fi
-  done
-) &
+  # Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
+  AUTO_DISMISS_ATTEMPTS=10
+  AUTO_DISMISS_INTERVAL=3
+  (
+    for i in $(seq 1 $AUTO_DISMISS_ATTEMPTS); do
+      sleep "$AUTO_DISMISS_INTERVAL"
+      PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
+      if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
+        tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -q "Choose the text style"; then
+        tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -q "Share anonymous usage data\|help improve goose\|Would you like"; then
+        tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -q "Choose a provider\|Select.*provider\|Which provider"; then
+        tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -qi "custom API key"; then
+        # Claude Code asks whether to use ANTHROPIC_API_KEY (litellm backend)
+        tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -q "bypass permissions\|autopilot\|goose>\|G >\|❯\|/ commands\|> *$"; then
+        break
+      fi
+    done
+  ) &
+fi
 
 echo ""
 CONTAINER_NAME="${HIVE_CONTAINER_NAME:-hive-contributor}"
 echo "Contributor agent is running."
+echo "  Mode:    $CONTRIBUTOR_MODE"
 echo "  CLI:     $CMD"
 echo "  ClankeR: PID $RELAY_PID"
-echo "  Tmux:    docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
+  echo "  Tmux:    docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+else
+  # Headless: no pane to attach to. The relay drives a one-shot CLI per task and
+  # writes its lifecycle state (waiting/working/done/failed) here for a probe.
+  echo "  Status:  ${HIVE_HEADLESS_STATUS_FILE:-/tmp/contributor-headless-status.json}"
+fi
 echo ""
 
 # Keep running until interrupted

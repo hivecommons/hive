@@ -30,6 +30,50 @@ const GH_TOKEN_CACHE = fs.existsSync('/var/run/hive-metrics')
   : '/tmp/hive-gh-token.cache';
 const TASK_FILE = '/tmp/contributor-task.json';
 
+// --- Delivery mode (kubestellar/hive#2538) -------------------------------
+// The relay can deliver a task to the backend CLI in one of two ways:
+//
+//   interactive (default) — the legacy path: type the prompt into a live
+//     tmux pane with `tmux send-keys` and scrape the pane for readiness,
+//     progress and completion. Requires an attached-or-attachable TTY and is
+//     unchanged by this feature.
+//
+//   headless — the non-interactive path added for #2538: drive the backend
+//     CLI in a one-shot / print invocation (`claude -p`, `copilot -p`,
+//     `codex exec`, …), capture its stdout/stderr, and report completion or a
+//     REAL error back over the same WebSocket channel. No tmux, no pane
+//     scraping, no waiting on an invisible prompt — so a K8s Job/Deployment
+//     running this mode either runs to completion or fails loudly (the exact
+//     "healthy-looking but stalled pod" failure #2538 warns about), and it
+//     never needs a human to attach and type `/login`.
+//
+// This is opt-in and additive: absent/any-other value keeps the interactive
+// path exactly as before. K8s manifests (#2549) and the credential boundary
+// (#2537) are the explicit follow-ons and are NOT built here.
+const MODE_INTERACTIVE = 'interactive';
+const MODE_HEADLESS = 'headless';
+const CONTRIBUTOR_MODE = process.env.CONTRIBUTOR_MODE === MODE_HEADLESS
+  ? MODE_HEADLESS
+  : MODE_INTERACTIVE;
+
+// Where the headless runner records its current lifecycle state as JSON, so a
+// supervising process (or a future K8s liveness/readiness probe reading the
+// file) can distinguish waiting / working / done / failed — instead of a pod
+// that merely looks alive. Best-effort: a write failure never aborts a task.
+const HEADLESS_STATUS_FILE = process.env.HIVE_HEADLESS_STATUS_FILE || '/tmp/contributor-headless-status.json';
+
+// Coarse lifecycle states reported by the headless runner. Named so probes and
+// logs agree on the vocabulary rather than matching free text.
+const HEADLESS_STATE_WAITING = 'waiting'; // authenticated, no task in flight
+const HEADLESS_STATE_WORKING = 'working'; // one-shot CLI invocation running
+const HEADLESS_STATE_DONE = 'done';       // last task completed (exit 0)
+const HEADLESS_STATE_FAILED = 'failed';   // last task failed (non-zero/spawn error)
+
+// Cap on captured child output kept in memory / sent to the hub, so a chatty
+// CLI cannot grow the buffer without bound. The tail is what matters for an
+// audit trail, mirroring TMUX_TAIL_LINES on the interactive path.
+const HEADLESS_MAX_OUTPUT_BYTES = 1048576; // 1 MiB
+
 const TMUX_TAIL_LINES = 15;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_TIMEOUT_MS = 90000;
@@ -38,6 +82,12 @@ const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
 const MAX_TASK_DURATION_MS = 1800000;
+// Hard ceiling on a single headless one-shot invocation (kubestellar/hive#2538).
+// The interactive path bounds a task with MAX_TASK_DURATION_MS via a
+// tmux-scraping watchdog; the headless child gets the SAME bound enforced
+// directly on the process, so a wedged CLI is killed and reported failed rather
+// than hanging the pod forever.
+const HEADLESS_TASK_TIMEOUT_MS = MAX_TASK_DURATION_MS;
 const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // After the hub sends an explicit task_unavailable negative-ack (no admissible
 // work, a disabled tier, a concurrency limit, or a token-mint failure — see
@@ -150,9 +200,15 @@ const NO_MODEL_FLAG_BACKENDS = ['amazonq', 'goose', 'bob'];
 // inline, silently dropping the resolved model for the rest of the container's
 // life. Build it once here and reuse it everywhere so the paths cannot drift.
 let cachedLaunchCommand = null;
+let cachedBackendResolution = null;
 
-function buildLaunchCommand() {
-  if (cachedLaunchCommand) return cachedLaunchCommand;
+// resolveBackend() returns the { cmd, perm } pair backends.conf maps this
+// backend to (binary + permission flags). Shared by the interactive launch
+// command and the headless argv builder so the two paths cannot drift on which
+// binary/flags a backend uses. Result cached — the resolution is a couple of
+// bash sub-shells and never changes for the life of the process.
+function resolveBackend() {
+  if (cachedBackendResolution) return cachedBackendResolution;
   const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
   const confPath = confPaths.find(p => fs.existsSync(p)) || confPaths[0];
   let cmd = BACKEND;
@@ -163,9 +219,150 @@ function buildLaunchCommand() {
   } catch (e) {
     console.error(`Could not resolve backend flags from ${confPath}: ${e.message}`);
   }
+  cachedBackendResolution = { cmd, perm };
+  return cachedBackendResolution;
+}
+
+function buildLaunchCommand() {
+  if (cachedLaunchCommand) return cachedLaunchCommand;
+  const { cmd, perm } = resolveBackend();
   const modelFlag = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
   cachedLaunchCommand = [cmd, perm, modelFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
+}
+
+// --- Headless (non-interactive) one-shot dispatch (kubestellar/hive#2538) ---
+//
+// Backends whose CLI supports a one-shot / print invocation that takes the
+// prompt on the command line, runs to completion, and EXITS with a meaningful
+// status — the property the headless mode needs. Each entry says how to turn
+// (binary, perm-flags, prompt) into an argv:
+//
+//   flag — the sub-command/flag that selects one-shot mode; the prompt is
+//          passed as the single positional argument that follows it
+//          (`claude -p "<prompt>"`, `codex exec "<prompt>"`).
+//
+// Backends NOT listed here have no known non-interactive entry point (goose /
+// bob / agy / pi drive an interactive TUI), so headless mode refuses them
+// LOUDLY at task time rather than silently stalling. Extending this table is
+// how a future PR adds a backend once its headless invocation is verified.
+const HEADLESS_BACKENDS = {
+  // claude -p "<prompt>" — print mode: runs the prompt non-interactively and
+  // exits. Same perm flags as the interactive launch (bypass permissions).
+  claude: { flag: '-p' },
+  // litellm is the claude binary pointed at a LiteLLM proxy, so the same
+  // print-mode invocation applies.
+  litellm: { flag: '-p' },
+  // copilot -p "<prompt>" — non-interactive programmatic mode.
+  copilot: { flag: '-p' },
+  // codex exec "<prompt>" — Codex's non-interactive execution sub-command.
+  codex: { flag: 'exec' },
+};
+
+// headlessSupportsBackend reports whether the configured backend has a known
+// one-shot invocation. Used to fail fast at startup and per task.
+function headlessSupportsBackend() {
+  return Object.prototype.hasOwnProperty.call(HEADLESS_BACKENDS, BACKEND);
+}
+
+// buildHeadlessArgv turns a task prompt into the argv for a one-shot,
+// non-interactive backend invocation: [binary, ...permFlags, ...modelFlag,
+// oneShotFlag, prompt] (order adjusted per promptAsArg). Returns null for an
+// unsupported backend. Never shell-interpolates the prompt — it is passed as a
+// distinct argv element to execFile, so apostrophes/quotes in the prompt (the
+// exact #2203 wedge on the interactive path) cannot break anything here.
+function buildHeadlessArgv(prompt) {
+  const spec = HEADLESS_BACKENDS[BACKEND];
+  if (!spec) return null;
+  const { cmd, perm } = resolveBackend();
+  const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
+  const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
+  const args = [...permArgs, ...modelArgs, spec.flag, prompt];
+  return { bin: cmd, args };
+}
+
+// writeHeadlessStatus records the runner's coarse lifecycle state so a
+// supervising process / K8s probe can read it. Best-effort: a failed write is
+// logged-by-omission and never aborts the task.
+function writeHeadlessStatus(state, extra) {
+  const payload = Object.assign({
+    mode: MODE_HEADLESS,
+    backend: BACKEND,
+    state,
+    updated_at: new Date().toISOString(),
+  }, extra || {});
+  try {
+    fs.writeFileSync(HEADLESS_STATUS_FILE, JSON.stringify(payload, null, 2));
+  } catch (_) { /* probe file is advisory; never fail a task on it */ }
+  return payload;
+}
+
+// Reference to the in-flight headless child, so a revoke/shutdown can kill it.
+let headlessChild = null;
+
+// runHeadlessTask drives a single task to completion WITHOUT tmux: it spawns the
+// one-shot CLI, captures (bounded) output, and on exit reports task_complete
+// (exit 0) or task_failed (non-zero / spawn error / timeout) over the existing
+// WebSocket channel — then announces `ready` for the next task. This is the
+// headless analogue of the interactive progressTick() completion path.
+function runHeadlessTask(task) {
+  const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
+  if (!headlessSupportsBackend()) {
+    // No non-interactive entry point for this backend: fail LOUDLY rather than
+    // stall. This is the #2538 guarantee — a headless run never waits silently.
+    const reason = `backend '${BACKEND}' has no headless (non-interactive) mode; supported: ${Object.keys(HEADLESS_BACKENDS).join(', ')}`;
+    console.error(`Headless dispatch refused: ${reason}`);
+    writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });
+    failCurrentTask(reason, { permanent: true });
+    return;
+  }
+
+  const { bin, args } = buildHeadlessArgv(prompt);
+  console.log(`Headless: running ${bin} (one-shot) for ${task.repo}#${task.number}`);
+  writeHeadlessStatus(HEADLESS_STATE_WORKING, { task_id: task.task_id, repo: task.repo, number: task.number });
+  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working' });
+
+  let settled = false;
+  const finish = (fn) => { if (settled) return; settled = true; fn(); };
+
+  headlessChild = execFile(bin, args, {
+    timeout: HEADLESS_TASK_TIMEOUT_MS,
+    maxBuffer: HEADLESS_MAX_OUTPUT_BYTES,
+    killSignal: 'SIGKILL',
+    cwd: process.env.HIVE_WORKSPACE_DIR || process.cwd(),
+  }, (err, stdout, stderr) => {
+    headlessChild = null;
+    // Tokens can appear in agent output; redact before the tail leaves the host.
+    const outTail = redactTokens(String(stdout || '') + String(stderr || ''))
+      .split('\n').slice(-TMUX_TAIL_LINES);
+    if (err) {
+      // A non-zero exit, a spawn failure (ENOENT), or the timeout kill all land
+      // here. err.killed && err.signal signals the timeout; report a real
+      // failure either way so the hub can reassign — never a silent hang.
+      const timedOut = err.killed === true;
+      const reason = timedOut
+        ? `headless task exceeded ${HEADLESS_TASK_TIMEOUT_MS / 60000}min and was killed`
+        : `headless CLI exited with error: ${err.code !== undefined ? `code ${err.code}` : err.message}`;
+      finish(() => {
+        console.error(`Headless task ${task.task_id} failed: ${reason}`);
+        writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });
+        failCurrentTask(reason, { permanent: false });
+      });
+      return;
+    }
+    finish(() => {
+      console.log(`Headless task ${task.task_id} completed (exit 0)`);
+      const prURL = detectPRURL(outTail, task.repo);
+      if (prURL) console.log(`Detected PR for ${task.task_id}: ${prURL}`);
+      writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, pr_url: prURL });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
+      currentTask = null;
+      taskAssignedAt = 0;
+      tasksCompletedCount++;
+      writeHeadlessStatus(HEADLESS_STATE_WAITING);
+      send({ type: 'ready', seq: nextSeq() });
+    });
+  });
 }
 
 // A tmux pane can be left in bash's PS2 continuation state ("> ") when task
@@ -270,10 +467,27 @@ function waitForCLI() {
 let cliReady = false;
 let pendingTask = null;
 
-waitForCLI().then(() => {
+if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+  // Headless mode has no tmux pane to scrape for readiness. Each task spawns
+  // its own one-shot CLI process on demand, so there is nothing to "become
+  // ready" — the relay is ready to accept work as soon as it authenticates.
+  // Fail fast on an unsupported backend so a K8s pod reports a real error at
+  // startup instead of accepting a task it can never run.
   cliReady = true;
-  flushPendingTask();
-}).catch(e => console.error(e.message));
+  if (!headlessSupportsBackend()) {
+    console.error(`FATAL: CONTRIBUTOR_MODE=headless but backend '${BACKEND}' has no non-interactive mode. Supported: ${Object.keys(HEADLESS_BACKENDS).join(', ')}`);
+    writeHeadlessStatus(HEADLESS_STATE_FAILED, { reason: `unsupported headless backend: ${BACKEND}` });
+    if (process.env.HIVE_RELAY_TEST_MODE !== '1') process.exit(1);
+  } else {
+    console.log(`Headless mode: backend '${BACKEND}' will run one-shot per task (no tmux).`);
+    writeHeadlessStatus(HEADLESS_STATE_WAITING);
+  }
+} else {
+  waitForCLI().then(() => {
+    cliReady = true;
+    flushPendingTask();
+  }).catch(e => console.error(e.message));
+}
 
 const ENTER_COUNT = 3;
 const ENTER_DELAY_MS = 300;
@@ -851,11 +1065,18 @@ function handleMessage(data) {
       }
       fs.writeFileSync(TASK_FILE, JSON.stringify(msg, null, 2));
       send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id });
-      const taskPrompt = msg.prompt || `Work on ${msg.kind} ${msg.repo}#${msg.number}: ${msg.title}`;
-      // tmuxSendKeys() itself queues when the CLI is not confirmed ready, so
-      // there is a single gate rather than two that can disagree.
-      tmuxSendKeys(taskPrompt);
-      startProgressReporting();
+      if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+        // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
+        // invocation and report completion/failure from its exit status — no
+        // tmux, no pane scraping, no watchdog waiting on an invisible prompt.
+        runHeadlessTask(msg);
+      } else {
+        const taskPrompt = msg.prompt || `Work on ${msg.kind} ${msg.repo}#${msg.number}: ${msg.title}`;
+        // tmuxSendKeys() itself queues when the CLI is not confirmed ready, so
+        // there is a single gate rather than two that can disagree.
+        tmuxSendKeys(taskPrompt);
+        startProgressReporting();
+      }
       break;
 
     case 'token_refresh':
@@ -871,6 +1092,14 @@ function handleMessage(data) {
       currentTask = null;
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+      // Headless mode: kill the in-flight one-shot child so the revoked task's
+      // process does not keep running (and holding the credential) after the
+      // hub took the work back.
+      if (CONTRIBUTOR_MODE === MODE_HEADLESS && headlessChild) {
+        try { headlessChild.kill('SIGKILL'); } catch (_) {}
+        headlessChild = null;
+        writeHeadlessStatus(HEADLESS_STATE_WAITING);
+      }
       send({ type: 'ready', seq: nextSeq() });
       break;
 
@@ -985,6 +1214,19 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
     setWs: (w) => { ws = w; },
+    // Headless (non-interactive) mode surface (kubestellar/hive#2538).
+    CONTRIBUTOR_MODE,
+    MODE_INTERACTIVE,
+    MODE_HEADLESS,
+    HEADLESS_BACKENDS,
+    HEADLESS_STATE_WAITING,
+    HEADLESS_STATE_WORKING,
+    HEADLESS_STATE_DONE,
+    HEADLESS_STATE_FAILED,
+    headlessSupportsBackend,
+    buildHeadlessArgv,
+    runHeadlessTask,
+    getHeadlessChild: () => headlessChild,
   };
 } else {
   connect();

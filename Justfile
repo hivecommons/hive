@@ -739,19 +739,49 @@ contribute-stop:
     done
     $STOPPED && echo "Stopped." || echo "Not running."
 
-# Generate K8s ConfigMap + Secret YAML from contributor.env
+# Generate a runnable K8s contributor workload (Namespace + ConfigMap + Secret + Deployment)
 # Usage: just contribute-k8s                          (default namespace: hive-contributor)
 #        just contribute-k8s my-namespace              (custom namespace)
-#        just contribute-k8s my-namespace output.yaml  (write to file instead of stdout)
-contribute-k8s namespace="hive-contributor" outfile="":
+#        just contribute-k8s my-namespace out.yaml     (write to file instead of stdout)
+#        just contribute-k8s my-namespace "" v2        (pin a specific image tag, #2549)
+#
+# Unlike the earlier config-only generator, this now ALSO emits a Deployment that
+# actually RUNS the contributor relay in HEADLESS mode (kubestellar/hive#2660,
+# #2549): a headless pod has no TTY, so it sets CONTRIBUTOR_MODE=headless (the
+# interactive tmux path would stall forever waiting on a prompt nobody can type
+# into). Applying the output results in a running contributor, not three inert
+# config objects. Like before, it PRINTS YAML (or writes a file) and prints an
+# apply instruction — it never invokes kubectl itself.
+contribute-k8s namespace="hive-contributor" outfile="" image_tag="v2":
     #!/usr/bin/env bash
     set -euo pipefail
 
     # ── Constants ──
     readonly CONFIGMAP_NAME="hive-contributor-config"
     readonly SECRET_NAME="hive-contributor-secrets"
+    readonly DEPLOYMENT_NAME="hive-contributor"
     readonly ENV_FILE="{{config_dir}}/contributor.env"
     readonly GH_AUTH_FILE="{{config_dir}}/gh-auth.env"
+    # Published multi-arch image (.github/workflows/docker.yml build-contributor).
+    readonly IMAGE_REPO="ghcr.io/kubestellar/hive-contributor"
+    # CONTRIBUTOR_MODE selector values — must match bin/contributor-relay.sh.
+    readonly MODE_HEADLESS="headless"
+    # Where the headless relay writes its coarse lifecycle state as JSON
+    # (waiting/working/done/failed). Kept in step with HEADLESS_STATUS_FILE's
+    # default in bin/contributor-relay.sh; the probe below reads this exact path.
+    readonly HEADLESS_STATUS_FILE="/tmp/contributor-headless-status.json"
+    # Backends with a verified non-interactive (headless) entry point — must
+    # match HEADLESS_BACKENDS in bin/contributor-relay.sh. A headless pod on any
+    # OTHER backend (goose/bob/agy/pi) refuses work LOUDLY at startup, so we warn
+    # here rather than emit a manifest that will crash-loop with no explanation.
+    readonly HEADLESS_BACKENDS="claude litellm copilot codex"
+    # Memory sizing: the contributor image is ~2.7GiB unpacked and each task
+    # spawns a real coding-CLI + a repo build/test, so requests are deliberately
+    # generous. Named here so an operator can see and tune them, not magic YAML.
+    readonly MEM_REQUEST="1Gi"
+    readonly MEM_LIMIT="4Gi"
+    readonly CPU_REQUEST="500m"
+    readonly CPU_LIMIT="2"
 
     # ── Validate setup exists ──
     if [[ ! -f "$ENV_FILE" ]]; then
@@ -770,6 +800,27 @@ contribute-k8s namespace="hive-contributor" outfile="":
     fi
 
     NS="{{namespace}}"
+    IMAGE_TAG="{{image_tag}}"
+    IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+    BACKEND="${AGENT_BACKEND:-claude}"
+
+    # ── Headless-backend preflight (#2549 / #2660) ──
+    # The workload runs headless. Only the backends in HEADLESS_BACKENDS have a
+    # verified non-interactive entry point; anything else makes the relay refuse
+    # work loudly at startup. Warn to STDERR (never stdout — stdout is the YAML
+    # that gets piped to kubectl) so the contributor is told BEFORE they apply,
+    # rather than debugging a crash-looping pod. We still emit the manifest so an
+    # operator switching AGENT_BACKEND to a supported one need not regenerate.
+    BACKEND_HEADLESS_OK=false
+    for b in $HEADLESS_BACKENDS; do
+      if [[ "$b" == "$BACKEND" ]]; then BACKEND_HEADLESS_OK=true; break; fi
+    done
+    if [[ "$BACKEND_HEADLESS_OK" != true ]]; then
+      echo "WARNING: AGENT_BACKEND='${BACKEND}' has no headless (non-interactive) mode." >&2
+      echo "         The headless Deployment supports only: ${HEADLESS_BACKENDS}." >&2
+      echo "         This backend would refuse work at startup. Re-run 'just contribute-setup <cli>'" >&2
+      echo "         with one of the supported backends before applying." >&2
+    fi
 
     # ── Helper: base64-encode a value (portable across macOS and Linux) ──
     b64() {
@@ -800,7 +851,14 @@ contribute-k8s namespace="hive-contributor" outfile="":
     YAML+="  HIVE_HUB: \"${HIVE_HUB:-}\""$'\n'
     YAML+="  CONTRIBUTOR_ID: \"${CONTRIBUTOR_ID:-}\""$'\n'
     YAML+="  CONTRIBUTOR_USERNAME: \"${CONTRIBUTOR_USERNAME:-}\""$'\n'
-    YAML+="  AGENT_BACKEND: \"${AGENT_BACKEND:-claude}\""$'\n'
+    YAML+="  AGENT_BACKEND: \"${BACKEND}\""$'\n'
+    # A pod has no TTY, so the relay MUST run headless (#2660/#2549); the
+    # interactive tmux path would stall forever. Carried in the ConfigMap so the
+    # Deployment picks it up via envFrom with everything else.
+    YAML+="  CONTRIBUTOR_MODE: \"${MODE_HEADLESS}\""$'\n'
+    # Path the headless relay writes its lifecycle state to; the Deployment's
+    # liveness/readiness probes read this same file.
+    YAML+="  HIVE_HEADLESS_STATUS_FILE: \"${HEADLESS_STATUS_FILE}\""$'\n'
     YAML+="---"$'\n'
     YAML+="# Sensitive credentials — treat as secret"$'\n'
     YAML+="apiVersion: v1"$'\n'
@@ -814,19 +872,145 @@ contribute-k8s namespace="hive-contributor" outfile="":
     YAML+="type: Opaque"$'\n'
     YAML+="data:"$'\n'
     YAML+="  HIVE_REGISTRATION_TOKEN: ${REG_TOKEN_B64}"$'\n'
-    YAML+="  GH_TOKEN: ${GH_TOKEN_B64}"
+    YAML+="  GH_TOKEN: ${GH_TOKEN_B64}"$'\n'
+
+    # ── Probe command (#2660 status file) ──
+    # The kubelet execs this against the pod. It reads the coarse lifecycle state
+    # the headless relay writes (waiting/working/done/failed):
+    #   file missing            -> exit 1  (relay not up yet / died before writing)
+    #   state == "failed"       -> exit 1  (task wedged & killed by the relay's
+    #                                        HEADLESS_TASK_TIMEOUT_MS, or a spawn
+    #                                        error — surface as unhealthy, NOT a
+    #                                        healthy-looking-but-stalled pod)
+    #   waiting|working|done    -> exit 0  (alive and connected)
+    # Emitted as a YAML block sequence (one arg per line) and written with a
+    # block scalar so shell quoting inside the command can't corrupt the YAML.
+    # We grep for the "state" line then test its VALUE — the relay only ever
+    # writes one of the four known values, so a plain grep on the file is enough
+    # and avoids needing jq. `grep -q failed` on the state line is the fail case;
+    # a matching known-good state is the pass case; anything else (no file, no
+    # recognised state) fails closed.
+    PROBE_STEP1='STATE=$(sed -n "s/.*\"state\"[^\"]*\"\\([a-z]*\\)\".*/\\1/p" '"${HEADLESS_STATUS_FILE}"' 2>/dev/null | head -1)'
+    PROBE_STEP2='case "$STATE" in waiting|working|done) exit 0 ;; *) exit 1 ;; esac'
+
+    # ── Deployment: the workload that actually runs the contributor (#2549) ──
+    YAML+="---"$'\n'
+    YAML+="# The contributor workload. Runs the relay HEADLESS (#2660): no TTY, one"$'\n'
+    YAML+="# one-shot CLI invocation per task. A long-lived Deployment (not a Job)"$'\n'
+    YAML+="# because the relay stays connected to the hub and pulls work over time;"$'\n'
+    YAML+="# Kubernetes restarts it on failure and keeps a stable identity — the"$'\n'
+    YAML+="# exact reason an operator wants a cluster over a laptop."$'\n'
+    YAML+="#"$'\n'
+    YAML+="# INTERIM CREDENTIAL NOTE (#2537): the Secret above carries a long-lived,"$'\n'
+    YAML+="# personal GH_TOKEN (scope repo,read:org). In a cluster it is base64 (NOT"$'\n'
+    YAML+="# encrypted), readable by anyone with 'get secrets' in this namespace and"$'\n'
+    YAML+="# by cluster-scoped operators/backups. This is materially more exposed"$'\n'
+    YAML+="# than a 0600 file on a laptop. Revoke any time with: gh auth logout (or"$'\n'
+    YAML+="# revoke the token in GitHub settings). Gating the credential on explicit"$'\n'
+    YAML+="# task acceptance is tracked in kubestellar/hive#2537 and is NOT solved"$'\n'
+    YAML+="# here — this path reuses the existing Secret rather than inventing new"$'\n'
+    YAML+="# long-lived credential plumbing."$'\n'
+    YAML+="apiVersion: apps/v1"$'\n'
+    YAML+="kind: Deployment"$'\n'
+    YAML+="metadata:"$'\n'
+    YAML+="  name: ${DEPLOYMENT_NAME}"$'\n'
+    YAML+="  namespace: ${NS}"$'\n'
+    YAML+="  labels:"$'\n'
+    YAML+="    app.kubernetes.io/name: hive-contributor"$'\n'
+    YAML+="    app.kubernetes.io/component: relay"$'\n'
+    YAML+="spec:"$'\n'
+    # Single replica: one relay per registration token / contributor identity.
+    # Scaling capacity means more (separately-registered) contributors, not more
+    # replicas of the same token — so a fixed 1 here, documented.
+    YAML+="  replicas: 1"$'\n'
+    YAML+="  selector:"$'\n'
+    YAML+="    matchLabels:"$'\n'
+    YAML+="      app.kubernetes.io/name: hive-contributor"$'\n'
+    YAML+="      app.kubernetes.io/component: relay"$'\n'
+    YAML+="  template:"$'\n'
+    YAML+="    metadata:"$'\n'
+    YAML+="      labels:"$'\n'
+    YAML+="        app.kubernetes.io/name: hive-contributor"$'\n'
+    YAML+="        app.kubernetes.io/component: relay"$'\n'
+    YAML+="    spec:"$'\n'
+    # Deployment pods are always restartPolicy: Always (the API rejects anything
+    # else) — the relay is meant to run forever and reconnect, so this is the
+    # right shape. Stated for the reader; not settable here.
+    YAML+="      restartPolicy: Always"$'\n'
+    YAML+="      containers:"$'\n'
+    YAML+="        - name: contributor"$'\n'
+    YAML+="          image: ${IMAGE}"$'\n'
+    # Pull the pinned tag on restart so a moved tag can't silently swap the code
+    # under a running contributor; a digest/pinned tag is recommended for repro.
+    YAML+="          imagePullPolicy: Always"$'\n'
+    # envFrom pulls the whole ConfigMap (incl. CONTRIBUTOR_MODE=headless) and the
+    # whole Secret — no per-key wiring to drift out of sync with the generator.
+    YAML+="          envFrom:"$'\n'
+    YAML+="            - configMapRef:"$'\n'
+    YAML+="                name: ${CONFIGMAP_NAME}"$'\n'
+    YAML+="            - secretRef:"$'\n'
+    YAML+="                name: ${SECRET_NAME}"$'\n'
+    YAML+="          resources:"$'\n'
+    YAML+="            requests:"$'\n'
+    YAML+="              memory: \"${MEM_REQUEST}\""$'\n'
+    YAML+="              cpu: \"${CPU_REQUEST}\""$'\n'
+    YAML+="            limits:"$'\n'
+    YAML+="              memory: \"${MEM_LIMIT}\""$'\n'
+    YAML+="              cpu: \"${CPU_LIMIT}\""$'\n'
+    # Readiness: gates the pod Ready only once the relay has authenticated and
+    # written a non-failed state. A wedged/failed relay drops out of Ready.
+    # emit_probe <indent> — appends an exec: command block sequence with the two
+    # probe steps as a single `sh -c` argument, block-scalar formatted so quoting
+    # inside the script can't corrupt the surrounding YAML.
+    emit_probe() {
+      local ind="$1"
+      YAML+="${ind}exec:"$'\n'
+      YAML+="${ind}  command:"$'\n'
+      YAML+="${ind}    - sh"$'\n'
+      YAML+="${ind}    - -c"$'\n'
+      YAML+="${ind}    - |"$'\n'
+      YAML+="${ind}      ${PROBE_STEP1}"$'\n'
+      YAML+="${ind}      ${PROBE_STEP2}"$'\n'
+    }
+
+    YAML+="          readinessProbe:"$'\n'
+    emit_probe "            "
+    YAML+="            initialDelaySeconds: 15"$'\n'
+    YAML+="            periodSeconds: 15"$'\n'
+    YAML+="            failureThreshold: 3"$'\n'
+    # Liveness: restarts the pod if the relay reports failed (a CLI killed by the
+    # HEADLESS_TASK_TIMEOUT_MS watchdog) or stops writing the file entirely.
+    # Longer initialDelay so a slow first authenticate isn't mistaken for death.
+    YAML+="          livenessProbe:"$'\n'
+    emit_probe "            "
+    YAML+="            initialDelaySeconds: 60"$'\n'
+    YAML+="            periodSeconds: 30"$'\n'
+    YAML+="            failureThreshold: 3"
 
     # ── Output ──
     OUTFILE="{{outfile}}"
     if [[ -n "$OUTFILE" ]]; then
       echo "$YAML" > "$OUTFILE"
-      echo "✓ K8s manifests written to ${OUTFILE}"
+      echo "✓ K8s contributor workload written to ${OUTFILE}"
+      echo "  Namespace + ConfigMap + Secret + Deployment (headless relay, image ${IMAGE})"
       echo ""
       echo "Apply with:"
       echo "  kubectl apply -f ${OUTFILE}"
+      echo ""
+      echo "Then watch it come up:"
+      echo "  kubectl -n ${NS} rollout status deploy/${DEPLOYMENT_NAME}"
+      echo ""
+      echo "Interim credential note (#2537): the Secret holds a long-lived personal"
+      echo "GH_TOKEN — base64, not encrypted, and cluster-readable. Revoke any time"
+      echo "with 'gh auth logout'. Pin the image with a 3rd arg, e.g.:"
+      echo "  just contribute-k8s ${NS} ${OUTFILE} <git-short-sha>"
     else
       echo "$YAML"
       echo ""
       echo "# Apply with: just contribute-k8s {{namespace}} | kubectl apply -f -"
       echo "# Or save:    just contribute-k8s {{namespace}} manifests.yaml"
+      echo "# Then:       kubectl -n {{namespace}} rollout status deploy/${DEPLOYMENT_NAME}"
+      echo "# Pin image:  just contribute-k8s {{namespace}} manifests.yaml <git-short-sha>"
+      echo "# Interim credential note (#2537): Secret holds a long-lived personal GH_TOKEN"
+      echo "#   (base64, cluster-readable). Revoke with 'gh auth logout'."
     fi
