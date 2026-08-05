@@ -1490,6 +1490,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if contributor != nil {
 				contributor.mu.Lock()
 				contributor.tmuxOutput = msg.TmuxOutput
+				// resumed is true only when this task_progress REBUILT currentTask
+				// from nothing — i.e. the relay is re-asserting a task the hub had
+				// released on disconnect (the reconnect/resume path), not a routine
+				// progress ping for a task the hub already tracks.
+				resumed := false
 				if contributor.currentTask == nil && msg.TaskID != "" {
 					contributor.currentTask = &WSTaskAssign{
 						TaskID: msg.TaskID,
@@ -1506,8 +1511,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						Number: msg.Number,
 						Title:  msg.Title,
 					}
+					resumed = true
 				}
 				contributor.mu.Unlock()
+
+				// #2610 finding 3: the disconnect defer clears tokenMintedAt, and
+				// this resume path historically rebuilt currentTask WITHOUT re-arming
+				// it. tokenRefreshDue treats a zero tokenMintedAt as "not due", so
+				// maybeRefreshToken on the heartbeat became a permanent no-op for the
+				// resumed connection — the task kept the token minted at its original
+				// assignment and it expired at wsTokenTTL (55m) with no 50-minute
+				// replacement, the exact silent-expiry case the refresh path was added
+				// for (#2393 item 2). Re-mint and push a fresh token_refresh here so
+				// the resumed session both holds a valid token and re-arms the refresh
+				// cycle (resumeTaskToken sets tokenMintedAt on a successful send).
+				if resumed {
+					h.resumeTaskToken(contributor)
+				}
 			}
 
 		case "task_complete":
@@ -1703,6 +1723,39 @@ func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 	}
 
 	h.logger.Info("[contribute-ws] token refreshed for active task",
+		"username", c.profile.GitHubUsername, "tier", tier)
+}
+
+// resumeTaskToken re-mints a scoped GitHub token for a task that has just been
+// re-asserted over a reconnect (task_progress rebuilt currentTask) and pushes it
+// to the relay, which re-arms the heartbeat refresh cycle: sendTokenRefresh
+// records tokenMintedAt on success, so the subsequent maybeRefreshToken calls see
+// a non-zero mint time and fire again. Without this the resumed session's
+// tokenMintedAt stays zero (cleared by the disconnect defer) and refresh never
+// fires again for the life of the connection (#2610 finding 3). A mint failure or
+// an empty token (no App auth / no cache) leaves the relay's existing token in
+// place — the same lenient policy maybeRefreshToken uses — and tokenMintedAt stays
+// zero, so the next reconnect (or a later mint success) can still arm it.
+func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection) {
+	tier := ""
+	if c.profile != nil {
+		tier = c.profile.TrustTier
+	}
+	tok, err := h.mintScopedToken(tier)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] resume token refresh: mint failed, refresh will re-arm on next resume/heartbeat",
+			"username", c.profile.GitHubUsername, "tier", tier, "error", err)
+		return
+	}
+	if tok == "" {
+		// No new token available: leave the relay's existing token in place.
+		return
+	}
+	if err := h.sendTokenRefresh(c, tok); err != nil {
+		h.logger.Info("[contribute-ws] resume token refresh: send failed", "username", c.profile.GitHubUsername, "error", err)
+		return
+	}
+	h.logger.Info("[contribute-ws] token refreshed on task resume (re-armed refresh cycle)",
 		"username", c.profile.GitHubUsername, "tier", tier)
 }
 
