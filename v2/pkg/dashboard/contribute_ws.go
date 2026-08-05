@@ -1458,7 +1458,15 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.currentTask = &WSTaskAssign{
 						TaskID: msg.TaskID,
 						Kind:   msg.Kind,
-						Repo:   msg.Repo,
+						// #2644: canonicalise the CLIENT-supplied repo to the same
+						// repo.Full form selectTask assigned it under, so the
+						// activeIssues double-assign guard and the failure/completion
+						// cooldowns — all keyed "repo#number" off currentTask.Repo —
+						// match. Storing msg.Repo verbatim let a relay whose repo
+						// spelling differs from repo.Full slip its resumed task past
+						// the in-flight exclusion, and the SAME issue was handed to a
+						// second contributor (intermittent, and only for that repo).
+						Repo:   h.canonicalRepoKey(msg.Repo),
 						Number: msg.Number,
 						Title:  msg.Title,
 					}
@@ -1927,6 +1935,75 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
 		repoFull, repoFull, number, title, repoFull, repoFull,
 	)
+}
+
+// canonicalRepoKey maps an arbitrary, possibly client-supplied repo string to the
+// SAME canonical form the server keys everything on: FrontendRepo.Full, i.e. the
+// exact string selectTask's activeIssues guard, the failure/quarantine cooldowns,
+// and the completion cooldown all build their "repo#number" keys from.
+//
+// Why this is load-bearing (#2644): currentTask.Repo is normally set by selectTask
+// to chosen.repoFull (== repo.Full). But the task_progress RESUME path re-populates
+// currentTask from the CLIENT-supplied msg.Repo after a reconnect (the relay keeps
+// its task locally and re-asserts it via task_progress). If the relay reports the
+// repo in ANY other spelling than repo.Full — a bare name where the hub uses
+// "owner/repo", or a differently-cased/prefixed cross-org name — then every
+// server-side "%s#%d" key built from currentTask.Repo silently MISSES:
+//   - the activeIssues double-assign guard no longer excludes the in-flight issue,
+//     so a concurrent selectTask hands the SAME issue to a second contributor; and
+//   - the disconnect/abandon reconnect-window cooldown (recordTaskFailure) is booked
+//     under the wrong key, so it does not protect that issue either.
+//
+// This is exactly the #2356/#2492 duplicate-assignment race re-opened through a key
+// mismatch, and it is intermittent + repo-specific: it only fires for a repo whose
+// relay-reported name differs from the hub's repo.Full, and only across a reconnect
+// that resumes via task_progress — which is why #2644 was seen "only in this repo".
+//
+// Resolution order:
+//  1. Exact match on a known repo's Full (already canonical) → return it unchanged.
+//  2. Match on a known repo's Name (case-insensitive) or its Full (case-insensitive)
+//     → return that repo's Full, adopting the canonical casing/prefix.
+//  3. No status/no match: fall back to the SAME rule buildRepos uses — prefix the
+//     configured Org when the string carries no "owner/" segment — so a bare name
+//     still lands on "org/name". If even the org is unknown, return the raw string
+//     (unchanged behaviour of last resort; never worse than before).
+func (h *ContributeWSHub) canonicalRepoKey(repo string) string {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return repo
+	}
+
+	var status *StatusPayload
+	if h != nil && h.server != nil {
+		h.server.statusMu.RLock()
+		status = h.server.status
+		h.server.statusMu.RUnlock()
+	}
+	if status != nil {
+		// First pass: an exact Full match is already canonical — cheap and common.
+		for _, r := range status.Repos {
+			if r.Full == repo {
+				return r.Full
+			}
+		}
+		// Second pass: reconcile a differently-spelled client value against the
+		// known set by Name or case-insensitive Full, adopting the canonical Full.
+		for _, r := range status.Repos {
+			if strings.EqualFold(r.Name, repo) || strings.EqualFold(r.Full, repo) {
+				return r.Full
+			}
+		}
+	}
+
+	// Fallback mirrors buildRepos: a bare name is qualified with the configured org
+	// so it matches the "org/name" Full the rest of the server builds.
+	if !strings.Contains(repo, "/") &&
+		h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		if org := h.server.deps.Config.Project.Org; org != "" {
+			return org + "/" + repo
+		}
+	}
+	return repo
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
