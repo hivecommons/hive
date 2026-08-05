@@ -504,9 +504,18 @@ if [ "$(id -u)" = "0" ]; then
 
   # Write .bashrc for agent shells. GH_TOKEN is NOT exported here — gh-wrapper.sh
   # injects the token at call time, avoiding exposure in shell env / transcripts.
+  # Point agent shells (git/curl, which also go through the MITM proxy) at the
+  # COMBINED bundle (public roots + proxy CA) the entrypoint builds before the Go
+  # launch. Falling back to the proxy CA alone if the combined bundle isn't there
+  # yet keeps proxied HTTPS working; the combined bundle is strictly safer because
+  # it also trusts real public roots for any non-proxied endpoint (advisory mode).
   cat > /data/home/.bashrc <<'BASHRC' 2>/dev/null || true
 # Hive agent shell environment
-export SSL_CERT_FILE=/data/proxy-ca.pem
+if [ -f /data/proxy-ca-bundle.pem ]; then
+  export SSL_CERT_FILE=/data/proxy-ca-bundle.pem
+else
+  export SSL_CERT_FILE=/data/proxy-ca.pem
+fi
 BASHRC
   chmod 644 /data/home/.bashrc 2>/dev/null || true
 
@@ -815,6 +824,49 @@ if [ -f "$COPILOT_PAT_FILE" ] && [ -s "$COPILOT_PAT_FILE" ]; then
   echo "[entrypoint] Copilot PAT loaded from $COPILOT_PAT_FILE"
 fi
 
+# ── Proxy CA trust for the MAIN Go hive process (race-free) ──────────────
+# The Go hive process makes GitHub App token calls
+# (POST /app/installations/{id}/access_tokens). With F5 forced egress enabled
+# (the iptables REDIRECT of all outbound :443 to the MITM proxy, set up above),
+# those calls hit the proxy, which presents a cert forged by /data/proxy-ca.pem.
+# Go's crypto/x509 must trust that CA or every token mint fails with
+# "x509: certificate signed by unknown authority" → "all N repos failed" → the
+# agent loop is dead (verified live on the console hive).
+#
+# We CANNOT rely on the system-trust install below (the gosu/update-ca-certificates
+# block after the launch) for the Go process, for two reasons:
+#   1. RACE: the Go process starts here, BEFORE that install runs, and Go caches
+#      the system cert pool at first TLS handshake. A boot-time gosu failure
+#      ("WARN: proxy CA install via gosu failed", seen live) then leaves the
+#      already-running Go process permanently unable to verify the proxy cert —
+#      the later CA-watch re-install loop cannot fix a pool Go already cached.
+#   2. Go honors SSL_CERT_FILE at handshake time (NOT cached like the system
+#      bundle), so pointing it at a file we control is robust and race-free.
+#
+# We point SSL_CERT_FILE at a COMBINED bundle = public roots + proxy CA, NOT the
+# proxy CA alone. Rationale: SSL_CERT_FILE REPLACES the trust set, so proxy-CA-only
+# would make Go trust ONLY the proxy CA and break any HTTPS that does NOT traverse
+# the MITM proxy — which happens in advisory mode (HIVE_PROXY_ADVISORY_OK=true, no
+# iptables redirect: the Go process then reaches api.github.com / a GHE host
+# directly with a REAL public cert). The combined bundle trusts BOTH the real
+# public roots AND the proxy CA, so it is correct whether or not egress is forced.
+SSL_CERT_BUNDLE="/data/proxy-ca-bundle.pem"
+SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+if [ -f /data/proxy-ca.pem ] && [ -f "$SYSTEM_CA_BUNDLE" ]; then
+  if cat "$SYSTEM_CA_BUNDLE" /data/proxy-ca.pem > "$SSL_CERT_BUNDLE" 2>/dev/null; then
+    export SSL_CERT_FILE="$SSL_CERT_BUNDLE"
+    echo "[entrypoint] SSL_CERT_FILE=$SSL_CERT_BUNDLE (public roots + proxy CA) for Go hive process"
+  else
+    echo "[entrypoint] WARN: could not build combined CA bundle $SSL_CERT_BUNDLE; Go hive will rely on system trust store (racy)"
+  fi
+elif [ -f /data/proxy-ca.pem ]; then
+  # No system bundle on disk (unusual): fall back to proxy CA alone so at least
+  # proxied HTTPS verifies. Direct (non-proxied) HTTPS would fail here, but with
+  # forced egress every :443 is proxied anyway.
+  export SSL_CERT_FILE="/data/proxy-ca.pem"
+  echo "[entrypoint] WARN: no system CA bundle at $SYSTEM_CA_BUNDLE; SSL_CERT_FILE=/data/proxy-ca.pem (proxy CA only)"
+fi
+
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
 hive "$@" &
 HIVE_PID=$!
@@ -824,20 +876,38 @@ sleep 1
 # Install the MITM proxy CA into the system trust store so that
 # agent sub-processes (git, curl) trust the forged certificates.
 # Also set NODE_EXTRA_CA_CERTS for Node.js (Copilot, etc.).
+#
+# NOTE: this system-bundle install is NO LONGER the trust path for the Go hive
+# process — that now uses SSL_CERT_FILE (the combined bundle built before the
+# launch above), which is race-free and survives a gosu failure here. So unlike
+# the F5 egress enforcement (fatal on failure), a failure of THIS install is
+# recoverable and must NOT be fatal: it only affects sub-processes that read the
+# system store, and even those have the combined-bundle fallback via .bashrc /
+# NODE_EXTRA_CA_CERTS. We log clearly but continue.
 if [ -f /data/proxy-ca.pem ]; then
   if command -v gosu >/dev/null 2>&1; then
     gosu root sh -c 'cp /data/proxy-ca.pem /usr/local/share/ca-certificates/hive-proxy-ca.crt && update-ca-certificates' 2>/dev/null \
       && echo "[entrypoint] proxy CA installed to system trust store" \
-      || echo "[entrypoint] WARN: proxy CA install via gosu failed"
+      || echo "[entrypoint] WARN: proxy CA install via gosu failed (recoverable: Go hive uses SSL_CERT_FILE combined bundle; sub-processes use NODE_EXTRA_CA_CERTS / .bashrc SSL_CERT_FILE)"
   elif cp /data/proxy-ca.pem /usr/local/share/ca-certificates/hive-proxy-ca.crt 2>/dev/null; then
     update-ca-certificates 2>/dev/null && echo "[entrypoint] proxy CA installed to system trust store"
   else
-    echo "[entrypoint] WARN: could not install proxy CA to system store (non-root)"
+    echo "[entrypoint] WARN: could not install proxy CA to system store (non-root; recoverable via SSL_CERT_FILE / NODE_EXTRA_CA_CERTS)"
   fi
-  export NODE_EXTRA_CA_CERTS=/data/proxy-ca.pem
-  echo "[entrypoint] NODE_EXTRA_CA_CERTS set for Node.js agents"
+  # Prefer the combined bundle (public roots + proxy CA) for Node.js too, for the
+  # same advisory-mode safety as the Go process; fall back to the proxy CA alone.
+  if [ -f /data/proxy-ca-bundle.pem ]; then
+    export NODE_EXTRA_CA_CERTS=/data/proxy-ca-bundle.pem
+  else
+    export NODE_EXTRA_CA_CERTS=/data/proxy-ca.pem
+  fi
+  echo "[entrypoint] NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS set for Node.js agents"
 fi
-# Watch for CA cert changes (Go binary may regenerate it) and re-install
+# Watch for CA cert changes (Go binary may regenerate it) and re-install into
+# the system store AND rebuild the combined SSL_CERT_FILE bundle so sub-processes
+# and any future Go restart pick up the new proxy CA. (A restart is required for
+# the already-running Go process to re-read SSL_CERT_FILE — Go caches it — but the
+# supervisor restarts the process, which then reads the freshly-rebuilt bundle.)
 (
   PREV_HASH=""
   while true; do
@@ -848,6 +918,10 @@ fi
       cp /data/proxy-ca.pem /usr/local/share/ca-certificates/hive-proxy-ca.crt 2>/dev/null \
         && update-ca-certificates 2>/dev/null \
         && echo "[entrypoint] proxy CA re-installed to system trust store (hash changed)"
+      if [ -f "$SYSTEM_CA_BUNDLE" ]; then
+        cat "$SYSTEM_CA_BUNDLE" /data/proxy-ca.pem > "$SSL_CERT_BUNDLE" 2>/dev/null \
+          && echo "[entrypoint] combined CA bundle rebuilt at $SSL_CERT_BUNDLE (proxy CA hash changed)"
+      fi
       PREV_HASH="$CUR_HASH"
     fi
   done
