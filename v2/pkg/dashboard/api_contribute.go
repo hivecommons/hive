@@ -2773,8 +2773,11 @@ onEl('clanker-list','click',function(e){
     // returned to the queue and booked for the same short cooldown as an auto-release,
     // so it is not instantly re-handed to a stale worker. Uses the existing
     // POST /api/contributors/{id}/requeue endpoint (owner/read-write only).
-    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, so it is not instantly re-assigned to a stale worker. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
-      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST'})
+    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, and the assignment generation is bumped so a stale worker cannot later overwrite the new owner. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
+      // #2568: let the operator attach an optional reason. It is recorded in the
+      // audit + activity log and pushed to the still-connected worker on task_revoke.
+      var reason=(window.prompt('Reason for releasing this task (optional):','wedged: no progress')||'').trim();
+      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
         .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
         .then(function(x){if(x.ok){toast('Task requeued for '+user,true);opsPoll();}else{toast((x.d&&x.d.error)||'Requeue failed',false);}})
         .catch(function(){toast('Requeue failed',false);});
@@ -4817,10 +4820,13 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 // ContributeWSHub.RequeueContributorTask — so a manual requeue can NOT recreate the
 // duplicate-assignment race #2492/#2557 closed: the released issue books the same
 // short failure cooldown and is therefore not instantly re-handed to a stale worker.
-// It does NOT enforce wsTaskTimeout automatically (manual action only) and does NOT
-// implement the deferred renewable-lease / generation-token protocol (that is the
-// follow-up design half of #2568). Requeuing a contributor with no in-flight task is
-// a 404 (nothing to release) rather than a silent no-op.
+//
+// #2568 completion: the release now BUMPS the connection's assignment generation, so a
+// stale worker that later reports completion is fenced out (the Gate — the automatic
+// lease-TTL backstop lives in the hub's cleanupLoop/reclaimExpiredLeases). The operator
+// may pass a REASON (JSON body {"reason":...} or ?reason=), which is recorded in the
+// audit + activity log and pushed to the still-connected worker on task_revoke.
+// Requeuing a contributor with no in-flight task is a 404 (nothing to release).
 func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request) {
 	if !s.requireContributorWrite(w, r) {
 		return
@@ -4835,15 +4841,27 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 		jsonError(w, "Contributor relay is not available", http.StatusServiceUnavailable)
 		return
 	}
+	// #2568: accept an optional operator reason from a JSON body or query param. Both
+	// are optional — an empty reason falls back to the hub's default recovery label —
+	// so existing callers that POST no body keep working unchanged.
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	if reason == "" && r.Body != nil {
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			reason = strings.TrimSpace(body.Reason)
+		}
+	}
 	// Key the live release by the registered ContributorID (what the ops tab passes),
 	// matching how the hub tracks connections. GitHubUsername is only used for logs.
-	released := s.contributeHub.RequeueContributorTask(p.ContributorID)
+	released := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
 	if released == 0 {
 		jsonError(w, "That contributor has no in-flight task to requeue.", http.StatusNotFound)
 		return
 	}
-	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername), "")
-	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released)
+	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername, "reason", reason), "")
+	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released, "reason", reason)
 	jsonResponse(w, map[string]any{"ok": true, "released": released})
 }
 

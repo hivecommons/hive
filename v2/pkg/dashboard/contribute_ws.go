@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,7 +29,18 @@ import (
 const (
 	wsHeartbeatInterval = 30 * time.Second
 	wsHeartbeatTimeout  = 90 * time.Second
-	wsTaskTimeout       = 30 * time.Minute
+	// wsTaskTimeout is the hub-owned LEASE TTL on task ownership (kubestellar/hive
+	// #2568). A task's lease is renewed on assignment and on every task_progress
+	// report; if a connection holds a task but the lease has not been renewed within
+	// this window the cleanupLoop auto-releases it through the SAME cooldown path the
+	// disconnect/ready-abandon/manual-requeue releases use, so a wedged-but-connected
+	// worker cannot hold an issue forever. It is deliberately CONSERVATIVE (option 4
+	// in the issue: manual operator recovery is the primary path, auto-expiry is only
+	// the backstop) so a task that is legitimately "working slowly" — but still
+	// reporting progress — is never falsely reclaimed. Matches the relay's own
+	// 30-minute MAX_TASK_DURATION_MS watchdog so the hub backstop fires no earlier
+	// than the relay's own give-up point.
+	wsTaskTimeout = 30 * time.Minute
 	// wsTokenTTL is how long a minted scoped GitHub token stays valid. It must
 	// match the token_expires_at we advertise to the relay so both sides agree
 	// on when the token dies.
@@ -66,8 +78,25 @@ type ContributorConnection struct {
 	role        string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
 	connectedAt time.Time
 	currentTask *WSTaskAssign
-	lastPong    time.Time
-	tmuxOutput  []string
+	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
+	// hive#2568, the Gate). It is a monotonically increasing token minted per
+	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
+	// It is shipped to the relay in task_assign and echoed back on task_progress /
+	// task_complete / task_failed. When a task is released (disconnect, ready-abandon,
+	// operator requeue, or lease-TTL expiry) this is bumped, so a STALE worker that
+	// later wakes and reports completion/progress carrying the OLD generation is
+	// FENCED OUT: its message is rejected and cannot overwrite the new owner's state.
+	// Zero when no task is active (and a client that never learned a generation — an
+	// unversioned relay — reports 0, which is treated as "unstamped" and falls back to
+	// the pre-existing TaskID match, preserving backward compatibility).
+	currentTaskGen uint64
+	// lastLeaseRenew is when currentTask's hub-owned lease was last renewed
+	// (kubestellar/hive#2568): set on assignment and refreshed on every task_progress.
+	// cleanupLoop auto-releases a task whose lease has not been renewed within
+	// wsTaskTimeout. Zero when no task is active.
+	lastLeaseRenew time.Time
+	lastPong       time.Time
+	tmuxOutput     []string
 	// tokenMintedAt is when the scoped GitHub token for currentTask was last
 	// minted. The heartbeat loop uses it to re-mint and push a token_refresh
 	// once wsTokenRefreshPeriod has elapsed, before the token expires. Zero when
@@ -127,13 +156,21 @@ type WSMessage struct {
 	CLIBackend        string   `json:"cli_backend,omitempty"`
 	Model             string   `json:"model,omitempty"`
 	TaskID            string   `json:"task_id,omitempty"`
-	Kind              string   `json:"kind,omitempty"`
-	Repo              string   `json:"repo,omitempty"`
-	Number            int      `json:"number,omitempty"`
-	Title             string   `json:"title,omitempty"`
-	URL               string   `json:"url,omitempty"`
-	Labels            []string `json:"labels,omitempty"`
-	Prompt            string   `json:"prompt,omitempty"`
+	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
+	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
+	// on task_progress / task_complete / task_failed. The hub rejects any completion or
+	// progress carrying a generation older than the currently-held one, so a worker
+	// whose task was revoked and reassigned cannot later overwrite the new owner's
+	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
+	// pre-existing TaskID match for those clients. Never a credential.
+	TaskGen uint64   `json:"task_gen,omitempty"`
+	Kind    string   `json:"kind,omitempty"`
+	Repo    string   `json:"repo,omitempty"`
+	Number  int      `json:"number,omitempty"`
+	Title   string   `json:"title,omitempty"`
+	URL     string   `json:"url,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
+	Prompt  string   `json:"prompt,omitempty"`
 	// GitHubToken carries the scoped, expiring credential. As of #2537 it is
 	// NEVER populated on task_assign — the credential is split OUT of the
 	// assignment message and delivered only AFTER the task's acceptance decision,
@@ -214,10 +251,21 @@ type ActivityEntry struct {
 }
 
 type ContributeWSHub struct {
-	connections    map[string]*ContributorConnection
-	mu             sync.RWMutex
-	logger         *slog.Logger
-	seq            int
+	connections map[string]*ContributorConnection
+	mu          sync.RWMutex
+	logger      *slog.Logger
+	seq         int
+	// taskGen is the monotonically increasing source of assignment GENERATION tokens
+	// (kubestellar/hive#2568, the Gate). nextTaskGen() hands out a fresh value for
+	// every assignment and every release, so a generation is never reused across the
+	// life of the hub — a stale worker's old generation can never coincidentally match
+	// a later assignment's. It is an atomic counter (NOT guarded by mu) precisely so
+	// nextTaskGen() can be called from paths that ALREADY hold h.mu (e.g.
+	// RequeueContributorTask and reclaimExpiredLeases iterate connections under
+	// h.mu.RLock): a mu-guarded counter would deadlock (RLock-then-Lock on the same
+	// RWMutex). Lock-free is also what the -race coverage job wants — see the standing
+	// "never re-lock m.mu from a path that holds it" rule.
+	taskGen        atomic.Uint64
 	activityMu     sync.RWMutex
 	activity       []ActivityEntry
 	server         *Server
@@ -339,6 +387,17 @@ const quarantineCooldownHours = 6
 // failure. With a weight of 3 and a threshold of 3, a single permanent failure
 // quarantines the issue immediately.
 const permanentFailureWeight = 3
+
+// defaultRequeueReason is the fallback reason recorded and pushed to the client when
+// an operator requeues a held task without supplying one (kubestellar/hive#2568). A
+// non-empty reason is always recorded so the release stays auditable.
+const defaultRequeueReason = "requeued by operator"
+
+// leaseExpiredReason is the reason pushed to a relay whose task lease expired without
+// progress (kubestellar/hive#2568). It is distinct from the operator-requeue reason so
+// an operator reading the activity log can tell a manual release from the automatic
+// backstop.
+const leaseExpiredReason = "task lease expired (no progress within lease TTL)"
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub := &ContributeWSHub{
@@ -867,17 +926,34 @@ func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
 //     it clears its local currentTask, stops progress reporting, and sends "ready")
 //     so the wedged relay stops cleanly and re-asks for work.
 //
-// It does NOT mint or rotate any token, does NOT change trust, and does NOT
-// implement the deferred lease/generation-token guarantee (a truly stale worker that
-// later reconnects and reports completion is out of scope for this slice — the
-// cooldown is the safe interim). Synthetic pr-review tasks carry Number == 0 and are
-// released without booking an issue-key cooldown, exactly like the disconnect path.
+// It does NOT mint or rotate any token and does NOT change trust. It DOES now bump
+// the connection's assignment generation on release (the deferred lease/generation
+// guarantee, delivered here — see step 4 below), so a truly stale worker that later
+// reports completion on the same socket is fenced out. Synthetic pr-review tasks
+// carry Number == 0 and are released without booking an issue-key cooldown, exactly
+// like the disconnect path.
+//
+//  4. bump the connection's currentTaskGen (kubestellar/hive#2568, the Gate) so a
+//     late completion/progress from the revoked worker echoing the OLD generation is
+//     rejected by the task_complete/task_progress/task_failed guards and cannot
+//     overwrite the new owner's state.
 //
 // It returns the number of held sessions that were released so the caller can 404 a
 // contributor that has no in-flight task (nothing to requeue) versus report success.
-func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
+//
+// #2568 completion: each release now BUMPS the connection's assignment generation
+// (the Gate), so a revoked worker that later wakes and reports completion/progress
+// carrying the OLD generation is fenced out and cannot overwrite the new owner's
+// state. The operator-supplied reason is recorded in the activity log and pushed to
+// the (still-connected) client on the task_revoke message so the worker learns WHY
+// its task was released. A blank reason falls back to the default recovery label.
+func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) int {
 	if contributorID == "" {
 		return 0
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = defaultRequeueReason
 	}
 	// Collect the connections + their held tasks under the connection lock, but do
 	// the network send (task_revoke) OUTSIDE h.mu to avoid holding the hub lock
@@ -901,6 +977,10 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
 			// so it cannot leak to the (now task-less) connection.
 			c.pendingToken = ""
 			c.credentialDelivered = false
+			// #2568 (the Gate): fence the revoked worker — bump the generation so its
+			// later completion/progress echoing the old generation is rejected.
+			c.currentTaskGen = h.nextTaskGen()
+			c.lastLeaseRenew = time.Time{}
 			targets = append(targets, releaseTarget{conn: c, task: released})
 		}
 		c.mu.Unlock()
@@ -923,17 +1003,22 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
 			"task", tgt.task.TaskID,
 			"repo", tgt.task.Repo,
 			"number", tgt.task.Number,
+			"reason", reason,
 		)
-		h.addActivity(username, "requeued by operator", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		// #2568: record the operator's reason in the activity log so the release is
+		// auditable (the reason rides in the Task field alongside the task id).
+		h.addActivity(username, "requeued by operator: "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
-		// has (or will) release it anyway; the cooldown above is already booked.
+		// has (or will) release it anyway; the cooldown above is already booked. The
+		// operator's reason travels on Reason so a still-connected worker learns WHY
+		// its task was released (kubestellar/hive#2568).
 		if tgt.conn.ws != nil {
 			_ = sendJSON(tgt.conn.ws, WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
-				Reason: "requeued by operator",
+				Reason: reason,
 			})
 		}
 	}
@@ -946,6 +1031,40 @@ func (h *ContributeWSHub) nextSeq() int {
 	s := h.seq
 	h.mu.Unlock()
 	return s
+}
+
+// nextTaskGen hands out a fresh, never-reused assignment GENERATION token
+// (kubestellar/hive#2568, the Gate). It is minted for every task_assign, every
+// task-adopting task_progress RESUME, and every release (disconnect, ready-abandon,
+// operator requeue, lease-TTL expiry) — bumping on release is what fences a
+// stale worker: the connection's currentTaskGen advances past whatever the stale
+// worker still believes it holds. Monotonic (atomic, lock-free — see the taskGen
+// field), so generations are strictly increasing across the life of the hub.
+func (h *ContributeWSHub) nextTaskGen() uint64 {
+	// Lock-free: atomic increment so this is safe to call from paths that already hold
+	// h.mu (RequeueContributorTask / reclaimExpiredLeases run under h.mu.RLock). See
+	// the taskGen field comment for why a mu-guarded counter would deadlock here.
+	return h.taskGen.Add(1)
+}
+
+// generationAccepted reports whether a client message carrying clientGen (the
+// TaskGen it echoed) may act on a connection whose current task generation is
+// currentGen (kubestellar/hive#2568, the Gate). The rule:
+//
+//   - clientGen == 0 → an UNVERSIONED relay that never learned a generation. Accept
+//     it and let the caller's pre-existing TaskID match decide, preserving backward
+//     compatibility with relays that predate the lease token.
+//   - clientGen == currentGen → the current owner. Accept.
+//   - clientGen != currentGen → a STALE worker whose task was released/reassigned
+//     (the connection's generation was bumped past it). REJECT, so its completion or
+//     progress cannot overwrite the new owner's state.
+//
+// The caller MUST hold c.mu (currentTaskGen is read under it).
+func generationAccepted(clientGen, currentGen uint64) bool {
+	if clientGen == 0 {
+		return true
+	}
+	return clientGen == currentGen
 }
 
 func (h *ContributeWSHub) ActiveCount() int {
@@ -1246,6 +1365,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.mu.Lock()
 			abandonedTask := contributor.currentTask
 			contributor.currentTask = nil
+			// #2568: bump the generation on release so any late message from this
+			// now-defunct socket carrying the old generation is fenced.
+			contributor.currentTaskGen = h.nextTaskGen()
+			contributor.lastLeaseRenew = time.Time{}
 			contributor.tokenMintedAt = time.Time{}
 			// #2537: clear any pending/delivered credential state with the task.
 			contributor.pendingToken = ""
@@ -1440,6 +1563,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.mu.Lock()
 			abandoned := contributor.currentTask
 			contributor.currentTask = nil
+			// #2568: bump the generation on release so a re-`ready` abandon fences any
+			// later message echoing the old generation for the just-abandoned task.
+			contributor.currentTaskGen = h.nextTaskGen()
+			contributor.lastLeaseRenew = time.Time{}
 			contributor.tokenMintedAt = time.Time{}
 			// #2537: clear any pending/delivered credential state with the task.
 			contributor.pendingToken = ""
@@ -1550,6 +1677,22 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_progress":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate): a worker still holding a task whose progress carries
+				// a STALE generation was revoked/reassigned — its currentTaskGen was
+				// bumped past what it echoes. Reject its progress so it cannot renew a
+				// lease it no longer owns or resurrect ownership state. An unversioned
+				// relay echoes 0 and is accepted (generationAccepted falls back to the
+				// TaskID identity below).
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				contributor.tmuxOutput = msg.TmuxOutput
 				// resumed is true only when this task_progress REBUILT currentTask
 				// from nothing — i.e. the relay is re-asserting a task the hub had
@@ -1573,6 +1716,16 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						Title:  msg.Title,
 					}
 					resumed = true
+					// #2568: a RESUME adopts the task under a FRESH generation so the
+					// hub, not the client, owns the authoritative token from here on.
+					contributor.currentTaskGen = h.nextTaskGen()
+				}
+				// #2568: renew the hub-owned lease on every progress report. This is
+				// what distinguishes "working slowly but alive" (lease keeps renewing,
+				// never reclaimed) from "connected but wedged" (lease goes stale and
+				// cleanupLoop reclaims it after wsTaskTimeout).
+				if contributor.currentTask != nil {
+					contributor.lastLeaseRenew = time.Now()
 				}
 				contributor.mu.Unlock()
 
@@ -1594,6 +1747,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_complete":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate, critical guarantee): a worker whose task was revoked
+				// and reassigned — but that later wakes and reports completion carrying
+				// the OLD generation — must NOT overwrite the new owner's state. Its
+				// currentTaskGen was bumped past what it echoes, so reject the message
+				// WITHOUT clearing currentTask (which may now hold the NEW owner's task).
+				// An unversioned relay echoes 0 and is accepted, falling back to the
+				// TaskID identity match below. Checked before any mutation.
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_complete rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				completedTask := contributor.currentTask
 				contributor.currentTask = nil
@@ -1685,6 +1855,22 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_failed":
 			if contributor != nil {
 				contributor.mu.Lock()
+				// #2568 (the Gate): reject a STALE worker's failure the same way as its
+				// completion — its currentTaskGen was bumped past the generation it
+				// echoes. Left unguarded, a revoked worker's late task_failed would book
+				// a spurious failure cooldown against the NEW owner's issue. Do not clear
+				// currentTask (it may now be the new owner's task). Unversioned relays
+				// echo 0 and fall back to the TaskID match below.
+				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+					staleGen := msg.TaskGen
+					contributor.mu.Unlock()
+					h.logger.Warn("[contribute-ws] stale-generation task_failed rejected",
+						"username", contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"client_gen", staleGen,
+					)
+					continue
+				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				failedTask := contributor.currentTask
 				contributor.currentTask = nil
@@ -1978,6 +2164,13 @@ func (h *ContributeWSHub) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		// #2568: reclaim wedged-but-connected task leases first (the backstop). A
+		// connection whose lastPong is still fresh (so the heartbeat sweep below will
+		// NOT remove it) but that has stopped renewing its task lease is exactly the
+		// "connected but wedged" case the issue describes; this releases its task
+		// through the SAME cooldown+generation-bump path a manual requeue uses.
+		h.reclaimExpiredLeases(time.Now())
+
 		h.mu.Lock()
 		for id, c := range h.connections {
 			c.mu.Lock()
@@ -2002,6 +2195,73 @@ func (h *ContributeWSHub) cleanupLoop() {
 		}
 		h.mu.Unlock()
 	}
+}
+
+// reclaimExpiredLeases is the hub-owned LEASE-TTL backstop (kubestellar/hive#2568,
+// option 4). A connection that is still HELD by its socket (heartbeat alive) but has
+// not renewed its task lease within wsTaskTimeout is presumed wedged — connected but
+// no longer progressing — and its task is auto-released. It reuses EXACTLY the manual
+// requeue machinery: it books the same short failure cooldown (so the released issue
+// is not instantly re-admissible and can't recreate the #2492 dup-assign race), bumps
+// the assignment generation (the Gate — so the wedged worker, if it later wakes, is
+// fenced), and pushes task_revoke with an auto-expiry reason so a still-listening
+// relay stops cleanly. It is deliberately CONSERVATIVE: a task that keeps reporting
+// task_progress renews lastLeaseRenew every report and is therefore NEVER reclaimed,
+// so "working slowly but alive" is not confused with "wedged". `now` is injected so
+// tests can drive expiry deterministically.
+func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
+	type expiredTarget struct {
+		conn *ContributorConnection
+		task WSTaskAssign
+	}
+	var targets []expiredTarget
+	h.mu.RLock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		// Only a connection actively holding a task with a started lease clock can
+		// expire; a zero lastLeaseRenew means no active lease (idle or just released).
+		expired := c.currentTask != nil && !c.lastLeaseRenew.IsZero() &&
+			now.Sub(c.lastLeaseRenew) > wsTaskTimeout
+		if expired {
+			released := *c.currentTask
+			c.currentTask = nil
+			c.currentPrompt = ""
+			c.currentLabels = nil
+			c.tokenMintedAt = time.Time{}
+			c.currentTaskGen = h.nextTaskGen()
+			c.lastLeaseRenew = time.Time{}
+			targets = append(targets, expiredTarget{conn: c, task: released})
+		}
+		c.mu.Unlock()
+	}
+	h.mu.RUnlock()
+
+	for _, tgt := range targets {
+		if tgt.task.Number > 0 {
+			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
+		}
+		username := ""
+		if tgt.conn.profile != nil {
+			username = tgt.conn.profile.GitHubUsername
+		}
+		h.logger.Warn("[contribute-ws] task lease expired, auto-released",
+			"username", username,
+			"task", tgt.task.TaskID,
+			"repo", tgt.task.Repo,
+			"number", tgt.task.Number,
+			"lease_ttl", wsTaskTimeout.String(),
+		)
+		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		if tgt.conn.ws != nil {
+			_ = sendJSON(tgt.conn.ws, WSMessage{
+				Type:   "task_revoke",
+				Seq:    h.nextSeq(),
+				TaskID: tgt.task.TaskID,
+				Reason: leaseExpiredReason,
+			})
+		}
+	}
+	return len(targets)
 }
 
 // mintScopedToken produces a scoped GitHub token for the given trust tier via
@@ -2625,6 +2885,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
 	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
 
+	// #2568: mint a fresh assignment generation for this task. It is stamped on the
+	// connection, shipped in task_assign below, and echoed back by the relay so a
+	// later stale-worker completion carrying an older generation is fenced out.
+	gen := h.nextTaskGen()
+
 	c.mu.Lock()
 	c.currentTask = &WSTaskAssign{
 		TaskID: taskID,
@@ -2633,6 +2898,10 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		Number: chosen.number,
 		Title:  chosen.title,
 	}
+	c.currentTaskGen = gen
+	// #2568: start the hub-owned lease clock. task_progress renews it; cleanupLoop
+	// auto-releases the task if it is not renewed within wsTaskTimeout.
+	c.lastLeaseRenew = time.Now()
 	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539),
 	// and clear any stale idle reason now that this connection has real work.
 	c.currentPrompt = prompt
@@ -2660,20 +2929,22 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.recordAssignment(identityOf(c), time.Now())
 
 	return &WSMessage{
-		Type:   "task_assign",
-		Seq:    h.nextSeq(),
-		TaskID: taskID,
-		Kind:   "issue",
-		Repo:   chosen.repoFull,
-		Number: chosen.number,
-		Title:  chosen.title,
-		URL:    chosen.url,
+		Type:    "task_assign",
+		Seq:     h.nextSeq(),
+		TaskID:  taskID,
+		TaskGen: gen,
+		Kind:    "issue",
+		Repo:    chosen.repoFull,
+		Number:  chosen.number,
+		Title:   chosen.title,
+		URL:     chosen.url,
 		// #2537: NO github_token / token_expires_at here. The scoped credential is
 		// split out of task_assign and delivered only after acceptance (see
 		// pendingToken / deliverTaskCredential). task_assign now carries exactly the
-		// metadata needed to DECIDE — repo/number/title/url/labels/prompt — and no
-		// credential, so nothing an agent could act on is authenticated until the
-		// task's source has been accepted under the operator/contributor policy.
+		// metadata needed to DECIDE — repo/number/title/url/labels/prompt — plus the
+		// #2568 TaskGen lease token, and no credential, so nothing an agent could act
+		// on is authenticated until the task's source has been accepted under the
+		// operator/contributor policy.
 		Prompt: prompt,
 		// The chosen issue's own labels — the Labels envelope field was declared
 		// but never populated, so a client reading it got nothing (kubestellar/
