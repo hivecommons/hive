@@ -952,7 +952,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
    instead of stretching the page; the panel scrolls, the page does not. */
 .cc-queue{max-height:560px;overflow-y:auto}
-.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);animation:cc-popin .35s ease;position:relative}
+/* The enter animation is OPT-IN via .cc-q-enter (added only to genuinely-new rows),
+   NOT baked into .cc-q-item — otherwise every poll re-render replayed cc-popin on
+   every row and the whole queue "blinked". Mirrors .clanker-row.cc-enter above. */
+.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);position:relative}
+.cc-q-item.cc-q-enter{animation:cc-popin .35s ease}
 .cc-q-item:first-child{background:rgba(88,166,255,.05)}
 /* Drag handle (grab bar) — owner/read-write only. Hidden unless the queue root
    carries .cc-q-draggable (set by initAdmin after /api/role). Reduced-motion and
@@ -1013,6 +1017,18 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
 .clanker-interests-label{color:#6e7681}
 .clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+/* #2637 owner roster: an OWNER-facing aggregate of which labels connected
+   contributors subscribe to, and who — so the owner can label matching issues to
+   route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
+.label-affinity{margin-top:14px;padding-top:12px;border-top:1px solid var(--cc-border-2)}
+.label-affinity-head{display:flex;align-items:center;gap:2px;margin-bottom:8px}
+.label-affinity-title{font-size:.82rem;font-weight:600;color:var(--cc-text-2)}
+.label-affinity-body{display:flex;flex-direction:column;gap:7px}
+.affinity-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:.78rem}
+.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3);flex-shrink:0}
+.affinity-count{font-weight:700;color:#3fb950;font-size:.7rem}
+.affinity-who{color:var(--cc-muted);word-break:break-word}
+.affinity-empty{font-size:.74rem;color:var(--cc-muted-2);line-height:1.5}
 .cc-interests-add{display:flex;gap:6px}
 .cc-interests-add input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-interests-add input::placeholder{color:var(--cc-muted-2)}
@@ -1182,7 +1198,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
   .ops-rail.collapsed{flex-basis:auto}
 }
 @media(prefers-reduced-motion:reduce){
-  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
+  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-q-enter,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
   .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
 }
 /* #2548 Branded client entry points — a find-by-SIGHT tile grid above the CLI
@@ -1819,6 +1835,27 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <span class="pipe-node">merged</span>
 </div>
 <div id="policy-body"><div class="ops-empty">Loading policy&hellip;</div></div>
+<!-- Owner-facing Label interests roster (#2637). The contributor editor (#cc-interests)
+     and the per-clanker "prefers:" mirror only surface interests to the contributor
+     themselves / on a connected row; this gives the OWNER an actionable aggregate:
+     which labels the connected contributors subscribe to, and who — so the owner can
+     label matching issues to route work ("I have nvidia contributors, so I'll label
+     nvidia issues"). Always shows the explainer (even with an empty roster) so the
+     owner knows the feature exists; the aggregate is hydrated each poll by
+     ccRenderInterestRoster() from the fleet payload's per-clanker label_interests. -->
+<div class="label-affinity" id="label-affinity">
+<div class="label-affinity-head">
+<span class="label-affinity-title">Contributor label interests</span>
+<span class="info-affordance">
+<button type="button" class="info-btn" id="affinity-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="affinity-info-pop" aria-label="What are label interests?" title="What are label interests?">&#9432;</button>
+<div class="info-pop" id="affinity-info-pop" role="tooltip" hidden>
+<h4>What are label interests?</h4>
+Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues are highlighted and routed to them &mdash; a soft hint, nothing is hidden. Label an issue to steer it toward the contributors who asked for that kind of work.
+</div>
+</span>
+</div>
+<div class="label-affinity-body" id="label-affinity-body"><div class="ops-empty">Loading interests&hellip;</div></div>
+</div>
 <p class="ops-note">Merge automation advances a PR when CI is green and a maintainer signals <code>/approve</code> or <code>lgtm</code>; a <code>do-not-merge</code> label blocks it. This panel displays the configured admission posture &mdash; it does not change it.</p>
 </div>
 </div>
@@ -2692,6 +2729,25 @@ function _wireCooldownInfo(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireCooldownInfo);else _wireCooldownInfo();
 
+// _wireAffinityInfo toggles the label-interests explainer popover (#2637), mirroring
+// _wireCooldownInfo exactly: the ⓘ button flips [hidden] + aria-expanded; a click
+// elsewhere or Escape closes it. Null-guarded so a missing element never throws.
+function _wireAffinityInfo(){
+  var btn=document.getElementById('affinity-info-btn');
+  var pop=document.getElementById('affinity-info-pop');
+  if(!btn||!pop)return;
+  function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    var open=pop.hidden;
+    pop.hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');
+  });
+  document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireAffinityInfo);else _wireAffinityInfo();
+
 // ccRenderCooldownCount surfaces the current cooldown tally next to the Management
 // tab's Task cooldown control (#2649): "M issues currently cooling down". It reads
 // the ccCooldownCount stashed by opsPoll and writes into #admin-cooldown-count.
@@ -3139,6 +3195,10 @@ function renderClankers(list){
   // malformed row leaves BOTH the list on "Loading…" AND the roster at 0/0/0
   // (regression #2574: the exact live symptom). ccUpdateArmy is itself nil-safe.
   ccUpdateArmy(list);
+  // #2637 owner roster: aggregate the fleet's label interests into the owner-facing
+  // "which labels to target, and who" summary. Independent of the row render below so
+  // a malformed row can't leave the roster stuck on "Loading…".
+  try{ccRenderInterestRoster(list);}catch(e){console.error('interest roster render failed',e);}
   if(!el)return;
   if(!list.length){el.innerHTML='<div class="ops-empty">No clankers connected right now.</div>';return;}
   el.innerHTML=list.map(function(c){
@@ -3216,6 +3276,50 @@ function ccUpdateArmy(list){
   // arrivals (enter animation). ccKnownClankers is also read by the SSE join event.
   var next={};(list||[]).forEach(function(c){var k=(c.github_username||c.contributor_id||'').toLowerCase();if(k)next[k]=true;});
   ccKnownClankers=next;
+}
+// ccRenderInterestRoster (#2637) builds the OWNER-facing aggregate: for each label
+// any connected contributor subscribes to, show the label + how many contributors
+// want it + who — so the owner can label matching issues to route work. Aggregated
+// from the SAME fleet snapshot renderClankers gets (each clanker carries its own
+// label_interests), so it updates every poll. Labels sort by descending count, ties
+// alphabetical. A graceful empty state shows when NO connected clanker set interests
+// (the explainer above still renders, so the owner learns the feature exists).
+function ccRenderInterestRoster(list){
+  var body=document.getElementById('label-affinity-body');
+  if(!body)return;
+  list=list||[];
+  // label(lower) -> {label: display, who: [usernames]}. First-seen casing wins for
+  // the display label; matching is case-insensitive so 'nvidia'/'NVIDIA' aggregate.
+  var agg={};
+  list.forEach(function(c){
+    var who=c.github_username||c.contributor_id||'clanker';
+    var interests=c.label_interests||[];
+    for(var i=0;i<interests.length;i++){
+      var raw=(interests[i]||'').trim();if(!raw)continue;
+      var lk=raw.toLowerCase();
+      if(!agg[lk])agg[lk]={label:raw,who:[]};
+      if(agg[lk].who.indexOf(who)<0)agg[lk].who.push(who);
+    }
+  });
+  var labels=Object.keys(agg);
+  if(!labels.length){
+    body.innerHTML='<div class="affinity-empty">No contributors have set label interests yet &mdash; when they do, you&rsquo;ll see which labels to target here.</div>';
+    return;
+  }
+  // Sort by descending contributor count, then alphabetically for a stable order.
+  labels.sort(function(a,b){
+    var d=agg[b].who.length-agg[a].who.length;
+    if(d!==0)return d;
+    return agg[a].label<agg[b].label?-1:(agg[a].label>agg[b].label?1:0);
+  });
+  body.innerHTML=labels.map(function(lk){
+    var e=agg[lk];
+    var whoStr=e.who.map(esc).join(', ');
+    return '<div class="affinity-row">'+
+      '<span class="affinity-chip">'+esc(e.label)+'<span class="affinity-count">'+e.who.length+'</span></span>'+
+      '<span class="affinity-who">'+whoStr+'</span>'+
+    '</div>';
+  }).join('');
 }
 
 function workMatchesFilter(w){
@@ -3356,6 +3460,17 @@ var ccLogCap=60;           // capped scrollback length
 var ccEs=null;             // EventSource handle
 var ccQueuePollTimer=null; // fallback poll timer
 var ccKnownClankers={};    // username -> true, for enter/leave detection
+// ccKnownQueueKeys tracks the queue-item keys (repo#number) present in the PREVIOUS
+// row render so the cc-popin enter animation only plays for GENUINELY-new arrivals —
+// mirroring ccKnownClankers for the fleet list. Without it, every poll re-render
+// replayed the enter animation on EVERY row and the whole queue "blinked". Rebuilt
+// at the end of each row render from the items actually painted.
+var ccKnownQueueKeys={};
+// ccQueueRenderDeferred is set when a poll re-render was SKIPPED because a ⋯ menu /
+// "Move to #" dialog was open (a rebuild would wipe the open menu mid-interaction).
+// ccCloseQueueMenus replays one render when it flips true, so the queue catches up to
+// the latest data the moment the operator closes the menu.
+var ccQueueRenderDeferred=false;
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
@@ -3499,6 +3614,13 @@ function ccRenderQueue(flip){
     if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
     qc.textContent=segs.join(' · ');
   }
+  // No-blink guard: if a per-row ⋯ menu / "Move to #" dialog is OPEN and this is a
+  // POLL re-render (flip is falsy — NOT a drag/move, which the operator initiated),
+  // SKIP the row-list rebuild. A full innerHTML rebuild would destroy the open menu
+  // mid-interaction; the queue data has not meaningfully changed under the operator's
+  // hands. We already updated the header tally above so counts stay live; we mark the
+  // render DEFERRED so ccCloseQueueMenus replays it the moment the menu closes.
+  if(!flip&&document.querySelector('.cc-q-menu.open')){ccQueueRenderDeferred=true;return;}
   // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
   // when no interests are set (order preserved); skipped mid-drag so an operator
   // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
@@ -3516,7 +3638,7 @@ function ccRenderQueue(flip){
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
   // The server enforces the same boundary independently (403 on the order endpoint).
   el.classList.toggle('cc-q-draggable',!!adminEnabled);
-  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);return;}
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);ccKnownQueueKeys={};return;}
   var shown=0,total=ccQueue.length;
   // Render over the FULL model, tagging each row with its TRUE position (i) so the
   // shown index and the move-to menu reflect the real queue position even while a
@@ -3525,9 +3647,20 @@ function ccRenderQueue(flip){
   // qkey in the full order. Drag-reorder is DISABLED while a filter is active (a
   // drag over a partial list would be ambiguous); the ⋯ menu is the filtered path.
   var filtering=!!ccQueueSearch;
+  // nextQueueKeys collects the keys present in the FULL model this render (not just
+  // the painted subset) so the NEXT render pops-in only genuinely-new arrivals and a
+  // filter toggle never re-animates existing rows. Mirrors ccKnownClankers.
+  var nextQueueKeys={};
+  for(var qk=0;qk<ccQueue.length;qk++){nextQueueKeys[ccQueueKey(ccQueue[qk])]=true;}
   el.innerHTML=ccQueue.map(function(q,i){
     if(!ccQueueMatches(q))return '';
     shown++;
+    // Enter pop-in ONLY for an item absent from the previous render — so existing
+    // rows never re-animate on a poll (the "blink"). A drag/move FLIP re-render
+    // (flip truthy) must not pop-in either: the glide is the animation there, so we
+    // suppress the enter class whenever flip is set.
+    var qkey=ccQueueKey(q);
+    var isNewQ=!flip&&qkey&&!ccKnownQueueKeys[qkey];
     // Show ALL of the issue's gh labels as pills (the backend already carries the
     // full label set). "My work" items render every label the same way, so the
     // queue is consistent with them. esc() guards each label.
@@ -3559,10 +3692,13 @@ function ccRenderQueue(flip){
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
     var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
-    return '<div class="cc-q-item'+mineCls+heldCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+    var enterCls=isNewQ?' cc-q-enter':'';
+    return '<div class="cc-q-item'+mineCls+heldCls+enterCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
       '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
+  // Adopt the freshly-painted key set so the NEXT render only pops-in new arrivals.
+  ccKnownQueueKeys=nextQueueKeys;
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
   ccUpdateFilterNote(shown,total);
   // Drag binding only when NOT filtering (a partial list would drop ambiguously).
@@ -3690,6 +3826,10 @@ function ccCloseQueueMenus(){
   for(var i=0;i<open.length;i++)open[i].classList.remove('open');
   var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
   for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
+  // No-blink guard companion: a poll re-render that arrived while a menu was open was
+  // SKIPPED (ccQueueRenderDeferred). Now that no menu is open, catch the queue up to
+  // the latest data with a single plain (non-flip) re-render.
+  if(ccQueueRenderDeferred){ccQueueRenderDeferred=false;try{ccRenderQueue();}catch(e){}}
 }
 function ccBindQueueMenus(root){
   // Clicks INSIDE an open menu (the number input, its label, whitespace) must not
