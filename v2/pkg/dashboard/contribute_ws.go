@@ -1156,6 +1156,42 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 	return snap
 }
 
+// CooldownCounts returns two read-only tallies the Operations/Management tabs
+// surface next to the ready queue (see handleContributeFleet):
+//
+//   - cooldown: how many completed issues are STILL within their cooldown window
+//     and therefore held out of selection. It counts only NON-expired entries in
+//     completedTasks (an entry past its cooldownForLocked() period is expired-but-
+//     not-yet-swept and must not inflate the count — it matches what
+//     isTaskInCooldown would actually gate). When cooldown is disabled by the
+//     operator kill-switch (cooldownEnabled()==false), nothing is gated, so this
+//     is 0.
+//   - inFlight: how many distinct issues are currently held by a live
+//     connection — reuses activeIssueKeys(), the SAME set selectTask uses as its
+//     double-assign guard and ReadyQueue uses to exclude in-flight work.
+//
+// Read-only: it mutates nothing (unlike isTaskInCooldown it does not sweep
+// expired entries) and adds no enforcement.
+func (h *ContributeWSHub) CooldownCounts() (cooldown, inFlight int) {
+	// cooldown: count non-expired completedTasks under the completion lock. When the
+	// operator kill-switch disables cooldown, nothing is gated, so the count is 0.
+	if h.cooldownEnabled() {
+		h.completedMu.Lock()
+		for key, t := range h.completedTasks {
+			if time.Since(t) <= h.cooldownForLocked(key) {
+				cooldown++
+			}
+		}
+		h.completedMu.Unlock()
+	}
+
+	// inFlight: distinct issues held by a live connection — the same activeIssues
+	// set selectTask's guard and ReadyQueue use, so the header count matches what is
+	// actually excluded from "ready".
+	inFlight = len(h.activeIssueKeys())
+	return cooldown, inFlight
+}
+
 func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

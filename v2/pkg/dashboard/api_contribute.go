@@ -639,6 +639,19 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Ops "your army" counts + card counts as bold numerals (tabular, no layout shift). */
 .cc-army b{font-weight:700;font-variant-numeric:tabular-nums}
 .ops-card-count.count-strong{color:#e6edf3;font-weight:700;font-variant-numeric:tabular-nums}
+/* Small circled-i info affordance next to a header (cooldown explainer, #2649
+   companion). A borderless button carrying the ⓘ glyph; hover/focus brightens it.
+   The popover is an absolutely-positioned card toggled open by JS (aria-expanded),
+   anchored to the wrapper so it sits just under the glyph. */
+.info-affordance{position:relative;display:inline-flex;align-items:center}
+.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:#6e7681;cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
+.info-btn:hover,.info-btn:focus{color:#58a6ff;outline:none}
+.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:#c9d1d9;font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
+.info-pop[hidden]{display:none}
+.info-pop h4{margin:0 0 4px;font-size:.76rem;color:#e6edf3;font-weight:600}
+.info-pop ul{margin:4px 0 0;padding-left:16px}
+.info-pop li{margin:2px 0}
+.info-pop code{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:0 3px;font-size:.7rem}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
@@ -1482,6 +1495,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
 <label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
 <input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
+<!-- Live tally of issues currently within their cooldown window (#2649 companion),
+     hydrated by ccRenderCooldownCount from the fleet payload. Hidden when 0. -->
+<div id="admin-cooldown-count" class="admin-toggle-sub" style="margin-top:4px;display:none"></div>
 </div>
 
 <hr class="admin-hr">
@@ -1579,7 +1595,25 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+     explains what "in cooldown" in the count means and how an issue lands there.
+     Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
+     quarantine after 3 consecutive failures) — keep them in sync with
+     completedTaskCooldownHours / completedNoPRCooldownHours / quarantineCooldownHours
+     / consecutiveFailureQuarantineThreshold in contribute_ws.go. -->
+<span class="info-affordance">
+<button type="button" class="info-btn" id="cooldown-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cooldown-info-pop" aria-label="What is cooldown?" title="What is cooldown?">&#9432;</button>
+<div class="info-pop" id="cooldown-info-pop" role="tooltip" hidden>
+<h4>What is cooldown?</h4>
+Cooldown briefly holds a just-worked issue out of the ready queue so it isn&rsquo;t instantly re-offered while a PR settles. An issue enters cooldown when it is:
+<ul>
+<li>completed <b>with a verified PR</b> &mdash; held for the full cooldown period (default <code>168h</code> / 7 days, configurable in Management &rarr; Task cooldown).</li>
+<li>completed with <b>no PR</b> &mdash; held ~<code>4h</code>.</li>
+<li><b>failed</b> &mdash; a short cooldown; after <code>3</code> consecutive failures the issue is quarantined for ~<code>6h</code>.</li>
+</ul>
+It clears automatically when the period elapses. An operator can shorten or disable the with-PR period in the Management tab.
+</div>
+</span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
 <!-- #queue-suspend-btn is the SAME logical control as the Management "Suspend
      contributions" switch (#admin-suspend-switch) — not a related toggle, the
      identical Config.Hub.ContributeSuspended state surfaced a second place. Both
@@ -2357,6 +2391,42 @@ function _wireConfirmModal(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireConfirmModal);else _wireConfirmModal();
 
+// _wireCooldownInfo toggles the cooldown explainer popover (#2649 companion). The
+// ⓘ button flips the popover's [hidden] + aria-expanded; a click anywhere else or
+// Escape closes it. Null-guarded so a missing element never throws (matching the
+// confirm-modal wiring above).
+function _wireCooldownInfo(){
+  var btn=document.getElementById('cooldown-info-btn');
+  var pop=document.getElementById('cooldown-info-pop');
+  if(!btn||!pop)return;
+  function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    var open=pop.hidden;
+    pop.hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');
+  });
+  document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireCooldownInfo);else _wireCooldownInfo();
+
+// ccRenderCooldownCount surfaces the current cooldown tally next to the Management
+// tab's Task cooldown control (#2649): "M issues currently cooling down". It reads
+// the ccCooldownCount stashed by opsPoll and writes into #admin-cooldown-count.
+// Hidden entirely when 0 so the control stays clean.
+function ccRenderCooldownCount(){
+  var el=document.getElementById('admin-cooldown-count');
+  if(!el)return;
+  if(ccCooldownCount>0){
+    el.textContent=ccCooldownCount+(ccCooldownCount===1?' issue currently cooling down':' issues currently cooling down');
+    el.style.display='';
+  }else{
+    el.textContent='';
+    el.style.display='none';
+  }
+}
+
 // Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
 // dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
 async function adminSaveHub(patch,okMsg){
@@ -2926,6 +2996,15 @@ async function opsPoll(){
     safeRender('clankers',function(){renderClankers((data&&data.clankers)||[]);});
     safeRender('work',function(){renderWork((data&&data.work)||[]);});
     safeRender('policy',function(){renderPolicy(data&&data.policy);});
+    // Cooldown / in-flight tallies (#2649 companion): stash the read-only counts
+    // from the fleet payload so the ready-queue header can annotate "N ready" with
+    // "M in cooldown / K in flight", and the Management cooldown control can show
+    // how many issues are currently cooling down. Coerced to a number; a missing
+    // field stays 0. A re-render picks up the fresh values.
+    ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
+    ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
+    safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
+    safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
     // fetch/parse failed — log so the "Loading…" placeholders are diagnosable, and
     // fall through to reschedule so a transient failure self-heals on the next poll.
@@ -2953,6 +3032,8 @@ var ccQueuePollTimer=null; // fallback poll timer
 var ccKnownClankers={};    // username -> true, for enter/leave detection
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
+var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
+var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
 
 function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
@@ -2973,7 +3054,15 @@ function ccRenderQueue(flip){
   // every render (initial load, SSE queue push, poll fallback, drag-reorder).
   // Populated FIRST so it stays set even if the queue container is absent.
   var qc=document.getElementById('queue-count');
-  if(qc)qc.textContent=ccQueue.length+' ready';
+  // Header tally: "N ready" plus the read-only cooldown / in-flight segments from
+  // the fleet payload (#2649 companion). A segment is OMITTED when its count is 0
+  // so the header stays compact; " · " (a middot) separates present segments.
+  if(qc){
+    var segs=[ccQueue.length+' ready'];
+    if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
+    if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
+    qc.textContent=segs.join(' · ');
+  }
   var el=document.getElementById('cc-queue');if(!el)return;
   // reload bridge — overwritten by the next poll, including to empty.
   ccOpsCacheWrite(OPS_CACHE_QUEUE_KEY,ccQueue);
@@ -4180,13 +4269,21 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 // the hub's live connection state and the already-configured admission policy.
 func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	snap := FleetSnapshot{Clankers: []FleetClanker{}, Work: []FleetWorkItem{}}
+	// cooldownCount = completed issues still within their cooldown window (held out
+	// of the queue); inFlightCount = issues currently held by a live connection.
+	// Both are read-only tallies the queue header / Management tab surface (#2649
+	// configurable cooldown).
+	cooldownCount, inFlightCount := 0, 0
 	if s.contributeHub != nil {
 		snap = s.contributeHub.FleetSnapshot()
+		cooldownCount, inFlightCount = s.contributeHub.CooldownCounts()
 	}
 	jsonResponse(w, map[string]any{
-		"clankers": snap.Clankers,
-		"work":     snap.Work,
-		"policy":   s.buildContributeAdmissionPolicy(),
+		"clankers":        snap.Clankers,
+		"work":            snap.Work,
+		"policy":          s.buildContributeAdmissionPolicy(),
+		"cooldown_count":  cooldownCount,
+		"in_flight_count": inFlightCount,
 	})
 }
 
