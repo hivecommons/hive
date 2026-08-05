@@ -128,8 +128,10 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 	if err != nil {
 		return 0, fmt.Errorf("generating JWT: %w", err)
 	}
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	// Per-request Timeout (belt-and-suspenders with the discoveryTimeout ctx
+	// above): keeps a single hung request against an unreachable GHE endpoint
+	// from consuming the whole discovery budget.
+	jwtClient := a.newJWTClient(jwtToken)
 
 	// Preferred: direct per-org lookup.
 	inst, resp, err := jwtClient.Apps.FindOrganizationInstallation(ctx, org)

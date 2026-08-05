@@ -639,12 +639,17 @@ func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile s
 		logger.Warn("failed to init docs org token", "error", err)
 		return
 	}
-	if _, err := docsAuth.Token(ctx); err != nil {
-		logger.Warn("failed to generate initial docs org token", "error", err)
-	} else {
-		logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
-	}
 	go func() {
+		// Mint the initial docs token in the BACKGROUND, not on the startup
+		// path. The docs org is an add-on; blocking here on a docs-installation
+		// mint that hangs (unreachable/uninstalled GHE) would delay the whole
+		// process reaching MarkReady — the #2439 readiness-stall pattern. The
+		// mint is bounded (tokenMintTimeout) and non-fatal regardless.
+		if _, err := docsAuth.Token(ctx); err != nil {
+			logger.Warn("failed to generate initial docs org token", "error", err)
+		} else {
+			logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
+		}
 		const docsTokenRefreshInterval = 45 * time.Minute
 		ticker := time.NewTicker(docsTokenRefreshInterval)
 		defer ticker.Stop()

@@ -23,6 +23,22 @@ const (
 	DocsTokenCachePath = "/var/run/hive-metrics/gh-app-token-docs.cache"
 	tokenCachePerms    = 0o640
 
+	// tokenMintTimeout hard-bounds every live App-JWT → installation-token
+	// exchange (CreateInstallationToken / GetInstallation). These calls are made
+	// with a bare gh.NewClient (no per-client Timeout) and are sometimes reached
+	// with an undeadlined process context (startup advisory-issue ensure, docs
+	// token refresh, appTransport.RoundTrip). On a firewalled / GHE-hosted spoke
+	// whose App is not yet installed (github.ibm.com unreachable, or the org has
+	// no installation) the underlying TCP/TLS connect can hang for minutes.
+	//
+	// That hang is the #2439 root cause: it froze the FIRST heartbeat attempt
+	// and blocked readiness (advisory-issue ensure runs before MarkReady), so
+	// livez/health deadline-exceeded, the pod crash-looped, and the hub stayed
+	// stuck "Upgrading" (it never received a fresh heartbeat with the new
+	// version). Bounding the mint turns "hang forever" into a fast, soft error
+	// the caller already treats as "App not usable → show install banner".
+	tokenMintTimeout = 8 * time.Second
+
 	// Per-agent scoped token caches. entrypoint.sh pre-creates each file as
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
 	// place and ONLY the owning agent's private group can read it — no chown
@@ -90,6 +106,27 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 		cachePath:      cachePath,
 		apiURL:         apiURL,
 	}, nil
+}
+
+// newJWTClient builds a go-github client authenticated with the App JWT for
+// the live token-mint calls. Unlike gh.NewClient(nil) (which serves the
+// timeout-less http.DefaultClient), this client carries tokenMintTimeout so a
+// mint against an unreachable / firewalled GHE endpoint cannot hang past that
+// bound even if the caller passed an undeadlined context.
+func (a *AppAuth) newJWTClient(jwtToken string) *gh.Client {
+	httpClient := &http.Client{Timeout: tokenMintTimeout}
+	client := gh.NewClient(httpClient).WithAuthToken(jwtToken)
+	setBaseURL(client, a.apiURL)
+	return client
+}
+
+// mintContext derives a child context bounded by tokenMintTimeout from the
+// caller's context. It guarantees a deadline even when the caller passed a
+// background/process context with none, so a token mint is a bounded operation
+// end to end (client Timeout AND context deadline). The returned cancel MUST be
+// called by the caller.
+func mintContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, tokenMintTimeout)
 }
 
 func (a *AppAuth) generateJWT() (string, error) {
@@ -173,9 +210,13 @@ func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expi
 		return "", time.Time{}, fmt.Errorf("generating JWT: %w", err)
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
+	// Bound the mint end to end: a firewalled/uninstalled GHE endpoint would
+	// otherwise hang for the full TCP/TLS connect (minutes) and freeze whatever
+	// loop reached this — the first heartbeat, readiness, the eval cycle (#2439).
+	mintCtx, cancel := mintContext(ctx)
+	defer cancel()
+	jwtClient := a.newJWTClient(jwtToken)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, a.installationID, nil)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("creating installation token: %w", err)
 	}
@@ -227,9 +268,10 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 	}
 
 	opts := &gh.InstallationTokenOptions{Permissions: perms}
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, opts)
+	mintCtx, cancel := mintContext(ctx)
+	defer cancel()
+	jwtClient := a.newJWTClient(jwtToken)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(mintCtx, a.installationID, opts)
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
 	}
@@ -332,9 +374,10 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 		return nil, fmt.Errorf("generating JWT: %w", err)
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
-	inst, _, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
+	mintCtx, cancel := mintContext(ctx)
+	defer cancel()
+	jwtClient := a.newJWTClient(jwtToken)
+	inst, _, err := jwtClient.Apps.GetInstallation(mintCtx, a.installationID)
 	if err != nil {
 		return nil, fmt.Errorf("resolving installation %d: %w", a.installationID, err)
 	}

@@ -326,9 +326,12 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 		return d
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
-	inst, resp, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
+	// Bound the probe: a firewalled/uninstalled GHE endpoint must not hang this
+	// diagnosis (it runs on the startup path before MarkReady, and on Re-check).
+	probeCtx, cancel := mintContext(ctx)
+	defer cancel()
+	jwtClient := a.newJWTClient(jwtToken)
+	inst, resp, err := jwtClient.Apps.GetInstallation(probeCtx, a.installationID)
 	if err != nil {
 		d.State = classifyAPIError(err, resp)
 		d.Err = err
