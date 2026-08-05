@@ -2130,11 +2130,35 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
-		// A placeholder wedged between the two claim paths: assigned but the spoke
-		// never reported the project back. Computed from meta (not the live
-		// registry) so it is true even for an offline/silent spoke — the exact
-		// dead-end the Reset assignment action targets.
-		entry.AssignedUnclaimed = sh.Status == statusAssigned && !sh.ClaimDelivered
+		// A placeholder wedged between the two claim paths: it was given a real
+		// identity (org/repo written) but the spoke never reported the project back.
+		// Computed from meta (not the live registry) so it is true even for an
+		// offline/silent spoke — the exact dead-end the Reset assignment action
+		// targets.
+		//
+		// The predicate is deliberately broader than "Status == statusAssigned".
+		// The current assign paths (handleApproveProvision / handleAssignHive) always
+		// stamp Status=statusAssigned alongside the org/repo, but LEGACY/wedged
+		// placeholders exist that carry a REAL org/primary_repo with Status left NULL
+		// or "" (e.g. the live hosted-available-vllmd-13: org=z-innersource,
+		// repo=AutoIPL, status=null) — precisely the wedge the escape hatch was built
+		// to rescue. Keying only on statusAssigned HID the Reset item for exactly
+		// those slots.
+		//
+		// A clean available slot is NOT bare — a seeded/reset placeholder carries the
+		// synthetic "available-<id>" org (placeholderOrgPrefix) and an empty
+		// primary_repo, which is how isPlaceholderEntry recognizes inventory. So "has
+		// a real assigned identity" means a non-empty org that is NOT the placeholder
+		// prefix, or any primary_repo. Treat a placeholder as assigned-unclaimed
+		// whenever it is NOT a delivered claim (that is a LIVE hive) AND is NOT a
+		// clean available slot but HAS been handed a real identity (Status==assigned,
+		// or a real org / primary_repo written under any/no status).
+		hasRealOrg := sh.Org != "" && !strings.HasPrefix(sh.Org, placeholderOrgPrefix)
+		notClaimed := !sh.ClaimDelivered
+		hasAssignedIdentity := hasRealOrg || sh.PrimaryRepo != ""
+		isAssignedStatus := sh.Status == statusAssigned
+		isCleanAvailable := sh.Status == statusAvailable && !hasAssignedIdentity
+		entry.AssignedUnclaimed = notClaimed && !isCleanAvailable && (isAssignedStatus || hasAssignedIdentity)
 		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
 			entry.ACMMLevel = sh.ACMMLevel
 		}
