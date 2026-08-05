@@ -801,7 +801,12 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    as one state. Left of #cc-live so status (queue live/stale) and posture
    (active/paused) sit as a pair. */
 #queue-suspend-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
-.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;font-size:.7rem;line-height:1;transition:background .15s,color .15s,border-color .15s}
+.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:999px;border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;line-height:0;transition:background .15s,color .15s,border-color .15s}
+/* SVG glyph is centered by the flex-box; currentColor tracks the button state.
+   Using an SVG (not a &#10074; bar glyph) so the pause bars sit dead-center —
+   the light-vertical-bar character carries font side-bearing that pushed the
+   pair off-center inside the circle. */
+.queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
 .queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:#c9d1d9}
 .queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
 .queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
@@ -1551,7 +1556,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
      (#queue-suspend-pill), which is read-only info. -->
 <span id="queue-suspend-wrap">
 <span class="pill pill-passed" id="queue-suspend-pill" style="display:none">active</span>
-<button type="button" class="queue-suspend-btn" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon">&#10074;&#10074;</span></button>
+<button type="button" class="queue-suspend-btn" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
 </span>
 <span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
 <!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
@@ -2328,7 +2333,10 @@ function renderQueueSuspendControl(suspended){
   btn.title=suspended?'Resume contributions':'Pause contributions';
   btn.setAttribute('aria-label',btn.title);
   var icon=document.getElementById('queue-suspend-icon');
-  if(icon)icon.innerHTML=suspended?'&#9654;':'&#10074;&#10074;'; // play triangle : pause bars
+  // SVG glyphs (not bar/triangle chars) so both stay dead-center in the circle.
+  if(icon)icon.innerHTML=suspended
+    ?'<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>' // play triangle
+    :'<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>'; // pause bars
 }
 
 // setContributeSuspended is the SINGLE handler for the contribute_suspended
@@ -2858,6 +2866,16 @@ function ccCloseQueueMenus(){
   for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
 }
 function ccBindQueueMenus(root){
+  // Clicks INSIDE an open menu (the number input, its label, whitespace) must not
+  // bubble to the global document dismiss handler — otherwise focusing the
+  // "Move to #" field instantly closes the menu before Go can run. Swallow the
+  // bubble on the menu container itself; the ⋯/top/Go handlers still fire because
+  // they run in the same bubble phase before it reaches this element.
+  var menus=root.querySelectorAll('.cc-q-menu');
+  for(var m=0;m<menus.length;m++){(function(menu){
+    menu.addEventListener('mousedown',function(e){e.stopPropagation();});
+    menu.addEventListener('click',function(e){e.stopPropagation();});
+  })(menus[m]);}
   var btns=root.querySelectorAll('.cc-q-menu-btn');
   for(var i=0;i<btns.length;i++){(function(btn){
     btn.addEventListener('click',function(e){
@@ -2875,7 +2893,10 @@ function ccBindQueueMenus(root){
   var gos=root.querySelectorAll('.cc-q-act-go');
   for(var g=0;g<gos.length;g++){(function(go){
     var key=go.getAttribute('data-qkey');
-    var input=root.querySelector('#mv-'+cssEscId(key));
+    // cssEscId already returns the escaped FULL id ('mv-'+key), so only the '#'
+    // selector prefix is added here. (Prepending '#mv-' would double the 'mv-' and
+    // never match — the bug that made "Move to #" silently no-op.)
+    var input=root.querySelector('#'+cssEscId(key));
     function apply(){ccCloseQueueMenus();ccMoveToPosition(key,input?parseInt(input.value,10):NaN);}
     go.addEventListener('click',function(e){e.stopPropagation();apply();});
     if(input)input.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();apply();}});
