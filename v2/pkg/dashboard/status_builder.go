@@ -843,9 +843,30 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 
 	issuesByRepo := make(map[string][]any)
 	prsByRepo := make(map[string][]any)
+	// seenByRepo dedupes issue numbers per repo so a contribute-rescued issue
+	// (ContributeExtraIssues) is not double-listed if it also somehow appears in
+	// the governor actionable set. Keyed by "repo\x00number".
+	seenByRepo := make(map[string]bool)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
+			issuesByRepo[issue.Repo] = append(issuesByRepo[issue.Repo], issue)
+			seenByRepo[issue.Repo+"\x00"+strconv.Itoa(issue.Number)] = true
+		}
+		// Merge contribute-rescued issues: open issues the governor scan exempted
+		// or held but which carry a contribute allow-label. They are governed by
+		// the contribute filters downstream (ReadyQueue / selectTask), not by the
+		// governor's exempt/hold predicate, so the contribute queue must see them.
+		// This is the fix for the contribute queue showing 0 items while dozens of
+		// matching (e.g. "3-clanker-queue") issues were open — those issues were
+		// dropped by the governor scan and never reached the candidate set. Deduped
+		// so a rescued issue already in the actionable set is not listed twice.
+		for _, issue := range actionable.ContributeExtraIssues {
+			key := issue.Repo + "\x00" + strconv.Itoa(issue.Number)
+			if seenByRepo[key] {
+				continue
+			}
+			seenByRepo[key] = true
 			issuesByRepo[issue.Repo] = append(issuesByRepo[issue.Repo], issue)
 		}
 		for _, pr := range actionable.PRs.Items {

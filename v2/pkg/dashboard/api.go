@@ -4058,6 +4058,14 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeTitlesMode = config.NormalizeFilterMode(cfg.Hub.ContributeTitlesMode)
 	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
+	// Push the (possibly changed) contribute label config into the actionable
+	// scan client so it can rescue contribute-labeled issues the governor would
+	// exempt/hold. Without this the change would only take effect on the next full
+	// config reload / restart, and the contribute queue would stay starved until
+	// then. No-op unless labels_mode is "allow" with a non-empty list.
+	if s.deps != nil && s.deps.GHClient != nil {
+		s.deps.GHClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
+	}
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})

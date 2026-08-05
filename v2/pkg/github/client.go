@@ -30,7 +30,17 @@ type Client struct {
 	reposMu      sync.RWMutex
 	repos        []string
 	exemptLabels []string
-	logger       *slog.Logger
+	// contributeLabels / contributeLabelsMode mirror the CONTRIBUTE label config
+	// (Hub.ContributeDenyLabels + Hub.ContributeLabelsMode). They exist so the
+	// actionable scan can RESCUE issues the governor would otherwise exempt/hold
+	// but which are explicitly contribute-queue work (a positive label match in
+	// "allow" mode). Without this, an issue carrying a contribute allow-label
+	// that also carries a governor exempt-label never reaches the contribute
+	// queue at all — see contributeRescue below. Guarded by reposMu (set on the
+	// same config-sync paths as repos/exemptLabels).
+	contributeLabels     []string
+	contributeLabelsMode string
+	logger               *slog.Logger
 	appAuth      *AppAuth // nil for token-authenticated clients
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
@@ -146,6 +156,14 @@ type ActionableResult struct {
 	Hold        HoldResult            `json:"hold"`
 	Clusters    []IssueCluster        `json:"clusters,omitempty"`
 	TotalByRepo map[string]RepoCounts `json:"total_by_repo,omitempty"`
+	// ContributeExtraIssues are open issues the governor scan EXEMPTED or HELD
+	// but that carry a contribute allow-label (positive match in "allow" mode).
+	// They are excluded from Issues (so governor counts are unaffected) and are
+	// merged into per-repo ActionableIssues by the dashboard so the contribute
+	// ready-queue / selectTask can surface them. Without this, contribute-labeled
+	// issues that are also governor-exempt made the contribute queue show 0 even
+	// with dozens of admissible issues. See Client.contributeRescue.
+	ContributeExtraIssues []Issue `json:"contribute_extra_issues,omitempty"`
 }
 
 type RepoCounts struct {
@@ -268,6 +286,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	}
 
 	var allIssues []Issue
+	var contributeExtra []Issue
 	var allPRs []PullRequest
 	var holdItems []HoldItem
 	totalByRepo := make(map[string]RepoCounts)
@@ -276,7 +295,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	failedRepos := 0
 	var lastFetchErr error
 	for _, repo := range repos {
-		issues, held, issueTotal, err := c.fetchIssues(ctx, repo, now)
+		issues, held, extra, issueTotal, err := c.fetchIssues(ctx, repo, now)
 		if err != nil {
 			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
 			failedRepos++
@@ -284,6 +303,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			continue
 		}
 		allIssues = append(allIssues, issues...)
+		contributeExtra = append(contributeExtra, extra...)
 		holdItems = append(holdItems, held...)
 
 		prs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
@@ -344,6 +364,11 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		Items:  holdItems,
 	}
 	result.TotalByRepo = totalByRepo
+	// Issues rescued for the contribute queue only (governor-exempt or held but
+	// carrying a contribute allow-label). Kept OUT of result.Issues so governor
+	// counts/SLA are unchanged; buildRepos merges these into per-repo
+	// ActionableIssues so the contribute queue can see them. See contributeRescue.
+	result.ContributeExtraIssues = contributeExtra
 
 	return result, nil
 }
@@ -357,7 +382,7 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 	return c.org, repo
 }
 
-func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, err error) {
+func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, contributeExtra []Issue, totalIssues int, err error) {
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -368,13 +393,29 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 	for {
 		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, 0, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
 		}
 		allIssues = append(allIssues, issues...)
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.ListOptions.Page = resp.NextPage
+	}
+
+	// issueOf builds the transport Issue for one raw GitHub issue.
+	issueOf := func(issue *gh.Issue, labels []string) Issue {
+		return Issue{
+			Repo:       repo,
+			Number:     issue.GetNumber(),
+			Title:      issue.GetTitle(),
+			Author:     safeGetLogin(issue.GetUser()),
+			Labels:     labels,
+			Assignees:  extractAssignees(issue.Assignees),
+			CreatedAt:  issue.GetCreatedAt().Time,
+			AgeMinutes: int(now.Sub(issue.GetCreatedAt().Time).Minutes()),
+			URL:        issue.GetHTMLURL(),
+			IsTracker:  isTracker(issue.GetTitle(), labels),
+		}
 	}
 
 	for _, issue := range allIssues {
@@ -392,30 +433,34 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 				Title:  issue.GetTitle(),
 				Type:   "issue",
 			})
+			// A held issue that is ALSO explicit contribute-queue work is still
+			// surfaced to the contribute queue (contribute filters, not governor
+			// hold semantics, decide contributor eligibility). Governor counts
+			// are unaffected — held issues never enter `actionable`.
+			if c.contributeRescue(labels) {
+				contributeExtra = append(contributeExtra, issueOf(issue, labels))
+			}
 			continue
 		}
 
 		if c.isExempt(labels) {
+			// Governor-exempt issues are dropped from the actionable set (and
+			// thus its count) exactly as before — but if the issue carries a
+			// contribute allow-label it is contribute-queue work and MUST reach
+			// the contribute queue, which piggybacks on this scan. Retain it in
+			// the separate contributeExtra set so buildRepos can merge it into
+			// ActionableIssues without inflating governor counts. This is the
+			// fix for the "0 items with dozens of matching issues" bug.
+			if c.contributeRescue(labels) {
+				contributeExtra = append(contributeExtra, issueOf(issue, labels))
+			}
 			continue
 		}
 
-		ageMinutes := int(now.Sub(issue.GetCreatedAt().Time).Minutes())
-
-		actionable = append(actionable, Issue{
-			Repo:       repo,
-			Number:     issue.GetNumber(),
-			Title:      issue.GetTitle(),
-			Author:     safeGetLogin(issue.GetUser()),
-			Labels:     labels,
-			Assignees:  extractAssignees(issue.Assignees),
-			CreatedAt:  issue.GetCreatedAt().Time,
-			AgeMinutes: ageMinutes,
-			URL:        issue.GetHTMLURL(),
-			IsTracker:  isTracker(issue.GetTitle(), labels),
-		})
+		actionable = append(actionable, issueOf(issue, labels))
 	}
 
-	return actionable, held, totalIssues, nil
+	return actionable, held, contributeExtra, totalIssues, nil
 }
 
 func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, totalPRs int, err error) {
@@ -606,6 +651,100 @@ func (c *Client) SetExemptLabels(labels []string) {
 		return
 	}
 	c.exemptLabels = labels
+}
+
+// SetContributeLabels records the CONTRIBUTE label config (the deny/allow list
+// plus its mode) so the actionable scan can rescue contribute-queue work the
+// governor would otherwise drop. Nil-receiver safe for the same reason as
+// SetExemptLabels. Passing an empty list or a non-"allow" mode disables the
+// rescue (nothing to rescue positively on).
+func (c *Client) SetContributeLabels(labels []string, mode string) {
+	if c == nil {
+		return
+	}
+	c.reposMu.Lock()
+	defer c.reposMu.Unlock()
+	c.contributeLabels = labels
+	c.contributeLabelsMode = mode
+}
+
+// wildcardMatch mirrors config.WildcardMatch (kept local to avoid a
+// github->config import cycle): a "/re/"-delimited pattern is a case-insensitive
+// regex, a "*" pattern is a glob, and a bare pattern is a case-insensitive
+// substring test. Only used by contributeRescue to compare labels against the
+// contribute label list, so the two stay behaviourally identical.
+func wildcardMatch(text, pattern string) bool {
+	text = strings.ToLower(text)
+	pattern = strings.TrimSpace(pattern)
+
+	if strings.HasPrefix(pattern, "/") && strings.HasSuffix(pattern, "/") && len(pattern) >= 2 {
+		re, err := regexp.Compile("(?i)" + pattern[1:len(pattern)-1])
+		if err != nil {
+			return false
+		}
+		return re.MatchString(text)
+	}
+
+	pattern = strings.ToLower(pattern)
+	if strings.Contains(pattern, "*") {
+		parts := strings.Split(pattern, "*")
+		idx := 0
+		for _, part := range parts {
+			if part == "" {
+				continue
+			}
+			found := strings.Index(text[idx:], part)
+			if found < 0 {
+				return false
+			}
+			idx += found + len(part)
+		}
+		if !strings.HasPrefix(pattern, "*") && !strings.HasPrefix(text, parts[0]) {
+			return false
+		}
+		if !strings.HasSuffix(pattern, "*") && !strings.HasSuffix(text, parts[len(parts)-1]) {
+			return false
+		}
+		return true
+	}
+
+	return strings.Contains(text, pattern)
+}
+
+// contributeRescue reports whether an issue that the governor scan would exempt
+// or hold should nevertheless be RETAINED because it is explicitly
+// contribute-queue work: i.e. the contribute label config is in "allow" mode
+// with a non-empty list and at least one of the issue's labels matches it.
+//
+// Why this exists (the 0-with-matching-issues bug): the contribute ready-queue
+// (dashboard.ReadyQueue) and the assignment path (selectTask) both draw their
+// candidate set exclusively from repo.ActionableIssues — the governor's
+// actionable scan. That scan filters by GOVERNOR exempt-labels and hold-labels,
+// which are configured independently of the CONTRIBUTE label allow-list. When
+// an operator marks the contribute label (e.g. "3-clanker-queue") as a governor
+// exempt label — a natural setup so the governor does not auto-work it and it is
+// instead surfaced to human/agent contributors — every such issue is dropped in
+// fetchIssues before it can reach the contribute queue. The contribute filters
+// only NARROW the candidate set, so they can never re-add it: the queue shows 0
+// even with dozens of admissible issues. This rescue lets those issues survive
+// the governor exemption so the contribute filters can then admit them. It is
+// deliberately positive-match-only (allow mode + explicit label hit) so it never
+// resurrects arbitrary exempt issues — only genuine contribute-queue work.
+//
+// Deny mode is intentionally NOT rescued: in deny mode "matching a label" means
+// EXCLUDE, so there is no positive contribute-queue signal to rescue on.
+func (c *Client) contributeRescue(labels []string) bool {
+	if !strings.EqualFold(c.contributeLabelsMode, "allow") || len(c.contributeLabels) == 0 {
+		return false
+	}
+	for _, l := range labels {
+		for _, want := range c.contributeLabels {
+			if wildcardMatch(l, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) isExempt(labels []string) bool {

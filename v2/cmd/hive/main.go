@@ -898,6 +898,11 @@ func main() {
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 	}
+	// Sync the contribute label config so the actionable scan can rescue
+	// contribute-queue work the governor would otherwise exempt/hold (fixes the
+	// contribute queue showing 0 with matching issues). No-op unless labels_mode
+	// is "allow" with a non-empty list. Safe on a nil client.
+	ghClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 	// Load user token for advisory posting (comments on issues as the logged-in user)
 	var userGHClient atomic.Pointer[github.Client]
 	if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
@@ -1349,6 +1354,7 @@ func main() {
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 			}
+			ghClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 			if uc := userGHClient.Load(); uc != nil {
 				uc.SetRepos(cfg.Project.Repos)
 			}
@@ -1930,6 +1936,7 @@ func main() {
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 			}
+			newClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 
 			ghClient = newClient
 			appAuth = newAppAuth
@@ -2259,6 +2266,11 @@ func main() {
 
 		// Re-sync subsystems that cache config values
 		ghClient.SetRepos(cfg.Project.Repos)
+		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+		// Re-sync contribute label config on reload so an operator toggling the
+		// contribute allow-list / labels_mode immediately affects which exempt/held
+		// issues the scan rescues for the contribute queue.
+		ghClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 		if uc := userGHClient.Load(); uc != nil {
 			uc.SetRepos(cfg.Project.Repos)
 		}
@@ -2289,6 +2301,7 @@ func main() {
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 					}
+					newClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 					ghClient = newClient
 					appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
@@ -3318,6 +3331,7 @@ func main() {
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				}
+				newClient.SetContributeLabels(cfg.Hub.ContributeDenyLabels, cfg.Hub.ContributeLabelsMode)
 				ghClient = newClient
 				appAuth = newAppAuth
 				agentMgr.SetAppAuth(newAppAuth)

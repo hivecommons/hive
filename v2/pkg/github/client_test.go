@@ -1024,6 +1024,96 @@ func TestIsInternalAuthor(t *testing.T) {
 	}
 }
 
+// TestEnumerateActionable_ContributeRescue is the scan-level reproduction of the
+// "contribute queue shows 0 with many matching issues" bug. The contribute
+// ready-queue draws its candidate set from the governor's actionable scan. When
+// the operator marks the CONTRIBUTE label ("3-clanker-queue") as a GOVERNOR
+// exempt label — a natural setup so the governor does not auto-work it and it is
+// surfaced to contributors instead — the scan dropped every such issue, so the
+// contribute queue was starved even though the contribute filter would pass them.
+//
+// With the fix, an exempt (or held) issue that carries a contribute allow-label
+// is RETAINED in ContributeExtraIssues (kept OUT of Issues so governor counts are
+// unaffected), so the dashboard can merge it into the contribute candidate set.
+func TestEnumerateActionable_ContributeRescue(t *testing.T) {
+	org, repo := "projectbluefin", "common"
+	issues := []wireIssue{
+		// Contribute work that is ALSO governor-exempt: previously vanished.
+		{Number: 100, Title: "clanker work A", User: wireUser{"alice"},
+			Labels: []wireLabel{{Name: "3-clanker-queue"}}, CreatedAt: hoursAgo(2)},
+		// Contribute work that is ALSO held: previously vanished.
+		{Number: 101, Title: "clanker work B (held)", User: wireUser{"bob"},
+			Labels: []wireLabel{{Name: "3-clanker-queue"}, {Name: "hold"}}, CreatedAt: hoursAgo(3)},
+		// Plain governor-actionable issue (no contribute label): stays in Issues.
+		{Number: 102, Title: "ordinary bug", User: wireUser{"carol"},
+			Labels: []wireLabel{{Name: "bug"}}, CreatedAt: hoursAgo(1)},
+		// Governor-exempt WITHOUT a contribute label: must NOT be rescued.
+		{Number: 103, Title: "adopters entry", User: wireUser{"dave"},
+			Labels: []wireLabel{{Name: "3-clanker-queue-lookalike"}, {Name: "adopters"}}, CreatedAt: hoursAgo(1)},
+	}
+
+	mux := buildMux(t, org, repo, issues, nil)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	// Operator exempts the contribute label from the GOVERNOR (plus the default
+	// "adopters"), and configures the CONTRIBUTE label allow-list to that label.
+	c.SetExemptLabels([]string{"3-clanker-queue", "adopters"})
+	c.SetContributeLabels([]string{"clanker-queue", "3-clanker-queue"}, "allow")
+
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+
+	// Governor counts are unchanged: only the plain bug (#102) is actionable; the
+	// two clanker issues are exempt/held, and #103 is exempt via "adopters".
+	if result.Issues.Count != 1 {
+		t.Fatalf("governor Issues.Count = %d, want 1 (rescue must not inflate governor counts)", result.Issues.Count)
+	}
+	if result.Issues.Items[0].Number != 102 {
+		t.Fatalf("unexpected actionable issue: %+v", result.Issues.Items)
+	}
+
+	// Both clanker issues are rescued for the contribute queue; #103 is not.
+	got := map[int]bool{}
+	for _, iss := range result.ContributeExtraIssues {
+		got[iss.Number] = true
+	}
+	if !got[100] || !got[101] {
+		t.Fatalf("ContributeExtraIssues missing rescued clanker issues, got %+v", result.ContributeExtraIssues)
+	}
+	if got[103] {
+		t.Fatalf("exempt non-contribute issue #103 was wrongly rescued")
+	}
+	if len(result.ContributeExtraIssues) != 2 {
+		t.Fatalf("ContributeExtraIssues len = %d, want 2", len(result.ContributeExtraIssues))
+	}
+}
+
+// TestContributeRescue_DisabledWhenNotAllowMode proves the rescue is inert unless
+// the contribute label config is in "allow" mode with a non-empty list — a deny
+// list carries no positive contribute-queue signal to rescue on.
+func TestContributeRescue_DisabledWhenNotAllowMode(t *testing.T) {
+	c := &Client{}
+	c.SetContributeLabels([]string{"3-clanker-queue"}, "deny")
+	if c.contributeRescue([]string{"3-clanker-queue"}) {
+		t.Error("deny mode must not rescue")
+	}
+	c.SetContributeLabels(nil, "allow")
+	if c.contributeRescue([]string{"3-clanker-queue"}) {
+		t.Error("empty allow list must not rescue")
+	}
+	c.SetContributeLabels([]string{"3-clanker-queue"}, "allow")
+	if !c.contributeRescue([]string{"3-clanker-queue"}) {
+		t.Error("allow mode with matching label must rescue")
+	}
+	if c.contributeRescue([]string{"unrelated"}) {
+		t.Error("non-matching label must not rescue")
+	}
+}
+
 func init() {
 	_ = rfc3339Ago // suppress unused-constant warning
 }
