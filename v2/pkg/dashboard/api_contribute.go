@@ -782,6 +782,18 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
 .cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
 .cc-live.stale .cc-live-dot{background:#d29922;animation:none}
+/* Ready-work queue play/pause — the SAME contribute_suspended control as the
+   Management "Suspend contributions" switch, surfaced on the queue header.
+   Quiet by default (bordered ghost button); the danger tint only appears once
+   paused, matching .admin-switch.on.danger's accent so the two placements read
+   as one state. Left of #cc-live so status (queue live/stale) and posture
+   (active/paused) sit as a pair. */
+#queue-suspend-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;font-size:.7rem;line-height:1;transition:background .15s,color .15s,border-color .15s}
+.queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:#c9d1d9}
+.queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
+.queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
+.queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
 /* Army roster header line under the clanker card */
 .cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.78rem;color:#8b949e}
 .cc-army b{color:#e6edf3;font-weight:600}
@@ -991,11 +1003,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
 .client-tile .ct-name small{display:block;font-weight:400;color:#8b949e;font-size:.7rem}
-/* Name + First-class badge stack vertically: the badge gets its OWN line below the
-   name/subtitle so it never overlaps them (the #2602 tiles overlapped at narrow
-   widths). min-width:0 keeps the name ellipsising instead of shoving the badge. */
+/* min-width:0 keeps the name ellipsising rather than overflowing the tile. */
 .client-tile .ct-body{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
-.client-tile .ct-parity{align-self:flex-start;font-size:.62rem;color:#3fb950;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:1px 6px;white-space:nowrap}
 /* "Open in <tool>" onboarding affordance — deliberately understated and clearly a
    SETUP helper, never a "contributing" surface. Only rendered for a client with a
    real, vendor-documented deep-link scheme. */
@@ -1263,7 +1272,8 @@ var promptEdited=false;   // once the user edits, don't clobber on same client
 var promptForClient='';   // which client the current prompt text was generated for
 function tileOrder(){
   // Peers (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter) first, in select order, then
-  // the rest — so the first-class tools lead the grid rather than being afterthoughts.
+  // the rest — so these tools lead the grid rather than being afterthoughts. This
+  // is an ORDERING signal only; peer status is no longer shown as a visible badge.
   var peers=[],rest=[];
   for(var i=0;i<sel.options.length;i++){
     var v=sel.options[i].value;var c=CLIENTS[v]||{name:v,tag:''};
@@ -1276,13 +1286,9 @@ function buildTiles(){
   tilesEl.innerHTML=tileOrder().map(function(v){
     var c=CLIENTS[v]||{name:v,tag:''};
     var emb=EMB[v]||EMB.other;
-    // First-class badge sits on its OWN line BELOW the name/subtitle (a sibling
-    // block in a flex column), never absolutely positioned over the text — so it
-    // can't overlap the tool name or the vendor subtitle at narrow tile widths.
-    var parity=c.peer?'<span class="ct-parity">First-class</span>':'';
     return '<button type="button" class="client-tile" role="option" data-cli="'+v+'" aria-selected="false" title="'+c.name+'">'+
       '<span class="ct-emblem">'+emb+'</span>'+
-      '<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</span></button>';
+      '<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span></span></button>';
   }).join('');
 }
 function defaultPromptFor(v){
@@ -1521,7 +1527,19 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span>
+<!-- #queue-suspend-btn is the SAME logical control as the Management "Suspend
+     contributions" switch (#admin-suspend-switch) — not a related toggle, the
+     identical Config.Hub.ContributeSuspended state surfaced a second place. Both
+     read/write through setContributeSuspended(), which is the single source of
+     truth for the PUT + both render updates (see below). Hidden until initAdmin()
+     resolves owner/read-write; a read viewer still sees the status pill next to it
+     (#queue-suspend-pill), which is read-only info. -->
+<span id="queue-suspend-wrap">
+<span class="pill pill-passed" id="queue-suspend-pill" style="display:none">active</span>
+<button type="button" class="queue-suspend-btn" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon">&#10074;&#10074;</span></button>
+</span>
+<span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
 <!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
      (repo / number / title / label, case-insensitive, live) — it never changes
      the persisted order, only what is shown. Read-only, so visible to everyone. -->
@@ -2237,6 +2255,57 @@ function renderAdminTierLimits(){
   }).join('');
 }
 
+// renderQueueSuspendControl paints the Ready-work queue's play/pause button +
+// status pill from the SAME contribute_suspended value the Management "Suspend
+// contributions" switch reads (adminHub.contribute_suspended when available, or
+// the read-only policy snapshot as a fallback for a viewer with no adminHub).
+// There is no separate queue-local state — this is a pure render of one shared
+// value, called from every place that value can change (renderAdminControls
+// after a toggle/hub load, and renderPolicy on every opsPoll tick so a change
+// made on the OTHER surface — or by another operator — shows up here too).
+function renderQueueSuspendControl(suspended){
+  var pill=document.getElementById('queue-suspend-pill');
+  if(pill){
+    pill.style.display='';
+    pill.className='pill '+(suspended?'pill-blocked':'pill-passed');
+    pill.textContent=suspended?'paused':'active';
+  }
+  var btn=document.getElementById('queue-suspend-btn');
+  if(!btn)return;
+  if(!adminEnabled){btn.style.display='none';return;} // read viewer: status pill only, no control
+  btn.style.display='';
+  btn.classList.toggle('paused',!!suspended);
+  btn.title=suspended?'Resume contributions':'Pause contributions';
+  btn.setAttribute('aria-label',btn.title);
+  var icon=document.getElementById('queue-suspend-icon');
+  if(icon)icon.innerHTML=suspended?'&#9654;':'&#10074;&#10074;'; // play triangle : pause bars
+}
+
+// setContributeSuspended is the SINGLE handler for the contribute_suspended
+// toggle, shared by the Management "Suspend contributions" switch and the
+// Ready-work queue play/pause button — they are the same logical control
+// surfaced twice, not two independent toggles. It PUTs through the existing
+// governor-hub endpoint (adminSaveHub) and, on success, updates adminHub and
+// re-renders BOTH surfaces so they can never drift apart.
+var contributeSuspendBusy=false;
+function setContributeSuspended(next,source){
+  if(contributeSuspendBusy)return;
+  contributeSuspendBusy=true;
+  adminSaveHub({contribute_suspended:next},next?'Contributions paused':'Contributions resumed').then(function(ok){
+    contributeSuspendBusy=false;
+    if(!ok)return;
+    if(adminHub)adminHub.contribute_suspended=next;
+    renderAdminControls();
+    renderQueueSuspendControl(next);
+  });
+}
+
+onEl('queue-suspend-btn','click',function(){
+  if(!adminEnabled)return;
+  var next=!(adminHub&&adminHub.contribute_suspended);
+  setContributeSuspended(next,'queue');
+});
+
 function renderAdminControls(){
   if(!adminEnabled||!adminHub)return;
   // Immediate toggles.
@@ -2244,6 +2313,7 @@ function renderAdminControls(){
   document.getElementById('admin-suspend-switch').classList.toggle('danger',!!adminHub.contribute_suspended);
   document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
   document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
+  renderQueueSuspendControl(!!adminHub.contribute_suspended);
   // Filters (mirror Governor Hub: titles/authors/labels + modes, allow-models).
   renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
   renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
@@ -2263,6 +2333,10 @@ function bindImmediateToggle(id){
   sw.addEventListener('click',function(){
     var key=sw.getAttribute('data-key');
     var next=!(adminHub&&adminHub[key]);
+    // contribute_suspended is the SAME control as the queue play/pause button —
+    // route both through the one shared handler so there is exactly one code
+    // path that PUTs this field and exactly one place that renders both surfaces.
+    if(key==='contribute_suspended'){setContributeSuspended(next,'management');return;}
     var patch={};patch[key]=next;
     adminSaveHub(patch,next?'Enabled '+key.replace(/_/g,' '):'Disabled '+key.replace(/_/g,' ')).then(function(ok){
       if(ok){adminHub[key]=next;renderAdminControls();}
@@ -2562,6 +2636,13 @@ function renderWork(list){
 function renderPolicy(p){
   var el=document.getElementById('policy-body');
   if(!p){el.innerHTML='<div class="ops-empty">Policy unavailable.</div>';return;}
+  // Keep the queue play/pause in sync every poll tick — this is what makes the
+  // two surfaces converge even when the change came from elsewhere (the other
+  // tab, another operator, a page that hasn't loaded adminHub yet). If adminHub
+  // is already loaded, prefer it (freshest, updated synchronously on toggle);
+  // otherwise fall back to this read-only policy snapshot so a read viewer (who
+  // never loads adminHub) still sees the correct paused/active status.
+  renderQueueSuspendControl(adminHub?!!adminHub.contribute_suspended:!!p.suspended);
   function list(a){return (a&&a.length)?a.map(esc).join(', '):'&mdash;';}
   var rows=[
     ['Contribute queue',p.suspended?'<span class="pill pill-blocked">suspended</span>':'<span class="pill pill-passed">active</span>'],
