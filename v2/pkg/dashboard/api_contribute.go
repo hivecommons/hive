@@ -161,10 +161,20 @@ type ContributorProfile struct {
 	LastActive        string                `json:"last_active,omitempty"`
 	LastCompletedTask *WSTaskAssign         `json:"last_completed_task,omitempty"`
 	RateLimits        ContributorRateLimits `json:"rate_limits"`
-	Active            bool                  `json:"active,omitempty"`
-	CurrentTask       *WSTaskAssign         `json:"current_task,omitempty"`
-	ActiveTasks       []WSTaskAssign        `json:"active_tasks,omitempty"`
-	Sessions          int                   `json:"sessions,omitempty"`
+	// LabelInterests is the contributor's OPT-IN list of GitHub issue labels they
+	// want to help with (issue #2637) — e.g. a contributor with an NVIDIA machine
+	// subscribes to "nvidia" so nvidia-labelled work surfaces first for them. It is
+	// a SOFT signal only: the Operations ready-work queue highlights and sorts
+	// matching issues to the front FOR THIS VIEWER, but never hard-filters the
+	// queue, so a contributor with no interests set (or an issue with no labels) is
+	// never starved of work. Matching is exact on the label NAME, case-insensitive.
+	// Stored here (the existing per-contributor profile store) rather than in a new
+	// subsystem; empty/omitted for contributors who set none.
+	LabelInterests []string       `json:"label_interests,omitempty"`
+	Active         bool           `json:"active,omitempty"`
+	CurrentTask    *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks    []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions       int            `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
@@ -249,6 +259,13 @@ func (s *Server) registerContributeRoutes() {
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
 	s.mux.HandleFunc("PUT /api/contribute/queue/order", s.handleContributeQueueOrder)
+	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
+	// GitHub labels they can help with, used to surface/prioritise matching issues
+	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
+	// never a client param), so a contributor reads/writes only their OWN interests;
+	// it is a preference, not an operator control. GET reads, PUT replaces.
+	s.mux.HandleFunc("GET /api/contribute/interests", s.handleContributeInterests)
+	s.mux.HandleFunc("PUT /api/contribute/interests", s.handleContributeInterests)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -882,6 +899,33 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
 .cc-q-search-clear:hover{color:#c9d1d9}
 .cc-q-filternote{padding:6px 20px;font-size:.72rem;color:#6e7681;border-bottom:1px solid #21262d}
+/* ── My label interests (#2637) — contributor-declared label affinity ───────────
+   A quiet self-service editor on the queue card: chips for the labels this viewer
+   subscribed to, plus an add field. Shown only to a signed-in contributor. Matching
+   queue rows are highlighted (.cc-q-mine) and a small "for you" tag explains why.
+   Sober palette to match the SRE ops register; the page's green accent marks a
+   personal match without shouting. */
+.cc-interests{padding:10px 20px;border-bottom:1px solid #21262d}
+.cc-interests-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:6px}
+.cc-interests-title{font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#8b949e}
+.cc-interests-hint{font-size:.68rem;color:#6e7681}
+.cc-interests-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
+.cc-interests-empty{font-size:.72rem;color:#6e7681}
+.cc-interests-empty code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:0 4px;font-size:.9em}
+.cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+.cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
+.cc-interest-x:hover{opacity:1}
+.cc-interests-add{display:flex;gap:6px}
+.cc-interests-add input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-interests-add input::placeholder{color:#6e7681}
+.cc-interests-add input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-interests-add button{background:#161b22;border:1px solid #30363d;border-radius:7px;color:#c9d1d9;cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
+.cc-interests-add button:hover{border-color:#3fb950;color:#3fb950}
+/* A queue row matching one of the viewer's label interests: a soft green rail on
+   the leading edge + faint tint. Never hides the row — pure emphasis. */
+.cc-q-item.cc-q-mine{background:rgba(46,160,67,.06);box-shadow:inset 3px 0 0 0 #2ea043}
+.cc-q-item.cc-q-mine:first-child{background:rgba(46,160,67,.1)}
+.cc-q-mine-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#3fb950;background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* Per-row "⋯" context affordance — owner/read-write only (rendered only when
    adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
@@ -1601,6 +1645,22 @@ update();  // initial paint: copy block + branded UI in sync from first load
   <button type="button" class="cc-q-search-clear" id="cc-q-search-clear" aria-label="Clear filter" title="Clear filter">&times;</button>
 </div>
 <div class="cc-q-filternote" id="cc-q-filternote" style="display:none"></div>
+<!-- My label interests (#2637): a signed-in contributor's OPT-IN set of labels they
+     can help with. Matching issues are highlighted and floated to the top of THIS
+     viewer's queue. Soft signal — nothing is filtered out, so leaving it empty just
+     shows the shared queue. Hidden until the viewer is known to have a contributor
+     profile (populated by ccApplyInterests from the /api/contribute/queue response). -->
+<div class="cc-interests" id="cc-interests" style="display:none">
+  <div class="cc-interests-head">
+    <span class="cc-interests-title">My label interests</span>
+    <span class="cc-interests-hint">Issues with these labels are highlighted and shown first for you. Soft signal &mdash; nothing else is hidden.</span>
+  </div>
+  <div class="cc-interests-chips" id="cc-interests-chips"></div>
+  <div class="cc-interests-add">
+    <input type="text" id="cc-interests-input" placeholder="e.g. nvidia" aria-label="Add a label interest" autocomplete="off" spellcheck="false">
+    <button type="button" id="cc-interests-add-btn">Add</button>
+  </div>
+</div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
 <!-- End-of-queue block (#2595): a calm "all caught up" marker + the hive's managed
      rate-limit settings + the viewer's daily quota. Rendered by ccRenderQueueEnd()
@@ -2954,6 +3014,116 @@ var ccKnownClankers={};    // username -> true, for enter/leave detection
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
 
+// ── Label-affinity (#2637): the viewer's own label interests ───────────────────
+// ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
+// from /api/contribute/queue's "interests" echo (and the dedicated interests GET)
+// when the viewer has a contributor profile; null means "not a known contributor"
+// (or not loaded yet) so we hide the editor. It is a SOFT signal: we re-tag the
+// queue client-side so matches highlight/float even on the anonymous SSE snapshot,
+// but we NEVER drop a row — a viewer with no interests sees the shared queue as-is.
+var ccInterests=null;
+// ccInterestSet mirrors ccInterests as a lookup set for O(1) per-label matching.
+var ccInterestSet={};
+function ccRebuildInterestSet(){
+  ccInterestSet={};
+  (ccInterests||[]).forEach(function(l){var n=(l||'').trim().toLowerCase();if(n)ccInterestSet[n]=true;});
+}
+// ccItemMatchesInterests tags one queue item with matches_interest by comparing its
+// labels (exact, case-insensitive) against the viewer's interest set. Mirrors the
+// server rule so the client view agrees with a personalised /api/contribute/queue.
+function ccItemMatchesInterests(q){
+  var labels=q.labels||[];
+  for(var i=0;i<labels.length;i++){
+    if(ccInterestSet[(labels[i]||'').trim().toLowerCase()])return true;
+  }
+  return false;
+}
+// ccApplyInterestsToQueue re-tags every item's matches_interest and STABLY floats
+// matches to the front — mirroring the server's personalizeQueueByInterests so the
+// view is identical whether the queue arrived via the personalised poll or the
+// anonymous SSE snapshot. No-op (order untouched) when the viewer set no interests:
+// the anti-starvation guarantee holds client-side too.
+function ccApplyInterestsToQueue(){
+  for(var i=0;i<ccQueue.length;i++){ccQueue[i].matches_interest=ccItemMatchesInterests(ccQueue[i]);}
+  var keys=Object.keys(ccInterestSet);
+  if(!keys.length)return; // nothing to promote; leave order exactly as-is
+  // Stable partition: matches first, keeping each group's relative order.
+  var matched=[],rest=[];
+  for(var j=0;j<ccQueue.length;j++){(ccQueue[j].matches_interest?matched:rest).push(ccQueue[j]);}
+  ccQueue=matched.concat(rest);
+}
+
+// ── My-label-interests editor (#2637) ──────────────────────────────────────────
+// The editor is shown ONLY to a viewer with a contributor profile (ccInterests is
+// a real array, even if empty). ccApplyInterestsFromResponse is called with the
+// "interests" field the personalised /api/contribute/queue returns; a present array
+// means "known contributor" → show + render the editor.
+function ccApplyInterestsFromResponse(interests){
+  if(!Array.isArray(interests))return; // anonymous / no profile: leave hidden
+  ccInterests=interests.slice();
+  ccRebuildInterestSet();
+  ccRenderInterests();
+}
+function ccRenderInterests(){
+  var wrap=document.getElementById('cc-interests');if(!wrap)return;
+  if(ccInterests===null){wrap.style.display='none';return;}
+  wrap.style.display='';
+  var chips=document.getElementById('cc-interests-chips');
+  if(chips){
+    if(!ccInterests.length){
+      chips.innerHTML='<span class="cc-interests-empty">No interests yet &mdash; add a label (like <code>nvidia</code>) to have matching issues surfaced first for you.</span>';
+    }else{
+      chips.innerHTML=ccInterests.map(function(l){
+        return '<span class="cc-interest-chip">'+esc(l)+'<span class="cc-interest-x" data-label="'+esc(l)+'" title="Remove" role="button" aria-label="Remove '+esc(l)+'">&times;</span></span>';
+      }).join('');
+      var xs=chips.querySelectorAll('.cc-interest-x');
+      for(var i=0;i<xs.length;i++){(function(x){x.addEventListener('click',function(){ccRemoveInterest(x.getAttribute('data-label'));});})(xs[i]);}
+    }
+  }
+}
+function ccAddInterestFromInput(){
+  var inp=document.getElementById('cc-interests-input');if(!inp)return;
+  var v=(inp.value||'').trim().toLowerCase();
+  inp.value='';
+  if(!v||ccInterests===null)return;
+  if(ccInterests.indexOf(v)>=0)return; // already present
+  var next=ccInterests.concat([v]);
+  ccSaveInterests(next);
+}
+function ccRemoveInterest(label){
+  if(ccInterests===null)return;
+  var next=ccInterests.filter(function(l){return l!==label;});
+  ccSaveInterests(next);
+}
+// ccSaveInterests PUTs the new set and, on success, adopts the server-sanitised
+// result (the server is the authority on normalisation/dedupe/cap), then re-renders
+// the editor AND the queue so highlights/order update immediately.
+function ccSaveInterests(next){
+  fetch('/api/contribute/interests',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({interests:next})})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){
+      if(d&&Array.isArray(d.interests)){ccInterests=d.interests.slice();}
+      else{ccInterests=next;} // optimistic fallback if the body was unexpected
+      ccRebuildInterestSet();
+      ccRenderInterests();
+      ccRenderQueue(); // re-tag + re-float with the new interests
+    })
+    .catch(function(){});
+}
+function ccInitInterestsEditor(){
+  var btn=document.getElementById('cc-interests-add-btn');
+  if(btn)btn.addEventListener('click',ccAddInterestFromInput);
+  var inp=document.getElementById('cc-interests-input');
+  if(inp)inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();ccAddInterestFromInput();}});
+  // Seed interests from the personalised queue endpoint (which echoes them for a
+  // known contributor). A dedicated GET is unnecessary — the queue we already poll
+  // carries them — but this initial fetch guarantees the editor appears even before
+  // the first SSE/poll render.
+  fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
+    if(d)ccApplyInterestsFromResponse(d.interests);
+  }).catch(function(){});
+}
+
 function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
 // ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
@@ -2970,10 +3140,14 @@ function ccQueueMatches(q){
 }
 function ccRenderQueue(flip){
   // Item count badge, same style as "My work"'s #work-count — kept in sync on
-  // every render (initial load, SSE queue push, poll fallback, drag-reorder).
-  // Populated FIRST so it stays set even if the queue container is absent.
+  // every render path. Populated FIRST so it stays set even if the container is absent.
+  // (The interest re-float below only reorders ccQueue, never changes its length.)
   var qc=document.getElementById('queue-count');
   if(qc)qc.textContent=ccQueue.length+' ready';
+  // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
+  // when no interests are set (order preserved); skipped mid-drag so an operator
+  // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
+  if(!flip){try{ccApplyInterestsToQueue();}catch(e){}}
   var el=document.getElementById('cc-queue');if(!el)return;
   // reload bridge — overwritten by the next poll, including to empty.
   ccOpsCacheWrite(OPS_CACHE_QUEUE_KEY,ccQueue);
@@ -3014,8 +3188,14 @@ function ccRenderQueue(flip){
     // only when adminEnabled). Carries move-to-top + move-to-position, both keyed on
     // this row's qkey so they act on the right item in the FULL order.
     var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
-    return '<div class="cc-q-item"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+'</div>'+
+    // Label-affinity (#2637): the server sets matches_interest per VIEWER when one
+    // of the issue's labels matches a label this contributor subscribed to. Tag the
+    // row so CSS can highlight it; a small "for you" pill makes the reason explicit.
+    var mine=!!q.matches_interest;
+    var mineCls=mine?' cc-q-mine':'';
+    var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
+    return '<div class="cc-q-item'+mineCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
   }).join('');
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
@@ -3520,7 +3700,11 @@ function ccHydrate(payload){
 }
 function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
   fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
-    if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+    if(!d)return;
+    // Adopt the viewer's interests the personalised endpoint echoes (#2637) so the
+    // editor + highlights stay current even without a separate fetch.
+    ccApplyInterestsFromResponse(d.interests);
+    if(d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
   }).catch(function(){});
   ccQueuePollTimer=setTimeout(ccQueuePoll,6000);
 }
@@ -3541,6 +3725,7 @@ function ccStart(){
   // poll. Both are independent of the SSE lifecycle: a throw here must not block the
   // live queue stream, so each is guarded.
   try{ccInitQueueSearch();}catch(e){console.error('queue search init failed',e);}
+  try{ccInitInterestsEditor();}catch(e){console.error('interests editor init failed',e);}
   try{ccStartOpportunistic();}catch(e){console.error('opportunistic init failed',e);}
   if(!('EventSource' in window)){ccSetLive('poll');ccQueuePoll();return;}
   function connect(){
@@ -4200,7 +4385,106 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	if s.contributeHub != nil {
 		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
 	}
-	jsonResponse(w, map[string]any{"queue": queue})
+	resp := map[string]any{"queue": queue}
+	// Label-affinity (#2637): if we can identify the viewer server-side and they
+	// have declared label interests, personalise THIS response — tag matching
+	// issues and float them to the front for them. Soft signal only: nothing is
+	// filtered out, so a viewer with no interests (or none identifiable) gets the
+	// exact shared queue. Resolved from session / X-Hive-User (never a client
+	// param), so a viewer only ever personalises with their OWN interests.
+	if username := s.resolveViewerUsername(r); username != "" {
+		if profile := findContributor(username); profile != nil {
+			personalizeQueueByInterests(queue, profile.LabelInterests)
+			// Echo the viewer's own interests so the Operations tab can render the
+			// editor pre-filled without a second round-trip.
+			resp["interests"] = profile.LabelInterests
+		}
+	}
+	jsonResponse(w, resp)
+}
+
+// maxLabelInterests caps how many label interests one contributor may declare. It
+// is generous (a contributor could reasonably follow many hardware/area labels)
+// yet bounds a hostile payload so a single profile file cannot be bloated. A
+// submission over the cap is truncated, not rejected, so the save still succeeds.
+const maxLabelInterests = 64
+
+// maxLabelInterestLen bounds a single label string. GitHub labels are short; this
+// is well above any real label yet stops a pathological entry from bloating the
+// stored profile. Over-length entries are dropped.
+const maxLabelInterestLen = 128
+
+// handleContributeInterests is the contributor-owned read/write for their OWN
+// label interests (#2637). GET returns the caller's current interests; PUT
+// replaces them. Identity is resolved server-side (session / X-Hive-User / owner
+// token / Bearer gh-token) via resolveContributeCaller — NEVER from the body — so
+// a contributor can only ever read or write THEIR OWN interests, and an anonymous
+// caller gets 401. This is a self-service PREFERENCE, not an operator control, so
+// it deliberately does NOT require write-tier; any registered contributor may set
+// what work they want surfaced to them.
+func (s *Server) handleContributeInterests(w http.ResponseWriter, r *http.Request) {
+	username := s.resolveContributeCaller(r)
+	if username == "" {
+		jsonError(w, "Sign in with GitHub to set your label interests.", http.StatusUnauthorized)
+		return
+	}
+	profile := findContributor(username)
+	if profile == nil {
+		jsonError(w, "You need a contributor profile on this hive before you can set label interests.", http.StatusForbidden)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		interests := profile.LabelInterests
+		if interests == nil {
+			interests = []string{}
+		}
+		jsonResponse(w, map[string]any{"interests": interests})
+		return
+	}
+
+	// PUT: replace the caller's interests with the submitted (sanitised) set.
+	var body struct {
+		Interests []string `json:"interests"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	cleaned := sanitizeLabelInterests(body.Interests)
+	profile.LabelInterests = cleaned
+	if err := saveContributorProfile(profile); err != nil {
+		s.logger.Error("failed to save contributor label interests", "username", username, "error", err)
+		jsonError(w, "could not save label interests", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("contributor label interests updated", "username", username, "count", len(cleaned))
+	jsonResponse(w, map[string]any{"interests": cleaned})
+}
+
+// sanitizeLabelInterests normalises a submitted interest list: trims/lower-cases
+// each entry (so matching is predictable and case-insensitive), drops blanks and
+// over-length entries, de-duplicates while preserving first-seen order, and caps
+// the total. It never errors — a hostile or messy payload is cleaned into a safe
+// stored set rather than rejected.
+func sanitizeLabelInterests(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		n := normalizeLabelInterest(raw)
+		if n == "" || len(n) > maxLabelInterestLen {
+			continue
+		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+		if len(out) >= maxLabelInterests {
+			break
+		}
+	}
+	return out
 }
 
 // handleContributeOpportunistic serves the read-only OPPORTUNISTIC WORK list

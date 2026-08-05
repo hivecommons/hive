@@ -72,6 +72,13 @@ type ReadyQueueItem struct {
 	Title  string   `json:"title"`
 	URL    string   `json:"url,omitempty"`
 	Labels []string `json:"labels,omitempty"`
+	// MatchesInterest is set true, per VIEWER, when at least one of the issue's
+	// labels exactly matches (case-insensitive) a label the viewing contributor
+	// declared interest in (issue #2637). It is a SOFT signal the Operations tab
+	// uses to highlight and float this row for that viewer; it is NEVER set on the
+	// shared/anonymous queue snapshot (no viewer identity there) and NEVER used to
+	// exclude an item. omitempty so the anonymous payload is byte-for-byte unchanged.
+	MatchesInterest bool `json:"matches_interest,omitempty"`
 }
 
 // sseSubscriber is one connected browser. events is the fan-out channel; done is
@@ -439,4 +446,89 @@ func sortReadyQueue(items []ReadyQueueItem) {
 		}
 		return items[i].Number < items[j].Number
 	})
+}
+
+// ── Label-affinity: contributor-declared label interests (#2637) ───────────────
+//
+// A contributor opts in to a set of label names they can help with (e.g. an
+// NVIDIA-machine owner subscribes to "nvidia"). The Operations ready-work queue
+// then, FOR THAT VIEWER ONLY, tags matching issues and floats them to the front.
+// This is a SOFT signal — a personalised VIEW over the same admissible set — never
+// a filter: nothing is removed, so a contributor with no interests, or an issue
+// with no labels, is never starved. The shared/anonymous queue is untouched.
+//
+// Matching rule (chosen for predictability): an issue matches when at least one of
+// its GitHub labels equals — case-insensitively, after trimming surrounding
+// whitespace — a label the viewer declared. Exact NAME match, not substring, so a
+// "gpu" interest does not silently sweep in "gpu-docs" and the contributor gets
+// exactly the labels they asked for.
+
+// normalizeLabelInterest lower-cases and trims one label string so interest
+// matching is case-insensitive and whitespace-insensitive. Empty after trimming
+// means "not a real interest" and callers drop it.
+func normalizeLabelInterest(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// labelInterestSet builds a lookup set of normalised interest labels from a
+// contributor's declared list, dropping blanks and de-duplicating. A nil/empty
+// input yields an empty (non-nil) set, so callers can range/lookup without a nil
+// guard and "no interests" naturally matches nothing (→ no reordering).
+func labelInterestSet(interests []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(interests))
+	for _, in := range interests {
+		if n := normalizeLabelInterest(in); n != "" {
+			set[n] = struct{}{}
+		}
+	}
+	return set
+}
+
+// issueMatchesInterests reports whether any of an issue's labels exactly matches
+// (case-insensitively) a label in the interest set. An empty interest set or a
+// label-less issue returns false — the anti-starvation contract: a non-match is
+// never excluded, it simply is not promoted.
+func issueMatchesInterests(labels []string, interests map[string]struct{}) bool {
+	if len(interests) == 0 {
+		return false
+	}
+	for _, l := range labels {
+		if _, ok := interests[normalizeLabelInterest(l)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// personalizeQueueByInterests annotates each item with MatchesInterest for the
+// given viewer and STABLY floats matching items to the front, preserving the
+// established (operator-pinned + scan) relative order WITHIN the matching group and
+// WITHIN the non-matching group. It mutates items in place and returns the same
+// slice for convenience.
+//
+// Soft-signal guarantees:
+//   - Empty interests → no item matches → order is unchanged (stable sort with a
+//     constant key is a no-op), so a contributor who set nothing sees the exact
+//     shared queue: NO STARVATION.
+//   - A label-less issue never matches, but is never removed — it keeps its place
+//     behind any matches and remains fully eligible.
+//   - Only OFFER PRIORITY in THIS VIEWER'S view changes; the persisted operator
+//     order and every other viewer's queue are untouched (this runs per-request on
+//     a copy the handler owns). A matching item may rise above an operator-pinned
+//     non-match for this viewer — that is the intended personalisation and is
+//     view-only, never written back.
+func personalizeQueueByInterests(items []ReadyQueueItem, interests []string) []ReadyQueueItem {
+	set := labelInterestSet(interests)
+	for i := range items {
+		items[i].MatchesInterest = issueMatchesInterests(items[i].Labels, set)
+	}
+	if len(set) == 0 {
+		return items // fast path: nothing to promote, order untouched
+	}
+	// Stable partition: matches first, everything else after, each group keeping its
+	// prior relative order. SliceStable with a boolean "!match" key does exactly this.
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].MatchesInterest && !items[j].MatchesInterest
+	})
+	return items
 }
