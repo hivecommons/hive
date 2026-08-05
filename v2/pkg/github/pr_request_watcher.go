@@ -88,12 +88,19 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 // watcher must never open a PR that hasn't been authorized against the same
 // policy as the direct `gh pr create` path.
 //
+// holdLabel (F6) decides server-side, from authoritative hive config (the ACMM
+// level), whether a freshly-opened PR must carry the "hold" label. It is applied
+// AFTER the PR is created, on the path that actually runs — unlike the
+// gh-wrapper.sh tail, which was dead code (it sat after `exec hive-open-pr`), so
+// hold-gated PRs were being opened unlabeled. A nil holdLabel means "never hold".
+//
 // nowFn is injectable for tests; pass nil for time.Now.
-func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, nowFn func() time.Time) {
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func() bool, nowFn func() time.Time) {
 	if c == nil {
 		return
 	}
 	c.prAuthz = authz
+	c.prHoldLabel = holdLabel
 	if nowFn == nil {
 		nowFn = time.Now
 	}
@@ -202,6 +209,27 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.Number = res.Number
 	resp.URL = res.URL
 	resp.AlreadyExisted = res.AlreadyExisted
+
+	// F6: apply the ACMM "hold" label server-side, from authoritative config, on
+	// the path that actually runs. At hold-gated levels (L3/L4/L5) every
+	// agent-opened PR must be human-approved before merge; the label is what the
+	// merge gate keys on. The old gh-wrapper.sh `args+=("--label" "hold")` was
+	// unreachable (it followed `exec hive-open-pr`), so those PRs were opened
+	// unlabeled and the gate was inert. AddLabels is additive + idempotent, so it
+	// is safe to (re)apply even when we reused an already-open PR.
+	if c.prHoldLabel != nil && c.prHoldLabel() {
+		if lerr := c.AddLabels(ctx, req.Repo, res.Number, []string{"hold"}); lerr != nil {
+			// A missing hold label at a hold-gated level is a policy failure, not a
+			// cosmetic one — surface it loudly so an operator notices, but the PR is
+			// already open so we do not fail the request.
+			c.logger.Warn("pr-request watcher: PR opened but failed to apply hold label (hold-gated level)",
+				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", lerr.Error()))
+		} else {
+			c.logger.Info("pr-request watcher: applied hold label (hold-gated ACMM level)",
+				slog.String("repo", req.Repo), slog.Int("number", res.Number))
+		}
+	}
+
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.

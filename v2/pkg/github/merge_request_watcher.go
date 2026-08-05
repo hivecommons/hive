@@ -76,17 +76,28 @@ type MergeResponse struct {
 
 // MergeRequestAuthorizer decides whether a merge request may proceed. Like
 // PRRequestAuthorizer it receives the claimed agent NAME and the UID that OWNS
-// the request file, returning nil to authorize. The caller implements the two
-// checks: (1) forge-resistance — the file UID must map to the claimed agent; and
-// (2) the ACMM merge-gate — the agent must be merge-capable (CanMerge) at the
-// hive's current level. A nil authorizer DENIES everything (fail closed).
-type MergeRequestAuthorizer func(agent string, fileUID int) error
+// the request file, PLUS the merge TARGET (repo, number, expectSHA) so the
+// authorization can be bound to the specific PR being landed. Returning nil
+// authorizes. The caller implements the checks:
+//
+//  1. forge-resistance — the file UID must map to the claimed agent;
+//  2. the ACMM merge-gate — the agent must be merge-capable (CanMerge) at the
+//     hive's current level;
+//  3. target-binding (F4, CWE-863) — expectSHA must be non-empty (an empty
+//     expected SHA is a TOCTOU hole: "merge whatever HEAD is now"), and the
+//     (repo, number) pair must currently appear in the governor's
+//     merge-eligible list. Without (3) an injected L6 scanner could request
+//     landing ANY reachable PR whose required checks pass, including its own.
+//
+// A nil authorizer DENIES everything (fail closed).
+type MergeRequestAuthorizer func(agent string, fileUID int, repo string, number int, expectSHA string) error
 
 // StartMergeRequestWatcher runs a loop that merges PRs for request files dropped
 // in MergeRequestDir. It returns immediately; the loop runs until ctx is
 // cancelled. A nil client (no GitHub creds) makes this a no-op. authz enforces
-// the per-agent ACMM merge-gate + forge-resistance; a nil authz fails closed.
-// nowFn is injectable for tests; pass nil for time.Now.
+// the per-agent ACMM merge-gate + forge-resistance AND the F4 target-binding
+// (pinned SHA + merge-eligible membership); a nil authz fails closed. nowFn is
+// injectable for tests; pass nil for time.Now.
 func (c *Client) StartMergeRequestWatcher(ctx context.Context, authz MergeRequestAuthorizer, nowFn func() time.Time) {
 	if c == nil {
 		return
@@ -168,7 +179,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.denyMergeRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
 	}
-	if err := c.mergeAuthz(req.Agent, fileUID); err != nil {
+	if err := c.mergeAuthz(req.Agent, fileUID, req.Repo, req.Number, req.ExpectSHA); err != nil {
 		c.denyMergeRequest(path, req, err.Error(), nowFn)
 		return
 	}

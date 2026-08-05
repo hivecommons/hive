@@ -232,7 +232,14 @@ if [ -n "$AGENT_MODE" ]; then
         echo "🔧 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_AND_PRS mode. Merging requires human approval." >&2
         exit 1
       fi
-      # Auto-add hold label for L5 PRs
+      # NOTE (F6): This hold-label block is DEAD for `pr create`. A non-contributor
+      # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
+      # 160), which REPLACES this process — execution never reaches here for the
+      # create path. The hold label is now applied AUTHORITATIVELY server-side, in
+      # v2/pkg/github/pr_request_watcher.go, after the hive's App-bot opens the PR,
+      # keyed on the real hive ACMM level (L3/L4/L5). Do NOT rely on this line to
+      # gate anything; it is retained only so `args` stays well-formed for any
+      # non-create pr subcommand that still falls through.
       if [ "$ACMM_LEVEL" = "5" ] && [ "$subcmd" = "pr" ] && [ "$action" = "create" ]; then
         args+=("--label" "hold")
       fi

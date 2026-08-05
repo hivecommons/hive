@@ -1235,13 +1235,28 @@ func main() {
 		// authz enforces the SAME per-agent ACMM write-gate + forge-resistance as
 		// the direct `gh pr create` path — the request-file route grants no extra
 		// privilege. A denied request is quarantined, never opened.
-		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, nil)
+		// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
+		// PR must carry the "hold" label so the merge gate holds it for human
+		// approval. This is decided server-side from the authoritative hive level
+		// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
+		// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
+		// agent PRs (manual); L6 auto-merges on green (no hold).
+		holdLabel := func() bool {
+			l := agentMgr.GetACMMLevel()
+			return l >= acmmHoldGatedMinLevel && l <= acmmHoldGatedMaxLevel
+		}
+		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, holdLabel, nil)
 		// Merge relay: agents request merges by dropping a file (hive-merge)
 		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
 		// mutation GitHub rejects for App tokens ("Resource not accessible by
 		// integration"). The hive merges over REST with the App token, gated by
 		// the same forge-resistance + a CanMerge ACMM check.
-		ghClient.StartMergeRequestWatcher(ctx, agentMgr.AuthorizeMerge, nil)
+		// bindMergeAuthz layers the F4 target-binding (CWE-863) on top of the
+		// manager's agent/UID/CanMerge check: the merge must name a pinned head
+		// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
+		// must appear in the governor's current merge-eligible list — so an
+		// injected agent cannot land an arbitrary reachable PR of its choosing.
+		ghClient.StartMergeRequestWatcher(ctx, bindMergeAuthz(agentMgr.AuthorizeMerge), nil)
 	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config
@@ -5059,11 +5074,96 @@ func runEscalationSweep(
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
+// acmmHoldGatedMinLevel / acmmHoldGatedMaxLevel bracket the ACMM levels whose
+// merge policy is "hold-gated" — every agent-opened PR gets a "hold" label and
+// no agent merges (see v2/pkg/config/packs/level-{3,4,5}.yaml). L1/L2 are
+// "manual" (agents open no PRs) and L6 is "auto-merge on green CI, no hold
+// label", so both fall outside this range. Used by the F6 hold-label decider.
+const (
+	acmmHoldGatedMinLevel = 3
+	acmmHoldGatedMaxLevel = 5
+)
+
 // mergeableJSONUnknown is the explicit wire value for "mergeability was never
 // determined". It is spelled out rather than left as "" so a consumer reading
 // merge-eligible.json cannot mistake an unpopulated field for a definitive
 // "no" — the failure mode that made every PR read as unmergeable.
 const mergeableJSONUnknown = "unknown"
+
+// mergeTargetEligible reports whether (repo, number) currently appears in the
+// governor's merge-eligible.json. It reads the file FRESH on every call (never
+// caches) because eligibility is recomputed each governor cycle — a stale cache
+// could authorize a PR that has since fallen out of the list. On any read/parse
+// error it returns false (FAIL CLOSED): if we cannot prove the target is
+// eligible, we must not authorize the merge.
+//
+// merge-eligible.json stores repos as "owner/repo"; a MergeRequest.Repo may be
+// bare ("repo") or fully qualified ("owner/repo"). We match on the bare repo
+// name (the segment after the last "/") plus the number, so both request forms
+// resolve to the same eligible entry without depending on the org prefix.
+func mergeTargetEligible(repo string, number int) bool {
+	data, err := os.ReadFile(mergeEligiblePath)
+	if err != nil {
+		return false // fail closed: no list ⇒ nothing is eligible
+	}
+	var payload struct {
+		Items []struct {
+			Number int    `json:"number"`
+			Repo   string `json:"repo"`
+		} `json:"merge_eligible"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return false // fail closed: unparseable list ⇒ deny
+	}
+	want := bareRepoName(repo)
+	for _, it := range payload.Items {
+		if it.Number == number && bareRepoName(it.Repo) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// bareRepoName returns the repo segment after the last "/", so "owner/repo" and
+// "repo" compare equal. Used to match a MergeRequest.Repo against the
+// "owner/repo" entries in merge-eligible.json regardless of prefix.
+func bareRepoName(repo string) string {
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return repo[i+1:]
+	}
+	return repo
+}
+
+// bindMergeAuthz wraps the manager's agent/UID/CanMerge authorizer with the
+// F4 target-binding checks (CWE-863). The inner authz owns the "may this agent
+// merge at all" decision; this wrapper owns "is THIS specific target one the
+// governor deemed eligible, at a pinned SHA". Both must pass before MergePR is
+// reached. Ordering: run the agent/UID/CanMerge check first (cheapest, and it
+// gives the clearest denial reason), then the SHA + eligible-list binding.
+func bindMergeAuthz(inner func(agent string, fileUID int) error) github.MergeRequestAuthorizer {
+	return func(agent string, fileUID int, repo string, number int, expectSHA string) error {
+		if err := inner(agent, fileUID); err != nil {
+			return err
+		}
+		// (a) Require a pinned head SHA. An empty expectSHA means "merge whatever
+		// HEAD is now", which is the TOCTOU hole: a PR that was eligible when the
+		// governor last looked could have had a malicious commit pushed since.
+		// MergePR passes expectSHA as the required head SHA, so a moved head fails
+		// cleanly — but only if we insist it is set.
+		if strings.TrimSpace(expectSHA) == "" {
+			return fmt.Errorf("merge target %s#%d has no expected head SHA — refusing to merge an unpinned head (TOCTOU guard)", repo, number)
+		}
+		// (b) Require the target to be in the governor's current merge-eligible
+		// list. This binds authorization to a PR the hive actually deemed
+		// landable this cycle, so an injected agent cannot request landing an
+		// arbitrary reachable PR (e.g. its own) whose required checks happen to
+		// pass. Read fresh + fail closed (see mergeTargetEligible).
+		if !mergeTargetEligible(repo, number) {
+			return fmt.Errorf("merge target %s#%d is not in the current merge-eligible list — only governor-approved PRs may be landed via the merge relay", repo, number)
+		}
+		return nil
+	}
+}
 
 // mergeableJSON renders a tri-state mergeability verdict for the
 // merge-eligible.json marker, mapping the unknown zero value to an explicit

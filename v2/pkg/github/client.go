@@ -36,9 +36,18 @@ type Client struct {
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
+	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
+	// carry the "hold" label (F6). It is consulted server-side from authoritative
+	// hive config (the ACMM level), NOT trusted from a client flag — the
+	// gh-wrapper.sh tail that used to add the label is dead code (it sits after
+	// `exec hive-open-pr`). nil means "never hold" (backward-compatible no-op).
+	// Set by StartPRRequestWatcher.
+	prHoldLabel func() bool
 	// mergeAuthz gates merge requests from the merge-request watcher against the
-	// per-agent ACMM merge-policy (CanMerge) + forge-resistance. nil fails
-	// closed. Set by StartMergeRequestWatcher.
+	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
+	// TARGET (pinned SHA + governor merge-eligible membership; see
+	// MergeRequestAuthorizer / F4). nil fails closed. Set by
+	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
 }
 

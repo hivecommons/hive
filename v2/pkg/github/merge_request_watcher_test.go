@@ -43,7 +43,7 @@ func newMergeMockServer(t *testing.T, failWith int, merges *int) *httptest.Serve
 func testMergeClient(t *testing.T, srvURL string) *Client {
 	t.Helper()
 	c := NewClientForTest(srvURL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.mergeAuthz = func(agent string, uid int) error { return nil }
+	c.mergeAuthz = func(agent string, uid int, repo string, number int, expectSHA string) error { return nil }
 	return c
 }
 
@@ -119,7 +119,9 @@ func TestMergeRequestWatcher_AuthzDeny(t *testing.T) {
 	srv := newMergeMockServer(t, 0, &merges)
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.mergeAuthz = func(agent string, uid int) error { return context.DeadlineExceeded }
+	c.mergeAuthz = func(agent string, uid int, repo string, number int, expectSHA string) error {
+		return context.DeadlineExceeded
+	}
 
 	dir := t.TempDir()
 	mergeRequestDirForTest = dir
@@ -133,6 +135,60 @@ func TestMergeRequestWatcher_AuthzDeny(t *testing.T) {
 	}
 	if _, err := os.Stat(reqPath + ".denied"); err != nil {
 		t.Error("denied request should be quarantined as .denied")
+	}
+}
+
+// F4: the authorizer receives the merge TARGET (repo, number, expectSHA), and a
+// denial keyed on any of those (e.g. empty expectSHA or a target not in the
+// eligible list) quarantines the request WITHOUT merging. This asserts the
+// target-binding parameters actually reach the authorizer.
+func TestMergeRequestWatcher_TargetBoundAuthz(t *testing.T) {
+	merges := 0
+	srv := newMergeMockServer(t, 0, &merges)
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	var gotRepo, gotSHA string
+	var gotNumber int
+	// Stand-in for bindMergeAuthz's SHA guard: deny when expectSHA is empty.
+	c.mergeAuthz = func(agent string, uid int, repo string, number int, expectSHA string) error {
+		gotRepo, gotNumber, gotSHA = repo, number, expectSHA
+		if strings.TrimSpace(expectSHA) == "" {
+			return context.DeadlineExceeded // stand-in denial (TOCTOU guard)
+		}
+		return nil
+	}
+
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	// No ExpectSHA → must be denied and quarantined, never merged.
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 99, Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+
+	if gotRepo != "o/r" || gotNumber != 99 || gotSHA != "" {
+		t.Errorf("authorizer did not receive the target: repo=%q number=%d sha=%q", gotRepo, gotNumber, gotSHA)
+	}
+	if merges != 0 {
+		t.Fatalf("unpinned (empty-SHA) merge must be denied, got %d merges", merges)
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Error("target-bound denial should quarantine the request as .denied")
+	}
+
+	// With a pinned SHA the same target authorizes and merges.
+	merges = 0
+	reqPath2, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 100, Agent: "scanner", ExpectSHA: "abc123"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if gotSHA != "abc123" || gotNumber != 100 {
+		t.Errorf("authorizer did not receive pinned target: number=%d sha=%q", gotNumber, gotSHA)
+	}
+	if merges != 1 {
+		t.Fatalf("pinned + authorized merge should proceed, got %d merges", merges)
+	}
+	if _, err := os.Stat(reqPath2); !os.IsNotExist(err) {
+		t.Error("successful merge should consume the request file")
 	}
 }
 

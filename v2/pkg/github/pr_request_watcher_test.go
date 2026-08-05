@@ -16,6 +16,15 @@ import (
 // mock GitHub API for PR create + list. created counts POST /pulls calls.
 func newPRMockServer(t *testing.T, existingHead string, created *int) *httptest.Server {
 	t.Helper()
+	return newPRMockServerLabels(t, existingHead, created, nil)
+}
+
+// newPRMockServerLabels extends newPRMockServer to also mock
+// POST /issues/{n}/labels; when addedLabels != nil it records each labels-add
+// payload (as the JSON array of label names) so a test can assert the "hold"
+// label was (or was not) applied.
+func newPRMockServerLabels(t *testing.T, existingHead string, created *int, addedLabels *[]string) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
@@ -37,6 +46,15 @@ func newPRMockServer(t *testing.T, existingHead string, created *int) *httptest.
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"number":42,"html_url":"https://github.com/o/r/pull/42","title":"`+
 				strings.ReplaceAll(asString(np["title"]), `"`, `\"`)+`"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			body, _ := io.ReadAll(r.Body)
+			var labels []string
+			_ = json.Unmarshal(body, &labels)
+			if addedLabels != nil {
+				*addedLabels = append(*addedLabels, labels...)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -191,5 +209,54 @@ func TestPRRequestWatcher_NilAuthzFailsClosed(t *testing.T) {
 
 	if created != 0 {
 		t.Errorf("nil authorizer must fail closed (no PR); got %d", created)
+	}
+}
+
+// F6: the hold label is applied server-side after a PR is opened iff the
+// injected decider says the current ACMM level is hold-gated. This is the check
+// the dead gh-wrapper.sh tail failed to perform (it sat after `exec
+// hive-open-pr`), so hold-gated PRs were opened unlabeled.
+func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
+	cases := []struct {
+		name     string
+		holdFn   func() bool
+		wantHold bool
+	}{
+		{"hold-gated level applies hold", func() bool { return true }, true},
+		{"non-hold-gated level applies nothing", func() bool { return false }, false},
+		{"nil decider applies nothing", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			created := 0
+			var added []string
+			srv := newPRMockServerLabels(t, "", &created, &added)
+			defer srv.Close()
+
+			c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			c.prAuthz = func(agent string, uid int) error { return nil }
+			c.prHoldLabel = tc.holdFn
+
+			dir := t.TempDir()
+			old := prRequestDirForTest
+			prRequestDirForTest = dir
+			defer func() { prRequestDirForTest = old }()
+
+			_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/hold", Title: "gated PR", Agent: "scanner"})
+			c.ProcessPRRequestsOnce(context.Background())
+
+			if created != 1 {
+				t.Fatalf("expected the PR to be created once, got %d", created)
+			}
+			gotHold := false
+			for _, l := range added {
+				if l == "hold" {
+					gotHold = true
+				}
+			}
+			if gotHold != tc.wantHold {
+				t.Errorf("hold label applied=%v, want %v (labels seen: %v)", gotHold, tc.wantHold, added)
+			}
+		})
 	}
 }
