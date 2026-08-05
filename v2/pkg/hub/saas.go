@@ -9096,7 +9096,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (ageMs < HEART_FRESH_MS) cls += ' heartbeat-heart-fresh';
       else if (ageMs >= HEART_INTERVAL_MS) cls += ' heartbeat-heart-aging';
       return '<svg class="' + cls + '" width="11" height="11" viewBox="0 0 16 16" fill="currentColor" ' +
-        'aria-hidden="true" title="Last heartbeat: ' + ageStr + '">' +
+        'aria-hidden="true" title="' + 'Last heartbeat: ' + ageStr + '">' +
         '<path d="M8 14.2l-1.1-1C3 9.9 0.6 7.7 0.6 5 0.6 2.8 2.3 1.1 4.5 1.1c1.2 0 2.4 0.6 3.1 1.5 0.7-0.9 1.9-1.5 3.1-1.5 2.2 0 3.9 1.7 3.9 3.9 0 2.7-2.4 4.9-6.3 8.2L8 14.2z"/>' +
         '</svg>';
     }
