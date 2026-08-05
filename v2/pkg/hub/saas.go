@@ -4665,6 +4665,23 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if !h.AutoUpgrade {
 			continue
 		}
+		// Claim-in-flight latch (#95). A placeholder that has just been ASSIGNED
+		// but whose claim has not yet been delivered (Status==assigned &&
+		// !ClaimDelivered) is mid-wiring: the spoke is receiving its org/repos/
+		// ACMM over successive heartbeats. Rolling its pod onto a new image now
+		// can wedge it — the classic EPM dead-end (task #94). DEFER (do not
+		// cancel) the auto-upgrade until the claim lands. This is self-limiting:
+		// it releases the moment ClaimDelivered flips true, and if the claim
+		// never completes, sweepStuckAssignments returns the slot to available
+		// after assignStuckResetTimeout — either way this latch clears and the
+		// next cycle upgrades normally. A hard image pin is unaffected: pins are
+		// delivered via UpgradeTarget through the recovery path ABOVE this gate,
+		// not started here, so a pin still wins.
+		if assignmentInFlight(&h) {
+			s.logger.Debug("auto-upgrade deferred — claim in flight",
+				"hive_id", h.ID, "status", h.Status, "assigned_at", h.AssignedAt)
+			continue
+		}
 		// Scheduling gate. Instant-mode hives (and every legacy record, whose
 		// mode is empty) pass straight through, so this changes nothing for the
 		// existing fleet. Daily-mode hives are held until the first cycle at or
