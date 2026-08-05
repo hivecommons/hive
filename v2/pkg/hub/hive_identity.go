@@ -117,25 +117,41 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 
 	clusterForge := clusterForgeHost(cluster)
 	// Start from the cluster default — rule 2.
+	//
+	// The App/URLs are read for the cluster's DEFAULT forge through
+	// forgesForCluster, NOT from the flat github_app_id/github_* fields directly.
+	// The flat fields are only ONE of the two shapes a cluster's identity can take
+	// since 2026-07-31: a GHE cluster may instead declare `default_forge` plus a
+	// `forges` map and leave the flat fields blank. Reading the flat fields alone
+	// then produced app_id 0 / blank urls for a GHE cluster whose real identity
+	// sat in the map — the half-identity that dropped the EPM placeholder onto
+	// github.com. forgesForCluster merges both shapes, so the default forge's
+	// identity is found however it is written; defaultForgeIdentity falls back to
+	// the flat fields when the map is absent, keeping legacy clusters unchanged.
+	defID := defaultForgeIdentity(cluster, clusterForge)
 	id := HiveIdentity{
-		AppID:   cluster.GitHubAppID,
-		AppSlug: strings.TrimSpace(cluster.GitHubAppSlug),
-		APIURL:  cluster.GitHubAPIURL,
-		BaseURL: cluster.GitHubBaseURL,
+		AppID:   defID.AppID,
+		AppSlug: strings.TrimSpace(defID.AppSlug),
+		APIURL:  defID.APIURL,
+		BaseURL: defID.BaseURL,
 		Forge:   clusterForge,
 	}
-	// DELIBERATELY NOT made explicit here, unlike the elected-forge branch below.
+	// PUBLIC urls are DELIBERATELY left empty here, unlike the elected-forge
+	// branch below.
 	//
-	// A cluster that declares no url fields looks public to clusterForgeHost —
+	// A cluster that declares no forge at all resolves clusterForge to public —
 	// but so does a GHE cluster that simply has not backfilled its urls, and
-	// several real records are in exactly that state. Writing public urls on
-	// that silence would stamp api.github.com onto GHE clusters and break the
-	// repair path this whole design exists to serve. SILENCE IS NOT EVIDENCE.
+	// several real records are in exactly that state. Writing public urls on that
+	// silence would stamp api.github.com onto GHE clusters and break the repair
+	// path this whole design exists to serve. SILENCE IS NOT EVIDENCE, so
+	// defaultForgeIdentity leaves the urls blank whenever clusterForge is public.
 	//
-	// An ELECTION is different: a hive that records github_host is stating its
-	// forge, so the urls can be stated with it. Explicitness is safe where there
-	// is evidence and dangerous where there is only absence — which is the same
-	// unknown-vs-mismatch rule the push flags follow.
+	// A GHE default is the opposite of silence: clusterDefaultForge names a GHE
+	// host only on POSITIVE evidence (an explicit default_forge or a flat GHE
+	// url), so defaultForgeIdentity states the GHE urls with it. That is what
+	// stops a GHE default from ever travelling with blank/public urls — the EPM
+	// half-identity — while a public/under-specified cluster stays untouched. The
+	// same unknown-vs-mismatch rule the push flags follow.
 	//
 	// Filling the slug IS safe: slugOfAppID keys on app_id, which is always
 	// populated, and returns "" for an App this build does not recognise.
@@ -333,19 +349,75 @@ func normalizeHiveForge(h *SaaSHive, cluster *ClusterConfig) bool {
 	return changed
 }
 
-// clusterForgeHost is the forge a cluster defaults to: the host named by its
-// URL fields, else public github.com.
+// clusterForgeHost is the forge a cluster defaults to.
+//
+// It MUST agree with clusterDefaultForge, which is the forge-aware authority
+// (explicit default_forge, then the flat URL fields, then public). Reading only
+// the flat github_base_url/github_api_url — as this used to — silently disagreed
+// with clusterDefaultForge for a cluster that expresses its GHE-ness through the
+// 2026-07-31 `default_forge` + `forges` map shape instead of the flat URL
+// fields: clusterDefaultForge said github.ibm.com while this said github.com.
+//
+// That split is the regression this whole file exists to prevent, reintroduced
+// one layer down. A vllm-d entry written as
+//
+//	{ "default_forge": "github.ibm.com",
+//	  "forges": { "github.ibm.com": { "app_id": 5686, "app_slug": "..." } } }
+//
+// has EMPTY flat github_base_url, so the old form resolved its default forge to
+// public github.com. ResolveHiveIdentity then handed every hive with no recorded
+// host the PUBLIC identity (app_id 0 / blank urls) on a GHE cluster — the EPM
+// placeholder that claimed github.ibm.com yet ran a blank forge against
+// github.com. Routing through clusterDefaultForge closes that gap: one function
+// decides "what forge does this cluster default to", forge-map shape included.
 func clusterForgeHost(c *ClusterConfig) string {
 	if c == nil {
 		return publicForgeHost
 	}
-	if c.GitHubBaseURL != "" {
-		return forgeHostLabel(c.GitHubBaseURL)
+	return clusterDefaultForge(c)
+}
+
+// defaultForgeIdentity returns the App identity (id, slug, urls) a cluster
+// declares for its DEFAULT forge, from whichever shape the cluster is written
+// in.
+//
+// forgesForCluster already merges the legacy flat github_app_id/github_app_slug
+// fields with the explicit per-forge `forges` map, so this one lookup covers a
+// cluster written either way. The URLs are stated explicitly for a GHE default
+// even when the cluster left them blank in the map, because the forge host is
+// enough to derive them (the same derivation the elected-forge branch uses) —
+// and a GHE default whose urls read as blank is precisely the state that let a
+// GHE cluster resolve to github.com.
+//
+// A public default keeps EMPTY urls: that is the correct, coherent public shape
+// (ResolvedAPIURL/ResolvedBaseURL map "" to the two public constants), and
+// stating public urls on a cluster that only IMPLIED public — by declaring
+// nothing — would stamp api.github.com onto GHE clusters that simply have not
+// filled their urls in. Silence is not evidence, exactly as ResolveHiveIdentity
+// documents for its own cluster-default branch.
+func defaultForgeIdentity(c *ClusterConfig, forge string) ClusterForgeIdentity {
+	if c == nil {
+		return ClusterForgeIdentity{}
 	}
-	if c.GitHubAPIURL != "" {
-		return forgeHostLabel(c.GitHubAPIURL)
+	var out ClusterForgeIdentity
+	for host, id := range forgesForCluster(c) {
+		if sameGitHubHost(host, forge) {
+			out = id
+			break
+		}
 	}
-	return publicForgeHost
+	if isPublicForgeHost(forge) {
+		return out // public: empty urls are the coherent shape
+	}
+	// GHE default: state the urls from the forge host when the cluster left them
+	// blank, so a GHE default can never travel with public/blank urls.
+	if strings.TrimSpace(out.BaseURL) == "" {
+		out.BaseURL = "https://" + forge
+	}
+	if strings.TrimSpace(out.APIURL) == "" {
+		out.APIURL = "https://" + forge + gheAPIPathSuffix
+	}
+	return out
 }
 
 // clusterAppForForge returns the App a cluster names on a given forge.
@@ -427,6 +499,13 @@ func (i HiveIdentity) AppIDString() string {
 //
 // Deterministic on collision (two clusters naming different Apps on one forge):
 // clusters are visited in sorted ID order, mirroring appKeysByAppID.
+//
+// It enumerates EVERY forge each cluster serves via forgesForCluster, not just
+// the cluster's flat github_app_id. A GHE cluster written in the 2026-07-31
+// `forges` map shape carries its App under forges.<host> with a blank flat
+// github_app_id, so a flat-only read contributed nothing for it — leaving a
+// hive that elected that forge on a DIFFERENT cluster unable to borrow the App,
+// with the same app_id-0 blank identity this file exists to prevent.
 func (s *HubServer) forgeAppsAcrossFleet() map[string]clusterAppIdentity {
 	out := map[string]clusterAppIdentity{}
 	if s == nil || s.clusters == nil {
@@ -439,16 +518,18 @@ func (s *HubServer) forgeAppsAcrossFleet() map[string]clusterAppIdentity {
 	sort.Strings(ids)
 	for _, id := range ids {
 		c := s.clusters[id]
-		if c.GitHubAppID == 0 {
-			continue
-		}
-		forge := clusterForgeHost(&c)
-		if _, seen := out[forge]; seen {
-			continue // first cluster in sorted order wins
-		}
-		out[forge] = clusterAppIdentity{
-			AppID:   c.GitHubAppID,
-			AppSlug: strings.TrimSpace(c.GitHubAppSlug),
+		for host, fid := range forgesForCluster(&c) {
+			if fid.AppID == 0 {
+				continue
+			}
+			forge := forgeHostLabel(host)
+			if _, seen := out[forge]; seen {
+				continue // first cluster in sorted order wins
+			}
+			out[forge] = clusterAppIdentity{
+				AppID:   fid.AppID,
+				AppSlug: strings.TrimSpace(fid.AppSlug),
+			}
 		}
 	}
 	return out

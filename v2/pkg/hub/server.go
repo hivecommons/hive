@@ -1590,6 +1590,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// never demoting a legit public pin). Closes the vllmd-06 class: meta said
 	// github.com while the spoke ran api_url github.ibm.com.
 	s.reconcileGitHubHostFromSpoke(&payload)
+	// Never-blank-for-GHE guard. The two repairs above trust a blank host or a
+	// GHE-reporting spoke; neither catches a claimed GHE-cluster hive that is
+	// POSITIVELY reporting the public github.com forge (blank api_url + public
+	// app_id) with no public pin — the EPM symptom. Re-deliver the cluster forge
+	// so the spoke stops silently talking to github.com. No-op (and silent) for
+	// every hive not in that exact state.
+	s.guardGHEHiveNotOnPublicForge(&payload)
 
 	// Close the FORGE handshake before building the project config, so the beat
 	// on which the spoke first reports the requested host is also the beat the
