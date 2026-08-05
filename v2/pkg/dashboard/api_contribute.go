@@ -2918,13 +2918,14 @@ function ccQueueMatches(q){
   return hay.indexOf(ccQueueSearch)>=0;
 }
 function ccRenderQueue(flip){
+  // Item count badge, same style as "My work"'s #work-count — kept in sync on
+  // every render (initial load, SSE queue push, poll fallback, drag-reorder).
+  // Populated FIRST so it stays set even if the queue container is absent.
+  var qc=document.getElementById('queue-count');
+  if(qc)qc.textContent=ccQueue.length+' ready';
   var el=document.getElementById('cc-queue');if(!el)return;
   // reload bridge — overwritten by the next poll, including to empty.
   ccOpsCacheWrite(OPS_CACHE_QUEUE_KEY,ccQueue);
-  // Item count badge, same style as "My work"'s #work-count — kept in sync on
-  // every render (initial load, SSE queue push, poll fallback, drag-reorder).
-  var qc=document.getElementById('queue-count');
-  if(qc)qc.textContent=ccQueue.length+' ready';
   // flip=true (set only from the drag-drop / move handlers) records each row's rect
   // BEFORE the rebuild so ccFlipPlay can glide displaced rows to their new slots
   // instead of a hard jump. Every other caller (initial load, SSE queue push, poll
