@@ -799,7 +799,11 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:#3fb950}
 .cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
 .cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
-.cc-live.stale .cc-live-dot{background:#d29922;animation:none}
+/* Polling (stale) dot: a very slow, gentle breathe rather than the brisk live
+   pulse — signals "still watching, just on the calmer poll cadence". */
+.cc-live.stale .cc-live-dot{background:#d29922;animation:cc-slowpulse 2.8s ease-in-out infinite}
+@keyframes cc-slowpulse{0%%,100%%{opacity:1}50%%{opacity:.45}}
+@media(prefers-reduced-motion:reduce){.cc-live .cc-live-dot,.cc-live.stale .cc-live-dot{animation:none!important}}
 /* Ready-work queue play/pause — the SAME contribute_suspended control as the
    Management "Suspend contributions" switch, surfaced on the queue header.
    Quiet by default (bordered ghost button); the danger tint only appears once
@@ -2800,6 +2804,15 @@ function renderWork(list){
       :('No work items in flight'+(currentFilter!=='all'?' for this filter.':'.'));
     el.innerHTML='<div class="ops-empty">'+msg+'</div>';return;
   }
+  // opsPoll re-renders this list every 4s. Without preserving state, an open
+  // "Prompt preview" <details> would slam shut on the next tick (the "opens then
+  // closes ~2s later" bug). Snapshot which previews the user has expanded — keyed
+  // by a stable data-wkey (repo#number, or title as a fallback) — and re-apply
+  // the open attribute to the matching ones after the innerHTML swap. Stays open
+  // until the user clicks the summary to close it, surviving every poll.
+  var openKeys={};
+  var priorDetails=el.querySelectorAll('details.prompt-preview[open]');
+  for(var p=0;p<priorDetails.length;p++){var pk=priorDetails[p].getAttribute('data-wkey');if(pk)openKeys[pk]=true;}
   el.innerHTML=shown.map(function(w){
     var who=w.github_username?('<span class="feed-role">'+esc(w.github_username)+'</span>'):'';
     var cli=w.cli_backend?(' &middot; '+esc(w.cli_backend)):'';
@@ -2807,12 +2820,14 @@ function renderWork(list){
     // task metadata (repo/number/title). The server never puts the github_token in
     // prompt_preview, so this can never leak the credential.
     var labels=(w.labels&&w.labels.length)?('<div class="prompt-labels">'+w.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join(' ')+'</div>'):'';
+    var repoLabel=(w.repo||'')+(w.number?('#'+w.number):'');
+    var wkey=repoLabel||(w.title||'');
+    var wasOpen=openKeys[wkey]?' open':'';
     var preview=w.prompt_preview
-      ?('<details class="prompt-preview"><summary>Prompt preview</summary>'+labels+
+      ?('<details class="prompt-preview" data-wkey="'+esc(wkey)+'"'+wasOpen+'><summary>Prompt preview</summary>'+labels+
         '<pre class="prompt-text">'+esc(w.prompt_preview)+'</pre>'+
         '<p class="ops-note">Read-only. This is the instruction the agent receives; the scoped GitHub token is delivered separately and is never shown here.</p></details>')
       :'';
-    var repoLabel=(w.repo||'')+(w.number?('#'+w.number):'');
     return '<div class="work-item"><div class="work-repo">'+ccIssueLinkHTML(w,repoLabel)+'</div>'+
       '<div class="work-title">'+esc(w.title||'(untitled task)')+'</div>'+
       '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div>'+preview+'</div>';
