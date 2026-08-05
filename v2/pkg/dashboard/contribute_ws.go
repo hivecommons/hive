@@ -96,7 +96,23 @@ type ContributorConnection struct {
 	// client). Stored read-only and surfaced on FleetClanker; NEVER used to route
 	// or gate work.
 	capabilities *ContributorCapabilities
-	mu           sync.Mutex
+	// pendingToken is the scoped, expiring GitHub credential minted for currentTask
+	// but NOT yet delivered to the relay (kubestellar/hive#2537). The credential no
+	// longer travels inside task_assign; it is held here until the task's acceptance
+	// decision is made, then shipped via deliverTaskCredential (which reuses the
+	// token_refresh wire shape). In auto-accept mode (the default) it is delivered
+	// immediately after task_assign is sent; in explicit-accept mode it is held
+	// until a task_accepted arrives. Cleared to "" once delivered (or when the task
+	// ends without acceptance). It is a credential — NEVER logged or previewed.
+	pendingToken string
+	// credentialDelivered records that the scoped credential for currentTask has
+	// already been handed to the relay, so a duplicate task_accepted (the relay
+	// re-asserts one on reconnect) does not re-deliver, and the auto-accept and
+	// explicit-accept paths cannot both fire. Reset when a task ends. This is the
+	// single flag that makes "the credential arrived AFTER acceptance" observable
+	// and idempotent.
+	credentialDelivered bool
+	mu                  sync.Mutex
 }
 
 type WSMessage struct {
@@ -118,8 +134,15 @@ type WSMessage struct {
 	URL               string   `json:"url,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
 	Prompt            string   `json:"prompt,omitempty"`
-	GitHubToken       string   `json:"github_token,omitempty"`
-	TokenExpiresAt    string   `json:"token_expires_at,omitempty"`
+	// GitHubToken carries the scoped, expiring credential. As of #2537 it is
+	// NEVER populated on task_assign — the credential is split OUT of the
+	// assignment message and delivered only AFTER the task's acceptance decision,
+	// via a token_refresh (see deliverTaskCredential). It still travels on
+	// token_refresh (post-acceptance delivery + the #2393 mid-task re-mint). The
+	// token itself is unchanged: same per-tier mint, same wsTokenTTL expiry — only
+	// its timing relative to acceptance moved.
+	GitHubToken    string `json:"github_token,omitempty"`
+	TokenExpiresAt string `json:"token_expires_at,omitempty"`
 	// Restrictions is RESERVED and intentionally not populated by the server yet:
 	// the contributor command restrictions are enforced server-side (gh-wrapper /
 	// contributor-default.json), so shipping the policy to the client would be
@@ -874,6 +897,10 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
 			c.currentPrompt = ""
 			c.currentLabels = nil
 			c.tokenMintedAt = time.Time{}
+			// #2537: drop any credential that was pending/held for the released task
+			// so it cannot leak to the (now task-less) connection.
+			c.pendingToken = ""
+			c.credentialDelivered = false
 			targets = append(targets, releaseTarget{conn: c, task: released})
 		}
 		c.mu.Unlock()
@@ -1220,6 +1247,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			abandonedTask := contributor.currentTask
 			contributor.currentTask = nil
 			contributor.tokenMintedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			contributor.pendingToken = ""
+			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
@@ -1411,6 +1441,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			abandoned := contributor.currentTask
 			contributor.currentTask = nil
 			contributor.tokenMintedAt = time.Time{}
+			// #2537: clear any pending/delivered credential state with the task.
+			contributor.pendingToken = ""
+			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
 			if abandoned != nil {
 				h.logger.Warn("[contribute-ws] task abandoned without completion",
@@ -1481,10 +1514,38 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"repo", task.Repo,
 					"number", task.Number,
 				)
+				// #2537: the credential was withheld from the task_assign above and is
+				// delivered only AFTER acceptance. In the DEFAULT trusted-source
+				// auto-accept mode, the task already cleared admission and the per-tier
+				// trust gate in selectTask, so acceptance is automatic HERE — after the
+				// assignment is committed and sent — and the scoped credential is
+				// delivered immediately. This preserves an unattended fleet's timing
+				// (credential arrives right after task_assign) while making the ordering
+				// provable: the credential leaves the hub only once acceptance is
+				// recorded, never bundled with the metadata. In EXPLICIT-accept mode the
+				// hub withholds here and waits for a task_accepted (handled below).
+				if !h.requireExplicitAccept() {
+					h.deliverTaskCredential(contributor, "auto_accept")
+				} else {
+					h.logger.Info("[contribute-ws] credential withheld pending explicit acceptance",
+						"username", contributor.profile.GitHubUsername, "task", task.TaskID)
+				}
 			}
 
 		case "task_accepted":
-			// acknowledged
+			// #2537: a task_accepted is the client's explicit acceptance of the
+			// assigned task. In EXPLICIT-accept mode the hub withheld the scoped
+			// credential from task_assign and waits for exactly this message before
+			// delivering it — so a task that is never accepted (declined, timed out,
+			// or reconnected away) never receives a credential. acceptTaskCredential
+			// delivers only when the acceptance is for the task this connection
+			// currently holds; a stale/mismatched task_id is ignored. It is idempotent
+			// via deliverTaskCredential, so in auto-accept mode (where the credential
+			// already went out) this is a no-op, and a relay that re-asserts
+			// task_accepted on reconnect cannot re-deliver.
+			if contributor != nil {
+				h.acceptTaskCredential(contributor, msg.TaskID)
+			}
 
 		case "task_progress":
 			if contributor != nil {
@@ -1541,6 +1602,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.currentPrompt = ""
 				contributor.currentLabels = nil
 				contributor.tokenMintedAt = time.Time{}
+				// #2537: clear any pending/delivered credential state with the task.
+				contributor.pendingToken = ""
+				contributor.credentialDelivered = false
 				contributor.tmuxOutput = msg.TmuxOutput
 				contributor.mu.Unlock()
 
@@ -1625,6 +1689,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				failedTask := contributor.currentTask
 				contributor.currentTask = nil
 				contributor.tokenMintedAt = time.Time{}
+				// #2537: clear any pending/delivered credential state with the task.
+				contributor.pendingToken = ""
+				contributor.credentialDelivered = false
 				contributor.mu.Unlock()
 
 				if hasTask {
@@ -1798,6 +1865,95 @@ func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string)
 	return nil
 }
 
+// requireExplicitAccept reports whether this hive is in the opt-in EXPLICIT
+// (human/manual) acceptance mode (#2537). A hub without a Config (direct-in-test
+// construction) or an unset toggle resolves to FALSE — the trusted-source
+// auto-accept default — so existing deployments keep delivering credentials to
+// admitted tasks without a wait state.
+func (h *ContributeWSHub) requireExplicitAccept() bool {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return false
+	}
+	return h.server.deps.Config.Hub.IsContributeRequireExplicitAccept()
+}
+
+// deliverTaskCredential ships the scoped credential the hub minted for the
+// connection's current task but deliberately withheld from task_assign (#2537).
+// It is the single post-acceptance delivery point: both the auto-accept path (in
+// the ready handler, right after task_assign is sent) and the explicit-accept path
+// (the task_accepted handler) funnel through here, so the credential provably
+// leaves the hub only AFTER an acceptance decision was recorded — never bundled
+// with the task metadata.
+//
+// It reuses the token_refresh wire shape (github_token + token_expires_at) that
+// every existing relay already understands, so an old client that never learned a
+// new "credential" message still ends up holding a working token: it processes
+// task_assign (metadata) then a token_refresh (credential) exactly as it already
+// handles a mid-task re-mint. The token itself is unchanged — the same per-tier
+// scoped, wsTokenTTL-expiring token selectTask minted — only its timing moved.
+//
+// It is idempotent and safe to call more than once: it delivers only while a
+// pending token is held and not yet delivered, then sets credentialDelivered and
+// clears pendingToken. A task_accepted that arrives in auto-accept mode after the
+// credential already went out is therefore a no-op, and a duplicate acceptance
+// cannot double-send. It NEVER logs the token value. Returns true when it actually
+// delivered (an assignment→acceptance→credential ordering point for tests/audit).
+func (h *ContributeWSHub) deliverTaskCredential(c *ContributorConnection, reason string) bool {
+	c.mu.Lock()
+	if c.currentTask == nil || c.credentialDelivered || c.pendingToken == "" {
+		c.mu.Unlock()
+		return false
+	}
+	tok := c.pendingToken
+	taskID := c.currentTask.TaskID
+	username := ""
+	if c.profile != nil {
+		username = c.profile.GitHubUsername
+	}
+	c.mu.Unlock()
+
+	// sendTokenRefresh writes the github_token + token_expires_at frame and
+	// re-stamps tokenMintedAt on success, anchoring the #2393 refresh cycle on when
+	// the relay actually received the credential.
+	if err := h.sendTokenRefresh(c, tok); err != nil {
+		// Delivery failed (socket gone): leave the token PENDING and undelivered so
+		// a reconnect/resume or a retried acceptance can deliver it. Never log the
+		// token value.
+		h.logger.Info("[contribute-ws] task credential delivery failed, will retry",
+			"username", username, "task", taskID, "accept_reason", reason, "error", err)
+		return false
+	}
+
+	c.mu.Lock()
+	c.credentialDelivered = true
+	c.pendingToken = ""
+	c.mu.Unlock()
+
+	h.logger.Info("[contribute-ws] task credential delivered after acceptance",
+		"username", username, "task", taskID, "accept_reason", reason)
+	return true
+}
+
+// acceptTaskCredential is the explicit-acceptance entry point (#2537): a client
+// task_accepted for taskID accepts the assigned task, releasing the credential the
+// hub withheld from task_assign. It delivers only when taskID matches the task this
+// connection currently holds — a stale or mismatched task_id (e.g. a late
+// task_accepted for a task that already ended) is ignored, so a credential is never
+// delivered for work this connection is not actually on. It returns whether a
+// credential was delivered (an assignment→acceptance→credential ordering point).
+func (h *ContributeWSHub) acceptTaskCredential(c *ContributorConnection, taskID string) bool {
+	if c == nil || taskID == "" {
+		return false
+	}
+	c.mu.Lock()
+	match := c.currentTask != nil && c.currentTask.TaskID == taskID
+	c.mu.Unlock()
+	if !match {
+		return false
+	}
+	return h.deliverTaskCredential(c, "explicit_accept")
+}
+
 func (h *ContributeWSHub) checkModelAllowed(model string) (bool, []string) {
 	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
 		return true, nil
@@ -1833,7 +1989,14 @@ func (h *ContributeWSHub) cleanupLoop() {
 			c.mu.Unlock()
 			if stale {
 				h.logger.Info("[contribute-ws] cleanup: removing stale connection", "username", username, "conn", id)
-				c.ws.Close()
+				// Nil-guard the close: a connection may carry no live socket (e.g. a
+				// test-injected in-flight entry, or a connection torn down elsewhere),
+				// and cleanupLoop iterates ALL registered connections. Mirrors the
+				// existing guard in RequeueContributorTask so a ws-less entry is pruned
+				// rather than nil-dereferenced.
+				if c.ws != nil {
+					c.ws.Close()
+				}
 				delete(h.connections, id)
 			}
 		}
@@ -2475,6 +2638,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.currentPrompt = prompt
 	c.currentLabels = chosen.labels
 	c.lastIdleReason = ""
+	// #2537: hold the minted scoped token as PENDING rather than shipping it in the
+	// task_assign below. It is delivered only AFTER the acceptance decision — see
+	// the ready-handler (auto-accept default) and the task_accepted handler
+	// (explicit-accept mode) — via deliverTaskCredential. A fresh assignment resets
+	// the delivered flag so the new task's credential is (re)delivered post-accept.
+	// tokenMintedAt is set here so the #2393 refresh cycle is armed for the token we
+	// hand out; deliverTaskCredential re-stamps it on actual delivery to anchor the
+	// 50-minute refresh on when the relay truly received the credential.
+	c.pendingToken = ghToken
+	c.credentialDelivered = false
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
 
@@ -2487,17 +2660,21 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.recordAssignment(identityOf(c), time.Now())
 
 	return &WSMessage{
-		Type:           "task_assign",
-		Seq:            h.nextSeq(),
-		TaskID:         taskID,
-		Kind:           "issue",
-		Repo:           chosen.repoFull,
-		Number:         chosen.number,
-		Title:          chosen.title,
-		URL:            chosen.url,
-		GitHubToken:    ghToken,
-		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
-		Prompt:         prompt,
+		Type:   "task_assign",
+		Seq:    h.nextSeq(),
+		TaskID: taskID,
+		Kind:   "issue",
+		Repo:   chosen.repoFull,
+		Number: chosen.number,
+		Title:  chosen.title,
+		URL:    chosen.url,
+		// #2537: NO github_token / token_expires_at here. The scoped credential is
+		// split out of task_assign and delivered only after acceptance (see
+		// pendingToken / deliverTaskCredential). task_assign now carries exactly the
+		// metadata needed to DECIDE — repo/number/title/url/labels/prompt — and no
+		// credential, so nothing an agent could act on is authenticated until the
+		// task's source has been accepted under the operator/contributor policy.
+		Prompt: prompt,
 		// The chosen issue's own labels — the Labels envelope field was declared
 		// but never populated, so a client reading it got nothing (kubestellar/
 		// hive#2393 item 8). Carried on the candidate from the scan above.
