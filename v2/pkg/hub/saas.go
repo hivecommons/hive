@@ -267,6 +267,14 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
+	// Admin read-only "View as user" impersonation. Enter is admin-only and
+	// sets the short-lived signed hive_hub_impersonate cookie; exit clears it
+	// and is exempt from the impersonation write-block (see impersonateExitPath)
+	// so the admin can always get back out. Status folds into /api/auth/user for
+	// the banner, but a dedicated read is offered too.
+	s.mux.HandleFunc("POST /api/saas/admin/impersonate/exit", s.requireAdmin(s.handleImpersonateExit))
+	s.mux.HandleFunc("POST /api/saas/admin/impersonate/{username}", s.requireAdmin(s.handleImpersonateStart))
+	s.mux.HandleFunc("GET /api/saas/impersonation-status", s.requireAuth(s.handleImpersonationStatus))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/assign", s.requireAuth(s.handleAssignHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
@@ -307,12 +315,71 @@ func (s *HubServer) registerSaaSRoutes() {
 	}
 }
 
+// impersonateExitPath is the one mutating endpoint that stays callable while
+// impersonation is active — it is how the admin gets OUT. Every other write is
+// refused 403 by the write-block below.
+const impersonateExitPath = "/api/saas/admin/impersonate/exit"
+
+// blockIfImpersonatingWrite enforces the read-only property of impersonation.
+// While a valid admin grant is active, ANY non-GET/HEAD request (except the
+// exit endpoint) is refused 403 before it reaches its handler. This is the
+// central write gate: it lives in both requireAuth and requireAdmin, through
+// which every user-facing mutation is routed, so no write path can slip past.
+// It returns true when it has already written the 403 response and the caller
+// must stop.
+func (s *HubServer) blockIfImpersonatingWrite(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return false
+	}
+	if r.URL.Path == impersonateExitPath {
+		return false
+	}
+	_, _, impersonating := s.resolveIdentity(r)
+	if !impersonating {
+		return false
+	}
+	target := "user"
+	if grant, ok := s.activeImpersonationGrant(r); ok {
+		target = grant.Target
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	// target is a GitHub login (no quotes/backslashes possible), safe to inline.
+	w.Write([]byte(`{"error":"read-only while viewing as ` + target + ` — exit impersonation to make changes"}`))
+	return true
+}
+
+// activeImpersonationGrant returns the verified grant behind the current
+// request when (and only when) resolveIdentity would honor it. It is a thin
+// read used for messaging/audit/status; the security decisions live in
+// resolveIdentity.
+func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGrant, bool) {
+	if s.getRealAuthUser(r) != hubAdminUsername {
+		return impersonationGrant{}, false
+	}
+	cookie, err := r.Cookie(impersonateCookieName)
+	if err != nil || cookie.Value == "" {
+		return impersonationGrant{}, false
+	}
+	grant, ok := verifyImpersonateCookieValue(s.hubSecret, cookie.Value, time.Now())
+	if !ok || grant.Admin != hubAdminUsername {
+		return impersonationGrant{}, false
+	}
+	if loadSaaSUser(grant.Target) == nil {
+		return impersonationGrant{}, false
+	}
+	return grant, true
+}
+
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isCSRFSafe(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			return
+		}
+		if s.blockIfImpersonatingWrite(w, r) {
 			return
 		}
 		username := s.getAuthUser(r)
@@ -371,7 +438,12 @@ func isTrustedOrigin(raw string) bool {
 		host == "127.0.0.1"
 }
 
-func (s *HubServer) getAuthUser(r *http.Request) string {
+// getRealAuthUser resolves the REAL authenticated user from the signed session
+// cookie or a Bearer token, with NO impersonation applied. This is the identity
+// the admin actually logged in as. Impersonation is layered on top of this by
+// resolveIdentity — never inside it — so the write-block and the admin gate can
+// always reason about who is really driving the request.
+func (s *HubServer) getRealAuthUser(r *http.Request) string {
 	cookie, err := r.Cookie("hive_hub_user")
 	if err == nil && cookie.Value != "" {
 		// The cookie value is only trusted when its HMAC signature verifies
@@ -394,6 +466,67 @@ func (s *HubServer) getAuthUser(r *http.Request) string {
 	}
 
 	return ""
+}
+
+// resolveIdentity is the single decision point for admin "View as user"
+// impersonation. It returns the EFFECTIVE identity every per-user view should
+// render as, the REAL admin login driving the request, and whether an
+// impersonation grant is currently active.
+//
+// Impersonation is honored ONLY when every one of these holds (fail closed on
+// any miss — the request is then simply the real user, not impersonating):
+//
+//   - a hive_hub_impersonate cookie is present AND its HMAC verifies AND it has
+//     not expired (verifyImpersonateCookieValue);
+//   - the grant's Admin field equals the REAL signed session user;
+//   - that real user is exactly hubAdminUsername (only the admin may impersonate
+//     — a stolen cookie replayed on a non-admin session is ignored);
+//   - the target resolves to a real registered user on disk.
+//
+// The effective identity switches to the target ONLY for GET/HEAD requests.
+// For any mutating method the effective identity stays the admin so no write is
+// ever attributed to the target; the write itself is separately refused 403 by
+// requireAuth/requireAdmin. This split means impersonation can never elevate:
+// the target is always a normal user, and writes never run under it.
+func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string, impersonating bool) {
+	realUser = s.getRealAuthUser(r)
+	if realUser == "" || realUser != hubAdminUsername {
+		return realUser, realUser, false
+	}
+	cookie, err := r.Cookie(impersonateCookieName)
+	if err != nil || cookie.Value == "" {
+		return realUser, realUser, false
+	}
+	grant, ok := verifyImpersonateCookieValue(s.hubSecret, cookie.Value, time.Now())
+	if !ok {
+		return realUser, realUser, false
+	}
+	// The cookie must name THIS real admin as its actor. Anything else — a
+	// cookie minted for a different admin, or one lifted onto the wrong
+	// session — is ignored rather than trusted.
+	if grant.Admin != realUser {
+		return realUser, realUser, false
+	}
+	if loadSaaSUser(grant.Target) == nil {
+		return realUser, realUser, false
+	}
+	// A valid, active grant exists. Report impersonating=true regardless of
+	// method (so writes can be blocked), but only SWITCH the effective identity
+	// for read requests.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return grant.Target, realUser, true
+	}
+	return realUser, realUser, true
+}
+
+// getAuthUser returns the EFFECTIVE identity for the request: the impersonated
+// target on a GET/HEAD while a valid admin grant is active, otherwise the real
+// authenticated user. Every per-user handler calls this, so making it
+// impersonation-aware is what renders all per-user views as the target with no
+// per-handler change.
+func (s *HubServer) getAuthUser(r *http.Request) string {
+	effective, _, _ := s.resolveIdentity(r)
+	return effective
 }
 
 var (
@@ -539,9 +672,20 @@ func listAllSaaSUsers() []SaaSUser {
 
 func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		username := s.getAuthUser(r)
+		// Gate on the REAL logged-in user, not the effective (possibly
+		// impersonated) identity. While the admin is viewing as a normal user,
+		// getAuthUser resolves to that user on GETs — but admin routes (and in
+		// particular the impersonation exit) must still be reachable by the real
+		// admin, and no admin-only surface may leak to the impersonated target.
+		username := s.getRealAuthUser(r)
 		if username != hubAdminUsername {
 			http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+			return
+		}
+		// Admin writes are also read-only under impersonation (exit excepted),
+		// so an impersonating admin cannot mutate through an admin endpoint
+		// either.
+		if s.blockIfImpersonatingWrite(w, r) {
 			return
 		}
 		next(w, r)
@@ -578,6 +722,93 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"users": views})
+}
+
+// impersonateCookieDomain matches the session cookie's domain so the two are
+// scoped identically across the hive.kubestellar.io hosts. It mirrors the
+// hive_hub_user cookie set in oauth.go.
+const impersonateCookieDomain = ".hive.kubestellar.io"
+
+// setImpersonateCookie writes (value != "") or clears (value == "") the signed
+// impersonation cookie with the same hardened attributes as the session cookie:
+// HttpOnly (no JS access), Secure (HTTPS only), SameSite=Lax. The short MaxAge
+// mirrors impersonateTTL so the browser drops the cookie about when the server
+// would stop honoring it.
+func setImpersonateCookie(w http.ResponseWriter, value string) {
+	c := &http.Cookie{
+		Name:     impersonateCookieName,
+		Value:    value,
+		Path:     "/",
+		Domain:   impersonateCookieDomain,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if value == "" {
+		c.MaxAge = -1 // delete
+	} else {
+		c.MaxAge = int(impersonateTTL / time.Second)
+	}
+	http.SetCookie(w, c)
+}
+
+// handleImpersonateStart begins an admin read-only "View as user" session.
+// Registered behind requireAdmin, so only the real hub admin reaches it (and
+// the impersonation write-block cannot fire here because starting requires no
+// active grant). It validates the target is a registered user, then sets the
+// short-lived signed hive_hub_impersonate cookie. The admin gains NO privilege:
+// subsequent GETs render as the target, and every write is refused 403.
+func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Request) {
+	admin := s.getRealAuthUser(r) // == hubAdminUsername (requireAdmin gated)
+	target := r.PathValue("username")
+	if target == "" || target == admin {
+		writeJSONError(w, http.StatusBadRequest, "invalid target user")
+		return
+	}
+	if loadSaaSUser(target) == nil {
+		writeJSONError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	value := mintImpersonateCookieValue(s.hubSecret, admin, target, time.Now())
+	if value == "" {
+		writeJSONError(w, http.StatusInternalServerError, "cannot start impersonation")
+		return
+	}
+	setImpersonateCookie(w, value)
+	s.logger.Info("audit: admin impersonation started", "admin", admin, "target", target,
+		"at", time.Now().UTC().Format(time.RFC3339))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "viewing_as": target})
+}
+
+// handleImpersonateExit ends an active "View as user" session by clearing the
+// impersonation cookie. It is registered behind requireAdmin (the real admin is
+// always the actor) and its path is exempt from the write-block, so it stays
+// callable WHILE impersonating — that is the whole point. It is a no-op if no
+// grant is active.
+func (s *HubServer) handleImpersonateExit(w http.ResponseWriter, r *http.Request) {
+	admin := s.getRealAuthUser(r)
+	if grant, ok := s.activeImpersonationGrant(r); ok {
+		s.logger.Info("audit: admin impersonation ended", "admin", admin, "target", grant.Target,
+			"at", time.Now().UTC().Format(time.RFC3339))
+	}
+	setImpersonateCookie(w, "")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// handleImpersonationStatus reports whether the current request is inside an
+// impersonation session and, if so, who is being viewed. The banner reads this
+// (or the equivalent fields folded into /api/auth/user). Because getAuthUser
+// resolves to the target on this GET, the status is derived from the real admin
+// grant via activeImpersonationGrant rather than from getAuthUser.
+func (s *HubServer) handleImpersonationStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if grant, ok := s.activeImpersonationGrant(r); ok {
+		json.NewEncoder(w).Encode(map[string]any{"impersonating": true, "viewing_as": grant.Target})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"impersonating": false})
 }
 
 // handleAdminUpdateUser applies a partial admin edit to one hub user record.
@@ -7449,6 +7680,14 @@ const dashboardHTML = `<!DOCTYPE html>
   </style>
 </head>
 <body>
+  <!-- Admin "View as user" banner. Hidden until loadUser() detects an active
+       impersonation session, then fixed to the very top of every hub page so it
+       is unmissable. The Exit button POSTs the exit endpoint and reloads. -->
+  <div id="impersonation-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#b45309;color:#fff;font-size:0.85rem;font-weight:600;padding:8px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.4);text-align:center">
+    <span style="margin-right:6px">&#128065;</span>
+    <span id="impersonation-banner-text">Viewing as user — read-only</span>
+    <button type="button" onclick="exitImpersonation()" style="margin-left:14px;padding:3px 12px;background:#fff;color:#b45309;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:700">Exit</button>
+  </div>
   <header class="site-header">
     <a href="/" class="brand">
       <span class="brand-mark">🐝</span>
@@ -8782,10 +9021,52 @@ const dashboardHTML = `<!DOCTYPE html>
       window.open(target, '_blank');
     });
 
+    // Show or hide the sticky "Viewing as … read-only" banner and nudge the page
+    // down so the fixed banner never covers the header. Reads the impersonation
+    // fields folded into /api/auth/user.
+    function applyImpersonationBanner(data) {
+      var banner = document.getElementById('impersonation-banner');
+      if (!banner) return;
+      if (data && data.impersonating) {
+        document.getElementById('impersonation-banner-text').textContent =
+          'Viewing as ' + (data.viewing_as || 'user') + ' — read-only';
+        banner.style.display = '';
+        document.body.style.paddingTop = banner.offsetHeight + 'px';
+      } else {
+        banner.style.display = 'none';
+        document.body.style.paddingTop = '';
+      }
+    }
+
+    // exitImpersonation ends the current "View as" session and reloads so every
+    // view re-renders as the real admin again.
+    async function exitImpersonation() {
+      try { await fetch('/api/saas/admin/impersonate/exit', {method:'POST'}); } catch(e) {}
+      location.reload();
+    }
+
+    // startImpersonation enters read-only "View as <username>" and reloads so
+    // all per-user views re-render as that user. Admin-only (the server refuses
+    // any non-admin caller with 403).
+    async function startImpersonation(username) {
+      try {
+        var resp = await fetch('/api/saas/admin/impersonate/' + encodeURIComponent(username), {method:'POST'});
+        if (!resp.ok) {
+          var e = {}; try { e = await resp.json(); } catch(_) {}
+          hiveToast('Cannot view as ' + username + ': ' + (e.error || resp.status), 'error');
+          return;
+        }
+        location.reload();
+      } catch(err) {
+        hiveToast('Cannot view as ' + username, 'error');
+      }
+    }
+
     async function loadUser() {
       try {
         var resp = await fetch('/api/auth/user');
         var data = await resp.json();
+        applyImpersonationBanner(data);
         if (data.authenticated) {
           _isAdmin = !!data.hub_admin;
           /* The signed-in login is the ONE piece of viewer identity the hive
@@ -14996,7 +15277,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
-          '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
+          '<td>' + (isAdmin ? '' : '<button onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only" style="padding:3px 10px;background:#b45309;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">View as</button> <button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
           '</tr>' + renderContactPanelRow(u) + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =

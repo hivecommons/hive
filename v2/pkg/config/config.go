@@ -1906,11 +1906,32 @@ type HubConfig struct {
 	// always see and Resume them. Persisted through the same Config.Hub.* mechanism
 	// as ContributeQueueOrder so it survives restart, and edited only through the
 	// authenticated POST /api/contribute/queue/hold endpoint (owner/read-write only).
-	ContributeQueueHold []string            `yaml:"contribute_queue_hold,omitempty"`
-	DisabledRepos       []string            `yaml:"disabled_repos"`
-	DisabledTiers       []string            `yaml:"disabled_tiers"`
-	TierLimits          map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin int                 `yaml:"snapshot_interval_min"`
+	ContributeQueueHold []string `yaml:"contribute_queue_hold,omitempty"`
+	// ContributeRequireExplicitAccept gates HOW a contributor's scoped GitHub
+	// credential is delivered relative to task acceptance (kubestellar/hive#2537).
+	// The credential is ALWAYS delivered only AFTER an acceptance decision — it no
+	// longer travels bundled in the task_assign message. This toggle only chooses
+	// WHO makes that decision:
+	//   - nil / false (DEFAULT): trusted-source AUTO-ACCEPT. A task that already
+	//     passed admission (the title/author/label filters, disabled-repo/tier
+	//     gates, cooldown, and the per-tier trust gate in selectTask) is
+	//     auto-accepted the instant it is assigned, and the scoped credential is
+	//     delivered immediately after — no human in the loop. This keeps an
+	//     unattended fleet running exactly as before: the only observable change is
+	//     that the credential arrives in a distinct message right after task_assign
+	//     rather than inside it.
+	//   - true: EXPLICIT (manual/human) acceptance. The hub withholds the credential
+	//     until the client sends a task_accepted for the assigned task; a task that
+	//     is never accepted (declined, timed out, or reconnected away) never
+	//     receives a credential. This is the opt-in "mandatory acceptance" mode for
+	//     operators who want a wait state.
+	// A POINTER so an absent value (older on-disk config) resolves to the
+	// backward-compatible auto-accept default via IsContributeRequireExplicitAccept().
+	ContributeRequireExplicitAccept *bool               `yaml:"contribute_require_explicit_accept,omitempty"`
+	DisabledRepos                   []string            `yaml:"disabled_repos"`
+	DisabledTiers                   []string            `yaml:"disabled_tiers"`
+	TierLimits                      map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin             int                 `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
@@ -1936,6 +1957,16 @@ const (
 // ENABLED for backward compatibility; an explicit false disables it.
 func (h HubConfig) IsContributeCooldownEnabled() bool {
 	return h.ContributeCooldownEnabled == nil || *h.ContributeCooldownEnabled
+}
+
+// IsContributeRequireExplicitAccept resolves the effective acceptance mode for
+// contributor credential delivery (kubestellar/hive#2537). A nil pointer (unset,
+// older config) resolves to FALSE — trusted-source auto-accept — so an existing
+// deployment keeps handing credentials to admitted tasks without a wait state; an
+// explicit true opts into mandatory (human/manual) acceptance where the credential
+// is withheld until the client accepts the assigned task.
+func (h HubConfig) IsContributeRequireExplicitAccept() bool {
+	return h.ContributeRequireExplicitAccept != nil && *h.ContributeRequireExplicitAccept
 }
 
 // ContributeCooldownHoursOrDefault resolves the with-PR cooldown PERIOD in

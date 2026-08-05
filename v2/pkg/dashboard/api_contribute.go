@@ -1210,6 +1210,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="containerized">Containerized (recommended)</option>
 <option value="host">Host (non-containerized)</option>
+<option value="kubernetes">Kubernetes (cluster)</option>
 </select>
 </span>
 <span id="runtime-group" style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
@@ -1224,6 +1225,15 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
 <input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" oninput="updateCmds()">
+</div>
+<!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
+     honest constraints up front: only headless-capable backends run in a cluster
+     (a headless pod has no TTY), and the credential stored in the cluster Secret
+     is a long-lived personal token that is more exposed than a laptop file, with
+     the per-task credential boundary tracked in #2537. -->
+<div id="k8s-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
+<strong style="color:#e6edf3">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
+<span style="color:#8b949e">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
 </div>
 <p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
@@ -1264,6 +1274,16 @@ windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
 var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
 var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive CLI local';
+// Kubernetes (#2549): register locally, then generate + apply a headless
+// contributor workload (Deployment, #2660) into a cluster you already have.
+// just contribute-k8s prints the manifest; it never touches your cluster on
+// its own, so you can read it before piping to kubectl. Only the headless-
+// capable backends run this way (see K8S_HEADLESS_BACKENDS).
+var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
+// Backends with a verified headless (non-interactive) entry point — must match
+// HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
+// TTY, so only these run in a cluster; anything else refuses work at startup.
+var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1};
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
@@ -1277,6 +1297,11 @@ var modelFlag=opt.getAttribute('data-model-flag')||'';
 var model=(modelInput.value||'').trim();
 if(cli==='other')mode='host';
 if(mode==='containerized'&&cli==='other'){modeSel.value='host';mode='host';}
+// #2549 Kubernetes mode. "other" has no image, so it can't run in a cluster;
+// fall back to host. Show the k8s note only in this mode.
+if(mode==='kubernetes'&&cli==='other'){modeSel.value='host';mode='host';}
+var k8sNote=document.getElementById('k8s-note');
+if(k8sNote)k8sNote.style.display=(mode==='kubernetes')?'block':'none';
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
 var modelLine='';
 if(model){
@@ -1292,7 +1317,15 @@ runtimeGroup.style.display=showRuntime?'inline-flex':'none';
 var runtimeLine=(showRuntime&&runtimeSel.value)?'export HIVE_CONTAINER_RUNTIME='+runtimeSel.value+'\n':'';
 var preLines=envLines+modelLine+runtimeLine;
 var tpl,install;
-if(mode==='host'){
+if(mode==='kubernetes'){
+// A cluster pod exports its config via envFrom, so no HIVE_CONTAINER_RUNTIME
+// line — but model/env exports still belong before contribute-setup so the
+// generated ConfigMap picks them up. If the chosen backend has no headless
+// mode, prepend a visible warning comment (the Justfile also warns on stderr).
+var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot or Codex for Kubernetes.\n';
+var k8sPre=envLines+modelLine;
+cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
+}else if(mode==='host'){
 tpl=hostTpl;
 install=opt.getAttribute('data-host-install');
 if(!install)install='# '+cli+' uses your existing gh auth';
