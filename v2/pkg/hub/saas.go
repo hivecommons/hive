@@ -276,6 +276,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/admin/impersonate/{username}", s.requireAdmin(s.handleImpersonateStart))
 	s.mux.HandleFunc("GET /api/saas/impersonation-status", s.requireAuth(s.handleImpersonationStatus))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/assign", s.requireAuth(s.handleAssignHive))
+	// Escape hatch: return an assigned-but-unclaimed placeholder to the available
+	// pool so it can be re-armed. Admin-only, and guarded to the wedged middle
+	// state (assigned && !claim_delivered) inside the handler.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	// Acknowledging a fleet alert is an operator action on the operator's own
@@ -1979,6 +1983,15 @@ type MyHiveEntry struct {
 	Assigning   bool   `json:"assigning,omitempty"`
 	AssigningTo string `json:"assigningTo,omitempty"`
 
+	// AssignedUnclaimed marks a placeholder wedged at Status=statusAssigned &&
+	// !ClaimDelivered: a claim was stamped but the spoke never reported the
+	// project back. Unlike Assigning — which is true only while a REACHABLE spoke
+	// is actively reporting a DIFFERENT project — this is true even when the spoke
+	// is offline or silent (the frozen-image / heartbeat-only case), which is
+	// exactly the dead-end the Reset assignment action exists for. It gates that
+	// admin-only action in the row menu.
+	AssignedUnclaimed bool `json:"assignedUnclaimed,omitempty"`
+
 	// Migration tracking (Phase 7).
 	MigrationStatus string `json:"migrationStatus,omitempty"`
 	MigrationFrom   string `json:"migrationFrom,omitempty"`
@@ -2117,6 +2130,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
+		// A placeholder wedged between the two claim paths: assigned but the spoke
+		// never reported the project back. Computed from meta (not the live
+		// registry) so it is true even for an offline/silent spoke — the exact
+		// dead-end the Reset assignment action targets.
+		entry.AssignedUnclaimed = sh.Status == statusAssigned && !sh.ClaimDelivered
 		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
 			entry.ACMMLevel = sh.ACMMLevel
 		}
@@ -4376,6 +4394,9 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// only ever considers hives with AutoUpgrade enabled, while the flag is set
 	// by the admin and bulk upgrade paths for any hive.
 	s.sweepOrphanedUpgrades()
+	// Auto-reset any placeholder wedged at assigned && !claim_delivered past the
+	// timeout, so an assigned-but-unclaimed slot can never dead-end silently.
+	s.sweepStuckAssignments()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4396,6 +4417,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
 		s.sweepOrphanedUpgrades()
+		s.sweepStuckAssignments()
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -6078,6 +6100,9 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// does above. (The assign path — handleAssignHive — already does this.)
 	h.ClaimDelivered = false
 	h.Status = statusAssigned
+	// Stamp when this claim began so the self-heal sweep can age it out if the
+	// spoke never reports the project back (ClaimDelivered stuck false).
+	h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
 	// resolution below (host backfill uses s.clusterForHive(h), which silently
@@ -6901,6 +6926,9 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
 	h.Status = statusAssigned
+	// Stamp when this claim began so the self-heal sweep can age it out if the
+	// spoke never reports the project back (ClaimDelivered stuck false).
+	h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
 	h.Error = ""
 	// A (re)assignment is a new claim payload: reset delivery so the hub pushes
 	// this project to the spoke until it reports the new org/repos back, before
@@ -12244,6 +12272,13 @@ const dashboardHTML = `<!DOCTYPE html>
         var menuItems = [];
         var mi = 'display:block;padding:7px 14px;color:#c9d1d9;text-decoration:none;font-size:0.78rem;cursor:pointer';
         if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
+        /* Reset assignment: escape hatch for a placeholder wedged at
+           assigned && !claim_delivered (assignedUnclaimed) — its spoke never
+           reported the project back, so it can be neither re-approved (needs a
+           pending request) nor re-assigned (needs an available slot). This
+           returns the slot to the pool so it can be re-armed. Admin-only,
+           mirroring the endpoint's own guard. */
+        if (_isAdmin && h.assignedUnclaimed) menuItems.push('<div onclick="resetAssignment(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + ';color:#d29922;font-weight:600">Reset assignment</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" style="' + mi + '">Contribute</a>');
         if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" style="' + mi + '">Preview</a>');
         var apiBase = rb ? esc(rb) : '';
@@ -13210,6 +13245,30 @@ const dashboardHTML = `<!DOCTYPE html>
         await hiveNotify('Forge App reset armed',
           'Hive: ' + hiveName + '\n' +
           'The spoke clears its installation on the next heartbeat (about 30 seconds), then shows the install prompt.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        await hiveNotify('Reset failed', String(e));
+      }
+    }
+
+    /* Reset assignment: returns an assigned-but-unclaimed placeholder to the
+       available pool so it can be re-armed. Shown only on a wedged row
+       (assigned && !claim_delivered), matching the endpoint's guard — a
+       delivered claim is a live hive and the server refuses to reset it. */
+    async function resetAssignment(hiveId, hiveName) {
+      var ok = await hiveConfirm('Reset the assignment for "' + hiveName + '"?\n\n' +
+        'This slot was assigned but its spoke never reported the project back, so it is stuck "Assigning" and cannot be re-approved or re-assigned. ' +
+        'Resetting returns it to the available pool — its project, owner and org are cleared — so it can be assigned again cleanly. ' +
+        'A live, fully-claimed hive is never affected.');
+      if (!ok) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-assignment', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { await hiveNotify('Reset failed', String(data.error || resp.status)); return; }
+        var extra = data.reopened_request_for ? '\nThe provision request for ' + data.reopened_request_for + ' was reopened so you can re-approve it.' : '';
+        await hiveNotify('Assignment reset',
+          'Hive: ' + hiveName + '\n' +
+          'The slot is back in the available pool and can be assigned again.' + extra);
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         await hiveNotify('Reset failed', String(e));
