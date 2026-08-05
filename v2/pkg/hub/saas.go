@@ -682,9 +682,27 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 			return
 		}
+		// While impersonating, NO admin-only surface may leak to the view the
+		// admin is "viewing as" — the whole point of read-only impersonation is to
+		// see exactly what the target user sees, and a normal user is never an
+		// admin. requireAdmin gates on the REAL admin (so exit and admin routes
+		// stay reachable), which means an admin-DATA GET (e.g. /api/saas/admin/users)
+		// would otherwise still answer 200 under impersonation and the client would
+		// render the admin Users section. So: while a grant is active, refuse every
+		// admin route (GET included) EXCEPT the impersonation exit — the client's
+		// 403 handling then hides the admin section, matching what the target sees.
+		if r.URL.Path != impersonateExitPath {
+			if _, _, impersonating := s.resolveIdentity(r); impersonating {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"admin surfaces are hidden while viewing as a user — exit impersonation for admin access"}`))
+				return
+			}
+		}
 		// Admin writes are also read-only under impersonation (exit excepted),
 		// so an impersonating admin cannot mutate through an admin endpoint
-		// either.
+		// either. (Redundant with the block above now, but kept as defense in
+		// depth / a clear write-specific message if the above is ever relaxed.)
 		if s.blockIfImpersonatingWrite(w, r) {
 			return
 		}
