@@ -153,3 +153,92 @@ func TestTokenMintUpstreamError(t *testing.T) {
 		t.Fatalf("error should carry the status: %v", err)
 	}
 }
+
+// A malformed IAM response body surfaces as a decode error (not a panic or a
+// silent empty token).
+func TestTokenMintMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{not json`))
+	}))
+	defer srv.Close()
+
+	m, _ := newTestMinter(srv.URL)
+	if _, err := m.Token(context.Background(), "k"); err == nil {
+		t.Fatal("malformed IAM JSON must error")
+	}
+}
+
+// A 200 with no access_token is an error, never a blank bearer treated as valid.
+func TestTokenMintMissingAccessToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	m, _ := newTestMinter(srv.URL)
+	_, err := m.Token(context.Background(), "k")
+	if err == nil {
+		t.Fatal("missing access_token must error")
+	}
+	if !strings.Contains(err.Error(), "access_token") {
+		t.Fatalf("error should name the missing field: %v", err)
+	}
+}
+
+// When the IAM response omits expires_in, the token is cached with the short
+// fallback TTL rather than an immediately-expired (or never-expiring) one: a
+// second call within the fallback window is served from cache.
+func TestTokenMintFallbackTTL(t *testing.T) {
+	var mints int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&mints, 1)
+		// No expires_in field at all.
+		_, _ = w.Write([]byte(`{"access_token":"IAM-JWT-fallback"}`))
+	}))
+	defer srv.Close()
+
+	m, nowNanos := newTestMinter(srv.URL)
+	first, err := m.Token(context.Background(), "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "IAM-JWT-fallback" {
+		t.Fatalf("token = %q", first)
+	}
+	// Within the fallback TTL (minus skew) → cached, no re-mint.
+	atomic.AddInt64(nowNanos, int64(iamTokenFallbackTTL-iamTokenExpirySkew-time.Minute))
+	if _, err := m.Token(context.Background(), "k"); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&mints); got != 1 {
+		t.Fatalf("expected the fallback-TTL token to be cached (1 mint), got %d", got)
+	}
+}
+
+// A transport-level failure (unreachable endpoint) surfaces as an error.
+func TestTokenMintTransportError(t *testing.T) {
+	// Port 0 on a closed address: Do() fails without an HTTP response.
+	m := NewTokenMinterForTest("http://127.0.0.1:0/identity/token", &http.Client{Timeout: iamTokenRequestTimeout})
+	if _, err := m.Token(context.Background(), "k"); err == nil {
+		t.Fatal("unreachable IAM endpoint must error")
+	}
+}
+
+// NewTokenMinterForTest builds a working minter against a custom endpoint (the
+// seam other packages use to avoid the network) — exercised directly here.
+func TestNewTokenMinterForTest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"access_token": "seam-JWT", "expires_in": 3600})
+	}))
+	defer srv.Close()
+
+	m := NewTokenMinterForTest(srv.URL, nil) // nil client → default-timeout client
+	tok, err := m.Token(context.Background(), "k")
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	if tok != "seam-JWT" {
+		t.Fatalf("token = %q, want the minted seam token", tok)
+	}
+}
