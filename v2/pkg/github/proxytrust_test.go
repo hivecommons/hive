@@ -201,3 +201,140 @@ func signLeaf(t *testing.T, ca *x509.Certificate, caPath string) *x509.Certifica
 	}
 	return leaf
 }
+
+// TestCertPool_CachesWithinReloadInterval verifies the second call within the
+// reload window returns the SAME pool instance without re-reading disk, so the
+// hot mint path is not stat-ing the CA on every call.
+func TestCertPool_CachesWithinReloadInterval(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	writeTestCA(t, caPath)
+	withProxyCAPath(t, caPath)
+
+	tp := &proxyTrustPool{}
+	first := tp.certPool()
+	if first == nil {
+		t.Fatal("expected non-nil pool")
+	}
+	// Immediately call again — inside proxyCAReloadInterval, so the cached
+	// pointer must be returned verbatim (no rebuild).
+	second := tp.certPool()
+	if first != second {
+		t.Error("expected the cached pool to be returned within the reload interval")
+	}
+}
+
+// TestCertPool_NoRebuildWhenFileUnchanged verifies that after the reload window
+// elapses but the CA file's mtime and size are unchanged, the established pool
+// is reused rather than rebuilt — the mtime/size short-circuit.
+func TestCertPool_NoRebuildWhenFileUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	writeTestCA(t, caPath)
+	withProxyCAPath(t, caPath)
+
+	tp := &proxyTrustPool{}
+	first := tp.certPool()
+	if first == nil {
+		t.Fatal("expected non-nil pool")
+	}
+	// Elapse the reload window without touching the file. The next call re-stats
+	// but must find mtime+size unchanged and return the same pool.
+	tp.mu.Lock()
+	tp.lastReload = time.Now().Add(-2 * proxyCAReloadInterval)
+	tp.mu.Unlock()
+
+	second := tp.certPool()
+	if first != second {
+		t.Error("expected pool reuse when the CA file is unchanged after reload window")
+	}
+}
+
+// TestCertPool_UnparseableCAKeepsExistingTrust verifies that if the CA file is
+// later overwritten with garbage, an established (system+CA) pool is preserved
+// rather than downgraded to an empty/partial pool.
+func TestCertPool_UnparseableCAKeepsExistingTrust(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	writeTestCA(t, caPath)
+	withProxyCAPath(t, caPath)
+
+	tp := &proxyTrustPool{}
+	first := tp.certPool()
+	if first == nil {
+		t.Fatal("expected non-nil pool")
+	}
+
+	// Corrupt the CA file with non-PEM bytes and change its size, then elapse the
+	// reload window so certPool re-reads it.
+	if err := os.WriteFile(caPath, []byte("not a certificate at all"), 0o644); err != nil {
+		t.Fatalf("corrupt CA: %v", err)
+	}
+	tp.mu.Lock()
+	tp.lastReload = time.Now().Add(-2 * proxyCAReloadInterval)
+	tp.mu.Unlock()
+
+	second := tp.certPool()
+	if second != first {
+		t.Error("expected the previously-established pool to be preserved on an unparseable CA")
+	}
+}
+
+// TestCertPool_UnreadableCAKeepsExistingTrust verifies that if os.Stat succeeds
+// but os.ReadFile then fails (e.g. the CA path becomes a directory), an
+// established pool is preserved rather than downgraded.
+func TestCertPool_UnreadableCAKeepsExistingTrust(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	writeTestCA(t, caPath)
+	withProxyCAPath(t, caPath)
+
+	tp := &proxyTrustPool{}
+	first := tp.certPool()
+	if first == nil {
+		t.Fatal("expected non-nil pool")
+	}
+
+	// Replace the CA file with a directory: os.Stat still succeeds (a dir has a
+	// size/mtime) but os.ReadFile fails, exercising the read-error fallback.
+	if err := os.Remove(caPath); err != nil {
+		t.Fatalf("remove CA file: %v", err)
+	}
+	if err := os.Mkdir(caPath, 0o755); err != nil {
+		t.Fatalf("mkdir at CA path: %v", err)
+	}
+	tp.mu.Lock()
+	tp.lastReload = time.Now().Add(-2 * proxyCAReloadInterval)
+	tp.caModTime = time.Time{}
+	tp.caSize = -1
+	tp.mu.Unlock()
+
+	second := tp.certPool()
+	if second != first {
+		t.Error("expected established pool to be preserved when the CA becomes unreadable")
+	}
+}
+
+// TestCertPool_UnparseableCAOnFirstLoadFallsBackToSystem verifies that when the
+// very first read encounters a garbage CA file (no prior pool), certPool falls
+// back to system roots instead of returning nil unexpectedly or panicking.
+func TestCertPool_UnparseableCAOnFirstLoadFallsBackToSystem(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "proxy-ca.pem")
+	if err := os.WriteFile(caPath, []byte("garbage, not PEM"), 0o644); err != nil {
+		t.Fatalf("write garbage CA: %v", err)
+	}
+	withProxyCAPath(t, caPath)
+
+	tp := &proxyTrustPool{}
+	// Must not panic; a nil pool is valid (means "system roots"), and a non-nil
+	// pool must carry at least the system roots.
+	pool := tp.certPool()
+	if pool != nil {
+		if sysPool, _ := x509.SystemCertPool(); sysPool != nil &&
+			len(pool.Subjects()) < len(sysPool.Subjects()) { //nolint:staticcheck // Subjects OK for count
+			t.Errorf("fallback pool smaller than system roots: got %d want >= %d",
+				len(pool.Subjects()), len(sysPool.Subjects()))
+		}
+	}
+}
