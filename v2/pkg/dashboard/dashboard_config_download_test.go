@@ -460,6 +460,61 @@ func TestHandleGitSourcesConnectBadJSON(t *testing.T) {
 	}
 }
 
+// TestHandleConfigDownloadMissingRoleDeniedWithAuthToken pins F9 (CWE-862): on a
+// spoke that HAS an auth boundary (a shared authToken), a request with NO
+// X-Hive-Role must be denied — a missing role must not be silently promoted to
+// owner and hand out the raw hive.yaml. This is the compounding half of the
+// ownerless-config finding.
+func TestHandleConfigDownloadMissingRoleDeniedWithAuthToken(t *testing.T) {
+	srv := newMinimalServer(t)
+	srv.authToken = "shared-secret-token" // gives the spoke an auth boundary
+	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	// No X-Hive-Role header at all.
+	w := httptest.NewRecorder()
+	srv.handleConfigDownload(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("missing role on a token-guarded spoke must be denied; got %d, want 403", w.Code)
+	}
+}
+
+// TestHandleConfigDownloadOwnerRoleAllowed confirms the legitimate owner path is
+// untouched by the F9 fix: an explicit owner role is served even on a
+// token-guarded spoke.
+func TestHandleConfigDownloadOwnerRoleAllowed(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "hive.yaml")
+	os.WriteFile(cfgPath, []byte("project:\n  org: testorg\n"), 0644)
+	t.Setenv("HIVE_CONFIG", cfgPath)
+
+	srv := newMinimalServer(t)
+	srv.authToken = "shared-secret-token"
+	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	req.Header.Set("X-Hive-Role", "owner")
+	w := httptest.NewRecorder()
+	srv.handleConfigDownload(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("explicit owner must still be served; got %d, want 200", w.Code)
+	}
+}
+
+// TestHandleConfigDownloadMissingRoleOpenSpoke confirms the open/dev spoke (no
+// authToken, no allowlist) still treats a missing role as owner — the documented
+// convenience where there is no security boundary to protect.
+func TestHandleConfigDownloadMissingRoleOpenSpoke(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "hive.yaml")
+	os.WriteFile(cfgPath, []byte("project:\n  org: testorg\n"), 0644)
+	t.Setenv("HIVE_CONFIG", cfgPath)
+
+	srv := newMinimalServer(t) // NewServer => authToken=="" and no allowlist
+	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	w := httptest.NewRecorder()
+	srv.handleConfigDownload(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("open/dev spoke should still serve missing-role as owner; got %d, want 200", w.Code)
+	}
+}
+
 func TestHandleConfigDownloadEnvVar(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "custom.yaml")

@@ -537,7 +537,7 @@ func TestHandleProxyHiveConfigNotInRegistry(t *testing.T) {
 
 func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
 	// The SSRF guard blocks loopback (the httptest server address) in
-	// production; override it here so the proxy pass-through can be exercised.
+	// production; override it here so the ownership check is the only gate.
 	orig := hiveConfigSSRFGuard
 	hiveConfigSSRFGuard = func(context.Context, string) bool { return false }
 	defer func() { hiveConfigSSRFGuard = orig }()
@@ -545,7 +545,14 @@ func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
+	// The upstream must NOT be reached: this registry entry is ownerless, and
+	// after the F9 fix an ownerless hive's config is not world-readable. The
+	// unauthenticated test caller (getAuthUser == "") is not the site admin, so
+	// the request is refused before any proxy fetch. A hit here would be a
+	// regression re-opening CWE-862.
+	reached := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
 		w.Header().Set("Content-Type", "application/x-yaml")
 		w.Write([]byte("agents:\n  scanner:\n    model: claude-sonnet\n"))
 	}))
@@ -553,7 +560,7 @@ func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
-		{ID: "config-hive", DashboardURL: upstream.URL},
+		{ID: "config-hive", DashboardURL: upstream.URL}, // Owner intentionally empty
 	}
 	srv.mu.Unlock()
 
@@ -563,8 +570,11 @@ func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("ownerless hive must be refused; expected 403, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if reached {
+		t.Error("upstream config was fetched for an ownerless hive — F9 regression")
 	}
 }
 
@@ -1127,5 +1137,33 @@ func TestHandleProxyHiveConfigSSRFAndOwnership(t *testing.T) {
 	mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusForbidden {
 		t.Errorf("non-owner: expected 403, got %d (%s)", w2.Code, w2.Body.String())
+	}
+}
+
+// TestHandleProxyHiveConfigOwnerlessDenied pins F9 (CWE-862): an OWNERLESS
+// registry entry (Owner == "") must NOT be world-readable. Before the fix the
+// ownership check was gated on `owner != ""`, so an ownerless hive's raw config
+// was fetchable by any authenticated hub user. Now a non-admin caller is refused
+// even for an ownerless hive. The SSRF guard is disabled here so the only thing
+// that can reject the request is the ownership check.
+func TestHandleProxyHiveConfigOwnerlessDenied(t *testing.T) {
+	orig := hiveConfigSSRFGuard
+	hiveConfigSSRFGuard = func(context.Context, string) bool { return false }
+	defer func() { hiveConfigSSRFGuard = orig }()
+
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	srv.mu.Lock()
+	// Owner intentionally empty (ownerless), public URL, SSRF disabled.
+	srv.registry.Hives = []RegistryEntry{{ID: "ownerless-hive", DashboardURL: "https://example.com", Owner: ""}}
+	srv.mu.Unlock()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", srv.handleProxyHiveConfig)
+
+	// caller is "" (no auth user in test) → not the admin → must be refused.
+	req := httptest.NewRequest("GET", "/api/saas/hive-config/ownerless-hive", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("ownerless hive must not be world-readable; expected 403, got %d (%s)", w.Code, w.Body.String())
 	}
 }

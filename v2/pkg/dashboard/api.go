@@ -624,11 +624,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
+	// F9 (CWE-862): the raw hive.yaml carries secrets, so a MISSING X-Hive-Role
+	// must NOT default to owner on a spoke that has an auth boundary. Least
+	// privilege: only a genuinely open/dev spoke treats an empty role as owner.
+	if !s.requestRoleAllowsOwner(r) {
 		http.Error(w, "owner access required", http.StatusForbidden)
 		return
 	}

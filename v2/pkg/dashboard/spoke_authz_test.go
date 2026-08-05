@@ -3,6 +3,7 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -160,6 +161,11 @@ func TestMiddleware_DirectRouteSessionResolvesUser(t *testing.T) {
 
 func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
 	// Empty allowlist = hub-proxied hive; nginx-injected headers must still work.
+	// F7: since proxyProofRequired now defaults to true (fail closed), the
+	// legitimate hub path carries the X-Hive-Proxy-Auth proof (the hub's
+	// auth-check sets it fleet-wide). With a valid proof the identity headers are
+	// trusted; without it the request would be rejected (see the no-proof case
+	// below and TestMiddleware_F2ProxyProof).
 	s := newFullServer(t)
 	s.authToken = "shared-secret-token"
 	var sawUser string
@@ -167,13 +173,25 @@ func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.Header.Set("X-Hive-User", "clubanderson")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, "shared-secret-token") // proof the hub injects
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("hub-proxied request must be authorized, got %d", w.Code)
+		t.Fatalf("hub-proxied request with valid proof must be authorized, got %d", w.Code)
 	}
 	if sawUser != "clubanderson" {
 		t.Errorf("hub-proxied identity must be preserved, got %q", sawUser)
+	}
+
+	// Same identity headers WITHOUT the proof: now rejected by default (F7). This
+	// is the forged direct-to-:3002 request the fail-closed default blocks.
+	reqNoProof := httptest.NewRequest("GET", "/api/config", nil)
+	reqNoProof.Header.Set("X-Hive-User", "clubanderson")
+	reqNoProof.Header.Set("X-Hive-Role", "owner")
+	wNoProof := httptest.NewRecorder()
+	s.authenticate(recordingHandler(nil, nil)).ServeHTTP(wNoProof, reqNoProof)
+	if wNoProof.Code == http.StatusOK {
+		t.Fatal("forged identity headers with no proof must be rejected under the fail-closed default (F7)")
 	}
 }
 
@@ -222,6 +240,20 @@ func TestMiddleware_F2ProxyProof(t *testing.T) {
 	}
 	if c := run(t, true, ""); c == http.StatusOK {
 		t.Error("missing proof must be rejected in strict mode")
+	}
+}
+
+// TestProxyProofRequiredDefaultsStrict pins F7: the shipped default must be
+// fail-closed. A hub-proxied spoke that receives forged X-Hive-User/X-Hive-Role
+// with NO proof header must be rejected out of the box, not trusted. If someone
+// flips the default back to fail-open, this test breaks.
+func TestProxyProofRequiredDefaultsStrict(t *testing.T) {
+	// Unset means "not =false", which is the production default.
+	if os.Getenv("HIVE_PROXY_PROOF_REQUIRED") == "false" {
+		t.Skip("HIVE_PROXY_PROOF_REQUIRED=false escape hatch set in env; default not under test")
+	}
+	if !proxyProofRequired {
+		t.Fatal("proxyProofRequired must default to true (fail closed) so forged identity headers with no proof are rejected (F7)")
 	}
 }
 

@@ -4558,7 +4558,13 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 	// Ownership: a hive's config is private to its owner (and site admins). This
 	// endpoint proxies a server-side fetch of a self-reported DashboardURL, so
 	// without this any authenticated user could pull any hive's config.
-	if owner != "" && caller != owner && caller != hubAdminUsername {
+	//
+	// F9 (CWE-862): an OWNERLESS registry entry (owner == "") must NOT be treated
+	// as world-readable. Previously the check was gated on `owner != ""`, so a
+	// hive with no owner fell through and its raw config was fetchable by ANY
+	// authenticated hub user. Fail closed: only the site admin may pull an
+	// ownerless hive's config.
+	if caller != hubAdminUsername && (owner == "" || caller != owner) {
 		http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
 		return
 	}

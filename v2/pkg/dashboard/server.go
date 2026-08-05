@@ -40,13 +40,23 @@ const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 // network. See authenticate() (F2). Must match the hub's constant.
 const proxyAuthHeader = "X-Hive-Proxy-Auth"
 
-// proxyProofRequired controls F2 enforcement strictness. Default false =
-// fail-open rollout: a request with no proof header is still trusted on its
-// identity headers (so hosted hives aren't locked out while the hub half rolls
-// out fleet-wide). Set HIVE_PROXY_PROOF_REQUIRED=true (once every hub is
-// confirmed injecting the header) to fail closed: a missing/incorrect proof
-// header is rejected. A WRONG proof header is ALWAYS rejected regardless.
-var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") == "true"
+// proxyProofRequired controls F2 enforcement strictness. It now defaults to
+// TRUE (fail closed): a hub-proxied request that carries identity headers but
+// NO valid X-Hive-Proxy-Auth proof is rejected, so a request forged on the pod
+// network that reaches :3002 directly (bypassing the hub nginx) cannot be
+// trusted on its X-Hive-User/X-Hive-Role alone (F7, CWE-306). The hub half is
+// shipped fleet-wide — its auth-check success path injects X-Hive-Proxy-Auth
+// (see hub saas.go handleSaaSAuthCheck) and its nginx forwards it via the
+// auth-response-headers annotation — so the legitimate proxied path always
+// presents a valid proof and stays trusted.
+//
+// A WRONG proof header is ALWAYS rejected regardless of this flag. The only
+// difference this flag makes is how a MISSING proof is treated: strict (default)
+// rejects it; fail-open trusts the identity headers. Set
+// HIVE_PROXY_PROOF_REQUIRED=false ONLY as a temporary escape hatch if a hub is
+// found not to be injecting the proof (e.g. mid-rollback); it re-opens the F7
+// hole and must not be left set in production.
+var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") != "false"
 
 type Server struct {
 	port       int
@@ -834,12 +844,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// only the trusted proxy can produce. Require it as PROOF the request
 		// transited the hub.
 		//
-		// ROLLOUT SAFETY — fail open until the hub half is everywhere: if the hub
-		// has NOT sent X-Hive-Proxy-Auth (older hub image mid-rollout), fall back
-		// to the pre-F2 behavior (trust the identity headers) so no hosted hive is
-		// locked out. Once the hub half is confirmed deployed fleet-wide, a
-		// follow-up flips proxyProofRequired to make a missing/incorrect proof
-		// header fail closed.
+		// FAIL CLOSED by default (F7): if the hub has NOT sent X-Hive-Proxy-Auth,
+		// the request is rejected — it did not demonstrably transit the hub nginx,
+		// so its identity headers are not trustworthy. The hub half is deployed
+		// fleet-wide, so the legitimate proxied path always carries a valid proof.
+		// The pre-F2 fail-open behavior (trust identity headers when no proof is
+		// present) is available ONLY as a temporary escape hatch by setting
+		// HIVE_PROXY_PROOF_REQUIRED=false; see proxyProofRequired.
 		if !trusted && !directRouteAuthz &&
 			r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
 			proof := r.Header.Get(proxyAuthHeader)
@@ -911,6 +922,34 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 func (s *Server) directRouteAuthzEnabled() bool {
 	return s.deps != nil && s.deps.Config != nil &&
 		s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled()
+}
+
+// requestRoleAllowsOwner reports whether the request should be treated as an
+// owner for owner-gated endpoints. It reads X-Hive-Role, which the authenticate
+// middleware injects from a per-user session or from a proof-verified hub header.
+//
+// SECURITY (F9, CWE-862): a MISSING role must default to LEAST privilege on any
+// spoke that has an auth boundary (a shared token or a direct-route allowlist).
+// On such a spoke an empty role means no identity was established — either a
+// dev/misconfig, or a request that reached the handler without being
+// authenticated — and must NOT be silently promoted to owner (which previously
+// let a missing-header request download the raw hive.yaml verbatim). The
+// legitimate owner always arrives with X-Hive-Role set.
+//
+// The empty-role==owner convenience is preserved ONLY for a genuinely open spoke
+// (no auth_token AND no allowlist), where there is no security boundary at all
+// and the whole dashboard is already admitted anonymously.
+func (s *Server) requestRoleAllowsOwner(r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "owner" {
+		return true
+	}
+	if role == "" {
+		// Least privilege: only an open/dev spoke (no boundary) may treat a
+		// missing role as owner.
+		return s.authToken == "" && !s.directRouteAuthzEnabled()
+	}
+	return false
 }
 
 // hubProxied reports whether this spoke sits behind the hub's nginx, which

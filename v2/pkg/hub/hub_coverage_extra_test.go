@@ -1153,7 +1153,11 @@ func TestHandleProxyHiveConfigUpstreamError(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
+	// Ownerless entry: after the F9 fix the unauthenticated test caller cannot
+	// reach the upstream, so the ownership check (403) preempts any proxy fetch.
+	reached := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("upstream error"))
 	}))
@@ -1161,7 +1165,7 @@ func TestHandleProxyHiveConfigUpstreamError(t *testing.T) {
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
-		{ID: "error-hive", DashboardURL: upstream.URL},
+		{ID: "error-hive", DashboardURL: upstream.URL}, // Owner intentionally empty
 	}
 	srv.mu.Unlock()
 
@@ -1171,9 +1175,12 @@ func TestHandleProxyHiveConfigUpstreamError(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	// Proxies the upstream status
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", w.Code)
+	// Ownerless hive is refused before the proxy fetch (F9).
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for ownerless hive, got %d", w.Code)
+	}
+	if reached {
+		t.Error("upstream was fetched for an ownerless hive — F9 regression")
 	}
 }
 

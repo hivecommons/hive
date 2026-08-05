@@ -601,10 +601,13 @@ func TestSecurityHeaders_WithAuthToken(t *testing.T) {
 		t.Errorf("internal token: code = %d, want 200", w.Code)
 	}
 
-	// Hub auth headers
+	// Hub auth headers. F7: the fail-closed default requires the hub's proof
+	// header (X-Hive-Proxy-Auth) alongside the identity headers; the real hub
+	// injects it. With a valid proof the request is trusted.
 	req = httptest.NewRequest("GET", "/api/kick/scanner", nil)
 	req.Header.Set("X-Hive-User", "testuser")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, "secret-token")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
