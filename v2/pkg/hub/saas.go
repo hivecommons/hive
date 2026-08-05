@@ -7738,6 +7738,18 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <!-- Register-your-own-hive: for a user who self-installed a standalone
+             hive and wants to attach it to THIS hub. Points at the existing
+             self-host guide (get-started.html #self-host) whose key step is to
+             set HIVE_HUB_URL — no new backend, no new content. Always available. -->
+        <a class="btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (set HIVE_HUB_URL)">Register your own hive</a>
+        <!-- Request-a-hive: routes to the EXISTING Request-a-Hive wizard at
+             /get-started (files a provision request via POST
+             /api/saas/request-provision). Shown when the user has NO hosted
+             quota (cannot self-create); hidden otherwise. No new modal. -->
+        <a class="btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
+        <!-- Self-create path, for users who DO have hosted quota. Hidden when the
+             user has no quota (the Request-a-hive link above takes over). -->
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
       </div>
     </div>
@@ -11615,9 +11627,17 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         var canCreate = _userQuota < 0 || _userQuota > _userUsed;
         var addBtn = document.getElementById('btn-add-hive');
+        var requestBtn = document.getElementById('btn-request-hive');
         if (addBtn) {
           addBtn.disabled = !canCreate;
           addBtn.title = canCreate ? '' : 'No hosted quota — contact hub admin';
+          /* No hosted quota: hide the dead-end self-create button entirely and
+             surface the active "Request a hive" link in its place. With quota,
+             keep the working + Add Hosted Hive button and hide the request link. */
+          addBtn.style.display = canCreate ? '' : 'none';
+        }
+        if (requestBtn) {
+          requestBtn.style.display = canCreate ? 'none' : '';
         }
         /* Render through sortedDashHives() rather than the raw payload so an
            active sort — whether the operator clicked a column or restored a
@@ -11720,21 +11740,29 @@ const dashboardHTML = `<!DOCTYPE html>
           var repoLink = repoPath ? (repoHref ? '<a href="' + repoHref + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '<span class="repo-link">' + esc(h.primaryRepo) + '</span>') : '';
           var actionCell = '';
           var access = accessMap[h.id];
+          // /contribute is a PUBLIC endpoint (see publicPaths) — lending compute
+          // does NOT require access — so Contribute is the PRIMARY action for
+          // EVERYONE on a public hive, regardless of access status. Use the
+          // hive's heartbeat-reported dashboard URL (resolvedBase), NOT a
+          // hardcoded <id>.hive.kubestellar.io host. Firewalled spokes (e.g.
+          // vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a different
+          // domain, so the hardcoded host 503'd/failed to resolve.
+          var cBase = resolvedBase(h);
+          var contributeAction = cBase
+            ? '<a href="' + cBase + '/contribute" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>'
+            : '<span style="padding:3px 10px;color:var(--muted);font-size:0.7rem" title="hive has not reported its dashboard URL yet">Contribute unavailable</span>';
+          // Access is the SECONDARY, less-prominent action: a small link for the
+          // user who genuinely wants sign-in / manage access. Pending state is
+          // preserved (no re-request while one is outstanding).
+          var accessSecondary;
           if (access && access.status === 'accepted') {
-            // Use the hive's heartbeat-reported dashboard URL (resolvedBase),
-            // NOT a hardcoded <id>.hive.kubestellar.io host. Firewalled spokes
-            // (e.g. vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a
-            // different domain, so the hardcoded host 503'd/failed to resolve.
-            var cBase = resolvedBase(h);
-            var actionCell2 = cBase
-              ? '<a href="' + cBase + '/contribute" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>'
-              : '<span style="padding:3px 10px;color:var(--muted);font-size:0.7rem" title="hive has not reported its dashboard URL yet">Contribute unavailable</span>';
-            actionCell = actionCell2;
+            accessSecondary = '<span style="font-size:0.65rem;color:var(--green)" title="you have access to this hive">✓ access</span>';
           } else if (access && access.status === 'pending') {
-            actionCell = '<span style="padding:3px 10px;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:4px;font-size:0.7rem">Pending</span>';
+            accessSecondary = '<span style="font-size:0.65rem;color:#fbbf24" title="access request pending">Pending</span>';
           } else {
-            actionCell = '<button onclick="dashRequestAccess(\'' + esc(h.id) + '\',this)" style="padding:3px 10px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;cursor:pointer;border:1px solid rgba(59,130,246,0.3)">Request Access</button>';
+            accessSecondary = '<a href="#" onclick="dashRequestAccess(\'' + esc(h.id) + '\',this);return false" style="font-size:0.65rem;color:#60a5fa;text-decoration:none" title="request sign-in / manage access to this hive">Request access</a>';
           }
+          actionCell = '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">' + contributeAction + accessSecondary + '</div>';
           return '<tr>' +
             '<td style="text-align:left">' + esc(h.name || h.id) + '</td>' +
             '<td>' + repoLink + '</td>' +
@@ -12122,7 +12150,16 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives yet</p>' +
-          '<p>Log in to a local hive dashboard to see it here, or create a hosted hive.</p>' +
+          '<p style="margin-bottom:16px">Get started in one of two ways:</p>' +
+          '<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px">' +
+          /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
+             (POST /api/saas/request-provision). We host it for you. */
+          '<a class="btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
+          /* Register-your-own-hive → the EXISTING self-host guide at
+             /get-started#self-host (set HIVE_HUB_URL, hive auto-appears). */
+          '<a class="btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
+          '</div>' +
+          '<p style="color:var(--muted);font-size:0.85rem">…or contribute to a public hive below.</p>' +
           '</div>';
         return;
       }
