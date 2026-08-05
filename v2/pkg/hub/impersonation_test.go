@@ -190,6 +190,63 @@ func TestWriteBlockedDuringImpersonation(t *testing.T) {
 	}
 }
 
+// TestAdminReadSurfacesHiddenDuringImpersonation pins the UX-fidelity property of
+// "View as": while impersonating, an admin-DATA GET (e.g. /api/saas/admin/users)
+// must be refused so no admin surface leaks into the view — the impersonated
+// dashboard shows exactly what the target user sees. The exit path stays callable.
+func TestAdminReadSurfacesHiddenDuringImpersonation(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	mkUser(t, hubAdminUsername)
+	mkUser(t, "alice")
+	now := time.Now()
+
+	called := false
+	next := func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusOK) }
+	guardedAdmin := s.requireAdmin(next)
+
+	// A GET admin-data route under an active grant -> 403, handler NOT reached, so
+	// the client's 403 handling hides the admin Users section AND the Send Banner
+	// controls. (Before the fix this returned 200 because requireAdmin honors the
+	// real admin identity — leaking the full user list into the impersonated view.)
+	rec := httptest.NewRecorder()
+	get := httptest.NewRequest(http.MethodGet, "/api/saas/admin/users", nil)
+	get.AddCookie(testAuthCookie(hubAdminUsername))
+	get.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
+	guardedAdmin(rec, get)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("admin GET under impersonation status = %d, want 403 (admin surface must not leak)", rec.Code)
+	}
+	if called {
+		t.Error("admin GET handler ran under impersonation — admin data leaked into the impersonated view")
+	}
+
+	// The SAME admin GET, NOT impersonating, still reaches the handler (200) — the
+	// real admin retains full access when not viewing as someone.
+	called = false
+	rec = httptest.NewRecorder()
+	get = httptest.NewRequest(http.MethodGet, "/api/saas/admin/users", nil)
+	get.AddCookie(testAuthCookie(hubAdminUsername))
+	guardedAdmin(rec, get)
+	if rec.Code != http.StatusOK || !called {
+		t.Errorf("admin GET without impersonation: status=%d called=%v; want 200 + handler called", rec.Code, called)
+	}
+
+	// The exit path stays reachable while impersonating (so the admin can always
+	// get back out) even though it is behind requireAdmin.
+	called = false
+	rec = httptest.NewRecorder()
+	guardedExit := s.requireAdmin(next)
+	exitReq := httptest.NewRequest(http.MethodPost, impersonateExitPath, nil)
+	exitReq.AddCookie(testAuthCookie(hubAdminUsername))
+	exitReq.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
+	guardedExit(rec, exitReq)
+	if rec.Code != http.StatusOK || !called {
+		t.Errorf("exit path under impersonation: status=%d called=%v; want 200 + handler reached", rec.Code, called)
+	}
+}
+
 // TestImpersonateExitClearsCookieAndStaysCallable: exit works WHILE impersonating
 // (it is exempt from the write-block) and clears the cookie.
 func TestImpersonateExitClearsCookieAndStaysCallable(t *testing.T) {
