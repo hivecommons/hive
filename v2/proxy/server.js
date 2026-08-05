@@ -14,9 +14,27 @@ const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
+// HIVE_HUB_SECRET is present ONLY on hub-hosted hives (injected by the hub at
+// provision time). Its presence is the boot-time signal that this hive runs
+// hosted, where per-request identity comes from the hub-minted, HMAC-signed
+// `hive_hub_user` cookie (verified below) rather than a shared dashboard token.
+const HUB_SECRET = process.env.HIVE_HUB_SECRET || '';
 
-if (!DASHBOARD_TOKEN && process.env.NODE_ENV === 'production') {
-  console.error('[SECURITY] HIVE_DASHBOARD_TOKEN is not set — all mutations are unauthenticated!');
+// SECURITY (fail closed on empty dashboard token — CWE-306).
+//
+// The prior guard only fired when NODE_ENV === 'production', but NODE_ENV is
+// never set in any deploy manifest, so it was dead code: every shipped
+// self-hosted deploy ran with unauthenticated mutation endpoints. Reverse the
+// polarity — the guard now fires in every real deploy and only the unit test
+// (which sets NODE_ENV=test) opts out.
+//
+// Hosted hives INTENTIONALLY run with HIVE_DASHBOARD_TOKEN unset: identity is
+// carried by the hub cookie, so a missing token is expected there and the proxy
+// must still boot. HUB_SECRET being set proves hosted mode. Only a self-hosted
+// deploy with neither a token nor a hub secret is truly unauthenticated, and
+// that is what we refuse to start.
+if (!DASHBOARD_TOKEN && !HUB_SECRET && process.env.NODE_ENV !== 'test') {
+  console.error('[SECURITY] HIVE_DASHBOARD_TOKEN is not set and this hive is not hub-hosted (HIVE_HUB_SECRET unset) — all mutation endpoints would be unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.');
   process.exit(1);
 }
 
@@ -34,6 +52,35 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
+}
+
+// verifyHubUserCookie mirrors verifyHubUserCookieValue in v2/pkg/hub/hub_cookie.go
+// EXACTLY. The `hive_hub_user` cookie value is `<username>.<sig>` where sig is
+// base64url-unpadded HMAC-SHA256(key=HUB_SECRET, msg=username). The proxy holds
+// no other secret and must not merely check that the cookie is non-empty (that
+// was CWE-345: any `Cookie: hive_hub_user=x` yielded a shell in a
+// credential-holding container). We recompute the HMAC and constant-time-compare
+// the signature; a forged, edited, or legacy-unsigned cookie fails closed.
+//
+// Returns the verified username on success, or '' when the signature does not
+// verify / the secret is unset / the value is malformed.
+function verifyHubUserCookie(secret, value) {
+  if (!secret || !value) return '';
+  // SplitN from the right: the final segment is the signature.
+  const idx = value.lastIndexOf('.');
+  if (idx <= 0 || idx === value.length - 1) return '';
+  const username = value.slice(0, idx);
+  const sig = value.slice(idx + 1);
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(username)
+    .digest('base64url'); // base64url is unpadded, matching Go's RawURLEncoding
+  const suppliedBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (suppliedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(suppliedBuf, expectedBuf)) {
+    return '';
+  }
+  return username;
 }
 
 app.use((req, res, next) => {
@@ -142,7 +189,9 @@ app.use('/terminal', (req, res, next) => {
       if (k) acc[k] = v.join('=');
       return acc;
     }, {});
-    const user = cookies['hive_hub_user'];
+    // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
+    // signature — a non-empty value is NOT proof of authentication.
+    const user = verifyHubUserCookie(HUB_SECRET, cookies['hive_hub_user']);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -227,7 +276,8 @@ server.on('upgrade', (req, socket, head) => {
         if (k) acc[k] = v.join('=');
         return acc;
       }, {});
-      if (!cookies['hive_hub_user']) {
+      // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
+      if (!verifyHubUserCookie(HUB_SECRET, cookies['hive_hub_user'])) {
         socket.destroy();
         return;
       }
