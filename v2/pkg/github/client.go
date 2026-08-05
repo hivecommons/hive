@@ -538,7 +538,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		var failingNames []string
 		var failingIDs []int64
 		for _, cr := range checkRuns.CheckRuns {
-			if cr.GetName() == "tide" {
+			if isMetaCheck(cr.GetName()) {
 				continue
 			}
 			ciChecksFound++
@@ -568,6 +568,25 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			prs[i].CIStatus = ciStatusPending
 		}
 	}
+}
+
+// isMetaCheck reports check runs that are merge-gates or deploy-status
+// mirrors, NOT code CI. They must not drive CIStatus: a stale
+// enforce-guardrails (red-main era) or Netlify status left three
+// actually-green PRs classified ci_failing and invisible to the merge sweep
+// for hours (2026-08-04). The merge step itself re-enforces these gates —
+// counting them here only poisons the eligibility signal.
+func isMetaCheck(name string) bool {
+	switch name {
+	case "tide", "enforce-guardrails":
+		return true
+	}
+	for _, prefix := range []string{"Header rules", "Pages changed", "Redirect rules", "netlify/", "copilot"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Bounds for fetchFailureExcerpt: annotations are fetched for at most
