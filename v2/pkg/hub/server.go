@@ -83,6 +83,11 @@ type FleetStatsSnapshot struct {
 	Hives        int `json:"hives"`
 	Reporting    int `json:"reporting"`
 	Eligible     int `json:"eligible"`
+	// ContributorsTotal carries the registered-contributor total (see
+	// FleetStats.ContributorsTotal) into the last-known-good fallback so a
+	// recollecting fleet still serves a stable figure instead of dropping to
+	// 0 while coverage is below the publish threshold.
+	ContributorsTotal int `json:"contributors_total"`
 	// CollectedAt is when this aggregate was computed, i.e. what "as of" means
 	// on the public page.
 	CollectedAt time.Time `json:"collected_at"`
@@ -2092,7 +2097,16 @@ type FleetStats struct {
 	// owner or URL is derivable from them.
 	AgentsRunning int    `json:"agents_running"`
 	Contributors  int    `json:"contributors"`
-	UpdatedAt     string `json:"updated_at"`
+	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
+	// contributors, summed from each hive's ContributorCount rather than
+	// ActiveContributors. Contributors above tracks who is CURRENTLY active,
+	// which legitimately drops to 0 whenever nobody happens to be connected —
+	// on the hub landing page that reads as "this fleet has no
+	// contributors", which is false. ContributorsTotal is stable across quiet
+	// periods because a contributor stays registered whether or not they are
+	// active right now, so the public tile should prefer it.
+	ContributorsTotal int    `json:"contributors_total"`
+	UpdatedAt         string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
 	// Without this pair the totals are indistinguishable from a healthy fleet:
@@ -2220,6 +2234,9 @@ func (s *HubServer) computeFleetStats() FleetStats {
 		fs.Hives++
 		fs.AgentsRunning += h.AgentCount
 		fs.Contributors += h.ActiveContributors
+		// Registered (not active) so the total does not crater to 0 whenever
+		// nobody happens to be connected at collection time.
+		fs.ContributorsTotal += h.ContributorCount
 		for _, r := range h.Repos {
 			if r == "" {
 				continue
@@ -2317,14 +2334,15 @@ func (s *HubServer) fleetStatsLKG() *FleetStatsSnapshot {
 func (s *HubServer) recordFleetStatsLKG(fs FleetStats, collectedAt time.Time) {
 	s.mu.Lock()
 	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
-		ReposManaged: fs.ReposManaged,
-		PRsMerged:    fs.PRsMerged,
-		PRsRejected:  fs.PRsRejected,
-		CVEsClosed:   fs.CVEsClosed,
-		Hives:        fs.Hives,
-		Reporting:    fs.Reporting,
-		Eligible:     fs.Eligible,
-		CollectedAt:  collectedAt.UTC(),
+		ReposManaged:      fs.ReposManaged,
+		PRsMerged:         fs.PRsMerged,
+		PRsRejected:       fs.PRsRejected,
+		CVEsClosed:        fs.CVEsClosed,
+		Hives:             fs.Hives,
+		Reporting:         fs.Reporting,
+		Eligible:          fs.Eligible,
+		ContributorsTotal: fs.ContributorsTotal,
+		CollectedAt:       collectedAt.UTC(),
 	}
 	s.mu.Unlock()
 	s.requestSave()
@@ -2358,6 +2376,7 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 		fs.PRsMerged = lkg.PRsMerged
 		fs.PRsRejected = lkg.PRsRejected
 		fs.CVEsClosed = lkg.CVEsClosed
+		fs.ContributorsTotal = lkg.ContributorsTotal
 		fs.StaleData = true
 		fs.AsOf = lkg.CollectedAt.UTC().Format(time.RFC3339)
 		s.logger.Warn("fleet stats: serving last-known-good totals; live coverage is below the publish threshold",

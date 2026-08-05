@@ -269,6 +269,39 @@ func TestComputeFleetStatsZeroCollectedAtIsTrusted(t *testing.T) {
 	}
 }
 
+// TestComputeFleetStatsContributorsTotal pins the hub-landing-page fix: the
+// "Contributors" tile must show the fleet-wide REGISTERED contributor total
+// (ContributorsTotal, summed from each spoke's ContributorCount), not the
+// currently-active count (Contributors, summed from ActiveContributors) —
+// the active count legitimately drops to 0 whenever nobody happens to be
+// connected at collection time, which made the tile crater to 0. The two
+// totals must be independent: a hive can have many registered contributors
+// and zero active ones right now, and vice versa.
+func TestComputeFleetStatsContributorsTotal(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		// Registered contributors but nobody active right now — the case that
+		// used to crater the tile to 0.
+		{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"},
+			ContributorCount: 12, ActiveContributors: 0},
+		// Some active, fewer registered visible in this snapshot — still summed
+		// independently.
+		{IsPublic: true, Online: true, Org: "a", Repos: []string{"r2"},
+			ContributorCount: 3, ActiveContributors: 2},
+		// Offline hives are excluded from both totals, same as every other
+		// fleet-wide count.
+		{IsPublic: true, Online: false, Org: "a", Repos: []string{"r3"},
+			ContributorCount: 100, ActiveContributors: 100},
+	}
+	got := s.computeFleetStats()
+	if got.ContributorsTotal != 15 {
+		t.Errorf("ContributorsTotal = %d, want 15 (12+3, offline hive excluded)", got.ContributorsTotal)
+	}
+	if got.Contributors != 2 {
+		t.Errorf("Contributors = %d, want 2 (active count unaffected by the fix)", got.Contributors)
+	}
+}
+
 // TestFleetStatsTrustworthy is the regression guard for the reported bug: a
 // total assembled from a small minority of the fleet must NOT be presented as
 // a fleet-wide figure. 2 reporting out of 50 eligible is the live shape of the
