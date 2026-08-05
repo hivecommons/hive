@@ -236,7 +236,7 @@ func TestQueueMoveToBottomAndHoldControlsPresent(t *testing.T) {
 		`cc-q-held`,                            // dimmed held-row class
 		`cc-q-held-tag`,                        // on-hold badge class
 		`on hold`,                              // badge text
-		`color-scheme:dark`,                    // visible spinner-arrow fix
+		`color-scheme:light dark`,              // theme-aware spinner-arrow fix (visible in both light + dark; #2612)
 		`.cc-q-moverow input[type=number]`,     // spinner fix targets the number input
 	} {
 		if !strings.Contains(body, want) {

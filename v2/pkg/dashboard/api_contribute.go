@@ -255,6 +255,13 @@ func (s *Server) registerContributeRoutes() {
 	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
 	// no side effects. See contribute_metrics.go.
 	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
+	// Read-only TRIAGE ladder (#2612 part b): the contribute issues grouped into a
+	// Warp-style lifecycle (Triaging → Ready → Implementing → Reviewing → Closed),
+	// DERIVED LIVE from the ready queue + fleet snapshot + the PR→issue link (part
+	// c) — no new persistent store. Public like the other /api/contribute* reads
+	// (only public issue metadata + public PR numbers; no tokens, no PII). Fetched
+	// after page load so a slow GitHub PR-link lookup never delays the page render.
+	s.mux.HandleFunc("GET /api/contribute/triage", s.handleContributeTriage)
 	// Operator priority override for the ready-work queue. Owner/read-write only —
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
@@ -1212,6 +1219,46 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-invite__link{flex:1 1 220px;min-width:0;background:var(--cc-bg-deep);color:var(--cc-text-2);border:1px solid var(--cc-border);border-radius:6px;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
 .me-invite__copy{background:#238636;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.78rem;font-family:inherit;cursor:pointer}
 .me-invite__hint{width:100%%;margin-top:6px;color:var(--cc-muted);font-size:.74rem;line-height:1.4}
+/* ── Triage ladder (#2612 part b) — a lifecycle view over contribute issues.
+   Themed entirely with the (d) tokens so it flips light/dark with the rest of the
+   page. The ladder is a row of level chips (count per rung); below it, per-level
+   groups list the issues with an optional PR badge (part c). Sober SRE register:
+   muted neutrals, the level accent only on the chip dot + count. */
+.cc-triage-ladder{display:flex;flex-wrap:wrap;gap:8px;padding:14px 20px;border-bottom:1px solid var(--cc-border-2)}
+.cc-triage-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:.76rem;font-weight:600;color:var(--cc-text-2);background:var(--cc-bg);border:1px solid var(--cc-border)}
+.cc-triage-chip .cc-tl-dot{width:8px;height:8px;border-radius:50%%;flex:none;background:var(--cc-muted)}
+.cc-triage-chip .cc-tl-n{font-variant-numeric:tabular-nums;color:var(--cc-text);font-weight:700}
+.cc-triage-chip .cc-tl-lbl{color:var(--cc-muted);font-weight:600}
+/* Per-level accent on the dot only — meaning without shouting. */
+.cc-triage-chip.lv-triaging .cc-tl-dot{background:var(--cc-muted)}
+.cc-triage-chip.lv-ready .cc-tl-dot{background:var(--cc-accent)}
+.cc-triage-chip.lv-implementing .cc-tl-dot{background:var(--cc-accent-fg)}
+.cc-triage-chip.lv-reviewing .cc-tl-dot{background:var(--cc-amber)}
+.cc-triage-chip.lv-closed .cc-tl-dot{background:var(--cc-green)}
+.cc-triage-groups{max-height:520px;overflow-y:auto}
+.cc-tg{border-bottom:1px solid var(--cc-border-2)}
+.cc-tg:last-child{border-bottom:none}
+.cc-tg-head{display:flex;align-items:center;gap:8px;padding:10px 20px;font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted);position:sticky;top:0;background:var(--cc-surface);z-index:1}
+.cc-tg-head .cc-tg-dot{width:8px;height:8px;border-radius:50%%;flex:none;background:var(--cc-muted)}
+.cc-tg.lv-ready .cc-tg-dot{background:var(--cc-accent)}
+.cc-tg.lv-implementing .cc-tg-dot{background:var(--cc-accent-fg)}
+.cc-tg.lv-reviewing .cc-tg-dot{background:var(--cc-amber)}
+.cc-tg.lv-closed .cc-tg-dot{background:var(--cc-green)}
+.cc-tg-count{margin-left:auto;color:var(--cc-muted-2);font-weight:600;font-variant-numeric:tabular-nums}
+.cc-tg-item{display:flex;align-items:flex-start;gap:10px;padding:10px 20px;border-top:1px solid var(--cc-border-2)}
+.cc-tg-body{flex:1;min-width:0}
+.cc-tg-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cc-tg-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-tg-empty{padding:8px 20px 12px;font-size:.76rem;color:var(--cc-muted-2)}
+/* PR→issue badge (#2612 part c) — a small link chip on a queue/triage row telling
+   whether a fixing PR is open or merged. Reuses the status-pill palette so its
+   meaning matches the rest of the page (open = review-amber, merged = done-green). */
+.cc-pr-badge{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;align-self:center;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;text-decoration:none;border:1px solid transparent;white-space:nowrap}
+.cc-pr-badge.pr-open{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
+.cc-pr-badge.pr-merged{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
+.cc-pr-badge:hover{filter:brightness(1.1);text-decoration:underline}
+/* Inline PR badge riding on a ready-queue row (smaller, sits after the title). */
+.cc-q-body .cc-pr-badge{margin-top:4px}
 /* ── (#2612 part d) Light-mode fixups for the handful of DARK one-off surfaces
    that are not part of the tokenized neutral ramp (small gradient washes and a
    couple of hover fills baked as literal dark hex). On a light appearance those
@@ -1827,6 +1874,21 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </div>
 </div>
+<!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
+     contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
+     Closed. Each level is DERIVED LIVE from the ready queue + fleet snapshot +
+     the PR→issue link (part c); there is no persistent per-issue lifecycle store
+     (a future enhancement, out of scope). A SECTION within Operations — NOT a new
+     page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
+     PR-link lookup never delays the page. Full-width card below the ops grid. -->
+<div class="ops-card cc-triage-card" id="cc-triage-card" style="margin-top:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
+<!-- Compact ladder summary: one chip per level with its live count. -->
+<div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
+<!-- Grouped per-level issue lists (each collapsible-ish section, capped). -->
+<div class="cc-triage-groups" id="cc-triage-groups"></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; each issue is placed on the ladder from what the hive can observe right now (the ready queue, the fleet&rsquo;s in-flight work, and whether a fixing PR is open or merged). Read-only and recomputed on each load; there is no stored per-issue state.</p>
+</div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
      (moved here out of the former right column). Named "Live Activity" to match
@@ -1976,6 +2038,9 @@ function activateTab(t,push){
     // The dev-log rail collapse/persist wiring is independent too: a throw here must
     // not abort fleet hydration or the SSE feed.
     try{initOpsRail();}catch(e){console.error('initOpsRail failed',e);}
+    // Triage ladder (#2612 part b): fetched after the tab opens so a slow GitHub
+    // PR-link lookup never delays the page. A throw must not abort the panels above.
+    try{ccTriagePoll();}catch(e){console.error('ccTriagePoll failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   // The personal "Me" card loads alongside the standings; a throw in one must
@@ -3377,9 +3442,13 @@ function ccRenderQueue(flip){
     var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
     var heldCls=isHeld?' cc-q-held':'';
     var heldTag=isHeld?'<span class="cc-q-held-tag" title="On hold — parked by the operator; not offered until resumed">&#x23F8; on hold</span>':'';
+    // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
+    // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
+    // and simply omitted when no PR is linked — never blocks the queue render.
+    var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
     return '<div class="cc-q-item'+mineCls+heldCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
       '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
-      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
+      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
   ccUpdateFilterNote(shown,total);
@@ -3390,6 +3459,76 @@ function ccRenderQueue(flip){
   // End-of-queue block (#2595): the "all caught up" marker + hive settings + quota.
   // Only when the full list is shown (a filtered view isn't "the end of the queue").
   ccRenderQueueEnd(!filtering);
+}
+// ── Triage ladder (#2612 parts b + c) ─────────────────────────────────────────
+// ccPRLinks maps "repo#number" -> {number,url,state} for issues whose fixing PR the
+// triage endpoint resolved (open/merged). Populated by ccTriagePoll; consumed by
+// the queue-row badge and the triage groups. Empty until the first poll lands, so
+// the queue renders immediately without any PR data.
+var ccPRLinks={};
+// ccPRBadgeHTML returns the small "PR #NNN (open|merged)" link chip for an issue
+// key, or '' when no PR is linked. esc()-guarded; opens the PR on GitHub.
+function ccPRBadgeHTML(key){
+  var pr=ccPRLinks[key];
+  if(!pr||!pr.number)return '';
+  var cls=(pr.state==='merged')?'pr-merged':'pr-open';
+  var label='PR #'+pr.number+' ('+(pr.state==='merged'?'merged':'open')+')';
+  var href=pr.url||'';
+  return '<a class="cc-pr-badge '+cls+'" href="'+esc(href)+'" target="_blank" rel="noopener noreferrer" title="'+esc(label)+'">'+esc(label)+'</a>';
+}
+// CC_TRIAGE_LEVELS pins the ladder's render order + display labels client-side,
+// mirroring triageLevelOrder/triageLevelLabel on the server so the chips/groups
+// render in lifecycle order even if the JSON key order ever changed.
+var CC_TRIAGE_LEVELS=[['triaging','Triaging'],['ready','Ready to implement'],['implementing','Implementing'],['reviewing','Reviewing'],['closed','Closed']];
+// ccTriagePoll fetches the live triage snapshot and renders the ladder + groups,
+// then refreshes ccPRLinks and re-renders the queue so PR badges appear on queue
+// rows too. Best-effort: any failure leaves the "Loading…"/prior state and is
+// retried on the next tab open; it never throws into the ops bootstrap.
+function ccTriagePoll(){
+  fetch('/api/contribute/triage',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){if(d)ccRenderTriage(d);})
+    .catch(function(){/* degrade silently — the panel keeps its last state */});
+}
+// ccRenderTriage paints the ladder summary chips + the per-level issue groups, and
+// harvests the PR links into ccPRLinks so the queue rows can show badges.
+function ccRenderTriage(snap){
+  var groups=(snap&&snap.groups)||[];
+  // Index groups by level for ordered lookup.
+  var byLevel={};for(var i=0;i<groups.length;i++){byLevel[groups[i].level]=groups[i];}
+  // Total count badge.
+  var totEl=document.getElementById('cc-triage-total');
+  if(totEl)totEl.textContent=(snap&&snap.total!=null?snap.total:0)+' issues';
+  // Ladder chips.
+  var ladder=document.getElementById('cc-triage-ladder');
+  if(ladder){
+    ladder.innerHTML=CC_TRIAGE_LEVELS.map(function(lv){
+      var g=byLevel[lv[0]]||{count:0};
+      return '<span class="cc-triage-chip lv-'+lv[0]+'"><span class="cc-tl-dot"></span><span class="cc-tl-n">'+(g.count||0)+'</span><span class="cc-tl-lbl">'+esc(lv[1])+'</span></span>';
+    }).join('');
+  }
+  // Per-level groups with their issue lists.
+  var wrap=document.getElementById('cc-triage-groups');
+  if(wrap){
+    ccPRLinks={};
+    wrap.innerHTML=CC_TRIAGE_LEVELS.map(function(lv){
+      var g=byLevel[lv[0]]||{count:0,issues:[]};
+      var issues=g.issues||[];
+      var rows=issues.map(function(it){
+        var key=(it.repo||'')+'#'+(it.number||'');
+        if(it.pr&&it.pr.number){ccPRLinks[key]=it.pr;}
+        var repoLbl=esc((it.repo||'')+'#'+(it.number||''));
+        var link=it.url?('<a class="cc-issue-link" href="'+esc(it.url)+'" target="_blank" rel="noopener noreferrer">'+repoLbl+'</a>'):repoLbl;
+        var badge=(it.pr&&it.pr.number)?ccPRBadgeHTML(key):'';
+        return '<div class="cc-tg-item"><div class="cc-tg-body"><div class="cc-tg-repo">'+link+'</div><div class="cc-tg-title" title="'+esc(it.title||'')+'">'+esc(it.title||'(untitled)')+'</div></div>'+badge+'</div>';
+      }).join('');
+      var body=issues.length?rows:'<div class="cc-tg-empty">None right now.</div>';
+      return '<div class="cc-tg lv-'+lv[0]+'"><div class="cc-tg-head"><span class="cc-tg-dot"></span>'+esc(lv[1])+'<span class="cc-tg-count">'+(g.count||0)+'</span></div>'+body+'</div>';
+    }).join('');
+  }
+  // Now that ccPRLinks is populated, re-render the queue so its rows pick up the
+  // PR badges too (the queue endpoint intentionally does not resolve PR links).
+  try{if(typeof ccRenderQueue==='function')ccRenderQueue();}catch(e){}
 }
 // ccQueueMenuHTML renders the per-row ⋯ menu markup (owner/read-write only). pos is
 // the row's ZERO-based position in the full queue; total is the queue length. The
