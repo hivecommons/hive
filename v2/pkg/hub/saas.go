@@ -11265,14 +11265,27 @@ const dashboardHTML = `<!DOCTYPE html>
             // so the badge flips to "Upgrading" immediately on click, before the
             // next /api/saas/my-hives poll reports "upgrading".
             var hubIsUpgrading = hubState === 'upgrading' || _hubUpgrading;
-            var hubQueued = !hubIsUpgrading && (hubState === 'queued' ||
+            // The container image for the latest hub SHA can still be building
+            // (same signal the per-hive rows use). While it builds there is nothing
+            // to upgrade TO yet, so the pill must read "queued" (matching the per-hive
+            // "building image…" state) rather than offer a clickable green "Upgrade"
+            // that would pull the PREVIOUS image. Only "Upgrading" (an active rollout)
+            // outranks it.
+            var hubImageBuilding = (_latestImageStatus[hubBranch] || '') === 'building';
+            var hubQueued = !hubIsUpgrading && (hubState === 'queued' || hubImageBuilding ||
               (hubState === '' && !isCurrent && hubBranchLatest && _hubAutoUpgrade));
             if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading && !hubQueued) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(hubBranchLatest || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
             } else if (hubQueued) {
-              hubUpgradeBtn = ' <span title="Auto-upgrade will apply ' + esc(hubBranchLatest || '?') + ' shortly' + (_isAdmin ? ' — click to upgrade now' : '') + '"' + (_isAdmin ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
+              // While the image is still building we do NOT offer click-to-upgrade-now
+              // (there is no built image to roll to); once built, an admin can click.
+              var hubQueuedTitle = hubImageBuilding
+                ? 'Image for ' + esc(hubBranchLatest || '?') + ' is still building — upgrade will be available once it is published'
+                : 'Auto-upgrade will apply ' + esc(hubBranchLatest || '?') + ' shortly' + (_isAdmin ? ' — click to upgrade now' : '');
+              var hubQueuedClickable = _isAdmin && !hubImageBuilding;
+              hubUpgradeBtn = ' <span title="' + hubQueuedTitle + '"' + (hubQueuedClickable ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
             } else if (hubLatestUnknown && _isAdmin) {
               hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
             }
