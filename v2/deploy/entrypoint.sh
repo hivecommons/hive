@@ -6,6 +6,16 @@ export HIVE_API_PORT="${HIVE_API_PORT:-3002}"
 export HIVE_PROXY_PORT="${HIVE_PROXY_PORT:-3001}"
 export HIVE_STATIC_DIR="${HIVE_STATIC_DIR:-/opt/hive/proxy/public}"
 
+# Packet mark (fwmark / SO_MARK) used to exempt the MITM proxy's OWN upstream
+# :443 dials from the forced-egress redirect, so its traffic is not looped back
+# into itself. Exported here so the iptables `-m mark --mark` exemption below
+# stays in lockstep with the Go proxy (which reads HIVE_PROXY_EGRESS_MARK,
+# defaulting to this same 0x1112). Unlike `-m owner --uid-owner`, a packet mark
+# needs no xt_owner kernel module, so the exemption also works on OpenShift/OVN
+# (where xt_owner is absent). On OKE the owner-match is the reliable exemption;
+# the mark is the OpenShift-compatible fallback. Value must match the Go default.
+export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
+
 # ── Config backup/restore across container recreation ─────────────────
 # When Watchtower recreates the container (pull new image, stop old, start
 # new), the Go binary's config.Save() may write an empty/default config to
@@ -699,11 +709,32 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
     PROXY_PORT=18443
     if command -v iptables >/dev/null 2>&1; then
       if iptables -t nat -N HIVE_PROXY 2>/dev/null; then
-        iptables -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN
-        iptables -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN
+        # Self-exemption uses BOTH owner-UID and packet-mark RETURNs so each
+        # platform is covered by whichever mechanism works there:
+        #   - OKE: `-m owner --uid-owner` works (xt_owner present) and is the
+        #     RELIABLE exemption for the proxy's own upstream :443 dials.
+        #   - OpenShift/OVN: xt_owner is ABSENT so the owner lines fail to load,
+        #     but the PACKET MARK (SO_MARK / HIVE_PROXY_EGRESS_MARK, exported
+        #     above) exempts the proxy's traffic there.
+        #
+        # A mark-ONLY exemption (as PR #2678 shipped on the v4 line) regressed
+        # the LIVE OKE console hive: the SO_MARK did not reliably stick on the
+        # proxy's outbound sockets, so its OWN :443 to api.github.com hit the
+        # REDIRECT rule, looped back into itself (:18443) → EPERM/ECONNREFUSED/
+        # EOF → no GitHub App token minting → no repo enumeration → dead L6 loop
+        # (refs #2678, #2674). Keeping the owner-match RETURNs is what fixes OKE.
+        #
+        # The owner `-A` lines are appended DEFENSIVELY with `|| true` so that on
+        # a host WITHOUT xt_owner their failure does NOT abort the ruleset under
+        # `set -e`; the mark exemption + redirect still establish.
+        # OKE: owner-match exemption (reliable where xt_owner is present).
+        iptables -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN || true
+        iptables -t nat -A HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN || true
+        # OpenShift/OVN: packet-mark exemption (works with no xt_owner).
+        iptables -t nat -A HIVE_PROXY -m mark --mark "$HIVE_PROXY_EGRESS_MARK" -j RETURN
         iptables -t nat -A HIVE_PROXY -p tcp --dport 443 -j REDIRECT --to-ports "$PROXY_PORT"
         iptables -t nat -A OUTPUT -j HIVE_PROXY
-        echo "[entrypoint] iptables: outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} exempt)"
+        echo "[entrypoint] iptables: outbound :443 -> :${PROXY_PORT} (proxy UID ${PROXY_UID} + egress mark ${HIVE_PROXY_EGRESS_MARK} exempt)"
         # Update uid-map to record iptables active
         python3 -c "
 import json
