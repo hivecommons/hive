@@ -77,6 +77,28 @@ except Exception: pass
   [ -n "$MAPPED" ] && AGENT="$MAPPED"
 fi
 
+# Resolve the head SHA when the caller did not pin one. The merge-request
+# watcher REQUIRES a non-empty expect_sha (the F4 TOCTOU guard, hive #2670):
+# an empty SHA means "merge whatever HEAD is now", so a commit pushed after the
+# PR was judged eligible would be merged unseen. Agents historically call
+# `hive-merge --repo X --number N` without --expect-sha, which the watcher now
+# denies outright. Rather than push the SHA burden onto every caller (or weaken
+# the guard), resolve the CURRENT head here and pin it: the head is captured at
+# request time, so the TOCTOU window closes exactly as intended, and existing
+# agent call sites keep working unchanged.
+if [ -z "$EXPECT_SHA" ]; then
+  GH_TOKEN_FILE="/var/run/hive-metrics/gh-app-token.cache"
+  if [ -f "$GH_TOKEN_FILE" ] && command -v gh >/dev/null 2>&1; then
+    EXPECT_SHA="$(GH_TOKEN="$(cat "$GH_TOKEN_FILE" 2>/dev/null)" \
+      gh pr view "$NUMBER" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null || true)"
+  fi
+  if [ -z "$EXPECT_SHA" ]; then
+    echo "hive-merge: could not resolve head SHA for $REPO#$NUMBER (needed for the merge watcher's TOCTOU guard). Pass --expect-sha explicitly, or check the App token cache at $GH_TOKEN_FILE." >&2
+    exit 3
+  fi
+  echo "hive-merge: pinned head SHA ${EXPECT_SHA} for $REPO#$NUMBER (auto-resolved; TOCTOU guard)"
+fi
+
 mkdir -p "$REQ_DIR" 2>/dev/null || true
 
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
