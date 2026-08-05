@@ -5188,6 +5188,24 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 
+		// A PR whose CI is still "pending" is nonetheless merge-eligible when
+		// GitHub itself reports it as mergeable (mergeStateStatus=unstable):
+		// that state means every REQUIRED check has passed and only
+		// non-required checks remain outstanding. Those non-required checks —
+		// a cancelled Mobile Browser Tests, a still-running coverage-report,
+		// perpetually-pending tide — can never complete on their own, so
+		// waiting for CIStatus=="success" (all checks done) leaves cleanly
+		// mergeable PRs frozen out of the sweep indefinitely (observed
+		// 2026-08-04: three green console PRs stuck for hours). The merge step
+		// re-enforces branch protection, so trusting the mergeable verdict here
+		// cannot merge anything GitHub would actually block.
+		if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes {
+			// Genuinely not ready: a required check is still running (or
+			// mergeability is unknown/no). Leave it out of both buckets, as
+			// before — it neither merges nor gets a fix dispatched.
+			continue
+		}
+
 		dco := "unknown"
 		for _, l := range pr.Labels {
 			if l == "dco-signoff: yes" {
