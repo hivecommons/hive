@@ -381,6 +381,30 @@ func TestNormalServiceNoDispatchIsIdleAndNeverRunsWorker(t *testing.T) {
 	}
 }
 
+func TestNormalServiceTransientDenialKeepsExactPacketForReevaluation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	launchable := fixture.intake.dispatch[0]
+	fixture.intake.dispatch = nil
+	fixture.intake.reevaluationPending = []string{"visual-hive://owner/repo/discovery"}
+	service := fixture.service(t, fixture.verifier)
+
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) || !strings.Contains(err.Error(), "re-evaluation pending") {
+		t.Fatalf("transient hold error = %v, want durable idle hold", err)
+	}
+	if fixture.source.consumes != 0 || fixture.source.consumeSideEffects != 0 || fixture.repairer.runs != 0 || fixture.verifier.calls != 0 {
+		t.Fatalf("transient hold consumed evidence or launched work: source=%+v repair=%+v verifier=%+v", fixture.source, fixture.repairer, fixture.verifier)
+	}
+
+	fixture.intake.reevaluationPending = nil
+	fixture.intake.dispatch = []visualcontroller.DispatchEnvelope{launchable}
+	if err := service.RunCycle(context.Background()); err != nil {
+		t.Fatalf("cleared transient hold did not resume the same packet: %v", err)
+	}
+	if fixture.source.fetches != 2 || fixture.intake.imports != 2 || fixture.repairer.runs != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("same-packet re-evaluation duplicated or skipped lifecycle work: source=%+v intake=%+v repair=%+v", fixture.source, fixture.intake, fixture.repairer)
+	}
+}
+
 func TestNormalServiceNoDispatchAmbiguousConsumeDoesNotStartAnotherWorkflow(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.intake.dispatch = nil
@@ -1498,6 +1522,7 @@ func (source *fakeArtifactSource) Consume(_ integrated.WorkflowRunEvidence, allo
 
 type fakeIntake struct {
 	dispatch                    []visualcontroller.DispatchEnvelope
+	reevaluationPending         []string
 	imports                     int
 	revalidates                 int
 	revalidateErr               error
@@ -1522,7 +1547,10 @@ func (intake *fakeIntake) Import(context.Context, hivegithub.VerifiedVisualHiveA
 			intake.represented[envelope.SourceExternalRef] = 1
 		}
 	}
-	return visualcontroller.Result{DispatchPending: append([]visualcontroller.DispatchEnvelope(nil), intake.dispatch...)}, nil
+	return visualcontroller.Result{
+		DispatchPending:               append([]visualcontroller.DispatchEnvelope(nil), intake.dispatch...),
+		ReevaluationPendingSourceRefs: append([]string(nil), intake.reevaluationPending...),
+	}, nil
 }
 
 func (intake *fakeIntake) RevalidateSpecialistBoundary(sourceExternalRef, _, _ string) (visualcontroller.DispatchEnvelope, error) {

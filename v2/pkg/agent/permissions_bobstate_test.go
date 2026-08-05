@@ -173,6 +173,19 @@ func TestFixEntryIgnoresNonBobDirs(t *testing.T) {
 	}
 }
 
+func TestPermissionsWatcherSkipsOtherAgentOwnership(t *testing.T) {
+	for _, uid := range []uint32{2001, 2002, 2003, 65534} {
+		if permissionsWatcherManagesOwner(uid) {
+			t.Fatalf("dedicated agent uid %d must not be chowned by the dashboard watcher", uid)
+		}
+	}
+	for _, uid := range []uint32{0, uint32(DevUID)} {
+		if !permissionsWatcherManagesOwner(uid) {
+			t.Fatalf("root/dev uid %d must remain eligible for watcher repair", uid)
+		}
+	}
+}
+
 // TestFixPermissionsRemediatesBobStateDirEndToEnd drives the full watcher tick:
 // pointing WatchedHomeDirs at a temp tree containing a broken 0755 .bob dir, one
 // fixPermissions pass must leave it group-writable, mirroring how the running

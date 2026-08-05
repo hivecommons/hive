@@ -634,9 +634,17 @@ func (service *Service) RunCycle(ctx context.Context) error {
 			return err
 		}
 		if !found {
-			// A green report or a current pause/WIP/policy hold creates no model or
-			// PR. Retire this exact workflow and let the ordinary cadence produce a
-			// fresh report after state changes.
+			if len(result.ReevaluationPendingSourceRefs) > 0 {
+				// A transient Governor hold must keep the exact verified packet
+				// available. A later cadence can deterministically re-evaluate the
+				// durable denial after pause, role, WIP, budget, mode, or execution
+				// readiness changes without redispatching the workflow.
+				refs := append([]string(nil), result.ReevaluationPendingSourceRefs...)
+				sort.Strings(refs)
+				return fmt.Errorf("%w: transient Governor re-evaluation pending for %s", ErrNoDispatch, strings.Join(refs, ", "))
+			}
+			// A green report or a durable non-transient policy hold creates no
+			// model or PR. Retire this exact workflow.
 			ledger.ConsumeStarted = true
 			if err := service.saveLedger(ledger); err != nil {
 				return err

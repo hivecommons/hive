@@ -917,7 +917,8 @@ func TestVisualWorkControllerDenialCreatesNoIssueIntent(t *testing.T) {
 	packet := completeControllerPacket("denied-packet", digest)
 	work.Packet = packet
 	result := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(digest)}, packet, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply})
-	if len(result.Decisions) != 1 || result.Decisions[0].Allowed || len(lifecycle.PendingOutbox()) != 0 || issues.upserts != 0 {
+	if len(result.Decisions) != 1 || result.Decisions[0].Allowed || len(lifecycle.PendingOutbox()) != 0 || issues.upserts != 0 ||
+		!reflect.DeepEqual(result.ReevaluationPendingSourceRefs, []string{heldRef}) {
 		t.Fatalf("denial leaked issue intent: result=%+v outbox=%+v upserts=%d", result, lifecycle.PendingOutbox(), issues.upserts)
 	}
 	bead := store.FindByExternalRef(work.SourceExternalRef)
@@ -927,7 +928,8 @@ func TestVisualWorkControllerDenialCreatesNoIssueIntent(t *testing.T) {
 	}
 	replay := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(digest)}, packet, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply})
 	replayedDecision, replayedRecorded := visualBeadAdmissionDecision(store.FindByExternalRef(work.SourceExternalRef))
-	if len(replay.Decisions) != 0 || len(gov.AdmissionHistory()) != 1 || !replayedRecorded || !reflect.DeepEqual(replayedDecision, decision) {
+	if len(replay.Decisions) != 0 || len(gov.AdmissionHistory()) != 1 || !replayedRecorded || !reflect.DeepEqual(replayedDecision, decision) ||
+		!reflect.DeepEqual(replay.ReevaluationPendingSourceRefs, []string{heldRef}) {
 		t.Fatalf("exact denied replay changed the Governor receipt: result=%+v decision=%+v", replay, replayedDecision)
 	}
 	gov.UpdateAgents(map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}})

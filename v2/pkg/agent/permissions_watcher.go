@@ -167,6 +167,17 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	if !ok {
 		return
 	}
+	// Bob state directories are the one intentional cross-agent permission
+	// repair. Widen only their shared-group bits before the ownership guard.
+	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
+		fixBobStateDirGroupWrite(path, fi.Mode(), logger)
+	}
+	if !permissionsWatcherManagesOwner(uid) {
+		// Dedicated hive-<agent> worktrees are not owned by the unprivileged
+		// dashboard process. Traversing them is safe, but chown attempts are not:
+		// they create unbounded EPERM log and filesystem churn on every tick.
+		return
+	}
 
 	// Fix group ownership if not in the node group — all agents share this group.
 	// Also fix root-owned files (uid 0) to the dev user.
@@ -194,28 +205,6 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 				"new_gid", NodeGID,
 			)
 		}
-	}
-
-	// bob state dirs (.bob) are the one class of directory the watcher must
-	// widen even though they are owned by a hive-<agent> UID rather than
-	// DevUID: bob runs as that agent's UID through the shared `node` group, so
-	// a 0755 dir leaves the group without write and bob logs "error saving your
-	// latest settings changes" / "Failed to initialize logger" and runs
-	// degraded. verifyBobStateDirsWritable only DETECTS this; here we actually
-	// fix it, on every tick and at startup, so the fleet self-heals instead of
-	// staying degraded until an operator hand-chmods the pod. Handled before
-	// the general owner guard below precisely because that guard would skip
-	// these non-DevUID dirs. Only the group r/w/x bits are added — owner and
-	// other bits are preserved — so an already-770 dir is left untouched.
-	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
-		fixBobStateDirGroupWrite(path, fi.Mode(), logger)
-	}
-
-	// Only fix permissions on files we own or just chowned.
-	// Skipping files owned by other users avoids "operation not permitted"
-	// spam when agents create files as their own users.
-	if newUID != DevUID && uid != uint32(DevUID) {
-		return
 	}
 
 	mode := fi.Mode()
@@ -295,4 +284,8 @@ func fixBobStateDirGroupWrite(path string, mode os.FileMode, logger *slog.Logger
 		"old_mode", perm.String(),
 		"new_mode", newPerm.String(),
 	)
+}
+
+func permissionsWatcherManagesOwner(uid uint32) bool {
+	return uid == 0 || uid == uint32(DevUID)
 }
