@@ -278,6 +278,53 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	}
 }
 
+// TestContributeLandingHasKubernetesMode pins the #2549 discoverability
+// addition: the /contribute run-mode surface must offer a Kubernetes path
+// alongside containerized and host, wired to `just contribute-k8s`, and it must
+// state the two honest constraints — only headless-capable backends run in a
+// cluster (#2660) and the interim credential model deferring to #2537.
+func TestContributeLandingHasKubernetesMode(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		// The third run-mode option.
+		`<option value="kubernetes">Kubernetes (cluster)</option>`,
+		// The command the mode generates.
+		`just contribute-k8s`,
+		// Honest headless-backend constraint (#2660) surfaced to the reader.
+		`K8S_HEADLESS_BACKENDS`,
+		`headless`,
+		// Interim credential story deferring to #2537, visible on the page.
+		`id="k8s-note"`,
+		`2537`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/contribute Kubernetes surface missing %q", want)
+		}
+	}
+
+	// The existing two modes must remain — this is additive, not a replacement.
+	for _, want := range []string{
+		`<option value="containerized">Containerized (recommended)</option>`,
+		`<option value="host">Host (non-containerized)</option>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("existing run mode removed: missing %q", want)
+		}
+	}
+}
+
 // TestContributeFleet pins the read-only fleet endpoint JSON shape.
 func TestContributeFleet(t *testing.T) {
 	setupContributeEnv(t)

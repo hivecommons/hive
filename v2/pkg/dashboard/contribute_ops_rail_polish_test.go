@@ -178,10 +178,15 @@ func TestReadyWorkQueueHeaderHasCount(t *testing.T) {
 	if headOpen < 0 {
 		t.Fatal(`could not locate the "Ready-work queue" header`)
 	}
-	// The header line: h3, then the new count span, then the pre-existing live pill.
-	headEnd := strings.Index(body[headOpen:], "</div>")
+	// The header (.ops-card-head) contains, in order: the h3, the count span, the
+	// cooldown info-affordance (which nests its OWN <div> tooltip), the queue-depth
+	// sparkline, the suspend control, and the cc-live pill — then the header's
+	// closing </div>. A naive "first </div>" bound stops inside the nested info-pop
+	// tooltip, truncating before cc-live; so bound the header slice at the search
+	// wrap that immediately follows the header instead (robust to nested divs).
+	headEnd := strings.Index(body[headOpen:], `class="cc-q-search"`)
 	if headEnd < 0 {
-		t.Fatal("could not locate the end of the Ready-work queue header")
+		t.Fatal("could not locate the end of the Ready-work queue header (cc-q-search wrap)")
 	}
 	headHTML := body[headOpen : headOpen+headEnd]
 

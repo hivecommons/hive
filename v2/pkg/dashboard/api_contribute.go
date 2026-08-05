@@ -255,10 +255,22 @@ func (s *Server) registerContributeRoutes() {
 	// reads (only counts + already-public usernames; no tokens, no PII). GET only,
 	// no side effects. See contribute_metrics.go.
 	s.mux.HandleFunc("GET /api/contribute/metrics", s.handleContributeMetrics)
+	// Read-only TRIAGE ladder (#2612 part b): the contribute issues grouped into a
+	// Warp-style lifecycle (Triaging → Ready → Implementing → Reviewing → Closed),
+	// DERIVED LIVE from the ready queue + fleet snapshot + the PR→issue link (part
+	// c) — no new persistent store. Public like the other /api/contribute* reads
+	// (only public issue metadata + public PR numbers; no tokens, no PII). Fetched
+	// after page load so a slow GitHub PR-link lookup never delays the page render.
+	s.mux.HandleFunc("GET /api/contribute/triage", s.handleContributeTriage)
 	// Operator priority override for the ready-work queue. Owner/read-write only —
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
 	s.mux.HandleFunc("PUT /api/contribute/queue/order", s.handleContributeQueueOrder)
+	// Operator HOLD toggle for the ready-work queue. Owner/read-write only, gated
+	// exactly like queue/order above (in-handler requireContributorWrite). Parks an
+	// issue so it is never offered until Resumed — a persistent hold DISTINCT from
+	// the time-based cooldown. Body: {"key":"owner/repo#number","held":true|false}.
+	s.mux.HandleFunc("POST /api/contribute/queue/hold", s.handleContributeQueueHold)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
@@ -496,65 +508,130 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <style>
+/* ── Theme tokens (#2612 part d) ─────────────────────────────────────────────
+   The /contribute page shipped with a hardcoded GitHub-dark palette and zero
+   light-mode infrastructure. These custom properties name the palette once so
+   the whole sheet can flip to a light appearance without touching any rule. The
+   :root defaults below are the ORIGINAL dark hex values byte-for-byte, so the
+   dark appearance is unchanged; only the neutral surface/border/text ramp is
+   tokenized (accents like blue/green/amber/red read fine on both themes and are
+   pinned by exact-match tests, so they stay literal and are exposed here only as
+   named tokens for the light-mode fixups below).
+   Light mode activates on BOTH signals — the OS preference AND an explicit
+   :root[data-theme="light"] hook — so a future in-page toggle can force it
+   (the toggle itself is out of scope). data-theme="dark" always wins back to
+   dark even under a light OS preference. Values are Primer-light neutrals so the
+   surface blends with the surrounding Docusaurus docs chrome. */
+:root{
+  --cc-bg:#0d1117;
+  --cc-bg-deep:#010409;
+  --cc-surface:#161b22;
+  --cc-border:#30363d;
+  --cc-border-2:#21262d;
+  --cc-text:#e6edf3;
+  --cc-text-2:#c9d1d9;
+  --cc-muted:#8b949e;
+  --cc-muted-2:#6e7681;
+  --cc-code-bg:#0d1117;
+  --cc-accent:#58a6ff;
+  --cc-accent-fg:#1f6feb;
+  --cc-green:#3fb950;
+  --cc-amber:#d29922;
+  --cc-red:#f85149;
+}
+@media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  --cc-bg:#ffffff;
+  --cc-bg-deep:#f6f8fa;
+  --cc-surface:#f6f8fa;
+  --cc-border:#d0d7de;
+  --cc-border-2:#eaeef2;
+  --cc-text:#1f2328;
+  --cc-text-2:#32383f;
+  --cc-muted:#636c76;
+  --cc-muted-2:#7d858e;
+  --cc-code-bg:#eff1f3;
+  --cc-accent:#0969da;
+  --cc-accent-fg:#0969da;
+  --cc-green:#1a7f37;
+  --cc-amber:#9a6700;
+  --cc-red:#cf222e;
+}}
+:root[data-theme="light"]{
+  --cc-bg:#ffffff;
+  --cc-bg-deep:#f6f8fa;
+  --cc-surface:#f6f8fa;
+  --cc-border:#d0d7de;
+  --cc-border-2:#eaeef2;
+  --cc-text:#1f2328;
+  --cc-text-2:#32383f;
+  --cc-muted:#636c76;
+  --cc-muted-2:#7d858e;
+  --cc-code-bg:#eff1f3;
+  --cc-accent:#0969da;
+  --cc-accent-fg:#0969da;
+  --cc-green:#1a7f37;
+  --cc-amber:#9a6700;
+  --cc-red:#cf222e;
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;margin:0;min-height:100vh}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--cc-bg);color:var(--cc-text);margin:0;min-height:100vh}
 .page{display:flex;min-height:100vh;width:100%%}
 .main{flex:3;padding:40px 48px;overflow-y:auto}
-.sidebar{flex:1;background:#161b22;border-left:1px solid #30363d;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar{flex:1;background:var(--cc-surface);border-left:1px solid var(--cc-border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
 h1{font-size:2rem;margin-bottom:8px}
-.subtitle{color:#8b949e;font-size:1.1rem;margin-bottom:32px}
+.subtitle{color:var(--cc-muted);font-size:1.1rem;margin-bottom:32px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:24px}
-.stat{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 8px;text-align:center}
+.stat{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:14px 8px;text-align:center}
 .stat-num{font-size:1.5rem;font-weight:700;color:#58a6ff}
-.stat-label{font-size:.7rem;color:#8b949e;margin-top:4px}
-.steps{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;margin-top:24px}
+.stat-label{font-size:.7rem;color:var(--cc-muted);margin-top:4px}
+.steps{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:24px;margin-top:24px}
 .steps h3{margin-top:0;color:#58a6ff}
 .steps ol{padding-left:20px;line-height:2}
-code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
+code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .how{margin-top:32px}
-.how h3{color:#e6edf3}
-.how p{color:#8b949e;line-height:1.6}
+.how h3{color:var(--cc-text)}
+.how p{color:var(--cc-muted);line-height:1.6}
 .tier-table{width:100%%;border-collapse:collapse;margin-top:16px}
-.tier-table th,.tier-table td{padding:8px 12px;text-align:left;border-bottom:1px solid #30363d;font-size:.85rem}
-.tier-table th{color:#8b949e;font-weight:600}
-.feed-header{padding:20px 20px 12px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:8px}
-.feed-header h3{font-size:.95rem;color:#e6edf3}
+.tier-table th,.tier-table td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--cc-border);font-size:.85rem}
+.tier-table th{color:var(--cc-muted);font-weight:600}
+.feed-header{padding:20px 20px 12px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:8px}
+.feed-header h3{font-size:.95rem;color:var(--cc-text)}
 .feed-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
 @keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:.4}}
-.feed-count{font-size:.75rem;color:#8b949e;margin-left:auto}
+.feed-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
 .feed-scroll{flex:1;overflow-y:auto;padding:0}
-.feed-entry{padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem;animation:fadeIn .3s ease;display:flex;align-items:flex-start;gap:12px}
+.feed-entry{padding:10px 20px;border-bottom:1px solid var(--cc-border-2);font-size:.85rem;animation:fadeIn .3s ease;display:flex;align-items:flex-start;gap:12px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 .feed-entry:hover{background:rgba(88,166,255,.04)}
 .feed-text{flex:1;min-width:0}
-.feed-time{color:#8b949e;font-size:.75rem;white-space:nowrap;flex-shrink:0}
+.feed-time{color:var(--cc-muted);font-size:.75rem;white-space:nowrap;flex-shrink:0}
 .feed-role{color:#58a6ff;font-weight:500}
-.feed-cli{color:#8b949e;font-size:.8rem}
-.feed-empty{padding:40px 20px;text-align:center;color:#8b949e;font-size:.85rem}
-@media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid #30363d;max-width:none;max-height:300px}}
+.feed-cli{color:var(--cc-muted);font-size:.8rem}
+.feed-empty{padding:40px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
+@media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid var(--cc-border);max-width:none;max-height:300px}}
 /* Management & Operations tab chrome — additive, does not touch onboarding content */
-.page-tabs{display:flex;gap:2px;background:#161b22;border-bottom:1px solid #30363d;padding:0 48px}
-.page-tab{background:none;border:none;color:#8b949e;font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
-.page-tab:hover{color:#e6edf3}
-.page-tab.active{color:#e6edf3;border-bottom-color:#58a6ff}
+.page-tabs{display:flex;gap:2px;background:var(--cc-surface);border-bottom:1px solid var(--cc-border);padding:0 48px}
+.page-tab{background:none;border:none;color:var(--cc-muted);font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+.page-tab:hover{color:var(--cc-text)}
+.page-tab.active{color:var(--cc-text);border-bottom-color:#58a6ff}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .ops{padding:40px 48px;overflow-y:auto}
 .ops h1{font-size:1.7rem;margin-bottom:6px}
 .ops-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;margin-top:24px}
 @media(max-width:900px){.ops-grid{grid-template-columns:1fr}}
-.ops-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:0;overflow:hidden}
-.ops-card-head{padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px}
-.ops-card-head h3{font-size:.95rem;color:#e6edf3;margin:0}
-.ops-card-count{font-size:.75rem;color:#8b949e;margin-left:auto}
-.ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid #21262d;flex-wrap:wrap}
-.ops-filter{background:#0d1117;border:1px solid #30363d;color:#8b949e;font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
+.ops-card{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:0;overflow:hidden}
+.ops-card-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px}
+.ops-card-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
+.ops-card-count{font-size:.75rem;color:var(--cc-muted);margin-left:auto}
+.ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2);flex-wrap:wrap}
+.ops-filter{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-muted);font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
 .ops-filter.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
 .work-list{max-height:520px;overflow-y:auto}
-.work-item{padding:14px 20px;border-bottom:1px solid #21262d;cursor:pointer}
+.work-item{padding:14px 20px;border-bottom:1px solid var(--cc-border-2);cursor:pointer}
 .work-item:hover{background:rgba(88,166,255,.04)}
 .work-item.selected{background:rgba(88,166,255,.08)}
-.work-repo{font-size:.75rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.work-repo{font-size:.75rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 /* ── Clickable GitHub issue/PR references (#2616) ────────────────────────────────
    Shared affordance for every repo#number reference on the Operations tab (ready
    queue, my-work, opportunistic-work, dev-log). Deliberately more visible than
@@ -567,14 +644,14 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-issue-link:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
 .cc-issue-link-ic{flex-shrink:0;opacity:.85}
 .cc-issue-link:hover .cc-issue-link-ic{opacity:1}
-.work-title{font-size:.9rem;color:#e6edf3;margin:2px 0 6px}
-.work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:#8b949e}
+.work-title{font-size:.9rem;color:var(--cc-text);margin:2px 0 6px}
+.work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:var(--cc-muted)}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
 .pill-progress{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
 .pill-review{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
 .pill-passed{background:rgba(63,185,80,.12);color:#3fb950;border-color:rgba(63,185,80,.3)}
 .pill-blocked{background:rgba(248,81,73,.12);color:#f85149;border-color:rgba(248,81,73,.3)}
-.pill-idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
+.pill-idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* #2574 (follow-up): the Connected-clankers card is a NARROW column. The old
    layout put the multi-line identity text (.clanker-main) and the inline
    controls (.admin-actions: tier dropdown + Revoke + Remove) in the SAME
@@ -587,44 +664,44 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    horizontally with the multi-line text. Long repo paths in .clanker-sub wrap
    (overflow-wrap:anywhere) rather than pushing into anything. align-items:start
    keeps the dot/avatar top-aligned with the first text line. */
-.clanker-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid #21262d}
+.clanker-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid var(--cc-border-2)}
 /* The trailing controls / timestamp: full-width line beneath the identity. It is
    always the LAST grid child, so grid-column:1/-1 drops it below regardless of
    whether it's .admin-actions or the .feed-time fallback. */
 .clanker-row>.admin-actions,.clanker-row>.feed-time{grid-column:1/-1}
-.clanker-av{width:28px;height:28px;border-radius:50%%;flex-shrink:0;background:#30363d}
+.clanker-av{width:28px;height:28px;border-radius:50%%;flex-shrink:0;background:var(--cc-border)}
 .clanker-main{min-width:0}
-.clanker-user{font-size:.88rem;color:#e6edf3;font-weight:500}
-.clanker-sub{font-size:.74rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
+.clanker-user{font-size:.88rem;color:var(--cc-text);font-weight:500}
+.clanker-sub{font-size:.74rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
 /* Row is align-items:start (grid), so nudge the small dot down to sit level with
    the username's first line instead of the very top of the row. */
 .clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0;margin-top:7px}
-.clanker-dot.stale{background:#8b949e}
+.clanker-dot.stale{background:var(--cc-muted)}
 .pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0}
-.pipe-node{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 14px;font-size:.82rem;color:#e6edf3}
+.pipe-node{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:8px 14px;font-size:.82rem;color:var(--cc-text)}
 .pipe-node .lgtm{color:#3fb950;font-size:.72rem}
-.pipe-arrow{color:#8b949e}
-.policy-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #21262d;font-size:.85rem}
+.pipe-arrow{color:var(--cc-muted)}
+.policy-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--cc-border-2);font-size:.85rem}
 .policy-row:last-child{border-bottom:none}
-.policy-key{color:#8b949e}
-.policy-val{color:#e6edf3;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
-.ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
-.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
+.policy-key{color:var(--cc-muted)}
+.policy-val{color:var(--cc-text);text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
+.ops-empty{padding:32px 20px;text-align:center;color:var(--cc-muted);font-size:.85rem}
+.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px 72px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--cc-border-2);font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
 /* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
    accent border, professional not loud. Readability preserved. */
 .lb-row--me{background:rgba(31,111,235,.09);box-shadow:inset 3px 0 0 0 #1f6feb}
 .lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
-.lb-head{color:#8b949e;font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:#0d1117}
-.lb-rank{color:#8b949e;font-variant-numeric:tabular-nums}
-.lb-name{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lb-tier{color:#8b949e}
-.lb-stat{text-align:right;color:#c9d1d9;font-variant-numeric:tabular-nums}
-.lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:#8b949e}
+.lb-head{color:var(--cc-muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:var(--cc-bg)}
+.lb-rank{color:var(--cc-muted);font-variant-numeric:tabular-nums}
+.lb-name{color:var(--cc-text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-tier{color:var(--cc-muted)}
+.lb-stat{text-align:right;color:var(--cc-text-2);font-variant-numeric:tabular-nums}
+.lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:var(--cc-muted)}
 .lb-head .lb-rank{text-align:left}
 /* ── Subtle "ranked/alive" accent pass on Operations + Leaderboard (SUBTLE +
    PROFESSIONAL — light watermarking only). Theme-aware: built entirely from the
-   existing dark palette (#161b22 card / #30363d border / #0d1117 deep). Every
+   existing dark palette (var(--cc-surface) card / var(--cc-border) border / var(--cc-bg) deep). Every
    accent is driven by REAL data (trust tier + real task counts); nothing is
    fabricated. Readability first — text keeps full contrast; the tints are muted,
    never neon. All motion respects the prefers-reduced-motion block below. ───── */
@@ -635,27 +712,40 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    tier-badge family; the Me-card below reuses it rather than hand-rolling its own
    tier-color helper, so leaderboard rows, ops cards, and the Me-card read as one
    ranked family. */
-.tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid #30363d;background:#0d1117;color:#8b949e;text-transform:capitalize;white-space:nowrap}
+.tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid var(--cc-border);background:var(--cc-bg);color:var(--cc-muted);text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
 .tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
 .tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
-.tier-badge.tier-newcomer{border-color:#30363d;background:#0d1117;color:#8b949e}
+.tier-badge.tier-newcomer{border-color:var(--cc-border);background:var(--cc-bg);color:var(--cc-muted)}
 /* Restrained gradient header band on the accented cards. Very low-contrast wash
    from the deep bg into the card colour — reads as a faint banner, not a loud
    gradient; the bottom border keeps the head crisp. */
-.ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,#12161d 0%%,#161b22 100%%)}
+.ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,#12161d 0%%,var(--cc-surface) 100%%)}
 .ops-card.card-accent>.ops-card-head h3{letter-spacing:.01em}
 /* Bold-numeral stat emphasis: the primary "Done" numeral on the leaderboard and
    the key ops counts get heavier weight + slightly larger tabular figures so the
    number reads as the hero of the row without adding chrome. The Me-card's own
    stat numerals reuse this same bold/tabular treatment via .lb-stat.lb-primary. */
-.lb-row .lb-stat.lb-primary{color:#e6edf3;font-weight:700;font-size:.95rem}
-.lb-head .lb-stat.lb-primary{font-weight:600;font-size:.72rem;color:#8b949e}
+.lb-row .lb-stat.lb-primary{color:var(--cc-text);font-weight:700;font-size:.95rem}
+.lb-head .lb-stat.lb-primary{font-weight:600;font-size:.72rem;color:var(--cc-muted)}
 .tier-badge.tier-lb{padding:2px 8px 2px 5px;font-size:.66rem}
 /* Ops "your army" counts + card counts as bold numerals (tabular, no layout shift). */
 .cc-army b{font-weight:700;font-variant-numeric:tabular-nums}
-.ops-card-count.count-strong{color:#e6edf3;font-weight:700;font-variant-numeric:tabular-nums}
+.ops-card-count.count-strong{color:var(--cc-text);font-weight:700;font-variant-numeric:tabular-nums}
+/* Small circled-i info affordance next to a header (cooldown explainer, #2649
+   companion). A borderless button carrying the ⓘ glyph; hover/focus brightens it.
+   The popover is an absolutely-positioned card toggled open by JS (aria-expanded),
+   anchored to the wrapper so it sits just under the glyph. */
+.info-affordance{position:relative;display:inline-flex;align-items:center}
+.info-btn{background:none;border:0;padding:0 2px;margin-left:4px;color:#6e7681;cursor:pointer;font-size:.85rem;line-height:1;vertical-align:middle}
+.info-btn:hover,.info-btn:focus{color:#58a6ff;outline:none}
+.info-pop{position:absolute;top:130%%;left:0;z-index:40;width:300px;max-width:78vw;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(1,4,9,.7);color:#c9d1d9;font-size:.74rem;line-height:1.5;font-weight:400;text-align:left;white-space:normal}
+.info-pop[hidden]{display:none}
+.info-pop h4{margin:0 0 4px;font-size:.76rem;color:#e6edf3;font-weight:600}
+.info-pop ul{margin:4px 0 0;padding-left:16px}
+.info-pop li{margin:2px 0}
+.info-pop code{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:0 3px;font-size:.7rem}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
@@ -673,50 +763,50 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    (.me-card--style1..7) are palette/framing/density variations over the SAME
    real data. Subtle and professional, reduced-motion safe. --me-accent drives
    the per-tier accent wash (medallion ring, chips, stat numerals). */
-.me-card{position:relative;background:#161b22;border:1px solid #30363d;border-radius:14px;overflow:hidden;margin-bottom:20px;--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.14)}
-.me-card__band{position:relative;padding:20px 22px 18px;background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0) 70%%);border-bottom:1px solid #21262d}
+.me-card{position:relative;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:14px;overflow:hidden;margin-bottom:20px;--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.14)}
+.me-card__band{position:relative;padding:20px 22px 18px;background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0) 70%%);border-bottom:1px solid var(--cc-border-2)}
 .me-card__toprow{display:flex;align-items:center;gap:16px}
-.me-medallion{position:relative;width:64px;height:64px;flex-shrink:0;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),#0d1117 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
-.me-medallion img{width:52px;height:52px;border-radius:50%%;object-fit:cover;background:#30363d}
+.me-medallion{position:relative;width:64px;height:64px;flex-shrink:0;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),var(--cc-bg) 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
+.me-medallion img{width:52px;height:52px;border-radius:50%%;object-fit:cover;background:var(--cc-border)}
 /* #2595 fix: the tier badge now lives in its OWN layout slot beside the name
    (.me-id__tier), NOT absolutely positioned over the avatar — so the "Contributor"
    / "Trusted" / "Newcomer" pill can never overlap the avatar image. */
 .me-id__tier{margin:4px 0 2px}
 .me-id__tier .tier-badge{position:static;transform:none}
 .me-id{min-width:0;flex:1}
-.me-id__name{font-size:1.25rem;font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.me-id__lead{font-size:.85rem;color:#8b949e;margin-top:2px}
+.me-id__name{font-size:1.25rem;font-weight:700;color:var(--cc-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.me-id__lead{font-size:.85rem;color:var(--cc-muted);margin-top:2px}
 .me-id__lead b{color:var(--me-accent)}
-.me-rankpill{margin-left:auto;flex-shrink:0;text-align:center;background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:8px 14px}
-.me-rankpill__num{font-size:1.25rem;font-weight:800;color:#e6edf3;font-variant-numeric:tabular-nums;line-height:1}
-.me-rankpill__lbl{font-size:.62rem;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+.me-rankpill{margin-left:auto;flex-shrink:0;text-align:center;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:12px;padding:8px 14px}
+.me-rankpill__num{font-size:1.25rem;font-weight:800;color:var(--cc-text);font-variant-numeric:tabular-nums;line-height:1}
+.me-rankpill__lbl{font-size:.62rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
 .me-card__body{padding:18px 22px 20px}
 .me-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.me-stat{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:12px 8px;text-align:center}
+.me-stat{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 8px;text-align:center}
 /* Stat numeral reuses the canonical bold/tabular "hero numeral" treatment
    (same weight/tabular-nums as .lb-stat.lb-primary), tinted by --me-accent. */
 .me-stat .lb-stat.lb-primary{display:block;font-size:1.6rem;color:var(--me-accent);padding:0}
-.me-stat__lbl{font-size:.66rem;color:#8b949e;text-transform:uppercase;letter-spacing:.04em;margin-top:5px}
+.me-stat__lbl{font-size:.66rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.04em;margin-top:5px}
 .me-sec{margin-top:18px}
-.me-sec__title{font-size:.72rem;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:8px}
-.me-sec__title .me-soon{font-size:.6rem;font-weight:600;color:#8b949e;border:1px solid #30363d;border-radius:999px;padding:1px 7px;text-transform:none;letter-spacing:0}
+.me-sec__title{font-size:.72rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:8px}
+.me-sec__title .me-soon{font-size:.6rem;font-weight:600;color:var(--cc-muted);border:1px solid var(--cc-border);border-radius:999px;padding:1px 7px;text-transform:none;letter-spacing:0}
 .me-chips{display:flex;flex-wrap:wrap;gap:7px}
-.me-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid transparent;background:#0d1117;color:#8b949e;border-color:#30363d}
+.me-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid transparent;background:var(--cc-bg);color:var(--cc-muted);border-color:var(--cc-border)}
 .me-chip--got{background:var(--me-accent-soft);color:var(--me-accent);border-color:var(--me-accent)}
-.me-chip--next{background:#0d1117;color:#c9d1d9;border-color:#30363d;border-style:dashed}
-.me-chip--badge{background:#0d1117;color:#8b949e;border-color:#30363d;border-style:dashed;opacity:.85}
+.me-chip--next{background:var(--cc-bg);color:var(--cc-text-2);border-color:var(--cc-border);border-style:dashed}
+.me-chip--badge{background:var(--cc-bg);color:var(--cc-muted);border-color:var(--cc-border);border-style:dashed;opacity:.85}
 .me-hives{display:flex;flex-direction:column;gap:6px}
-.me-hive{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#c9d1d9}
+.me-hive{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--cc-text-2)}
 .me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
 .me-hive__rel--owner{background:rgba(210,153,34,.16);color:#d29922}
 .me-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
-.me-share{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;font-size:.85rem;font-weight:600;text-decoration:none;background:var(--me-accent);color:#0d1117;border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
+.me-share{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;font-size:.85rem;font-weight:600;text-decoration:none;background:var(--me-accent);color:var(--cc-bg);border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
 .me-share:hover{filter:brightness(1.08)}
 .me-share--ghost{background:transparent;color:var(--me-accent)}
-.me-stylepick{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:.72rem;color:#8b949e}
-.me-stylepick select{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
-.me-signin{background:#161b22;border:1px dashed #30363d;border-radius:14px;padding:22px;text-align:center;color:#8b949e;font-size:.9rem;margin-bottom:20px}
-.me-signin b{color:#e6edf3}
+.me-stylepick{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:.72rem;color:var(--cc-muted)}
+.me-stylepick select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
+.me-signin{background:var(--cc-surface);border:1px dashed var(--cc-border);border-radius:14px;padding:22px;text-align:center;color:var(--cc-muted);font-size:.9rem;margin-bottom:20px}
+.me-signin b{color:var(--cc-text)}
 /* ── The 7 profile-style skins (palette / framing / density variations) ────────
    Each is a tasteful, readable, professional variant of the SAME card. They only
    change accent palette, header treatment, medallion framing, and density —
@@ -724,9 +814,9 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-card--style2{--me-accent:#3fb950;--me-accent-soft:rgba(63,185,80,.14)}
 .me-card--style3{--me-accent:#d29922;--me-accent-soft:rgba(210,153,34,.15)}
 .me-card--style4{--me-accent:#a371f7;--me-accent-soft:rgba(163,113,247,.15)}
-.me-card--style5{--me-accent:#8b949e;--me-accent-soft:rgba(139,148,158,.12)}     /* minimal / restrained */
-.me-card--style5 .me-card__band{background:#161b22}
-.me-card--style5 .me-medallion{background:#0d1117}
+.me-card--style5{--me-accent:var(--cc-muted);--me-accent-soft:rgba(139,148,158,.12)}     /* minimal / restrained */
+.me-card--style5 .me-card__band{background:var(--cc-surface)}
+.me-card--style5 .me-medallion{background:var(--cc-bg)}
 .me-card--style6{--me-accent:#f778ba;--me-accent-soft:rgba(247,120,186,.14)}
 .me-card--style6 .me-card__band{background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0))}
 .me-card--style7{--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.18)}     /* roomy "ranked" */
@@ -736,15 +826,15 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-card--style7 .me-medallion img{width:60px;height:60px}
 @media(max-width:520px){.me-card__toprow{flex-wrap:wrap}.me-rankpill{margin-left:0}.me-statgrid{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.me-card *{transition:none!important;animation:none!important}}
-.ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
-.ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
-.prompt-preview{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
+.ops-note{color:var(--cc-muted-2);font-size:.78rem;margin-top:12px;line-height:1.5}
+.ops-note code{background:var(--cc-bg);padding:1px 6px;border-radius:4px}
+.prompt-preview{margin-top:10px;border-top:1px solid var(--cc-border-2);padding-top:8px}
 .prompt-preview summary{cursor:pointer;color:#58a6ff;font-size:.78rem;list-style:none}
 .prompt-preview summary::-webkit-details-marker{display:none}
-.prompt-preview summary::before{content:'\25B8 ';color:#8b949e}
+.prompt-preview summary::before{content:'\25B8 ';color:var(--cc-muted)}
 .prompt-preview[open] summary::before{content:'\25BE '}
 .prompt-labels{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px}
-.prompt-text{margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto}
+.prompt-text{margin-top:8px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:var(--cc-text-2);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto}
 .prompt-preview .ops-note{margin-top:8px}
 /* #2534 Operator admin controls — mirror the Governor Hub config controls into the
    Management & Operations tab. Owner/read-write only; a read viewer never sees them. */
@@ -753,63 +843,63 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:#d29922;border:1px solid rgba(210,153,34,.3);margin-left:auto}
 .admin-body{padding:16px 20px}
 .admin-toggle{display:flex;align-items:center;gap:10px;padding:8px 0}
-.admin-switch{width:38px;height:20px;border-radius:999px;background:#30363d;position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
-.admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:#e6edf3;transition:left .15s}
+.admin-switch{width:38px;height:20px;border-radius:999px;background:var(--cc-border);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
+.admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:var(--cc-text);transition:left .15s}
 .admin-switch.on{background:#1f6feb}
 .admin-switch.on.danger{background:#f85149}
 .admin-switch.on::after{left:20px}
-.admin-toggle-label{font-size:.85rem;color:#e6edf3}
-.admin-toggle-sub{font-size:.74rem;color:#8b949e}
+.admin-toggle-label{font-size:.85rem;color:var(--cc-text)}
+.admin-toggle-sub{font-size:.74rem;color:var(--cc-muted)}
 .admin-field{margin:14px 0}
-.admin-field>label{display:block;font-size:.78rem;color:#8b949e;margin-bottom:6px}
-.admin-modeseg{display:inline-flex;border:1px solid #30363d;border-radius:6px;overflow:hidden;margin-bottom:6px}
-.admin-modeseg button{background:#0d1117;border:none;color:#8b949e;font-size:.72rem;padding:3px 10px;cursor:pointer;font-family:inherit}
+.admin-field>label{display:block;font-size:.78rem;color:var(--cc-muted);margin-bottom:6px}
+.admin-modeseg{display:inline-flex;border:1px solid var(--cc-border);border-radius:6px;overflow:hidden;margin-bottom:6px}
+.admin-modeseg button{background:var(--cc-bg);border:none;color:var(--cc-muted);font-size:.72rem;padding:3px 10px;cursor:pointer;font-family:inherit}
 .admin-modeseg button.on{background:#1f6feb;color:#fff}
 .admin-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
-.admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:#c9d1d9;border:1px solid #30363d}
+.admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:var(--cc-text-2);border:1px solid var(--cc-border)}
 .admin-chip .x{cursor:pointer;opacity:.7}
 .admin-chip .x:hover{opacity:1;color:#f85149}
 .admin-addrow{display:flex;gap:4px}
-.admin-addrow input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:.78rem;padding:5px 8px;font-family:inherit}
+.admin-addrow input{flex:1;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font-size:.78rem;padding:5px 8px;font-family:inherit}
 .admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
-.admin-addrow button{background:#21262d;border-color:#30363d;color:#c9d1d9}
+.admin-addrow button{background:var(--cc-border-2);border-color:var(--cc-border);color:var(--cc-text-2)}
 .admin-save{margin-top:8px}
 .admin-save:disabled{opacity:.5;cursor:default}
-.admin-hr{border:none;border-top:1px solid #21262d;margin:16px 0}
+.admin-hr{border:none;border-top:1px solid var(--cc-border-2);margin:16px 0}
 /* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
    the Governor Hub sections). Subtle, matching the rest of the admin controls. */
 .admin-repos{display:flex;flex-wrap:wrap;gap:8px}
-.admin-repo{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #30363d;border-radius:8px;background:#0d1117}
+.admin-repo{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--cc-border);border-radius:8px;background:var(--cc-bg)}
 .admin-repo .admin-switch{width:32px;height:18px}
 .admin-repo .admin-switch::after{width:14px;height:14px}
 .admin-repo .admin-switch.on::after{left:16px}
-.admin-repo__name{font-size:.76rem;color:#c9d1d9;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.admin-tier{display:grid;grid-template-columns:1fr repeat(3,64px);align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #21262d}
+.admin-repo__name{font-size:.76rem;color:var(--cc-text-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.admin-tier{display:grid;grid-template-columns:1fr repeat(3,64px);align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cc-border-2)}
 .admin-tier:last-child{border-bottom:none}
 .admin-tier__head{display:flex;align-items:center;gap:8px;min-width:0}
-.admin-tier__name{font-size:.8rem;color:#e6edf3;text-transform:capitalize}
-.admin-tier input{width:100%%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.78rem;padding:4px 6px;outline:none;text-align:right}
+.admin-tier__name{font-size:.8rem;color:var(--cc-text);text-transform:capitalize}
+.admin-tier input{width:100%%;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.78rem;padding:4px 6px;outline:none;text-align:right}
 .admin-tier input:focus{border-color:#1f6feb}
 .admin-tier input:disabled{opacity:.45}
-.admin-tier__col{font-size:.62rem;color:#6e7681;text-align:right;text-transform:uppercase;letter-spacing:.03em}
-.admin-tier--head{border-bottom:1px solid #30363d;padding-bottom:4px}
+.admin-tier__col{font-size:.62rem;color:var(--cc-muted-2);text-align:right;text-transform:uppercase;letter-spacing:.03em}
+.admin-tier--head{border-bottom:1px solid var(--cc-border);padding-bottom:4px}
 /* No margin-left:auto — .admin-actions is now a full-width grid row beneath the
    identity (see .clanker-row grid), left-aligned and wrapping if the buttons
    don't fit the narrow column. */
 .admin-actions{display:flex;gap:6px;flex-wrap:wrap}
-.admin-act{background:#21262d;border:1px solid #30363d;color:#c9d1d9;font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
-.admin-act:hover{border-color:#8b949e}
+.admin-act{background:var(--cc-border-2);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
+.admin-act:hover{border-color:var(--cc-muted)}
 .admin-act.danger:hover{border-color:#f85149;color:#f85149}
-.admin-act select{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
+.admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .admin-modal-back{display:none;position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:1000;align-items:center;justify-content:center}
 .admin-modal-back.show{display:flex}
-.admin-modal{background:#161b22;border:1px solid #30363d;border-radius:12px;max-width:420px;width:90%%;padding:22px}
-.admin-modal h4{margin:0 0 8px;font-size:1rem;color:#e6edf3}
-.admin-modal p{font-size:.85rem;color:#8b949e;line-height:1.5;margin:0 0 18px}
+.admin-modal{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;max-width:420px;width:90%%;padding:22px}
+.admin-modal h4{margin:0 0 8px;font-size:1rem;color:var(--cc-text)}
+.admin-modal p{font-size:.85rem;color:var(--cc-muted);line-height:1.5;margin:0 0 18px}
 .admin-modal-btns{display:flex;gap:8px;justify-content:flex-end}
-.admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid #30363d;background:#21262d;color:#c9d1d9}
+.admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid var(--cc-border);background:var(--cc-border-2);color:var(--cc-text-2)}
 .admin-modal-btns button.confirm{background:#da3633;border-color:#f85149;color:#fff}
-.admin-note{color:#6e7681;font-size:.76rem;margin-top:10px;line-height:1.5}
+.admin-note{color:var(--cc-muted-2);font-size:.76rem;margin-top:10px;line-height:1.5}
 /* ── Operations command center — live SSE-driven queue / travel / dev-log /
    achievements / army framing. Subtle-professional motion only; degrades to the
    existing poll when SSE is unavailable. Additive, read-only. ─────────────── */
@@ -828,24 +918,24 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    as one state. Left of #cc-live so status (queue live/stale) and posture
    (active/paused) sit as a pair. */
 #queue-suspend-wrap{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
-.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:999px;border:1px solid #30363d;background:transparent;color:#8b949e;cursor:pointer;line-height:0;transition:background .15s,color .15s,border-color .15s}
+.queue-suspend-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:999px;border:1px solid var(--cc-border);background:transparent;color:var(--cc-muted);cursor:pointer;line-height:0;transition:background .15s,color .15s,border-color .15s}
 /* SVG glyph is centered by the flex-box; currentColor tracks the button state.
    Using an SVG (not a &#10074; bar glyph) so the pause bars sit dead-center —
    the light-vertical-bar character carries font side-bearing that pushed the
    pair off-center inside the circle. */
 .queue-suspend-btn svg{display:block;width:12px;height:12px;fill:currentColor}
-.queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:#c9d1d9}
+.queue-suspend-btn:hover{background:rgba(139,148,158,.12);color:var(--cc-text-2)}
 .queue-suspend-btn.paused{border-color:rgba(248,81,73,.35);color:#f85149;background:rgba(248,81,73,.08)}
 .queue-suspend-btn.paused:hover{background:rgba(248,81,73,.16)}
 .queue-suspend-btn:disabled{opacity:.5;cursor:not-allowed}
 /* Army roster header line under the clanker card */
-.cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.78rem;color:#8b949e}
-.cc-army b{color:#e6edf3;font-weight:600}
+.cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--cc-border-2);font-size:.78rem;color:var(--cc-muted)}
+.cc-army b{color:var(--cc-text);font-weight:600}
 .cc-army-stat{display:inline-flex;align-items:center;gap:5px}
 .cc-army-stat .dot{width:7px;height:7px;border-radius:50%%}
 .cc-army-stat.working .dot{background:#58a6ff}
 .cc-army-stat.reviewing .dot{background:#d29922}
-.cc-army-stat.idle .dot{background:#8b949e}
+.cc-army-stat.idle .dot{background:var(--cc-muted)}
 /* Clanker rows: enter pop-in / leave fade so the roster feels alive */
 @keyframes cc-popin{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes cc-fadeout{from{opacity:1}to{opacity:0;transform:translateX(8px)}}
@@ -857,26 +947,26 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-status{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;margin-left:6px;border:1px solid transparent}
 .clanker-status.working{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
 .clanker-status.reviewing{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
-.clanker-status.idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
+.clanker-status.idle{background:rgba(139,148,158,.12);color:var(--cc-muted);border-color:rgba(139,148,158,.3)}
 /* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
    instead of stretching the page; the panel scrolls, the page does not. */
 .cc-queue{max-height:560px;overflow-y:auto}
-.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d;animation:cc-popin .35s ease;position:relative}
+.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);animation:cc-popin .35s ease;position:relative}
 .cc-q-item:first-child{background:rgba(88,166,255,.05)}
 /* Drag handle (grab bar) — owner/read-write only. Hidden unless the queue root
    carries .cc-q-draggable (set by initAdmin after /api/role). Reduced-motion and
    pointer friendly. */
-.cc-q-grip{display:none;flex-shrink:0;width:16px;align-self:stretch;cursor:grab;color:#6e7681;font-size:.9rem;line-height:1;align-items:center;justify-content:center;user-select:none;touch-action:none}
-.cc-q-grip:hover{color:#c9d1d9}
+.cc-q-grip{display:none;flex-shrink:0;width:16px;align-self:stretch;cursor:grab;color:var(--cc-muted-2);font-size:.9rem;line-height:1;align-items:center;justify-content:center;user-select:none;touch-action:none}
+.cc-q-grip:hover{color:var(--cc-text-2)}
 .cc-queue.cc-q-draggable .cc-q-grip{display:flex}
 .cc-queue.cc-q-draggable .cc-q-item{cursor:default}
 .cc-q-item.cc-q-dragging{opacity:.5;cursor:grabbing}
 .cc-q-item.cc-q-over{box-shadow:inset 0 2px 0 0 #58a6ff}
-.cc-q-idx{font-size:.7rem;color:#6e7681;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0;width:22px;text-align:right;padding-top:2px}
+.cc-q-idx{font-size:.7rem;color:var(--cc-muted-2);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0;width:22px;text-align:right;padding-top:2px}
 .cc-q-body{flex:1;min-width:0}
-.cc-q-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.cc-q-title{font-size:.86rem;color:#e6edf3;margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-q-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cc-q-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cc-q-labels{display:flex;flex-wrap:wrap;gap:4px}
 .cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;flex-shrink:0;padding-top:2px}
 .cc-q-item.cc-leaving{animation:cc-fadeout .45s ease forwards}
@@ -890,36 +980,44 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    muted greys, the page's blue accent only on focus/hover, no game-y flourish.
    The search bar is read-only filtering so it shows for everyone; the per-row
    ACTIONS live inside the row menu, which is only rendered for owner/read-write. */
-.cc-q-search{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d}
-.cc-q-search-ic{color:#6e7681;font-size:.85rem;flex-shrink:0;line-height:1}
-.cc-q-search input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
-.cc-q-search input::placeholder{color:#6e7681}
+.cc-q-search{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid var(--cc-border-2)}
+.cc-q-search-ic{color:var(--cc-muted-2);font-size:.85rem;flex-shrink:0;line-height:1}
+.cc-q-search input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-q-search input::placeholder{color:var(--cc-muted-2)}
 .cc-q-search input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
-.cc-q-search-clear{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
+.cc-q-search-clear{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
 .cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
-.cc-q-search-clear:hover{color:#c9d1d9}
-.cc-q-filternote{padding:6px 20px;font-size:.72rem;color:#6e7681;border-bottom:1px solid #21262d}
+.cc-q-search-clear:hover{color:var(--cc-text-2)}
+.cc-q-filternote{padding:6px 20px;font-size:.72rem;color:var(--cc-muted-2);border-bottom:1px solid var(--cc-border-2)}
 /* ── My label interests (#2637) — contributor-declared label affinity ───────────
    A quiet self-service editor on the queue card: chips for the labels this viewer
    subscribed to, plus an add field. Shown only to a signed-in contributor. Matching
    queue rows are highlighted (.cc-q-mine) and a small "for you" tag explains why.
    Sober palette to match the SRE ops register; the page's green accent marks a
    personal match without shouting. */
-.cc-interests{padding:10px 20px;border-bottom:1px solid #21262d}
+.cc-interests{padding:10px 20px;border-bottom:1px solid var(--cc-border-2)}
 .cc-interests-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:6px}
-.cc-interests-title{font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#8b949e}
-.cc-interests-hint{font-size:.68rem;color:#6e7681}
+.cc-interests-title{font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted)}
+.cc-interests-hint{font-size:.68rem;color:var(--cc-muted-2)}
 .cc-interests-chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
-.cc-interests-empty{font-size:.72rem;color:#6e7681}
-.cc-interests-empty code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:0 4px;font-size:.9em}
+.cc-interests-empty{font-size:.72rem;color:var(--cc-muted-2)}
+.cc-interests-empty code{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:4px;padding:0 4px;font-size:.9em}
 .cc-interest-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
 .cc-interest-x{cursor:pointer;opacity:.7;font-size:.95rem;line-height:1}
 .cc-interest-x:hover{opacity:1}
+/* #2677: read-only mirror of a contributor's OWN label interests, shown on their
+   row in the operator "Connected clankers" fleet list (Operations tab). Reuses
+   the .cc-interest-chip visual (same green affinity color) in a compact, non-
+   interactive line so an owner gets a fleet-wide view without editing anything
+   here — editing stays contributor-owned via My label interests above. */
+.clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
+.clanker-interests-label{color:#6e7681}
+.clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
 .cc-interests-add{display:flex;gap:6px}
-.cc-interests-add input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
-.cc-interests-add input::placeholder{color:#6e7681}
+.cc-interests-add input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-interests-add input::placeholder{color:var(--cc-muted-2)}
 .cc-interests-add input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
-.cc-interests-add button{background:#161b22;border:1px solid #30363d;border-radius:7px;color:#c9d1d9;cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
+.cc-interests-add button{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text-2);cursor:pointer;font:inherit;font-size:.78rem;padding:5px 12px}
 .cc-interests-add button:hover{border-color:#3fb950;color:#3fb950}
 /* A queue row matching one of the viewer's label interests: a soft green rail on
    the leading edge + faint tint. Never hides the row — pure emphasis. */
@@ -929,64 +1027,75 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Per-row "⋯" context affordance — owner/read-write only (rendered only when
    adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
-.cc-q-menu-btn{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
-.cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:#e6edf3;background:#21262d}
-.cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:#161b22;border:1px solid #30363d;border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
+.cc-q-menu-btn{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
+.cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:var(--cc-text);background:var(--cc-border-2)}
+.cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
 .cc-q-menu.open{display:block}
-.cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:#c9d1d9;font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
-.cc-q-menu button.cc-q-act:hover{background:#21262d;color:#e6edf3}
-.cc-q-menu-ic{color:#6e7681;flex-shrink:0;width:16px;text-align:center}
-.cc-q-menu-sep{height:1px;background:#21262d;margin:5px 2px}
+.cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:var(--cc-text-2);font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
+.cc-q-menu button.cc-q-act:hover{background:var(--cc-border-2);color:var(--cc-text)}
+.cc-q-menu-ic{color:var(--cc-muted-2);flex-shrink:0;width:16px;text-align:center}
+.cc-q-menu-sep{height:1px;background:var(--cc-border-2);margin:5px 2px}
 .cc-q-moverow{display:flex;align-items:center;gap:6px;padding:7px 9px}
-.cc-q-moverow label{font-size:.78rem;color:#8b949e;flex:1}
-.cc-q-moverow input{width:56px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.8rem;padding:4px 6px;outline:none}
+.cc-q-moverow label{font-size:.78rem;color:var(--cc-muted);flex:1}
+/* color-scheme makes the native number-input spinner arrows theme-aware, so they
+   render legibly against the field in BOTH appearances (previously black-on-black
+   and effectively invisible on dark). The tokenized background/color are kept as a
+   belt-and-braces fallback for engines that don't honour color-scheme on the
+   control; the field itself flips with the (#2612) light/dark tokens. */
+.cc-q-moverow input[type=number]{width:56px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:4px 6px;outline:none;color-scheme:light dark}
 .cc-q-moverow input:focus{border-color:#1f6feb}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
+/* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
+   not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
+   Never hidden, so the operator can always see and Resume it. */
+.cc-q-item.cc-q-held{opacity:.55}
+.cc-q-item.cc-q-held:hover{opacity:.8}
+.cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
    heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
 .opp-list{padding:2px 0}
-.opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d}
+.opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2)}
 .opp-item:last-child{border-bottom:none}
 .opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.14)}
 .opp-heat.warm{background:#d29922;box-shadow:0 0 0 3px rgba(210,153,34,.14)}
-.opp-heat.cool{background:#6e7681;box-shadow:none}
+.opp-heat.cool{background:var(--cc-muted-2);box-shadow:none}
 .opp-body{flex:1;min-width:0}
-.opp-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.opp-title{font-size:.86rem;color:#e6edf3;margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.opp-reason{font-size:.7rem;color:#6e7681}
-.opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid #30363d;color:#c9d1d9;font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.opp-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.opp-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.opp-reason{font-size:.7rem;color:var(--cc-muted-2)}
+.opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid var(--cc-border);color:var(--cc-text-2);font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
 .opp-add:hover{border-color:#1f6feb;color:#fff;background:rgba(31,111,235,.15)}
-.opp-add:disabled{opacity:.55;cursor:default;border-color:#30363d;color:#8b949e;background:none}
+.opp-add:disabled{opacity:.55;cursor:default;border-color:var(--cc-border);color:var(--cc-muted);background:none}
 /* ── End-of-queue + hive-settings (#2595) — turn a short queue into an intentional,
    reassuring moment: a calm "all caught up" marker, the managed-queue rate limits
    presented readably, and the viewer's own daily quota. Sober, ranked-family styling. */
 .cc-q-end{padding:18px 20px 6px;text-align:center}
-.cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:#8b949e;background:#0d1117;border:1px solid #21262d;border-radius:999px;padding:7px 16px}
+.cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:var(--cc-muted);background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:999px;padding:7px 16px}
 .cc-q-end-badge .cc-q-end-ic{color:#3fb950;font-size:.95rem;line-height:1}
-.hive-settings{margin:14px 20px 4px;background:#0d1117;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
-.hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8b949e}
-.hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:#c9d1d9;line-height:1.5}
+.hive-settings{margin:14px 20px 4px;background:var(--cc-bg);border:1px solid var(--cc-border-2);border-radius:10px;padding:14px 16px}
+.hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-muted)}
+.hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:var(--cc-text-2);line-height:1.5}
 .hs-tiers{display:flex;flex-wrap:wrap;gap:8px}
-.hs-tier{flex:1 1 130px;min-width:120px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:9px 11px}
-.hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:#e6edf3;display:flex;align-items:center;gap:6px}
-.hs-tier__lim{font-size:.74rem;color:#8b949e;margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hs-tier{flex:1 1 130px;min-width:120px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;padding:9px 11px}
+.hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:var(--cc-text);display:flex;align-items:center;gap:6px}
+.hs-tier__lim{font-size:.74rem;color:var(--cc-muted);margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .hs-tier.is-you{border-color:#1f6feb;box-shadow:0 0 0 2px rgba(31,111,235,.18)}
 .hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff}
 /* Daily quota widget — a slim progress meter, calm. Used at end-of-queue AND on
    the Me card. Fill width is set inline from the REAL used/limit ratio. */
 .quota{margin-top:12px}
 .quota__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
-.quota__lbl{font-size:.76rem;color:#8b949e}
-.quota__val{font-size:.82rem;color:#e6edf3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.quota__bar{height:7px;border-radius:999px;background:#21262d;overflow:hidden}
+.quota__lbl{font-size:.76rem;color:var(--cc-muted)}
+.quota__val{font-size:.82rem;color:var(--cc-text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.quota__bar{height:7px;border-radius:999px;background:var(--cc-border-2);overflow:hidden}
 .quota__fill{height:100%%;border-radius:999px;background:linear-gradient(90deg,#1f6feb,#388bfd);transition:width .4s ease}
 .quota__fill.near{background:linear-gradient(90deg,#d29922,#e3b341)}
 .quota__fill.full{background:linear-gradient(90deg,#f85149,#ff7b72)}
-.quota__sub{font-size:.7rem;color:#6e7681;margin-top:5px}
+.quota__sub{font-size:.7rem;color:var(--cc-muted-2);margin-top:5px}
 /* Me-card quota variant — sits inside a me-sec, so it inherits the card padding. */
-.me-quota .quota__lbl{color:#8b949e}
+.me-quota .quota__lbl{color:var(--cc-muted)}
 @media(prefers-reduced-motion:reduce){.quota__fill{transition:none!important}}
 /* Sparklines (#persistent-history): tiny dependency-free inline-SVG trend charts
    fed by /api/contribute/metrics (7-day hourly history). Muted stroke to sit
@@ -1001,39 +1110,39 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    numerals stay the focus. */
 .lb-spark{display:flex;align-items:center;justify-content:flex-end}
 /* Hive-wide trend strip pinned above the standings. */
-.lb-trend{display:flex;align-items:center;gap:10px;padding:8px 20px 12px;color:#8b949e;font-size:.76rem;border-bottom:1px solid #21262d}
+.lb-trend{display:flex;align-items:center;gap:10px;padding:8px 20px 12px;color:var(--cc-muted);font-size:.76rem;border-bottom:1px solid var(--cc-border-2)}
 .lb-trend .spark{margin-left:auto}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
-.cc-page-foot{padding:26px 48px 34px;border-top:1px solid #21262d;margin-top:28px;display:flex;justify-content:center}
-.cc-report-link{display:inline-flex;align-items:center;gap:7px;color:#8b949e;font-size:.8rem;text-decoration:none;border:1px solid #30363d;border-radius:8px;padding:7px 14px;transition:color .15s,border-color .15s,background .15s}
-.cc-report-link:hover{color:#e6edf3;border-color:#484f58;background:#161b22}
+.cc-page-foot{padding:26px 48px 34px;border-top:1px solid var(--cc-border-2);margin-top:28px;display:flex;justify-content:center}
+.cc-report-link{display:inline-flex;align-items:center;gap:7px;color:var(--cc-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--cc-border);border-radius:8px;padding:7px 14px;transition:color .15s,border-color .15s,background .15s}
+.cc-report-link:hover{color:var(--cc-text);border-color:#484f58;background:var(--cc-surface)}
 .cc-report-link .cc-report-ic{font-size:.9rem;line-height:1}
 /* The travelling token that flies from the queue to a clanker on task_assign */
 .cc-token{position:fixed;z-index:1200;pointer-events:none;background:#1f6feb;color:#fff;font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:999px;box-shadow:0 6px 20px rgba(31,111,235,.5);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:transform .9s cubic-bezier(.5,0,.2,1),opacity .9s ease;will-change:transform,opacity}
 /* Dev-log — a running chat log of the development */
 .cc-log{max-height:360px;overflow-y:auto;padding:4px 0}
-.cc-log-line{display:flex;align-items:flex-start;gap:10px;padding:8px 20px;font-size:.83rem;border-bottom:1px solid #1c2128;animation:cc-logline .45s ease}
+.cc-log-line{display:flex;align-items:flex-start;gap:10px;padding:8px 20px;font-size:.83rem;border-bottom:1px solid var(--cc-border-2);animation:cc-logline .45s ease}
 @keyframes cc-logline{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .cc-log-line:last-child{border-bottom:none}
 .cc-log-ic{flex-shrink:0}
-.cc-log-body{flex:1;min-width:0;color:#c9d1d9;line-height:1.45}
-.cc-log-body b{color:#e6edf3}
+.cc-log-body{flex:1;min-width:0;color:var(--cc-text-2);line-height:1.45}
+.cc-log-body b{color:var(--cc-text)}
 .cc-log-body .who{color:#58a6ff;font-weight:600}
-.cc-log-body .ref{color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+.cc-log-body .ref{color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
 .cc-log-body a.ref.cc-issue-link{color:#58a6ff}
 .cc-log-body a.ref.cc-issue-link:hover,.cc-log-body a.ref.cc-issue-link:focus-visible{color:#79c0ff}
-.cc-log-time{flex-shrink:0;color:#6e7681;font-size:.72rem;white-space:nowrap;padding-top:1px}
+.cc-log-time{flex-shrink:0;color:var(--cc-muted-2);font-size:.72rem;white-space:nowrap;padding-top:1px}
 /* Achievement pops — tasteful badge toast, top-right, debounced */
 .cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.cc-ach{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#161b22,#1c2333);border:1px solid rgba(210,153,34,.4);border-radius:10px;padding:10px 14px;box-shadow:0 8px 28px rgba(1,4,9,.55);animation:cc-ach-in .4s ease;max-width:300px}
+.cc-ach{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,var(--cc-surface),#1c2333);border:1px solid rgba(210,153,34,.4);border-radius:10px;padding:10px 14px;box-shadow:0 8px 28px rgba(1,4,9,.55);animation:cc-ach-in .4s ease;max-width:300px}
 @keyframes cc-ach-in{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
 .cc-ach.cc-ach-out{animation:cc-ach-out .4s ease forwards}
 @keyframes cc-ach-out{to{opacity:0;transform:translateX(24px)}}
 .cc-ach-ic{font-size:1.3rem;flex-shrink:0}
 .cc-ach-txt{min-width:0}
 .cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#d29922}
-.cc-ach-s{font-size:.82rem;color:#e6edf3;margin-top:1px}
+.cc-ach-s{font-size:.82rem;color:var(--cc-text);margin-top:1px}
 /* ── Operations two-region shell: MAIN area + full-height DEV-LOG RAIL ──────────
    The main area flexes to fill remaining width; the rail is a fixed-width panel
    pinned to the tab's height. When the rail collapses it shrinks to a thin strip
@@ -1045,17 +1154,17 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* The rail: a self-contained chat/notifications panel that runs the tab's height.
    It sticks so the feed stays in view while the (taller) main area scrolls. */
 .ops-rail{flex:0 0 340px;position:sticky;top:0;align-self:flex-start;max-height:calc(100vh - 80px);
-  background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden;
+  background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;overflow:hidden;
   display:flex;flex-direction:column;transition:flex-basis .28s ease}
 .ops-rail-inner{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;opacity:1;transition:opacity .2s ease}
-.ops-rail-head{padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px;flex-shrink:0}
-.ops-rail-head h3{font-size:.95rem;color:#e6edf3;margin:0}
+.ops-rail-head{padding:16px 20px;border-bottom:1px solid var(--cc-border);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.ops-rail-head h3{font-size:.95rem;color:var(--cc-text);margin:0}
 .ops-rail .cc-log{flex:1 1 auto;max-height:none;min-height:0}
 /* The collapse toggle sits on the rail's leading edge (a slim handle). */
-.ops-rail-toggle{display:flex;align-items:center;gap:6px;width:100%%;background:#0d1117;border:none;
-  border-bottom:1px solid #30363d;color:#8b949e;font-family:inherit;font-size:.74rem;font-weight:600;
+.ops-rail-toggle{display:flex;align-items:center;gap:6px;width:100%%;background:var(--cc-bg);border:none;
+  border-bottom:1px solid var(--cc-border);color:var(--cc-muted);font-family:inherit;font-size:.74rem;font-weight:600;
   letter-spacing:.03em;text-transform:uppercase;padding:9px 14px;cursor:pointer;flex-shrink:0}
-.ops-rail-toggle:hover{color:#e6edf3;background:#161b22}
+.ops-rail-toggle:hover{color:var(--cc-text);background:var(--cc-surface)}
 .ops-rail-chevron{display:inline-block;font-size:1rem;line-height:1;transition:transform .28s ease}
 /* Collapsed: rail narrows to a strip; the toggle label + inner feed hide; the
    chevron flips to point "open" (right) as a "show log" affordance. */
@@ -1082,35 +1191,35 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    nothing about the copy-block logic changes. CSP-safe (inline assets only),
    theme-consistent with the dark palette, reduced-motion safe. */
 .client-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:4px 0 20px}
-.client-tile{display:flex;align-items:flex-start;gap:9px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:#e6edf3;font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
+.client-tile{display:flex;align-items:flex-start;gap:9px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:var(--cc-text);font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
 .client-tile:hover{border-color:#58a6ff;background:#1b2230}
 .client-tile:active{transform:translateY(1px)}
 .client-tile:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
 .client-tile.sel{border-color:#58a6ff;background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
-.client-tile .ct-emblem{width:24px;height:24px;flex:0 0 24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:#0d1117;overflow:hidden}
+.client-tile .ct-emblem{width:24px;height:24px;flex:0 0 24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--cc-bg);overflow:hidden}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
-.client-tile .ct-name small{display:block;font-weight:400;color:#8b949e;font-size:.7rem}
+.client-tile .ct-name small{display:block;font-weight:400;color:var(--cc-muted);font-size:.7rem}
 /* min-width:0 keeps the name ellipsising rather than overflowing the tile. */
 .client-tile .ct-body{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
 /* "Open in <tool>" onboarding affordance — deliberately understated and clearly a
    SETUP helper, never a "contributing" surface. Only rendered for a client with a
    real, vendor-documented deep-link scheme. */
-.openin-row{display:none;align-items:flex-start;gap:10px;background:#0d1117;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:8px;padding:11px 14px;margin:0 0 16px}
+.openin-row{display:none;align-items:flex-start;gap:10px;background:var(--cc-bg);border:1px solid var(--cc-border);border-left:3px solid #d29922;border-radius:8px;padding:11px 14px;margin:0 0 16px}
 .openin-row.show{display:flex}
-.openin-row .oi-body{min-width:0;font-size:.8rem;color:#8b949e;line-height:1.4}
-.openin-row .oi-body strong{color:#e6edf3}
-.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#58a6ff;text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
+.openin-row .oi-body{min-width:0;font-size:.8rem;color:var(--cc-muted);line-height:1.4}
+.openin-row .oi-body strong{color:var(--cc-text)}
+.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:6px;color:#58a6ff;text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
 .openin-link:hover{border-color:#58a6ff}
 .openin-link svg{width:14px;height:14px}
 .oi-note{color:#d29922;font-weight:600}
 /* Customizable, copy-pasteable per-client PROMPT (kept in an editable block the
    contributor can read/tweak, NOT compressed into a URL). Additive to the shell
    command copy block above it. */
-.prompt-block{margin:18px 0 8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px 16px 16px;position:relative}
-.prompt-block h4{margin:0 0 6px;font-size:.82rem;color:#e6edf3;font-weight:600}
-.prompt-block p.pb-sub{margin:0 0 10px;color:#8b949e;font-size:.76rem;line-height:1.4}
-.prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
+.prompt-block{margin:18px 0 8px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:8px;padding:14px 16px 16px;position:relative}
+.prompt-block h4{margin:0 0 6px;font-size:.82rem;color:var(--cc-text);font-weight:600}
+.prompt-block p.pb-sub{margin:0 0 10px;color:var(--cc-muted);font-size:.76rem;line-height:1.4}
+.prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:var(--cc-bg-deep);color:var(--cc-text);border:1px solid var(--cc-border);border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
 .prompt-block textarea:focus{outline:none;border-color:#58a6ff}
 .pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
 @media(prefers-reduced-motion:reduce){
@@ -1119,18 +1228,92 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Trusted invite banner (issue #2598) — shown on onboarding when arriving via an
    attributed invite link. Subtle, informational; makes clear the invitee joins
    as a newcomer. */
-.invite-banner{margin:0 0 20px;padding:11px 15px;border:1px solid #388bfd55;border-radius:8px;background:#1c2f4a55;color:#c9d1d9;font-size:.85rem;line-height:1.45}
-.invite-banner b{color:#e6edf3}
-.invite-banner .invite-tier{color:#8b949e}
+.invite-banner{margin:0 0 20px;padding:11px 15px;border:1px solid #388bfd55;border-radius:8px;background:#1c2f4a55;color:var(--cc-text-2);font-size:.85rem;line-height:1.45}
+.invite-banner b{color:var(--cc-text)}
+.invite-banner .invite-tier{color:var(--cc-muted)}
 /* Trusted "Invite someone" action inside the Me card (issue #2598). */
 .me-invite{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff14}
 .me-invite__btn{display:inline-flex;align-items:center;gap:6px;background:#1f6feb;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:.82rem;font-family:inherit;cursor:pointer}
 .me-invite__btn:hover{background:#388bfd}
 .me-invite__row{display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap}
 .me-invite__row.open{display:flex}
-.me-invite__link{flex:1 1 220px;min-width:0;background:#010409;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
+.me-invite__link{flex:1 1 220px;min-width:0;background:var(--cc-bg-deep);color:var(--cc-text-2);border:1px solid var(--cc-border);border-radius:6px;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
 .me-invite__copy{background:#238636;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.78rem;font-family:inherit;cursor:pointer}
-.me-invite__hint{width:100%%;margin-top:6px;color:#8b949e;font-size:.74rem;line-height:1.4}
+.me-invite__hint{width:100%%;margin-top:6px;color:var(--cc-muted);font-size:.74rem;line-height:1.4}
+/* ── Triage ladder (#2612 part b) — a lifecycle view over contribute issues.
+   Themed entirely with the (d) tokens so it flips light/dark with the rest of the
+   page. The ladder is a row of level chips (count per rung); below it, per-level
+   groups list the issues with an optional PR badge (part c). Sober SRE register:
+   muted neutrals, the level accent only on the chip dot + count. */
+.cc-triage-ladder{display:flex;flex-wrap:wrap;gap:8px;padding:14px 20px;border-bottom:1px solid var(--cc-border-2)}
+.cc-triage-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;font-size:.76rem;font-weight:600;color:var(--cc-text-2);background:var(--cc-bg);border:1px solid var(--cc-border)}
+.cc-triage-chip .cc-tl-dot{width:8px;height:8px;border-radius:50%%;flex:none;background:var(--cc-muted)}
+.cc-triage-chip .cc-tl-n{font-variant-numeric:tabular-nums;color:var(--cc-text);font-weight:700}
+.cc-triage-chip .cc-tl-lbl{color:var(--cc-muted);font-weight:600}
+/* Per-level accent on the dot only — meaning without shouting. */
+.cc-triage-chip.lv-triaging .cc-tl-dot{background:var(--cc-muted)}
+.cc-triage-chip.lv-ready .cc-tl-dot{background:var(--cc-accent)}
+.cc-triage-chip.lv-implementing .cc-tl-dot{background:var(--cc-accent-fg)}
+.cc-triage-chip.lv-reviewing .cc-tl-dot{background:var(--cc-amber)}
+.cc-triage-chip.lv-closed .cc-tl-dot{background:var(--cc-green)}
+.cc-triage-groups{max-height:520px;overflow-y:auto}
+.cc-tg{border-bottom:1px solid var(--cc-border-2)}
+.cc-tg:last-child{border-bottom:none}
+.cc-tg-head{display:flex;align-items:center;gap:8px;padding:10px 20px;font-size:.74rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--cc-muted);position:sticky;top:0;background:var(--cc-surface);z-index:1}
+.cc-tg-head .cc-tg-dot{width:8px;height:8px;border-radius:50%%;flex:none;background:var(--cc-muted)}
+.cc-tg.lv-ready .cc-tg-dot{background:var(--cc-accent)}
+.cc-tg.lv-implementing .cc-tg-dot{background:var(--cc-accent-fg)}
+.cc-tg.lv-reviewing .cc-tg-dot{background:var(--cc-amber)}
+.cc-tg.lv-closed .cc-tg-dot{background:var(--cc-green)}
+.cc-tg-count{margin-left:auto;color:var(--cc-muted-2);font-weight:600;font-variant-numeric:tabular-nums}
+.cc-tg-item{display:flex;align-items:flex-start;gap:10px;padding:10px 20px;border-top:1px solid var(--cc-border-2)}
+.cc-tg-body{flex:1;min-width:0}
+.cc-tg-repo{font-size:.72rem;color:var(--cc-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cc-tg-title{font-size:.86rem;color:var(--cc-text);margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-tg-empty{padding:8px 20px 12px;font-size:.76rem;color:var(--cc-muted-2)}
+/* PR→issue badge (#2612 part c) — a small link chip on a queue/triage row telling
+   whether a fixing PR is open or merged. Reuses the status-pill palette so its
+   meaning matches the rest of the page (open = review-amber, merged = done-green). */
+.cc-pr-badge{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;align-self:center;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;text-decoration:none;border:1px solid transparent;white-space:nowrap}
+.cc-pr-badge.pr-open{background:rgba(210,153,34,.12);color:var(--cc-amber);border-color:rgba(210,153,34,.3)}
+.cc-pr-badge.pr-merged{background:rgba(63,185,80,.12);color:var(--cc-green);border-color:rgba(63,185,80,.3)}
+.cc-pr-badge:hover{filter:brightness(1.1);text-decoration:underline}
+/* Inline PR badge riding on a ready-queue row (smaller, sits after the title). */
+.cc-q-body .cc-pr-badge{margin-top:4px}
+/* ── (#2612 part d) Light-mode fixups for the handful of DARK one-off surfaces
+   that are not part of the tokenized neutral ramp (small gradient washes and a
+   couple of hover fills baked as literal dark hex). On a light appearance those
+   would read as near-black patches, so re-point them at the light tokens. Also a
+   gentle contrast lift on the muted status-pill fills, whose ~12%% dark-tuned
+   rgba washes go faint on white — a gentle solid tint keeps them legible without
+   changing their hue/meaning. Applies under BOTH light signals. */
+@media(prefers-color-scheme:light){:root:not([data-theme="dark"]) .ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,var(--cc-border-2) 0%%,var(--cc-surface) 100%%)}
+:root:not([data-theme="dark"]) .cc-ach{background:var(--cc-surface)}
+:root:not([data-theme="dark"]) .client-tile:hover{background:var(--cc-border-2)}
+:root:not([data-theme="dark"]) .invite-banner{background:#ddf4ff;border-color:#b6e3ff}
+:root:not([data-theme="dark"]) .cc-report-link:hover{border-color:var(--cc-muted)}
+:root:not([data-theme="dark"]) .pill-progress{background:rgba(9,105,218,.10);color:var(--cc-accent-fg);border-color:rgba(9,105,218,.30)}
+:root:not([data-theme="dark"]) .pill-review,:root:not([data-theme="dark"]) .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
+:root:not([data-theme="dark"]) .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
+:root:not([data-theme="dark"]) .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+}
+:root[data-theme="light"] .ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,var(--cc-border-2) 0%%,var(--cc-surface) 100%%)}
+:root[data-theme="light"] .cc-ach{background:var(--cc-surface)}
+:root[data-theme="light"] .client-tile:hover{background:var(--cc-border-2)}
+:root[data-theme="light"] .invite-banner{background:#ddf4ff;border-color:#b6e3ff}
+:root[data-theme="light"] .cc-report-link:hover{border-color:var(--cc-muted)}
+:root[data-theme="light"] .pill-progress{background:rgba(9,105,218,.10);color:var(--cc-accent-fg);border-color:rgba(9,105,218,.30)}
+:root[data-theme="light"] .pill-review,:root[data-theme="light"] .clanker-status.reviewing{background:rgba(154,103,0,.12);color:var(--cc-amber);border-color:rgba(154,103,0,.30)}
+:root[data-theme="light"] .pill-passed{background:rgba(26,127,55,.12);color:var(--cc-green);border-color:rgba(26,127,55,.30)}
+:root[data-theme="light"] .pill-blocked{background:rgba(207,34,46,.10);color:var(--cc-red);border-color:rgba(207,34,46,.30)}
+/* ── (#2612 part d) Conservative de-crowd: small uniform breathing room on the
+   densest grids (the onboarding stat row and the Operations cards). No card
+   removed, no structural/layout change — just a touch more gap/padding so the
+   packed panels read less cramped, identically in both themes. */
+.stat-row{gap:12px}
+.stat{padding:16px 10px}
+.ops-grid{gap:24px}
+.ops-card-head{padding:18px 20px}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -1194,6 +1377,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="containerized">Containerized (recommended)</option>
 <option value="host">Host (non-containerized)</option>
+<option value="kubernetes">Kubernetes (cluster)</option>
 </select>
 </span>
 <span id="runtime-group" style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
@@ -1208,6 +1392,15 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
 <input id="model-input" type="text" placeholder="e.g. claude-sonnet-4-6, gpt-4o" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.85rem;flex:1;max-width:300px" oninput="updateCmds()">
+</div>
+<!-- #2549 Kubernetes-mode note. Hidden except in Kubernetes mode. States the two
+     honest constraints up front: only headless-capable backends run in a cluster
+     (a headless pod has no TTY), and the credential stored in the cluster Secret
+     is a long-lived personal token that is more exposed than a laptop file, with
+     the per-task credential boundary tracked in #2537. -->
+<div id="k8s-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
+<strong style="color:#e6edf3">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
+<span style="color:#8b949e">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
 </div>
 <p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
@@ -1248,6 +1441,16 @@ windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
 var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
 var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive CLI local';
+// Kubernetes (#2549): register locally, then generate + apply a headless
+// contributor workload (Deployment, #2660) into a cluster you already have.
+// just contribute-k8s prints the manifest; it never touches your cluster on
+// its own, so you can read it before piping to kubectl. Only the headless-
+// capable backends run this way (see K8S_HEADLESS_BACKENDS).
+var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
+// Backends with a verified headless (non-interactive) entry point — must match
+// HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
+// TTY, so only these run in a cluster; anything else refuses work at startup.
+var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1};
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
@@ -1261,6 +1464,11 @@ var modelFlag=opt.getAttribute('data-model-flag')||'';
 var model=(modelInput.value||'').trim();
 if(cli==='other')mode='host';
 if(mode==='containerized'&&cli==='other'){modeSel.value='host';mode='host';}
+// #2549 Kubernetes mode. "other" has no image, so it can't run in a cluster;
+// fall back to host. Show the k8s note only in this mode.
+if(mode==='kubernetes'&&cli==='other'){modeSel.value='host';mode='host';}
+var k8sNote=document.getElementById('k8s-note');
+if(k8sNote)k8sNote.style.display=(mode==='kubernetes')?'block':'none';
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
 var modelLine='';
 if(model){
@@ -1276,7 +1484,15 @@ runtimeGroup.style.display=showRuntime?'inline-flex':'none';
 var runtimeLine=(showRuntime&&runtimeSel.value)?'export HIVE_CONTAINER_RUNTIME='+runtimeSel.value+'\n':'';
 var preLines=envLines+modelLine+runtimeLine;
 var tpl,install;
-if(mode==='host'){
+if(mode==='kubernetes'){
+// A cluster pod exports its config via envFrom, so no HIVE_CONTAINER_RUNTIME
+// line — but model/env exports still belong before contribute-setup so the
+// generated ConfigMap picks them up. If the chosen backend has no headless
+// mode, prepend a visible warning comment (the Justfile also warns on stderr).
+var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot or Codex for Kubernetes.\n';
+var k8sPre=envLines+modelLine;
+cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
+}else if(mode==='host'){
 tpl=hostTpl;
 install=opt.getAttribute('data-host-install');
 if(!install)install='# '+cli+' uses your existing gh auth';
@@ -1526,6 +1742,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
 <label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
 <input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
+<!-- Live tally of issues currently within their cooldown window (#2649 companion),
+     hydrated by ccRenderCooldownCount from the fleet payload. Hidden when 0. -->
+<div id="admin-cooldown-count" class="admin-toggle-sub" style="margin-top:4px;display:none"></div>
 </div>
 
 <hr class="admin-hr">
@@ -1623,7 +1842,25 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+     explains what "in cooldown" in the count means and how an issue lands there.
+     Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
+     quarantine after 3 consecutive failures) — keep them in sync with
+     completedTaskCooldownHours / completedNoPRCooldownHours / quarantineCooldownHours
+     / consecutiveFailureQuarantineThreshold in contribute_ws.go. -->
+<span class="info-affordance">
+<button type="button" class="info-btn" id="cooldown-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cooldown-info-pop" aria-label="What is cooldown?" title="What is cooldown?">&#9432;</button>
+<div class="info-pop" id="cooldown-info-pop" role="tooltip" hidden>
+<h4>What is cooldown?</h4>
+Cooldown briefly holds a just-worked issue out of the ready queue so it isn&rsquo;t instantly re-offered while a PR settles. An issue enters cooldown when it is:
+<ul>
+<li>completed <b>with a verified PR</b> &mdash; held for the full cooldown period (default <code>168h</code> / 7 days, configurable in Management &rarr; Task cooldown).</li>
+<li>completed with <b>no PR</b> &mdash; held ~<code>4h</code>.</li>
+<li><b>failed</b> &mdash; a short cooldown; after <code>3</code> consecutive failures the issue is quarantined for ~<code>6h</code>.</li>
+</ul>
+It clears automatically when the period elapses. An operator can shorten or disable the with-PR period in the Management tab.
+</div>
+</span><!-- 7-day queue-depth trend (#persistent-history), hydrated by ccMetricsPoll --><span class="spark spark-inline" id="spark-queue" title="Ready-work queue depth, last 7 days (hourly)"></span>
 <!-- #queue-suspend-btn is the SAME logical control as the Management "Suspend
      contributions" switch (#admin-suspend-switch) — not a related toggle, the
      identical Config.Hub.ContributeSuspended state surfaced a second place. Both
@@ -1678,6 +1915,21 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
 </div>
+</div>
+<!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
+     contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
+     Closed. Each level is DERIVED LIVE from the ready queue + fleet snapshot +
+     the PR→issue link (part c); there is no persistent per-issue lifecycle store
+     (a future enhancement, out of scope). A SECTION within Operations — NOT a new
+     page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
+     PR-link lookup never delays the page. Full-width card below the ops grid. -->
+<div class="ops-card cc-triage-card" id="cc-triage-card" style="margin-top:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
+<!-- Compact ladder summary: one chip per level with its live count. -->
+<div class="cc-triage-ladder" id="cc-triage-ladder"><div class="ops-empty">Loading triage&hellip;</div></div>
+<!-- Grouped per-level issue lists (each collapsible-ish section, capped). -->
+<div class="cc-triage-groups" id="cc-triage-groups"></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; each issue is placed on the ladder from what the hive can observe right now (the ready queue, the fleet&rsquo;s in-flight work, and whether a fixing PR is open or merged). Read-only and recomputed on each load; there is no stored per-issue state.</p>
 </div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
@@ -1828,6 +2080,9 @@ function activateTab(t,push){
     // The dev-log rail collapse/persist wiring is independent too: a throw here must
     // not abort fleet hydration or the SSE feed.
     try{initOpsRail();}catch(e){console.error('initOpsRail failed',e);}
+    // Triage ladder (#2612 part b): fetched after the tab opens so a slow GitHub
+    // PR-link lookup never delays the page. A throw must not abort the panels above.
+    try{ccTriagePoll();}catch(e){console.error('ccTriagePoll failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   // The personal "Me" card loads alongside the standings; a throw in one must
@@ -2417,6 +2672,42 @@ function _wireConfirmModal(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireConfirmModal);else _wireConfirmModal();
 
+// _wireCooldownInfo toggles the cooldown explainer popover (#2649 companion). The
+// ⓘ button flips the popover's [hidden] + aria-expanded; a click anywhere else or
+// Escape closes it. Null-guarded so a missing element never throws (matching the
+// confirm-modal wiring above).
+function _wireCooldownInfo(){
+  var btn=document.getElementById('cooldown-info-btn');
+  var pop=document.getElementById('cooldown-info-pop');
+  if(!btn||!pop)return;
+  function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    var open=pop.hidden;
+    pop.hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');
+  });
+  document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireCooldownInfo);else _wireCooldownInfo();
+
+// ccRenderCooldownCount surfaces the current cooldown tally next to the Management
+// tab's Task cooldown control (#2649): "M issues currently cooling down". It reads
+// the ccCooldownCount stashed by opsPoll and writes into #admin-cooldown-count.
+// Hidden entirely when 0 so the control stays clean.
+function ccRenderCooldownCount(){
+  var el=document.getElementById('admin-cooldown-count');
+  if(!el)return;
+  if(ccCooldownCount>0){
+    el.textContent=ccCooldownCount+(ccCooldownCount===1?' issue currently cooling down':' issues currently cooling down');
+    el.style.display='';
+  }else{
+    el.textContent='';
+    el.style.display='none';
+  }
+}
+
 // Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
 // dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
 async function adminSaveHub(patch,okMsg){
@@ -2740,8 +3031,11 @@ onEl('clanker-list','click',function(e){
     // returned to the queue and booked for the same short cooldown as an auto-release,
     // so it is not instantly re-handed to a stale worker. Uses the existing
     // POST /api/contributors/{id}/requeue endpoint (owner/read-write only).
-    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, so it is not instantly re-assigned to a stale worker. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
-      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST'})
+    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, and the assignment generation is bumped so a stale worker cannot later overwrite the new owner. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
+      // #2568: let the operator attach an optional reason. It is recorded in the
+      // audit + activity log and pushed to the still-connected worker on task_revoke.
+      var reason=(window.prompt('Reason for releasing this task (optional):','wedged: no progress')||'').trim();
+      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
         .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
         .then(function(x){if(x.ok){toast('Task requeued for '+user,true);opsPoll();}else{toast((x.d&&x.d.error)||'Requeue failed',false);}})
         .catch(function(){toast('Requeue failed',false);});
@@ -2822,6 +3116,18 @@ function idleReasonLabel(r){
     tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
   return m[r]||String(r).replace(/_/g,' ');
 }
+// clankerInterestsLine (#2677) renders one contributor's OWN label interests as
+// a compact read-only chip line for the operator fleet view. Purely
+// observability: an owner sees who prefers what, but this never offers a way
+// to set/edit another contributor's interests — that stays contributor-owned
+// via PUT /api/contribute/interests (see the "My label interests" editor
+// above). Returns '' when the contributor has none declared, matching how
+// capabilityLine() omits itself for an unversioned client.
+function clankerInterestsLine(interests){
+  if(!interests||!interests.length)return '';
+  var chips=interests.map(function(l){return '<span class="clanker-interest-chip">'+esc(l)+'</span>';}).join('');
+  return '<div class="clanker-interests" title="This contributor&rsquo;s own opt-in label interests. Read-only here &mdash; they set these themselves."><span class="clanker-interests-label">prefers:</span>'+chips+'</div>';
+}
 function renderClankers(list){
   list=list||[];
   var el=document.getElementById('clanker-list');
@@ -2852,6 +3158,10 @@ function renderClankers(list){
     // used to route or gate work — see capabilityLine() for the "self-declared" note
     // that keeps that visible at the point of use (per the issue's risk section).
     var capsLine=capabilityLine(c.capabilities);
+    // #2677: this contributor's own label interests, read-only, so the operator
+    // gets a fleet-wide view of who prefers what without cross-referencing each
+    // profile separately (the data already travels in this same fleet snapshot).
+    var interestsLine=clankerInterestsLine(c.label_interests);
     // #2534: owner/read-write get per-contributor admin actions wired to the
     // EXISTING endpoints — set trust tier / promote (PUT /api/contributors/{id}/trust),
     // revoke (POST .../revoke), remove (DELETE .../{id}). Hidden for read viewers.
@@ -2888,7 +3198,7 @@ function renderClankers(list){
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
-      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+interestsLine+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }
@@ -3012,6 +3322,15 @@ async function opsPoll(){
     safeRender('clankers',function(){renderClankers((data&&data.clankers)||[]);});
     safeRender('work',function(){renderWork((data&&data.work)||[]);});
     safeRender('policy',function(){renderPolicy(data&&data.policy);});
+    // Cooldown / in-flight tallies (#2649 companion): stash the read-only counts
+    // from the fleet payload so the ready-queue header can annotate "N ready" with
+    // "M in cooldown / K in flight", and the Management cooldown control can show
+    // how many issues are currently cooling down. Coerced to a number; a missing
+    // field stays 0. A re-render picks up the fresh values.
+    ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
+    ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
+    safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
+    safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
     // fetch/parse failed — log so the "Loading…" placeholders are diagnosable, and
     // fall through to reschedule so a transient failure self-heals on the next poll.
@@ -3039,6 +3358,8 @@ var ccQueuePollTimer=null; // fallback poll timer
 var ccKnownClankers={};    // username -> true, for enter/leave detection
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
+var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
+var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
 
 // ── Label-affinity (#2637): the viewer's own label interests ───────────────────
 // ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
@@ -3169,7 +3490,15 @@ function ccRenderQueue(flip){
   // every render path. Populated FIRST so it stays set even if the container is absent.
   // (The interest re-float below only reorders ccQueue, never changes its length.)
   var qc=document.getElementById('queue-count');
-  if(qc)qc.textContent=ccQueue.length+' ready';
+  // Header tally: "N ready" plus the read-only cooldown / in-flight segments from
+  // the fleet payload (#2649 companion). A segment is OMITTED when its count is 0
+  // so the header stays compact; " · " (a middot) separates present segments.
+  if(qc){
+    var segs=[ccQueue.length+' ready'];
+    if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
+    if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
+    qc.textContent=segs.join(' · ');
+  }
   // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
   // when no interests are set (order preserved); skipped mid-drag so an operator
   // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
@@ -3213,16 +3542,26 @@ function ccRenderQueue(flip){
     // Per-row "⋯" context menu — Apple-Music style. Owner/read-write ONLY (rendered
     // only when adminEnabled). Carries move-to-top + move-to-position, both keyed on
     // this row's qkey so they act on the right item in the FULL order.
-    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
+    // Held (#queue-hold): the server tags a manually-parked issue with held:true. It
+    // stays VISIBLE in the queue (never hidden) but rendered greyed with an "on hold"
+    // badge so the operator can see and Resume it. The ⋯ menu shows Resume for it.
+    var isHeld=!!q.held;
+    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total,isHeld):'';
     // Label-affinity (#2637): the server sets matches_interest per VIEWER when one
     // of the issue's labels matches a label this contributor subscribed to. Tag the
     // row so CSS can highlight it; a small "for you" pill makes the reason explicit.
     var mine=!!q.matches_interest;
     var mineCls=mine?' cc-q-mine':'';
     var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
-    return '<div class="cc-q-item'+mineCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+'</div>'+
-      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
+    var heldCls=isHeld?' cc-q-held':'';
+    var heldTag=isHeld?'<span class="cc-q-held-tag" title="On hold — parked by the operator; not offered until resumed">&#x23F8; on hold</span>':'';
+    // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
+    // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
+    // and simply omitted when no PR is linked — never blocks the queue render.
+    var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
+    return '<div class="cc-q-item'+mineCls+heldCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
+      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
   ccUpdateFilterNote(shown,total);
@@ -3234,15 +3573,97 @@ function ccRenderQueue(flip){
   // Only when the full list is shown (a filtered view isn't "the end of the queue").
   ccRenderQueueEnd(!filtering);
 }
+// ── Triage ladder (#2612 parts b + c) ─────────────────────────────────────────
+// ccPRLinks maps "repo#number" -> {number,url,state} for issues whose fixing PR the
+// triage endpoint resolved (open/merged). Populated by ccTriagePoll; consumed by
+// the queue-row badge and the triage groups. Empty until the first poll lands, so
+// the queue renders immediately without any PR data.
+var ccPRLinks={};
+// ccPRBadgeHTML returns the small "PR #NNN (open|merged)" link chip for an issue
+// key, or '' when no PR is linked. esc()-guarded; opens the PR on GitHub.
+function ccPRBadgeHTML(key){
+  var pr=ccPRLinks[key];
+  if(!pr||!pr.number)return '';
+  var cls=(pr.state==='merged')?'pr-merged':'pr-open';
+  var label='PR #'+pr.number+' ('+(pr.state==='merged'?'merged':'open')+')';
+  var href=pr.url||'';
+  return '<a class="cc-pr-badge '+cls+'" href="'+esc(href)+'" target="_blank" rel="noopener noreferrer" title="'+esc(label)+'">'+esc(label)+'</a>';
+}
+// CC_TRIAGE_LEVELS pins the ladder's render order + display labels client-side,
+// mirroring triageLevelOrder/triageLevelLabel on the server so the chips/groups
+// render in lifecycle order even if the JSON key order ever changed.
+var CC_TRIAGE_LEVELS=[['triaging','Triaging'],['ready','Ready to implement'],['implementing','Implementing'],['reviewing','Reviewing'],['closed','Closed']];
+// ccTriagePoll fetches the live triage snapshot and renders the ladder + groups,
+// then refreshes ccPRLinks and re-renders the queue so PR badges appear on queue
+// rows too. Best-effort: any failure leaves the "Loading…"/prior state and is
+// retried on the next tab open; it never throws into the ops bootstrap.
+function ccTriagePoll(){
+  fetch('/api/contribute/triage',{headers:{'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(d){if(d)ccRenderTriage(d);})
+    .catch(function(){/* degrade silently — the panel keeps its last state */});
+}
+// ccRenderTriage paints the ladder summary chips + the per-level issue groups, and
+// harvests the PR links into ccPRLinks so the queue rows can show badges.
+function ccRenderTriage(snap){
+  var groups=(snap&&snap.groups)||[];
+  // Index groups by level for ordered lookup.
+  var byLevel={};for(var i=0;i<groups.length;i++){byLevel[groups[i].level]=groups[i];}
+  // Total count badge.
+  var totEl=document.getElementById('cc-triage-total');
+  if(totEl)totEl.textContent=(snap&&snap.total!=null?snap.total:0)+' issues';
+  // Ladder chips.
+  var ladder=document.getElementById('cc-triage-ladder');
+  if(ladder){
+    ladder.innerHTML=CC_TRIAGE_LEVELS.map(function(lv){
+      var g=byLevel[lv[0]]||{count:0};
+      return '<span class="cc-triage-chip lv-'+lv[0]+'"><span class="cc-tl-dot"></span><span class="cc-tl-n">'+(g.count||0)+'</span><span class="cc-tl-lbl">'+esc(lv[1])+'</span></span>';
+    }).join('');
+  }
+  // Per-level groups with their issue lists.
+  var wrap=document.getElementById('cc-triage-groups');
+  if(wrap){
+    ccPRLinks={};
+    wrap.innerHTML=CC_TRIAGE_LEVELS.map(function(lv){
+      var g=byLevel[lv[0]]||{count:0,issues:[]};
+      var issues=g.issues||[];
+      var rows=issues.map(function(it){
+        var key=(it.repo||'')+'#'+(it.number||'');
+        if(it.pr&&it.pr.number){ccPRLinks[key]=it.pr;}
+        var repoLbl=esc((it.repo||'')+'#'+(it.number||''));
+        var link=it.url?('<a class="cc-issue-link" href="'+esc(it.url)+'" target="_blank" rel="noopener noreferrer">'+repoLbl+'</a>'):repoLbl;
+        var badge=(it.pr&&it.pr.number)?ccPRBadgeHTML(key):'';
+        return '<div class="cc-tg-item"><div class="cc-tg-body"><div class="cc-tg-repo">'+link+'</div><div class="cc-tg-title" title="'+esc(it.title||'')+'">'+esc(it.title||'(untitled)')+'</div></div>'+badge+'</div>';
+      }).join('');
+      var body=issues.length?rows:'<div class="cc-tg-empty">None right now.</div>';
+      return '<div class="cc-tg lv-'+lv[0]+'"><div class="cc-tg-head"><span class="cc-tg-dot"></span>'+esc(lv[1])+'<span class="cc-tg-count">'+(g.count||0)+'</span></div>'+body+'</div>';
+    }).join('');
+  }
+  // Now that ccPRLinks is populated, re-render the queue so its rows pick up the
+  // PR badges too (the queue endpoint intentionally does not resolve PR links).
+  try{if(typeof ccRenderQueue==='function')ccRenderQueue();}catch(e){}
+}
 // ccQueueMenuHTML renders the per-row ⋯ menu markup (owner/read-write only). pos is
 // the row's ZERO-based position in the full queue; total is the queue length. The
 // move-to-position input is pre-filled with the row's current 1-based position.
-function ccQueueMenuHTML(key,pos,total){
+function ccQueueMenuHTML(key,pos,total,isHeld){
   var atTop=(pos===0);
+  // A held item is at the bottom of the visible queue by construction (held rows
+  // trail all offerable ones), and Move-to-bottom on it is a no-op anyway; the
+  // atBottom guard below disables it whenever pos is the last slot.
+  var atBottom=(pos===total-1);
+  // Hold/Resume toggles the persistent operator hold. "Resume" is shown when the
+  // item is already held (play glyph), "Hold" otherwise (pause glyph). data-act
+  // carries the CURRENT held state so the click handler knows which way to flip.
+  var holdLabel=isHeld?'Resume':'Hold';
+  var holdIcon=isHeld?'&#x25B6;':'&#x23F8;'; // ▶ resume / ⏸ hold
   return '<span class="cc-q-menu-wrap">'+
     '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
     '<div class="cc-q-menu" role="menu">'+
       '<button type="button" class="cc-q-act" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
+      '<div class="cc-q-menu-sep"></div>'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
       '<div class="cc-q-menu-sep"></div>'+
       '<div class="cc-q-moverow">'+
         '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
@@ -3295,6 +3716,14 @@ function ccBindQueueMenus(root){
   for(var a=0;a<acts.length;a++){(function(act){
     act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToTop(act.getAttribute('data-qkey'));});
   })(acts[a]);}
+  var bots=root.querySelectorAll('.cc-q-act[data-act=bottom]');
+  for(var b2=0;b2<bots.length;b2++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToBottom(act.getAttribute('data-qkey'));});
+  })(bots[b2]);}
+  var holds=root.querySelectorAll('.cc-q-act[data-act=hold]');
+  for(var h2=0;h2<holds.length;h2++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccToggleHold(act.getAttribute('data-qkey'),act.getAttribute('data-held')!=='1');});
+  })(holds[h2]);}
   var gos=root.querySelectorAll('.cc-q-act-go');
   for(var g=0;g<gos.length;g++){(function(go){
     var key=go.getAttribute('data-qkey');
@@ -3324,6 +3753,7 @@ function ccQueueIndexOf(key){
   return -1;
 }
 function ccMoveToTop(key){ccMoveToPosition(key,1);}
+function ccMoveToBottom(key){ccMoveToPosition(key,ccQueue.length);}
 function ccMoveToPosition(key,n){
   var from=ccQueueIndexOf(key);if(from<0)return;
   // Validate N (1..len). Clamp rather than reject so an out-of-range value lands at
@@ -3428,6 +3858,24 @@ function ccPersistQueueOrder(){
   fetch('/api/contribute/queue/order',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})})
     .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
     .catch(function(){/* a read viewer would 403 here, but the UI never shows handles to them */});
+}
+// ccToggleHold parks (held=true) or resumes (held=false) one ready-work issue via
+// the authenticated POST /api/contribute/queue/hold endpoint. A held issue is never
+// offered until resumed — a persistent operator hold, distinct from cooldown. On
+// success it re-fetches the queue so the held/offerable split (which the SERVER
+// computes) is reflected: a newly-held row re-appears greyed at the bottom, a
+// resumed row rejoins the offerable list. Owner/read-write only; a read viewer 403s
+// here, but the Hold/Resume action is never rendered for them (adminEnabled gate).
+function ccToggleHold(key,held){
+  if(!key)return;
+  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,held:!!held})})
+    .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+    .then(function(){
+      // Re-hydrate from the server so held tagging + offer-eligibility are authoritative.
+      return fetch('/api/contribute/queue').then(function(r){return r.json();});
+    })
+    .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}})
+    .catch(function(){/* a read viewer would 403; the UI never shows the action to them */});
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
   // Drive BOTH the queue-head pill (#cc-live, unchanged) and the mirror pill that
@@ -4391,13 +4839,21 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 // the hub's live connection state and the already-configured admission policy.
 func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	snap := FleetSnapshot{Clankers: []FleetClanker{}, Work: []FleetWorkItem{}}
+	// cooldownCount = completed issues still within their cooldown window (held out
+	// of the queue); inFlightCount = issues currently held by a live connection.
+	// Both are read-only tallies the queue header / Management tab surface (#2649
+	// configurable cooldown).
+	cooldownCount, inFlightCount := 0, 0
 	if s.contributeHub != nil {
 		snap = s.contributeHub.FleetSnapshot()
+		cooldownCount, inFlightCount = s.contributeHub.CooldownCounts()
 	}
 	jsonResponse(w, map[string]any{
-		"clankers": snap.Clankers,
-		"work":     snap.Work,
-		"policy":   s.buildContributeAdmissionPolicy(),
+		"clankers":        snap.Clankers,
+		"work":            snap.Work,
+		"policy":          s.buildContributeAdmissionPolicy(),
+		"cooldown_count":  cooldownCount,
+		"in_flight_count": inFlightCount,
 	})
 }
 
@@ -4666,6 +5122,73 @@ func (s *Server) handleContributeQueueOrder(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, map[string]any{"ok": true, "order": cleaned})
 }
 
+// maxQueueHoldKeys caps how many issues the operator may hold at once. Mirrors
+// maxQueueOrderKeys: generous (the whole visible queue could conceivably be
+// parked) yet bounds a hostile payload so the hold set can neither bloat hive.yaml
+// nor slow the per-selectTask membership lookup.
+const maxQueueHoldKeys = 512
+
+// handleContributeQueueHold toggles the OPERATOR HOLD on one ready-work issue.
+// A held issue is parked INDEFINITELY — never offered — until the operator Resumes
+// it; this is DISTINCT from the time-based cooldown, which self-clears. It is a
+// CONTROL, so owner/read-write ONLY, gated exactly like handleContributeQueueOrder
+// via requireContributorWrite (a read/anon caller gets 403). The hold set lives in
+// Config.Hub.ContributeQueueHold and persists through the SAME refreshAndPersist
+// path as ContributeQueueOrder, so it survives restart. Body:
+// {"key":"owner/repo#number","held":true|false} — held=true adds the key, false
+// removes it. The key MUST be the canonical "owner/repo#number" form (validated
+// against the same queueOrderKeyPattern) so it matches selectTask's exclusion key
+// exactly (the #2648 class of silent miss).
+func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var body struct {
+		Key  string `json:"key"`
+		Held bool   `json:"held"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(body.Key)
+	if key == "" || !queueOrderKeyPattern.MatchString(key) {
+		jsonError(w, "invalid issue key", http.StatusBadRequest)
+		return
+	}
+	// Rebuild the hold set: drop the target key (and any malformed/duplicate
+	// stragglers) first, then re-add it when held=true. This keeps the stored list
+	// well-formed and unique regardless of prior state, and makes the toggle
+	// idempotent (holding an already-held issue, or resuming an already-free one, is
+	// a clean no-op that still persists the canonical set).
+	seen := make(map[string]struct{})
+	cleaned := make([]string, 0, len(s.deps.Config.Hub.ContributeQueueHold)+1)
+	for _, k := range s.deps.Config.Hub.ContributeQueueHold {
+		k = strings.TrimSpace(k)
+		if k == "" || k == key || !queueOrderKeyPattern.MatchString(k) {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		cleaned = append(cleaned, k)
+	}
+	if body.Held {
+		if len(cleaned) >= maxQueueHoldKeys {
+			jsonError(w, "too many held issues", http.StatusBadRequest)
+			return
+		}
+		cleaned = append(cleaned, key)
+	}
+	s.deps.Config.Hub.ContributeQueueHold = cleaned
+	s.auditFromRequest(r, "contribute_queue_hold", auditDetail("key", key, "held", strconv.FormatBool(body.Held)), "")
+	s.refreshAndPersist()
+	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned))
+	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned})
+}
+
 // ── Contributor management ─────────────────────────────────────────────────
 
 // requireContributorWrite enforces owner/read-write authorization on the
@@ -4784,10 +5307,13 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 // ContributeWSHub.RequeueContributorTask — so a manual requeue can NOT recreate the
 // duplicate-assignment race #2492/#2557 closed: the released issue books the same
 // short failure cooldown and is therefore not instantly re-handed to a stale worker.
-// It does NOT enforce wsTaskTimeout automatically (manual action only) and does NOT
-// implement the deferred renewable-lease / generation-token protocol (that is the
-// follow-up design half of #2568). Requeuing a contributor with no in-flight task is
-// a 404 (nothing to release) rather than a silent no-op.
+//
+// #2568 completion: the release now BUMPS the connection's assignment generation, so a
+// stale worker that later reports completion is fenced out (the Gate — the automatic
+// lease-TTL backstop lives in the hub's cleanupLoop/reclaimExpiredLeases). The operator
+// may pass a REASON (JSON body {"reason":...} or ?reason=), which is recorded in the
+// audit + activity log and pushed to the still-connected worker on task_revoke.
+// Requeuing a contributor with no in-flight task is a 404 (nothing to release).
 func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request) {
 	if !s.requireContributorWrite(w, r) {
 		return
@@ -4802,15 +5328,27 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 		jsonError(w, "Contributor relay is not available", http.StatusServiceUnavailable)
 		return
 	}
+	// #2568: accept an optional operator reason from a JSON body or query param. Both
+	// are optional — an empty reason falls back to the hub's default recovery label —
+	// so existing callers that POST no body keep working unchanged.
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	if reason == "" && r.Body != nil {
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			reason = strings.TrimSpace(body.Reason)
+		}
+	}
 	// Key the live release by the registered ContributorID (what the ops tab passes),
 	// matching how the hub tracks connections. GitHubUsername is only used for logs.
-	released := s.contributeHub.RequeueContributorTask(p.ContributorID)
+	released := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
 	if released == 0 {
 		jsonError(w, "That contributor has no in-flight task to requeue.", http.StatusNotFound)
 		return
 	}
-	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername), "")
-	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released)
+	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername, "reason", reason), "")
+	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released, "reason", reason)
 	jsonResponse(w, map[string]any{"ok": true, "released": released})
 }
 

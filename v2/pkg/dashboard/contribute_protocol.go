@@ -36,7 +36,7 @@ package dashboard
 // backward-compatible by construction. Semantic: MAJOR.MINOR where a MINOR bump
 // is purely additive and a MAJOR bump would be a breaking change (none is made
 // here).
-const contributorProtocolVersion = "1.1"
+const contributorProtocolVersion = "1.2"
 
 // Server capability tokens advertised on auth_ok (#2567). Each names a message
 // type or feature this hub supports so a client can adapt without probing. They
@@ -55,6 +55,13 @@ const (
 	// capCapabilityDeclare: the hub accepts, stores, and surfaces client-declared
 	// capabilities in auth_response (#2547 declare half).
 	capCapabilityDeclare = "capability_declare"
+	// capCredentialAfterAccept: the hub splits the scoped GitHub credential OUT of
+	// task_assign and delivers it (via a token_refresh) only AFTER the task's
+	// acceptance decision (#2537). A client that sees this capability knows the
+	// task_assign it receives carries NO github_token and that the credential
+	// arrives in a following token_refresh — but no client change is required, since
+	// the token_refresh delivery is backward-compatible (see deliverTaskCredential).
+	capCredentialAfterAccept = "credential_after_accept"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -66,6 +73,7 @@ func serverCapabilities() []string {
 		capTaskUnavailableReasons,
 		capPromptPreview,
 		capCapabilityDeclare,
+		capCredentialAfterAccept,
 	}
 }
 
