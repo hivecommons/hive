@@ -381,6 +381,30 @@ func TestNormalServiceNoDispatchIsIdleAndNeverRunsWorker(t *testing.T) {
 	}
 }
 
+func TestNormalServiceTransientDenialKeepsExactPacketForReevaluation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	launchable := fixture.intake.dispatch[0]
+	fixture.intake.dispatch = nil
+	fixture.intake.reevaluationPending = []string{"visual-hive://owner/repo/discovery"}
+	service := fixture.service(t, fixture.verifier)
+
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) || !strings.Contains(err.Error(), "re-evaluation pending") {
+		t.Fatalf("transient hold error = %v, want durable idle hold", err)
+	}
+	if fixture.source.consumes != 0 || fixture.source.consumeSideEffects != 0 || fixture.repairer.runs != 0 || fixture.verifier.calls != 0 {
+		t.Fatalf("transient hold consumed evidence or launched work: source=%+v repair=%+v verifier=%+v", fixture.source, fixture.repairer, fixture.verifier)
+	}
+
+	fixture.intake.reevaluationPending = nil
+	fixture.intake.dispatch = []visualcontroller.DispatchEnvelope{launchable}
+	if err := service.RunCycle(context.Background()); err != nil {
+		t.Fatalf("cleared transient hold did not resume the same packet: %v", err)
+	}
+	if fixture.source.fetches != 2 || fixture.intake.imports != 2 || fixture.repairer.runs != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("same-packet re-evaluation duplicated or skipped lifecycle work: source=%+v intake=%+v repair=%+v", fixture.source, fixture.intake, fixture.repairer)
+	}
+}
+
 func TestNormalServiceNoDispatchAmbiguousConsumeDoesNotStartAnotherWorkflow(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.intake.dispatch = nil
@@ -479,6 +503,98 @@ func TestNormalServiceConsumedNoDispatchLedgerBypassesPullRequestObserver(t *tes
 	}
 	if fixture.verifier.stateCalls != 0 || fixture.source.fetches != 2 || fixture.repairer.runs != 0 {
 		t.Fatalf("green/no-dispatch ledger incorrectly entered PR gate: source=%+v repair=%+v verifier=%+v", fixture.source, fixture.repairer, fixture.verifier)
+	}
+}
+
+func TestNormalServiceReplacementRetainsCadenceUntilTrigger(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	stateDir := t.TempDir()
+	now := time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
+	first := fixture.serviceAt(t, stateDir, fixture.verifier)
+	first.options.Now = func() time.Time { return now }
+	if err := first.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) {
+		t.Fatalf("initial cycle error = %v, want idle", err)
+	}
+
+	// Model a replacement container with the same persistent state. Automatic
+	// startup must not fetch/dispatch again merely because the process changed.
+	replacement := fixture.serviceAt(t, stateDir, fixture.verifier)
+	replacement.options.PollInterval = time.Hour
+	replacement.options.Now = func() time.Time { return now.Add(time.Minute) }
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		replacement.Run(runCtx)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if fixture.source.fetches != 1 {
+		cancel()
+		t.Fatalf("replacement startup repeated the completed workflow: fetches=%d", fixture.source.fetches)
+	}
+
+	// A supported explicit trigger remains immediate and uses the same lease
+	// epoch; it does not require waiting for the inherited cadence deadline.
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer triggerCancel()
+	if err := replacement.Trigger(triggerCtx); !errors.Is(err, ErrNoDispatch) {
+		cancel()
+		t.Fatalf("replacement trigger result = %v, want idle", err)
+	}
+	if fixture.source.fetches != 2 {
+		cancel()
+		t.Fatalf("explicit trigger did not run exactly one workflow: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement service did not stop")
+	}
+}
+
+func TestNormalServiceReplacementRunsWhenInheritedCadenceExpires(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	stateDir := t.TempDir()
+	now := time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
+	first := fixture.serviceAt(t, stateDir, fixture.verifier)
+	first.options.Now = func() time.Time { return now }
+	if err := first.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) {
+		t.Fatalf("initial cycle error = %v, want idle", err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	completed := make(chan error, 1)
+	replacement := fixture.serviceAt(t, stateDir, fixture.verifier)
+	replacement.options.PollInterval = 50 * time.Millisecond
+	replacement.options.Now = func() time.Time { return now }
+	replacement.options.OnCycle = func(err error) {
+		completed <- err
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		replacement.Run(runCtx)
+		close(done)
+	}()
+	select {
+	case err := <-completed:
+		if !errors.Is(err, ErrNoDispatch) {
+			t.Fatalf("expired cadence cycle error = %v, want idle", err)
+		}
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("replacement did not run after the inherited cadence expired")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement service did not stop")
+	}
+	if fixture.source.fetches != 2 {
+		t.Fatalf("expired cadence ran an inexact number of workflows: fetches=%d", fixture.source.fetches)
 	}
 }
 
@@ -1115,6 +1231,9 @@ func TestNormalServiceRejectsCorruptLedgerStateMachineBeforeSideEffects(t *testi
 		"consumed without checkpoint": func(ledger *workLedger) {
 			ledger.Consumed = true
 		},
+		"completion time without consumed workflow": func(ledger *workLedger) {
+			ledger.CycleCompletedAt = time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
+		},
 		"PR without order": func(ledger *workLedger) {
 			ledger.SourceExternalRef = "visual-hive://owner/repo/finding"
 			ledger.Branch, ledger.CommitSHA = "hive/repair-one", strings.Repeat("f", 40)
@@ -1403,6 +1522,7 @@ func (source *fakeArtifactSource) Consume(_ integrated.WorkflowRunEvidence, allo
 
 type fakeIntake struct {
 	dispatch                    []visualcontroller.DispatchEnvelope
+	reevaluationPending         []string
 	imports                     int
 	revalidates                 int
 	revalidateErr               error
@@ -1427,7 +1547,10 @@ func (intake *fakeIntake) Import(context.Context, hivegithub.VerifiedVisualHiveA
 			intake.represented[envelope.SourceExternalRef] = 1
 		}
 	}
-	return visualcontroller.Result{DispatchPending: append([]visualcontroller.DispatchEnvelope(nil), intake.dispatch...)}, nil
+	return visualcontroller.Result{
+		DispatchPending:               append([]visualcontroller.DispatchEnvelope(nil), intake.dispatch...),
+		ReevaluationPendingSourceRefs: append([]string(nil), intake.reevaluationPending...),
+	}, nil
 }
 
 func (intake *fakeIntake) RevalidateSpecialistBoundary(sourceExternalRef, _, _ string) (visualcontroller.DispatchEnvelope, error) {

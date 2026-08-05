@@ -173,6 +173,57 @@ func TestFixEntryIgnoresNonBobDirs(t *testing.T) {
 	}
 }
 
+func TestPermissionsWatcherSkipsOtherAgentOwnership(t *testing.T) {
+	for _, uid := range []uint32{2001, 2002, 2003, 65534} {
+		if permissionsWatcherManagesOwner(uid) {
+			t.Fatalf("dedicated agent uid %d must not be chowned by the dashboard watcher", uid)
+		}
+	}
+	for _, uid := range []uint32{0, uint32(DevUID)} {
+		if !permissionsWatcherManagesOwner(uid) {
+			t.Fatalf("root/dev uid %d must remain eligible for watcher repair", uid)
+		}
+	}
+}
+
+func TestFixEntryDoesNotFollowSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX symlink ownership semantics are not meaningful on Windows")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	link := filepath.Join(root, "github-copilot")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target before: %v", err)
+	}
+	linkInfo, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat link: %v", err)
+	}
+
+	fixEntry(link, linkInfo, quietLogger())
+
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target after: %v", err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("symlink target mode changed from %v to %v", before.Mode().Perm(), after.Mode().Perm())
+	}
+	beforeUID, beforeGID, beforeOK := fileOwnership(before)
+	afterUID, afterGID, afterOK := fileOwnership(after)
+	if !beforeOK || !afterOK || beforeUID != afterUID || beforeGID != afterGID {
+		t.Fatalf("symlink target ownership changed from %d:%d to %d:%d", beforeUID, beforeGID, afterUID, afterGID)
+	}
+}
+
 // TestFixPermissionsRemediatesBobStateDirEndToEnd drives the full watcher tick:
 // pointing WatchedHomeDirs at a temp tree containing a broken 0755 .bob dir, one
 // fixPermissions pass must leave it group-writable, mirroring how the running

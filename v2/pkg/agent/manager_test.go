@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 		stubName = func(name string) string { return name + ".cmd" }
 		stubScript = "@echo off\r\nmore\r\n"
 	}
-	for _, name := range []string{"claude", "copilot", "gemini", "goose", "bob"} {
+	for _, name := range []string{"claude", "copilot", "gemini", "goose", "bob", "codex"} {
 		path := filepath.Join(dir, stubName(name))
 		if err := os.WriteFile(path, []byte(stubScript), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "TestMain: writing stub %s: %v\n", name, err)

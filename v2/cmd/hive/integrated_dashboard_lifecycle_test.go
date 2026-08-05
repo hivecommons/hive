@@ -6,6 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
+	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hostedcontrol"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
@@ -49,6 +54,7 @@ func installDashboardLifecycleFakes(t *testing.T) {
 	originalTrigger := dashboardLifecycleTrigger
 	originalPlanRetirement := dashboardLifecyclePlanRetirement
 	originalRetireRepair := dashboardLifecycleRetireRepair
+	originalGitHubClient := dashboardLifecycleGitHubClient
 	originalStopNormalVisual := dashboardLifecycleStopNormalVisual
 	originalNormalBeadsDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
 	t.Cleanup(func() {
@@ -56,9 +62,42 @@ func installDashboardLifecycleFakes(t *testing.T) {
 		dashboardLifecycleTrigger = originalTrigger
 		dashboardLifecyclePlanRetirement = originalPlanRetirement
 		dashboardLifecycleRetireRepair = originalRetireRepair
+		dashboardLifecycleGitHubClient = originalGitHubClient
 		dashboardLifecycleStopNormalVisual = originalStopNormalVisual
 		dashboardLifecycleNormalBeadsDirs = originalNormalBeadsDirs
 	})
+}
+
+func TestDashboardUninstalledReadsDoNotCreateRecoveryState(t *testing.T) {
+	parent := useTemporaryHostedHiveState(t)
+	stateRoot := filepath.Join(parent, "integrated")
+	installDashboardLifecycleFakes(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not installed", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	dashboardLifecycleGitHubClient = func(string) *hivegithub.Client {
+		return hivegithub.NewClient("owner-token", "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)), server.URL)
+	}
+
+	var selected string
+	for _, operation := range []string{"status", "doctor"} {
+		result, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+			Repository: "owner/repository", Operation: operation,
+		}, "owner-token")
+		if err != nil || result["installed"] != false {
+			t.Fatalf("%s result=%v err=%v", operation, result, err)
+		}
+		got, _ := result["selected_state_dir"].(string)
+		if selected == "" {
+			selected = got
+		} else if got != selected {
+			t.Fatalf("uninstalled reads drifted from %q to %q", selected, got)
+		}
+		if _, statErr := os.Lstat(stateRoot); !os.IsNotExist(statErr) {
+			t.Fatalf("%s created read-only lifecycle state: %v", operation, statErr)
+		}
+	}
 }
 
 func TestDashboardRepairRetirementPlanApplyAndReplayBindExactProposal(t *testing.T) {
@@ -365,6 +404,46 @@ func TestDashboardIntegratedTriggerUsesExistingNormalService(t *testing.T) {
 	}
 }
 
+func TestDashboardIntegratedTriggerSurvivesCallerCancellation(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	dashboardLifecycleCLIRunner = func(_ context.Context, _ []string, _ string, _ bool) (map[string]any, []byte, error) {
+		return map[string]any{
+			"schema_version": "hive.status.v1",
+			"config":         map[string]any{"repository": "owner/repository"},
+		}, []byte(`{"schema_version":"hive.status.v1"}`), nil
+	}
+	request := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "trigger",
+		RequestID: "cycle-a-trigger-disconnect-001",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Operation = "control-apply"
+	request.ExpectedPlanSHA256, _ = plan["plan_sha256"].(string)
+	caller, cancelCaller := context.WithCancel(context.Background())
+	cancelCaller()
+	dashboardLifecycleTrigger = func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("durable trigger inherited caller cancellation: %v", err)
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("durable trigger has no bounded deadline")
+		}
+		return nil
+	}
+	result, err := runDashboardIntegratedLifecycle(caller, request, "owner-token")
+	if err != nil || result["outcome"] != "completed" {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	ledger, err := loadDashboardLifecycleLedger(stateDir)
+	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].Status != "completed" {
+		t.Fatalf("ledger=%+v err=%v", ledger, err)
+	}
+}
+
 func TestDashboardIntegratedTriggerTreatsSetupBaselineProgressAsHeld(t *testing.T) {
 	writeDashboardLifecycleContract(t)
 	installDashboardLifecycleFakes(t)
@@ -455,7 +534,8 @@ func TestDashboardLifecycleFinalizationReceiptDoesNotRecreateDeletedState(t *tes
 	}
 	plan := strings.Repeat("f", 64)
 	calls := 0
-	result, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+	ledgerStateDir := dashboardLifecycleLedgerStateDir(stateDir, "uninstall-finalize")
+	result, err := runDashboardLifecycleMutation(ledgerStateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
 		calls++
 		if err := os.RemoveAll(stateDir); err != nil {
 			return nil, err
@@ -468,7 +548,7 @@ func TestDashboardLifecycleFinalizationReceiptDoesNotRecreateDeletedState(t *tes
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatalf("finalization receipt recreated deleted state: err=%v", err)
 	}
-	replay, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+	replay, err := runDashboardLifecycleMutation(ledgerStateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
 		calls++
 		return nil, errors.New("replayed finalization")
 	})

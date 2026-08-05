@@ -1172,11 +1172,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.installCavemanForAgent(agent, backend)
 	}
 
-	if agent.Config.Tools != nil {
+	if agent.Config.Tools != nil && agent.Config.Mode != "" {
+		m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
+	}
+	// Codex tool rules do not add a separate CLI permission surface. Route all
+	// Codex agents through the same launch builders so ordinary agents always
+	// receive their exact beads directory and specialists retain containment.
+	if agent.Config.Tools != nil && backend != "codex" {
 		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference)
-		if agent.Config.Tools != nil && agent.Config.Mode != "" {
-			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
-		}
 	} else {
 		switch backend {
 		case "claude":
@@ -1226,7 +1229,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			if agent.specialistReady {
 				launchCmd = codexSpecialistLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name))
 			} else {
-				launchCmd = codexAgentLaunchCmd(binary, model)
+				launchCmd = codexAgentLaunchCmd(binary, model, agent.Config.BeadsDir)
 			}
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -5905,7 +5908,7 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	case "codex":
-		return codexAgentLaunchCmd(binary, model)
+		return codexAgentLaunchCmd(binary, model, "")
 	default:
 		cmd := binary
 		if model != "" {
@@ -5916,14 +5919,22 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 }
 
 // codexAgentLaunchCmd keeps ordinary long-lived Codex agents unattended while
-// preserving Codex's sandbox. Without the explicit approval policy, a
-// read-only command that needs network access can stop the entire Hive agent at
-// an interactive prompt that no controller owns. This is intentionally not the
+// preserving a workspace-write sandbox. Ordinary agents use gh and the shared
+// beads checkout directly, so they need network access and an explicit grant
+// for the configured beads directory. Built-in MCP apps stay disabled: their
+// separate approval surface can otherwise stop an unattended agent even when
+// the command approval policy is never. This intentionally does not use the
 // dangerous sandbox bypass flag.
-func codexAgentLaunchCmd(binary, model string) string {
+func codexAgentLaunchCmd(binary, model, beadsDir string) string {
 	cmd := binary
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", binary, model)
+	}
+	cmd += " --sandbox workspace-write"
+	cmd += " -c sandbox_workspace_write.network_access=true"
+	cmd += " --disable enable_mcp_apps"
+	if beadsDir != "" {
+		cmd += " --add-dir " + specialistShellArgument(beadsDir)
 	}
 	return cmd + " --ask-for-approval never"
 }

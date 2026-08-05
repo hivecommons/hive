@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -443,6 +444,46 @@ func TestBuildDigestFromBeadsEmpty(t *testing.T) {
 	d := BuildDigestFromBeads(stores, "idle")
 	if d.TotalCount != 0 {
 		t.Errorf("TotalCount = %d, want 0", d.TotalCount)
+	}
+}
+
+func TestSortAdvisoryBeadsDeterministicallyBreaksTimestampTies(t *testing.T) {
+	const createdAt = "2026-08-04T06:45:00Z"
+	decode := func(raw string) *beads.Bead {
+		t.Helper()
+		var bead beads.Bead
+		if err := json.Unmarshal([]byte(raw), &bead); err != nil {
+			t.Fatalf("decode bead: %v", err)
+		}
+		return &bead
+	}
+	desktop := decode(`{"id":"bead-z","title":"Maintain visual test: overbroad_full_page","type":"bug","status":"open","priority":3,"actor":"quality","external_ref":"visual-hive://finding/desktop","created_at":"` + createdAt + `","updated_at":"` + createdAt + `"}`)
+	mobile := decode(`{"id":"bead-a","title":"Maintain visual test: overbroad_full_page","type":"bug","status":"open","priority":3,"actor":"quality","external_ref":"visual-hive://finding/mobile","created_at":"` + createdAt + `","updated_at":"` + createdAt + `"}`)
+
+	forward := []*beads.Bead{desktop, mobile}
+	reverse := []*beads.Bead{mobile, desktop}
+	sortAdvisoryBeads(forward)
+	sortAdvisoryBeads(reverse)
+
+	if forward[0].ID != reverse[0].ID || forward[0].ExternalRef != "visual-hive://finding/desktop" {
+		t.Fatalf("timestamp tie selected different advisory representatives: forward=%s reverse=%s", forward[0].ID, reverse[0].ID)
+	}
+}
+
+func TestResolvedFindingSortKeyBreaksClosedAtTies(t *testing.T) {
+	closedAt := time.Date(2026, time.August, 4, 6, 45, 0, 0, time.UTC)
+	items := []ResolvedFinding{
+		{Agent: "quality", Title: "Zulu", File: "z.go", ClosedAt: closedAt},
+		{Agent: "quality", Title: "Alpha", File: "a.go", ClosedAt: closedAt},
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].ClosedAt.Equal(items[j].ClosedAt) {
+			return items[i].ClosedAt.After(items[j].ClosedAt)
+		}
+		return resolvedFindingSortKey(items[i]) < resolvedFindingSortKey(items[j])
+	})
+	if items[0].Title != "Alpha" {
+		t.Fatalf("resolved timestamp tie was not deterministic: first=%q", items[0].Title)
 	}
 }
 

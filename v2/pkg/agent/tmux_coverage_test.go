@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +144,74 @@ func TestStart_LaunchClaude(t *testing.T) {
 	}
 	if !ap.HasLaunched {
 		t.Error("HasLaunched should be true")
+	}
+}
+
+func TestStart_LaunchCodexUsesUnattendedBeadsSandbox(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	workDir, err := os.MkdirTemp("", "hive-agent-launch-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
+	beadsDir := filepath.Join(t.TempDir(), "shared beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "codex-args")
+	stubPath := filepath.Join(stubBinDir, "codex")
+	original, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + specialistShellArgument(argsPath) +
+		"\nprintf 'OpenAI Codex\\n\342\200\272 ready\\n'\nexec cat\n"
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(stubPath, original, 0o755) })
+
+	t.Setenv("HIVE_WORK_DIR", workDir)
+	m := NewManager(map[string]config.AgentConfig{
+		"quality": {
+			Backend:  "codex",
+			Model:    "gpt-5.6-sol",
+			BeadsDir: beadsDir,
+			Tools:    &config.ToolsConfig{Preset: "advisory"},
+		},
+	}, discardLogger(), ProjectContext{ACMMLevel: 5})
+	if err := m.Start(context.Background(), "quality"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer cleanupAgent(t, m, "quality")
+
+	var args []string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		body, readErr := os.ReadFile(argsPath)
+		if readErr == nil && len(body) > 0 {
+			args = strings.Split(strings.TrimSpace(string(body)), "\n")
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	want := []string{
+		"--model", "gpt-5.6-sol",
+		"--sandbox", "workspace-write",
+		"-c", "sandbox_workspace_write.network_access=true",
+		"--disable", "enable_mcp_apps",
+		"--add-dir", beadsDir,
+		"--ask-for-approval", "never",
+	}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		status, _ := m.GetStatus("quality")
+		agent := m.agents["quality"]
+		paneState, paneStateErr := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession,
+			"#{pane_pid} #{pane_current_command} #{pane_dead} #{pane_dead_status}").CombinedOutput()
+		t.Fatalf("Codex argv = %#v, want %#v; state=%s last_error=%q pane=%q pane_state=%q pane_state_err=%v",
+			args, want, status.State, status.LastError, m.captureTmuxPaneForAgent(agent), paneState, paneStateErr)
 	}
 }
 

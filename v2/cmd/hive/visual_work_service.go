@@ -272,6 +272,20 @@ func (runner *normalVisualRepairer) Apply(ctx context.Context, plan normalservic
 	if err := validateNormalRepairRetirementFinding(runner.lifecycle, plan, true); err != nil {
 		return err
 	}
+	repairState, err := repair.NewStore(filepath.Join(current.StateDir, "repair"))
+	if err != nil {
+		return fmt.Errorf("load exact Worker checkpoint before repair retirement: %w", err)
+	}
+	workerRetirement := repair.PullRequestRetirement{
+		RepositoryFingerprint: plan.RepositoryFingerprint,
+		PRNumber:              plan.PullRequestNumber,
+		PRURL:                 plan.PullRequestURL,
+		Branch:                plan.Branch,
+		CommitSHA:             plan.HeadSHA,
+	}
+	if err := repairState.ValidatePullRequestRetirement(workerRetirement); err != nil {
+		return fmt.Errorf("validate exact Worker checkpoint before repair retirement: %w", err)
+	}
 	finding, exists := runner.lifecycle.Finding(plan.RepositoryFingerprint)
 	if !exists {
 		return errors.New("repair retirement lost its exact lifecycle finding")
@@ -310,6 +324,9 @@ func (runner *normalVisualRepairer) Apply(ctx context.Context, plan normalservic
 	}
 	if err := runner.lifecycle.RetireRepairForVerification(plan.RepositoryFingerprint, retired); err != nil {
 		return err
+	}
+	if err := repairState.RetirePullRequestForVerification(workerRetirement); err != nil {
+		return fmt.Errorf("retire exact Worker checkpoint for fresh verification: %w", err)
 	}
 	return runner.controller.RetireSpecialistPullRequest(plan.SourceExternalRef, visualcontroller.SpecialistPullRequestRetirement{
 		WorkOrderID: plan.WorkOrderID, RequestSHA256: plan.RequestSHA256,

@@ -2029,6 +2029,7 @@ func main() {
 			return nil
 		},
 		IntegratedSetupFunc:     runDashboardIntegratedSetup,
+		IntegratedPreflightFunc: runDashboardIntegratedPreflight,
 		IntegratedLifecycleFunc: runDashboardIntegratedLifecycle,
 		// Same key resolution as boot (initGitHubAuth) and the heartbeat apply
 		// path: without it, the dashboard Set ID handler gated reinit on the
