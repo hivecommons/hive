@@ -591,7 +591,11 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	key := fmt.Sprintf("%s#%d", repo, number)
 	cooldown := completedNoPRCooldownHours * time.Hour
 	if prURL != "" {
-		cooldown = completedTaskCooldownHours * time.Hour
+		// The WITH-PR period is operator-tunable (Config.Hub.ContributeCooldownHours,
+		// default completedTaskCooldownHours). We still RECORD this even when cooldown
+		// is disabled — isTaskInCooldown short-circuits the gating, so the history is
+		// kept for stats/audit but never excludes the issue.
+		cooldown = h.configuredWithPRCooldown()
 	}
 	h.completedMu.Lock()
 	h.completedTasks[key] = time.Now()
@@ -680,20 +684,52 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 	return false
 }
 
+// cooldownEnabled reports whether post-completion cooldown gating is turned on
+// for this hive. It reads the operator toggle (Config.Hub.ContributeCooldownEnabled)
+// through the config resolver, which defaults to ENABLED when unset. A hub built
+// without a Config (direct-in-test construction) is treated as enabled so the
+// historical default behavior is preserved.
+func (h *ContributeWSHub) cooldownEnabled() bool {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return true
+	}
+	return h.server.deps.Config.Hub.IsContributeCooldownEnabled()
+}
+
+// configuredWithPRCooldown returns the operator-configured WITH-PR completion
+// cooldown duration. It reads Config.Hub.ContributeCooldownHoursOrDefault() —
+// which yields the 168h default when unset — and falls back to the
+// completedTaskCooldownHours const when no Config is present (tests). It does NOT
+// consider whether cooldown is enabled; callers gate on cooldownEnabled().
+func (h *ContributeWSHub) configuredWithPRCooldown() time.Duration {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return completedTaskCooldownHours * time.Hour
+	}
+	return time.Duration(h.server.deps.Config.Hub.ContributeCooldownHoursOrDefault()) * time.Hour
+}
+
 // cooldownForLocked returns the cooldown duration to apply to key. Callers must
 // already hold completedMu. When no per-task override was recorded (older
-// on-disk entries, or hubs built directly in tests) it falls back to the full
-// completedTaskCooldownHours — the original, conservative default.
+// on-disk entries, or hubs built directly in tests) it falls back to the
+// operator-configured with-PR cooldown (default completedTaskCooldownHours) — the
+// original, conservative default.
 func (h *ContributeWSHub) cooldownForLocked(key string) time.Duration {
 	if h.completedTaskCooldown != nil {
 		if d, ok := h.completedTaskCooldown[key]; ok {
 			return d
 		}
 	}
-	return completedTaskCooldownHours * time.Hour
+	return h.configuredWithPRCooldown()
 }
 
 func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
+	// Operator kill-switch: when cooldown is disabled, no completed issue is ever
+	// gated out of the queue for cooldown. Completion HISTORY is still recorded by
+	// markTaskCompleted (stats/audit, #2356 duplicate detection) and failure
+	// quarantine is unaffected — this only stops cooldown from EXCLUDING work.
+	if !h.cooldownEnabled() {
+		return false
+	}
 	key := fmt.Sprintf("%s#%d", repo, number)
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()

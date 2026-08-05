@@ -1475,6 +1475,14 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-switch" id="admin-skip-switch" data-key="contribute_skip_assigned_to_others"></div>
 <div><div class="admin-toggle-label">Skip issues assigned to others</div><div class="admin-toggle-sub">Never serve an issue already assigned to a different GitHub user.</div></div>
 </div>
+<div class="admin-toggle">
+<div class="admin-switch" id="admin-cooldown-switch" data-key="contribute_cooldown_enabled"></div>
+<div><div class="admin-toggle-label">Task cooldown</div><div class="admin-toggle-sub">After a task completes with a verified PR, keep that issue out of the queue for the period below. Off = no cooldown gating. Failure quarantine is separate and always on.</div></div>
+</div>
+<div class="admin-field" id="admin-cooldown-hours-wrap" style="margin-left:50px">
+<label>Cooldown period (hours) <span style="color:#6e7681">— 168 = one week (default). Range 1&ndash;8760.</span></label>
+<input type="number" id="admin-cooldown-hours" min="1" max="8760" style="max-width:120px">
+</div>
 
 <hr class="admin-hr">
 <h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Admission filters</h3>
@@ -1682,6 +1690,12 @@ update();  // initial paint: copy block + branded UI in sync from first load
 // undefined and threw. Declaring+initializing them here — before any function that
 // uses them can run — makes the ordering explicit and regression-proof.
 var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+// ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
+// 168h = one week) so the period input shows the effective default when unset.
+// ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
+var ADMIN_COOLDOWN_DEFAULT_HOURS=168;
+var ADMIN_COOLDOWN_MIN_HOURS=1;
+var ADMIN_COOLDOWN_MAX_HOURS=8760;
 var ccActivity=[];       // chronological (oldest→newest) activity backlog for the rail
 var ccActivitySeen={};   // dedupe set keyed by ccActivityKey(); shared by poll + SSE
 // Null-guarded addEventListener: a missing element (not yet parsed, or a markup
@@ -2499,6 +2513,18 @@ function renderAdminControls(){
   document.getElementById('admin-suspend-switch').classList.toggle('danger',!!adminHub.contribute_suspended);
   document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
   document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
+  // Task cooldown: the GET resolves contribute_cooldown_enabled to a concrete
+  // bool (unset -> true), and contribute_cooldown_hours to the EFFECTIVE period
+  // (168 default surfaces when unset), so we render both directly. The period
+  // input is disabled while cooldown is off.
+  var cdOn=(adminHub.contribute_cooldown_enabled!==false);
+  document.getElementById('admin-cooldown-switch').classList.toggle('on',cdOn);
+  var cdHours=document.getElementById('admin-cooldown-hours');
+  if(cdHours){
+    if(document.activeElement!==cdHours)cdHours.value=adminHub.contribute_cooldown_hours||ADMIN_COOLDOWN_DEFAULT_HOURS;
+    cdHours.disabled=!cdOn;
+    cdHours.style.opacity=cdOn?'1':'0.5';
+  }
   renderQueueSuspendControl(!!adminHub.contribute_suspended);
   // Filters (mirror Governor Hub: titles/authors/labels + modes, allow-models).
   renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
@@ -2526,6 +2552,29 @@ function bindImmediateToggle(id){
     var patch={};patch[key]=next;
     adminSaveHub(patch,next?'Enabled '+key.replace(/_/g,' '):'Disabled '+key.replace(/_/g,' ')).then(function(ok){
       if(ok){adminHub[key]=next;renderAdminControls();}
+    });
+  });
+}
+
+// bindCooldownHoursInput persists the Task Cooldown PERIOD immediately on change
+// (like the immediate toggles, not the deferred filter Save), through the same
+// governor-hub PUT. The value is clamped client-side to [min,max]; the server
+// clamps again. On success adminHub is updated and both surfaces re-rendered so
+// the Governor Hub tab picks up the new value on its next poll.
+var cooldownHoursBusy=false;
+function bindCooldownHoursInput(){
+  var inp=document.getElementById('admin-cooldown-hours');
+  if(!inp)return;
+  inp.addEventListener('change',function(){
+    if(cooldownHoursBusy||!adminHub)return;
+    var v=parseInt(inp.value,10);
+    if(isNaN(v)||v<ADMIN_COOLDOWN_MIN_HOURS)v=ADMIN_COOLDOWN_MIN_HOURS;
+    if(v>ADMIN_COOLDOWN_MAX_HOURS)v=ADMIN_COOLDOWN_MAX_HOURS;
+    inp.value=v;
+    cooldownHoursBusy=true;
+    adminSaveHub({contribute_cooldown_hours:v},'Cooldown period set to '+v+'h').then(function(ok){
+      cooldownHoursBusy=false;
+      if(ok){adminHub.contribute_cooldown_hours=v;renderAdminControls();}
     });
   });
 }
@@ -2668,6 +2717,8 @@ async function initAdmin(){
   bindImmediateToggle('admin-suspend-switch');
   bindImmediateToggle('admin-skip-switch');
   bindImmediateToggle('admin-reject-switch');
+  bindImmediateToggle('admin-cooldown-switch');
+  bindCooldownHoursInput();
   try{
     // The Governor config GET is what carries the hub.contribute_* fields the
     // Governor Hub dialog edits (GET /api/config, by contrast, is a thin summary

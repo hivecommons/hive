@@ -3559,6 +3559,13 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
 			"contribute_reject_unknown_models":   cfg.Hub.ContributeRejectUnknownModels,
 			"contribute_skip_assigned_to_others": cfg.Hub.ContributeSkipAssignedToOthers,
+			// Cooldown toggle + period. contribute_cooldown_enabled is the RESOLVED
+			// on/off (nil pointer -> true) so both UI surfaces render a concrete
+			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
+			// 168h default surfaces when unset) so the number input shows the value
+			// actually in force.
+			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
 			"disabled_repos":                     cfg.Hub.DisabledRepos,
 			"disabled_tiers":                     cfg.Hub.DisabledTiers,
 			"tier_limits":                        cfg.Hub.TierLimits,
@@ -3982,6 +3989,8 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeAllowModels          []string                   `json:"contribute_allow_models"`
 		ContributeRejectUnknownModels  *bool                      `json:"contribute_reject_unknown_models"`
 		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
+		ContributeCooldownEnabled      *bool                      `json:"contribute_cooldown_enabled"`
+		ContributeCooldownHours        *int                       `json:"contribute_cooldown_hours"`
 		DisabledRepos                  []string                   `json:"disabled_repos"`
 		DisabledTiers                  []string                   `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
@@ -4042,6 +4051,20 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeSkipAssignedToOthers != nil {
 		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
+	}
+	// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
+	// is round-tripped exactly (nil would default back to enabled). A client that
+	// omits the field leaves the current value untouched.
+	if body.ContributeCooldownEnabled != nil {
+		v := *body.ContributeCooldownEnabled
+		cfg.Hub.ContributeCooldownEnabled = &v
+	}
+	// Cooldown period (hours): stored as-is; the config resolver
+	// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
+	// applyDefaults clamps any persisted value, so a stray input can never park an
+	// issue forever. A client sending 0 means "use the default".
+	if body.ContributeCooldownHours != nil {
+		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
 	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = body.DisabledRepos

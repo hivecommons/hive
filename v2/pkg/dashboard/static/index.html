@@ -15163,6 +15163,15 @@ function burnAreaChart() {
           <span class="config-toggle-label">Skip Issues Assigned to Others <span class="config-info">i<span class="config-tooltip">When on, the contribute queue never serves an issue that is already assigned to a different GitHub user, so contributors don't pick up work a maintainer has claimed. Mirrored on the /contribute Management &amp; Operations tab.</span></span></span>
         </div>
 
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.contribute_cooldown_enabled ? 'on' : ''}" onclick="toggleCooldownEnabled(this)" data-section="hub" data-key="contribute_cooldown_enabled"></div>
+          <span class="config-toggle-label">Task Cooldown <span class="config-info">i<span class="config-tooltip">After a task completes WITH a merged/verified PR, keep that issue out of the queue for the period below (default 168h = one week) so it isn't immediately re-offered. Turn off to disable cooldown gating entirely. Failure quarantine is separate and always on. Mirrored on the /contribute Management tab.</span></span></span>
+        </div>
+        <div class="config-field" style="margin-left:44px" ${hub.contribute_cooldown_enabled ? '' : 'title="Enable Task Cooldown to edit the period"'}>
+          <label>Cooldown Period (hours) <span class="config-info">i<span class="config-tooltip">The with-PR completion cooldown, in hours. 168 = one week (default). Range 1–8760.</span></span></label>
+          <input type="number" id="hub-cooldown-hours" min="1" max="8760" value="${hub.contribute_cooldown_hours || 168}" onchange="markDirty('hub','contribute_cooldown_hours',parseInt(this.value,10)||168)" ${hub.contribute_cooldown_enabled ? '' : 'disabled style="opacity:0.5"'}>
+        </div>
+
         ${renderFilterWithMode({
           label: 'Titles', noun: 'title', unit: 'issue',
           modeKey: 'contribute_titles_mode', listKey: 'contribute_deny_titles',
@@ -15268,6 +15277,20 @@ function burnAreaChart() {
             markDirty('hub', 'snapshot_url', snapUrl);
           }
         }
+      }
+    }
+
+    // toggleCooldownEnabled flips the Task Cooldown switch and live-enables/disables
+    // the paired period input (mirrors toggleAutoSnapshot). Marks the section dirty so
+    // Save PUTs contribute_cooldown_enabled through /api/config/governor/hub.
+    function toggleCooldownEnabled(el) {
+      el.classList.toggle('on');
+      var isOn = el.classList.contains('on');
+      markDirty('hub', 'contribute_cooldown_enabled', isOn);
+      var hoursInput = document.getElementById('hub-cooldown-hours');
+      if (hoursInput) {
+        hoursInput.disabled = !isOn;
+        hoursInput.style.opacity = isOn ? '1' : '0.5';
       }
     }
 
