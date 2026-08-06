@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -117,6 +118,48 @@ func TestIssueRequestWatcherCreatesNovelIssueAndReusesExactRetry(t *testing.T) {
 	}
 	if created != 1 {
 		t.Fatalf("cross-agent exact retry caused %d creates, want one", created)
+	}
+}
+
+func TestIssueRequestWatcherFindsExactRetryBeyondOneThousandOpenIssues(t *testing.T) {
+	created := 0
+	requests := 0
+	req := IssueRequest{Repo: "o/r", Agent: "scanner", Title: "novel", Body: "A new failure in `src/new.ts`."}
+	marker := agentFindingMarker(req)
+	var server *httptest.Server
+	client, server := newIssueRequestTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			requests++
+			page := r.URL.Query().Get("page")
+			if page == "11" {
+				body, _ := json.Marshal(marker)
+				_, _ = fmt.Fprintf(w, `[{"number":41,"html_url":"https://github.com/o/r/issues/41","title":"novel","body":%s}]`, body)
+				return
+			}
+			nextPage := requests + 1
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/o/r/issues?page=%d&per_page=100>; rel="next"`, server.URL, nextPage))
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+	dir := withIssueRequestDir(t)
+	path, err := WriteIssueRequest(dir, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.ProcessIssueRequestsOnce(context.Background())
+	result := readIssueResponse(t, path)
+	if !result.OK || !result.AlreadyExisted || result.Number != 41 {
+		t.Fatalf("exact retry beyond page ten was not reused: %+v", result)
+	}
+	if created != 0 || requests != 11 {
+		t.Fatalf("pagination created=%d requests=%d, want 0 and 11", created, requests)
 	}
 }
 

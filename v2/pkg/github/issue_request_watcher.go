@@ -190,7 +190,13 @@ func (c *Client) createOrReuseAgentIssue(ctx context.Context, req IssueRequest, 
 		return 0, "", false, false, err
 	}
 	var open []*gh.Issue
-	for page := 1; page <= 10; page++ {
+	page := 1
+	seenPages := map[int]bool{}
+	for {
+		if page <= 0 || seenPages[page] {
+			return 0, "", false, false, fmt.Errorf("list open issues before create: invalid pagination cycle at page %d", page)
+		}
+		seenPages[page] = true
 		issues, response, err := c.client.Issues.ListByRepo(ctx, owner, repo, &gh.IssueListByRepoOptions{
 			State: "open", ListOptions: gh.ListOptions{Page: page, PerPage: 100},
 		})
@@ -205,6 +211,7 @@ func (c *Client) createOrReuseAgentIssue(ctx context.Context, req IssueRequest, 
 		if response == nil || response.NextPage == 0 {
 			break
 		}
+		page = response.NextPage
 	}
 	for _, issue := range open {
 		if strings.Contains(issue.GetBody(), marker) {
