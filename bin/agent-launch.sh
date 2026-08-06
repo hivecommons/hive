@@ -20,10 +20,16 @@ set -euo pipefail
 # Agents share /data/home/.copilot — umask 007 ensures new files are group-rw.
 umask 007
 
-# Source hive-config.sh to make HIVE_GITHUB_TOKEN available for gh wrapper.
+# Source hive-config.sh for project/health/outreach config the agent env needs.
 # Do NOT export GH_TOKEN here — Copilot CLI uses GH_TOKEN for its own Copilot
-# API auth, which rejects GitHub App server-to-server tokens. The gh wrapper
-# (/usr/local/bin/gh) injects HIVE_GITHUB_TOKEN on a per-call basis instead.
+# API auth, which rejects GitHub App server-to-server tokens.
+#
+# SECURITY (audit H3 follow-up, CWE-522): sourcing hive-config.sh sets
+# HIVE_GITHUB_TOKEN (the shared FULL installation token) in this process env.
+# Agents must never carry the full token — they use ONLY their per-agent SCOPED
+# token via the gh wrapper (HIVE_AGENT_TOKEN_CACHE → gh-token-<agent>.cache).
+# Unset the full-token env immediately after sourcing, and do NOT re-export it
+# to the CLI below, so it cannot leak into the agent CLI or its children.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HIVE_CONFIG="${SCRIPT_DIR}/hive-config.sh"
 if [[ -f "$HIVE_CONFIG" ]]; then
@@ -32,6 +38,7 @@ elif [[ -f /usr/local/bin/hive-config.sh ]]; then
   source /usr/local/bin/hive-config.sh
 fi
 unset GH_TOKEN
+unset HIVE_GITHUB_TOKEN
 
 # Export agent identity so the gh wrapper can load per-agent restrictions.
 # AGENT_SESSION_NAME is set by the supervisor from the agent's .env file.
@@ -40,7 +47,10 @@ export HIVE_AGENT_ID="${AGENT_SESSION_NAME:-unknown}"
 # Re-export HIVE_ env vars so child processes (gh, etc.) inherit them.
 # These are set as inline prefixes by the Go binary (e.g. HIVE_ACMM_LEVEL=2 agent-launch.sh ...)
 # and need to be exported for gh-wrapper ACMM enforcement to work.
-for var in HIVE_AGENT HIVE_AGENT_DISPLAY_NAME HIVE_ACMM_LEVEL HIVE_ID HIVE_SHA HIVE_ADVISORY_ISSUE HIVE_GITHUB_TOKEN; do
+# NOTE: HIVE_GITHUB_TOKEN (the shared full installation token) is deliberately
+# NOT in this list — agents authenticate with their per-agent SCOPED token via
+# the gh wrapper, never the full token (audit H3 follow-up).
+for var in HIVE_AGENT HIVE_AGENT_DISPLAY_NAME HIVE_ACMM_LEVEL HIVE_ID HIVE_SHA HIVE_ADVISORY_ISSUE; do
   [[ -n "${!var:-}" ]] && export "$var"
 done
 

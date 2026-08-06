@@ -817,6 +817,17 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	for _, p := range m.agentEnvPairs(agent) {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
 	}
+	// Strip the shared FULL installation token (HIVE_GITHUB_TOKEN) from EVERY
+	// agent session (audit H3 follow-up, CWE-522). The hive process env carries
+	// HIVE_GITHUB_TOKEN (exported by entrypoint.sh from the full-token cache, and
+	// legitimately read by the hive itself as a config fallback), and a tmux
+	// server started by this process inherits that env — so without this strip it
+	// would leak into every pane the server forks, handing agents the full-
+	// privilege installation token. Agents must use ONLY their per-agent SCOPED
+	// token (gh-token-<agent>.cache via HIVE_AGENT_TOKEN_CACHE + the gh wrapper),
+	// so unset the full-token env in the session for all agents regardless of
+	// push capability. This does not touch the hive process env.
+	_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "HIVE_GITHUB_TOKEN").Run()
 	// Strip gh/git tokens from advisory agent sessions.
 	if !m.agentMode(agent).CanPush() {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GH_TOKEN").Run()
