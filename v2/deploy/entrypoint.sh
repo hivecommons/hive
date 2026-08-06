@@ -46,7 +46,16 @@ export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
 # losing owner customisations with no warning. The old name is picked up
 # read-only until the first save writes the new one, after which both
 # exist and the new one wins.
-HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+# Preserve the operator-provided/seed path across the root -> dev re-exec.
+# HIVE_CONFIG may be changed below to the durable PVC fallback. Without a
+# separate immutable value, the second entrypoint pass mistakes that fallback
+# for the original path, leaves the image CMD's --config flag in place, and the
+# Go process keeps reading the read-only ConfigMap seed.
+if [ -z "${HIVE_ENTRYPOINT_CONFIG_PATH:-}" ]; then
+  HIVE_ENTRYPOINT_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+  export HIVE_ENTRYPOINT_CONFIG_PATH
+fi
+HIVE_CONFIG_PATH="$HIVE_ENTRYPOINT_CONFIG_PATH"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
 
