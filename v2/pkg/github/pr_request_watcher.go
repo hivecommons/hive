@@ -178,6 +178,10 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
 	}
+	if !c.managesRepository(req.Repo) {
+		c.denyPRRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
+		return
+	}
 
 	// AUTHORIZE before opening — the watcher must enforce the SAME policy as the
 	// direct `gh pr create` path: the request's agent must own the file (an agent

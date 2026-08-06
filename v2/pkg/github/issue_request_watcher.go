@@ -123,7 +123,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		_ = os.Rename(path, path+".bad")
 		return
 	}
-	if !c.managesIssueRequestRepository(req.Repo) {
+	if !c.managesRepository(req.Repo) {
 		c.denyIssueRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
 		return
 	}
@@ -169,7 +169,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		slog.Bool("reused", reused), slog.Bool("managed_dedupe", managed), slog.String("agent", req.Agent))
 }
 
-func (c *Client) managesIssueRequestRepository(requested string) bool {
+func (c *Client) managesRepository(requested string) bool {
 	requestedOwner, requestedRepository, err := splitFullRepository(requested)
 	if err != nil {
 		return false
