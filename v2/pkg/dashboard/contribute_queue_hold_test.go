@@ -126,10 +126,11 @@ func TestQueueHoldEndpointPersistsRoundTrip(t *testing.T) {
 	// Pre-seed with a malformed/duplicate straggler to prove sanitisation.
 	deps.Config.Hub.ContributeQueueHold = []string{"not a key", "acme/repo#9", "acme/repo#9"}
 
-	// Hold acme/repo#4.
+	// Hold acme/repo#4 (owner role — mutation gate fails closed on missing role, C5).
 	req := httptest.NewRequest(http.MethodPost, "/api/contribute/queue/hold",
 		strings.NewReader(`{"key":"acme/repo#4","held":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -151,6 +152,7 @@ func TestQueueHoldEndpointPersistsRoundTrip(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/contribute/queue/hold",
 		strings.NewReader(`{"key":"acme/repo#4","held":false}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -185,7 +187,7 @@ func TestQueueHoldEndpointRoleGate(t *testing.T) {
 		{"read", http.StatusForbidden},
 		{"owner", http.StatusOK},
 		{"read-write", http.StatusOK},
-		{"", http.StatusOK}, // absent header = local/dev owner
+		{"", http.StatusForbidden}, // C5: absent header fails closed (NOT owner)
 	}
 	for _, tc := range cases {
 		t.Run("role_"+tc.role, func(t *testing.T) {
@@ -213,6 +215,7 @@ func TestQueueHoldEndpointRejectsBadKey(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/contribute/queue/hold",
 		strings.NewReader(`{"key":"not a canonical key","held":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner") // pass the write gate to reach key validation (C5)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {

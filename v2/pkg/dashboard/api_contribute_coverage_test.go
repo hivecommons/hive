@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -17,6 +18,45 @@ func covContribServer(t *testing.T) *Server {
 	s := NewServer(0, logger)
 	s.RegisterAPI(testDeps(t))
 	return s
+}
+
+// doPutOwner / doPostOwner / doDeleteOwner mirror doPut/doPost/doDelete but attach
+// an owner X-Hive-Role. The contributor mutation endpoints fail closed on a missing
+// role (C5 fix in requireContributorWrite), so a test exercising their success/
+// 404/400 logic must present an authorized role.
+func doPutOwner(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(body)
+	req := httptest.NewRequest(http.MethodPut, path, &b)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func doPostOwner(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(body)
+	req := httptest.NewRequest(http.MethodPost, path, &b)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func doDeleteOwner(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	var b bytes.Buffer
+	if body != nil {
+		json.NewEncoder(&b).Encode(body)
+	}
+	req := httptest.NewRequest(http.MethodDelete, path, &b)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner")
+	s.mux.ServeHTTP(rec, req)
+	return rec
 }
 
 // seedContributor writes a profile JSON into a temp contributors dir and points
@@ -114,19 +154,19 @@ func TestCovH_ContributorTrust(t *testing.T) {
 	s := covContribServer(t)
 
 	// Unknown contributor → 404.
-	rec := doPut(s, "/api/contributors/nope/trust", map[string]string{"tier": "trusted"})
+	rec := doPutOwner(s, "/api/contributors/nope/trust", map[string]string{"tier": "trusted"})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("trust unknown: expected 404, got %d", rec.Code)
 	}
 
 	// Invalid tier → 400.
-	rec = doPut(s, "/api/contributors/c-carol/trust", map[string]string{"tier": "bogus"})
+	rec = doPutOwner(s, "/api/contributors/c-carol/trust", map[string]string{"tier": "bogus"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("trust invalid tier: expected 400, got %d", rec.Code)
 	}
 
 	// Valid tier → 200.
-	rec = doPut(s, "/api/contributors/c-carol/trust", map[string]string{"tier": "trusted"})
+	rec = doPutOwner(s, "/api/contributors/c-carol/trust", map[string]string{"tier": "trusted"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trust valid: expected 200, got %d", rec.Code)
 	}
@@ -137,18 +177,18 @@ func TestCovH_ContributorRevokeAndDelete(t *testing.T) {
 	s := covContribServer(t)
 
 	// Revoke unknown → 404, known → 200.
-	if rec := doPost(s, "/api/contributors/nope/revoke", nil); rec.Code != http.StatusNotFound {
+	if rec := doPostOwner(s, "/api/contributors/nope/revoke", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("revoke unknown: expected 404, got %d", rec.Code)
 	}
-	if rec := doPost(s, "/api/contributors/c-dave/revoke", nil); rec.Code != http.StatusOK {
+	if rec := doPostOwner(s, "/api/contributors/c-dave/revoke", nil); rec.Code != http.StatusOK {
 		t.Fatalf("revoke known: expected 200, got %d", rec.Code)
 	}
 
 	// Delete unknown → 404, known → 200.
-	if rec := doDelete(s, "/api/contributors/nope", nil); rec.Code != http.StatusNotFound {
+	if rec := doDeleteOwner(s, "/api/contributors/nope", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("delete unknown: expected 404, got %d", rec.Code)
 	}
-	if rec := doDelete(s, "/api/contributors/c-dave", nil); rec.Code != http.StatusOK {
+	if rec := doDeleteOwner(s, "/api/contributors/c-dave", nil); rec.Code != http.StatusOK {
 		t.Fatalf("delete known: expected 200, got %d", rec.Code)
 	}
 }

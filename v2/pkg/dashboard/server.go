@@ -1007,7 +1007,16 @@ func isPublicPath(path string) bool {
 		return true
 	case path == "/contribute" || strings.HasPrefix(path, "/contribute/"):
 		return true
-	case strings.HasPrefix(path, "/api/contribute"):
+	case path == "/api/contribute" || strings.HasPrefix(path, "/api/contribute/"):
+		// SECURITY (C5): match ONLY the contribute flow (/api/contribute and its
+		// subtree /api/contribute/...), NOT the sibling admin routes under
+		// /api/contributors/... (trust/revoke/requeue/delete). A bare HasPrefix
+		// of "/api/contribute" also matched "/api/contributors/..." because the
+		// letters after the prefix ("rs/...") don't start with a boundary — so
+		// those mutation routes were exempted from authenticate entirely and were
+		// reachable anonymously on OpenShift Routes / in-cluster (no auth proxy).
+		// The trailing-slash boundary excludes /api/contributors while keeping the
+		// real public routes (register, the WS upgrade, status, etc.) public.
 		return true
 	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
 		return true
@@ -1159,7 +1168,14 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 		w.Header().Set("X-Hive-Role", role)
 		w.Header().Set("X-Hive-User", r.Header.Get("X-Hive-User"))
 		if role == "read" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !strings.HasPrefix(r.URL.Path, "/api/contribute") && r.URL.Path != "/api/gh-user-auth/status" {
+			// SECURITY (C5): use the same trailing-slash boundary as isPublicPath so
+			// the read-only write-gate exemption covers ONLY the contribute flow
+			// (/api/contribute[/...]) and NOT the /api/contributors/... admin
+			// mutation routes. A bare HasPrefix("/api/contribute") also matched
+			// "/api/contributors/...", letting a "read" viewer promote/revoke/delete
+			// contributors past this gate.
+			isContributeFlow := r.URL.Path == "/api/contribute" || strings.HasPrefix(r.URL.Path, "/api/contribute/")
+			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return
 			}

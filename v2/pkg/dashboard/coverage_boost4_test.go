@@ -695,6 +695,7 @@ func TestHandleContributorTrust_UserNotFound(t *testing.T) {
 	body := `{"username":"nonexistent","tier":"contributor"}`
 	req := httptest.NewRequest("PUT", "/api/contribute/trust", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner") // mutation gate fails closed on a missing role (C5)
 	w := httptest.NewRecorder()
 	srv.handleContributorTrust(w, req)
 

@@ -162,7 +162,7 @@ func TestQueueOrderEndpointRoleGate(t *testing.T) {
 		{"read", http.StatusForbidden},
 		{"owner", http.StatusOK},
 		{"read-write", http.StatusOK},
-		{"", http.StatusOK}, // absent header = local/dev owner
+		{"", http.StatusForbidden}, // C5: absent header fails closed (NOT owner)
 	}
 	for _, tc := range cases {
 		t.Run("role_"+tc.role, func(t *testing.T) {
@@ -191,6 +191,7 @@ func TestQueueOrderEndpointPersistsAndSanitizes(t *testing.T) {
 	body := `{"order":["acme/repo#4"," acme/repo#2 ","not a key","acme/repo#4","","acme/repo#7"]}`
 	req := httptest.NewRequest(http.MethodPut, "/api/contribute/queue/order", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner") // mutation gate fails closed on missing role (C5)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

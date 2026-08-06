@@ -190,9 +190,12 @@ func TestContributorWrite_ReadViewerForbidden(t *testing.T) {
 }
 
 // TestContributorWrite_OwnerAndRWAllowed proves owner and read-write pass the gate
-// (they are not blocked), and that an absent header falls back to owner (local/dev).
+// (they are not blocked). SECURITY (C5): an absent/empty role is NO LONGER allowed
+// here — the gate now fails closed on a missing role (see
+// TestContributorWrite_MissingRoleForbidden), because an absent header is exactly
+// what an unauthenticated caller reaching the pod directly presents.
 func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
-	for _, role := range []string{"owner", "read-write", ""} {
+	for _, role := range []string{"owner", "read-write"} {
 		t.Run("trust_"+role, func(t *testing.T) {
 			setupContributeEnv(t)
 			if err := saveContributorProfile(&ContributorProfile{
@@ -218,6 +221,109 @@ func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
 				t.Errorf("role %q: tier not promoted: %+v", role, p)
 			}
 		})
+	}
+}
+
+// TestContributorWrite_MissingRoleForbidden pins the C5 fail-closed fix: a request
+// with NO X-Hive-Role header (exactly what an unauthenticated caller reaching the
+// pod directly presents) must be REJECTED with 403 on every contributor mutation
+// endpoint, and must not mutate anything. Before the fix an absent header defaulted
+// to "owner", so anonymous callers could promote/revoke/delete/requeue contributors.
+func TestContributorWrite_MissingRoleForbidden(t *testing.T) {
+	for _, tc := range contributorWriteCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContributeEnv(t)
+			if err := saveContributorProfile(&ContributorProfile{
+				GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "newcomer",
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s := NewServer(0, slog.Default())
+			s.registerContributeRoutes()
+
+			var reqBody *strings.Reader
+			if tc.body != "" {
+				reqBody = strings.NewReader(tc.body)
+			} else {
+				reqBody = strings.NewReader("")
+			}
+			req := httptest.NewRequest(tc.method, tc.target, reqBody)
+			// Deliberately set NO X-Hive-Role header.
+			w := httptest.NewRecorder()
+			tc.invoke(s, w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("missing-role request got %d, want 403 (body: %s)", w.Code, w.Body.String())
+			}
+			if p := findContributor("c-alice"); p == nil || p.TrustTier != "newcomer" {
+				t.Errorf("missing-role request mutated the profile: %+v", p)
+			}
+		})
+	}
+}
+
+// TestContributorAdminRoutes_AnonymousDenied_ContributeFlowReachable is the
+// end-to-end C5 regression, driven through the full Handler() middleware chain on a
+// spoke that HAS an auth boundary (a shared authToken, i.e. a hosted/direct-route
+// hive — not local/dev). It proves:
+//
+//  1. The /api/contributors/{id}/... admin mutation routes are NOT public: an
+//     anonymous caller is stopped by authenticate() with 401. Before the fix the
+//     bare HasPrefix("/api/contribute") in isPublicPath also matched
+//     "/api/contributors/...", exempting these routes from auth entirely.
+//  2. The real contribute-flow public routes stay reachable (NOT 401): the WS
+//     upgrade path and POST /api/contribute/register still transit auth as public.
+func TestContributorAdminRoutes_AnonymousDenied_ContributeFlowReachable(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{
+		GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "newcomer",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s := NewServer(0, slog.Default())
+	s.authToken = "shared-secret-token" // gives the spoke a real auth boundary
+	s.registerContributeRoutes()
+	h := s.Handler()
+
+	// 1. Anonymous (no auth, no role) mutation attempts must be blocked by auth.
+	adminMutations := []struct {
+		name, method, path, body string
+	}{
+		{"trust", http.MethodPut, "/api/contributors/alice/trust", `{"tier":"trusted"}`},
+		{"revoke", http.MethodPost, "/api/contributors/alice/revoke", ``},
+		{"requeue", http.MethodPost, "/api/contributors/alice/requeue", ``},
+		{"delete", http.MethodDelete, "/api/contributors/alice", ``},
+	}
+	for _, m := range adminMutations {
+		t.Run("anon_"+m.name, func(t *testing.T) {
+			req := httptest.NewRequest(m.method, m.path, strings.NewReader(m.body))
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			// Must be denied — 401 (blocked at authenticate) or 403 (in-handler gate).
+			if w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden {
+				t.Fatalf("anonymous %s %s got %d, want 401/403 (body: %s)", m.method, m.path, w.Code, w.Body.String())
+			}
+		})
+	}
+	// The anonymous attempts must not have mutated the profile.
+	if p := findContributor("c-alice"); p == nil || p.TrustTier != "newcomer" {
+		t.Errorf("anonymous admin calls mutated the profile: %+v", p)
+	}
+
+	// 2. The genuine public contribute-flow routes must NOT be blocked by auth.
+	//    A 401 here would mean the boundary fix over-narrowed and broke onboarding.
+	regReq := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(`{}`))
+	regW := httptest.NewRecorder()
+	h.ServeHTTP(regW, regReq)
+	if regW.Code == http.StatusUnauthorized {
+		t.Errorf("public POST /api/contribute/register got 401 — the boundary fix broke onboarding")
+	}
+
+	wsReq := httptest.NewRequest(http.MethodGet, "/api/contribute/ws", nil)
+	wsW := httptest.NewRecorder()
+	h.ServeHTTP(wsW, wsReq)
+	if wsW.Code == http.StatusUnauthorized {
+		t.Errorf("public GET /api/contribute/ws got 401 — the WS upgrade path must stay public")
 	}
 }
 

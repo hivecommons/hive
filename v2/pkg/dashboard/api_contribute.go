@@ -5175,21 +5175,24 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 // contributor mutation endpoints (trust/revoke/delete) that the Management &
 // Operations tab surfaces as admin controls.
 //
-// These handlers live under the /api/contributors/... path. That path shares
-// the "/api/contribute" prefix that roleEnforcement (server.go) intentionally
-// EXEMPTS from its blanket read-only block — that exemption exists so a signed-in
-// contributor can still register/onboard themselves. As a result the middleware
-// does NOT stop a "read" viewer from calling these mutation endpoints, so each
-// mutation handler must enforce the boundary itself. This mirrors the in-handler
-// role check used by handleConfigDownload / handleSelfUpgrade: read X-Hive-Role,
-// treat an absent header as owner (local/dev, no hub nginx), and reject "read".
-// UI hiding on the ops tab is UX; this is the security boundary.
+// These handlers live under the /api/contributors/... path. Each mutation handler
+// must enforce the write boundary itself, because these routes are otherwise only
+// as protected as the surrounding auth layer — and on a direct OpenShift Route or
+// in-cluster (no hub nginx, no NetworkPolicy) there is NO auth layer in front.
+//
+// SECURITY (C5): FAIL CLOSED. An absent/empty X-Hive-Role is treated as NOT
+// authorized (deny), not as owner. The previous code defaulted an absent header to
+// "owner" for "local/dev, no hub nginx" convenience — but that same absence is
+// exactly what an anonymous caller hitting the pod directly (bypassing the hub
+// nginx that would otherwise inject the header) presents. Combined with the
+// prefix-match bug that exempted /api/contributors/... from authentication, an
+// unauthenticated caller could promote/revoke/delete/requeue contributors. Only an
+// explicit owner/read-write role may mutate; everything else (absent, "read", or
+// any unrecognized value) is rejected. UI hiding on the ops tab is UX; this is the
+// security boundary.
 func (s *Server) requireContributorWrite(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role == "read" {
+	if role != config.RoleOwner && role != config.RoleReadWrite {
 		jsonError(w, "your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.", http.StatusForbidden)
 		return false
 	}

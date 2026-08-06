@@ -152,8 +152,10 @@ func TestWSAuthRevoked(t *testing.T) {
 	var reg map[string]string
 	json.Unmarshal(w.Body.Bytes(), &reg)
 
-	// Revoke
+	// Revoke (owner role required — the mutation endpoint fails closed on a
+	// missing role, see requireContributorWrite / C5 fix).
 	revokeReq := httptest.NewRequest(http.MethodPost, "/api/contributors/"+reg["contributor_id"]+"/revoke", nil)
+	revokeReq.Header.Set("X-Hive-Role", "owner")
 	revokeW := httptest.NewRecorder()
 	s.mux.ServeHTTP(revokeW, revokeReq)
 
