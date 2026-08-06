@@ -265,12 +265,15 @@ func TestRepairedHostReachesSpokeViaHeartbeat(t *testing.T) {
 		t.Fatalf("expected no push before the host is recorded, got %+v", pc)
 	}
 
-	// A HEALTHY spoke positively reporting the GHE forge records the host — the
-	// per-hive evidence path that replaced the cluster-default fill.
+	// A WORKING spoke coherently reporting the GHE forge — GHE urls, the GHE
+	// App, a live installation — backfills the still-empty host: the per-hive
+	// evidence path that replaced the cluster-default fill. (Urls alone no
+	// longer qualify: they are exactly what a mis-delivery leaves behind.)
 	if !s.reconcileGitHubHostFromSpoke(&HeartbeatPayload{
 		HiveID: h.ID, ClusterID: defaultClusterID, GitHubHost: gheTestHost, GitHubAPIURL: gheTestAPIURL,
+		GitHubAppID: testGHEAppID, GitHubInstallationID: 42,
 	}) {
-		t.Fatal("a healthy spoke's positive GHE report did not record the host")
+		t.Fatal("a working spoke's coherent GHE report did not backfill the empty host")
 	}
 
 	// After the repair the very next heartbeat must carry the GHE API URL.

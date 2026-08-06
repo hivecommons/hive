@@ -793,8 +793,10 @@ func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
 //   - assign/approve record github_host from the pasted org URL (and
 //     backfillGitHubHostFromCluster fills it ONCE, at claim time, for legacy
 //     requests that named no host);
-//   - reconcileGitHubHostFromSpoke adopts the forge a HEALTHY spoke positively
-//     reports it runs;
+//   - reconcileGitHubHostFromSpoke backfills an EMPTY github_host from a spoke
+//     whose whole github block coherently, workingly names a forge — it never
+//     overwrites an explicit record (a spoke's report is downstream of hub
+//     delivery, so a contradiction is a mis-delivery echo, not evidence);
 //   - repairMisflippedForgeFromRequest (below) restores a github_host the
 //     cluster-keyed guard stomped, from the provision request's own record;
 //   - the wrong-forge identity repair (decideAppKeySync /
@@ -907,28 +909,51 @@ func spokeAppAuthFailing(payload *HeartbeatPayload) bool {
 	return false
 }
 
-// reconcileGitHubHostFromSpoke repairs a persisted github_host that is not merely
-// BLANK but WRONG, using the forge the spoke actually reports it is running
-// against. It reports whether it changed anything.
+// reconcileGitHubHostFromSpoke BACKFILLS an EMPTY persisted github_host from
+// the forge a demonstrably WORKING spoke reports it is running against. It
+// reports whether it changed anything.
 //
-// Why: a hive can carry a persisted host that is set AND wrong — assigned from
-// a pasted github.com URL, or seeded with a stale record, while the repo
-// actually lives on GitHub Enterprise (vllmd-06 is the live example — meta said
-// github.com but the spoke ran api_url github.ibm.com). Nothing repaired those;
-// each needed a hand-edit.
+// THE RECORDED HOST IS THE AUTHORITY; A SPOKE'S REPORT IS DOWNSTREAM OF IT.
+// A spoke's github block is whatever the hub last delivered (plus whatever a
+// mis-delivery left behind), so a spoke report can NEVER be treated as
+// independent evidence against an explicitly recorded host — adopting it just
+// launders the hub's own mis-delivery back into the record. That laundering is
+// exactly the feedback loop observed live on 2026-08-05
+// (hosted-kalantar-msb-soft-reflect-jsro, threatened on all 9): an operator
+// restored meta github_host to github.com and the spoke to the public App;
+// this reconcile then re-adopted github.ibm.com from a freshly-booted spoke
+// still carrying the mis-delivered GHE identity — a just-booted spoke has not
+// FAILED yet, so the auth-failing stand-down alone did not protect it — and
+// with meta back at GHE the wrong-forge repair re-delivered the GHE App with
+// an installation reset on the next beat. Every hand-repair reverted within
+// minutes; all six restored metas were re-stomped within ~30 minutes.
 //
-// The spoke's OWN reported forge is authoritative: it is what the running hive is
-// actually configured against. Read it base-or-api across the two reported fields
+// So this function now writes ONLY into an EMPTY github_host. An explicit
+// recorded host that contradicts the spoke is operator/request territory: the
+// forge-switch flow (RequestedGitHubHost) and the request-based restore
+// (repairMisflippedForgeFromRequest) are the paths allowed to change a
+// recorded host, and the wrong-forge delivery repair moves the SPOKE to match
+// the record — never the record to match the spoke. The former public→GHE
+// correction of an explicitly recorded github.com host (the vllmd-06 hand-edit
+// class) is deliberately no longer automatic: it was indistinguishable, from
+// the hub's side, from the mis-delivery laundering above.
+//
+// POSITIVE EVIDENCE ONLY for the empty-host backfill — "not failing yet" is
+// not "working" (the fresh-boot gap above), so adoption requires the spoke's
+// whole github block to coherently name the observed forge AND show a live
+// installation:
+//   - the spoke's reported app_id maps to the SAME forge it reports running
+//     (forgeOfSpokeAppID — leftover urls beside another forge's App are a
+//     mis-delivery artifact, not a forge);
+//   - a NON-ZERO installation_id (a spoke mid-reset/rediscovery is not
+//     evidence);
+//   - no positively reported auth failure (spokeAppAuthFailing).
+//
+// The spoke's forge is read base-or-api across the two reported fields
 // (GitHubHost from base_url, GitHubAPIURL from api_url) so a GHE spoke with a
-// blank base_url — the common state — is still recognised as GHE.
-//
-// CONSERVATIVE, ONE DIRECTION ONLY. It repairs public→GHE: a persisted github.com
-// host that the spoke reports as a GHE host is corrected to that GHE host. It does
-// NOT demote GHE→public, because a hive legitimately pinned to public github.com
-// on a GHE cluster (the appKeyReasonPublicHiveOnGHECluster case) reports
-// github.com by design, and overwriting a GHE record from a transient public read
-// could fight that pin. A blank/unknown spoke report changes nothing (silence is
-// not a mismatch — the same rule the heartbeat fields already follow). Every
+// blank base_url — the common state — is still recognised as GHE. A
+// blank/unknown report changes nothing, and public is never adopted (an empty
+// recorded host already means public github.com for a claimed hive). Every
 // change is logged with before/after.
 func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool {
 	if s == nil || payload == nil {
@@ -970,25 +995,40 @@ func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool
 	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
 		return false
 	}
+	// AN EXPLICIT RECORDED HOST IS NEVER OVERWRITTEN FROM A SPOKE REPORT.
+	// The record (assign/approve, operator forge switch, request-based restore)
+	// is the authority; the spoke's github block is downstream of hub delivery,
+	// so a contradicting report is at best a mis-delivery echoing back — the
+	// 2026-08-05 loop that re-stomped six hand-restored metas within ~30
+	// minutes. If the record and the spoke disagree, the wrong-forge delivery
+	// repair moves the SPOKE onto the recorded forge; nothing here moves the
+	// record onto the spoke's.
+	if h.GitHubHost != "" {
+		return false
+	}
+	// EMPTY-host backfill, on positive working evidence only. "Has not failed"
+	// is not "working": a freshly-booted mis-delivered spoke reports the wrong
+	// forge's urls before its first token mint fails, so absence of a failure
+	// report proves nothing (the fresh-boot gap in the old stand-down).
+	//
 	// A BROKEN spoke's forge report is not evidence of intent. A spoke whose App
 	// auth is failing may be running a forge it was mis-delivered (the
 	// 2026-08-05 flip left 9 spokes positively reporting github.ibm.com they
 	// could not authenticate against); adopting that report would launder the
 	// mis-delivery into the hive's record and fight the restore that
-	// repairMisflippedForgeFromRequest performs. Only a spoke that is actually
-	// WORKING on the forge it reports (the vllmd-06 class this reconcile exists
-	// for) is authoritative about it.
+	// repairMisflippedForgeFromRequest performs.
 	if spokeAppAuthFailing(payload) {
 		return false
 	}
-	current := githubHostLabel(h.GitHubHost) // normalize for a like-for-like compare
-	if current == observed {
-		return false // already correct — nothing to do
+	// The whole github block must coherently name the observed forge: an App of
+	// that forge, with a live (non-zero) installation. A spoke carrying GHE urls
+	// beside the public App — or beside a freshly-reset installation_id 0 — is a
+	// mis-delivery artifact or a repair in flight, never a forge election.
+	if payload.GitHubInstallationID == 0 {
+		return false
 	}
-	// Only repair public→GHE. If the persisted host is already some other GHE host,
-	// do not overwrite it from a single beat — that is an operator concern, not a
-	// safe automatic flip.
-	if h.GitHubHost != "" && current != config.DefaultGitHubBaseURL[len("https://"):] {
+	spokeAppForge := s.forgeOfSpokeAppID(payload.GitHubAppID)
+	if spokeAppForge == "" || !sameGitHubHost(spokeAppForge, observed) {
 		return false
 	}
 	before := h.GitHubHost
@@ -998,12 +1038,14 @@ func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool
 			"hive", payload.HiveID, "error", err)
 		return false
 	}
-	s.logger.Info("github host reconcile: corrected wrong github_host from spoke-reported forge",
+	s.logger.Info("github host reconcile: backfilled empty github_host from a working spoke's coherent forge report",
 		"hive", payload.HiveID,
 		"org", h.Org,
 		"github_host_before", before,
 		"github_host_after", observed,
 		"github_api_url_reported", strings.TrimSpace(payload.GitHubAPIURL),
+		"spoke_app_id", payload.GitHubAppID,
+		"spoke_installation_id", payload.GitHubInstallationID,
 		"note", gitHubAppStillRequiredNote)
 	return true
 }

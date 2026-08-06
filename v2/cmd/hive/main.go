@@ -188,6 +188,17 @@ func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitH
 //	                     hub does not track; reading that as a clear would blank
 //	                     a working installation fleet-wide and turn a key-only
 //	                     fault into a total auth outage.
+//
+// docs_installation_id is DELIBERATELY untouched by all three cases. It is the
+// optional docs-org add-on installation, has no rediscovery flow (zero simply
+// disables the docs token refresh, permanently), and a stale value is
+// non-fatal: the periodic docs mint warns and retries. After an app-changing
+// delivery it can therefore briefly equal the PREVIOUS app's installation id —
+// which looks like the old installation_id was "parked" there, but is just the
+// provisioned docs value (public hives commonly provision both fields with the
+// same installation) surviving a reset that correctly cleared only
+// installation_id. On a flip-back to the original App it becomes valid again
+// on its own.
 func nextInstallationID(current int64, ghCfg *hub.HeartbeatGitHubAppConfig) (next int64, reset bool) {
 	if ghCfg == nil {
 		return current, false

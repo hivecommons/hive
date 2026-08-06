@@ -421,11 +421,21 @@ func TestBrokenSpokeForgeReportNotAdopted(t *testing.T) {
 	if h := loadSaaSHive("restored"); h == nil || h.GitHubHost != publicForgeHost {
 		t.Fatalf("github_host = %q, want %q", h.GitHubHost, publicForgeHost)
 	}
-	// The same report from a HEALTHY spoke still repairs public→GHE (vllmd-06).
+	// The same report from a spoke that LOOKS healthy (fresh boot: no failure
+	// reported yet) must not be adopted either — an explicit recorded host is
+	// never overwritten from a spoke report. This is the second half of the
+	// 2026-08-05 loop: the restored meta was re-stomped by a freshly-booted
+	// spoke still carrying the mis-delivered GHE identity, and the wrong-forge
+	// repair then re-delivered the GHE App against the re-stomped record.
 	payload.GitHubAppRequired = false
 	payload.GitHubAppState = ""
-	if !s.reconcileGitHubHostFromSpoke(payload) {
-		t.Fatal("a healthy spoke's positive GHE report must still be adopted (the vllmd-06 repair)")
+	payload.GitHubAppID = testGHEAppID
+	payload.GitHubInstallationID = 146551814 // stale public id a pre-atomic-set flip left behind
+	if s.reconcileGitHubHostFromSpoke(payload) {
+		t.Fatal("a spoke report overwrote an explicit github_host — the hand-repair revert loop is back")
+	}
+	if h := loadSaaSHive("restored"); h == nil || h.GitHubHost != publicForgeHost {
+		t.Fatalf("github_host = %q, want %q — the restored record must hold", h.GitHubHost, publicForgeHost)
 	}
 }
 
@@ -820,6 +830,96 @@ func TestWrongForgeRepairTargetsElectedForge(t *testing.T) {
 			t.Fatalf("an unrecognised App was 'repaired' — unknown is never a mismatch: %+v", cfg)
 		}
 	})
+}
+
+// TestHandRepairDoesNotRevert pins the FULL 2026-08-05 feedback loop closed, as
+// observed on hosted-kalantar-msb-soft-reflect-jsro:
+//
+//  1. operator restores hub meta github_host -> github.com and the spoke to the
+//     public App;
+//  2. the spoke reboots (or beats) still carrying — or re-delivered — the GHE
+//     identity, and reports it BEFORE its first token mint fails, so it looks
+//     healthy; reconcileGitHubHostFromSpoke re-stomped meta back to
+//     github.ibm.com from that report;
+//  3. with meta back at GHE and the spoke on the public App, the EPM-class
+//     wrong-forge branch fired and re-delivered the GHE identity with an
+//     installation reset.
+//
+// Every hand-repair reverted within minutes; all six restored metas were
+// re-stomped within ~30 minutes. The loop must be broken at step 2 (a spoke
+// report never overwrites an explicit meta host) while step 3's delivery — now
+// derived from the intact meta — moves the SPOKE back to public instead.
+func TestHandRepairDoesNotRevert(t *testing.T) {
+	withTempAppKeyDir(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	storeKeyFor(t, "vllm-d")
+
+	s := &HubServer{
+		logger:   appKeyTestLogger(),
+		clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+	}
+	// The hand-restored record: meta explicitly public.
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "kalantar", Status: statusAssigned, ClusterID: "vllm-d",
+		Org: "kalantar", GitHubHost: publicForgeHost,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 2's beat: a freshly-booted spoke still on the mis-delivered GHE
+	// identity — GHE urls, the cluster's App, a leftover non-zero installation —
+	// reporting NO failure yet (its first github call has not happened).
+	freshBootGHE := &HeartbeatPayload{
+		HiveID:               "kalantar",
+		ClusterID:            "vllm-d",
+		GitHubHost:           identGHEHost,
+		GitHubAPIURL:         identGHEAPIURL,
+		GitHubBaseURL:        identGHEBaseURL,
+		GitHubAppID:          testGHEAppID,
+		GitHubInstallationID: 146551814,
+	}
+
+	// The record must hold against the full heartbeat repair surface.
+	if s.reconcileGitHubHostFromSpoke(freshBootGHE) {
+		t.Fatal("a fresh-boot spoke report overwrote the hand-restored github_host — the revert loop's step 2")
+	}
+	s.repairMisflippedForgeFromRequest(freshBootGHE)
+	if h := loadSaaSHive("kalantar"); h == nil || h.GitHubHost != publicForgeHost {
+		t.Fatalf("github_host = %q, want %q — the hand-repair reverted", h.GitHubHost, publicForgeHost)
+	}
+
+	// And the SAME beat's delivery must move the spoke back to public — never
+	// re-deliver the GHE identity (the loop's step 3).
+	cfg := s.appKeySyncForHeartbeat(freshBootGHE)
+	if cfg == nil {
+		t.Fatal("no delivery — the mis-flipped spoke must be moved back onto the public App")
+	}
+	if cfg.AppID == testGHEAppID {
+		t.Fatalf("the GHE identity was re-delivered against a public meta — the loop's step 3: %+v", cfg)
+	}
+	if cfg.AppID != testPublicAppID || !cfg.ResetInstallation || cfg.InstallationID != 0 {
+		t.Fatalf("want the public App %d with an installation reset, got %+v", testPublicAppID, cfg)
+	}
+
+	// Once the spoke converges on the public identity, everything goes quiet:
+	// no further delivery, and its public report never touches the record.
+	converged := &HeartbeatPayload{
+		HiveID:               "kalantar",
+		ClusterID:            "vllm-d",
+		GitHubAppID:          testPublicAppID,
+		GitHubInstallationID: 146551814, // rediscovery re-adopted the old public installation
+	}
+	if s.reconcileGitHubHostFromSpoke(converged) {
+		t.Error("a converged public report rewrote the record")
+	}
+	if cfg := s.appKeySyncForHeartbeat(converged); cfg != nil && (cfg.AppID != 0 || cfg.ResetInstallation) {
+		t.Errorf("a converged spoke was pushed an identity change: %+v", cfg)
+	}
+	if h := loadSaaSHive("kalantar"); h == nil || h.GitHubHost != publicForgeHost {
+		t.Fatalf("github_host = %q after convergence, want %q", h.GitHubHost, publicForgeHost)
+	}
 }
 
 // TestForgeAppsAcrossFleetForgeMapShape proves a forge declared only in the

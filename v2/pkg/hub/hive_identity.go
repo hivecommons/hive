@@ -177,7 +177,8 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	// forge). A claimed hive's forge comes only from its own recorded host —
 	// and a genuinely-GHE hive always has one: assign records it from the pasted
 	// org URL, backfillGitHubHostFromCluster fills it at claim time, and
-	// reconcileGitHubHostFromSpoke adopts it from a healthy spoke's own report.
+	// reconcileGitHubHostFromSpoke backfills a still-empty record from a
+	// coherently working spoke's own report.
 	if elected == "" && hiveClaimed(h) {
 		elected = publicForgeHost
 	}
