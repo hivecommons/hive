@@ -21,7 +21,14 @@ const (
 	tokenRefreshBuffer = 20 * time.Minute
 	TokenCachePath     = "/var/run/hive-metrics/gh-app-token.cache"
 	DocsTokenCachePath = "/var/run/hive-metrics/gh-app-token-docs.cache"
-	tokenCachePerms    = 0o640
+	// tokenCachePerms guards the SHARED, FULL-privilege installation-token cache
+	// (TokenCachePath / DocsTokenCachePath). It MUST stay owner-only (0600): the
+	// hive process runs as the "dev" user, and every agent UID is a member of the
+	// shared "node" group, so anything group-readable here would hand every agent
+	// the full-privilege installation token and defeat the per-agent scoped-token
+	// scheme entirely (audit H3, CWE-522/732). Per-agent scoped caches are a
+	// SEPARATE path and use agentTokenCachePerms — do not conflate the two.
+	tokenCachePerms = 0o600
 
 	// Per-agent scoped token caches. entrypoint.sh pre-creates each file as
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in

@@ -101,31 +101,24 @@ else
   fi
 fi
 
-TOKEN_FILE="/var/run/hive-metrics/gh-app-token.cache"
-CACHE_MAX_AGE_SECONDS=3300
-
-refresh_token() {
-  if [ -x /usr/local/bin/gh-app-token.sh ]; then
-    /usr/local/bin/gh-app-token.sh >/dev/null 2>&1 || true
-  fi
-}
-
-# Per-agent scoped token takes priority (Phase 4 — least-privilege).
+# Per-agent scoped token ONLY (Phase 4 — least-privilege).
+#
+# SECURITY (audit H3, CWE-522/732): this helper deliberately has NO fallback to
+# the shared full-privilege installation-token cache
+# (/var/run/hive-metrics/gh-app-token.cache). That cache holds the FULL
+# installation token; handing it to an agent's git push would silently escalate
+# the agent to full privilege and defeat per-agent tier scoping. When the
+# per-agent scoped token is absent we FAIL LOUD (exit 1 → git falls through to
+# its normal "no credential" error) so the operator repairs token delivery,
+# rather than quietly escalating. The scoped cache is minted and kept fresh by
+# the hive, so this helper only reads it — it never refreshes the shared cache.
 AGENT_TOKEN_FILE="${HIVE_AGENT_TOKEN_CACHE:-}"
-if [ -n "$AGENT_TOKEN_FILE" ] && [ -f "$AGENT_TOKEN_FILE" ]; then
-  TOKEN_FILE="$AGENT_TOKEN_FILE"
-else
-  if [ ! -f "$TOKEN_FILE" ]; then
-    refresh_token
-  fi
-
-  if [ -f "$TOKEN_FILE" ]; then
-    cache_age=$(( $(date +%s) - $(stat -c %Y "$TOKEN_FILE" 2>/dev/null || echo 0) ))
-    if [ "$cache_age" -gt "$CACHE_MAX_AGE_SECONDS" ]; then
-      refresh_token
-    fi
-  fi
+if [ -z "$AGENT_TOKEN_FILE" ] || [ ! -f "$AGENT_TOKEN_FILE" ]; then
+  echo "⛔ git push blocked: per-agent scoped GitHub token not available (${AGENT_TOKEN_FILE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
+  echo "⛔ Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3). Report this to the operator so token delivery is repaired." >&2
+  exit 1
 fi
+TOKEN_FILE="$AGENT_TOKEN_FILE"
 
 TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
 if [ -z "$TOKEN" ]; then

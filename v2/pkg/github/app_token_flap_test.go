@@ -168,3 +168,49 @@ func TestToken_TransientThenRecoveryDoesNotFlap(t *testing.T) {
 		t.Errorf("recovery poll token = %q, want fresh-token", tok)
 	}
 }
+
+// TestToken_SharedCacheIsOwnerOnly locks in audit H3 (CWE-522/732): the SHARED,
+// full-privilege installation-token cache (TokenCachePath / DocsTokenCachePath,
+// written by Token() with tokenCachePerms) MUST be owner-only 0600. The hive
+// process runs as "dev" and every agent UID is in the shared "node" group, so
+// any group/other read bit here would leak the full installation token to every
+// agent and defeat per-agent tier scoping. The per-agent scoped caches are a
+// SEPARATE path (WriteAgentToken / agentTokenCachePerms) and are intentionally
+// 0640 dev:hive-<agent>; this test guards only the shared cache.
+func TestToken_SharedCacheIsOwnerOnly(t *testing.T) {
+	key, _ := generateTestKey(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"fresh-token","expires_at":"` +
+			time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`))
+	}))
+	defer server.Close()
+
+	cachePath := t.TempDir() + "/gh-app-token.cache"
+	auth := &AppAuth{
+		appID:          1,
+		installationID: 2,
+		key:            key,
+		logger:         quietLogger(),
+		apiURL:         server.URL,
+		cachePath:      cachePath,
+		// No cached token → the first call mints and writes the cache.
+	}
+
+	if _, err := auth.Token(context.Background()); err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+
+	info, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("stat shared cache: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("shared full-token cache mode = %o, want 0600 (audit H3: must NOT be readable by the shared 'node' group)", got)
+	}
+	// Belt-and-suspenders: assert no group/other bits regardless of the exact mode.
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Errorf("shared full-token cache mode %o leaks read/write beyond the owner", info.Mode().Perm())
+	}
+}

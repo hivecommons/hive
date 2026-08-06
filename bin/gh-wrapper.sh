@@ -39,16 +39,26 @@ fi
 
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
 # Contributors keep their personal token — they fork+PR with their own identity.
-GH_APP_TOKEN_CACHE="/var/run/hive-metrics/gh-app-token.cache"
 TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
 if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
-  # Per-agent scoped token (Phase 4) — 0600, owned by agent UID, least-privilege.
+  # Per-agent scoped token (Phase 4) — 0640 dev:hive-<agent>, least-privilege,
+  # readable ONLY by the owning agent's private group. This is the ONLY token an
+  # agent may use.
+  #
+  # SECURITY (audit H3, CWE-522/732): there is deliberately NO fallback to the
+  # shared full-privilege installation-token cache
+  # (/var/run/hive-metrics/gh-app-token.cache) nor to the full-token-derived
+  # HIVE_GITHUB_TOKEN env var. Both carry the FULL installation token; falling
+  # back to either would silently escalate every agent to full privilege and
+  # defeat per-agent tier scoping. A missing scoped token must FAIL LOUD so the
+  # operator fixes token delivery — it must never quietly escalate.
   if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
-  elif [[ -f "$GH_APP_TOKEN_CACHE" ]]; then
-    export GH_TOKEN="$(cat "$GH_APP_TOKEN_CACHE")"
-  elif [[ -n "${HIVE_GITHUB_TOKEN:-}" ]]; then
-    export GH_TOKEN="$HIVE_GITHUB_TOKEN"
+  else
+    echo "⛔ BLOCKED: per-agent scoped GitHub token not available (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
+    echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
+    echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
+    exit 1
   fi
   printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
