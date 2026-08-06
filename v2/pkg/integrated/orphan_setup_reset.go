@@ -198,7 +198,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 		return result, fmt.Errorf("create isolated orphaned setup preparation directory: %w", err)
 	}
 	defer os.RemoveAll(preparationRoot)
-	preparationCheckout := filepath.Join(preparationRoot, "checkout")
+	preparationCheckout := orphanSetupResetCheckoutDir(preparationRoot)
 	checkout := orphanSetupResetCheckoutDir(options.StateDir)
 	ctx = gittransport.WithControllerToken(ctx, options.GitTransportToken)
 	defaultBranch, err := ensureCheckout(ctx, plan.Repository, preparationCheckout)

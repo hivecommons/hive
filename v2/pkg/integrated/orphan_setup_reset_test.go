@@ -94,6 +94,12 @@ func TestOrphanSetupResetCheckoutUsesManagedIntegratedLeaf(t *testing.T) {
 	if err != nil || exists {
 		t.Fatalf("managed checkout validation = %t, %v", exists, err)
 	}
+	preparationRoot := t.TempDir()
+	preparationCheckout := orphanSetupResetCheckoutDir(preparationRoot)
+	exists, err = validateManagedCheckoutBeforeGit(preparationCheckout, "owner/repo")
+	if err != nil || exists {
+		t.Fatalf("managed preparation checkout validation = %t, %v", exists, err)
+	}
 }
 
 type orphanSetupFixture struct {
