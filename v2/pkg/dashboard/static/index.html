@@ -5510,6 +5510,11 @@
        perform. Kept out of GH_APP_OPERATOR_STATES: installing is the user's
        job, not the operator's. */
     var GH_APP_STATE_NOT_INSTALLED = 'not-installed';
+    /* User-actionable like not-installed: an installation ID is present but
+       names an installation this App does not have (typically another org's).
+       The fix is the same install/re-check flow, so the banner treats it as
+       an install trigger rather than a permission problem. */
+    var GH_APP_STATE_WRONG_INSTALLATION = 'wrong-installation';
     /* Operator-side: this hive still carries the placeholder app_id and was
        never assigned a real App. It is NOT 'not-installed' — the App may well be
        installed and the installation ID correct (it usually is), but an app_id
@@ -5815,9 +5820,22 @@
          githubAppState (added with the operator/user classification) is the
          authoritative signal, so an explicitly not-installed state is never
          treated as a permission problem. */
-      var isNotInstalled = appState === GH_APP_STATE_NOT_INSTALLED;
+      /* PRIMARY trigger, checked FIRST and sufficient BY ITSELF: config truth
+         says a real App is named but installation_id is 0/empty
+         (githubAppInstallMissing, computed server-side from the RESOLVED
+         config). No auth-state classification, recheck round-trip, or install
+         URL may gate it: after a "Reset Forge App" the raw base_url/app_slug
+         go blank, and keying visibility off those raw fields (via an empty
+         githubAppInstallURL) kept this banner hidden on a hive whose auth
+         state was literally not-installed (vllmd-13). */
+      var isInstallMissing = !!data.githubAppInstallMissing;
+      /* Classified auth states remain an ADDITIONAL trigger — they cover the
+         id-present-but-invalid case the config test cannot see. */
+      var isNotInstalled = isInstallMissing
+        || appState === GH_APP_STATE_NOT_INSTALLED
+        || appState === GH_APP_STATE_WRONG_INSTALLATION;
       var isPermIssue = data.githubAppRequired && data.githubAppPermIssue && !isNotInstalled;
-      if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
+      if ((data.githubAppRequired || isInstallMissing) && (isNotInstalled || data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
         var title = document.querySelector('#gh-app-install-banner .gh-app-title');
         var desc = document.querySelector('#gh-app-install-banner .gh-app-desc');
@@ -14550,6 +14568,7 @@ function burnAreaChart() {
           ${forgeAppRow('Key file', esc(a.key_file || '—'))}
           ${forgeAppRow('Key fingerprint', a.key_fingerprint ? '<code style="font-size:0.74rem">' + esc(a.key_fingerprint) + '</code>' : '<span style="color:var(--muted)">— (no usable key)</span>')}
           ${forgeAppRow('Auth state', stateHtml)}
+          ${forgeAppActions(a)}
           ${a.editable ? forgeAppEditForm(a) : ''}
         </div>`;
       html += '<div style="font-weight:600;font-size:0.85rem;margin:14px 0 6px">Per-app-id keys on disk</div>';
@@ -14568,6 +14587,61 @@ function burnAreaChart() {
           </div>`).join('');
       }
       host.innerHTML = html;
+    }
+
+    // forgeAppNeedsInstall: PRIMARY rule, checked FIRST and sufficient BY
+    // ITSELF — a real App (app_id set) with no installation_id needs
+    // installing, full stop. No auth-state classification or recheck is
+    // required before offering the link: a blank id after a "Reset Forge App"
+    // must light the install affordance immediately on page load. The
+    // classified states are an ADDITIONAL trigger for the case where an id
+    // exists but names the wrong (or a vanished) installation.
+    function forgeAppNeedsInstall(a) {
+      if (a.app_id && !a.installation_id) return true;
+      return a.auth_state === GH_APP_STATE_NOT_INSTALLED
+        || a.auth_state === GH_APP_STATE_WRONG_INSTALLATION;
+    }
+
+    // forgeAppActions renders the install/settings affordance under the
+    // Active config table, so the tab is never a dead end. The URL is the
+    // SERVER-built install_url (config.AppInstallURL(), the same builder the
+    // install banner uses) — the tab must never compose its own URL scheme.
+    // When an installation is present and nothing is classified as broken, a
+    // subtle "View App settings" link renders instead (GitHub redirects the
+    // installations/new page to the App's settings when already installed —
+    // the same behavior the banner's View App Settings action relies on).
+    function forgeAppActions(a) {
+      const hostLabel = esc(String(a.base_url || 'https://github.com').replace(/^https?:\/\//, ''));
+      const recheckBtn = '<button type="button" onclick="forgeAppRecheck(this)" style="padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:0.76rem">Re-check</button>';
+      if (forgeAppNeedsInstall(a)) {
+        if (a.install_url) {
+          return `<div id="forge-app-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+              <a href="${esc(a.install_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);font-weight:600;font-size:0.8rem;text-decoration:none">Install GitHub App on ${hostLabel}</a>
+              ${recheckBtn}
+              <span style="font-size:0.74rem;color:var(--muted)">No installation is linked${a.installation_id ? '' : ' (Installation ID is 0)'} — install the App, then Re-check.</span>
+            </div>`;
+        }
+        return `<div id="forge-app-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+            <span style="font-size:0.76rem;color:var(--yellow)">The GitHub App is not installed, and no install link can be built: the App slug for ${hostLabel} is not configured. Ask your hub operator to set github.app_slug for this cluster.</span>
+            ${recheckBtn}
+          </div>`;
+      }
+      if (a.install_url && a.installation_id) {
+        return `<div id="forge-app-actions" style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+            <a href="${esc(a.install_url)}" target="_blank" rel="noopener noreferrer" style="font-size:0.76rem;color:var(--muted);text-decoration:underline">View App settings on ${hostLabel}</a>
+          </div>`;
+      }
+      return '';
+    }
+
+    // forgeAppRecheck reuses the banner's recheck endpoint, then re-renders
+    // the tab from server truth (auth_state/installation_id may have moved).
+    async function forgeAppRecheck(btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+      try {
+        await fetch('/api/github-app/recheck', { method: 'POST' });
+      } catch (e) { /* the reload below reports current truth either way */ }
+      loadForgeApps();
     }
 
     function forgeAppEditForm(a) {

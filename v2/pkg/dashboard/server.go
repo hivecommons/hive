@@ -249,10 +249,17 @@ type StatusPayload struct {
 	GitHubAppInstallURL string                 `json:"githubAppInstallURL,omitempty"`
 	GitHubAppPermIssue  string                 `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState      string                 `json:"githubAppState,omitempty"`
-	GitHubBaseURL       string                 `json:"githubBaseURL,omitempty"`
-	InferenceBackends   []InferenceBackend     `json:"inferenceBackends,omitempty"`
-	SystemAlerts        []SystemAlert          `json:"systemAlerts,omitempty"`
-	HubBanner           *HubBannerState        `json:"hubBanner,omitempty"`
+	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
+	// or classification: a real App is named (app_id set, not the placeholder)
+	// but installation_id is 0. That state alone means every token is a
+	// countdown, so the install banner keys off this field FIRST — no recheck,
+	// classification, or raw-URL sniffing may gate it (the vllmd-13 reset left
+	// blank raw fields suppressing the banner while auth was not-installed).
+	GitHubAppInstallMissing bool               `json:"githubAppInstallMissing,omitempty"`
+	GitHubBaseURL           string             `json:"githubBaseURL,omitempty"`
+	InferenceBackends       []InferenceBackend `json:"inferenceBackends,omitempty"`
+	SystemAlerts            []SystemAlert      `json:"systemAlerts,omitempty"`
+	HubBanner               *HubBannerState    `json:"hubBanner,omitempty"`
 }
 
 // HubBannerState is a banner message from the hub admin displayed on spoke dashboards.
@@ -1054,6 +1061,30 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
+
+	// CONFIG-TRUTH OVERRIDE, applied last so no probe-derived field can veto
+	// it: a real App with installation_id 0 must light the install banner the
+	// moment the page loads. The recheck loop's SetGitHubAppRequired state is
+	// probe-derived and can lag (or, after a "Reset Forge App", hold an empty
+	// install URL because the raw app_slug/base_url went blank); the RESOLVED
+	// config — the same values the Forge App tab displays — is what the banner
+	// must render. Operator-side classifications (key-missing/key-invalid/
+	// no-app-assigned) are preserved: only an empty state is filled in, and
+	// the placeholder app_id never reaches here (ConfiguredButUninstalled
+	// requires a real App).
+	if s.deps != nil && s.deps.Config != nil {
+		g := s.deps.Config.GitHub
+		if g.ConfiguredButUninstalled() {
+			status.GitHubAppInstallMissing = true
+			status.GitHubAppRequired = true
+			if status.GitHubAppState == "" {
+				status.GitHubAppState = githubAppStateNotInstalledToken
+			}
+		}
+		if status.GitHubAppRequired && status.GitHubAppInstallURL == "" {
+			status.GitHubAppInstallURL = g.AppInstallURL()
+		}
+	}
 
 	status.InferenceBackends = s.buildInferenceBackends()
 

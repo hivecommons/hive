@@ -1795,7 +1795,8 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new
 //
-// It returns "" for a GitHub Enterprise host whose App slug is not configured.
+// It returns "" for a GitHub Enterprise host whose App slug is neither
+// configured nor derivable from the forge-identity table.
 //
 // # WHY EMPTY RATHER THAN A BEST-EFFORT URL
 //
@@ -1807,16 +1808,28 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // reads as "this product is broken", and it sent a real user to
 // github.ibm.com/github-apps/kubestellar-hive/installations/new.
 //
-// The empty string is the honest answer — "this host's App slug was never
-// recorded" — and callers render it as a legible message naming the missing
-// config instead of a button that 404s. Public github.com keeps the default,
-// where it is correct by construction.
+// A KNOWN forge is different: forgeIdentities records the slug of the App
+// actually registered on that host, so deriving from the table can never build
+// the public-slug 404 above. This matters after a "Reset Forge App": the raw
+// app_slug/base_url go blank while the resolved identity (what the Forge App
+// tab displays) still names github.ibm.com — and returning "" here suppressed
+// the install banner on exactly the hive that needed it (vllmd-13).
+//
+// For a GHE host OUTSIDE the table the empty string remains the honest answer
+// — "this host's App slug was never recorded" — and callers render it as a
+// legible message naming the missing config instead of a button that 404s.
+// Public github.com keeps the default, where it is correct by construction.
 func (g GitHubConfig) AppInstallURL() string {
 	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
 	if g.IsGHE() {
-		// No default is admissible here: only an explicitly configured slug can
-		// name an App on this enterprise host.
+		// An explicit slug wins; otherwise only the forge-identity table may
+		// supply one — never DefaultGitHubAppSlug, which names no App here.
 		slug := strings.TrimSpace(g.AppSlug)
+		if slug == "" {
+			if id, ok := forgeIdentities[g.Forge()]; ok {
+				slug = id.AppSlug
+			}
+		}
 		if slug == "" {
 			return ""
 		}
