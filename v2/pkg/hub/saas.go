@@ -15884,7 +15884,13 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         var ok = await resp.json().catch(function(){ return {}; });
         if (ok.status === 'partially_deleted') {
-          hiveToast('Removed ' + id + ' from the hub, but cleanup was incomplete: ' + (ok.warning || 'cloud resources may need manual removal'), 'error');
+          /* partially_deleted is a SUCCESS, not a failure: the registry row is
+             gone (which is what the user asked for and what they can see), but
+             no cluster config was available to tear down the namespace/PV/OCI
+             storage, so those may survive. Rendering it as an 'error' toast made
+             a partial success look like the delete had failed even though the
+             row vanished. Show it as an informational notice instead. */
+          hiveToast('Removed ' + id + ' from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
         } else {
           hiveToast('Deleted ' + id, 'success');
         }
