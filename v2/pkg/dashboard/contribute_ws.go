@@ -142,6 +142,30 @@ type ContributorConnection struct {
 	// and idempotent.
 	credentialDelivered bool
 	mu                  sync.Mutex
+	// writeMu serializes ALL writes to this connection's ws. gorilla/websocket
+	// forbids concurrent writes to one connection ("Applications are responsible
+	// for ensuring that no more than one goroutine calls the write methods
+	// concurrently"), yet a live connection is written from many goroutines: the
+	// per-connection heartbeat ping ticker, the message-handling read loop, and
+	// the operator revoke/yank/reassign + lease-reclaim paths. Without this the
+	// races surface as a "concurrent write to websocket connection" panic (seen in
+	// TestStaleGeneration_RevokedWorkerCannotOverwriteNewOwner). It is a SEPARATE
+	// lock from mu (which guards the state fields above): no write path holds mu
+	// while calling send, so the two never nest. See kubestellar/hive
+	// contribute-ws concurrent-write fix.
+	writeMu sync.Mutex
+}
+
+// send serializes writes to this connection's websocket with writeMu, satisfying
+// gorilla/websocket's one-concurrent-writer contract. Every goroutine that writes
+// a frame to a LIVE ContributorConnection (heartbeat ping/token_refresh, the read
+// loop's replies, operator revoke/yank/reassign, lease-reclaim) MUST go through
+// this method rather than the free sendJSON, which stays only for the pre-handshake
+// path where no ContributorConnection (and thus no shared connection) exists yet.
+func (c *ContributorConnection) send(msg WSMessage) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.WriteJSON(msg)
 }
 
 type WSMessage struct {
@@ -1033,7 +1057,7 @@ func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason,
 		// operator's reason travels on Reason so a still-connected worker learns WHY
 		// its task was released (kubestellar/hive#2568).
 		if tgt.conn.ws != nil {
-			_ = sendJSON(tgt.conn.ws, WSMessage{
+			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
@@ -1139,7 +1163,7 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 		// credential, mirroring the ready handler so the reassigned clanker starts
 		// working without waiting for its next selectTask cycle.
 		if tgt.conn.ws != nil {
-			if err := sendJSON(tgt.conn.ws, *msg); err != nil {
+			if err := tgt.conn.send(*msg); err != nil {
 				h.logger.Warn("[contribute-ws] failed to send yank reassignment task_assign", "error", err)
 				continue
 			}
@@ -1761,7 +1785,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				perms = []string{"metadata:read"}
 			}
 
-			if err := sendJSON(conn, WSMessage{
+			if err := contributor.send(WSMessage{
 				Type:          "auth_ok",
 				Seq:           h.nextSeq(),
 				ContributorID: profile.ContributorID,
@@ -1857,7 +1881,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.mu.Lock()
 				contributor.lastIdleReason = task.Reason
 				contributor.mu.Unlock()
-				if err := sendJSON(conn, *task); err != nil {
+				if err := contributor.send(*task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
 					return
 				}
@@ -1866,7 +1890,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"reason", task.Reason,
 				)
 			default:
-				if err := sendJSON(conn, *task); err != nil {
+				if err := contributor.send(*task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
 					return
 				}
@@ -2153,7 +2177,15 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "ping":
-			_ = sendJSON(conn, WSMessage{Type: "pong", Seq: msg.Seq})
+			// Once registered, this reply shares the connection with the heartbeat
+			// loop and the operator paths, so it MUST take the write lock; a ping that
+			// somehow arrives pre-registration has no ContributorConnection and is
+			// still single-writer on the bare conn.
+			if contributor != nil {
+				_ = contributor.send(WSMessage{Type: "pong", Seq: msg.Seq})
+			} else {
+				_ = sendJSON(conn, WSMessage{Type: "pong", Seq: msg.Seq})
+			}
 		}
 	}
 }
@@ -2175,7 +2207,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 
 		h.maybeRefreshToken(c)
 
-		if err := sendJSON(c.ws, WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
+		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
 			h.logger.Info("[contribute-ws] heartbeat ping failed, closing", "username", c.profile.GitHubUsername)
 			c.ws.Close()
 			return
@@ -2279,7 +2311,7 @@ func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string)
 		GitHubToken:    tok,
 		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
 	}
-	if err := sendJSON(c.ws, msg); err != nil {
+	if err := c.send(msg); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -2494,7 +2526,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		)
 		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
 		if tgt.conn.ws != nil {
-			_ = sendJSON(tgt.conn.ws, WSMessage{
+			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
@@ -3285,6 +3317,12 @@ func stringSliceFromAny(v any) []string {
 	return out
 }
 
+// sendJSON writes a frame to a bare websocket connection. It is UNSERIALIZED and
+// may only be used on the PRE-HANDSHAKE path (auth_challenge / auth_failed), where
+// no ContributorConnection has been registered yet and the conn is not shared with
+// the heartbeat, operator, or lease-reclaim goroutines. Every write to a LIVE
+// connection MUST go through ContributorConnection.send, which serializes on
+// writeMu to satisfy gorilla/websocket's one-concurrent-writer contract.
 func sendJSON(conn *websocket.Conn, msg WSMessage) error {
 	return conn.WriteJSON(msg)
 }
