@@ -4010,7 +4010,13 @@ func matchesAuthError(output string) bool {
 func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess) {
 	m.tmuxSendKeysForAgent(agent, "C-c", "")
 	time.Sleep(paneCaptureSleep)
-	killAgentProcesses(agent.UID, m.logger)
+	// Only sweep by UID when isolation gave this agent a real per-agent UID.
+	// agent.UID==0 (isolation off or agent missing from the UID map) would
+	// otherwise ask killAgentProcesses to match root — the internal floor guard
+	// blocks it, but skipping the call makes the intent explicit.
+	if agent.UID > 0 {
+		killAgentProcesses(agent.UID, m.logger)
+	}
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -4061,7 +4067,9 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 				continue
 			}
 
-			killAgentProcesses(agent.UID, m.logger)
+			if agent.UID > 0 {
+				killAgentProcesses(agent.UID, m.logger)
+			}
 			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 			agent.forceRelaunch = true
 			if err := m.Restart(ctx, agent.Name); err != nil {
@@ -5104,9 +5112,10 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
-	// not UID isolation is enabled — killAgentProcesses (UID-based) is a no-op
-	// when agents share the dev UID, which let stale claude processes on old
-	// models survive a model/backend switch and keep hitting the gateway.
+	// not UID isolation is enabled. killAgentProcesses (UID-based) is only safe
+	// to call with a real per-agent UID: it now floor-guards uid < minAgentUID
+	// and refuses to run for system/shared UIDs (as root it would otherwise
+	// SIGKILL root-owned processes), so we gate the call on agent.UID > 0 below.
 	reaped := m.reapAgentCLI(agent)
 	if agent.UID > 0 {
 		// UID isolation on: also sweep any non-CLI helper processes (MCP
@@ -5274,10 +5283,33 @@ func environHasMarker(environ, marker string) bool {
 	return false
 }
 
+// minAgentUID is the lowest UID killAgentProcesses will ever target. Per-agent
+// UIDs are allocated from baseAgentUID (2001) upward, so any uid below this
+// belongs to the system (root=0, the proxy user, etc.). Refusing to match on a
+// sub-range UID guarantees that a stray killAgentProcesses(0) — which happens
+// when UID isolation is off or an agent is missing from the UID map — can never
+// SIGKILL root-owned processes (hive itself, PID 1, the shared tmux server).
+const minAgentUID = baseAgentUID
+
 // killAgentProcesses finds all processes owned by the given UID via /proc and
 // sends SIGKILL to each. Hung copilot binaries ignore SIGINT, so brute-force
 // cleanup is needed to prevent orphan accumulation on the shared SQLite store.
+//
+// The function is EPERM-safe only for unprivileged callers; hive runs as root,
+// so it is NOT inherently a no-op for shared/system UIDs. A floor guard
+// (uid >= minAgentUID) plus a self-skip (never SIGKILL our own PID) are the
+// real defenses that keep uid < minAgentUID from touching system processes.
 func killAgentProcesses(uid int, logger *slog.Logger) int {
+	// Floor guard: refuse to sweep by a system-range UID. uid==0 (root) reaches
+	// here when UID isolation is disabled or LookupByName missed the agent; as
+	// root, matching ownerUID==0 would SIGKILL every root process. This is a real
+	// bug signal, so warn loudly and kill nothing.
+	if uid < minAgentUID {
+		logger.Warn("refusing to kill by uid, would target system/root processes",
+			"uid", uid, "min_agent_uid", minAgentUID)
+		return 0
+	}
+
 	procPath := procRoot
 	entries, err := os.ReadDir(procPath)
 	if err != nil {
@@ -5292,6 +5324,11 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
+			continue
+		}
+		// Belt-and-suspenders: never SIGKILL the hive process itself, mirroring
+		// reapAgentCLI's self-skip.
+		if pid == os.Getpid() {
 			continue
 		}
 
@@ -5346,9 +5383,10 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	// Terminate the agent's CLI process(es) before recreating the session.
 	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
-	// not UID isolation is enabled — killAgentProcesses (UID-based) is a no-op
-	// when agents share the dev UID, which let stale claude processes on old
-	// models survive a model/backend switch and keep hitting the gateway.
+	// not UID isolation is enabled. killAgentProcesses (UID-based) is only safe
+	// to call with a real per-agent UID: it now floor-guards uid < minAgentUID
+	// and refuses to run for system/shared UIDs (as root it would otherwise
+	// SIGKILL root-owned processes), so we gate the call on agent.UID > 0 below.
 	reaped := m.reapAgentCLI(agent)
 	if agent.UID > 0 {
 		// UID isolation on: also sweep any non-CLI helper processes (MCP
