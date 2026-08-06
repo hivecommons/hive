@@ -198,7 +198,7 @@ func TestHostedPreflightRejectsExistingControllerLease(t *testing.T) {
 	if err := os.WriteFile(leasePath, []byte("stale-or-live\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
+	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
 		t.Fatalf("existing controller lease was accepted: %v", err)
 	}
 }
@@ -215,14 +215,23 @@ func TestHostedPreflightAllowsExactManagedRuntimeForRebind(t *testing.T) {
 	original := dashboardNormalVisualRuntime.Load()
 	dashboardNormalVisualRuntime.Store(manager)
 	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(original) })
+	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", true); err == nil || !strings.Contains(err.Error(), "missing its authoritative ownership lease") {
+		t.Fatalf("active runtime without its ownership lease was accepted: %v", err)
+	}
+	lease, err := claimNormalVisualDaemonLease(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseDaemonLease(lease) })
 
-	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true); err != nil {
+	active, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true)
+	if err != nil || !active {
 		t.Fatalf("exact managed update runtime rejected: %v", err)
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "other/repository", true); err == nil {
+	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "other/repository", true); err == nil {
 		t.Fatal("different repository runtime accepted for managed update")
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil {
+	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil {
 		t.Fatal("fresh setup accepted an existing runtime")
 	}
 }

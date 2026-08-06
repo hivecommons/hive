@@ -129,7 +129,8 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	} else if installed && !managedUpdate {
 		return nil, fmt.Errorf("Visual Hive is already installed; use status and doctor instead of preflight")
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateRoot, request.Repository, managedUpdate); err != nil {
+	controllerActive, err := ensureNoVisualRuntimeBeforeSetup(stateRoot, request.Repository, managedUpdate)
+	if err != nil {
 		return nil, err
 	}
 	runtimeIdentity, err := dashboardPreflightResolveRuntimeIdentity(providerCommand, visualCommand, visualArgs)
@@ -165,7 +166,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 			"model": providerModel, "health": "authenticated_model_verified", "model_calls": 1, "unattended": true},
 		"visual_hive": map[string]any{"ref": visualRef, "command": filepath.Base(visualCommand), "args": append([]string(nil), visualArgs...),
 			"command_sha256": receipt.VisualCommandSHA256, "entrypoint_sha256": receipt.VisualEntrypointSHA256},
-		"controller_active": false, "repository_mutations": false, "binding_sha256": receipt.BindingSHA256,
+		"controller_active": controllerActive, "repository_mutations": false, "binding_sha256": receipt.BindingSHA256,
 		"tested_at": receipt.TestedAt, "expires_at": receipt.ExpiresAt,
 	}, nil
 }
@@ -235,22 +236,34 @@ func ensureManagedRepositoryContractBeforeSetup(
 	return true, nil
 }
 
-func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManagedUpdate bool) error {
+func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManagedUpdate bool) (bool, error) {
+	exactActive := false
 	if manager := dashboardNormalVisualRuntime.Load(); manager != nil {
 		if binding, active := manager.ActiveBinding(); active {
 			if !allowManagedUpdate || !strings.EqualFold(strings.TrimSpace(binding.Repository), strings.TrimSpace(repository)) ||
 				filepath.Clean(binding.StateDir) != filepath.Clean(stateRoot) {
-				return fmt.Errorf("Visual Hive controller is already active for %s", binding.Repository)
+				return false, fmt.Errorf("Visual Hive controller is already active for %s", binding.Repository)
 			}
+			exactActive = true
 		}
 	}
 	leasePath := filepath.Join(stateRoot, "integrated", "daemon.lease")
 	if _, leaseErr := os.Lstat(leasePath); leaseErr == nil {
-		return fmt.Errorf("Visual Hive ownership lease already exists at the selected state root")
+		if exactActive {
+			owner, held := readNormalVisualDaemonLease(stateRoot)
+			if !held || owner.PID != os.Getpid() {
+				return false, fmt.Errorf("Visual Hive ownership lease at the selected state root is not held by this exact dashboard process")
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("Visual Hive ownership lease already exists at the selected state root")
 	} else if !os.IsNotExist(leaseErr) {
-		return fmt.Errorf("inspect Visual Hive ownership lease: %w", leaseErr)
+		return false, fmt.Errorf("inspect Visual Hive ownership lease: %w", leaseErr)
 	}
-	return nil
+	if exactActive {
+		return false, fmt.Errorf("active Visual Hive controller is missing its authoritative ownership lease")
+	}
+	return false, nil
 }
 
 func resolveDashboardPreflightRuntimeIdentity(providerCommand, visualCommand string, visualArgs []string) (dashboardPreflightRuntimeIdentity, error) {
