@@ -23,7 +23,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kubestellar/hive/v2/pkg/config"
-	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 const (
@@ -323,6 +322,133 @@ type ContributeWSHub struct {
 	// the Operations "command center" renders live. It is purely additive: the fan-out
 	// is a NON-BLOCKING send, so it can never back-pressure this WS event path.
 	sse *sseRegistry
+	// leases is the hub-owned, server-authoritative registry of the task the hub
+	// ISSUED to each contributor identity (kubestellar/hive C4). It is keyed by
+	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
+	// exactly one lease per identity — the last task selectTask handed that identity.
+	//
+	// It is the ONLY thing a reconnecting relay's task_progress may re-adopt against.
+	// Before this, a task_progress arriving while a (freshly reconnected) connection
+	// had currentTask == nil caused the hub to REBUILD ownership from the client's own
+	// task_id/repo/number fields and mint a fresh scoped credential for it — a client
+	// could therefore assert ANY task_id it liked and be handed a credential for work
+	// the server never assigned. Now a resume must match an active lease here EXACTLY
+	// on {identity, task_id, repo, generation} and be within its expiry, or it is
+	// rejected. A lease is recorded on assignment (recordLease) and revoked on every
+	// release path (revokeLease: disconnect, ready-abandon, complete, fail, operator
+	// requeue, lease-TTL expiry), so a released task can never be re-adopted. Guarded
+	// by leaseMu.
+	leases  map[string]*taskLease
+	leaseMu sync.Mutex
+}
+
+// taskLease is the server-authoritative record of a task the hub issued to a
+// contributor identity (kubestellar/hive C4). It binds the assignment to the
+// {profile, task, repo, generation} tuple and an expiry so a reconnecting relay's
+// task_progress can only RE-ADOPT a task the hub actually assigned to it, under the
+// exact generation it was assigned, and only until the lease expires. It is minted
+// by recordLease at assignment and cleared by revokeLease on every release path; a
+// resume that does not match an unexpired lease here is rejected outright.
+type taskLease struct {
+	identity  string
+	taskID    string
+	repo      string
+	number    int
+	tier      string
+	gen       uint64
+	expiresAt time.Time
+}
+
+// leaseTTL is how long a hub-issued task lease remains re-adoptable after
+// assignment (kubestellar/hive C4). It is deliberately aligned with wsTaskTimeout
+// (the wedged-task backstop): a task that has been reclaimed by the lease-TTL
+// backstop is also past its re-adoption window, so a relay that reconnects after
+// its task was auto-released cannot resurrect ownership from the client side. A
+// resume presented after this window is treated as a stale/forged claim and
+// rejected; the relay simply asks for fresh work via "ready".
+const leaseTTL = wsTaskTimeout
+
+// recordLease registers (or replaces) the server-authoritative lease for an
+// identity when the hub assigns it a task (kubestellar/hive C4). It stores the
+// exact {task, repo, generation, tier} the hub issued plus an expiry, so a later
+// reconnect can be validated against what the server actually handed out — never
+// reconstructed from client-supplied fields. Called from selectTask under the new
+// assignment's generation.
+func (h *ContributeWSHub) recordLease(identity, taskID, repo string, number int, tier string, gen uint64, now time.Time) {
+	if identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	if h.leases == nil {
+		h.leases = make(map[string]*taskLease)
+	}
+	h.leases[identity] = &taskLease{
+		identity:  identity,
+		taskID:    taskID,
+		repo:      repo,
+		number:    number,
+		tier:      tier,
+		gen:       gen,
+		expiresAt: now.Add(leaseTTL),
+	}
+	h.leaseMu.Unlock()
+}
+
+// revokeLease removes the server-authoritative lease for an identity on any release
+// path (kubestellar/hive C4): disconnect, ready-abandon, task_complete, task_failed,
+// operator requeue, and lease-TTL expiry. Once revoked, a reconnecting relay's
+// task_progress for that task no longer matches any lease and cannot re-adopt it —
+// closing the window in which a released task could be resurrected from client
+// fields. It only deletes the entry when the current lease is for taskID, so a race
+// where a NEW lease was already recorded for the same identity is not clobbered.
+func (h *ContributeWSHub) revokeLease(identity, taskID string) {
+	if identity == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	if l, ok := h.leases[identity]; ok && (taskID == "" || l.taskID == taskID) {
+		delete(h.leases, identity)
+	}
+	h.leaseMu.Unlock()
+}
+
+// lookupLease returns the active, unexpired server-issued lease for an identity that
+// EXACTLY matches the resume claim (kubestellar/hive C4): same task_id, same
+// canonical repo, same number, and same assignment generation. Any mismatch — no
+// lease, wrong task, wrong repo/number, wrong (or zero) generation, or an expired
+// lease — returns nil, so a reconnecting relay may only re-adopt the precise task the
+// hub assigned it, under the generation it was assigned, and only within the lease
+// window. It never reconstructs ownership from the client's own fields.
+//
+// clientGen == 0 (an unversioned relay) is deliberately NOT honored here: re-adoption
+// requires proving possession of the server-issued generation token, which an
+// unversioned relay cannot present. Such a relay is asked to re-`ready` for fresh
+// work instead of resurrecting a lease it cannot authenticate.
+func (h *ContributeWSHub) lookupLease(identity, taskID, repo string, number int, clientGen uint64, now time.Time) *taskLease {
+	if identity == "" || taskID == "" || clientGen == 0 {
+		return nil
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	l, ok := h.leases[identity]
+	if !ok {
+		return nil
+	}
+	if now.After(l.expiresAt) {
+		// Expired: drop it so it can never be re-adopted, and treat as no lease.
+		delete(h.leases, identity)
+		return nil
+	}
+	if l.taskID != taskID || l.gen != clientGen {
+		return nil
+	}
+	if repo != "" && l.repo != repo {
+		return nil
+	}
+	if number != 0 && l.number != number {
+		return nil
+	}
+	return l
 }
 
 // rateLimitHourWindow and rateLimitDayWindow are the trailing (rolling) windows
@@ -408,6 +534,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		failedTasks:           make(map[string]time.Time),
 		consecutiveFailures:   make(map[string]int),
 		assignmentTimes:       make(map[string][]time.Time),
+		leases:                make(map[string]*taskLease),
 		logger:                logger,
 		server:                server,
 		sse:                   newSSERegistry(),
@@ -988,6 +1115,9 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) i
 	h.mu.RUnlock()
 
 	for _, tgt := range targets {
+		// C4: an operator requeue releases the task — revoke its server-issued lease
+		// so the released worker cannot re-adopt it via a later task_progress.
+		h.revokeLease(identityOf(tgt.conn), tgt.task.TaskID)
 		// Book the SAME short cooldown the disconnect/ready-abandon paths book, so
 		// the released issue is not instantly re-offered. Only real issue tasks are
 		// booked; synthetic pr-review tasks (Number == 0) must not poison an issue key.
@@ -1023,6 +1153,52 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) i
 		}
 	}
 	return len(targets)
+}
+
+// DisconnectContributor closes every live WebSocket session held by the given
+// contributor identity and revokes any server-issued task lease it holds (H2,
+// CWE-613/639). It is called by the admin revoke/trust-downgrade path so a revoked
+// contributor's in-flight sessions cannot keep working, keep the #2393 token-refresh
+// cycle alive, or keep saving a stale non-revoked profile after the revoke lands. It
+// returns the number of sessions closed. The socket close makes each session's read
+// loop return, running its normal disconnect defer (task release + cooldown). We do
+// the actual Close OUTSIDE h.mu, mirroring the other broadcast-ish paths, so a slow
+// socket write never stalls the hub lock.
+func (h *ContributeWSHub) DisconnectContributor(contributorID, reason string) int {
+	if contributorID == "" {
+		return 0
+	}
+	var closing []*ContributorConnection
+	h.mu.RLock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		match := c.profile != nil && c.profile.ContributorID == contributorID
+		var taskID string
+		if match && c.currentTask != nil {
+			taskID = c.currentTask.TaskID
+		}
+		c.mu.Unlock()
+		if match {
+			// Revoke any server-issued lease so a reconnect cannot re-adopt the task.
+			h.revokeLease(identityOf(c), taskID)
+			closing = append(closing, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range closing {
+		username := ""
+		if c.profile != nil {
+			username = c.profile.GitHubUsername
+		}
+		h.logger.Info("[contribute-ws] disconnecting contributor session", "username", username, "reason", reason)
+		if c.ws != nil {
+			// Best-effort notify then close; the read loop's defer does the release.
+			_ = sendJSON(c.ws, WSMessage{Type: "auth_failed", Seq: h.nextSeq(), Reason: reason})
+			c.ws.Close()
+		}
+	}
+	return len(closing)
 }
 
 func (h *ContributeWSHub) nextSeq() int {
@@ -1622,6 +1798,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.credentialDelivered = false
 			contributor.mu.Unlock()
 			if abandoned != nil {
+				// C4: the relay explicitly gave up this task, so revoke its
+				// server-issued lease — a later task_progress for it must not resurrect
+				// ownership.
+				h.revokeLease(identityOf(contributor), abandoned.TaskID)
 				h.logger.Warn("[contribute-ws] task abandoned without completion",
 					"username", contributor.profile.GitHubUsername,
 					"abandoned_task", abandoned.TaskID,
@@ -1726,13 +1906,88 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		case "task_progress":
 			if contributor != nil {
 				contributor.mu.Lock()
-				// #2568 (the Gate): a worker still holding a task whose progress carries
-				// a STALE generation was revoked/reassigned — its currentTaskGen was
-				// bumped past what it echoes. Reject its progress so it cannot renew a
-				// lease it no longer owns or resurrect ownership state. An unversioned
-				// relay echoes 0 and is accepted (generationAccepted falls back to the
-				// TaskID identity below).
-				if contributor.currentTask != nil && !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
+				// C4 (CWE-862/639): a task_progress that arrives while this connection
+				// holds NO task is a RESUME claim. The hub must NOT rebuild ownership
+				// from the client's own task_id/repo/number fields — doing so let a
+				// client assert ANY task and be minted a scoped GitHub credential for
+				// work the server never assigned. A resume is honored ONLY when it
+				// matches a server-issued lease (lookupLease) EXACTLY on
+				// {identity, task_id, repo, number, generation} and is unexpired, and
+				// only after the same admission gates a fresh assignment must pass
+				// (suspension, disabled tier, revocation) still hold. Anything else is
+				// rejected: the relay is told to re-`ready` for fresh work.
+				if contributor.currentTask == nil {
+					if msg.TaskID == "" {
+						contributor.mu.Unlock()
+						continue
+					}
+					identity := identityOf(contributor)
+					canonRepo := h.canonicalRepoKey(msg.Repo)
+					contributor.mu.Unlock()
+
+					lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
+					if lease == nil {
+						h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
+							"username", contributor.profile.GitHubUsername,
+							"task", msg.TaskID,
+							"repo", canonRepo,
+							"client_gen", msg.TaskGen,
+						)
+						// Tell the relay this task is not (or no longer) its to hold, so
+						// it stops reporting and re-asks for work rather than silently
+						// believing it owns something the hub has no record of.
+						_ = sendJSON(conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "no active lease for this task"})
+						continue
+					}
+					// C4: re-run the same admission gates a fresh selectTask assignment
+					// must pass. A task assigned before the operator suspended the queue,
+					// disabled the tier, or revoked the contributor must NOT silently
+					// resume (and re-mint a credential) after the gate closed.
+					if reason := h.resumeGateReason(contributor); reason != "" {
+						h.logger.Warn("[contribute-ws] task_progress resume refused by admission gate",
+							"username", contributor.profile.GitHubUsername,
+							"task", msg.TaskID,
+							"reason", reason,
+						)
+						h.revokeLease(identity, msg.TaskID)
+						_ = sendJSON(conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
+						continue
+					}
+					// Adopt the task from the AUTHORITATIVE lease record, not the client
+					// fields: repo/number/tier are the server's, and the task keeps its
+					// ORIGINAL generation so it stays fenced against any older-generation
+					// straggler. lastLeaseRenew starts the wedged-task clock.
+					contributor.mu.Lock()
+					contributor.currentTask = &WSTaskAssign{
+						TaskID: lease.taskID,
+						Kind:   msg.Kind,
+						Repo:   lease.repo,
+						Number: lease.number,
+						Title:  msg.Title,
+					}
+					contributor.currentTaskGen = lease.gen
+					contributor.lastLeaseRenew = time.Now()
+					contributor.tmuxOutput = msg.TmuxOutput
+					contributor.mu.Unlock()
+
+					h.logger.Info("[contribute-ws] task resumed from server-issued lease",
+						"username", contributor.profile.GitHubUsername,
+						"task", lease.taskID, "repo", lease.repo, "number", lease.number)
+
+					// #2610 finding 3: re-mint and push a fresh token_refresh so the
+					// resumed session holds a valid token and re-arms the #2393 refresh
+					// cycle. The credential is minted for the LEASE's tier (server-owned),
+					// repository-scoped to the lease's repo (C4).
+					h.resumeTaskToken(contributor, lease)
+					continue
+				}
+
+				// A routine progress ping for a task the hub already tracks on THIS
+				// connection. #2568 (the Gate): reject a STALE generation — a worker
+				// whose task was revoked/reassigned (currentTaskGen bumped past what it
+				// echoes) must not renew a lease it no longer owns. An unversioned relay
+				// echoes 0 and is accepted (generationAccepted falls back to TaskID).
+				if !generationAccepted(msg.TaskGen, contributor.currentTaskGen) {
 					staleGen := msg.TaskGen
 					contributor.mu.Unlock()
 					h.logger.Warn("[contribute-ws] stale-generation task_progress rejected",
@@ -1743,54 +1998,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				contributor.tmuxOutput = msg.TmuxOutput
-				// resumed is true only when this task_progress REBUILT currentTask
-				// from nothing — i.e. the relay is re-asserting a task the hub had
-				// released on disconnect (the reconnect/resume path), not a routine
-				// progress ping for a task the hub already tracks.
-				resumed := false
-				if contributor.currentTask == nil && msg.TaskID != "" {
-					contributor.currentTask = &WSTaskAssign{
-						TaskID: msg.TaskID,
-						Kind:   msg.Kind,
-						// #2644: canonicalise the CLIENT-supplied repo to the same
-						// repo.Full form selectTask assigned it under, so the
-						// activeIssues double-assign guard and the failure/completion
-						// cooldowns — all keyed "repo#number" off currentTask.Repo —
-						// match. Storing msg.Repo verbatim let a relay whose repo
-						// spelling differs from repo.Full slip its resumed task past
-						// the in-flight exclusion, and the SAME issue was handed to a
-						// second contributor (intermittent, and only for that repo).
-						Repo:   h.canonicalRepoKey(msg.Repo),
-						Number: msg.Number,
-						Title:  msg.Title,
-					}
-					resumed = true
-					// #2568: a RESUME adopts the task under a FRESH generation so the
-					// hub, not the client, owns the authoritative token from here on.
-					contributor.currentTaskGen = h.nextTaskGen()
-				}
 				// #2568: renew the hub-owned lease on every progress report. This is
 				// what distinguishes "working slowly but alive" (lease keeps renewing,
 				// never reclaimed) from "connected but wedged" (lease goes stale and
 				// cleanupLoop reclaims it after wsTaskTimeout).
-				if contributor.currentTask != nil {
-					contributor.lastLeaseRenew = time.Now()
-				}
+				contributor.lastLeaseRenew = time.Now()
 				contributor.mu.Unlock()
-
-				// #2610 finding 3: the disconnect defer clears tokenMintedAt, and
-				// this resume path historically rebuilt currentTask WITHOUT re-arming
-				// it. tokenRefreshDue treats a zero tokenMintedAt as "not due", so
-				// maybeRefreshToken on the heartbeat became a permanent no-op for the
-				// resumed connection — the task kept the token minted at its original
-				// assignment and it expired at wsTokenTTL (55m) with no 50-minute
-				// replacement, the exact silent-expiry case the refresh path was added
-				// for (#2393 item 2). Re-mint and push a fresh token_refresh here so
-				// the resumed session both holds a valid token and re-arms the refresh
-				// cycle (resumeTaskToken sets tokenMintedAt on a successful send).
-				if resumed {
-					h.resumeTaskToken(contributor)
-				}
 			}
 
 		case "task_complete":
@@ -1838,6 +2051,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// bar was "a PR was reported", still trusting an unverified field).
 					// verifiedPR is the ONLY value allowed to unlock the PR-gated
 					// rewards below; the raw msg.PRURL is never trusted directly again.
+					// C4: a completion is terminal — revoke the server-issued lease so a
+					// later task_progress for this task cannot resurrect ownership and be
+					// re-minted a credential.
+					if completedTask != nil {
+						h.revokeLease(identityOf(contributor), completedTask.TaskID)
+					}
 					verifiedPR := ""
 					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
 						verifiedPR = msg.PRURL
@@ -1930,6 +2149,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.mu.Unlock()
 
 				if hasTask {
+					// C4: a failure is terminal — revoke the server-issued lease so a
+					// later task_progress for this task cannot resurrect ownership.
+					if failedTask != nil {
+						h.revokeLease(identityOf(contributor), failedTask.TaskID)
+					}
 					if failedTask != nil {
 						// #2435: record a short failure cooldown (and advance the
 						// consecutive-failure/quarantine counter) so a just-failed
@@ -2002,12 +2226,12 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 // wsTokenTTL. The relay's token_refresh handler consumes github_token +
 // token_expires_at (bin/contributor-relay.sh). See #2393 item 2.
 func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
-	tier, due := tokenRefreshDue(c, time.Now())
+	tier, repo, due := tokenRefreshDue(c, time.Now())
 	if !due {
 		return
 	}
 
-	tok, err := h.mintScopedToken(tier)
+	tok, err := h.mintScopedToken(tier, repo)
 	if err != nil {
 		h.logger.Warn("[contribute-ws] token refresh: mint failed, will retry next heartbeat",
 			"username", c.profile.GitHubUsername, "tier", tier, "error", err)
@@ -2038,12 +2262,19 @@ func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 // an empty token (no App auth / no cache) leaves the relay's existing token in
 // place — the same lenient policy maybeRefreshToken uses — and tokenMintedAt stays
 // zero, so the next reconnect (or a later mint success) can still arm it.
-func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection) {
+func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection, lease *taskLease) {
+	// C4: mint for the SERVER-issued lease's tier and repository, not the client's
+	// self-report, so a resumed session's credential is scoped to exactly the task the
+	// hub assigned.
 	tier := ""
-	if c.profile != nil {
+	repo := ""
+	if lease != nil {
+		tier = lease.tier
+		repo = lease.repo
+	} else if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	tok, err := h.mintScopedToken(tier)
+	tok, err := h.mintScopedToken(tier, repo)
 	if err != nil {
 		h.logger.Warn("[contribute-ws] resume token refresh: mint failed, refresh will re-arm on next resume/heartbeat",
 			"username", c.profile.GitHubUsername, "tier", tier, "error", err)
@@ -2063,21 +2294,23 @@ func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection) {
 
 // tokenRefreshDue reports whether the connection has an active task whose scoped
 // token was minted at least wsTokenRefreshPeriod ago, meaning it is time to
-// re-mint before wsTokenTTL. It returns the trust tier to mint for. Pure and
-// clock-injectable so the timing can be tested without a real clock.
-func tokenRefreshDue(c *ContributorConnection, now time.Time) (tier string, due bool) {
+// re-mint before wsTokenTTL. It returns the trust tier and the current task's repo
+// to mint a repository-scoped token for (C4). Pure and clock-injectable so the
+// timing can be tested without a real clock.
+func tokenRefreshDue(c *ContributorConnection, now time.Time) (tier, repo string, due bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentTask == nil || c.tokenMintedAt.IsZero() {
-		return "", false
+		return "", "", false
 	}
 	if now.Sub(c.tokenMintedAt) < wsTokenRefreshPeriod {
-		return "", false
+		return "", "", false
 	}
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	return tier, true
+	repo = c.currentTask.Repo
+	return tier, repo, true
 }
 
 // sendTokenRefresh writes a token_refresh message carrying the new token and its
@@ -2286,6 +2519,9 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 	h.mu.RUnlock()
 
 	for _, tgt := range targets {
+		// C4: the lease-TTL backstop released this task — revoke its server-issued
+		// lease so the wedged worker cannot re-adopt it via a later task_progress.
+		h.revokeLease(identityOf(tgt.conn), tgt.task.TaskID)
 		if tgt.task.Number > 0 {
 			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
 		}
@@ -2313,25 +2549,51 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 	return len(targets)
 }
 
-// mintScopedToken produces a scoped GitHub token for the given trust tier via
-// the GitHub App auth path, falling back to the on-disk cache when no App auth
-// is configured (dev/single-token deployments). This is the single mint path
-// shared by task_assign and the heartbeat token-refresh, so both advertise
-// tokens minted the same way. See #2393 item 2.
-func (h *ContributeWSHub) mintScopedToken(tier string) (string, error) {
+// mintScopedToken produces a scoped GitHub token for the given trust tier via the
+// GitHub App auth path, scoped to a single repository when repo is non-empty
+// (kubestellar/hive C4). This is the single mint path shared by task_assign and the
+// heartbeat/resume token-refresh, so all three advertise tokens minted the same way.
+// See #2393 item 2.
+//
+// C4 (CWE-862/639): the previous full-cache FALLBACK — when no App auth was
+// configured, returning the hive's own FULL cached installation token — has been
+// DELETED. Handing a contributor relay the hive's installation-wide credential gave
+// it push access to every repo the installation covers, wildly beyond the single
+// issue the contributor was assigned, and it was reachable from the forgeable resume
+// path. When there is no App auth to mint a properly scoped token, mint NOTHING: the
+// caller treats an empty token as "leave the relay's current token in place", and
+// selectTask surfaces token_mint_failed rather than leaking the full credential.
+func (h *ContributeWSHub) mintScopedToken(tier, repo string) (string, error) {
 	if h.server != nil && h.server.deps != nil && h.server.deps.GHAppAuth != nil {
 		ctx := h.server.deps.Ctx
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		// C4: restrict the installation token to the assignment's repository so the
+		// credential cannot touch any other repo the installation covers. repoNameOnly
+		// yields the bare repo name the GitHub API's Repositories option expects; an
+		// empty repo (synthetic/pr-review tasks with no single repo) falls back to the
+		// tier-scoped installation token — still permission-scoped, unchanged behavior.
+		if name := repoNameOnly(repo); name != "" {
+			return h.server.deps.GHAppAuth.ScopedTokenForRepos(ctx, tier, []string{name})
+		}
 		return h.server.deps.GHAppAuth.ScopedToken(ctx, tier)
 	}
-	if tokenBytes, err := os.ReadFile(github.TokenCachePath); err == nil {
-		return string(tokenBytes), nil
-	}
-	// No App auth and no cache: mint nothing rather than fail. Callers treat an
-	// empty token as "leave the relay's current token in place".
+	// No App auth: mint nothing rather than leak a full credential (see the note
+	// above — the cache fallback is deliberately gone).
 	return "", nil
+}
+
+// repoNameOnly returns the bare repository name from an "owner/repo" (or already
+// bare) value, for the GitHub App installation-token Repositories option, which is
+// keyed on the repo name within the installation's org (kubestellar/hive C4). An
+// empty input yields "".
+func repoNameOnly(repo string) string {
+	repo = strings.TrimSpace(repo)
+	if idx := strings.LastIndex(repo, "/"); idx >= 0 {
+		return repo[idx+1:]
+	}
+	return repo
 }
 
 // taskUnavailableReason* are the machine-readable reasons carried on a
@@ -2565,6 +2827,41 @@ func (h *ContributeWSHub) canonicalRepoKey(repo string) string {
 		}
 	}
 	return repo
+}
+
+// resumeGateReason re-runs, for a RESUME (kubestellar/hive C4), the same admission
+// gates a fresh selectTask assignment must clear that are NOT specific to a
+// particular candidate issue: the profile must not be revoked, the whole contribute
+// queue must not be suspended, and the contributor's trust tier must not be
+// operator-disabled. It returns a non-empty machine-readable reason when resume must
+// be REFUSED (so the caller can revoke the lease and tell the relay why), or "" when
+// resume may proceed. It deliberately does NOT re-run the per-candidate cooldown /
+// repo-filter / concurrency-window gates: the lease is for a task the hub already
+// committed to this identity, so re-applying candidate selection would falsely refuse
+// a legitimately in-flight task. The gates checked here are the ones that represent an
+// operator turning access OFF after assignment.
+func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
+	tier := ""
+	if c != nil && c.profile != nil {
+		if c.profile.TrustTier == "revoked" {
+			return "contribution access revoked"
+		}
+		tier = c.profile.TrustTier
+	}
+	if h.server == nil {
+		return taskUnavailableHubNotReady
+	}
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		if h.server.deps.Config.Hub.ContributeSuspended {
+			return taskUnavailableContributionSuspended
+		}
+		for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
+			if dt == tier {
+				return taskUnavailableTierDisabled
+			}
+		}
+	}
+	return ""
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
@@ -2921,8 +3218,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 
 	// Mint through the shared path so task_assign and the heartbeat token-refresh
 	// advertise tokens minted the same way (#2393 item 2). tokenMintedAt below
-	// arms the refresh ticker for the token we hand out here.
-	ghToken, err := h.mintScopedToken(c.profile.TrustTier)
+	// arms the refresh ticker for the token we hand out here. C4: the token is
+	// scoped to the chosen issue's REPOSITORY, not the whole installation.
+	ghToken, err := h.mintScopedToken(c.profile.TrustTier, chosen.repoFull)
 	if err != nil {
 		// #2436 finding 1: a mint failure previously returned nil, stranding the
 		// contributor with no message (the log even said "skipping task" while
@@ -2981,6 +3279,12 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.credentialDelivered = false
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
+
+	// C4: record the SERVER-AUTHORITATIVE lease for this assignment so a later
+	// reconnect can be validated against what the hub actually issued — the exact
+	// {task, repo, generation, tier} bound here — instead of reconstructing ownership
+	// from client-supplied task_progress fields. Revoked on every release path.
+	h.recordLease(identityOf(c), taskID, chosen.repoFull, chosen.number, c.profile.TrustTier, gen, time.Now())
 
 	// #2566: record this assignment against the identity's rolling hourly/daily
 	// windows so the next selectTask enforces tier_limits.max_per_hour /

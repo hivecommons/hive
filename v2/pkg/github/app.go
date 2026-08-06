@@ -195,6 +195,20 @@ func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expi
 // scoped to a contributor's trust tier. Unlike Token(), this is NOT
 // cached — each call creates a fresh token.
 func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) {
+	return a.ScopedTokenForRepos(ctx, tier, nil)
+}
+
+// ScopedTokenForRepos creates a short-lived installation token with permissions
+// scoped to a contributor's trust tier AND, when repos is non-empty, restricted to
+// those repositories within the installation (kubestellar/hive C4). Restricting the
+// repository scope means a contributor relay's credential can only touch the single
+// repo its assigned issue lives in, not every repo the installation covers — the
+// difference between a least-privilege, per-task credential and an
+// installation-wide one. repos are bare repository NAMES (not "owner/repo"); an
+// empty/nil slice yields the tier-scoped, installation-wide token (unchanged
+// behavior for callers that do not scope by repo). Like ScopedToken, the token is
+// NOT cached — each call mints fresh.
+func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return "", fmt.Errorf("generating JWT: %w", err)
@@ -236,13 +250,19 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 	}
 
 	opts := &gh.InstallationTokenOptions{Permissions: perms}
+	// C4: when the caller named repositories, restrict the token to them so it
+	// cannot reach any other repo the installation covers. Repositories is keyed on
+	// the bare repo name within the installation's org.
+	if len(repos) > 0 {
+		opts.Repositories = repos
+	}
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, opts)
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
 	}
 
-	a.logger.Info("scoped token minted", "tier", tier, "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
+	a.logger.Info("scoped token minted", "tier", tier, "repos", len(repos), "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
 	return installToken.GetToken(), nil
 }
 

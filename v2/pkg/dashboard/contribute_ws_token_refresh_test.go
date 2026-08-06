@@ -112,7 +112,7 @@ func TestTokenRefreshDue(t *testing.T) {
 				currentTask:   tc.task,
 				tokenMintedAt: tc.mintedAt,
 			}
-			tier, due := tokenRefreshDue(c, tc.now)
+			tier, _, due := tokenRefreshDue(c, tc.now)
 			if due != tc.wantDue {
 				t.Fatalf("due = %v, want %v", due, tc.wantDue)
 			}
@@ -264,12 +264,13 @@ func TestResumeTaskTokenReArmsRefresh(t *testing.T) {
 
 	// Precondition: with a zero mint time, refresh is NOT due — the bug's steady
 	// state where the resumed session never refreshes again.
-	if _, due := tokenRefreshDue(conn, time.Now().Add(2*wsTokenTTL)); due {
+	if _, _, due := tokenRefreshDue(conn, time.Now().Add(2*wsTokenTTL)); due {
 		t.Fatalf("precondition: refresh should not be due with zero tokenMintedAt")
 	}
 
 	before := time.Now()
-	hub.resumeTaskToken(conn)
+	// C4: resume mints for the SERVER-issued lease's tier + repo.
+	hub.resumeTaskToken(conn, &taskLease{taskID: "t-resume", repo: "o/r", number: 7, tier: "contributor", gen: 1})
 
 	// The relay must receive a token_refresh carrying the fresh token.
 	client.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -296,7 +297,7 @@ func TestResumeTaskTokenReArmsRefresh(t *testing.T) {
 	if minted.IsZero() || minted.Before(before.Add(-time.Second)) {
 		t.Fatalf("tokenMintedAt not re-armed on resume: %s", minted)
 	}
-	if _, due := tokenRefreshDue(conn, minted.Add(wsTokenRefreshPeriod+time.Second)); !due {
+	if _, _, due := tokenRefreshDue(conn, minted.Add(wsTokenRefreshPeriod+time.Second)); !due {
 		t.Fatalf("after re-arm, refresh should be due again past the refresh period")
 	}
 }

@@ -175,6 +175,17 @@ type ContributorProfile struct {
 	CurrentTask    *WSTaskAssign  `json:"current_task,omitempty"`
 	ActiveTasks    []WSTaskAssign `json:"active_tasks,omitempty"`
 	Sessions       int            `json:"sessions,omitempty"`
+	// Version is the profile's optimistic-concurrency token (kubestellar/hive H2,
+	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
+	// profile at version N may only persist its edit if the on-disk version is still
+	// N (saveContributorProfileCAS); a concurrent writer that already advanced the
+	// version wins, and the stale writer must reload and re-apply. Before this, a WS
+	// path holding a profile pointer captured at auth could save it back minutes
+	// later and silently CLOBBER an admin revoke that happened in between —
+	// restoring "contributor" over "revoked" and re-granting write access. Absent
+	// (0) on legacy on-disk profiles, which the CAS treats as "unversioned" and
+	// upgrades on first write. omitempty so existing files are byte-compatible.
+	Version int `json:"version,omitempty"`
 }
 
 type ContributorRateLimits struct {
@@ -335,10 +346,71 @@ func loadContributorProfile(username string) (*ContributorProfile, error) {
 	return &p, nil
 }
 
+// contributorSaveMu serializes profile writes across ALL goroutines (H2,
+// CWE-613/639). Every persisted mutation goes through saveContributorProfile, which
+// reloads the on-disk profile under this lock, reconciles it with the caller's copy,
+// bumps the version, and writes — so two concurrent writers (e.g. a WS stats update
+// and an admin revoke) can never race to clobber each other's change. The lock is
+// process-wide (the store is a single directory on the hive's PVC) and held only for
+// the brief read-reconcile-write window.
+var contributorSaveMu sync.Mutex
+
+// terminalTiers are trust tiers that, once written to disk, are SERVER-AUTHORITATIVE
+// and TERMINAL for non-admin writers (H2). A WS-path save carrying a live in-memory
+// profile pointer must never be able to move the tier OUT of one of these — that was
+// the account-un-revoke primitive: a stale WS save after an admin revoke restored
+// "contributor". Only the admin trust/revoke handlers (which pass adminOverride) may
+// change a terminal tier.
+func isTerminalTier(tier string) bool {
+	return tier == "revoked"
+}
+
 func saveContributorProfile(p *ContributorProfile) error {
+	return saveContributorProfileCAS(p, false)
+}
+
+// saveContributorProfileCAS persists a contributor profile under the global save
+// lock with optimistic-concurrency and the revocation-terminal invariant (H2,
+// CWE-613/639). It:
+//
+//   - reloads the CURRENT on-disk profile (if any) under contributorSaveMu;
+//   - enforces the terminal-tier fence UNLESS adminOverride: if the disk copy is in a
+//     terminal tier (revoked) but the incoming copy is not, the incoming TrustTier is
+//     OVERRIDDEN back to the disk value, so a stale WS save cannot un-revoke an
+//     account. Admin paths (trust/revoke) pass adminOverride=true to intentionally
+//     change a terminal tier;
+//   - detects a lost update: when the caller's Version is non-zero and the disk
+//     Version has advanced past it, the write is rejected with errProfileConflict so
+//     the caller can reload+retry rather than clobber the newer state;
+//   - bumps Version and writes atomically (temp + rename).
+//
+// A first-ever write (no disk file) or a legacy unversioned profile (Version 0)
+// proceeds and is upgraded to version 1+.
+func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error {
 	if strings.Contains(p.GitHubUsername, "..") || strings.Contains(p.GitHubUsername, "/") || strings.Contains(p.GitHubUsername, "\\") {
 		return fmt.Errorf("invalid username for save")
 	}
+	contributorSaveMu.Lock()
+	defer contributorSaveMu.Unlock()
+
+	// Reload the authoritative on-disk copy (bypasses any in-memory staleness).
+	if cur, err := loadContributorProfile(p.GitHubUsername); err == nil && cur != nil {
+		// Revocation is server-authoritative and terminal for non-admin writers:
+		// never let a non-admin save move the tier out of a terminal state.
+		if !adminOverride && isTerminalTier(cur.TrustTier) && !isTerminalTier(p.TrustTier) {
+			p.TrustTier = cur.TrustTier
+		}
+		// Optimistic-concurrency: reject a stale writer whose base version is behind
+		// the disk. A zero base version (legacy/unversioned caller) is exempt so
+		// existing call sites keep working; those saves still get the terminal-tier
+		// fence above.
+		if p.Version != 0 && p.Version < cur.Version {
+			return errProfileConflict
+		}
+		p.Version = cur.Version
+	}
+	p.Version++
+
 	ensureDir(getContributorsDir())
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -351,6 +423,11 @@ func saveContributorProfile(p *ContributorProfile) error {
 	}
 	return os.Rename(tmpPath, path)
 }
+
+// errProfileConflict is returned by saveContributorProfileCAS when a stale writer's
+// base version is behind the current on-disk version (H2). The caller should reload
+// the profile, re-apply its intended change, and retry.
+var errProfileConflict = fmt.Errorf("contributor profile version conflict")
 
 func listContributorProfiles() []ContributorProfile {
 	ensureDir(getContributorsDir())
@@ -5251,9 +5328,18 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	p.TrustTier = req.Tier
-	if err := saveContributorProfile(p); err != nil {
+	// H2: admin path — adminOverride lets this change a terminal (revoked) tier and
+	// wins the CAS reconcile against any concurrent stale WS save. The write is
+	// server-authoritative.
+	if err := saveContributorProfileCAS(p, true); err != nil {
 		jsonError(w, "Failed to save", http.StatusInternalServerError)
 		return
+	}
+	// H2: if this change revokes access, fence any live WebSocket sessions the
+	// contributor holds so an in-flight connection cannot keep working (or keep
+	// saving a stale "contributor" profile) after the revoke.
+	if req.Tier == "revoked" && s.contributeHub != nil {
+		s.contributeHub.DisconnectContributor(p.ContributorID, "contribution access revoked")
 	}
 	s.logger.Info("contributor tier changed", "username", p.GitHubUsername, "tier", req.Tier)
 	jsonResponse(w, map[string]any{"ok": true, "trust_tier": req.Tier})
@@ -5270,7 +5356,19 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	p.TrustTier = "revoked"
-	_ = saveContributorProfile(p)
+	// H2: admin path — adminOverride wins the CAS reconcile so this revoke cannot be
+	// silently clobbered by a concurrent stale WS save, and the tier is now
+	// server-authoritative and terminal for any later non-admin write.
+	if err := saveContributorProfileCAS(p, true); err != nil {
+		jsonError(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	// H2: fence live sessions — close any WebSocket connections this contributor
+	// holds so an in-flight session cannot keep working, keep minting credentials, or
+	// keep saving a stale non-revoked profile after the revoke lands.
+	if s.contributeHub != nil {
+		s.contributeHub.DisconnectContributor(p.ContributorID, "contribution access revoked")
+	}
 	s.logger.Info("contributor revoked", "username", p.GitHubUsername)
 	jsonResponse(w, map[string]any{"ok": true})
 }
