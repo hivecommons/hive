@@ -1757,7 +1757,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			if agent.specialistReady {
 				launchCmd = codexSpecialistLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name))
 			} else {
-				launchCmd = codexAgentLaunchCmd(binary, model, agent.Config.BeadsDir)
+				launchCmd = codexAgentLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name), agent.Config.BeadsDir)
 			}
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -7626,7 +7626,7 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	case "codex":
-		return codexAgentLaunchCmd(binary, model, "")
+		return codexAgentLaunchCmd(binary, model, "", "")
 	default:
 		cmd := binary
 		if model != "" {
@@ -7637,13 +7637,18 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 }
 
 // codexAgentLaunchCmd keeps ordinary long-lived Codex agents unattended while
-// preserving a workspace-write sandbox. Ordinary agents use gh and the shared
-// beads checkout directly, so they need network access and an explicit grant
-// for the configured beads directory. Built-in MCP apps stay disabled: their
-// separate approval surface can otherwise stop an unattended agent even when
-// the command approval policy is never. This intentionally does not use the
-// dangerous sandbox bypass flag.
-func codexAgentLaunchCmd(binary, model, beadsDir string) string {
+// preserving a workspace-write sandbox. The exact Hive-owned agent workspace
+// is explicitly trusted for this invocation: --ask-for-approval=never governs
+// tool calls but does not dismiss Codex's separate first-open directory trust
+// screen, which otherwise parks a fresh hosted agent before its first task.
+// The override is scoped to that one workspace and is not persisted into the
+// shared credential home. Ordinary agents use gh and the shared beads checkout
+// directly, so they also need network access and an explicit grant for the
+// configured beads directory. Built-in MCP apps stay disabled: their separate
+// approval surface can otherwise stop an unattended agent even when the command
+// approval policy is never. This intentionally does not use the dangerous
+// sandbox bypass flag.
+func codexAgentLaunchCmd(binary, model, workspaceDir, beadsDir string) string {
 	cmd := binary
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -7651,6 +7656,10 @@ func codexAgentLaunchCmd(binary, model, beadsDir string) string {
 	cmd += " --sandbox workspace-write"
 	cmd += " -c sandbox_workspace_write.network_access=true"
 	cmd += " --disable enable_mcp_apps"
+	if workspaceDir != "" {
+		trustOverride := fmt.Sprintf(`projects.%q.trust_level="trusted"`, filepath.ToSlash(filepath.Clean(workspaceDir)))
+		cmd += " -c " + specialistShellArgument(trustOverride)
+	}
 	if beadsDir != "" {
 		cmd += " --add-dir " + specialistShellArgument(beadsDir)
 	}

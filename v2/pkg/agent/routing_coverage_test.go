@@ -270,16 +270,18 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 
 func TestCodexAgentLaunchCmd_UnattendedWithoutSandboxBypass(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		model    string
-		beadsDir string
-		want     string
+		name      string
+		model     string
+		workspace string
+		beadsDir  string
+		want      string
 	}{
 		{
-			name:     "with model and beads checkout",
-			model:    "gpt-5.6-sol",
-			beadsDir: "/data/shared beads",
-			want:     "codex --model gpt-5.6-sol --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps --add-dir '/data/shared beads' --ask-for-approval never",
+			name:      "with model and beads checkout",
+			model:     "gpt-5.6-sol",
+			workspace: "/data/agents/quality",
+			beadsDir:  "/data/shared beads",
+			want:      "codex --model gpt-5.6-sol --sandbox workspace-write -c sandbox_workspace_write.network_access=true --disable enable_mcp_apps -c 'projects.\"/data/agents/quality\".trust_level=\"trusted\"' --add-dir '/data/shared beads' --ask-for-approval never",
 		},
 		{
 			name: "without model or beads checkout",
@@ -292,7 +294,7 @@ func TestCodexAgentLaunchCmd_UnattendedWithoutSandboxBypass(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := codexAgentLaunchCmd("codex", tc.model, tc.beadsDir)
+			got := codexAgentLaunchCmd("codex", tc.model, tc.workspace, tc.beadsDir)
 			if got != tc.want {
 				t.Fatalf("codexAgentLaunchCmd() = %q, want %q", got, tc.want)
 			}
@@ -308,6 +310,9 @@ func TestCodexAgentLaunchCmd_UnattendedWithoutSandboxBypass(t *testing.T) {
 			}
 			if strings.Contains(got, "dangerously") {
 				t.Fatalf("ordinary Codex launch bypassed sandboxing: %q", got)
+			}
+			if tc.workspace != "" && !strings.Contains(got, `projects."/data/agents/quality".trust_level="trusted"`) {
+				t.Fatalf("ordinary Codex launch did not bind trust to its exact Hive workspace: %q", got)
 			}
 		})
 	}
