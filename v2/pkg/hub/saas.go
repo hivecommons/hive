@@ -384,7 +384,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 	if err != nil || cookie.Value == "" {
 		return impersonationGrant{}, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.hubSecret, cookie.Value, time.Now())
+	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
 	if !ok || grant.Admin != hubAdminUsername {
 		return impersonationGrant{}, false
 	}
@@ -473,7 +473,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 		// against the hub secret. A legacy unsigned cookie or a forged value
 		// fails here and is treated as logged out, so the user re-authenticates
 		// through the normal login flow (which re-mints a signed cookie).
-		if username, ok := verifyHubUserCookieValue(s.hubSecret, cookie.Value); ok {
+		if username, ok := verifyHubUserCookieValue(s.sessionKey(), cookie.Value); ok {
 			if loadSaaSUser(username) != nil {
 				return username
 			}
@@ -520,7 +520,7 @@ func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string
 	if err != nil || cookie.Value == "" {
 		return realUser, realUser, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.hubSecret, cookie.Value, time.Now())
+	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
 	if !ok {
 		return realUser, realUser, false
 	}
@@ -810,7 +810,7 @@ func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	value := mintImpersonateCookieValue(s.hubSecret, admin, target, time.Now())
+	value := mintImpersonateCookieValue(s.impersonateKey(), admin, target, time.Now())
 	if value == "" {
 		writeJSONError(w, http.StatusInternalServerError, "cannot start impersonation")
 		return
@@ -2856,7 +2856,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// Mint the handoff token. Without a hub secret we can't sign one, so fall
 	// back to a plain dashboard redirect (spoke will prompt for login).
 	if s.hubSecret != "" {
-		if tok := MintSSOToken(s.hubSecret, username, role, id, time.Now()); tok != "" {
+		if tok := MintSSOToken(s.ssoKey(), username, role, id, time.Now()); tok != "" {
 			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
 			return
 		}

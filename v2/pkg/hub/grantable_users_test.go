@@ -50,9 +50,11 @@ func getGrantableUsers(t *testing.T, s *HubServer, username string) *httptest.Re
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/saas/grantable-users", nil)
 	if username != "" {
+		// Sign with the derived SESSION sub-key (C2 domain separation), the same
+		// key the hub verifies session cookies with.
 		req.AddCookie(&http.Cookie{
 			Name:  "hive_hub_user",
-			Value: mintHubUserCookieValue(grantableTestSecret, username),
+			Value: mintHubUserCookieValue(deriveDomainKey(grantableTestSecret, infoSessionKey), username),
 		})
 	}
 	rec := httptest.NewRecorder()

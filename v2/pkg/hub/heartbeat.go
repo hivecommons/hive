@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"runtime/debug"
 	"sync/atomic"
@@ -790,7 +789,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return nil
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+	if secret := SpokeHeartbeatKey(); secret != "" {
 		req.Header.Set("Authorization", "Bearer "+secret)
 	}
 
@@ -856,7 +855,7 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+	if secret := SpokeHeartbeatKey(); secret != "" {
 		req.Header.Set("Authorization", "Bearer "+secret)
 	}
 
@@ -908,7 +907,7 @@ func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, l
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+	if secret := SpokeHeartbeatKey(); secret != "" {
 		req.Header.Set("Authorization", "Bearer "+secret)
 	}
 
@@ -1205,7 +1204,7 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 				continue
 			}
 			req.Header.Set("Content-Type", "application/json")
-			if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+			if secret := SpokeHeartbeatKey(); secret != "" {
 				req.Header.Set("Authorization", "Bearer "+secret)
 			}
 			resp, err := http.DefaultClient.Do(req)

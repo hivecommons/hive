@@ -1415,15 +1415,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return hex.EncodeToString(b)
 		}(),
-		"HubSecret": func() string {
-			if s := os.Getenv("HIVE_HUB_SECRET"); s != "" {
-				return s
-			}
-			if data, err := os.ReadFile("/data/saas/hub-secret.key"); err == nil {
-				return strings.TrimSpace(string(data))
-			}
-			return ""
-		}(),
+		// C2 domain separation (CWE-321/798): the spoke Deployment is injected ONLY
+		// the derived sub-keys it needs — the heartbeat bearer, plus the session and
+		// SSO verification keys — and NEVER the master HIVE_HUB_SECRET. A spoke
+		// operator can read its pod env, but those keys can only prove
+		// "I am a provisioned spoke" / verify hub-minted cookies and tokens; they
+		// cannot mint an admin session, an SSO-as-any-owner token, or an
+		// impersonation grant (the impersonation key is hub-only and never derived
+		// here). The master, which could sign all of the above, stays on the hub.
+		"HeartbeatKey": deriveDomainKey(provisionMasterSecret(), infoHeartbeatKey),
+		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
+		"SSOKey":       deriveDomainKey(provisionMasterSecret(), infoSSOKey),
 		// Cluster-aware fields.
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
@@ -2223,8 +2225,17 @@ spec:
           value: "{{.ACMMLevel}}"
         - name: HIVE_HUB_URL
           value: https://hive.kubestellar.io
-        - name: HIVE_HUB_SECRET
-          value: "{{.HubSecret}}"
+        # C2 domain separation: derived per-domain sub-keys ONLY — never the
+        # master HIVE_HUB_SECRET. HEARTBEAT authenticates beats to the hub;
+        # SESSION/SSO verify hub-minted cookies and handoff tokens. None of these
+        # can forge a hub admin session, an SSO-as-any-owner token, or an
+        # impersonation grant.
+        - name: HIVE_HEARTBEAT_KEY
+          value: "{{.HeartbeatKey}}"
+        - name: HIVE_SESSION_KEY
+          value: "{{.SessionKey}}"
+        - name: HIVE_SSO_KEY
+          value: "{{.SSOKey}}"
 {{- if .AuthorizedUsers}}
         - name: HIVE_AUTHORIZED_USERS
           value: "{{.AuthorizedUsers}}"

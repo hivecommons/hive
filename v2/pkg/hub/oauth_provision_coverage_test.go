@@ -106,7 +106,7 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	if sessionCookie.Value == "octocat" {
 		t.Error("session cookie must be signed, not the raw username")
 	}
-	if user, ok := verifyHubUserCookieValue(testHubSecret, sessionCookie.Value); !ok || user != "octocat" {
+	if user, ok := verifyHubUserCookieValue(deriveDomainKey(testHubSecret, infoSessionKey), sessionCookie.Value); !ok || user != "octocat" {
 		t.Errorf("minted cookie did not verify: (%q, %v)", user, ok)
 	}
 }

@@ -211,8 +211,16 @@ func TestSendHeartbeatWithSecret(t *testing.T) {
 		return &HeartbeatPayload{HiveID: "test"}
 	}, slog.Default())
 
-	if gotAuth != "Bearer test-secret-123" {
-		t.Errorf("Authorization header = %q, want 'Bearer test-secret-123'", gotAuth)
+	// C2 domain separation: the spoke must present the DERIVED heartbeat sub-key,
+	// NOT the raw master. Sending "Bearer test-secret-123" here would mean the
+	// spoke still leaks the master — the whole vulnerability. Assert the derived
+	// value and, defensively, that the master itself never appears on the wire.
+	wantAuth := heartbeatBearer("test-secret-123")
+	if gotAuth != wantAuth {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, wantAuth)
+	}
+	if gotAuth == "Bearer test-secret-123" {
+		t.Error("spoke leaked the master HIVE_HUB_SECRET as the heartbeat bearer")
 	}
 }
 

@@ -14,11 +14,31 @@ const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
-// HIVE_HUB_SECRET is present ONLY on hub-hosted hives (injected by the hub at
-// provision time). Its presence is the boot-time signal that this hive runs
-// hosted, where per-request identity comes from the hub-minted, HMAC-signed
-// `hive_hub_user` cookie (verified below) rather than a shared dashboard token.
-const HUB_SECRET = process.env.HIVE_HUB_SECRET || '';
+// C2 domain separation: the proxy verifies the hub-minted `hive_hub_user`
+// session/terminal cookie, which is HMAC'd with the derived SESSION sub-key —
+// NOT the master hub secret. A hub-hosted hive is injected HIVE_SESSION_KEY and
+// never the master, so a spoke operator cannot forge a session cookie.
+//
+// SESSION_KEY resolution mirrors the Go SpokeSessionKey() helper:
+//   1. HIVE_SESSION_KEY (modern least-privilege provisioning) if set, else
+//   2. derive it from HIVE_HUB_SECRET via HMAC-SHA256(master, "hive-session-v1")
+//      — the backward-compatible path for self-hosted/legacy spokes that still
+//      hold the master. Both yield the identical key the hub signs with.
+// The info string MUST stay byte-for-byte identical to infoSessionKey in
+// v2/pkg/hub/hub_keys.go.
+const INFO_SESSION_KEY = 'hive-session-v1';
+function deriveSessionKey() {
+  const explicit = (process.env.HIVE_SESSION_KEY || '').trim();
+  if (explicit) return explicit;
+  const master = (process.env.HIVE_HUB_SECRET || '').trim();
+  if (!master) return '';
+  return crypto.createHmac('sha256', master).update(INFO_SESSION_KEY).digest('hex');
+}
+const SESSION_KEY = deriveSessionKey();
+// Boot-time "am I hub-hosted?" signal. Either the injected session key (modern)
+// or a master secret (legacy) proves hosted mode, where identity comes from the
+// hub cookie rather than a shared dashboard token.
+const IS_HOSTED = SESSION_KEY !== '';
 
 // SECURITY (fail closed on empty dashboard token — CWE-306).
 //
@@ -30,11 +50,11 @@ const HUB_SECRET = process.env.HIVE_HUB_SECRET || '';
 //
 // Hosted hives INTENTIONALLY run with HIVE_DASHBOARD_TOKEN unset: identity is
 // carried by the hub cookie, so a missing token is expected there and the proxy
-// must still boot. HUB_SECRET being set proves hosted mode. Only a self-hosted
-// deploy with neither a token nor a hub secret is truly unauthenticated, and
-// that is what we refuse to start.
-if (!DASHBOARD_TOKEN && !HUB_SECRET && process.env.NODE_ENV !== 'test') {
-  console.error('[SECURITY] HIVE_DASHBOARD_TOKEN is not set and this hive is not hub-hosted (HIVE_HUB_SECRET unset) — all mutation endpoints would be unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.');
+// must still boot. A resolved SESSION_KEY (IS_HOSTED) proves hosted mode. Only a
+// self-hosted deploy with neither a token nor a session key is truly
+// unauthenticated, and that is what we refuse to start.
+if (!DASHBOARD_TOKEN && !IS_HOSTED && process.env.NODE_ENV !== 'test') {
+  console.error('[SECURITY] HIVE_DASHBOARD_TOKEN is not set and this hive is not hub-hosted (no HIVE_SESSION_KEY / HIVE_HUB_SECRET) — all mutation endpoints would be unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.');
   process.exit(1);
 }
 
@@ -56,7 +76,7 @@ function requireAuth(req, res, next) {
 
 // verifyHubUserCookie mirrors verifyHubUserCookieValue in v2/pkg/hub/hub_cookie.go
 // EXACTLY. The `hive_hub_user` cookie value is `<username>.<sig>` where sig is
-// base64url-unpadded HMAC-SHA256(key=HUB_SECRET, msg=username). The proxy holds
+// base64url-unpadded HMAC-SHA256(key=SESSION_KEY, msg=username). The proxy holds
 // no other secret and must not merely check that the cookie is non-empty (that
 // was CWE-345: any `Cookie: hive_hub_user=x` yielded a shell in a
 // credential-holding container). We recompute the HMAC and constant-time-compare
@@ -191,7 +211,7 @@ app.use('/terminal', (req, res, next) => {
     }, {});
     // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
     // signature — a non-empty value is NOT proof of authentication.
-    const user = verifyHubUserCookie(HUB_SECRET, cookies['hive_hub_user']);
+    const user = verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user']);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -277,7 +297,7 @@ server.on('upgrade', (req, socket, head) => {
         return acc;
       }, {});
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
-      if (!verifyHubUserCookie(HUB_SECRET, cookies['hive_hub_user'])) {
+      if (!verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user'])) {
         socket.destroy();
         return;
       }

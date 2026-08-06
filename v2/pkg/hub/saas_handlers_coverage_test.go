@@ -23,11 +23,22 @@ import (
 // server recomputes matches the one baked into the cookie.
 const testHubSecret = "test-hub-secret-f4"
 
-// testAuthCookie mints a signed hive_hub_user cookie for username using
-// testHubSecret, matching the production cookie format so getAuthUser /
-// handleAuthUser accept it.
+// testAuthCookie mints a signed hive_hub_user cookie for username using the
+// derived SESSION sub-key of testHubSecret (C2 domain separation) — the same key
+// the hub now verifies session cookies with. A cookie signed with the raw master
+// no longer verifies (that is the whole point of the fix), so tests must sign
+// with the session sub-key to match getAuthUser / handleAuthUser.
 func testAuthCookie(username string) *http.Cookie {
-	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValue(testHubSecret, username)}
+	sessionKey := deriveDomainKey(testHubSecret, infoSessionKey)
+	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValue(sessionKey, username)}
+}
+
+// heartbeatBearer returns the derived HEARTBEAT-domain bearer for a given master
+// secret (C2 domain separation). The hub verifies /api/heartbeat and
+// /api/task-status against this sub-key, NOT the raw master, so tests that hit
+// those handlers with an explicit hubSecret must send this value.
+func heartbeatBearer(master string) string {
+	return "Bearer " + deriveDomainKey(master, infoHeartbeatKey)
 }
 
 // mkUser writes a SaaS user to the temp dir so getAuthUser resolves the cookie.

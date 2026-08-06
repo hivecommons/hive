@@ -1039,9 +1039,13 @@ func (s *HubServer) Shutdown(timeout time.Duration) error {
 }
 
 func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// Heartbeats authenticate with the derived HEARTBEAT sub-key, not the master
+	// secret — the master never leaves the hub (C2 domain separation). Spokes are
+	// injected only this sub-key, so a spoke operator's bearer can prove
+	// "I am a provisioned spoke" but cannot sign a session/SSO/impersonation value.
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.heartbeatKey()) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -2054,9 +2058,11 @@ func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
+	// Same derived HEARTBEAT sub-key as /api/heartbeat (task-status is the spoke's
+	// other beat channel); the master secret is never accepted here.
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.heartbeatKey()) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

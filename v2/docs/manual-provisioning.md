@@ -429,6 +429,17 @@ spec:
         # HIVE_HUB_SECRET authenticates every heartbeat to the hub. WITHOUT it,
         # the hub rejects the spoke's heartbeats with 401 and the hive shows
         # OFFLINE forever (see the gotcha below). HIVE_HUB_URL points at the hub.
+        #
+        # SECURITY (C2 domain separation): the hub no longer signs everything with
+        # this one key. It derives a distinct sub-key per trust domain
+        # (heartbeat / session cookie / SSO), so a spoke never needs the master.
+        # Automated hub-hosted provisioning injects ONLY the derived keys
+        # (HIVE_HEARTBEAT_KEY, HIVE_SESSION_KEY, HIVE_SSO_KEY) and NEVER
+        # HIVE_HUB_SECRET. Manual provisioning MAY still set HIVE_HUB_SECRET as
+        # shown below: the spoke derives the same sub-keys from it locally, so
+        # heartbeats/SSO keep working. If you prefer least privilege, set the three
+        # HIVE_*_KEY vars instead (each = HMAC-SHA256(master, "hive-<domain>-v1")
+        # rendered as lowercase hex) and omit HIVE_HUB_SECRET entirely.
         - { name: HIVE_HUB_SECRET, value: "${HUB_SECRET}" }
         - { name: HIVE_HUB_URL,    value: "https://hive.kubestellar.io" }
         # startupProbe keeps the liveness clock from starting until boot

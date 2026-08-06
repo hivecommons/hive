@@ -18,11 +18,14 @@ import (
 // setPathValue, helperSetupTempDirs).
 
 // impersonateCookie mints a signed impersonation cookie the same way the server
-// does, so a test can present a genuine grant.
+// does, so a test can present a genuine grant. It signs with the derived
+// IMPERSONATE sub-key (C2 domain separation) — the same key the hub verifies
+// impersonation cookies with. This key is HUB-ONLY: it is never derived for or
+// injected into a spoke.
 func impersonateCookie(admin, target string, now time.Time) *http.Cookie {
 	return &http.Cookie{
 		Name:  impersonateCookieName,
-		Value: mintImpersonateCookieValue(testHubSecret, admin, target, now),
+		Value: mintImpersonateCookieValue(deriveDomainKey(testHubSecret, infoImpersonateKey), admin, target, now),
 	}
 }
 
