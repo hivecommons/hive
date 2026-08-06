@@ -1416,16 +1416,20 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			return hex.EncodeToString(b)
 		}(),
 		// C2 domain separation (CWE-321/798): the spoke Deployment is injected ONLY
-		// the derived sub-keys it needs — the heartbeat bearer, plus the session and
-		// SSO verification keys — and NEVER the master HIVE_HUB_SECRET. A spoke
-		// operator can read its pod env, but those keys can only prove
-		// "I am a provisioned spoke" / verify hub-minted cookies and tokens; they
-		// cannot mint an admin session, an SSO-as-any-owner token, or an
+		// the derived sub-keys it needs — the heartbeat bearer, plus the session
+		// verification key and the SSO PUBLIC key — and NEVER the master
+		// HIVE_HUB_SECRET. A spoke operator can read its pod env, but those keys can
+		// only prove "I am a provisioned spoke" / VERIFY hub-minted cookies and
+		// tokens; they cannot mint an admin session, an SSO-as-any-owner token, or an
 		// impersonation grant (the impersonation key is hub-only and never derived
 		// here). The master, which could sign all of the above, stays on the hub.
+		//
+		// C2 follow-up: SSO is asymmetric — the spoke gets only the Ed25519 PUBLIC
+		// key (SSOPublicKey), derived from the same master seed the hub signs with,
+		// so even a hostile spoke operator holding this value cannot mint a token.
 		"HeartbeatKey": deriveDomainKey(provisionMasterSecret(), infoHeartbeatKey),
 		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
-		"SSOKey":       deriveDomainKey(provisionMasterSecret(), infoSSOKey),
+		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
 		// Cluster-aware fields.
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
@@ -2227,15 +2231,16 @@ spec:
           value: https://hive.kubestellar.io
         # C2 domain separation: derived per-domain sub-keys ONLY — never the
         # master HIVE_HUB_SECRET. HEARTBEAT authenticates beats to the hub;
-        # SESSION/SSO verify hub-minted cookies and handoff tokens. None of these
-        # can forge a hub admin session, an SSO-as-any-owner token, or an
-        # impersonation grant.
+        # SESSION verifies hub-minted cookies. SSO is ASYMMETRIC (C2 follow-up):
+        # the spoke gets the Ed25519 PUBLIC key and can only VERIFY hub-minted
+        # handoff tokens — it cannot mint one. None of these can forge a hub admin
+        # session, an SSO-as-any-owner token, or an impersonation grant.
         - name: HIVE_HEARTBEAT_KEY
           value: "{{.HeartbeatKey}}"
         - name: HIVE_SESSION_KEY
           value: "{{.SessionKey}}"
-        - name: HIVE_SSO_KEY
-          value: "{{.SSOKey}}"
+        - name: HIVE_SSO_PUBLIC_KEY
+          value: "{{.SSOPublicKey}}"
 {{- if .AuthorizedUsers}}
         - name: HIVE_AUTHORIZED_USERS
           value: "{{.AuthorizedUsers}}"

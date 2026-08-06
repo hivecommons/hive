@@ -43,7 +43,7 @@ func TestSpokeHeartbeatKeyCannotForgeOtherDomains(t *testing.T) {
 
 	// What the hub verifies with, per domain.
 	sessionKey := deriveDomainKey(master, infoSessionKey)
-	ssoKey := deriveDomainKey(master, infoSSOKey)
+	ssoPubKey := ssoPublicKeyFromSeed(SSOSigningSeedFromMaster(master))
 	impersonateKey := deriveDomainKey(master, infoImpersonateKey)
 
 	// What a spoke actually holds (all it is injected).
@@ -56,10 +56,12 @@ func TestSpokeHeartbeatKeyCannotForgeOtherDomains(t *testing.T) {
 		t.Error("spoke heartbeat key forged a valid hub SESSION cookie")
 	}
 
-	// 2. SSO token: a token minted with the spoke's heartbeat key must NOT verify
-	//    against the hub's SSO key.
+	// 2. SSO token: a token the spoke tries to mint using its heartbeat key as a
+	//    signing seed must NOT verify against the hub's SSO PUBLIC key. (SSO is now
+	//    asymmetric: the spoke holds only the public key and no signing seed at all,
+	//    so this also stands in for "spoke has no private material to sign with".)
 	forgedSSO := MintSSOToken(spokeHeartbeatKey, "victim-owner", "owner", "hive-x", now)
-	if _, _, err := VerifySSOToken(ssoKey, forgedSSO, "hive-x", now); err == nil {
+	if _, _, err := VerifySSOToken(ssoPubKey, forgedSSO, "hive-x", now); err == nil {
 		t.Error("spoke heartbeat key forged a valid SSO handoff token")
 	}
 

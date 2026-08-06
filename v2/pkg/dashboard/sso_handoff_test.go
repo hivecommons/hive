@@ -109,7 +109,7 @@ func TestSSOHandoff_ValidTokenLandsOnRootWithSession(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSSOServer(t, tc.hubProxied, tc.authToken, tc.authorized...)
-			tok := hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, testHiveID, time.Now())
+			tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, testHiveID, time.Now())
 			if tok == "" {
 				t.Fatal("failed to mint handoff token")
 			}
@@ -183,7 +183,7 @@ func TestSSOHandoff_LandingRequestIsAuthenticated(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newSSOServer(t, tc.hubProxied, tc.authToken, tc.authorized...)
-			tok := hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, testHiveID, time.Now())
+			tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, testHiveID, time.Now())
 			w := ssoGet(t, s, "token="+tok)
 			c := sessionCookie(w)
 			if c == nil {
@@ -214,7 +214,7 @@ func TestSSOHandoff_LandingRequestIsAuthenticated(t *testing.T) {
 // of them may emit a redirect, because a redirect is what spins the browser.
 func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 	validTok := func() string {
-		return hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, testHiveID, time.Now())
+		return hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, testHiveID, time.Now())
 	}
 
 	tests := []struct {
@@ -243,11 +243,13 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 			wantCode:   ssoErrBadToken,
 		},
 		{
-			name:       "token signed with the wrong secret",
+			name:       "token signed with the wrong key",
 			hubProxied: true,
 			hubSecret:  testHubSecret,
 			query: func() string {
-				return "token=" + hub.MintSSOToken("a-different-secret", "clubanderson", config.RoleOwner, testHiveID, time.Now())
+				// A validly-signed token, but under a DIFFERENT hub master's seed:
+				// its Ed25519 signature must not verify against this spoke's key.
+				return "token=" + hub.MintSSOToken(hub.SSOSigningSeedFromMaster("a-different-master"), "clubanderson", config.RoleOwner, testHiveID, time.Now())
 			},
 			wantStatus: http.StatusUnauthorized,
 			wantCode:   ssoErrBadToken,
@@ -257,7 +259,7 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 			hubProxied: true,
 			hubSecret:  testHubSecret,
 			query: func() string {
-				return "token=" + hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, "some-other-hive", time.Now())
+				return "token=" + hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, "some-other-hive", time.Now())
 			},
 			wantStatus: http.StatusUnauthorized,
 			wantCode:   ssoErrBadToken,
@@ -269,7 +271,7 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 			query: func() string {
 				// Minted far enough in the past that any sane TTL has lapsed.
 				const wellPastAnyTTL = -24 * time.Hour
-				return "token=" + hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, testHiveID, time.Now().Add(wellPastAnyTTL))
+				return "token=" + hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, testHiveID, time.Now().Add(wellPastAnyTTL))
 			},
 			wantStatus: http.StatusUnauthorized,
 			wantCode:   ssoErrBadToken,
@@ -349,7 +351,7 @@ func TestSSOHandoff_FailuresTerminateWithoutRedirecting(t *testing.T) {
 func TestSSOHandoff_HopCounterAdvances(t *testing.T) {
 	for hop := 0; hop < maxSSOHops; hop++ {
 		s := newSSOServer(t, true, "shared-secret-token")
-		tok := hub.MintSSOToken(hub.SpokeSSOKey(), "clubanderson", config.RoleOwner, testHiveID, time.Now())
+		tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(testHubSecret), "clubanderson", config.RoleOwner, testHiveID, time.Now())
 		w := ssoGet(t, s, "token="+tok+"&"+ssoHopParam+"="+strconv.Itoa(hop))
 		if w.Code != http.StatusSeeOther {
 			t.Fatalf("hop=%d: status = %d, want 303 (still under the limit)", hop, w.Code)

@@ -92,51 +92,53 @@ func TestReadingListMediumSource(t *testing.T) {
 // ============================================================
 
 func TestVerifySSOTokenBranches(t *testing.T) {
-	secret := "shared"
+	seed := SSOSigningSeedFromMaster("shared")
+	pub := ssoPublicKeyFromSeed(seed)
+	otherPub := ssoPublicKeyFromSeed(SSOSigningSeedFromMaster("other"))
 	now := time.Now()
-	tok := MintSSOToken(secret, "alice", "owner", "hiveA", now)
+	tok := MintSSOToken(seed, "alice", "owner", "hiveA", now)
 	if tok == "" {
 		t.Fatal("mint failed")
 	}
 
-	// Wrong secret -> bad signature.
-	if _, _, err := VerifySSOToken("other", tok, "hiveA", now); err == nil {
-		t.Error("expected bad signature with wrong secret")
+	// Wrong key -> bad signature.
+	if _, _, err := VerifySSOToken(otherPub, tok, "hiveA", now); err == nil {
+		t.Error("expected bad signature with the wrong public key")
 	}
-	// Empty secret -> no shared secret error.
+	// Empty key -> no verification key error.
 	if _, _, err := VerifySSOToken("", tok, "hiveA", now); err == nil {
-		t.Error("expected error with empty secret")
+		t.Error("expected error with empty public key")
 	}
 	// Malformed token.
-	if _, _, err := VerifySSOToken(secret, "no-dot", "hiveA", now); err == nil {
+	if _, _, err := VerifySSOToken(pub, "no-dot", "hiveA", now); err == nil {
 		t.Error("expected malformed token error")
 	}
 	// Wrong hive.
-	if _, _, err := VerifySSOToken(secret, tok, "hiveB", now); err == nil {
+	if _, _, err := VerifySSOToken(pub, tok, "hiveB", now); err == nil {
 		t.Error("expected wrong-hive error")
 	}
 	// Expired.
-	if _, _, err := VerifySSOToken(secret, tok, "hiveA", now.Add(10*time.Minute)); err == nil {
+	if _, _, err := VerifySSOToken(pub, tok, "hiveA", now.Add(10*time.Minute)); err == nil {
 		t.Error("expected expired error")
 	}
 	// Not yet valid.
-	if _, _, err := VerifySSOToken(secret, tok, "hiveA", now.Add(-10*time.Minute)); err == nil {
+	if _, _, err := VerifySSOToken(pub, tok, "hiveA", now.Add(-10*time.Minute)); err == nil {
 		t.Error("expected not-yet-valid error")
 	}
 	// Valid round trip.
-	u, role, err := VerifySSOToken(secret, tok, "hiveA", now)
+	u, role, err := VerifySSOToken(pub, tok, "hiveA", now)
 	if err != nil || u != "alice" || role != "owner" {
 		t.Errorf("valid verify failed: u=%q role=%q err=%v", u, role, err)
 	}
 
 	// Mint refuses empty inputs.
 	if MintSSOToken("", "a", "r", "h", now) != "" {
-		t.Error("mint should refuse empty secret")
+		t.Error("mint should refuse empty seed")
 	}
-	if MintSSOToken(secret, "", "r", "h", now) != "" {
+	if MintSSOToken(seed, "", "r", "h", now) != "" {
 		t.Error("mint should refuse empty username")
 	}
-	if MintSSOToken(secret, "a", "r", "", now) != "" {
+	if MintSSOToken(seed, "a", "r", "", now) != "" {
 		t.Error("mint should refuse empty hive")
 	}
 }

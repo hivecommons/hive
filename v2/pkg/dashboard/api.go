@@ -1701,20 +1701,22 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSO verification uses the derived SSO sub-key (C2 domain separation): a
-	// hub-hosted spoke is injected HIVE_SSO_KEY and never the master secret, so a
-	// spoke operator cannot mint SSO-as-any-owner tokens. SpokeSSOKey falls back to
-	// deriving from HIVE_HUB_SECRET for self-hosted/legacy spokes that still hold
-	// the master, so verification succeeds against the hub-minted token either way.
-	secret := hub.SpokeSSOKey()
-	if secret == "" {
-		// No shared secret → SSO cannot be verified. Terminate with an
+	// SSO verification uses the hub's Ed25519 PUBLIC key (C2 follow-up: SSO is
+	// asymmetric). A hub-hosted spoke is injected HIVE_SSO_PUBLIC_KEY and never the
+	// master or any signing seed, so a spoke operator who reads its pod env cannot
+	// mint SSO-as-any-owner tokens — only the hub, holding the private seed, can
+	// sign. SpokeSSOPublicKey falls back to deriving the public key from
+	// HIVE_HUB_SECRET for self-hosted/legacy spokes that still hold the master, so
+	// verification succeeds against the hub-minted token either way.
+	pubKey := hub.SpokeSSOPublicKey()
+	if pubKey == "" {
+		// No verification key → SSO cannot be verified. Terminate with an
 		// explanation. Redirecting to "/" here is what produced the historical
 		// infinite bounce: "/" is auth-gated, sends the user back to the hub
 		// login, the hub sees a valid session and hands off to /sso again.
 		writeSSOError(w, r, http.StatusServiceUnavailable, ssoErrNoSecret,
-			"This hive has no hub shared secret configured, so single sign-on from the hub cannot be verified.",
-			"Ask the hive operator to set HIVE_HUB_SECRET (or HIVE_SSO_KEY) on this hive. In the meantime you can sign in directly with GitHub using the button below.")
+			"This hive has no hub SSO verification key configured, so single sign-on from the hub cannot be verified.",
+			"Ask the hive operator to set HIVE_HUB_SECRET (or HIVE_SSO_PUBLIC_KEY) on this hive. In the meantime you can sign in directly with GitHub using the button below.")
 		return
 	}
 
@@ -1731,7 +1733,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		hiveID = s.deps.Config.HiveID
 	}
 
-	username, tokenRole, err := hub.VerifySSOToken(secret, token, hiveID, time.Now())
+	username, tokenRole, err := hub.VerifySSOToken(pubKey, token, hiveID, time.Now())
 	if err != nil {
 		if s.deps != nil && s.deps.Logger != nil {
 			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())

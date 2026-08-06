@@ -2856,7 +2856,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// Mint the handoff token. Without a hub secret we can't sign one, so fall
 	// back to a plain dashboard redirect (spoke will prompt for login).
 	if s.hubSecret != "" {
-		if tok := MintSSOToken(s.ssoKey(), username, role, id, time.Now()); tok != "" {
+		if tok := MintSSOToken(s.ssoSigningSeed(), username, role, id, time.Now()); tok != "" {
 			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
 			return
 		}
