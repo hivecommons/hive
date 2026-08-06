@@ -266,9 +266,13 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     echo "── Step 2/2: Hive Registration ──"
     _HUB="${HIVE_HUB:-{{hive_hub}}}"
     HUB_HTTP=$(echo "$_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
+    # SECURITY (H7 / CWE-522): Do NOT forward the contributor's GitHub PAT
+    # (gh auth token) to the hub. HUB_HTTP is derived from a registry entry's
+    # dashboardUrl, so a malicious/poisoned registry could harvest the token.
+    # The register endpoint identifies the contributor by github_username only
+    # and ignores any Authorization header, so no bearer token is sent here.
     RESPONSE=$(curl -sf --max-time 15 -X POST "${HUB_HTTP}/api/contribute/register" \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer ${GH_TOKEN}" \
       -d "{\"github_username\": \"${GH_USER}\"}" 2>/dev/null) || {
         echo "ERROR: Registration failed. Is the hub running at ${HUB_HTTP}?"
         echo "  Check: curl -sf ${HUB_HTTP}/api/contribute/status"
@@ -512,7 +516,16 @@ contribute-hive backend="" mode="docker": check-version
       RUNTIME_FLAGS=""
       VOLSUF=""      # volume-option suffix for read-write mounts
       ROSUF=":ro"    # volume-option suffix for read-only mounts
-      NET_FLAGS="--network host"
+      # SECURITY (H6 / CWE-668): the contributor container runs a hub-driven,
+      # bypass-permissions agent. It must NOT share the host network and must
+      # NOT be able to write back into the contributor's real host CLI configs
+      # (~/.claude, ~/.copilot, ~/.config/goose, ~/.codex, ~/.pi) — a poisoned
+      # agent could otherwise plant MCP/hook config there and get code execution
+      # on the contributor's HOST at their next CLI run.
+      #
+      # Networking: the relay only dials OUT (hub + GitHub + optional LiteLLM),
+      # so the default bridge network is sufficient. No host networking.
+      NET_FLAGS=""
       if [[ "$RUNTIME" == "podman" ]]; then
         RUNTIME_FLAGS="--userns=keep-id"
         VOLSUF=":Z"
@@ -520,33 +533,77 @@ contribute-hive backend="" mode="docker": check-version
         # podman machine on macOS has no host networking (host = the VM,
         # not the Mac). The relay only dials out, so the default network
         # works; reach a localhost LiteLLM proxy via host.containers.internal.
-        if [[ "$OSTYPE" == darwin* ]]; then NET_FLAGS=""; fi
       fi
       if [[ "${HIVE_SKIP_PULL:-}" != "true" ]]; then
         echo "Pulling {{hive_image}} (${RUNTIME})..."
         "$RUNTIME" pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
         echo ""
       fi
-      # Mount CLI-specific config directories
+      # Mount CLI-specific config directories.
+      #
+      # SECURITY (H6 / CWE-668): we do NOT bind-mount the contributor's real
+      # host CLI config dirs read-write. Instead we COPY each needed host
+      # config into an ephemeral per-run staging directory and bind-mount THAT
+      # read-write. The container gets a fully writable, working copy of the
+      # CLI's credentials/config (session state, onboarding flags, goose
+      # config.yaml, etc. can all be written), but any write — including a
+      # malicious MCP/hook/settings injection by the bypass-permissions agent —
+      # lands in the throwaway staging dir and is deleted on exit. The
+      # contributor's real ~/.claude / ~/.copilot / ~/.config/goose / ~/.codex
+      # / ~/.pi on the host are never modified.
+      #
+      # The staging dir is created with 0700 perms and removed by the cleanup
+      # trap alongside the container.
+      CLI_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/hive-cli-stage.XXXXXX")"
+      chmod 700 "${CLI_STAGE}"
+      # stage_copy <host-src> <stage-subpath> : copy host config into staging
+      # if it exists. Uses -a to preserve perms; failures are non-fatal so a
+      # missing/unreadable source just yields an empty (fresh) config.
+      stage_copy() {
+        local src="$1" dst="${CLI_STAGE}/$2"
+        if [ -e "$src" ]; then
+          mkdir -p "$(dirname "$dst")"
+          cp -a "$src" "$dst" 2>/dev/null || true
+        fi
+      }
       CLI_MOUNTS=""
       case "${BACKEND}" in
         claude)
-          CLI_MOUNTS="-v ${HOME}/.claude:/home/dev/.claude${VOLSUF} -v ${HOME}/.config/claude-code:/home/dev/.config/claude-code${VOLSUF}"
+          stage_copy "${HOME}/.claude" ".claude"
+          stage_copy "${HOME}/.config/claude-code" "claude-code"
+          mkdir -p "${CLI_STAGE}/.claude" "${CLI_STAGE}/claude-code"
+          CLI_MOUNTS="-v ${CLI_STAGE}/.claude:/home/dev/.claude${VOLSUF} -v ${CLI_STAGE}/claude-code:/home/dev/.config/claude-code${VOLSUF}"
           ;;
         copilot)
-          [ -d "${HOME}/.copilot" ] && CLI_MOUNTS="-v ${HOME}/.copilot:/home/dev/.copilot${VOLSUF}"
+          if [ -d "${HOME}/.copilot" ]; then
+            stage_copy "${HOME}/.copilot" ".copilot"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.copilot:/home/dev/.copilot${VOLSUF}"
+          fi
           ;;
         goose)
-          [ -d "${HOME}/.config/goose" ] && CLI_MOUNTS="-v ${HOME}/.config/goose:/home/dev/.config/goose${VOLSUF}"
+          # Always provide a writable goose config dir (the entrypoint may write
+          # config.yaml on first run); seed it from the host copy if present.
+          stage_copy "${HOME}/.config/goose" "goose"
+          mkdir -p "${CLI_STAGE}/goose"
+          CLI_MOUNTS="-v ${CLI_STAGE}/goose:/home/dev/.config/goose${VOLSUF}"
           ;;
         codex)
-          [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex${VOLSUF}"
+          if [ -d "${HOME}/.codex" ]; then
+            stage_copy "${HOME}/.codex" ".codex"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.codex:/home/dev/.codex${VOLSUF}"
+          fi
           ;;
         pi)
-          [ -d "${HOME}/.pi" ] && CLI_MOUNTS="-v ${HOME}/.pi:/home/dev/.pi${VOLSUF}"
+          if [ -d "${HOME}/.pi" ]; then
+            stage_copy "${HOME}/.pi" ".pi"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.pi:/home/dev/.pi${VOLSUF}"
+          fi
           ;;
         agy)
-          [ -d "${HOME}/.antigravitycli" ] && CLI_MOUNTS="-v ${HOME}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
+          if [ -d "${HOME}/.antigravitycli" ]; then
+            stage_copy "${HOME}/.antigravitycli" ".antigravitycli"
+            CLI_MOUNTS="-v ${CLI_STAGE}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
+          fi
           ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
@@ -557,6 +614,10 @@ contribute-hive backend="" mode="docker": check-version
       # in the cleanup trap below, after the logs have been read.
       cleanup_container() {
         "$RUNTIME" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        # Remove the ephemeral CLI config staging dir (H6). Any config the
+        # container wrote — including a malicious injection — dies with it and
+        # never touches the contributor's real host config.
+        [ -n "${CLI_STAGE:-}" ] && rm -rf "${CLI_STAGE}" 2>/dev/null || true
       }
       trap cleanup_container EXIT
       "$RUNTIME" run -d \
