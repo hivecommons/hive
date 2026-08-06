@@ -51,7 +51,9 @@ func TestAllowedByModeExtended(t *testing.T) {
 		{"issues-and-prs can push", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo.git/git-receive-pack", true},
 		{"issues-and-prs cannot merge", agent.ModeIssuesAndPRs, "PUT", "/repos/org/repo/pulls/1/merge", false},
 
-		{"merge mode can merge", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/1/merge", true},
+		// H1 (CWE-863): merge mode cannot merge directly either — PUT /pulls/{n}/merge
+		// is a hard deny for every mode; agents route through the hive-merge relay.
+		{"merge mode cannot merge directly (use hive-merge relay)", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/1/merge", false},
 		{"merge mode cannot create PRs directly (use hive-open-pr)", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
 
 		{"git upload-pack always allowed", agent.ModeAdvisory, "POST", "/repos/org/repo.git/git-upload-pack", true},

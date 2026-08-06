@@ -5172,7 +5172,10 @@ func runEscalationSweep(
 	return escalated
 }
 
-const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+// mergeEligiblePath is a var (not a const) only so tests can point
+// mergeTargetEligible at a temp file; production never reassigns it.
+var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 // acmmHoldGatedMinLevel / acmmHoldGatedMaxLevel bracket the ACMM levels whose
@@ -5192,34 +5195,47 @@ const (
 const mergeableJSONUnknown = "unknown"
 
 // mergeTargetEligible reports whether (repo, number) currently appears in the
-// governor's merge-eligible.json. It reads the file FRESH on every call (never
-// caches) because eligibility is recomputed each governor cycle — a stale cache
-// could authorize a PR that has since fallen out of the list. On any read/parse
-// error it returns false (FAIL CLOSED): if we cannot prove the target is
-// eligible, we must not authorize the merge.
+// governor's merge-eligible.json AT the expected head SHA. It reads the file
+// FRESH on every call (never caches) because eligibility is recomputed each
+// governor cycle — a stale cache could authorize a PR that has since fallen out
+// of the list. On any read/parse error it returns false (FAIL CLOSED): if we
+// cannot prove the target is eligible, we must not authorize the merge.
+//
+// M4 (CWE-367, TOCTOU): the governor records the head SHA it observed when it
+// deemed the PR eligible (eligiblePR.HeadSHA). A branch can move between that
+// review and the merge relay firing, so matching (repo, number) alone would let
+// a moved head merge at a commit the governor never vetted. We therefore also
+// require the entry's stored head_sha to equal expectSHA. A mismatch — or a
+// stored SHA that is empty (governor could not observe it) — fails closed; the
+// relay's SHA pin then fails the merge cleanly if a stale request slips through.
 //
 // merge-eligible.json stores repos as "owner/repo"; a MergeRequest.Repo may be
 // bare ("repo") or fully qualified ("owner/repo"). We match on the bare repo
 // name (the segment after the last "/") plus the number, so both request forms
 // resolve to the same eligible entry without depending on the org prefix.
-func mergeTargetEligible(repo string, number int) bool {
+func mergeTargetEligible(repo string, number int, expectSHA string) bool {
 	data, err := os.ReadFile(mergeEligiblePath)
 	if err != nil {
 		return false // fail closed: no list ⇒ nothing is eligible
 	}
 	var payload struct {
 		Items []struct {
-			Number int    `json:"number"`
-			Repo   string `json:"repo"`
+			Number  int    `json:"number"`
+			Repo    string `json:"repo"`
+			HeadSHA string `json:"head_sha"`
 		} `json:"merge_eligible"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return false // fail closed: unparseable list ⇒ deny
 	}
 	want := bareRepoName(repo)
+	wantSHA := strings.TrimSpace(expectSHA)
 	for _, it := range payload.Items {
 		if it.Number == number && bareRepoName(it.Repo) == want {
-			return true
+			// M4: bind authorization to the governor-observed head. An empty
+			// stored SHA cannot be proven to match, so it fails closed rather
+			// than authorizing an unpinned head.
+			return strings.TrimSpace(it.HeadSHA) != "" && strings.TrimSpace(it.HeadSHA) == wantSHA
 		}
 	}
 	return false
@@ -5255,12 +5271,14 @@ func bindMergeAuthz(inner func(agent string, fileUID int) error) github.MergeReq
 			return fmt.Errorf("merge target %s#%d has no expected head SHA — refusing to merge an unpinned head (TOCTOU guard)", repo, number)
 		}
 		// (b) Require the target to be in the governor's current merge-eligible
-		// list. This binds authorization to a PR the hive actually deemed
-		// landable this cycle, so an injected agent cannot request landing an
-		// arbitrary reachable PR (e.g. its own) whose required checks happen to
-		// pass. Read fresh + fail closed (see mergeTargetEligible).
-		if !mergeTargetEligible(repo, number) {
-			return fmt.Errorf("merge target %s#%d is not in the current merge-eligible list — only governor-approved PRs may be landed via the merge relay", repo, number)
+		// list AT the expected head SHA. This binds authorization to a PR the
+		// hive actually deemed landable this cycle, at the exact commit it
+		// reviewed, so an injected agent cannot request landing an arbitrary
+		// reachable PR (e.g. its own) whose required checks happen to pass, nor
+		// land an eligible PR at a head that moved after review (M4, CWE-367).
+		// Read fresh + fail closed (see mergeTargetEligible).
+		if !mergeTargetEligible(repo, number, expectSHA) {
+			return fmt.Errorf("merge target %s#%d is not in the current merge-eligible list at head %s — only governor-approved PRs may be landed via the merge relay, and only at the reviewed head SHA", repo, number, expectSHA)
 		}
 		return nil
 	}
@@ -5342,6 +5360,11 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// read from a list endpoint that never returns it.
 		Mergeable string `json:"mergeable"`
 		DCO       string `json:"dco"`
+		// HeadSHA is the governor-observed head commit at the moment eligibility
+		// was decided. mergeTargetEligible compares the relay's expected SHA
+		// against this value (M4, CWE-367): a branch that moved after review
+		// no longer matches and fails closed.
+		HeadSHA string `json:"head_sha,omitempty"`
 	}
 
 	type failingPR struct {
@@ -5423,6 +5446,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Labels:    pr.Labels,
 			Mergeable: mergeableJSON(pr.Mergeable),
 			DCO:       dco,
+			HeadSHA:   pr.HeadSHA,
 		})
 	}
 

@@ -25,8 +25,12 @@ func TestAllowedByModeMerge(t *testing.T) {
 	if AllowedByMode(agent.ModeIssuesAndPRs, "PUT", "/repos/org/repo/pulls/123/merge") {
 		t.Error("ISSUES_AND_PRS should NOT allow merge")
 	}
-	if !AllowedByMode(agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/123/merge") {
-		t.Error("ISSUES_PRS_MERGE should allow merge")
+	// H1 (CWE-863): direct PUT /pulls/{n}/merge is now a HARD DENY for EVERY
+	// mode, including merge mode — agents must route through the bound hive-merge
+	// relay. Merge mode still authorizes the merge via the relay's authorizer,
+	// not via a direct proxy PUT.
+	if AllowedByMode(agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/123/merge") {
+		t.Error("ISSUES_PRS_MERGE must NOT allow a direct proxy merge (use hive-merge relay)")
 	}
 }
 
@@ -45,6 +49,20 @@ func TestAllowedByModePROperations(t *testing.T) {
 	}
 	if msg, denied := DeniedMessage("POST", "/repos/org/repo/pulls"); !denied || !strings.Contains(msg, "hive-open-pr") {
 		t.Errorf("POST /pulls should carry a hive-open-pr deny message; got denied=%v msg=%q", denied, msg)
+	}
+	// H1 (CWE-863): direct PR merge (PUT /pulls/{n}/merge) is a HARD DENY for
+	// every mode — agents route through the bound hive-merge relay, not
+	// `gh api -X PUT .../merge`. Even merge mode cannot call it directly.
+	if AllowedByMode(agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/merge") {
+		t.Error("PUT /pulls/{n}/merge must be denied even for merge mode (use hive-merge relay)")
+	}
+	if msg, denied := DeniedMessage("PUT", "/repos/org/repo/pulls/42/merge"); !denied || !strings.Contains(msg, "hive-merge") {
+		t.Errorf("PUT /pulls/{n}/merge should carry a hive-merge deny message; got denied=%v msg=%q", denied, msg)
+	}
+	// The relay's own branch-sync (PUT /pulls/{n}/update-branch) is NOT denied —
+	// only the merge itself is hard-denied.
+	if !AllowedByMode(agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/update-branch") {
+		t.Error("PUT /pulls/{n}/update-branch should still be allowed at merge mode")
 	}
 	if !AllowedByMode(agent.ModeIssuesAndPRs, "PATCH", "/repos/org/repo/pulls/42") {
 		t.Error("ISSUES_AND_PRS should allow patching PRs")

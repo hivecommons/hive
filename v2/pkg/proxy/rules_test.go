@@ -55,7 +55,11 @@ func TestAllowedByMode(t *testing.T) {
 		{"merge allows POST issue", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues", true},
 		// Even merge mode cannot POST /pulls directly — hive-open-pr is the only path.
 		{"merge blocks direct POST pull", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
-		{"merge allows PUT merge", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/merge", true},
+		// H1 (CWE-863): even merge mode cannot PUT /pulls/{n}/merge directly — it
+		// is a hard deny for every mode, so agents route through the bound
+		// hive-merge relay (SHA-pin + merge-eligible binding) instead.
+		{"merge blocks direct PUT merge", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/merge", false},
+		{"merge allows PUT update-branch", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/update-branch", true},
 		{"merge allows git push", agent.ModeIssuesPRsMerge, "POST", "/org/repo.git/git-receive-pack", true},
 
 		// ── Default deny: unknown operations ──

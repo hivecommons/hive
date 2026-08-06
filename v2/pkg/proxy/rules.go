@@ -93,9 +93,12 @@ var rules = []ProxyRule{
 	{regexp.MustCompile(`^/login/device/code$`), "POST", agent.ModeAdvisory},
 	{regexp.MustCompile(`^/login/oauth/access_token$`), "POST", agent.ModeAdvisory},
 
-	// ── Merge — ISSUES_PRS_MERGE only ──
-	// Must come before the generic pulls PATCH/PUT rules.
-	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/merge$`), "PUT", agent.ModeIssuesPRsMerge},
+	// ── Merge — HARD DENY for every mode (see denyRules) ──
+	// NOTE: direct merge (PUT /pulls/{n}/merge) is NOT here — it is a HARD DENY
+	// for every mode, handled by denyRules below, so agents route through the
+	// bound `hive-merge` relay (SHA-pinned + merge-eligible binding) instead of
+	// `gh api -X PUT .../merge`. This mirrors the GraphQL mergePullRequest deny
+	// (GraphQLAllowed) so neither REST nor GraphQL is an agent-reachable bypass.
 
 	// Updating a PR branch from its base is part of landing a PR: an
 	// auto-merging agent hits it whenever the base has moved on. Without a rule
@@ -145,19 +148,39 @@ type denyRule struct {
 	Msg         string // agent-facing directive surfaced in the 403 body
 }
 
-// denyRules are checked BEFORE the mode rules. The canonical (and currently only)
-// case is direct PR creation: a POST /repos/*/pulls — whether from `gh pr create`
-// or the GitHub MCP create_pull_request/create_pull_request_with_copilot tool —
-// authors the PR as the Copilot login user, not the App bot. Blocking it here
-// forces agents to use `hive-open-pr`, which the hive fulfills with the App token
-// so the PR is authored by the App bot. This closes the MCP path the gh-wrapper
-// redirect cannot see. The hive's OWN CreatePR call does not traverse this agent
-// proxy, so it is unaffected.
+// denyRules are checked BEFORE the mode rules. Two cases are hard-denied for
+// EVERY agent mode:
+//
+//  1. Direct PR creation: a POST /repos/*/pulls — whether from `gh pr create`
+//     or the GitHub MCP create_pull_request/create_pull_request_with_copilot
+//     tool — authors the PR as the Copilot login user, not the App bot.
+//     Blocking it here forces agents to use `hive-open-pr`, which the hive
+//     fulfills with the App token so the PR is authored by the App bot. This
+//     closes the MCP path the gh-wrapper redirect cannot see.
+//
+//  2. Direct PR merge: a PUT /repos/*/pulls/{n}/merge (H1, CWE-863). Permitting
+//     this at ModeIssuesPRsMerge on a UID-derived mode check ALONE let an
+//     injected merge-mode agent `gh api -X PUT .../merge` any reachable PR,
+//     bypassing the bound merge relay's fail-closed SHA pin + merge-eligible
+//     binding (see bindMergeAuthz). Hard-denying it forces ALL agent-initiated
+//     merges through `hive-merge`, which the hive fulfills as the App over REST
+//     with those bindings enforced. This mirrors the GraphQL mergePullRequest
+//     deny (GraphQLAllowed treats it as a mutation), so neither REST nor GraphQL
+//     is an agent-reachable merge bypass.
+//
+// In BOTH cases the hive's OWN call (CreatePR / MergePR) does NOT traverse this
+// agent proxy — it originates from the hive process (owner UID), which the
+// forced-egress iptables redirect exempts — so the relay is unaffected.
 var denyRules = []denyRule{
 	{
 		PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`),
 		Method:      "POST",
 		Msg:         "direct PR creation is disabled for agents — use `hive-open-pr --repo <owner/repo> --head <branch> --title <t> --body <b>` so the hive opens the PR as the App bot (never the login user). Do NOT use `gh pr create` or the GitHub MCP create_pull_request/create_pull_request_with_copilot.",
+	},
+	{
+		PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/merge$`),
+		Method:      "PUT",
+		Msg:         "direct PR merge is disabled for agents — use `hive-merge --repo <owner/repo> --number <n> --expect-sha <head-sha>` so the hive merges as the App bot with the SHA-pin + merge-eligible binding enforced. Do NOT use `gh api -X PUT .../merge`, `gh pr merge`, or the GitHub MCP merge_pull_request.",
 	},
 }
 
