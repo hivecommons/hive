@@ -1498,6 +1498,29 @@
     .config-body {
       flex: 1; overflow-y: auto; padding: 20px;
       scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+      /* Scroll chaining containment (#2766): reaching the top/bottom of the
+         modal body must not hand the wheel to the dashboard behind it. */
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
+    /* Same containment for every scrollable surface INSIDE a modal — the
+       prompt-template textarea and its preview pane are the ones operators
+       actually hit, since a long kick template scrolls for a while and then
+       silently starts scrolling the page underneath. Scrolling within each
+       element is untouched; only the overflow hand-off is blocked. */
+    .config-overlay textarea,
+    .config-overlay pre,
+    .config-modal .config-pre,
+    #prompt-template-editor,
+    #prompt-template-preview {
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
+    }
+    /* The overlay backdrop itself: a wheel event landing on the dimmed area
+       around the panel must not scroll the page either. */
+    .config-overlay {
+      overscroll-behavior: contain;
+      overscroll-behavior-y: contain;
     }
     .config-footer {
       display: flex; gap: 8px; justify-content: flex-end;
@@ -13409,7 +13432,10 @@ function burnAreaChart() {
     function openConfigDialog(type, agentName, initialTabOverride) {
       const isCreate = type === 'agent' && !agentName;
       _configModalOpen = true;
-      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null };
+      // promptTemplateDirty/Value hold the Prompt Template tab's pending edit
+      // (it has its own endpoint, so it is not a `dirty` section). Reset on every
+      // open and on close, so Cancel/X/Escape discard it like any other field.
+      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
       const title = type === 'governor' ? 'Governor Configuration' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
       document.querySelector('.config-title').textContent = title;
@@ -13448,7 +13474,7 @@ function burnAreaChart() {
 
     function closeConfigDialog() {
       _configModalOpen = false;
-      _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
+      _configState = { type: null, agent: null, tab: null, data: {}, dirty: {}, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.add('hidden');
       if (location.hash.startsWith('#config/')) history.replaceState(null, '', location.pathname);
     }
@@ -16130,13 +16156,26 @@ function burnAreaChart() {
           })
           .catch(() => {});
 
-        fetch(`/api/config/agent/${agentName}/prompt?raw=1`)
-          .then(r => r.json())
-          .then(data => {
+        // A pending (unsaved) edit outlives a tab switch: re-entering the tab
+        // restores the operator's in-progress text rather than clobbering it
+        // with the server copy. Only fetch-and-fill when nothing is pending.
+        if (_configState.promptTemplateDirty) {
+          const pending = _configState.promptTemplateValue || '';
+          setTimeout(function() {
             const el = document.getElementById(editorId);
-            if (el) { el.value = data.prompt || ''; }
-          })
-          .catch(() => {});
+            if (el) { el.value = pending; }
+          }, 0);
+        } else {
+          fetch(`/api/config/agent/${agentName}/prompt?raw=1`)
+            .then(r => r.json())
+            .then(data => {
+              const el = document.getElementById(editorId);
+              // A race: the operator may have started typing while this was
+              // in flight. Never overwrite a pending edit.
+              if (el && !_configState.promptTemplateDirty) { el.value = data.prompt || ''; }
+            })
+            .catch(() => {});
+        }
       }
 
       const varPickerItems = TEMPLATE_VARS.map(v =>
@@ -16175,13 +16214,13 @@ function burnAreaChart() {
           <button id="prompt-btn-edit" onclick="switchPromptMode('edit')" style="font-size:0.72rem;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:600;border:1px solid var(--border);background:var(--green);color:var(--bg)">Edit</button>
           <button id="prompt-btn-preview" onclick="switchPromptMode('preview')" style="font-size:0.72rem;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:600;border:1px solid var(--border);background:var(--surface);color:var(--text)">Preview</button>
           <div style="flex:1"></div>
-          <button onclick="savePromptTemplate()" style="font-size:0.72rem;padding:4px 14px;border-radius:4px;cursor:pointer;font-weight:600;border:none;background:var(--green);color:var(--bg)">Save Template</button>
+          <span style="font-size:0.68rem;color:var(--muted);align-self:center">Edits are saved by the <strong style="color:var(--text)">Save</strong> button below.</span>
         </div>
-        <textarea id="${editorId}" style="flex:1;min-height:300px;font-family:var(--font-mono);font-size:0.75rem;padding:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;resize:vertical;white-space:pre;tab-size:2" placeholder="Enter your agent's kick template here. Use \${VARIABLE} placeholders from the picker below.">${agentName ? '' : ''}</textarea>
-        <div id="${previewId}" class="config-pre config-pre-fill" style="display:none;flex:1;min-height:300px;overflow-y:auto"></div>
+        <textarea id="${editorId}" oninput="markPromptTemplateDirty(this)" style="flex:1;min-height:300px;font-family:var(--font-mono);font-size:0.75rem;padding:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;resize:vertical;white-space:pre;tab-size:2;overscroll-behavior:contain;overscroll-behavior-y:contain" placeholder="Enter your agent's kick template here. Use \${VARIABLE} placeholders from the picker below.">${agentName ? '' : ''}</textarea>
+        <div id="${previewId}" class="config-pre config-pre-fill" style="display:none;flex:1;min-height:300px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain"></div>
         <div style="margin-top:8px;flex-shrink:0">
           <div style="font-size:0.7rem;font-weight:600;color:var(--text);margin-bottom:6px">Variable Picker <span style="font-weight:400;color:var(--muted)">(click to insert at cursor)</span></div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px;max-height:120px;overflow-y:auto;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:6px">${varPickerItems}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;max-height:120px;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:6px">${varPickerItems}</div>
         </div>
         </div>`;
     }
@@ -16254,10 +16293,18 @@ function burnAreaChart() {
           if (result.ok) {
             showToast(keepLinked ? 'Prompt linked to repo (live)' : 'Prompt imported (baked copy)', 'success');
             // Refresh the editor/preview with the newly fetched content.
+            // The import already persisted server-side, so the freshly fetched
+            // text is the saved truth: drop any stale pending edit and adopt it
+            // as the editor's content. A subsequent footer Save is then a
+            // no-op for the template unless the operator edits it again.
             var editor = document.getElementById('prompt-template-editor');
+            _configState.promptTemplateDirty = false;
             fetch('/api/config/agent/' + agentName + '/prompt?raw=1')
               .then(function(r) { return r.json(); })
-              .then(function(data) { if (editor) editor.value = data.prompt || ''; })
+              .then(function(data) {
+                _configState.promptTemplateValue = data.prompt || '';
+                if (editor) editor.value = data.prompt || '';
+              })
               .catch(function() {});
           } else {
             showToast(result.data.error || 'Import failed', 'error');
@@ -16266,25 +16313,55 @@ function burnAreaChart() {
         .catch(function(err) { showToast('Network error: ' + err.message, 'error'); });
     }
 
-    function savePromptTemplate() {
+    // markPromptTemplateDirty records an in-progress kick-template edit on
+    // _configState. There is deliberately no "Save Template" button any more
+    // (#2766: two save buttons — a green "Save Template" above the editor and
+    // the orange footer "Save" — meant operators clicked the wrong one). The
+    // footer Save is now the single commit point for the whole dialog, so the
+    // edited text has to live somewhere that survives a tab switch.
+    function markPromptTemplateDirty(el) {
+      if (!el) return;
+      _configState.promptTemplateDirty = true;
+      _configState.promptTemplateValue = el.value;
+    }
+
+    // capturePromptTemplate snapshots the live editor into _configState. Called
+    // before persisting so a save issued while the Preview pane is showing (the
+    // textarea is display:none but still holds the edited text) still commits
+    // what the operator typed.
+    function capturePromptTemplate() {
       var editor = document.getElementById('prompt-template-editor');
-      if (!editor) return;
+      if (editor && _configState.promptTemplateDirty) {
+        _configState.promptTemplateValue = editor.value;
+      }
+    }
+
+    // savePromptTemplate persists the kick template via the same PUT endpoint
+    // the removed "Save Template" button used. It resolves true on success (or
+    // when there is nothing to save) and false on failure, so saveConfig() can
+    // fold it into the dialog's single save and keep the dialog OPEN on error.
+    // It intentionally raises no success toast of its own — saveConfig() emits
+    // one "Configuration saved" for the whole dialog.
+    function savePromptTemplate() {
+      capturePromptTemplate();
       var agentName = _configState.agent;
-      if (!agentName) return;
-      fetch('/api/config/agent/' + agentName + '/prompt', {
+      if (!agentName || !_configState.promptTemplateDirty) return Promise.resolve(true);
+      var value = _configState.promptTemplateValue || '';
+      return fetch('/api/config/agent/' + agentName + '/prompt', {
         method: 'PUT',
         headers: _inceptionAuthHeaders(),
-        body: JSON.stringify({ template: editor.value })
+        body: JSON.stringify({ template: value })
       })
-        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+        .then(function(r) { return r.json().catch(function() { return {}; }).then(function(d) { return {ok: r.ok, data: d}; }); })
         .then(function(result) {
           if (result.ok) {
-            showToast('Template saved', 'success');
-          } else {
-            showToast(result.data.error || 'Failed to save', 'error');
+            _configState.promptTemplateDirty = false;
+            return true;
           }
+          showToast((result.data && result.data.error) || 'Failed to save prompt template', 'error');
+          return false;
         })
-        .catch(function(err) { showToast('Network error: ' + err.message, 'error'); });
+        .catch(function(err) { showToast('Network error saving prompt template: ' + err.message, 'error'); return false; });
     }
 
     function renderAgentExport() {
@@ -17653,6 +17730,12 @@ function burnAreaChart() {
           aliases: generalData.aliases || [],
           caveman_mode: generalData.cavemanMode || '',
         };
+        // Create mode has a Prompt Template tab but no agent to PUT to yet, so
+        // the edited template rides along in the create payload's kick_template.
+        capturePromptTemplate();
+        if (_configState.promptTemplateDirty && _configState.promptTemplateValue) {
+          agent.kick_template = _configState.promptTemplateValue;
+        }
         const ps = collectPromptSource();
         if (ps) agent.prompt_source = ps;
         try {
@@ -17676,7 +17759,12 @@ function burnAreaChart() {
         return;
       }
 
-      if (Object.keys(dirty).length === 0) {
+      // The kick template is not a _configState.dirty section — it has its own
+      // endpoint — so it is checked separately here (#2766: the footer Save is
+      // the single commit point now that "Save Template" is gone).
+      capturePromptTemplate();
+      const templateDirty = !!_configState.promptTemplateDirty;
+      if (Object.keys(dirty).length === 0 && !templateDirty) {
         showToast('No changes to save', 'info');
         return;
       }
@@ -17721,6 +17809,10 @@ function burnAreaChart() {
           success = false;
         }
       }
+      // Persist the Prompt Template tab as part of the same click. It raises
+      // its own error toast and returns false on failure, which keeps the
+      // dialog open rather than silently discarding the edit.
+      if (templateDirty && !(await savePromptTemplate())) success = false;
       if (success) {
         showToast('Configuration saved', 'success');
         // Optimistically reflect agent-level identity fields that render
