@@ -2365,6 +2365,10 @@ func main() {
 	}
 
 	dashboard.SetBackendAuthProvider(agentMgr.BackendAuthAvailable)
+	// Per-agent probe supersedes the backend-level one: under the per-agent-UID
+	// layout each agent has its own HOME, so the shared credential path is empty
+	// even for authenticated agents (see pkg/agent/authprobe.go).
+	dashboard.SetAgentAuthProvider(agentMgr.AgentAuthAvailable)
 
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {

@@ -3683,7 +3683,21 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 // GitHub device flow). Each must be distinctive enough to never appear in
 // ordinary agent output.
 var loginPromptPatterns = []string{
-	"/login",
+	// A BARE "/login" is deliberately NOT here. It is a substring of ordinary
+	// agent output — an agent reviewing an auth route writes "POST /login", and
+	// a CLI that prints its slash-command list renders "/login" alongside
+	// "/help". Matching it painted the 🔑 badge on agents that were
+	// authenticated and mid-work. Only the phrasings that appear on an actual
+	// login SCREEN qualify, and they must carry enough context to be
+	// unambiguous.
+	"Run /login to",
+	"run /login to",
+	"Please run /login",
+	"please run /login",
+	"Type /login",
+	"type /login",
+	"Use /login to",
+	"use /login to",
 	"sign in to use",
 	"Sign in to use",
 	"authenticate to use",
@@ -3737,7 +3751,19 @@ func configHasTokens() bool {
 // // comments (which Copilot CLI sometimes writes), parses the JSON, and returns
 // true if the "copilotTokens" field has at least one entry.
 func copilotConfigHasTokens() bool {
-	data, err := os.ReadFile(sharedCopilotConfigPath)
+	return copilotCredentialFileHasTokens(sharedCopilotConfigPath)
+}
+
+// copilotCredentialFileHasTokens is copilotConfigHasTokens for an ARBITRARY
+// path, so the per-agent auth probe can read the same file shapes under an
+// agent's own per-UID home instead of only the shared legacy location.
+//
+// Two shapes are accepted because the Copilot CLI uses both:
+//   - .copilot/config.json — token map under the "copilotTokens" key.
+//   - .config/github-copilot/{apps,hosts}.json — a flat map keyed by host,
+//     each entry carrying an oauth_token. Any non-empty top-level map counts.
+func copilotCredentialFileHasTokens(path string) bool {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
@@ -3756,15 +3782,26 @@ func copilotConfigHasTokens() bool {
 	if err := json.Unmarshal(cleaned, &cfg); err != nil {
 		return false
 	}
-	tokens, ok := cfg["copilotTokens"]
-	if !ok {
-		return false
+	if tokens, ok := cfg["copilotTokens"]; ok {
+		tokensMap, ok := tokens.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		return len(tokensMap) > 0
 	}
-	tokensMap, ok := tokens.(map[string]interface{})
-	if !ok {
-		return false
+	// apps.json / hosts.json shape: host -> {oauth_token: ...}
+	if strings.HasSuffix(path, "apps.json") || strings.HasSuffix(path, "hosts.json") {
+		for _, v := range cfg {
+			entry, ok := v.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if tok, ok := entry["oauth_token"].(string); ok && tok != "" {
+				return true
+			}
+		}
 	}
-	return len(tokensMap) > 0
+	return false
 }
 
 // clearExpiredTokens removes stored copilot tokens from config.json.
@@ -3961,8 +3998,17 @@ const (
 	claudeInferenceHomePrefix   = "/tmp/.claude-inference-home-"
 )
 
+// inferenceHomePrefixOverride redirects the per-agent inference HOME prefix.
+// TEST SEAM ONLY — empty in production, where inferenceHomePath always returns
+// claudeInferenceHomePrefix+name. It exists so the auth probe's per-UID home
+// resolution can be exercised against a temp dir instead of /tmp.
+var inferenceHomePrefixOverride string
+
 // inferenceHomePath returns the per-agent inference HOME directory.
 func inferenceHomePath(agentName string) string {
+	if inferenceHomePrefixOverride != "" {
+		return inferenceHomePrefixOverride + agentName
+	}
 	return claudeInferenceHomePrefix + agentName
 }
 
@@ -4758,6 +4804,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			home = inferenceHomePath(agent.Name)
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
+
+		// Under the per-agent-UID layout the global npm prefix is owned by the
+		// image's build user, so the Claude Code CLI's self-updater fails on
+		// every launch with "✘ Auto-update failed: no write permission to npm
+		// prefix" — a red line in every agent pane for an update the agent must
+		// not perform anyway (the CLI version is managed by the image, not by
+		// an in-pod npm write). Disabling the updater removes the failure at its
+		// source; a per-agent npm prefix would instead let an agent drift off
+		// the pinned image version.
+		vars = append(vars, agentEnvPair{"DISABLE_AUTOUPDATER", "1", false})
 	}
 
 	// Codex CLI 0.144.1's in-process app-server performs OWNER-gated operations

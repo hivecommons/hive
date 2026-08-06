@@ -64,9 +64,32 @@ func getBackendAuthFn() func(backend string) (bool, bool) {
 	return backendAuthFn
 }
 
+// SetAgentAuthProvider registers a PER-AGENT auth probe (agent.Manager's
+// AgentAuthAvailable). It supersedes the backend-level SetBackendAuthProvider
+// wherever it is registered, because the backend-level probe stats ONE shared
+// credential path (/data/home/.claude/.credentials.json) that is empty under
+// the per-agent-UID layout — every agent then reported (known, !available) and
+// the dashboard painted a 🔑 "needs login" badge on agents that were running,
+// being kicked, and passing deep health. The per-agent probe resolves the
+// agent's OWN home and gates on whether the backend has an interactive login
+// at all. The backend-level provider is retained as a fallback for callers
+// that only know a backend name.
+func SetAgentAuthProvider(fn func(agentName string) (bool, bool)) {
+	backendAuthMu.Lock()
+	defer backendAuthMu.Unlock()
+	agentAuthFn = fn
+}
+
+func getAgentAuthFn() func(agentName string) (bool, bool) {
+	backendAuthMu.RLock()
+	defer backendAuthMu.RUnlock()
+	return agentAuthFn
+}
+
 var (
 	backendAuthMu sync.RWMutex
 	backendAuthFn func(backend string) (bool, bool)
+	agentAuthFn   func(agentName string) (bool, bool)
 
 	cachedHealth   map[string]any
 	cachedHealthMu sync.RWMutex
@@ -346,7 +369,16 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 		a.DefaultMode = defaultMode.String()
 		a.IsCustomMode = mode != defaultMode
 		a.NeedsLogin = proc.NeedsLogin
-		if authFn := getBackendAuthFn(); authFn != nil {
+		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
+		// answers "does this backend even have an interactive login?" before
+		// looking at any file. The backend-level probe (shared legacy path
+		// only) is the fallback for deployments where the per-agent provider
+		// was not registered.
+		if agentFn := getAgentAuthFn(); agentFn != nil {
+			avail, known := agentFn(name)
+			a.AuthAvailable = avail
+			a.AuthKnown = known
+		} else if authFn := getBackendAuthFn(); authFn != nil {
 			avail, known := authFn(cli)
 			a.AuthAvailable = avail
 			a.AuthKnown = known

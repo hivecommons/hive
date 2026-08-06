@@ -2147,12 +2147,30 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	if proc.NeedsLogin {
 		return true
 	}
-	if authFn == nil {
-		return false
-	}
 	backend := proc.Config.Backend
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
+	}
+	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
+	// an API key supplied by config — there is no interactive login and so no
+	// "needs login" state an operator could act on. Checking this BEFORE the
+	// probe stops a shared-credential miss from flagging an inference-backed
+	// agent that is running fine. See pkg/agent/authprobe.go for the full
+	// precedence rule.
+	if agent.IsInferenceBackend(backend) {
+		return false
+	}
+	// POSITIVE EVIDENCE beats absence-of-file: a running agent that the pane
+	// poller has NOT seen at a login prompt is working (the same signal deep
+	// health folds into `pass`), so a missing credentials file must not
+	// reclassify it. Only a non-running agent falls through to the probe. This
+	// is what stopped the empty shared credential path (per-agent-UID layout)
+	// from reporting healthy agents as needing login.
+	if proc.State == agent.StateRunning {
+		return false
+	}
+	if authFn == nil {
+		return false
 	}
 	available, known := authFn(backend)
 	return known && !available
