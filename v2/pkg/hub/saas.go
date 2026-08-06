@@ -7749,17 +7749,18 @@ const dashboardHTML = `<!DOCTYPE html>
     .online-dot.upgrading { width: 12px; height: 12px; background: #58a6ff; box-shadow: 0 0 8px rgba(88,166,255,0.9), 0 0 3px rgba(88,166,255,0.7); animation: hiveUpgradePulse 1.8s ease-in-out infinite; }
     @keyframes hiveUpgradePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(88,166,255,1), 0 0 4px rgba(88,166,255,0.8); } 50% { opacity: 0.4; box-shadow: 0 0 4px rgba(88,166,255,0.4); } }
     @media (prefers-reduced-motion: reduce) { .online-dot.upgrading { animation: none; } }
-    /* Heartbeat heart: a small, muted red heart next to a hive's identity —
-       subtler and more tasteful than the emoji, and themeable via
-       currentColor. Rendered by heartbeatHeart(h); see that function for the
-       freshness thresholds that pick between the plain, -fresh and -aging
-       classes below. Steady state is full-opacity and un-animated; only a
-       just-landed beat gets the one-shot pulse. */
-    .heartbeat-heart { color: #e5534b; vertical-align: middle; margin-left: 4px; opacity: 0.9; }
-    .heartbeat-heart-fresh { animation: heartbeatPulse 0.6s ease-out 1; }
-    .heartbeat-heart-aging { opacity: 0.35; }
-    @keyframes heartbeatPulse { 0% { transform: scale(1); opacity: 0.9; } 35% { transform: scale(1.35); opacity: 1; } 100% { transform: scale(1); opacity: 0.9; } }
-    @media (prefers-reduced-motion: reduce) { .heartbeat-heart-fresh { animation: none; } }
+    /* Heartbeat heart: a small red heart next to a hive's identity that
+       appears ONLY when a new heartbeat lands, pulses exactly three times,
+       then disappears until the next beat. The element is invisible by
+       default (opacity 0) and the finite animation's forwards fill-mode
+       leaves it invisible again after the third pulse; heartbeatHeart(h)
+       additionally stops emitting the markup once the flash window passes.
+       The 0.6s duration and 3-iteration count here MUST match
+       HEART_PULSE_MS / HEART_PULSE_COUNT in heartbeatHeart(h). */
+    .heartbeat-heart { color: #e5534b; vertical-align: middle; margin-left: 4px; opacity: 0; }
+    .heartbeat-heart-flash { animation: heartbeatPulse 0.6s ease-in-out 3 forwards; }
+    @keyframes heartbeatPulse { 0% { transform: scale(0.85); opacity: 0; } 30% { transform: scale(1.3); opacity: 1; } 70% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(0.9); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .heartbeat-heart-flash { animation: none; } }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: 0.75rem; color: var(--muted); }
 
@@ -9110,41 +9111,60 @@ const dashboardHTML = `<!DOCTYPE html>
         accessRows +
         hoverEventRows(h) + '</span></span>';
     }
-    /* heartbeatHeart renders a small red heart next to a hive's identity,
-       reusing h.lastHeartbeat (already computed in healthBadge above) as a
-       purely presentational "this hive is beating right now" signal, distinct
-       from the online-dot's health status. Freshness bands, in milliseconds:
-       - age < HEART_FRESH_MS: the heartbeat just landed — a single gentle
-         pulse (heart-beat class), then it settles to steady on the next
-         render.
-       - age < HEART_INTERVAL_MS (the hub's normal beat cadence): steady,
-         full-opacity heart, no animation.
-       - age >= HEART_INTERVAL_MS: aging — dimmed so a hive that has gone
-         quiet visibly fades before it is marked offline.
-       A hive with no lastHeartbeat, or that is not online with a stale
-       reading, renders no heart at all rather than a misleading grey one. */
+    /* ---- Heartbeat heart ----------------------------------------------
+       heartbeatHeart renders a small red heart next to a hive's identity
+       ONLY when a heartbeat is actually received: it flashes exactly three
+       times, then disappears until the next beat. "Received" is detected by
+       watching h.lastHeartbeat advance across renders. The maps below live
+       in JS, keyed by hive id — not on the element — so the state survives
+       the periodic full re-render exactly like the other row-state trackers
+       in this file (_upgradingHives et al.). On the FIRST sighting of a hive
+       (initial page load, or a hive newly appearing in the table) the
+       timestamp is seeded silently so the whole table does not flash at
+       once; only a subsequent advance triggers the flash. */
+    // Duration of ONE pulse; must match the 0.6s in .heartbeat-heart-flash.
+    var HEART_PULSE_MS = 600;
+    // Pulses per received heartbeat; must match the CSS iteration count (3).
+    var HEART_PULSE_COUNT = 3;
+    // Total on-screen window for one flash sequence.
+    var HEART_FLASH_TOTAL_MS = HEART_PULSE_MS * HEART_PULSE_COUNT;
+    // hive id -> the last h.lastHeartbeat (epoch ms) this hive was seen with.
+    var _heartSeenBeats = {};
+    // hive id -> epoch ms until which the flash markup should still render.
+    var _heartFlashUntil = {};
     function heartbeatHeart(h) {
-      if (!h.lastHeartbeat) return '';
-      var ageMs = Date.now() - new Date(h.lastHeartbeat).getTime();
-      if (isNaN(ageMs) || ageMs < 0) return '';
-      // A beat just landed: worth a single soft pulse to catch the eye.
-      var HEART_FRESH_MS = 5000;
-      // The hub's normal heartbeat cadence; older than this and the heart
-      // dims rather than reading as "beating right now".
-      var HEART_INTERVAL_MS = 2 * 60000;
-      // Beyond this the reading is stale enough that showing a red heart at
-      // all would misrepresent a hive that has likely gone quiet.
-      var HEART_STALE_MS = 10 * 60000;
-      if (!h.online && ageMs > HEART_STALE_MS) return '';
+      if (!h || !h.id || !h.lastHeartbeat) return '';
+      var beatMs = new Date(h.lastHeartbeat).getTime();
+      if (isNaN(beatMs)) return '';
+      var prev = _heartSeenBeats[h.id];
+      _heartSeenBeats[h.id] = beatMs;
+      if (prev !== undefined && beatMs > prev) {
+        // A NEW heartbeat landed since the last render: open the flash window.
+        _heartFlashUntil[h.id] = Date.now() + HEART_FLASH_TOTAL_MS;
+      }
+      var until = _heartFlashUntil[h.id];
+      if (!until || Date.now() >= until) return '';
+      // A re-render mid-flash rebuilds the element; a negative delay resumes
+      // the animation where it left off instead of restarting the 3-pulse
+      // run, so the total flash never exceeds one sequence per heartbeat.
+      var elapsedMs = HEART_FLASH_TOTAL_MS - (until - Date.now());
+      var ageMs = Date.now() - beatMs;
       var ageStr = ageMs < 1000 ? 'just now' : (ageMs < 60000 ? Math.floor(ageMs / 1000) + 's ago' : Math.floor(ageMs / 60000) + 'm ago');
-      var cls = 'heartbeat-heart';
-      if (ageMs < HEART_FRESH_MS) cls += ' heartbeat-heart-fresh';
-      else if (ageMs >= HEART_INTERVAL_MS) cls += ' heartbeat-heart-aging';
-      return '<svg class="' + cls + '" width="11" height="11" viewBox="0 0 16 16" fill="currentColor" ' +
+      return '<svg class="heartbeat-heart heartbeat-heart-flash" width="11" height="11" viewBox="0 0 16 16" fill="currentColor" ' +
+        'style="animation-delay:-' + elapsedMs + 'ms" ' +
         'aria-hidden="true" title="' + 'Last heartbeat: ' + ageStr + '">' +
         '<path d="M8 14.2l-1.1-1C3 9.9 0.6 7.7 0.6 5 0.6 2.8 2.3 1.1 4.5 1.1c1.2 0 2.4 0.6 3.1 1.5 0.7-0.9 1.9-1.5 3.1-1.5 2.2 0 3.9 1.7 3.9 3.9 0 2.7-2.4 4.9-6.3 8.2L8 14.2z"/>' +
         '</svg>';
     }
+    /* After the third pulse the forwards fill-mode already leaves the heart
+       at opacity 0; this delegated listener (bound ONCE, so it survives every
+       table re-render) also removes the spent element from hit-testing so an
+       invisible heart cannot linger as a hover/tooltip target until the next
+       refresh replaces the row. */
+    document.addEventListener('animationend', function(e) {
+      var t = e.target;
+      if (t && t.classList && t.classList.contains('heartbeat-heart-flash')) t.style.display = 'none';
+    });
     /* ---- Config drift -------------------------------------------------
        The server computes drift signals per hive (pkg/hub/drift.go) and ships
        them on the My Hives payload as h.drift = {signals, count, worstSeverity}.

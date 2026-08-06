@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// TestDashboardHeartbeatHeartRendersInRow pins the subtle red-heart
-// heartbeat indicator: the heartbeatHeart(h) function must exist, must be
-// wired into the row's identity line (line1) right after the name link, and
-// must carry its freshness bands and reduced-motion guard. String-anchored
+// TestDashboardHeartbeatHeartFlashesOnReceipt pins the event-driven red-heart
+// heartbeat indicator: the heart is NOT visible by default, appears only when
+// a hive's lastHeartbeat ADVANCES across renders, flashes exactly three times
+// (finite CSS animation), then disappears until the next beat. String-anchored
 // on the raw dashboardHTML, same as the other JS structure tests (see
 // TestDashboardPlaceholderRowsRenderGreen).
-func TestDashboardHeartbeatHeartRendersInRow(t *testing.T) {
+func TestDashboardHeartbeatHeartFlashesOnReceipt(t *testing.T) {
 	if !strings.Contains(dashboardHTML, "function heartbeatHeart(h) {") {
 		t.Fatal("heartbeatHeart(h) is missing from dashboardHTML")
 	}
@@ -20,40 +20,65 @@ func TestDashboardHeartbeatHeartRendersInRow(t *testing.T) {
 	}
 	// Reuses h.lastHeartbeat rather than introducing a second heartbeat
 	// source of truth.
-	if !strings.Contains(dashboardHTML, "if (!h.lastHeartbeat) return '';") {
+	if !strings.Contains(dashboardHTML, "if (!h || !h.id || !h.lastHeartbeat) return '';") {
 		t.Error("heartbeatHeart no longer gates on h.lastHeartbeat — it must reuse the same field healthBadge uses, not track its own")
 	}
-	// Freshness thresholds: a just-landed beat pulses once, a beat older than
-	// the normal cadence dims, and a stale/offline reading hides the heart.
-	if !strings.Contains(dashboardHTML, "var HEART_FRESH_MS = 5000;") {
-		t.Error("heartbeatHeart lost its HEART_FRESH_MS threshold for the one-shot pulse")
+	// Event-driven trigger: the flash fires only when the tracked timestamp
+	// ADVANCES. A first sighting (prev === undefined) seeds silently so the
+	// whole table does not flash on initial page load.
+	if !strings.Contains(dashboardHTML, "if (prev !== undefined && beatMs > prev) {") {
+		t.Error("heartbeatHeart lost its advance-detection guard — the flash must fire only when lastHeartbeat is NEWER than the seeded value, never on first sighting")
 	}
-	if !strings.Contains(dashboardHTML, "var HEART_INTERVAL_MS = 2 * 60000;") {
-		t.Error("heartbeatHeart lost its HEART_INTERVAL_MS threshold for the steady-vs-aging cutover")
+	// Per-hive state lives in JS maps (like _upgradingHives), not on the
+	// element, so it survives the periodic full re-render.
+	for _, m := range []string{"var _heartSeenBeats = {};", "var _heartFlashUntil = {};"} {
+		if !strings.Contains(dashboardHTML, m) {
+			t.Errorf("heartbeatHeart is missing its %q row-state map", m)
+		}
 	}
-	if !strings.Contains(dashboardHTML, "if (!h.online && ageMs > HEART_STALE_MS) return '';") {
-		t.Error("heartbeatHeart no longer hides the heart for a stale/offline hive — a dead hive must not show a beating heart")
+	// Outside the flash window the function emits NO markup: the heart must
+	// not exist between heartbeats.
+	if !strings.Contains(dashboardHTML, "if (!until || Date.now() >= until) return '';") {
+		t.Error("heartbeatHeart lost its flash-window gate — the heart must render nothing once the 3-pulse window has passed")
 	}
-	// Tooltip mirrors the freshness the heart itself is showing.
+	// Named constants sizing the window; the CSS duration/iteration-count
+	// below must agree with them.
+	for _, c := range []string{"var HEART_PULSE_MS = 600;", "var HEART_PULSE_COUNT = 3;", "var HEART_FLASH_TOTAL_MS = HEART_PULSE_MS * HEART_PULSE_COUNT;"} {
+		if !strings.Contains(dashboardHTML, c) {
+			t.Errorf("heartbeatHeart lost its %q flash-window constant", c)
+		}
+	}
+	// Tooltip still reports how fresh the beat that triggered the flash is.
 	if !strings.Contains(dashboardHTML, "'Last heartbeat: ' + ageStr") {
 		t.Error("heartbeatHeart lost its 'Last heartbeat: Xs/Xm ago' tooltip")
 	}
-	// Class hooks the CSS keys its pulse/dim states off of.
-	for _, cls := range []string{"heartbeat-heart-fresh", "heartbeat-heart-aging"} {
-		if !strings.Contains(dashboardHTML, cls) {
-			t.Errorf("heartbeatHeart is missing the %q class hook", cls)
-		}
+	// CSS: invisible by default, and a FINITE 3-iteration animation whose
+	// forwards fill-mode leaves the heart invisible after the third pulse.
+	if !strings.Contains(dashboardHTML, ".heartbeat-heart { color: #e5534b; vertical-align: middle; margin-left: 4px; opacity: 0; }") {
+		t.Error("heartbeat-heart base rule must keep the heart invisible (opacity: 0) by default — no persistent heart between heartbeats")
 	}
-	// CSS: subtle red, themeable via currentColor's host, one-shot pulse
-	// keyframe, and a reduced-motion guard matching the other animated
-	// elements in this file (see .online-dot.upgrading).
-	if !strings.Contains(dashboardHTML, ".heartbeat-heart { color: #e5534b;") {
-		t.Error("heartbeat-heart lost its muted red color rule")
+	if !strings.Contains(dashboardHTML, ".heartbeat-heart-flash { animation: heartbeatPulse 0.6s ease-in-out 3 forwards; }") {
+		t.Error("heartbeat-heart-flash lost its finite 3-iteration, forwards-filling pulse animation")
 	}
 	if !strings.Contains(dashboardHTML, "@keyframes heartbeatPulse") {
 		t.Error("heartbeatPulse keyframe animation is missing")
 	}
-	if !strings.Contains(dashboardHTML, "@media (prefers-reduced-motion: reduce) { .heartbeat-heart-fresh { animation: none; } }") {
-		t.Error("heartbeat-heart-fresh is missing its prefers-reduced-motion guard")
+	// The spent element is also removed from hit-testing once the animation
+	// finishes, via a single delegated listener that survives re-renders.
+	if !strings.Contains(dashboardHTML, "t.classList.contains('heartbeat-heart-flash')) t.style.display = 'none';") {
+		t.Error("heartbeat-heart-flash lost its animationend cleanup — a spent heart must not linger as an invisible hover target")
+	}
+	// Reduced-motion guard matching the other animated elements in this file
+	// (see .online-dot.upgrading): no animation, and the opacity-0 base rule
+	// keeps the heart hidden.
+	if !strings.Contains(dashboardHTML, "@media (prefers-reduced-motion: reduce) { .heartbeat-heart-flash { animation: none; } }") {
+		t.Error("heartbeat-heart-flash is missing its prefers-reduced-motion guard")
+	}
+	// The old always-on freshness bands are gone: no steady heart, no aging
+	// dimmed heart — the heart exists ONLY during the 3-pulse flash.
+	for _, gone := range []string{"heartbeat-heart-fresh", "heartbeat-heart-aging", "HEART_FRESH_MS", "HEART_INTERVAL_MS", "HEART_STALE_MS"} {
+		if strings.Contains(dashboardHTML, gone) {
+			t.Errorf("stale always-on heart artifact %q is still present — the heart must only exist during the flash window", gone)
+		}
 	}
 }
