@@ -302,16 +302,20 @@ const (
 // tried to connect to github.com:443 but iptables sent it here instead.
 // We extract the SNI hostname from the TLS ClientHello, then MITM the connection.
 func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
-	// Read enough of the ClientHello to extract SNI.
-	buf := make([]byte, tlsClientHelloMaxSize)
-	copy(buf, peeked)
+	// Read the whole ClientHello TLS record before extracting SNI and replaying
+	// it. TCP guarantees nothing about record boundaries: a single Read can
+	// return only PART of the ClientHello. A partial read makes extractSNI miss
+	// the SNI (so the wrong host is chosen and the wrong cert is forged) and
+	// mis-frames the record stream handed to tls.Server — the agent-side
+	// handshake then fails deterministically (bad certificate / bad record MAC),
+	// which is exactly why every Copilot agent could not authenticate. Loop until
+	// the full record (per the record-layer length) is buffered.
 	conn.SetReadDeadline(time.Now().Add(transparentProxyTimeout))
-	n, err := conn.Read(buf[len(peeked):])
+	fullBuf, err := readClientHelloRecord(conn, peeked)
 	conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return
 	}
-	fullBuf := buf[:len(peeked)+n]
 
 	host := extractSNI(fullBuf)
 	if host == "" {
@@ -399,6 +403,69 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 }
 
 const tlsClientHelloMaxSize = 4096
+
+// tlsRecordHeaderLen is the size of the TLS record header: content type(1) +
+// version(2) + length(2).
+const tlsRecordHeaderLen = 5
+
+// readClientHelloRecord reads the complete first TLS record (the ClientHello)
+// off conn, starting from the already-peeked bytes, and returns the full record
+// so the caller can both extract the SNI and replay it verbatim into tls.Server.
+//
+// The prior implementation did a SINGLE conn.Read after the 1-byte peek and
+// assumed it captured the whole ClientHello. TCP makes no such guarantee: when
+// the ClientHello arrives split across segments, that single read returns only a
+// prefix. extractSNI then parses a truncated ClientHello, fails to find the SNI,
+// falls back to the wrong host, and the forged cert no longer matches what the
+// agent asked for — so the agent-side TLS handshake fails deterministically
+// (observed as "bad certificate" or "bad record MAC"), blocking every Copilot
+// agent from authenticating.
+//
+// This reassembles the record using the record-layer length field, reading in a
+// loop until the whole ClientHello record is buffered (or the buffer cap /
+// deadline is hit), so both SNI extraction and the replay always see an intact
+// ClientHello regardless of how TCP fragments the client's bytes. The caller
+// sets/clears the read deadline around this call.
+func readClientHelloRecord(conn net.Conn, peeked []byte) ([]byte, error) {
+	buf := make([]byte, tlsClientHelloMaxSize)
+	n := copy(buf, peeked)
+
+	// First, ensure we have at least the record header so we know the record's
+	// declared length.
+	for n < tlsRecordHeaderLen {
+		r, err := conn.Read(buf[n:])
+		n += r
+		if err != nil {
+			if n == 0 {
+				return nil, err
+			}
+			// Return what we have; extractSNI degrades gracefully on a short read.
+			return buf[:n], nil
+		}
+	}
+
+	// record length is bytes 3..4 (big-endian); total record size adds the header.
+	recordLen := int(buf[3])<<8 | int(buf[4])
+	need := tlsRecordHeaderLen + recordLen
+	if need > len(buf) {
+		// ClientHello larger than our cap: read to fill the buffer. The remainder
+		// (and subsequent records) are served to tls.Server via prefixConn+conn,
+		// so the handshake still completes; we only need enough here for SNI.
+		need = len(buf)
+	}
+
+	for n < need {
+		r, err := conn.Read(buf[n:])
+		n += r
+		if err != nil {
+			if n == 0 {
+				return nil, err
+			}
+			return buf[:n], nil
+		}
+	}
+	return buf[:n], nil
+}
 
 // extractSNI reads the SNI hostname from a TLS ClientHello message.
 func extractSNI(data []byte) string {
