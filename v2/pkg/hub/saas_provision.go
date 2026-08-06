@@ -29,8 +29,17 @@ const (
 	provisionTimeout      = 5 * time.Minute
 	cpuRequest            = "500m"
 	cpuLimit              = "2000m"
-	memRequest            = "2Gi"
-	memLimit              = "8Gi"
+	// memRequest/memLimit size the spoke pod for the WHOLE agent fleet, not just
+	// the Go hive process. Each active coding agent (Copilot/Claude CLI) grows to
+	// ~2GB RSS, and an L6 hive runs 5-6 concurrently plus the hive process, so an
+	// 8Gi limit is exceeded and the kernel OOM-kills agents one-by-one. Because a
+	// dead agent's tmux SESSION lingers, the liveness check (has-session) still
+	// reports it "running" and it is never relaunched — the fleet silently dies
+	// and the PR pipeline stalls (observed 2026-08-06: 9 OOM kills, whole fleet
+	// down ~4.5h on console-4vkt). 16Gi gives each agent headroom; OKE nodes have
+	// ~90GiB allocatable, so this is comfortably schedulable.
+	memRequest            = "4Gi"
+	memLimit              = "16Gi"
 	nfsStorageCapacity    = "50Gi"
 	nfsMountTargetIP      = "10.0.10.30"
 	nfsExportPathPrefix   = "/hive-"
