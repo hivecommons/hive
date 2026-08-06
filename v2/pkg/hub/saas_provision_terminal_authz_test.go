@@ -95,3 +95,23 @@ func TestMainAndTerminalIngressAuthURLMatch(t *testing.T) {
 		t.Errorf("expected per-hive auth-url on BOTH main and terminal ingress (>=2 occurrences), got %d", got)
 	}
 }
+
+// TestIngressAuthzEnvIsPlatformAware pins the HIVE_INGRESS_AUTHZ env flag that
+// lets the Node proxy fail CLOSED on an empty allowlist WITHOUT breaking nginx:
+//   - nginx lane: the flag is set ("true") because an ingress auth-proxy gates
+//     /terminal, so the proxy may defer on an empty allowlist.
+//   - OpenShift-Route lane: NO ingress auth-proxy, so the flag is absent and the
+//     proxy is the only gate → empty allowlist fails closed. (finding C3)
+func TestIngressAuthzEnvIsPlatformAware(t *testing.T) {
+	const flag = "name: HIVE_INGRESS_AUTHZ"
+
+	nginx := renderManifestForTest(t, true /* nginx */)
+	if !strings.Contains(nginx, flag) {
+		t.Errorf("nginx lane must set HIVE_INGRESS_AUTHZ so the proxy defers to the ingress on an empty allowlist")
+	}
+
+	openshift := renderManifestForTest(t, false /* OpenShift Route */)
+	if strings.Contains(openshift, flag) {
+		t.Errorf("OpenShift-Route lane must NOT set HIVE_INGRESS_AUTHZ — the proxy is the only per-hive gate and must fail closed on an empty allowlist")
+	}
+}

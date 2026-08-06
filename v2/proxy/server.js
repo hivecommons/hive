@@ -61,6 +61,18 @@ const HIVE_ID = process.env.HIVE_ID || '';
 // case-insensitive) and require the verified cookie user to be a member.
 const HIVE_AUTHORIZED_USERS = parseAuthorizedUsernames(process.env.HIVE_AUTHORIZED_USERS || '');
 
+// HIVE_INGRESS_AUTHZ is set ("true") by the hub ONLY on the nginx-ingress lane,
+// where an ingress auth-proxy per-hive-authorizes every /terminal request
+// (auth-url=auth-check?hive=<id>) BEFORE it reaches this proxy. It is unset on
+// the OpenShift-Route lane, where the Route forwards straight to the pod and
+// this proxy is the ONLY per-hive gate.
+//
+// SECURITY (CWE-862, finding C3): this flag is what lets an empty allowlist fail
+// CLOSED without breaking legitimate nginx access. With no ingress auth-proxy in
+// front (OpenShift), an empty local allowlist can NOT be treated as "defer to
+// the ingress" — there is no ingress to defer to — so the terminal must deny.
+const HIVE_INGRESS_AUTHZ = (process.env.HIVE_INGRESS_AUTHZ || '') === 'true';
+
 // parseAuthorizedUsernames turns "owner:owner,alice:read,bob" into a Set of
 // lowercased usernames. It mirrors the Go parseAuthorizedUsers split (comma
 // list, ":role" suffix optional) but keeps only the identity, which is all the
@@ -77,16 +89,25 @@ function parseAuthorizedUsernames(raw) {
 // isAuthorizedForThisHive reports whether a verified hub username is allowed to
 // open a terminal on THIS hive.
 //
-// Fail-closed policy: when the allowlist is populated (the normal hosted case —
-// authorizedUsersForHive always emits at least the owner), a user absent from it
-// is rejected. When the allowlist is EMPTY (env unset/blank), the proxy has no
-// independent per-hive data; hosted nginx hives still enforce authorization at
-// the ingress auth-url (finding C3 defense #1), so the proxy defers rather than
-// locking everyone out of a legitimately-allowlist-less hive. This keeps the
-// proxy check a strict tightening on top of the ingress, never a new outage.
+// Fail-CLOSED policy (finding C3 — no fail-open, even the narrow one):
+//   - Populated allowlist (the normal hosted case — authorizedUsersForHive
+//     always emits at least the owner): a user absent from it is DENIED.
+//   - Empty allowlist (env unset/blank, e.g. an ownerless hive):
+//       * nginx lane (HIVE_INGRESS_AUTHZ=true): an ingress auth-proxy already
+//         per-hive-authorized this request before it reached the proxy, so the
+//         proxy defers (returns true) rather than double-denying legitimate,
+//         ingress-approved access.
+//       * OpenShift-Route lane (HIVE_INGRESS_AUTHZ unset): there is NO ingress
+//         auth-proxy — this proxy is the ONLY per-hive gate — so an empty
+//         allowlist DENIES. A wide-open terminal on an ownerless OpenShift hive
+//         is exactly the fail-open we refuse to ship.
 function isAuthorizedForThisHive(username) {
   if (!username) return false;
-  if (HIVE_AUTHORIZED_USERS.size === 0) return true; // no local allowlist → defer to ingress
+  if (HIVE_AUTHORIZED_USERS.size === 0) {
+    // No independent per-hive data. Defer to the ingress ONLY when an ingress
+    // auth-proxy actually gates this hive; otherwise fail closed.
+    return HIVE_INGRESS_AUTHZ;
+  }
   return HIVE_AUTHORIZED_USERS.has(username.toLowerCase());
 }
 

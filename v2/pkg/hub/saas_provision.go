@@ -2243,6 +2243,17 @@ spec:
           value: "{{.SessionKey}}"
         - name: HIVE_SSO_KEY
           value: "{{.SSOKey}}"
+{{- if .IsNginxIngress}}
+        # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
+        # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every
+        # /terminal request (auth-url=auth-check?hive={{.ID}}) before it ever
+        # reaches the proxy. Only set on the nginx lane. On the OpenShift-Route
+        # lane there is NO auth-proxy — the Route forwards straight to the pod —
+        # so this is unset and the proxy is the ONLY per-hive gate, which makes
+        # it fail CLOSED on an empty allowlist (see server.js). SECURITY (C3).
+        - name: HIVE_INGRESS_AUTHZ
+          value: "true"
+{{- end}}
 {{- if .AuthorizedUsers}}
         - name: HIVE_AUTHORIZED_USERS
           value: "{{.AuthorizedUsers}}"

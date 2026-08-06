@@ -213,9 +213,19 @@ const HOSTED_HOST = `${HIVE_B_ID}.hive.kubestellar.io`;
 let hiveBTtyd, hiveBProxy;
 
 // mintCookie mirrors mintHubUserCookieValue / verifyHubUserCookie:
-// `<username>.<base64url(HMAC-SHA256(key=secret, msg=username))>`.
+// `<username>.<base64url(HMAC-SHA256(key=SESSION_KEY, msg=username))>`.
+//
+// C2 domain separation (#2758): the proxy no longer verifies the cookie with the
+// master HIVE_HUB_SECRET but with the derived SESSION sub-key —
+// HMAC-SHA256(master, "hive-session-v1"). We are started with HIVE_HUB_SECRET
+// (the legacy derivation lane), so mint through the SAME derivation the proxy's
+// deriveSessionKey() uses, keeping the info string byte-for-byte identical.
+function deriveSessionKey(secret) {
+  return crypto.createHmac('sha256', secret).update('hive-session-v1').digest('hex');
+}
 function mintCookie(secret, username) {
-  const sig = crypto.createHmac('sha256', secret).update(username).digest('base64url');
+  const sessionKey = deriveSessionKey(secret);
+  const sig = crypto.createHmac('sha256', sessionKey).update(username).digest('base64url');
   return `${username}.${sig}`;
 }
 
@@ -368,6 +378,128 @@ async function testC3_ForgedSigStillRejected() {
   console.log('  ✓ forged-signature cookie (even for allowlisted name) → 401');
 }
 
+// ---------------------------------------------------------------------------
+// Finding C3, empty-allowlist lane (no fail-open, even the narrow one).
+//
+// An OWNERLESS hive has an EMPTY per-hive allowlist (HIVE_AUTHORIZED_USERS
+// unset). Behavior must be platform-aware:
+//   - OpenShift Route (HIVE_INGRESS_AUTHZ unset): the proxy is the ONLY per-hive
+//     gate — there is no ingress auth-proxy — so it must fail CLOSED: EVERY
+//     signed cookie (cross-hive AND same-hive) is DENIED.
+//   - nginx ingress (HIVE_INGRESS_AUTHZ=true): the ingress already
+//     per-hive-authorized the request before it reached the proxy, so the proxy
+//     DEFERS (allows) rather than double-denying legitimate access.
+//
+// Each scenario runs its own proxy on its own ports + its own mock ttyd.
+// ---------------------------------------------------------------------------
+const EMPTY_SECRET = 'test-hub-secret-empty';
+const EMPTY_HIVE_ID = 'ownerless-hive';
+const EMPTY_HOST = `${EMPTY_HIVE_ID}.hive.kubestellar.io`;
+
+// startEmptyAllowlistProxy launches a proxy with NO HIVE_AUTHORIZED_USERS on the
+// given ports; ingressAuthz toggles HIVE_INGRESS_AUTHZ (nginx vs OpenShift lane).
+function startEmptyAllowlistProxy(proxyPort, apiPort, ttydPort, ingressAuthz) {
+  const env = {
+    ...process.env,
+    HIVE_PROXY_PORT: String(proxyPort),
+    HIVE_API_PORT: String(apiPort),
+    HIVE_TTYD_PORT: String(ttydPort),
+    HIVE_DASHBOARD_TOKEN: '',
+    HIVE_HUB_SECRET: EMPTY_SECRET,
+    HIVE_ID: EMPTY_HIVE_ID,
+    // HIVE_AUTHORIZED_USERS intentionally omitted → empty allowlist.
+    HIVE_STATIC_DIR: __dirname,
+    NODE_ENV: 'test',
+  };
+  if (ingressAuthz) env.HIVE_INGRESS_AUTHZ = 'true';
+  return new Promise((resolve, reject) => {
+    const proc = spawn('node', ['server.js'], { cwd: __dirname, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let started = false;
+    proc.stdout.on('data', (d) => { if (!started && d.toString().includes('hive-proxy')) { started = true; resolve(proc); } });
+    proc.stderr.on('data', (d) => { if (!started) console.error('empty-allowlist stderr:', d.toString()); });
+    proc.on('error', reject);
+    setTimeout(() => { if (!started) reject(new Error('empty-allowlist proxy start timeout')); }, 10000);
+  });
+}
+
+function startMockTtydOn(port) {
+  return new Promise(resolve => {
+    const server = createServer((_req, res) => { res.writeHead(200); res.end('ttyd'); });
+    const wss = new WebSocketServer({ server });
+    wss.on('connection', (ws) => { ws.send('ttyd-ready'); });
+    server.listen(port, () => resolve(server));
+  });
+}
+
+// Port-parameterized request helpers (raw http + ws, explicit Host).
+function terminalHTTPOn(port, cookieVal, hostHeader) {
+  return new Promise((resolve, reject) => {
+    const headers = { Host: hostHeader };
+    if (cookieVal) headers.Cookie = `hive_hub_user=${cookieVal}`;
+    const req = httpRequest({ host: '127.0.0.1', port, path: '/terminal/', method: 'GET', headers }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+function terminalWSOn(port, cookieVal, hostHeader) {
+  return new Promise((resolve) => {
+    const headers = { Host: hostHeader };
+    if (cookieVal) headers.Cookie = `hive_hub_user=${cookieVal}`;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/terminal/`, { headers });
+    const done = (opened) => { try { ws.close(); } catch { /* ignore */ } resolve({ opened }); };
+    const t = setTimeout(() => done(false), 4000);
+    ws.on('open', () => { clearTimeout(t); done(true); });
+    ws.on('error', () => { clearTimeout(t); done(false); });
+    ws.on('unexpected-response', () => { clearTimeout(t); done(false); });
+  });
+}
+
+// OpenShift lane: empty allowlist + no ingress authz → deny everything.
+const OS_PROXY_PORT = 19021, OS_API_PORT = 19022, OS_TTYD_PORT = 19023;
+let osTtyd, osProxy;
+
+async function testC3_EmptyAllowlist_OpenShift_ForeignDenied() {
+  const cookie = mintCookie(EMPTY_SECRET, 'bob');
+  const resp = await terminalHTTPOn(OS_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.equal(resp.status, 403, `OpenShift empty-allowlist: foreign user must be 403, got ${resp.status}`);
+  const { opened } = await terminalWSOn(OS_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.ok(!opened, 'OpenShift empty-allowlist: foreign user WS must be closed');
+  console.log('  ✓ OpenShift + empty allowlist: foreign user → 403 / WS closed');
+}
+
+async function testC3_EmptyAllowlist_OpenShift_SameHiveDenied() {
+  // The killer case: even a validly-signed cookie for THIS hive's own id-shaped
+  // user must be denied — an ownerless OpenShift hive has no one authorized, and
+  // the proxy is the only gate, so it must fail CLOSED rather than open a shell.
+  const cookie = mintCookie(EMPTY_SECRET, 'anyone');
+  const resp = await terminalHTTPOn(OS_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.equal(resp.status, 403, `OpenShift empty-allowlist: any user must be 403, got ${resp.status}`);
+  const { opened } = await terminalWSOn(OS_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.ok(!opened, 'OpenShift empty-allowlist: any user WS must be closed');
+  console.log('  ✓ OpenShift + empty allowlist: same-hive/any user → 403 / WS closed (no fail-open)');
+}
+
+// nginx lane: empty allowlist + ingress authz → proxy defers (allows).
+const NGINX_PROXY_PORT = 19031, NGINX_API_PORT = 19032, NGINX_TTYD_PORT = 19033;
+let nginxTtyd, nginxProxy;
+
+async function testC3_EmptyAllowlist_Nginx_Deferred() {
+  // The ingress auth-proxy already authorized this request; the proxy must NOT
+  // double-deny a legitimate ingress-approved user just because the local
+  // allowlist is empty.
+  const cookie = mintCookie(EMPTY_SECRET, 'bob');
+  const resp = await terminalHTTPOn(NGINX_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.equal(resp.status, 200, `nginx empty-allowlist: ingress-approved user must reach terminal, got ${resp.status}`);
+  const { opened } = await terminalWSOn(NGINX_PROXY_PORT, cookie, EMPTY_HOST);
+  assert.ok(opened, 'nginx empty-allowlist: ingress-approved user WS should open');
+  console.log('  ✓ nginx + empty allowlist: ingress-approved user → deferred (200 / WS opens)');
+}
+
 // Run tests
 console.log('\nProxy WebSocket Tests\n');
 
@@ -413,4 +545,32 @@ try {
   process.exitCode = 1;
 } finally {
   await teardownHiveB();
+}
+
+// C3 empty-allowlist lane: no fail-open, even the narrow one.
+console.log('Finding C3 — empty-allowlist platform-aware fail-closed\n');
+try {
+  osTtyd = await startMockTtydOn(OS_TTYD_PORT);
+  osProxy = await startEmptyAllowlistProxy(OS_PROXY_PORT, OS_API_PORT, OS_TTYD_PORT, false /* no ingress authz */);
+  nginxTtyd = await startMockTtydOn(NGINX_TTYD_PORT);
+  nginxProxy = await startEmptyAllowlistProxy(NGINX_PROXY_PORT, NGINX_API_PORT, NGINX_TTYD_PORT, true /* ingress authz */);
+  await new Promise(r => setTimeout(r, 500));
+
+  console.log('OpenShift-Route lane (no ingress auth-proxy):');
+  await testC3_EmptyAllowlist_OpenShift_ForeignDenied();
+  await testC3_EmptyAllowlist_OpenShift_SameHiveDenied();
+
+  console.log('\nnginx-ingress lane (ingress auth-proxy in front):');
+  await testC3_EmptyAllowlist_Nginx_Deferred();
+
+  console.log('\n✓ C3 empty-allowlist tests passed\n');
+} catch (e) {
+  console.error('\n✗ C3 empty-allowlist test failed:', e.message, '\n');
+  process.exitCode = 1;
+} finally {
+  if (osProxy) osProxy.kill();
+  if (nginxProxy) nginxProxy.kill();
+  if (osTtyd) osTtyd.close();
+  if (nginxTtyd) nginxTtyd.close();
+  await new Promise(r => setTimeout(r, 200));
 }
