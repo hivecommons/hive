@@ -92,7 +92,10 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	if metadata.GetID() <= 0 || !strings.EqualFold(metadata.GetFullName(), request.Repository) || strings.TrimSpace(metadata.GetDefaultBranch()) == "" {
 		return nil, fmt.Errorf("GitHub repository identity does not match %s", request.Repository)
 	}
-	if err := ensureNoManagedRepositoryContractBeforeSetup(ctx, client, owner, repository, metadata.GetDefaultBranch()); err != nil {
+	managedUpdate, err := ensureManagedRepositoryContractBeforeSetup(
+		ctx, client, stateRoot, request.Repository, metadata.GetID(), owner, repository, metadata.GetDefaultBranch(),
+	)
+	if err != nil {
 		return nil, err
 	}
 	normalized, err := normalizeDashboardPreflightProvider(request.Provider, integrated.Automation(request.Automation))
@@ -123,7 +126,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	}
 	if _, installed, loadErr := loadAuthoritativeVisualWorkContract(); loadErr != nil {
 		return nil, fmt.Errorf("inspect existing Visual Hive controller contract: %w", loadErr)
-	} else if installed {
+	} else if installed && !managedUpdate {
 		return nil, fmt.Errorf("Visual Hive is already installed; use status and doctor instead of preflight")
 	}
 	if err := ensureNoVisualRuntimeBeforeSetup(stateRoot); err != nil {
@@ -167,20 +170,69 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	}, nil
 }
 
-func ensureNoManagedRepositoryContractBeforeSetup(ctx context.Context, client *hivegithub.Client, owner, repository, defaultBranch string) error {
+// ensureManagedRepositoryContractBeforeSetup distinguishes a fresh install
+// from an exact, durable managed update. A repository contract without local
+// authoritative state remains an orphan and fails closed. An existing contract
+// is accepted only when the selected state root belongs to the same immutable
+// repository identity and its managed checkout contains byte-identical
+// contract content. This permits supported policy transitions (for example
+// L4/issues to L5/repair-pr) without weakening orphan detection.
+func ensureManagedRepositoryContractBeforeSetup(
+	ctx context.Context,
+	client *hivegithub.Client,
+	stateRoot, fullRepository string,
+	repositoryID int64,
+	owner, repository, defaultBranch string,
+) (bool, error) {
 	file, directory, response, err := client.GoGitHub().Repositories.GetContents(
 		ctx, owner, repository, ".hive/integrated.json", &gh.RepositoryContentGetOptions{Ref: defaultBranch},
 	)
 	if err != nil {
 		if response != nil && response.Response != nil && response.StatusCode == http.StatusNotFound {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("inspect repository contract before hosted setup: %w", err)
+		return false, fmt.Errorf("inspect repository contract before hosted setup: %w", err)
 	}
 	if file == nil || len(directory) != 0 || file.GetType() != "file" {
-		return fmt.Errorf("repository managed contract is not one ordinary file")
+		return false, fmt.Errorf("repository managed contract is not one ordinary file")
 	}
-	return fmt.Errorf("repository already contains a managed Visual Hive contract without authoritative local state; inspect status and doctor, then use setup-reset recovery")
+	orphaned := func(detail string) (bool, error) {
+		if strings.TrimSpace(detail) != "" {
+			detail = ": " + detail
+		}
+		return false, fmt.Errorf("repository already contains a managed Visual Hive contract without matching authoritative local state%s; inspect status and doctor, then use setup-reset recovery", detail)
+	}
+	store, err := integrated.NewStore(filepath.Join(filepath.Clean(stateRoot), "integrated"))
+	if err != nil {
+		return orphaned("state store is unavailable")
+	}
+	installed, err := store.Load()
+	if err != nil {
+		return orphaned("durable config is unavailable")
+	}
+	if !strings.EqualFold(strings.TrimSpace(installed.Repository), strings.TrimSpace(fullRepository)) ||
+		strings.TrimSpace(installed.RepositoryID) != fmt.Sprintf("%d", repositoryID) ||
+		filepath.Clean(installed.StateDir) != filepath.Clean(stateRoot) {
+		return orphaned("repository or state binding differs")
+	}
+	expectedCheckout := filepath.Join(filepath.Clean(stateRoot), "integrated", "checkout")
+	if filepath.Clean(installed.CheckoutDir) != expectedCheckout || installed.SetupPRNumber <= 0 || strings.TrimSpace(installed.SetupHeadSHA) == "" {
+		return orphaned("setup transaction binding is incomplete")
+	}
+	contractPath := filepath.Join(expectedCheckout, ".hive", "integrated.json")
+	info, err := os.Lstat(contractPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return orphaned("managed checkout contract is unavailable")
+	}
+	localContent, err := os.ReadFile(contractPath)
+	if err != nil {
+		return orphaned("managed checkout contract cannot be read")
+	}
+	remoteContent, err := file.GetContent()
+	if err != nil || string(localContent) != remoteContent {
+		return orphaned("repository contract differs from the durable managed checkout")
+	}
+	return true, nil
 }
 
 func ensureNoVisualRuntimeBeforeSetup(stateRoot string) error {

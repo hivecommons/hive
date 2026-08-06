@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -215,9 +216,52 @@ func TestHostedPreflightRejectsManagedContractWithoutDurableState(t *testing.T) 
 	}))
 	defer server.Close()
 	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repository"}, slog.Default())
-	err := ensureNoManagedRepositoryContractBeforeSetup(context.Background(), client, "owner", "repository", "main")
+	_, err := ensureManagedRepositoryContractBeforeSetup(context.Background(), client, t.TempDir(), "owner/repository", 123, "owner", "repository", "main")
 	if err == nil || !strings.Contains(err.Error(), "setup-reset") {
 		t.Fatalf("orphaned managed contract was accepted by hosted preflight: %v", err)
+	}
+}
+
+func TestHostedPreflightAcceptsExactManagedContractUpdate(t *testing.T) {
+	stateRoot := t.TempDir()
+	checkout := filepath.Join(stateRoot, "integrated", "checkout")
+	contractPath := filepath.Join(checkout, ".hive", "integrated.json")
+	if err := os.MkdirAll(filepath.Dir(contractPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contract := []byte("{\"schema_version\":\"hive.integrated.v1\",\"repository_id\":\"123\"}\n")
+	if err := os.WriteFile(contractPath, contract, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := integrated.NewStore(filepath.Join(stateRoot, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(integrated.Config{
+		Repository: "Owner/Repository", RepositoryID: "123", DefaultBranch: "main",
+		StateDir: stateRoot, CheckoutDir: checkout, SetupPRNumber: 9,
+		SetupHeadSHA: strings.Repeat("a", 40),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/repos/owner/repository/contents/.hive/integrated.json" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"type": "file", "path": ".hive/integrated.json", "name": "integrated.json",
+				"encoding": "base64", "content": base64.StdEncoding.EncodeToString(contract),
+			})
+			return
+		}
+		http.Error(writer, `{\"message\":\"not found\"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repository"}, slog.Default())
+	managed, err := ensureManagedRepositoryContractBeforeSetup(
+		context.Background(), client, stateRoot, "owner/repository", 123, "owner", "repository", "main",
+	)
+	if err != nil || !managed {
+		t.Fatalf("exact managed contract update rejected: managed=%v err=%v", managed, err)
 	}
 }
 
