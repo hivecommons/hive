@@ -159,6 +159,28 @@ func TestIssueRequestWatcherNilAuthorizerFailsClosed(t *testing.T) {
 	}
 }
 
+func TestIssueRequestWatcherRejectsRepositoryOutsideHiveScope(t *testing.T) {
+	requests := 0
+	client, server := newIssueRequestTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer server.Close()
+	dir := withIssueRequestDir(t)
+	path, _ := WriteIssueRequest(dir, IssueRequest{Repo: "other/repository", Agent: "scanner", Title: "x", Body: "y"})
+	client.ProcessIssueRequestsOnce(context.Background())
+	if requests != 0 {
+		t.Fatalf("out-of-scope request made %d GitHub calls", requests)
+	}
+	result := readIssueResponse(t, path)
+	if result.OK || !strings.Contains(result.Error, "outside this Hive's configured project scope") {
+		t.Fatalf("unexpected out-of-scope result: %+v", result)
+	}
+	if _, err := os.Stat(path + ".denied"); err != nil {
+		t.Fatalf("out-of-scope request was not quarantined: %v", err)
+	}
+}
+
 func readIssueResponse(t *testing.T, requestPath string) IssueResponse {
 	t.Helper()
 	data, err := os.ReadFile(strings.TrimSuffix(requestPath, ".json") + ".result.json")

@@ -123,6 +123,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		_ = os.Rename(path, path+".bad")
 		return
 	}
+	if !c.managesIssueRequestRepository(req.Repo) {
+		c.denyIssueRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
+		return
+	}
 	fileUID := statUID(data, path)
 	if c.issueAuthz == nil {
 		c.denyIssueRequest(path, req, "no authorizer configured (fail closed)", nowFn)
@@ -163,6 +167,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	c.logger.Info("issue-request watcher: issue resolved by Hive",
 		slog.String("repo", req.Repo), slog.Int("number", number),
 		slog.Bool("reused", reused), slog.Bool("managed_dedupe", managed), slog.String("agent", req.Agent))
+}
+
+func (c *Client) managesIssueRequestRepository(requested string) bool {
+	requestedOwner, requestedRepository, err := splitFullRepository(requested)
+	if err != nil {
+		return false
+	}
+	for _, configured := range c.getRepos() {
+		owner, repository := c.splitRepo(configured)
+		if strings.EqualFold(strings.TrimSpace(owner), requestedOwner) &&
+			strings.EqualFold(strings.TrimSpace(repository), requestedRepository) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) createOrReuseAgentIssue(ctx context.Context, req IssueRequest, body, marker string) (int, string, bool, bool, error) {
