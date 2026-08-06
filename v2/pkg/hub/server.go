@@ -150,7 +150,19 @@ type RegistryEntry struct {
 	Owner              string `json:"owner,omitempty"`
 	ClusterID          string `json:"clusterId,omitempty"`
 	ClusterName        string `json:"clusterName,omitempty"`
-	HiveType           string `json:"hiveType,omitempty"`
+	// Namespace is the Kubernetes namespace this hive's spoke runs in. For a
+	// hub-provisioned (hosted) hive it is hostedNamespaceForHive(sh) —
+	// "hive-hosted-<id>" — overlaid from the authoritative SaaSHive record on
+	// the heartbeat path (NOT reported by the spoke), so operators can
+	// `kubectl -n <ns> exec …` straight from My Hives without re-grepping
+	// `kubectl get ns` on a live cluster. It is derived, not renamed: a claimed
+	// placeholder keeps its "hive-hosted-<placeholder-id>" namespace forever
+	// (the ID never changes on claim — see hosted_namespace_identity.go), so
+	// this stays correct across reassignment. Empty for a self-hosted/BYO hive
+	// that does not run in a hub-provisioned namespace, or for a hive with no
+	// SaaSHive record (old spoke) — never guessed for those.
+	Namespace string `json:"namespace,omitempty"`
+	HiveType  string `json:"hiveType,omitempty"`
 	// ProvStatus is the authoritative provisioning status copied from the hive's
 	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
 	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
@@ -1288,6 +1300,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// entry the dashboard renders. The spoke never reports this, so a blank
 		// ProjectName simply leaves the client on its org/repo fallback label.
 		entry.ProjectName = sh.ProjectName
+		// Persist the hosted namespace ("hive-hosted-<id>") the same way — the
+		// hub already derives it deterministically from the (stable) hive ID, so
+		// storing it here makes it authoritative, self-healing across a claim/
+		// reassign, and available to My Hives + kubectl-exec without a live
+		// `kubectl get ns` hunt. Only set when a SaaSHive record exists, so a
+		// self-hosted/BYO hive keeps Namespace empty rather than being wrongly
+		// labelled with a namespace it does not run in.
+		entry.Namespace = hostedNamespaceForHive(sh)
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)

@@ -2217,6 +2217,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
+		// Overlay the hosted namespace at read time too, so a placeholder or a
+		// hive whose live registry entry predates the field still shows
+		// "hive-hosted-<id>" in My Hives. Derived from the SaaSHive record, same
+		// as the heartbeat path — the value the operator needs for kubectl exec.
+		entry.Namespace = hostedNamespaceForHive(sh)
 		// A placeholder wedged between the two claim paths: it was given a real
 		// identity (org/repo written) but the spoke never reported the project back.
 		// Computed from meta (not the live registry) so it is true even for an
@@ -2388,6 +2393,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 						PrimaryRepo: sh.PrimaryRepo,
 						ACMMLevel:   sh.ACMMLevel,
 						HiveType:    "hosted",
+						Namespace:   hostedNamespaceForHive(sh),
 						ClusterID:   clusterIDForSaaSHive(*sh),
 						ClusterName: s.clusterNameForID(clusterIDForSaaSHive(*sh)),
 					},
@@ -2421,6 +2427,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					PrimaryRepo: sh.PrimaryRepo,
 					ACMMLevel:   sh.ACMMLevel,
 					HiveType:    "hosted",
+					Namespace:   hostedNamespaceForHive(&sh),
 					ClusterID:   clusterIDForSaaSHive(sh),
 					ClusterName: s.clusterNameForID(clusterIDForSaaSHive(sh)),
 				},
@@ -8271,6 +8278,38 @@ const dashboardHTML = `<!DOCTYPE html>
       setTimeout(function() { t.remove(); }, 4000);
     }
 
+    /* copyHiveText copies a plain string to the clipboard for the small
+       copy-on-click affordances in the hive rows (e.g. the Kubernetes
+       namespace). Prefers the async Clipboard API and falls back to a hidden
+       textarea + execCommand for older/insecure-context browsers, so the copy
+       works whether or not the dashboard is served over HTTPS. Always shows a
+       toast so the (silent) copy is confirmed. */
+    function copyHiveText(text, label) {
+      var msg = 'Copied ' + (label || 'value');
+      function ok() { hiveToast(msg, 'success'); }
+      function fail() { hiveToast('Copy failed — select and copy manually', 'error'); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(ok, function() {
+          if (!legacyCopy(text)) fail(); else ok();
+        });
+        return;
+      }
+      if (legacyCopy(text)) ok(); else fail();
+    }
+    function legacyCopy(text) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var okc = document.execCommand('copy');
+        ta.remove();
+        return okc;
+      } catch (e) { return false; }
+    }
+
     function hiveConfirm(msg, rawHTML) {
       return new Promise(function(resolve) {
         var overlay = document.createElement('div');
@@ -12850,9 +12889,24 @@ const dashboardHTML = `<!DOCTYPE html>
            identically wherever it appears. An absent host renders as
            "github.com" rather than a blank chip, which is what an old
            heartbeat-only spoke that cannot yet report its host should show. */
+        /* Kubernetes namespace line: a small, copy-on-click monospace value so an
+           operator can grab "hive-hosted-<id>" for a kubectl -n <ns> exec without
+           re-grepping kubectl get ns on a live cluster. h.namespace is overlaid
+           by the hub from the SaaSHive record (see RegistryEntry.Namespace); it is
+           only present for hub-provisioned hosted hives, so a self-hosted/BYO/local
+           row simply omits the line and is pixel-identical to before. */
+        var nsLine = '';
+        if (h.namespace) {
+          nsLine = '<div style="' + STACKED_LINE_STYLE + ';font-size:0.65rem">' +
+            '<span onclick="copyHiveText(' + jsArg(h.namespace) + ',\'namespace\')" ' +
+            'title="Kubernetes namespace — click to copy (kubectl -n ' + escAttr(h.namespace) + ' exec …)" ' +
+            'style="font-family:ui-monospace,monospace;color:var(--muted);cursor:pointer;border-bottom:1px dotted var(--border)">' +
+            esc(h.namespace) + '</span></div>';
+        }
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
+          nsLine +
           '</div>';
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
