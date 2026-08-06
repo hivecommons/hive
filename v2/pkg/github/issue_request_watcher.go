@@ -68,7 +68,7 @@ func (c *Client) StartIssueRequestWatcher(ctx context.Context, authz IssueReques
 			slog.String("dir", issueRequestDir()), slog.String("error", err.Error()))
 		return
 	}
-	if err := os.Chmod(issueRequestDir(), 0o2775); err != nil {
+	if err := os.Chmod(issueRequestDir(), 0o3775); err != nil {
 		c.logger.Warn("issue-request watcher: could not set group-writable perms",
 			slog.String("dir", issueRequestDir()), slog.String("error", err.Error()))
 	}
@@ -108,8 +108,10 @@ func (c *Client) processIssueRequests(ctx context.Context, nowFn func() time.Tim
 }
 
 func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn func() time.Time) {
-	data, err := os.ReadFile(path)
+	data, fileUID, err := readAgentRequest(path)
 	if err != nil {
+		c.writeIssueResult(path, IssueResponse{Error: "invalid request file: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
+		_ = os.Rename(path, path+".bad")
 		return
 	}
 	var req IssueRequest
@@ -127,7 +129,6 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.denyIssueRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
 		return
 	}
-	fileUID := statUID(data, path)
 	if c.issueAuthz == nil {
 		c.denyIssueRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
@@ -321,10 +322,7 @@ func (c *Client) denyIssueRequest(path string, req IssueRequest, reason string, 
 }
 
 func (c *Client) writeIssueResult(reqPath string, resp IssueResponse) {
-	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
-	if data, err := json.MarshalIndent(resp, "", "  "); err == nil {
-		_ = os.WriteFile(out, data, 0o644)
-	}
+	_ = writeWatcherResult(reqPath, resp)
 }
 
 func WriteIssueRequest(dir string, req IssueRequest) (string, error) {
