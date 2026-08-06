@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -364,132 +363,29 @@ func (s *HubServer) appKeysByAppID() map[int64]fleetAppKey {
 	return out
 }
 
-// additionalAppKeysForSpoke returns every fleet App key EXCEPT the one a given
-// spoke would already receive as its primary (cluster) key, so a spoke ends up
-// holding all keys the fleet knows and can select by its own app_id.
+// SECURITY (C1/N3, CWE-200/639): the fleet-wide "additional App keys" delivery
+// lane was REMOVED. It formerly attached every OTHER fleet App's private key to
+// every heartbeat response, selecting them purely from the fleet key set with no
+// binding to the authenticated caller. Combined with the heartbeat trusting the
+// body-supplied hive_id, that let any hive holding the fleet-shared bearer pull
+// every tenant's App private key by beating with any hive_id. See
+// additionalAppKeysForSpoke/attachMissingAppKeys in git history.
 //
-// primaryAppID is the app_id of the key already carried in the heartbeat's
-// AppID/PrivateKey pair (the spoke's cluster key). Passing 0 means "no primary
-// carried" and every fleet key is returned. The result is sorted by app_id so
-// delivery — and any test asserting on it — is deterministic, and never contains
-// the primary again (that would be pure duplication on the wire).
-func (s *HubServer) additionalAppKeysForSpoke(primaryAppID int64) []HeartbeatAppKey {
-	keys := s.appKeysByAppID()
-	if len(keys) == 0 {
-		return nil
-	}
-	appIDs := make([]int64, 0, len(keys))
-	for id := range keys {
-		if id == primaryAppID {
-			continue // already delivered as the primary key
-		}
-		appIDs = append(appIDs, id)
-	}
-	if len(appIDs) == 0 {
-		return nil
-	}
-	sort.Slice(appIDs, func(i, j int) bool { return appIDs[i] < appIDs[j] })
-	out := make([]HeartbeatAppKey, 0, len(appIDs))
-	for _, id := range appIDs {
-		k := keys[id]
-		out = append(out, HeartbeatAppKey{
-			AppID:       k.AppID,
-			PrivateKey:  k.PrivateKey,
-			Fingerprint: k.Fingerprint,
-		})
-	}
-	return out
-}
-
-// attachMissingAppKeys adds the fleet's OTHER App keys to a heartbeat response
-// so a spoke ends up holding every App key the fleet knows, and can pick the one
-// matching its own app_id. It is the fix for a github.com hive on a
-// GitHub-Enterprise cluster (vllm-d): that hive inherits only the GHE cluster
-// key, holds no github.com key, and cannot authenticate github.com repos.
+// A heartbeat now delivers ONLY the App identity/key for THAT hive:
+//   - its PRIMARY (cluster) key, via appKeySyncForHeartbeat's per-cluster
+//     reconcile (idempotent, gated on the hive's own cluster key), and
+//   - a targeted, operator/webhook-queued identity, via
+//     pendingAppIdentityForHeartbeat.
 //
-// IDEMPOTENCE: it delivers only the keys the spoke does NOT already hold with a
-// matching fingerprint (payload.GitHubAppKeysHeld). Once the spoke reports it
-// holds them all, nothing further rides the wire — the same "compare by
-// fingerprint, never re-send a key already in place" contract the per-cluster
-// reconcile uses.
-//
-// EXCLUSIONS: the spoke's PRIMARY key is never sent as an "additional" key.
-// Primary = whatever app_id the spoke is already configured as
-// (payload.GitHubAppID) AND whatever app_id the response's own
-// GitHubAppConfig.AppID carries this beat (the cluster key just decided above).
-// Sending either again would be pure duplication.
-//
-// It attaches to resp.GitHubAppConfig, creating a bare one (no primary key, no
-// app_id change) when the branches above left it nil — the additional keys must
-// reach the spoke even when its cluster key needs no correction. The private key
-// values are secret and travel only on this TLS response; only fingerprints are
-// logged.
-func (s *HubServer) attachMissingAppKeys(resp *HeartbeatResponse, payload *HeartbeatPayload) {
-	if s == nil || resp == nil || payload == nil {
-		return
-	}
-	// The spoke's primary app_id is its own configured one; also exclude the
-	// app_id of any cluster key attached this beat so we never duplicate it.
-	primaryAppID := payload.GitHubAppID
-	var alsoExclude int64
-	if resp.GitHubAppConfig != nil {
-		alsoExclude = resp.GitHubAppConfig.AppID
-	}
-
-	additional := s.additionalAppKeysForSpoke(primaryAppID)
-	if len(additional) == 0 {
-		return
-	}
-
-	missing := make([]HeartbeatAppKey, 0, len(additional))
-	for _, k := range additional {
-		if alsoExclude != 0 && k.AppID == alsoExclude {
-			continue // already delivered as the primary/cluster key this beat
-		}
-		// Idempotence: skip a key the spoke already holds with this fingerprint.
-		if held, ok := payload.GitHubAppKeysHeld[strconv.FormatInt(k.AppID, 10)]; ok {
-			if held != "" && k.Fingerprint != "" && held == k.Fingerprint {
-				continue
-			}
-		}
-		missing = append(missing, k)
-	}
-	if len(missing) == 0 {
-		return
-	}
-
-	// Non-convergence back-off (#2496): this path re-delivers every beat while
-	// the spoke's GitHubAppKeysHeld never reflects the delivery — the exact
-	// hot loop observed from a broken same-pod duplicate sender. It shares the
-	// per-hive ledger with the primary reconcile, so key material of any kind
-	// stops riding every beat once the budget is exhausted.
-	if !s.allowAppKeyDelivery(payload.HiveID) {
-		return
-	}
-	s.noteAppKeyDelivered(payload.HiveID)
-
-	if resp.GitHubAppConfig == nil {
-		// No primary key change this beat — attach a bare carrier. AppID 0 and an
-		// empty PrivateKey both mean "leave the spoke's primary alone"; only the
-		// additional keys travel.
-		resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
-	}
-	resp.GitHubAppConfig.AdditionalKeys = missing
-
-	if s.logger != nil {
-		fps := make([]string, 0, len(missing))
-		for _, k := range missing {
-			// Fingerprints only — the key material is never logged.
-			fps = append(fps, strconv.FormatInt(k.AppID, 10)+"="+k.Fingerprint)
-		}
-		s.logger.Info("heartbeat: delivering additional github app keys to spoke",
-			"hive_id", payload.HiveID,
-			"cluster_id", payload.ClusterID,
-			"primary_app_id", primaryAppID,
-			"delivered", strings.Join(fps, ","),
-		)
-	}
-}
+// A hive is never handed a key for an App it is not currently assigned. The
+// "github.com hive on a GHE cluster needs the other forge's key pre-positioned
+// for a future migration" rationale did not justify broadcasting private key
+// material: when a hive is actually re-assigned to a different App, that App's
+// key is delivered at that time through the reconcile/pending-identity lanes,
+// keyed to the hive that is authoritatively assigned it — not speculatively
+// pushed to every spoke. appKeysByAppID is retained: provisioning still renders
+// a specific hive's own manifest from it, and nothing on the heartbeat path
+// enumerates other tenants' keys any more.
 
 // appKeySyncDecision is the outcome of comparing a spoke's reported App identity
 // against its cluster's authoritative one. Returned rather than acted on inline
@@ -545,11 +441,12 @@ const (
 	// pins it to public github.com (github_base_url:"public" / "https://github.com")
 	// even though its cluster's default App is the GHE App. Pushing the cluster's
 	// GHE key as the hive's PRIMARY every beat overwrites its github.com app_id and
-	// breaks github.com auth. The hive is github.com: its own public App is
-	// primary, and the cluster GHE key rides only as an ADDITIONAL key
-	// (attachMissingAppKeys) so a future migration onto the GHE App already has the
-	// key on disk. This mirrors resolveProvisionAppID, which likewise honours the
-	// public pin instead of forcing the cluster GHE app_id.
+	// breaks github.com auth. The hive is github.com: its own public App stays
+	// primary. (The heartbeat no longer also broadcasts the cluster GHE key as an
+	// additional key — that cross-tenant lane was removed for C1/N3; the GHE key
+	// is delivered only when the hive is actually re-assigned to that App.) This
+	// mirrors resolveProvisionAppID, which likewise honours the public pin instead
+	// of forcing the cluster GHE app_id.
 	appKeyReasonPublicHiveOnGHECluster = "hive is pinned to public github.com on a GHE-default cluster"
 	// appKeyReasonWrongForgeApp repairs a spoke carrying an App registered on a
 	// DIFFERENT GitHub host than the one the hive actually talks to.
@@ -632,9 +529,11 @@ const (
 // a GHE App. The cluster identity resolved above is that GHE App; pushing it as
 // this hive's PRIMARY would overwrite its github.com app_id and break github.com
 // auth on the very next beat. So the reconcile refuses to push the cluster key as
-// primary for such a hive — its own public App stays primary and the cluster GHE
-// key rides only as an ADDITIONAL key (attachMissingAppKeys). This is the app-KEY
-// reconcile finally honouring the same public pin that resolveProvisionAppID and
+// primary for such a hive — its own public App stays primary. (The heartbeat no
+// longer also broadcasts the cluster GHE key as an additional key; that
+// cross-tenant delivery lane was removed for C1/N3. Such a hive is handed the
+// GHE App key only when it is actually re-assigned to that App.) This is the
+// app-KEY reconcile honouring the same public pin that resolveProvisionAppID and
 // effectiveGitHubBaseURL already honour on the provisioning path.
 //
 // WRONG-FORGE APP — clusterIsGHE carries the one fact this function cannot see

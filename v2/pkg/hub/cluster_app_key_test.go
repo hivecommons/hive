@@ -675,9 +675,9 @@ func TestAppKeySyncForHeartbeatNilServer(t *testing.T) {
 // TestAppKeySyncForHeartbeatPublicPinnedHive is the end-to-end class fix: a
 // github.com hive (github_base_url:"public") parked on the vllm-d GHE cluster
 // must NEVER be handed the cluster's GHE App (5686) as its primary key, while a
-// genuine GHE hive on the same cluster still is. The public hive's GHE key rides
-// only as an additional key via attachMissingAppKeys — asserted separately in
-// both_app_keys_test.go.
+// genuine GHE hive on the same cluster still is. (Post-C1/N3 the heartbeat no
+// longer also broadcasts the GHE key to the public hive as an additional key;
+// that cross-tenant delivery lane was removed — see both_app_keys_test.go.)
 func TestAppKeySyncForHeartbeatPublicPinnedHive(t *testing.T) {
 	withTempAppKeyDir(t)
 	oldHives := saasHivesDir

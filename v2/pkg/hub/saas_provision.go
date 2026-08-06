@@ -1274,9 +1274,16 @@ type provisionAppKey struct {
 // newly provisioned spoke should hold — every fleet key except the primary the
 // spoke is already getting as gh-app-key.pem.
 //
-// This is the provisioning-time twin of attachMissingAppKeys: the heartbeat gets
-// a spoke to the both-keys state eventually, this gets it there at birth, so a
-// forge switch never has to wait a beat for the target forge's key to arrive.
+// This runs on the PROVISIONING path only, rendering keys into the manifest of
+// the single hive being provisioned by an authenticated operator action.
+//
+// NOTE (related to C1/N3): the heartbeat's fleet-wide additional-key broadcast
+// was REMOVED — it disclosed every tenant's App private key to any caller under
+// the fleet-shared bearer. This provisioning-time rendering is a distinct path
+// (operator-gated, per-hive manifest) and is retained, but it likewise embeds
+// the fleet's OTHER App keys into one hive's manifest; an operator hardening
+// review should decide whether provisioning too should deliver only the hive's
+// own key.
 //
 // Excluding primaryAppID is what keeps key selection identity-safe. A hive's
 // GitHub identity is the atomic set (app_id, app_slug, api_url, base_url); the

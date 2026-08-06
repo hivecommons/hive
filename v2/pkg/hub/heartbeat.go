@@ -563,15 +563,14 @@ type HeartbeatPayload struct {
 	GitHubBaseURL string `json:"github_base_url,omitempty"`
 	// GitHubAppKeysHeld reports the NON-SECRET fingerprint of every ADDITIONAL
 	// per-app-id key file this spoke holds on its PVC, keyed by app_id as a
-	// decimal string (JSON object keys must be strings). It exists so the hub can
-	// deliver the fleet's OTHER App keys (see HeartbeatGitHubAppConfig.
-	// AdditionalKeys) exactly once and then stop: a key already present with the
-	// right fingerprint is not re-sent every beat.
+	// decimal string (JSON object keys must be strings).
 	//
-	// It carries fingerprints ONLY — never key material — exactly like
-	// GitHubAppKeyFingerprint above. Empty/nil means the spoke holds no per-app-id
-	// keys, or is too old to report; either way the hub falls back to delivering
-	// any additional keys it has, which the spoke writes idempotently.
+	// SECURITY (C1/N3, CWE-200/639): the hub no longer acts on this field. It once
+	// drove the fleet-wide additional-key broadcast (HeartbeatGitHubAppConfig.
+	// AdditionalKeys), which handed every tenant's App private key to any caller.
+	// That lane was removed; the field is retained only so older spokes can keep
+	// reporting it harmlessly and to describe what per-app-id files a spoke holds.
+	// It carries fingerprints ONLY — never key material.
 	GitHubAppKeysHeld map[string]string `json:"github_app_keys_held,omitempty"`
 }
 
@@ -973,27 +972,20 @@ type HeartbeatGitHubAppConfig struct {
 	// the App ID is the field that names the forge.
 	APIURL  string `json:"api_url,omitempty"`
 	BaseURL string `json:"base_url,omitempty"`
-	// AdditionalKeys carries EVERY OTHER GitHub App private key the fleet knows,
-	// keyed by its own app_id, so a spoke can hold both the github.com App key
-	// AND its cluster's GitHub Enterprise App key at once — and pick whichever
-	// one matches the app_id it is actually configured to authenticate as.
+	// AdditionalKeys formerly carried EVERY OTHER GitHub App private key the fleet
+	// knew, keyed by app_id, so a spoke could hold keys for Apps other than its
+	// cluster's default.
 	//
-	// WHY THIS EXISTS
-	//
-	// The AppID/PrivateKey pair above is the spoke's CLUSTER key: the key of the
-	// App registered on the cluster's GitHub host. That is wrong for a github.com
-	// hive that happens to land on a GitHub-Enterprise-default cluster (the live
-	// vllm-d case): it inherits the GHE app_id and GHE key, holds no github.com
-	// key at all, and every github.com repo call dies with "github auth token
-	// error". Delivering the OTHER app's key too — written to a distinct
-	// per-app-id file on the spoke — lets that hive authenticate as the App it is
-	// really pinned to, regardless of which cluster it runs on.
-	//
-	// It is purely additive: a spoke that only understands the single AppID/
-	// PrivateKey pair (an older build) ignores this field and behaves exactly as
-	// before. Each entry's PrivateKey is a SECRET value and travels only over the
-	// TLS heartbeat channel; it is never logged. nil/empty means "nothing extra
-	// to deliver".
+	// SECURITY (C1/N3, CWE-200/639): the hub NO LONGER POPULATES this field. That
+	// broadcast was the critical cross-tenant key-disclosure vulnerability — the
+	// hub attached every tenant's App private key to every heartbeat, and because
+	// the handler trusts the body-supplied hive_id under one fleet-shared bearer,
+	// any hive could pull the whole fleet's keys by beating with any hive_id. A
+	// heartbeat now delivers ONLY the caller hive's own App key/identity via the
+	// AppID/PrivateKey pair above (the per-cluster reconcile) and any targeted
+	// operator/webhook-queued identity. The field is kept in the wire struct only
+	// so it deserializes to empty on both sides; a spoke that reads it (older
+	// builds) simply never receives entries. It always arrives nil now.
 	AdditionalKeys []HeartbeatAppKey `json:"additional_keys,omitempty"`
 }
 

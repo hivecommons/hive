@@ -1266,7 +1266,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// from a CLAIMED one that still carries the "hosted-available-" ID — the ID
 	// prefix alone over-counts available hives because it never changes on claim.
 	clusterID := ""
+	// Whether this hive has an authoritative SaaS record. Its Owner (the
+	// authorization principal) comes from there when present, and the
+	// existing-entry preservation below uses this to decide whether to carry the
+	// prior Owner forward for non-SaaS (local) hives.
+	hasSaaSRecord := false
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
+		hasSaaSRecord = true
 		clusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
 		// The SaaS store is authoritative for the operator-editable display name
@@ -1274,6 +1280,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// entry the dashboard renders. The spoke never reports this, so a blank
 		// ProjectName simply leaves the client on its org/repo fallback label.
 		entry.ProjectName = sh.ProjectName
+		// SECURITY (C1/N3, CWE-639): Owner is an authorization principal — every
+		// saas.go handler gates writes on `h.Owner == username`. The SaaS store is
+		// its authoritative source (set at provisioning and by ownership transfer),
+		// so overlay it here and NEVER let the heartbeat body assert it. A spoke
+		// beating with someone else's hive_id could otherwise rewrite that hive's
+		// Owner in the registry the dashboard reads.
+		entry.Owner = sh.Owner
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1330,6 +1343,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			entry.RegisteredAt = h.RegisteredAt
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
+			}
+			// SECURITY (C1/N3, CWE-639): for an EXISTING entry, Owner is never taken
+			// from the heartbeat body. When this hive has an authoritative SaaS
+			// record its Owner was already overlaid above (sh.Owner). Otherwise
+			// carry the previously-recorded Owner forward so a caller cannot rewrite
+			// another hive's ownership principal simply by beating with its hive_id.
+			// The heartbeat body's Owner is honoured only when first registering a
+			// brand-new entry (the !found branch below), where there is no prior
+			// value and no SaaS record to contradict it.
+			if !hasSaaSRecord {
+				entry.Owner = h.Owner
 			}
 			// Preserve hub-side visibility: if the hub set this hive
 			// to public, don't let the spoke's heartbeat revert it.
@@ -1729,16 +1753,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.GitHubAppConfig = keyCfg
 	}
 
-	// Deliver the fleet's OTHER App keys so a spoke can authenticate as an App
-	// that is NOT its cluster's default — the github.com hive parked on a
-	// GitHub-Enterprise cluster (vllm-d) that inherits only the GHE key and can
-	// never sign for github.com. This runs on EVERY heartbeat, independent of the
-	// branches above: those decide the spoke's PRIMARY (cluster) key; this makes
-	// sure it also carries every other key it is missing. Delivering only the
-	// missing/stale ones (attachMissingAppKeys diffs against what the spoke
-	// reports it holds) keeps it idempotent — once the spoke has them all, nothing
-	// rides the wire.
-	s.attachMissingAppKeys(&resp, &payload)
+	// SECURITY (C1/N3, CWE-200/639): the fleet-wide additional-key broadcast that
+	// once ran here was removed. It attached every OTHER tenant's App private key
+	// to every heartbeat, and — because the handler trusts the body-supplied
+	// hive_id (all hives share one bearer) — let any caller pull the whole fleet's
+	// keys by asserting any hive_id. The spoke's PRIMARY (cluster) key and any
+	// targeted operator/webhook identity are delivered above via
+	// appKeySyncForHeartbeat and pendingAppIdentityForHeartbeat; a hive is never
+	// handed a key for an App it is not currently assigned. See the removed
+	// attachMissingAppKeys/additionalAppKeysForSpoke in cluster_app_key.go.
 
 	s.hubBannersMu.RLock()
 	if banner, ok := s.hubBanners[payload.HiveID]; ok {

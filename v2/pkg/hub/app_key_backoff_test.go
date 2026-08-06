@@ -66,50 +66,12 @@ func TestAppKeyDeliveryBackoffOnPrimaryReconcile(t *testing.T) {
 	}
 }
 
-// The additional-keys pass re-delivered every beat too while a broken sender's
-// GitHubAppKeysHeld never reflected the delivery. It shares the per-hive
-// ledger, so it throttles the same way.
-func TestAppKeyDeliveryBackoffOnAdditionalKeys(t *testing.T) {
-	s, _ := twoClusterHub(t)
-	// A GHE-primary hive that never reports holding the github.com key.
-	payload := &HeartbeatPayload{
-		HiveID:      "broken-add",
-		ClusterID:   "vllm-d",
-		GitHubAppID: testGHEAppID,
-	}
-
-	for i := 0; i < appKeyDeliveryImmediateBudget; i++ {
-		var resp HeartbeatResponse
-		s.attachMissingAppKeys(&resp, payload)
-		if resp.GitHubAppConfig == nil || len(resp.GitHubAppConfig.AdditionalKeys) == 0 {
-			t.Fatalf("beat %d: additional key not delivered inside the immediate budget", i+1)
-		}
-	}
-
-	var resp HeartbeatResponse
-	s.attachMissingAppKeys(&resp, payload)
-	if resp.GitHubAppConfig != nil {
-		t.Fatal("additional-keys delivery not suppressed after the budget — key material would ride every beat forever")
-	}
-
-	// A spoke that reports holding the key is converged on this path: nothing
-	// is attached and nothing is counted.
-	held := &HeartbeatPayload{
-		HiveID:      "healthy-add",
-		ClusterID:   "vllm-d",
-		GitHubAppID: testGHEAppID,
-		GitHubAppKeysHeld: map[string]string{
-			"3568013": s.appKeysByAppID()[testGitHubComAppID].Fingerprint,
-		},
-	}
-	for i := 0; i < appKeyDeliveryImmediateBudget+2; i++ {
-		var r HeartbeatResponse
-		s.attachMissingAppKeys(&r, held)
-		if r.GitHubAppConfig != nil {
-			t.Fatalf("beat %d: spoke holding every key still got a delivery", i+1)
-		}
-	}
-}
+// SECURITY (C1/N3, CWE-200/639): the former
+// TestAppKeyDeliveryBackoffOnAdditionalKeys exercised the fleet-wide
+// additional-key broadcast's throttle (attachMissingAppKeys). That delivery lane
+// was removed — it handed every tenant's App private key to any caller — so the
+// test was deleted with it. The primary-key delivery back-off above and the
+// ledger contract below remain the live coverage for the throttle.
 
 // Unit contract of the ledger itself: budget, throttle, reset.
 func TestAppKeyDeliveryLedger(t *testing.T) {
