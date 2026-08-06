@@ -396,6 +396,18 @@ if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   exit 1
 fi
 
+# Route ordinary-agent issue creation through Hive as well. Besides preserving
+# App authorship, this is the deterministic cross-path duplicate guard: Hive
+# compares the request with active managed Visual Hive issues before creating
+# anything. Contributors remain exempt because they are not lifecycle agents.
+if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+  if command -v hive-open-issue >/dev/null 2>&1; then
+    exec hive-open-issue "$@"
+  fi
+  echo "BLOCKED: hive-open-issue not found; cannot open an issue through Hive's duplicate guard." >&2
+  exit 1
+fi
+
 # Helper: capture advisory finding to JSONL for governor digest
 _capture_advisory_finding() {
   local _adv_title="" _adv_body="" _next_is_title=false _next_is_body=false

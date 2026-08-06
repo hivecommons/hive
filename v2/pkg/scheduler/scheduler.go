@@ -758,6 +758,12 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
   or raw 'gh pr create' — those author the PR as the Copilot login user. 'gh pr create'
   is auto-redirected to hive-open-pr, but prefer calling hive-open-pr directly.
   (Push your branch first; hive-open-pr requests the PR, the hive opens it within ~10s.)
+- To OPEN AN ISSUE, use `+"`hive-open-issue`"+` so Hive performs exact retry
+  deduplication and cross-checks active managed Visual Hive findings before any
+  GitHub write:
+    hive-open-issue --repo <org>/<repo> --title "<title>" --body "<body>" --label <label>
+  Raw REST/GraphQL and GitHub MCP create_issue calls are blocked. Never re-file
+  an existing work-list issue; comment on or act from its canonical issue.
 - git push / git fetch: run them normally. A credential helper supplies the
   App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).

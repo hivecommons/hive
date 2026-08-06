@@ -50,6 +50,9 @@ type Client struct {
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
+	// issueAuthz is the equivalent fail-closed gate for mediated agent issue
+	// requests. Direct agent issue creation is denied by the proxy.
+	issueAuthz IssueRequestAuthorizer
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
 	// carry the "hold" label (F6). It is consulted server-side from authoritative
 	// hive config (the ACMM level), NOT trusted from a client flag — the

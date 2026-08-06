@@ -3485,7 +3485,6 @@ func (m *Manager) sendKick(name string, message string, specialistTaskID string)
 		attribute.String("agent.name", name))
 	defer span.End()
 
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -6238,6 +6237,36 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 	}
 	if !m.agentMode(agent).CanPush() {
 		return fmt.Errorf("agent %q is not push-capable at this ACMM level (mode %s) — advisory agents may not open PRs",
+			agentName, m.agentMode(agent).String())
+	}
+	return nil
+}
+
+// AuthorizeIssueOpen applies the same UID forge-resistance as AuthorizePROpen,
+// but uses the narrower CanCreateIssues capability. The issue-request watcher
+// is the only ordinary-agent issue creation path, so this check cannot be
+// bypassed by choosing a different CLI or MCP client.
+func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("no agent named in the request")
+	}
+	if m.uidMap != nil && fileUID > 0 {
+		owner := m.uidMap.LookupByUID(fileUID)
+		if owner == "" {
+			return fmt.Errorf("request file owned by unknown uid %d (not a registered agent)", fileUID)
+		}
+		if owner != agentName {
+			return fmt.Errorf("request claims agent %q but file is owned by agent %q (uid %d)", agentName, owner, fileUID)
+		}
+	}
+	m.mu.RLock()
+	agent := m.agents[agentName]
+	m.mu.RUnlock()
+	if agent == nil {
+		return fmt.Errorf("unknown agent %q", agentName)
+	}
+	if !m.agentMode(agent).CanCreateIssues() {
+		return fmt.Errorf("agent %q cannot create issues at this ACMM level (mode %s)",
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
