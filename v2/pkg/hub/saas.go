@@ -4664,6 +4664,33 @@ func (s *HubServer) triggerAutoUpgrades() {
 					"hive", h.ID, "branch", branch, "sha", currentSHA, "image_ref", imageRef)
 				continue
 			}
+			// Target reached or SURPASSED. The equality checks above cannot see
+			// a spoke that landed AHEAD of the armed target: a floating-tag
+			// re-pull delivers whatever CI last published, so when the branch
+			// advanced between arming and pulling — and again before this cycle
+			// — the reported hash equals neither the target nor the current
+			// latest. Without this ancestry check the stale-recovery below
+			// re-arms the ORIGINAL stale pin forever (manual upgrades never
+			// advance their target), re-stamping the registry latch and
+			// re-instructing a commit the spoke can never report — the
+			// vllmd-13 wedge. Cache-only + background resolve, so this loop
+			// never blocks on the network; an unresolved pair clears on a
+			// later cycle.
+			if upgradeTarget != "" && currentSHA != "" &&
+				commitAtOrAheadOfTarget(currentSHA, upgradeTarget, s.logger) {
+				s.mu.Lock()
+				for i := range s.registry.Hives {
+					if s.registry.Hives[i].ID == h.ID {
+						s.clearUpgradeLatch(i)
+						break
+					}
+				}
+				delete(s.heartbeatUpgrade, h.ID)
+				s.mu.Unlock()
+				s.logger.Info("clearing upgrade latch — hive is at or ahead of its armed target",
+					"hive", h.ID, "branch", branch, "sha", currentSHA, "target", upgradeTarget)
+				continue
+			}
 			// Latched-upgrade recovery runs for EVERY hive, deliberately BEFORE
 			// the AutoUpgrade gate below (#2476). The registry latch
 			// (Upgrading/UpgradeTarget/UpgradeStartedAt) is durable, but

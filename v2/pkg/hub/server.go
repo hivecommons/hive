@@ -1399,13 +1399,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// times from zero, not from this completed rollout.
 				entry.UpgradeStartedAt = time.Time{}
 				entry.OrphanedUpgradeSweeps = 0
-			} else if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
-				// Non-upgrading heartbeat at the target SHA or at latest —
-				// upgrade completed (image may have advanced past the
-				// original target before the spoke pulled it). sameCommit
-				// tolerates short/full SHA length mismatch — a raw == left the
-				// Upgrading badge spinning forever when the spoke reported a
-				// full SHA and the target/latest was the 7-char short form.
+			} else if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA)) || commitAtOrAheadOfTarget(payload.GitHash, h.UpgradeTarget, s.logger)) {
+				// Non-upgrading heartbeat at the target SHA, at latest, or at
+				// a commit AHEAD of the target — upgrade completed (image may
+				// have advanced past the original target before the spoke
+				// pulled it). sameCommit tolerates short/full SHA length
+				// mismatch — a raw == left the Upgrading badge spinning
+				// forever when the spoke reported a full SHA and the
+				// target/latest was the 7-char short form. The at-or-ahead
+				// check closes the remaining gap (the vllmd-13 wedge): a
+				// floating-tag spoke that pulled a build NEWER than the armed
+				// target while the branch advanced yet again reports a hash
+				// that equals neither the target nor the current latest, and
+				// only commit ANCESTRY can prove it surpassed the target.
+				// Cache-only under s.mu — see commit_order.go.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 				// Upgrade landed — clear the start clock so the next upgrade
@@ -1695,11 +1702,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"hive_id", payload.HiveID, "tag", switchTag)
 		}
 	}
-	if hbTarget != "" && (sameCommit(payload.GitHash, hbTarget) || (latestSHA != "" && sameCommit(payload.GitHash, latestSHA))) {
-		// Spoke already at the target or at latest — clear the fallback entry.
-		// sameCommit tolerates short/full SHA length mismatch (hub stores a
-		// 7-char short SHA; a spoke may report a longer one) so a hive already
-		// at HEAD is not told to upgrade forever.
+	if hbTarget != "" && (sameCommit(payload.GitHash, hbTarget) || (latestSHA != "" && sameCommit(payload.GitHash, latestSHA)) || commitAtOrAheadOfTarget(payload.GitHash, hbTarget, s.logger)) {
+		// Spoke already at the target, at latest, or at a commit AHEAD of the
+		// target — clear the fallback entry. sameCommit tolerates short/full
+		// SHA length mismatch (hub stores a 7-char short SHA; a spoke may
+		// report a longer one) so a hive already at HEAD is not told to
+		// upgrade forever. The at-or-ahead ancestry check is what actually
+		// drains a STALE pin for a floating-tag hive: its re-pull landed past
+		// the target while the branch advanced again, so its hash matches
+		// neither target nor latest, and without this the hub re-sends the
+		// same unreachable UpgradeTo on every beat — the spoke re-rolls its
+		// pod and re-latches "Upgrading" forever (the vllmd-13 wedge).
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
 		s.mu.Unlock()

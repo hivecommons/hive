@@ -137,9 +137,14 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 	}
 
 	// The spoke is alive and post-dates the instruction. If it is already on the
-	// target, the flag is merely lagging and the heartbeat path clears it; only
-	// a spoke still on a DIFFERENT SHA is genuinely un-upgraded.
-	if entry.UpgradeTarget != "" && sameCommit(entry.GitHash, entry.UpgradeTarget) {
+	// target — or AHEAD of it (a floating-tag re-pull lands on whatever CI last
+	// published, which can surpass a stale target; only ancestry can prove
+	// that) — the flag is merely lagging and the heartbeat path clears it; only
+	// a spoke still on a SHA behind the target is genuinely un-upgraded.
+	// commitAtOrAheadOfTarget is cache-only (the sweep holds s.mu), so an
+	// unresolved pair is treated as "behind" this cycle and re-evaluated next.
+	if entry.UpgradeTarget != "" && (sameCommit(entry.GitHash, entry.UpgradeTarget) ||
+		commitAtOrAheadOfTarget(entry.GitHash, entry.UpgradeTarget, nil)) {
 		return ev
 	}
 
