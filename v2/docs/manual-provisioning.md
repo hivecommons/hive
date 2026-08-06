@@ -257,9 +257,9 @@ metadata: { name: hive-config, namespace: ${NS}, labels: { app: hive } }
 data:
   hive.yaml: |
     project:
-      org: myorg
-      repos: [myrepo]
-      primary_repo: myrepo
+      org: myorg                      # a POOL PLACEHOLDER uses the literal "placeholder" for
+      repos: [myrepo]                 # org / repos / primary_repo (matching its meta.json)
+      primary_repo: myrepo            # until it is claimed — see Placeholder pools below
     agents:
       guide:   { backend: copilot, model: claude-sonnet-4-6, enabled: true }
       scanner: { backend: copilot, model: claude-sonnet-4-6, enabled: true }
@@ -276,7 +276,7 @@ data:
     dashboard:
       port: 3002
       authorized_users:
-        - owner-github-login:owner
+        - owner-github-login:owner    # a POOL PLACEHOLDER lists the pool owner: clubanderson:owner
       hub_proxied: false              # vllm-d has no hub auth proxy → direct device-flow
     hub:
       enabled: true
@@ -634,10 +634,35 @@ provision. Two pools, one per method type:
 - **hive-oke** placeholders serve **public** methods — provisioned via the API
   (Path A), then **scaled to 0**.
 
-Provision each placeholder as above, then:
+> **Gotcha — placeholder IDs are date + random suffix, NOT sequential integers.**
+> The live pool uses `hosted-available-vllmd-<YYMMDD>-<suffix>`, where `<suffix>`
+> is a short unique token (4 lowercase base36 chars) — e.g.
+> `hosted-available-vllmd-260731-fikn`, `hosted-available-vllmd-260806-1bo3`.
+> **Do not** use sequential numbers like `hosted-available-vllmd-01`: they
+> collide with existing pool slots and don't match the ID convention the fleet
+> uses, so renumbering is needed every time the pool grows. Unique suffixes let
+> you add a batch on any date without touching existing slots. Generate a batch
+> of `N` suffixes:
+>
+> ```bash
+> tr -dc 'a-z0-9' < /dev/urandom | fold -w4 | head -N | sort -u
+> ```
+>
+> Then **collision-check** each suffix before creating — skip any that already
+> exist — against both the hub meta dirs and the target cluster's namespaces:
+>
+> ```bash
+> kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- ls /data/saas/hives/   # existing hive IDs
+> kubectl --context vllm-d get ns | grep hive-hosted-hosted-available-vllmd        # existing namespaces
+> ```
+
+Provision each placeholder as above (at `replicas: 0` — a placeholder never
+boots until claimed, so there is nothing to test by scaling it up; see the
+verification below), then, for the automated path only, scale it down:
 
 ```bash
-# manual (vllm-d): set replicas: 0 in the Deployment (or scale after apply)
+# manual (vllm-d): set replicas: 0 in the Deployment from the start (it never boots)
+# — if you applied it at replicas: 1, scale it to 0:
 kubectl --context vllm-d -n "$NS" scale deploy/hive --replicas=0
 
 # automated (hive-oke): the API provisions at replicas=1 — scale it down
@@ -645,14 +670,52 @@ kubectl --context hive-oke -n "hive-hosted-$ID" scale deploy/hive --replicas=0
 ```
 
 Give every placeholder a `meta.json` with **`owner: clubanderson`** (admin-only
-visibility), **`status: "available"`**, and **`acmm_level: 2`**:
+visibility), **`status: "available"`**, and **`acmm_level: 2`**. The live pool's
+placeholder `meta.json` uses the literal string `"placeholder"` for
+`org`/`repos`/`primary_repo` (they stay that way until the hive is claimed), and
+carries `github_host` because vllm-d placeholders target GitHub Enterprise
+(`github.ibm.com`), not `github.com`:
 
 ```json
-{ "id": "hosted-available-vllmd-01", "owner": "clubanderson",
-  "org": "available-vllmd-01", "repos": [], "primary_repo": "",
-  "acmm_level": 2, "status": "available", "auto_upgrade": false,
-  "is_public": false, "cluster_id": "vllm-d" }
+{
+  "id": "hosted-available-vllmd-260806-1bo3",
+  "owner": "clubanderson",
+  "project_name": "Available slot (private) 260806-1bo3",
+  "org": "placeholder",
+  "repos": ["placeholder"],
+  "primary_repo": "placeholder",
+  "acmm_level": 2,
+  "status": "available",
+  "created_at": "",
+  "subdomain": "",
+  "claim_delivered": false,
+  "auto_upgrade": true,
+  "is_public": false,
+  "cluster_id": "vllm-d",
+  "github_host": "github.ibm.com"
+}
 ```
+
+### Verify a provisioned placeholder
+
+A correct vllm-d placeholder is `replicas: 0`, its `hive-anyuid` binding points
+at its **own** namespace, its PVC is `Bound`, and its hub `meta.json` exists.
+This exact set verified all ten placeholders in the 2026-08-06 batch:
+
+```bash
+ID=hosted-available-vllmd-<date>-<suffix>; NS=hive-hosted-$ID
+kubectl --context vllm-d -n $NS get deploy hive -o jsonpath='{.spec.replicas}'          # must be 0
+kubectl --context vllm-d -n $NS get rolebinding hive-anyuid -o jsonpath='{.subjects[0].namespace}'  # must equal $NS
+kubectl --context vllm-d -n $NS get pvc hive-data -o jsonpath='{.status.phase}'         # must be Bound
+kubectl --context hive-oke -n hive-hub exec $HUB_POD -- test -f /data/saas/hives/$ID/meta.json  # must exist
+```
+
+> **The `hive-anyuid` subject-namespace check is the load-bearing one** (it is
+> the same `restricted-v2` crash-loop gotcha from B.2). For a `replicas: 0`
+> placeholder it is **sufficient** SCC verification: because a placeholder never
+> boots until claimed, you do **not** need to scale it up to confirm the `anyuid`
+> SCC — a correct subject namespace guarantees the pod will land on `anyuid` the
+> moment it is scaled to 1 at claim time.
 
 > **Gotcha — automated placeholders leave a fleet-registry entry.** Because the
 > API provisions at `replicas=1`, an hive-oke placeholder heartbeats once before
