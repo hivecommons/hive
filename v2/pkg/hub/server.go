@@ -696,9 +696,16 @@ type HubServer struct {
 	// single repair attempt spends minutes in kubectl dial timeouts while beats
 	// keep arriving every ~2 min; without this guard the attempts pile up
 	// goroutines all hanging against the same dead cluster.
-	vanityRepairInFlight sync.Map                         // hive ID → struct{}
-	heartbeatHealth      map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu    sync.RWMutex
+	vanityRepairInFlight sync.Map // hive ID → struct{}
+	// claimWorkInFlight tracks hive IDs whose claim-time cluster work
+	// (namespace identity stamp + vanity mint) is currently running in the
+	// background (kickClaimClusterWorkAsync), so assign/approve start at most
+	// one work-set per hive. Same rationale as vanityRepairInFlight above: a
+	// single attempt against an unreachable cluster spends minutes in kubectl
+	// dial timeouts, and stacking attempts piles up goroutines for no benefit.
+	claimWorkInFlight sync.Map                         // hive ID → struct{}
+	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu sync.RWMutex
 
 	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
 	// having a live dashboard session. It powers the "logged into their hive right

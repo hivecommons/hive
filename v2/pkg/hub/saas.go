@@ -6316,11 +6316,11 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 
 	// Entry point 2/3 for namespace identity: this is the moment a placeholder
 	// gets a real owner/org — the hive's identity is known here for the first
-	// time, so the namespace's labels/annotations MUST be (re)written now
-	// rather than left holding whatever provisionHive stamped at pool-creation
-	// time (typically just hive_id). Best-effort — see
-	// stampHostedNamespaceIdentity's doc comment.
-	stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
+	// time, so the namespace's labels/annotations must be (re)written. That
+	// stamp is kubectl against the hive's cluster, so it runs in the BACKGROUND
+	// via kickClaimClusterWorkAsync below — inline it held the approve dialog's
+	// fetch behind up to 2×15s of dial timeouts against an unreachable cluster
+	// (the same request-path disease #2730 cured on the heartbeat path).
 
 	// Ensure the user record exists, grant them owner access, and count this
 	// owned hive against a quota.
@@ -6360,6 +6360,14 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	s.logger.Info("audit: provision request approved via placeholder assignment",
 		"target", targetUsername, "by", approver, "org", pr.Org, "repos", pr.Repos,
 		"hive_id", hiveID, "cluster", clusterIDForHive(h))
+
+	// Everything the response depends on is persisted above — all fast local
+	// ops. The cluster-facing side effects (namespace identity stamp; vanity
+	// mint, which this path previously left to the heartbeat repair) run in the
+	// background so the approve dialog gets its ack immediately; the claim
+	// itself reaches the spoke over the heartbeat channel regardless.
+	s.kickClaimClusterWorkAsync(hiveID)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
@@ -7077,76 +7085,23 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// this project to the spoke until it reports the new org/repos back, before
 	// letting the spoke's dashboard own them.
 	h.ClaimDelivered = false
-	// Derive a stable, friendly vanity URL from the claimed project so the user
-	// sees hosted-<org>-<repo>-*.<domain> instead of the raw placeholder host.
-	// Compute once (idempotent re-assign keeps the same URL) and only when the
-	// hive's cluster domain is known. The spoke adopts this via the heartbeat
-	// (HeartbeatProjectConfig.DashboardURL) and reports it back, so the hub
-	// registry's dashboardUrl becomes the vanity URL and stays that way.
-	if h.VanityURL == "" {
-		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
-			// Option B (namespace-identity operability): prefer a host built
-			// from the hive's OWN display name (h.ProjectName /
-			// body.ProjectName) when one is set — "TradingAsBuddies" reads as
-			// the hive an operator actually asked for, where
-			// "hosted-acme-repo-*" only reads as org/repo. Falls back to the
-			// existing org/repo-derived host (generateHiveID) when no display
-			// name is set, so a hive claimed without one behaves exactly as
-			// before. Both schemes share the same suffix length and the same
-			// "no route until makeVanityHostServable succeeds" adoption rule
-			// below — this only changes what the label PORTION of the host
-			// says, never the get-or-create/idempotency semantics.
-			vanityHost := hiveNameVanityHost(h.ProjectName, cluster.Domain)
-			if vanityHost == "" {
-				vanityHost = generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
-			}
-			// Make the vanity host servable, then adopt it. Nothing else creates a
-			// route for this host: provisioning templates a single DashboardHost, so
-			// a vanity URL minted here resolves to no backend and every hub link to
-			// it — including the SSO handoff — returns 503, while the raw placeholder
-			// host works fine. Create the route FIRST, then adopt the URL.
-			//
-			// VanityURL doubles as the "placeholder is claimed" marker
-			// (projectConfigForHiveID keeps pushing until the spoke reports it
-			// back), so it is always set once we have a domain to derive it from —
-			// but a failed create is logged at Warn rather than swallowed, since the
-			// symptom is a 503 on every hub link to this hive until the route is
-			// reconciled (cert-manager on nginx, or the cluster wildcard on the
-			// heartbeat-only OpenShift pool where the hub cannot kubectl to create
-			// it, so the create "fails" yet the *.apps.<domain> wildcard still
-			// serves the host — the vllm-d case).
-			// Goes through the same seam as the retroactive repair so both
-			// adoption paths share one definition of "servable" (and so tests,
-			// which have no kubectl, can exercise the success path).
-			if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
-				// Do NOT adopt a host we could not make servable. This used to
-				// assume an OpenShift cluster wildcard would serve the host
-				// anyway and adopt it regardless; on vllm-d that assumption is
-				// false — only explicitly created *-vanity Routes are served, so
-				// the hub advertised a hostname that returned 503 while the raw
-				// placeholder host worked fine. Leaving VanityURL empty makes
-				// every read path fall back to the working placeholder, and the
-				// heartbeat repair re-attempts adoption once a route exists.
-				s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
-					"keeping the working placeholder host; the heartbeat repair will retry",
-					"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
-			} else {
-				h.VanityURL = "https://" + vanityHost
-			}
-		}
-	}
+	// The vanity URL is NOT minted here anymore. It used to be derived and made
+	// servable inline (makeVanityHostServable → kubectl against the hive's
+	// cluster) between this save and the HTTP response, which held the admin's
+	// assign dialog hostage for ~a minute whenever the cluster was slow or
+	// unreachable (each kubectl call eats a ~45s TCP dial timeout on the
+	// heartbeat-only vllm-d pool — the same disease #2730 cured on the
+	// heartbeat path). The mint — same host preference (name-bearing Option B
+	// host, org/repo fallback), same servability seam, same "never adopt an
+	// unservable host" rule — now runs in the background via
+	// kickClaimClusterWorkAsync below, after the response is written. Nothing
+	// about the response depends on it: the claim reaches the spoke over the
+	// heartbeat channel regardless, and a failed mint is retried by the
+	// heartbeat-kicked repair exactly as before.
 	if err := saveSaaSHive(h); err != nil {
 		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Entry point 3/3 for namespace identity: the (re)assignment path. A
-	// claimed placeholder can be reassigned to a different owner/org later
-	// (or an admin can assign directly, bypassing the approve-provision flow
-	// entirely), so the namespace's labels/annotations must be refreshed here
-	// too — same rationale as handleApproveProvision above. Best-effort — see
-	// stampHostedNamespaceIdentity's doc comment.
-	stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
 
 	// Grant the assignee owner access. handleAccessList builds a hive's access
 	// list by scanning every user record for Hives[hiveID], NOT from h.Owner —
@@ -7211,6 +7166,14 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	s.recordTimeline(hiveID, TimelineOwnership,
 		fmt.Sprintf("hive assigned to %s (%s, ACMM %d)", h.Owner, repoDisplayLine(h.Org, h.PrimaryRepo), h.ACMMLevel),
 		s.getAuthUser(r))
+
+	// Everything the response depends on is persisted above (meta.json, owner
+	// grant, pending App creds, audit/timeline) — all fast local ops. The
+	// cluster-facing work (namespace identity stamp + vanity-host mint, both
+	// kubectl against the hive's cluster) runs in the background so the assign
+	// dialog gets its ack immediately; the row's "claim pending" indicators
+	// track actual delivery, which happens over the heartbeat channel anyway.
+	s.kickClaimClusterWorkAsync(hiveID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

@@ -1160,6 +1160,112 @@ func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 	}()
 }
 
+// kickClaimClusterWorkAsync runs the cluster-facing side effects of a claim —
+// the namespace identity stamp and the vanity-host mint — in the BACKGROUND,
+// at most one attempt per hive at a time, registered with provisionWG so tests
+// can drain it before swapping the package-level saas*Dir vars (the same
+// contract every other background provision goroutine in this package follows).
+//
+// It exists for exactly the reason kickVanityURLRepairAsync does (#2730):
+// handleAssignHive and handleApproveProvision used to run this work
+// SYNCHRONOUSLY between persisting the assignment and writing the HTTP
+// response. Every call shells out to kubectl against the hive's cluster, and
+// against a cluster the hub cannot reach — vllm-d is heartbeat-only — those
+// calls hang until their TCP dials time out (~45s each, ~90s observed for the
+// vanity mint alone), so the admin's assign dialog sat on a pending fetch for
+// about a minute. Nothing here is needed for the response semantics: the claim
+// itself is persisted before the kick and delivered to the spoke over the
+// heartbeat channel (projectConfigForHiveID), the namespace stamp is
+// best-effort/cosmetic by contract, and a failed vanity mint already has a
+// retry path (the heartbeat-kicked repair above) plus a Warn log.
+//
+// Callers must kick AFTER the assignment is fully persisted: the goroutine
+// re-loads meta.json rather than closing over the handler's copy, so it never
+// writes through a record that predates concurrent heartbeat updates.
+func (s *HubServer) kickClaimClusterWorkAsync(hiveID string) {
+	// One in-flight claim work-set per hive, so an admin double-submitting the
+	// dialog (or re-assigning while a slow attempt is stuck against a dead
+	// cluster) does not stack goroutines against the same unreachable cluster.
+	if _, inFlight := s.claimWorkInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+		return
+	}
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		defer s.claimWorkInFlight.Delete(hiveID)
+		h := loadSaaSHive(hiveID)
+		if h == nil {
+			return
+		}
+		// Entry points 2/3 for namespace identity (see
+		// hosted_namespace_identity.go): the claim/assign moment is when the
+		// hive's real owner/org become known, so the namespace labels must be
+		// (re)written now. Best-effort and bounded, but the bound is still
+		// 2×15s of kubectl against an unreachable cluster — background-only.
+		stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
+		// Mint the vanity host under the SAME per-hive guard the heartbeat
+		// repair uses, so a beat-kicked repair and this claim-time mint never
+		// run concurrently against the same hive (concurrent minters would
+		// churn routes and race the adopt write).
+		if _, inFlight := s.vanityRepairInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+			return // a repair attempt is already minting — let it win
+		}
+		defer s.vanityRepairInFlight.Delete(hiveID)
+		s.mintClaimVanityURL(hiveID)
+	}()
+}
+
+// mintClaimVanityURL is the vanity-minting half of a claim/(re)assignment —
+// the work handleAssignHive used to do inline before writing its response.
+// Behavior is unchanged from the synchronous version: prefer a name-bearing
+// host built from the hive's display name (Option B — see
+// hosted_namespace_identity.go), fall back to the org/repo-derived host, make
+// it servable through the same seam as the retroactive repair, and only adopt
+// a host that IS servable (the vllm-d 503 rule). On failure VanityURL stays
+// empty, every read path keeps the working placeholder host, and the
+// heartbeat-kicked repair retries later — exactly as before.
+//
+// The one addition over the inline version is the RE-LOAD before the adopt
+// write: this now runs after the handler has already responded, so the slow
+// kubectl window overlaps live heartbeat writes (ClaimDelivered/ACMMDelivered
+// latches, forge handshakes) and saving through a pre-window record would
+// silently revert them — the same hazard repairVanityURLForHive documents.
+func (s *HubServer) mintClaimVanityURL(hiveID string) {
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status == statusAvailable || h.VanityURL != "" {
+		return // unclaimed, gone, or already has one (stable-host idempotency)
+	}
+	cluster := s.clusterForHive(h)
+	if cluster == nil || cluster.Domain == "" {
+		return // nothing to derive a host from
+	}
+	vanityHost := hiveNameVanityHost(h.ProjectName, cluster.Domain)
+	if vanityHost == "" {
+		vanityHost = generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+	}
+	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
+		// Do NOT adopt a host we could not make servable — leaving VanityURL
+		// empty makes every read path fall back to the working placeholder
+		// host, and the heartbeat repair re-attempts adoption once a route
+		// exists (the cluster-wildcard/vllm-d case included).
+		s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
+			"keeping the working placeholder host; the heartbeat repair will retry",
+			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+		return
+	}
+	h = loadSaaSHive(hiveID)
+	if h == nil {
+		return
+	}
+	if h.VanityURL != "" {
+		return // another path minted one while we were in kubectl — keep it
+	}
+	h.VanityURL = "https://" + vanityHost
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("claim vanity mint: failed to save hive", "hive", hiveID, "error", err)
+	}
+}
+
 // existingVanityHost returns the host an already-created vanity route/ingress
 // on the spoke is serving, or "" when there is none (or the cluster cannot be
 // reached).
