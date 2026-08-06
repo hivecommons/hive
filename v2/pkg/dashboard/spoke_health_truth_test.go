@@ -185,8 +185,21 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "the sidebar dot must treat every non-running, non-paused process state (stopped, failed, idle) as down",
 		},
 		{
-			snippet: "const needsLoginDown = (isDown && needsLogin) || a.needsLogin === true;",
+			// The formula moved into the shared _agentNeedsLogin helper (one
+			// definition instead of four copies), and the sidebar passes its
+			// own isDown so paused/off/on-demand agents keep their styling.
+			// The #2465 guarantee is unchanged: a.needsLogin always wins, and
+			// the weaker probe signal still applies only to a DOWN agent.
+			snippet: "const needsLoginDown = _agentNeedsLogin(a, isDown);",
 			why:     "a down agent with an unauthenticated CLI must get the distinct needs-login state, not plain down-red",
+		},
+		{
+			snippet: "return down && a.authKnown === true && a.authAvailable !== true;",
+			why:     "the probe-based needs-login inference must stay gated on the down-state so a stale probe cannot repaint a running agent",
+		},
+		{
+			snippet: "if (a.needsLogin === true) return true;",
+			why:     "the pane-poller login signal must remain authoritative — an agent wedged at a login prompt always shows needs-login",
 		},
 		{
 			snippet: ".oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }",

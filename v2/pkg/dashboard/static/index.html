@@ -3748,7 +3748,7 @@
          (a.needsLogin) — alive-but-wedged must not render as healthy. The
          weaker probe-based inference stays stopped-only so a stale probe
          cannot repaint a genuinely working agent. */
-      const needsLoginDown = _agentNeedsLogin(a);
+      const needsLoginDown = _agentNeedsLogin(a, isStopped);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
       const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       // A healthy agent that is off *because of its governor cadence* (offByCadence,
@@ -4032,7 +4032,7 @@
       // panel's Login button; rendered amber with a "needs login" note. Only
       // applies when the agent is not running: a running authenticated agent
       // is green, a non-running authenticated agent is red (#2465).
-      const needsLoginDown = _agentNeedsLogin(a);
+      const needsLoginDown = _agentNeedsLogin(a, isDown);
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
       const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
@@ -5392,10 +5392,14 @@
 
        The server now also gates the probe on "does this backend even have an
        interactive login", so inference/API-key backends report no opinion. */
-    function _agentNeedsLogin(a) {
+    function _agentNeedsLogin(a, isDown) {
       if (a.needsLogin === true) return true;
-      const isRunning = a.state === 'running';
-      return !isRunning && a.authKnown === true && a.authAvailable !== true;
+      // Callers that already computed a down-state pass it in (paused / off /
+      // on-demand agents are NOT down and must keep their own styling —
+      // #2465). Callers that have no such notion fall back to the raw
+      // process state.
+      const down = (isDown === undefined) ? (a.state !== 'running') : isDown;
+      return down && a.authKnown === true && a.authAvailable !== true;
     }
 
     function renderAgents(agents) {
@@ -5408,13 +5412,13 @@
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       const cards = sortedAgents.map(a => {
-        const needsLogin = _agentNeedsLogin(a);
         const isOff = a.offByCadence === true;
         const isOnDemand = a.onDemand === true;
         const isPaused = a.paused === true && !isOff && !isOnDemand;
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
         const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+        const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
