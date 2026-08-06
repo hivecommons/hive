@@ -43,10 +43,21 @@ func TestProxyEgressMarkEnvOverride(t *testing.T) {
 }
 
 // TestMarkDialerControlRuns exercises the mark dialer's Control hook against a
-// real loopback listener. The Control func must run and set SO_MARK (a no-op on
-// non-Linux) WITHOUT failing the dial — a returned error here would break every
-// upstream connection the proxy makes. This is the default dial path used when
-// copilotDial is unset.
+// real loopback listener. The Control func must run and attempt SO_MARK (a no-op
+// on non-Linux) WITHOUT failing the dial — a returned error here would break
+// every upstream connection the proxy makes. This is the default dial path used
+// when copilotDial is unset.
+//
+// CRITICALLY: the dial must SUCCEED even when SO_MARK fails with EPERM. The hive
+// Go process runs as a non-root user (entrypoint drops from root to `dev` via
+// gosu, which strips CAP_NET_ADMIN from the effective set), so setsockopt(SO_MARK)
+// returns EPERM on every real deployment. Before this was fixed, the Control hook
+// propagated that EPERM and aborted the dial — so every proxy upstream dial to
+// GitHub failed with "operation not permitted" and agents could not authenticate
+// (they got empty replies through the proxy). SO_MARK is a best-effort egress
+// hint (the owner-UID iptables exemption already covers the proxy's uid on OKE),
+// so a mark failure must NOT break the connection. This test now asserts success
+// rather than skipping on EPERM — the skip previously masked the regression.
 func TestMarkDialerControlRuns(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -64,13 +75,11 @@ func TestMarkDialerControlRuns(t *testing.T) {
 
 	conn, err := markDialer(2*time.Second).Dial("tcp", ln.Addr().String())
 	if err != nil {
-		// Setting SO_MARK requires CAP_NET_ADMIN. Unprivileged CI on Linux will
-		// see EPERM from the Control hook — that still proves the hook ran and
-		// attempted the setsockopt (the whole point). Tolerate ONLY EPERM; any
-		// other error is a real dialer regression. On non-Linux the hook no-ops,
-		// so the dial simply succeeds.
+		// A SO_MARK EPERM (unprivileged, the common non-root case) must NOT reach
+		// here: the Control hook is expected to swallow it and dial unmarked. If we
+		// see EPERM, the regression is back.
 		if errors.Is(err, syscall.EPERM) {
-			t.Skipf("SO_MARK requires CAP_NET_ADMIN; hook ran but got EPERM (expected unprivileged): %v", err)
+			t.Fatalf("markDialer aborted the dial on SO_MARK EPERM — the non-fatal-mark fix regressed: %v", err)
 		}
 		t.Fatalf("markDialer Dial failed (Control hook must not break the dial): %v", err)
 	}

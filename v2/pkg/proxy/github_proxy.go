@@ -75,20 +75,54 @@ func proxyEgressMark() int {
 // fwmark (SO_MARK) on the outbound socket before connect. On non-Linux builds
 // setSockMark is a no-op, so the dialer is portable. The optional timeout is
 // applied when non-zero.
+//
+// SO_MARK is a BEST-EFFORT egress hint, never a hard requirement: it exists so
+// the forced-egress iptables redirect can exempt the proxy's own upstream dials
+// via `-m mark`. But setsockopt(SO_MARK) needs CAP_NET_ADMIN in the process's
+// EFFECTIVE set, and the hive Go process runs as a non-root user (entrypoint
+// drops from root to `dev` via gosu, which strips all capabilities). So the mark
+// call fails with EPERM ("operation not permitted") on exactly the deployments
+// that run non-root — which is all of them. Returning that error from the
+// Control hook ABORTS the dial, so every proxy upstream dial fails and agents
+// can't reach GitHub at all. That is a regression: on OKE the `-m owner
+// --uid-owner` exemption already covers the proxy's uid dials, so an unmarked
+// dial succeeds; on OpenShift (no xt_owner) the mark is the only exemption, but
+// there too, failing the dial helps nothing. So we log the mark failure ONCE and
+// proceed unmarked rather than killing the connection.
 func markDialer(timeout time.Duration) *net.Dialer {
 	mark := proxyEgressMark()
 	return &net.Dialer{
 		Timeout: timeout,
 		Control: func(_, _ string, c syscall.RawConn) error {
-			var sockErr error
+			// A failure to enter the raw-conn control context is a real dial
+			// problem (the fd is unusable) — propagate it.
 			if err := c.Control(func(fd uintptr) {
-				sockErr = setSockMark(fd, mark)
+				if markErr := setSockMark(fd, mark); markErr != nil {
+					warnSockMarkOnce(mark, markErr)
+				}
 			}); err != nil {
 				return err
 			}
-			return sockErr
+			// Deliberately do NOT propagate a setSockMark failure: the mark is a
+			// best-effort exemption hint, and the owner-UID iptables RETURN
+			// already exempts the proxy's own uid on OKE, so an unmarked dial
+			// still reaches GitHub.
+			return nil
 		},
 	}
+}
+
+// warnSockMarkOnce logs the first SO_MARK failure at WARN and every subsequent
+// one at DEBUG, so a non-CAP_NET_ADMIN deployment (the common non-root case)
+// does not flood the log with one line per dial while still surfacing the
+// condition once.
+var sockMarkWarnOnce sync.Once
+
+func warnSockMarkOnce(mark int, err error) {
+	sockMarkWarnOnce.Do(func() {
+		slog.Warn("proxy egress SO_MARK unavailable — dialing unmarked (owner-UID exemption still applies on OKE); this is expected when the hive runs non-root without CAP_NET_ADMIN in its effective set",
+			"mark", mark, "error", err)
+	})
 }
 
 // CACertPath and caKeyPath are the PVC locations of the persisted MITM CA.
