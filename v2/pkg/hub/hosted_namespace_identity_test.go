@@ -521,7 +521,7 @@ func TestStatusHoverRendersNamespace(t *testing.T) {
 		name    string
 		snippet string
 	}{
-		{"namespace line is composed into the hover", "lines.push('Namespace: ' + hns);"},
+		{"namespace line is composed into the hover", "lines.push('ns: ' + hns);"},
 		{"hiveNamespace helper exists", "function hiveNamespace(h)"},
 		{"hiveNamespace derives from hive-hosted- + id", "return 'hive-hosted-' + h.id;"},
 	}

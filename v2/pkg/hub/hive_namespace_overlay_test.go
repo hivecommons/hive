@@ -76,24 +76,26 @@ func TestHeartbeatOverlaysHostedNamespace(t *testing.T) {
 	})
 }
 
-// TestDashboardRendersHiveNamespace guards that the hive-row namespace
-// affordance stays wired into the dashboard: the row reads h.namespace, offers
-// a click-to-copy handler, and titles it for kubectl exec. A regression that
-// dropped any of these would silently send operators back to `kubectl get ns`.
+// TestDashboardRendersHiveNamespace guards that the hive-row namespace stays
+// surfaced in the STATUS HOVER (not the location column): the hover's lines[]
+// builder derives the namespace via hiveNamespace(h) and pushes it as an "ns:"
+// line. A regression that dropped this would silently send operators back to
+// `kubectl get ns`. The namespace is deliberately NOT a permanent location-
+// column value — it is low-frequency reference metadata for a kubectl -n exec.
 func TestDashboardRendersHiveNamespace(t *testing.T) {
 	snippets := []string{
-		// The row consumes the JSON field the hub now overlays.
-		"if (h.namespace)",
-		// Copy-on-click into the shared clipboard helper.
-		"copyHiveText(",
-		// The helper itself exists.
-		"function copyHiveText(",
-		// The affordance is labelled for its purpose.
-		"kubectl -n ",
+		// The hover derives the namespace client-side from the row.
+		"hiveNamespace(h)",
+		// It is pushed into the hover as an "ns:" line.
+		"lines.push('ns: ' + hns)",
 	}
 	for _, s := range snippets {
 		if !strings.Contains(dashboardHTML, s) {
-			t.Errorf("dashboardHTML is missing the hive-namespace snippet %q", s)
+			t.Errorf("dashboardHTML is missing the hive-namespace hover snippet %q", s)
 		}
+	}
+	// And it must NOT reappear as a permanent location-column render.
+	if strings.Contains(dashboardHTML, "var nsLine =") {
+		t.Errorf("namespace should live in the status hover, not the location column (found nsLine render)")
 	}
 }

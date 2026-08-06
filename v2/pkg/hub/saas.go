@@ -9096,7 +9096,7 @@ const dashboardHTML = `<!DOCTYPE html>
       // decided; omitted for a non-hosted row, which has no such namespace.
       var hns = hiveNamespace(h);
       if (hns) {
-        lines.push('Namespace: ' + hns);
+        lines.push('ns: ' + hns);
       }
       var access = h.access || [];
       var dotMarkup = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
@@ -12889,24 +12889,14 @@ const dashboardHTML = `<!DOCTYPE html>
            identically wherever it appears. An absent host renders as
            "github.com" rather than a blank chip, which is what an old
            heartbeat-only spoke that cannot yet report its host should show. */
-        /* Kubernetes namespace line: a small, copy-on-click monospace value so an
-           operator can grab "hive-hosted-<id>" for a kubectl -n <ns> exec without
-           re-grepping kubectl get ns on a live cluster. h.namespace is overlaid
-           by the hub from the SaaSHive record (see RegistryEntry.Namespace); it is
-           only present for hub-provisioned hosted hives, so a self-hosted/BYO/local
-           row simply omits the line and is pixel-identical to before. */
-        var nsLine = '';
-        if (h.namespace) {
-          nsLine = '<div style="' + STACKED_LINE_STYLE + ';font-size:0.65rem">' +
-            '<span onclick="copyHiveText(' + jsArg(h.namespace) + ',\'namespace\')" ' +
-            'title="Kubernetes namespace — click to copy (kubectl -n ' + escAttr(h.namespace) + ' exec …)" ' +
-            'style="font-family:ui-monospace,monospace;color:var(--muted);cursor:pointer;border-bottom:1px dotted var(--border)">' +
-            esc(h.namespace) + '</span></div>';
-        }
+        /* The Kubernetes namespace is NOT shown in the location column — it is
+           low-frequency reference metadata (an operator only needs it to build a
+           kubectl -n <ns> exec), so it lives in the status hover as an "ns:" line
+           (see hiveNamespace(h) / the lines[] builder) rather than competing for
+           space in a permanent column. */
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
-          nsLine +
           '</div>';
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
