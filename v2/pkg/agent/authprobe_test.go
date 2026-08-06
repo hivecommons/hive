@@ -166,9 +166,14 @@ func TestLoginPromptPatterns_NoBareSlashLogin(t *testing.T) {
 		}
 	}
 
-	// True positives must still match.
+	// True positives must still match: "/login" plus an imperative verb is a
+	// directive to the operator, which is what a real login screen renders.
 	truePositives := []string{
+		"Please /login to continue",
 		"Please run /login to authenticate",
+		"Run /login",
+		"Type /login to sign in",
+		"You need to /login first",
 		"You must sign in to use Copilot",
 		"Use the url below to sign in",
 		"Enter one-time code",

@@ -3683,21 +3683,12 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 // GitHub device flow). Each must be distinctive enough to never appear in
 // ordinary agent output.
 var loginPromptPatterns = []string{
-	// A BARE "/login" is deliberately NOT here. It is a substring of ordinary
-	// agent output — an agent reviewing an auth route writes "POST /login", and
-	// a CLI that prints its slash-command list renders "/login" alongside
-	// "/help". Matching it painted the 🔑 badge on agents that were
-	// authenticated and mid-work. Only the phrasings that appear on an actual
-	// login SCREEN qualify, and they must carry enough context to be
-	// unambiguous.
-	"Run /login to",
-	"run /login to",
-	"Please run /login",
-	"please run /login",
-	"Type /login",
-	"type /login",
-	"Use /login to",
-	"use /login to",
+	// A BARE "/login" is deliberately NOT here — it is handled separately by
+	// lineHasLoginDirective below. "/login" alone is a substring of ordinary
+	// agent output (an agent reviewing an auth route writes "POST /login"; a
+	// CLI printing its slash-command list renders "/login" beside "/help"), and
+	// matching it painted the 🔑 badge on agents that were authenticated and
+	// mid-work.
 	"sign in to use",
 	"Sign in to use",
 	"authenticate to use",
@@ -3864,8 +3855,36 @@ func paneShowsCLIReady(lines []string) bool {
 
 // paneShowsLoginPrompt returns true if any line in the pane output matches a
 // known login/authentication prompt pattern.
+// loginDirectiveVerbs are the imperative words a CLI uses when it is TELLING
+// the operator to authenticate ("Please /login to continue", "Run /login",
+// "Type /login to sign in"). A line containing "/login" counts as a login
+// prompt only when one of these also appears, which is what separates a real
+// login screen from an agent discussing an auth route ("POST /login returns
+// 302") or a CLI listing its slash commands ("/help  /login  /model").
+var loginDirectiveVerbs = []string{
+	"please", "run", "type", "use", "enter", "try", "must", "need",
+}
+
+// lineHasLoginDirective reports whether a line both mentions "/login" AND
+// carries an imperative that makes it a directive to the operator.
+func lineHasLoginDirective(line string) bool {
+	if !strings.Contains(line, "/login") {
+		return false
+	}
+	lower := strings.ToLower(line)
+	for _, verb := range loginDirectiveVerbs {
+		if strings.Contains(lower, verb) {
+			return true
+		}
+	}
+	return false
+}
+
 func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
+		if lineHasLoginDirective(line) {
+			return true
+		}
 		for _, pat := range loginPromptPatterns {
 			if strings.Contains(line, pat) {
 				return true
