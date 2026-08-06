@@ -353,6 +353,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	// pool so it can be re-armed. Admin-only, and guarded to the wedged middle
 	// state (assigned && !claim_delivered) inside the handler.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
+	// Phase 2 of #2748: return a LIVE, claimed hive to the unassigned pool by
+	// wiping its /data + hive-secrets credential-safely IN PLACE (namespace/PVC
+	// kept), verifying the wipe is clean, then flipping the record to available.
+	// Admin-only + typed-confirm + same-origin + dry-run + fail-closed; guarded to
+	// a delivered-claim LIVE hive inside the handler (the inverse of
+	// reset-assignment's gate).
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-to-pool", s.requireAdmin(s.handleResetToPool))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	// Acknowledging a fleet alert is an operator action on the operator's own
@@ -12658,6 +12665,14 @@ const dashboardHTML = `<!DOCTYPE html>
         if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
+        /* Reset to pool (Phase 2 of #2748): admin-only destructive wipe that
+           returns a LIVE, claimed hosted hive to the unassigned pool — wipes
+           /data + credentials + agent state IN PLACE (namespace kept), verifies
+           clean, then flips the slot to available. Distinct from Delete (which
+           destroys the namespace). Offered on a plausibly-live hive: hosted, not
+           an available placeholder, and not the assigned-but-unclaimed wedge
+           (that uses Reset assignment). The server re-checks claim_delivered. */
+        if (_isAdmin && isHosted && h.provStatus !== 'available' && !h.assignedUnclaimed) menuItems.push('<div onclick="resetToPool(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + ';color:#d29922;font-weight:600">Reset to pool</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
         /* Drift folded ONTO Version: config drift is overwhelmingly "this hive's
@@ -13630,6 +13645,68 @@ const dashboardHTML = `<!DOCTYPE html>
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         await hiveNotify('Reset failed', String(e));
+      }
+    }
+
+    /* Reset to pool (Phase 2 of #2748): admin-only DESTRUCTIVE wipe that returns
+       a LIVE, claimed hive to the unassigned pool. It wipes /data (config,
+       storage, beads, agent state, tmux) AND the hive-secrets Secret (gh token,
+       App keys, inference keys) IN PLACE, verifies the result is clean, then
+       flips the slot to available. FAIL-CLOSED: if the wipe cannot be verified
+       clean, the slot is NOT pooled and the namespace is left intact.
+       Requires typing the exact hive id to enable — the typed-confirm the server
+       also enforces (defeats stray clicks / forged requests). Offers a dry-run
+       preview first so the operator sees exactly what will be wiped. */
+    async function resetToPool(hiveId, hiveName) {
+      /* Dry-run first: show what WOULD be wiped, without deleting anything. */
+      var preview = '';
+      try {
+        var dr = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-to-pool',
+          {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({dry_run: true})});
+        var drData = await dr.json().catch(function() { return {}; });
+        if (!dr.ok) { await hiveNotify('Reset to pool unavailable', String(drData.error || dr.status)); return; }
+        var dataList = (drData.data_to_wipe || []);
+        var keyList = (drData.secret_keys_to_reset || []);
+        preview = '\n\nNamespace: ' + (drData.namespace || '') +
+          '\n/data entries to wipe: ' + (dataList.length ? dataList.slice(0, 12).join(', ') + (dataList.length > 12 ? ', …' : '') : '(none listed)') +
+          '\nSecret keys to reset: ' + (keyList.length ? keyList.join(', ') : '(none listed)');
+      } catch (e) {
+        /* A dry-run failure should not block the operator, but note it. */
+        preview = '\n\n(could not fetch a dry-run preview: ' + String(e) + ')';
+      }
+      /* Typed confirmation: the operator must type the exact hive id. */
+      var typed = await hivePrompt(
+        'Reset "' + hiveName + '" to the pool?',
+        '',
+        {ok: 'Wipe and return to pool'});
+      if (typed === null) return; /* cancelled */
+      if (typed !== hiveId) {
+        await hiveNotify('Confirmation mismatch',
+          'You must type the exact hive id (' + hiveId + ') to confirm this destructive wipe.' + preview);
+        return;
+      }
+      /* Final explicit confirm naming the destruction. */
+      var ok = await hiveConfirm('This WIPES all config, storage, credentials and agent state for "' + hiveName +
+        '" and returns the namespace to the unassigned pool. This cannot be undone.' + preview +
+        '\n\nProceed?');
+      if (!ok) return;
+      hiveToast('Resetting ' + hiveId + ' to the pool — wiping and verifying…', 'info');
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-to-pool',
+          {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: hiveId})});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          await hiveNotify('Reset to pool FAILED (fail-closed)',
+            'The slot was NOT returned to the pool and the namespace was left intact for inspection.\n\n' +
+            String(data.error || resp.status));
+          if (typeof loadHives === 'function') loadHives();
+          return;
+        }
+        await hiveNotify('Reset to pool complete',
+          'Hive: ' + hiveName + '\n/data and credentials were wiped (verified clean) and the slot is back in the available pool.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        await hiveNotify('Reset to pool failed', String(e));
       }
     }
 

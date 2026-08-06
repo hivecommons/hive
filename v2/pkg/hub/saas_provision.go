@@ -553,6 +553,19 @@ type SaaSHive struct {
 	// cannot touch any other way.
 	RequestedRestartAt string `json:"requested_restart_at,omitempty"`
 
+	// ResetToPoolStatus tracks a LIVE-hive reset-to-pool wipe (Phase 2 of #2748).
+	// Empty means no reset is in flight. resetToPoolStatusInProgress is set while
+	// the credential-safe /data + Secret wipe runs and doubles as the concurrency
+	// latch (a second reset request 409s while it is set). resetToPoolStatusFailed
+	// is the FAIL-CLOSED terminal state: a wipe or verify step did not prove the
+	// slot clean, so the record was NOT flipped to available and the namespace is
+	// left intact for manual inspection. ResetToPoolError carries the human reason
+	// for the failure (never a secret value — key names / paths only). Both clear
+	// only on a verified-clean reset, which flips the record to the available
+	// placeholder shape. omitempty keeps existing meta.json records byte-identical.
+	ResetToPoolStatus string `json:"reset_to_pool_status,omitempty"`
+	ResetToPoolError  string `json:"reset_to_pool_error,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`
