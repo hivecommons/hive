@@ -262,15 +262,52 @@ func ResolveHiveIdentityInFleet(h *SaaSHive, cluster *ClusterConfig, forgeApps m
 		return id
 	}
 	for host, app := range forgeApps {
-		if sameGitHubHost(forgeHostLabel(host), id.Forge) && app.AppID != 0 {
-			id.AppID = app.AppID
-			if id.AppSlug == "" {
-				id.AppSlug = strings.TrimSpace(app.AppSlug)
-			}
-			return id
+		if !sameGitHubHost(forgeHostLabel(host), id.Forge) || app.AppID == 0 {
+			continue
 		}
+		// COHERENCE, not just the map key. forgesForCluster synthesises a
+		// cluster's flat github_app_id under that cluster's DEFAULT forge, and an
+		// under-specified GHE record — flat app_id, no urls, no default_forge —
+		// defaults to PUBLIC, so the fleet map can carry the GHE App keyed under
+		// "github.com". Adopting that entry would hand a public-elected hive the
+		// very wrong-forge App the repair exists to remove — and, worse, make the
+		// wrong-forge delivery gate compare the spoke's broken App against ITSELF
+		// (5686 == 5686) and stand down forever, which is exactly how six restored
+		// public hives sat undelivered across many heartbeats on 2026-08-05.
+		//
+		// So an App whose issuing forge is POSITIVELY known (config.ForgeOfAppID)
+		// must agree with the elected forge before it is borrowed. An App the
+		// build does not recognise (a third forge, self-hosted) is still adopted
+		// exactly as before: unknown is never a mismatch.
+		if f := config.ForgeOfAppID(app.AppID); f != "" && !sameGitHubHost(f, id.Forge) {
+			continue
+		}
+		id.AppID = app.AppID
+		if id.AppSlug == "" {
+			id.AppSlug = strings.TrimSpace(app.AppSlug)
+		}
+		return id
 	}
 	return id
+}
+
+// builtinAppOfForge returns the App this BUILD itself can name on a forge —
+// the two compile-time App identities (public github.com and the known GHE
+// instance) — or 0 for any other forge.
+//
+// A GitHub App ID is a per-forge constant: the public App is the SAME App for
+// every hive on github.com, so answering with the constant is positive
+// knowledge, not invention. This exists for the delivery path, where a repair
+// needs an actual App to move a spoke onto even when no cluster entry in
+// clusters.json happens to name one on the hive's elected forge.
+func builtinAppOfForge(forge string) (int64, string) {
+	switch {
+	case isPublicForgeHost(forge):
+		return config.PublicGitHubAppID, config.PublicGitHubAppSlug
+	case sameGitHubHost(forge, forgeHostLabel(config.EnterpriseGitHubBaseURL)):
+		return config.EnterpriseGitHubAppID, config.EnterpriseGitHubAppSlug
+	}
+	return 0, ""
 }
 
 // hiveClaimed reports whether a hive record is a CLAIMED hive — one with a real

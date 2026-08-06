@@ -643,6 +643,185 @@ func TestStaleInstallationReset(t *testing.T) {
 	}
 }
 
+// TestWrongForgeRepairTargetsElectedForge pins the residual 2026-08-05 gate bug
+// closed: the wrong-forge repair must deliver the App of the HIVE'S ELECTED
+// forge, never compare the spoke against the CLUSTER's App.
+//
+// The live failure: six public hives (llm-d wva, llm-d-incubation, kellyaa,
+// kalantar, ai-native, alchemy) had their hub meta correctly restored to
+// github_host=github.com after the #2713 mis-flip, but their spokes stayed on
+// the GHE cluster's own App 5686. The delivery gate compared the spoke's app_id
+// against the cluster's (5686 == 5686) and stood down — zero re-deliveries
+// across many heartbeats, until each spoke was hand-restored from its
+// /data/hive.yaml.bak. The gate must instead compare against — and deliver —
+// the elected forge's App (public 3568013), with #2732's installation-reset
+// semantics (app change → ResetInstallation → rediscovery re-adopts the org's
+// existing public installation).
+func TestWrongForgeRepairTargetsElectedForge(t *testing.T) {
+	withTempAppKeyDir(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	storeKeyFor(t, "vllm-d")
+
+	// The 2026-08-05 spoke state: mis-flipped onto the GHE cluster's own App,
+	// GHE urls adopted, old public installation_id still in place (it 404s
+	// under App 5686).
+	misflippedReport := func(id string) *HeartbeatPayload {
+		return &HeartbeatPayload{
+			HiveID:               id,
+			ClusterID:            "vllm-d",
+			GitHubAPIURL:         identGHEAPIURL,
+			GitHubBaseURL:        identGHEBaseURL,
+			GitHubAppID:          testGHEAppID,
+			GitHubInstallationID: 146551814,
+		}
+	}
+	publicHive := func(id string) *SaaSHive {
+		return &SaaSHive{
+			ID: id, Status: statusAssigned, ClusterID: "vllm-d",
+			Org: "llm-d", GitHubHost: publicForgeHost,
+		}
+	}
+	assertPublicRestore := func(t *testing.T, cfg *HeartbeatGitHubAppConfig) {
+		t.Helper()
+		if cfg == nil {
+			t.Fatal("NO delivery — the exact live symptom: six restored hives sat on the wrong GHE identity across many heartbeats")
+		}
+		if cfg.AppID != testPublicAppID {
+			t.Fatalf("delivered app_id = %d, want the elected forge's public App %d — never the cluster's %d", cfg.AppID, testPublicAppID, testGHEAppID)
+		}
+		// Explicit public urls: the spoke sits on GHE urls and empty means
+		// "unchanged" on the wire.
+		if cfg.APIURL != config.DefaultGitHubAPIURL || cfg.BaseURL != config.DefaultGitHubBaseURL {
+			t.Errorf("restore urls = api=%q base=%q, want explicit public urls", cfg.APIURL, cfg.BaseURL)
+		}
+		// #2732's atomic-set rule: the app changes, so the stale id resets and
+		// rediscovery re-adopts the org's existing public installation.
+		if !cfg.ResetInstallation || cfg.InstallationID != 0 {
+			t.Errorf("app-changing delivery must reset installation_id (got reset=%v id=%d)", cfg.ResetInstallation, cfg.InstallationID)
+		}
+	}
+
+	// The exact live case, hardest form: NO cluster in the fleet names a public
+	// App at all, so the elected forge's App can only come from the build's own
+	// constant. Before the fix appIdentityForHive resolved AppID 0 → nil → the
+	// repair was structurally unreachable.
+	t.Run("public-elected hive mis-flipped onto the cluster App is restored (no public App in fleet)", func(t *testing.T) {
+		s := &HubServer{
+			logger:   appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+		}
+		if err := saveSaaSHive(publicHive("wva")); err != nil {
+			t.Fatal(err)
+		}
+		assertPublicRestore(t, s.appKeySyncForHeartbeat(misflippedReport("wva")))
+	})
+
+	// The literal 5686 == 5686 gate: an under-specified cluster record (flat GHE
+	// app_id, no urls, no default_forge) keys the GHE App under PUBLIC in the
+	// fleet's forge map. The resolver then answered the hive's public election
+	// with the GHE App itself, and the delivery gate compared the spoke's broken
+	// App against the same broken App and stood down forever.
+	t.Run("a leaked cluster App under the public forge label cannot dead-end the gate", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				// Sorts before vllm-d, so its poisoned public entry wins the map.
+				"a-underspecified": {ID: "a-underspecified", GitHubAppID: testGHEAppID, GitHubAppSlug: identGHESlug},
+				"vllm-d":           *vllmDForgeMapCluster(),
+			},
+		}
+		if err := saveSaaSHive(publicHive("kellyaa")); err != nil {
+			t.Fatal(err)
+		}
+		assertPublicRestore(t, s.appKeySyncForHeartbeat(misflippedReport("kellyaa")))
+	})
+
+	// Regression guard for #2732's original direction (the EPM class): a
+	// GHE-elected hive whose spoke runs the public App must still be moved onto
+	// the GHE identity — in the same minimal one-cluster fleet.
+	t.Run("GHE-elected hive on the public App still gets the GHE identity", func(t *testing.T) {
+		s := &HubServer{
+			logger:   appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "epm-guard", Status: statusAssigned, ClusterID: "vllm-d",
+			Org: "epm", GitHubHost: identGHEHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:               "epm-guard",
+			ClusterID:            "vllm-d",
+			GitHubAppID:          testPublicAppID,
+			GitHubInstallationID: 146551814,
+		})
+		if cfg == nil || cfg.AppID != testGHEAppID {
+			t.Fatalf("a GHE-elected hive on the public App must be delivered the GHE identity, got %+v", cfg)
+		}
+		if !cfg.ResetInstallation || cfg.InstallationID != 0 {
+			t.Errorf("app-changing delivery must reset installation_id (got reset=%v id=%d)", cfg.ResetInstallation, cfg.InstallationID)
+		}
+	})
+
+	// The healthy case stays untouched: a hive whose elected forge IS its
+	// cluster's forge, converged on that App and key, gets nothing.
+	t.Run("spoke on the cluster App of a cluster-forge hive is never touched", func(t *testing.T) {
+		s := &HubServer{
+			logger:   appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "certus-healthy", Status: statusAssigned, ClusterID: "vllm-d",
+			Org: "certus", GitHubHost: identGHEHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		clusterFP, err := config.AppKeyFingerprint(loadClusterAppKey("vllm-d"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:                  "certus-healthy",
+			ClusterID:               "vllm-d",
+			GitHubAPIURL:            identGHEAPIURL,
+			GitHubBaseURL:           identGHEBaseURL,
+			GitHubAppID:             testGHEAppID,
+			GitHubInstallationID:    777,
+			GitHubAppKeyFingerprint: clusterFP,
+		})
+		if cfg != nil {
+			t.Fatalf("a converged cluster-forge hive was pushed a change: %+v", cfg)
+		}
+	})
+
+	// An App this build does not recognise is a deliberate pin, not evidence of
+	// a wrong forge: silence never triggers the repair.
+	t.Run("unknown spoke App stays protected as a deliberate pin", func(t *testing.T) {
+		s := &HubServer{
+			logger:   appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+		}
+		if err := saveSaaSHive(publicHive("visual")); err != nil {
+			t.Fatal(err)
+		}
+		const thirdPartyAppID = 4240368 // daviddiaz0317-visual-hive: real fleet shape
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:                  "visual",
+			ClusterID:               "vllm-d",
+			GitHubAppID:             thirdPartyAppID,
+			GitHubInstallationID:    888,
+			GitHubAppKeyPerHive:     true,
+			GitHubAppKeyFingerprint: "sha256:cccccccccccccccccccccccccccccccc",
+		})
+		if cfg != nil {
+			t.Fatalf("an unrecognised App was 'repaired' — unknown is never a mismatch: %+v", cfg)
+		}
+	})
+}
+
 // TestForgeAppsAcrossFleetForgeMapShape proves a forge declared only in the
 // `forges` map is discoverable fleet-wide, so a hive that elects it on a
 // DIFFERENT cluster can still borrow the App.

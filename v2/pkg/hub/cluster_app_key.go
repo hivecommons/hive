@@ -261,6 +261,23 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 		return nil
 	}
 	resolved := ResolveHiveIdentityInFleet(h, &c, s.forgeAppsAcrossFleet())
+	// A hive that ELECTED a forge no cluster entry names an App on still has a
+	// real App when that forge's App is a build constant (public github.com, the
+	// known GHE instance). Without this, a public-elected hive on a GHE-only
+	// fleet resolved AppID 0, this function returned nil, and the wrong-forge
+	// repair could never deliver — the hub held the right answer (github_host
+	// restored to github.com) and answered nothing, beat after beat, which is
+	// how six restored public hives stayed on the GHE App on 2026-08-05.
+	// Scoped to FromHiveIntent: a cluster-default resolution that names no App
+	// still yields nil, so no cluster gets an identity invented for it.
+	if resolved.AppID == 0 && resolved.FromHiveIntent && resolved.Forge != "" {
+		if appID, slug := builtinAppOfForge(resolved.Forge); appID != 0 {
+			resolved.AppID = appID
+			if resolved.AppSlug == "" {
+				resolved.AppSlug = slug
+			}
+		}
+	}
 	if resolved.AppID == 0 {
 		return nil
 	}
@@ -596,7 +613,7 @@ const (
 // are distinguishable without heuristics. A GitHub App JWT is signed by the
 // private key and presented alongside an app_id; GitHub verifies the signature
 // against the public key registered for THAT app_id. So for a hive reporting
-// app_id == cluster.AppID with a key fingerprint != cluster.Fingerprint, the
+// app_id == identity.AppID with a key fingerprint != identity.Fingerprint, the
 // credential pair is provably unusable — not "probably stale", not "differently
 // configured", but arithmetically incapable of producing a token. That is
 // exactly the state three live GHE hives are in: they carry the PUBLIC
@@ -651,8 +668,20 @@ const (
 // hosts hives of BOTH forges (vllm-d carries github.ibm.com projects beside
 // github.com ones), so cluster membership alone proves nothing about any one
 // hive. See appKeyReasonWrongForgeApp.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, spokeOnWrongForge bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
-	if cluster == nil {
+//
+// THE identity PARAMETER IS THE HIVE'S RESOLVED IDENTITY, NOT THE CLUSTER'S.
+// It is the App of the hive's ELECTED forge (appIdentityForHive /
+// ResolveHiveIdentityInFleet), which coincides with the cluster's App only for
+// hives that elected nothing or elected their cluster's own forge. The caller
+// (appKeyConfigForHeartbeat) guarantees that whenever spokeOnWrongForge is
+// true the identity's App genuinely belongs to the elected forge. That
+// guarantee is load-bearing for the wrong-forge gate below: comparing the
+// spoke's App against the CLUSTER's App instead is exactly what made the
+// repair unreachable for a public-elected hive mis-flipped onto its GHE
+// cluster's own App (5686 == 5686 — the gate saw the spoke's broken App on
+// both sides and stood down, every beat, for six live hives on 2026-08-05).
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, spokeOnWrongForge bool, spokeAppID int64, identity *clusterAppIdentity) appKeySyncDecision {
+	if identity == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
 	}
 	if hivePublicPinned {
@@ -662,7 +691,7 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 		return appKeySyncDecision{
 			Reason:          appKeyReasonPublicHiveOnGHECluster,
 			FromFingerprint: strings.TrimSpace(spokeFingerprint),
-			ToFingerprint:   cluster.Fingerprint,
+			ToFingerprint:   identity.Fingerprint,
 		}
 	}
 	fp := strings.TrimSpace(spokeFingerprint)
@@ -689,10 +718,10 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 	if spokeAppID == config.PlaceholderAppID {
 		return appKeySyncDecision{
 			Push:            true,
-			PushKey:         cluster.HasKey(),
+			PushKey:         identity.HasKey(),
 			Reason:          appKeyReasonPlaceholderAppID,
 			FromFingerprint: fp,
-			ToFingerprint:   cluster.Fingerprint,
+			ToFingerprint:   identity.Fingerprint,
 		}
 	}
 	// A spoke holding an App from ANOTHER forge is broken for the same reason the
@@ -713,20 +742,27 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 	// Like the sentinel repair this does NOT require the hub to hold the cluster's
 	// key — correcting a cross-forge app_id/app_slug is a non-secret change and is
 	// the whole fix for a hive whose owner has yet to install the App at all.
-	if spokeOnWrongForge && spokeAppID != 0 && spokeAppID != cluster.AppID {
+	//
+	// The third clause compares the spoke's App against the HIVE'S ELECTED
+	// forge's App — identity is the per-hive resolution, never the raw cluster
+	// record. For a coherent identity it is implied by spokeOnWrongForge (the
+	// spoke's App is another forge's, the identity's is the elected forge's, and
+	// no App ID belongs to two forges); it stays as a guard so an incoherent
+	// caller can never make this branch push a spoke's own broken App back at it.
+	if spokeOnWrongForge && spokeAppID != 0 && spokeAppID != identity.AppID {
 		return appKeySyncDecision{
 			Push:            true,
-			PushKey:         cluster.HasKey(),
+			PushKey:         identity.HasKey(),
 			Reason:          appKeyReasonWrongForgeApp,
 			FromFingerprint: fp,
-			ToFingerprint:   cluster.Fingerprint,
+			ToFingerprint:   identity.Fingerprint,
 		}
 	}
 	// Beyond the sentinel repair every remaining decision is about REPLACING the
 	// spoke's key, which the hub cannot do without holding one. Stopping here
 	// keeps a keyless cluster from reporting a "mismatch" against an empty
 	// fingerprint and pushing a blank key over a working one.
-	if !cluster.HasKey() {
+	if !identity.HasKey() {
 		return appKeySyncDecision{
 			Reason:          appKeyReasonNoClusterKey,
 			FromFingerprint: fp,
@@ -737,33 +773,33 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 		// there is nothing to decide and nothing to send. Checking this ahead of
 		// the app_id logic also means a hive whose provisioned key happens to be
 		// correct never enters the exception path at all.
-		if fp != "" && fp == cluster.Fingerprint {
+		if fp != "" && fp == identity.Fingerprint {
 			return appKeySyncDecision{
 				Reason:          appKeyReasonMatch,
 				FromFingerprint: fp,
-				ToFingerprint:   cluster.Fingerprint,
+				ToFingerprint:   identity.Fingerprint,
 			}
 		}
 		// The exception: the hive claims this cluster's App but cannot sign for
 		// it. Requires a POSITIVE app_id match — zero (unknown) and any other
 		// App both fall through to the protected override below.
-		if spokeAppID != 0 && spokeAppID == cluster.AppID && fp != "" && fp != cluster.Fingerprint {
+		if spokeAppID != 0 && spokeAppID == identity.AppID && fp != "" && fp != identity.Fingerprint {
 			return appKeySyncDecision{
 				Push:            true,
 				PushKey:         true,
 				Reason:          appKeyReasonPerHiveUnusable,
 				FromFingerprint: fp,
-				ToFingerprint:   cluster.Fingerprint,
+				ToFingerprint:   identity.Fingerprint,
 			}
 		}
 		reason := appKeyReasonPerHiveOverride
-		if spokeAppID != 0 && spokeAppID != cluster.AppID {
+		if spokeAppID != 0 && spokeAppID != identity.AppID {
 			reason = appKeyReasonDifferentApp
 		}
 		return appKeySyncDecision{
 			Reason:          reason,
 			FromFingerprint: fp,
-			ToFingerprint:   cluster.Fingerprint,
+			ToFingerprint:   identity.Fingerprint,
 		}
 	}
 	if fp == "" {
@@ -771,22 +807,22 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 			Push:          true,
 			PushKey:       true,
 			Reason:        appKeyReasonSpokeHasNoKey,
-			ToFingerprint: cluster.Fingerprint,
+			ToFingerprint: identity.Fingerprint,
 		}
 	}
-	if fp != cluster.Fingerprint {
+	if fp != identity.Fingerprint {
 		return appKeySyncDecision{
 			Push:            true,
 			PushKey:         true,
 			Reason:          appKeyReasonMismatch,
 			FromFingerprint: fp,
-			ToFingerprint:   cluster.Fingerprint,
+			ToFingerprint:   identity.Fingerprint,
 		}
 	}
 	return appKeySyncDecision{
 		Reason:          appKeyReasonMatch,
 		FromFingerprint: fp,
-		ToFingerprint:   cluster.Fingerprint,
+		ToFingerprint:   identity.Fingerprint,
 	}
 }
 
@@ -848,6 +884,51 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 	if hiveForgeKnown && identity != nil && identity.Forge != "" {
 		if spokeForge := s.forgeOfSpokeAppID(spokeAppID); spokeForge != "" && !sameGitHubHost(spokeForge, identity.Forge) {
 			spokeOnWrongForge = true
+		}
+	}
+	// THE REPAIR DELIVERS THE ELECTED FORGE'S APP — NEVER ANOTHER FORGE'S.
+	//
+	// The identity resolved above is supposed to be the hive's elected forge's
+	// App, but two config shapes can leak a wrong-forge App into it: a cluster
+	// record whose flat github_app_id names the GHE App while its blank urls
+	// default the record to public (the App lands keyed under the hive's OWN
+	// forge), and any equivalent drift in a forges map. Delivering that identity
+	// would push the spoke's broken App straight back at it — and the delivery
+	// gate below, comparing the spoke's App against the SAME wrong App
+	// (5686 == 5686), would instead stand down and deliver nothing forever.
+	// That dead gate is why six public hives whose hub meta was correctly
+	// restored to github_host=github.com received no re-delivery across many
+	// heartbeats on 2026-08-05 and had to be hand-restored from backups.
+	//
+	// So when the spoke is provably on the wrong forge, verify the identity
+	// being delivered is provably NOT: an App whose issuing forge is known
+	// (config.ForgeOfAppID) must agree with the hive's elected forge, else it is
+	// rebuilt from the build's own App for that forge — with the key looked up
+	// by the App it belongs to, and the urls stated explicitly so the spoke is
+	// moved off the wrong forge's urls in the same atomic set. If the build
+	// cannot name an App on the elected forge either, the repair stands down
+	// rather than deliver another forge's App.
+	if spokeOnWrongForge {
+		if f := config.ForgeOfAppID(identity.AppID); f != "" && !sameGitHubHost(f, identity.Forge) {
+			if appID, slug := builtinAppOfForge(identity.Forge); appID != 0 {
+				identity.AppID = appID
+				identity.AppSlug = slug
+				// The key must follow the App: whatever key rode in with the
+				// leaked identity signs for the WRONG App. Empty means "leave
+				// the spoke's key alone", which is the safe floor.
+				identity.PrivateKey, identity.Fingerprint = "", ""
+				if k, found := s.appKeysByAppID()[appID]; found && k.PrivateKey != "" {
+					identity.PrivateKey, identity.Fingerprint = k.PrivateKey, k.Fingerprint
+				}
+				if isPublicForgeHost(identity.Forge) {
+					identity.APIURL, identity.BaseURL = config.DefaultGitHubAPIURL, config.DefaultGitHubBaseURL
+				} else {
+					identity.BaseURL = "https://" + forgeHostLabel(identity.Forge)
+					identity.APIURL = identity.BaseURL + gheAPIPathSuffix
+				}
+			} else {
+				spokeOnWrongForge = false
+			}
 		}
 	}
 	// The public pin is honoured BY the per-hive identity now: a public-pinned
