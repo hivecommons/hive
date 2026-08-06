@@ -306,8 +306,12 @@ if [ "$(id -u)" = "0" ]; then
   # driver's inherited mountpoint mode.
   chmod 0750 /data 2>/dev/null || true
   chown dev:node /home/dev 2>/dev/null || true
-  chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
-  chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
+  # The Kubernetes first-boot seed is copied to the persistent runtime path
+  # above while this process is still root. Normalize both current and legacy
+  # runtime names before dropping privileges so dashboard/ACMM saves cannot be
+  # stranded behind a root-owned PVC file.
+  chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null || true
+  chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null || true
 
   # Ensure the PVC secrets dir the dashboard writes API keys into
   # (/data/secrets/litellm_api_key) exists and is owned by the dev user.

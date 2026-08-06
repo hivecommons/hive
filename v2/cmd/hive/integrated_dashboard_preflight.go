@@ -95,10 +95,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	if err := ensureNoManagedRepositoryContractBeforeSetup(ctx, client, owner, repository, metadata.GetDefaultBranch()); err != nil {
 		return nil, err
 	}
-	normalized, err := integrated.NormalizeNormalHiveProvider(integrated.SetupOptions{
-		Provider: request.Provider, ExecutionMode: integrated.ExecutionLocal, VisualHive: true,
-		Automation: integrated.Automation(request.Automation),
-	})
+	normalized, err := normalizeDashboardPreflightProvider(request.Provider, integrated.Automation(request.Automation))
 	if err != nil {
 		return nil, fmt.Errorf("resolve governed repair provider: %w", err)
 	}
@@ -243,8 +240,11 @@ func resolveDashboardPreflightRuntimeIdentity(providerCommand, visualCommand str
 
 func verifyDashboardPreflightProvider(ctx context.Context, command string, args []string) (string, error) {
 	model, err := repair.CodexSpecialistProviderModel(args)
-	if err != nil || strings.TrimSpace(model) == "" {
+	if err != nil {
 		return "", fmt.Errorf("resolve configured Codex model: %w", err)
+	}
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("configured Codex model is missing")
 	}
 	result, err := integratedSetupCodexProvider(command, args).Run(ctx, "", "Return exactly HIVE_HOSTED_PREFLIGHT_OK and do not use tools.")
 	if err != nil {
@@ -254,6 +254,30 @@ func verifyDashboardPreflightProvider(ctx context.Context, command string, args 
 		return "", fmt.Errorf("configured Codex model did not return the bounded readiness token")
 	}
 	return model, nil
+}
+
+// normalizeDashboardPreflightProvider binds the concrete Codex model that the
+// hosted readiness probe executes. Advisory and issues modes do not otherwise
+// need a repair provider, but their preflight still promises to verify the
+// configured provider/backend/model before setup. Use the same audited default
+// that repair-pr will use later instead of accepting a model-less probe.
+func normalizeDashboardPreflightProvider(provider string, automation integrated.Automation) (integrated.SetupOptions, error) {
+	options := integrated.SetupOptions{
+		Provider: provider, ExecutionMode: integrated.ExecutionLocal, VisualHive: true, Automation: automation,
+	}
+	normalized, err := integrated.NormalizeNormalHiveProvider(options)
+	if err != nil {
+		return integrated.SetupOptions{}, err
+	}
+	model, err := repair.CodexSpecialistProviderModel(normalized.ProviderArgs)
+	if err != nil {
+		return integrated.SetupOptions{}, err
+	}
+	if strings.TrimSpace(model) != "" {
+		return normalized, nil
+	}
+	options.Automation = integrated.AutomationRepairPR
+	return integrated.NormalizeNormalHiveProvider(options)
 }
 
 func probeIntegratedStateStorage(root string) error {
@@ -455,10 +479,7 @@ func requireDashboardPreflightReceipt(ctx context.Context, request dashboard.Int
 	if stateErr != nil {
 		return stateErr
 	}
-	normalized, normalizeErr := integrated.NormalizeNormalHiveProvider(integrated.SetupOptions{
-		Provider: request.Provider, ExecutionMode: integrated.ExecutionLocal, VisualHive: true,
-		Automation: integrated.Automation(request.Automation),
-	})
+	normalized, normalizeErr := normalizeDashboardPreflightProvider(request.Provider, integrated.Automation(request.Automation))
 	if normalizeErr != nil || !slices.Equal(normalized.ProviderArgs, receipt.ProviderArgs) {
 		return fmt.Errorf("hosted readiness preflight runtime identity changed after the readiness check")
 	}

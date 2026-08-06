@@ -228,3 +228,20 @@ func TestLocalSetupDoesNotRequireHostedPreflightReceipt(t *testing.T) {
 		t.Fatalf("ordinary local setup was changed by hosted preflight: %v", err)
 	}
 }
+
+func TestNormalizeDashboardPreflightProviderDefaultsModelForIssues(t *testing.T) {
+	normalized, err := normalizeDashboardPreflightProvider("codex", integrated.AutomationIssues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(normalized.ProviderArgs) != 1 || normalized.ProviderArgs[0] != "--model=gpt-5.6-sol" {
+		t.Fatalf("issues preflight did not bind the audited Codex default: %v", normalized.ProviderArgs)
+	}
+}
+
+func TestVerifyDashboardPreflightProviderRejectsMissingModelCleanly(t *testing.T) {
+	_, err := verifyDashboardPreflightProvider(context.Background(), "/unused/codex", nil)
+	if err == nil || !strings.Contains(err.Error(), "configured Codex model is missing") || strings.Contains(err.Error(), "%!w") {
+		t.Fatalf("unexpected missing-model diagnostic: %v", err)
+	}
+}
