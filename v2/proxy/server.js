@@ -111,6 +111,140 @@ function isAuthorizedForThisHive(username) {
   return HIVE_AUTHORIZED_USERS.has(username.toLowerCase());
 }
 
+// ── Signed terminal assertion (finding C3 follow-up) ──────────────────────────
+//
+// The static HIVE_AUTHORIZED_USERS allowlist above (from #2756) authorizes by a
+// per-hive username list injected at PROVISION time: coarse (no expiry, no role
+// granularity, a re-provision needed to change access). The PRIMARY gate is now
+// a short-lived HMAC-signed assertion the spoke mints at LOGIN time, binding
+// {user, hive_id, role, exp}. This block verifies it, mirroring the Go
+// hub.VerifyTerminalAssertion EXACTLY (keep the two in lockstep).
+//
+// DECOUPLED FROM SSO SIGNING (C2 #2761): the SSO handoff token is now ASYMMETRIC
+// (Ed25519 — only the hub mints, the spoke holds the public key). The terminal
+// assertion is a DIFFERENT trust shape: SYMMETRIC and SPOKE-LOCAL — the spoke
+// mints it (dashboard) and this proxy verifies it, both on the same spoke, with a
+// key the spoke holds. So it has its OWN dedicated HMAC key (TERMINAL_SIGNING_KEY
+// below), independent of the SSO key. This mirrors the Go hub.terminalSign /
+// hub.TerminalSigningKey EXACTLY (keep the two in lockstep).
+
+// TERMINAL_ASSERTION_VERSION must equal the Go terminalAssertionVersion. A token
+// carrying any other version (e.g. an SSO handoff token) is rejected, so the two
+// token families are never confusable.
+const TERMINAL_ASSERTION_VERSION = 'hive-terminal-v1';
+
+// INFO_TERMINAL_KEY is the domain-separation label for the terminal signing
+// sub-key. Must equal the Go infoTerminalKey and match the C2 deriveDomainKey
+// convention (HMAC-SHA256(master, info) as lowercase hex).
+const INFO_TERMINAL_KEY = 'hive-terminal-v1';
+
+// deriveTerminalKeyFrom mirrors the Go deriveTerminalKeyFrom: the hex
+// HMAC-SHA256(master, INFO_TERMINAL_KEY), or '' for an empty master.
+function deriveTerminalKeyFrom(master) {
+  if (!master) return '';
+  return crypto.createHmac('sha256', master).update(INFO_TERMINAL_KEY).digest('hex');
+}
+
+// TERMINAL_SIGNING_KEY resolves the symmetric key the proxy verifies terminal
+// assertions with, mirroring Go hub.TerminalSigningKey's order EXACTLY:
+//   1. HIVE_TERMINAL_KEY   — a dedicated derived sub-key, if provisioned.
+//   2. HIVE_SESSION_KEY    — the session sub-key a C2-provisioned spoke already
+//                            holds (normal post-#2761 hosted path; the spoke no
+//                            longer receives the master).
+//   3. derive from HIVE_HUB_SECRET — self-hosted / pre-#2761 hosted spokes that
+//                            still hold the master.
+// Empty when none is configured → no assertion ever verifies → the terminal gate
+// falls back to the #2756 static allowlist. Computed ONCE at startup like HUB_SECRET.
+const TERMINAL_SIGNING_KEY =
+  (process.env.HIVE_TERMINAL_KEY || '').trim() ||
+  (process.env.HIVE_SESSION_KEY || '').trim() ||
+  deriveTerminalKeyFrom((process.env.HIVE_HUB_SECRET || '').trim());
+
+// TERMINAL_ASSERTION_COOKIE is where the spoke deposits the assertion (see
+// dashboard setTerminalAssertionCookie). Path=/terminal-scoped, HttpOnly.
+const TERMINAL_ASSERTION_COOKIE = 'hive_terminal_assertion';
+
+// TERMINAL_CLOCK_SKEW_S tolerates minor hub/spoke clock drift on the exp / iat
+// bounds. Matches the Go ssoClockSkew (30s).
+const TERMINAL_CLOCK_SKEW_S = 30;
+
+// TERMINAL_ROLES are the roles sufficient to open a shell: owner and read-write.
+// A `read`-only grant authenticates and authorizes the DASHBOARD but is NOT
+// enough for a terminal — the finding asks role sufficiency (owner/operator) be
+// enforced, and a read-only user with shell access would be a privilege
+// escalation. Role strings mirror pkg/config (RoleOwner, RoleReadWrite) and the
+// hub saasRole* constants.
+const TERMINAL_ROLES = new Set(['owner', 'read-write']);
+
+// verifyTerminalAssertion mirrors Go hub.VerifyTerminalAssertion. It returns
+// { username, role } on success, or null on ANY failure (bad signature, wrong
+// version, wrong hive, expired/not-yet-valid, malformed) — fail closed, never
+// trusting payload bytes before the constant-time signature check passes.
+function verifyTerminalAssertion(key, token, expectedHiveID, nowSec) {
+  if (!key || !token || !expectedHiveID) return null;
+  const idx = token.indexOf('.');
+  if (idx <= 0 || idx === token.length - 1) return null;
+  const body = token.slice(0, idx);
+  const sig = token.slice(idx + 1);
+  // Constant-time signature check over the base64url body BEFORE decoding it.
+  const expected = crypto.createHmac('sha256', key).update(body).digest('base64url');
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return null;
+  }
+  let claims;
+  try {
+    claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!claims || typeof claims !== 'object') return null;
+  if (claims.v !== TERMINAL_ASSERTION_VERSION) return null;
+  if (claims.h !== expectedHiveID) return null;
+  if (!claims.u) return null;
+  const iat = Number(claims.iat);
+  const exp = Number(claims.exp);
+  if (!Number.isFinite(iat) || !Number.isFinite(exp)) return null;
+  if (iat > nowSec + TERMINAL_CLOCK_SKEW_S) return null; // not yet valid
+  if (exp < nowSec - TERMINAL_CLOCK_SKEW_S) return null; // expired
+  return { username: String(claims.u), role: String(claims.r || '') };
+}
+
+// authorizeTerminal is the single per-hive terminal decision, combining the new
+// PRIMARY signed-assertion gate with the #2756 static-allowlist FALLBACK.
+//
+//   PRIMARY  — a valid, unexpired, this-hive assertion whose role is sufficient
+//              (owner / read-write) → ALLOW. This is the principled gate: fresh,
+//              expiring, role-checked, minted per-user-per-hive at login.
+//   FALLBACK — no usable assertion (absent / expired / wrong hive / insufficient
+//              role) → defer to isAuthorizedForThisHive(cookieUser): the static
+//              per-hive allowlist plus the OpenShift fail-CLOSED behavior from
+//              #2756. This is defense-in-depth and MUST NOT regress: a hive with
+//              no assertion cookie (older client, direct navigation) still gets
+//              exactly the #2756 decision, and an empty allowlist on an
+//              OpenShift-Route hive still fails closed.
+//
+// cookieUser is the hub-wide-authenticated user from the verified hive_hub_user
+// cookie (already checked by the caller); assertionCookie is the raw
+// hive_terminal_assertion value (may be undefined).
+function authorizeTerminal(cookieUser, assertionCookie) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const claim = verifyTerminalAssertion(TERMINAL_SIGNING_KEY, assertionCookie, HIVE_ID, nowSec);
+  if (claim && TERMINAL_ROLES.has((claim.role || '').toLowerCase())) {
+    // A valid this-hive assertion with a sufficient role is the primary grant.
+    // Bind it to the SAME user the hub-wide cookie authenticated: an attacker
+    // must present BOTH a validly-signed hub cookie for user X AND a validly-
+    // signed terminal assertion for user X on THIS hive.
+    if (claim.username && cookieUser &&
+        claim.username.toLowerCase() === cookieUser.toLowerCase()) {
+      return true;
+    }
+  }
+  // No usable assertion → fall back to the #2756 static allowlist + fail-closed.
+  return isAuthorizedForThisHive(cookieUser);
+}
+
 const HOSTED_SUFFIX = '.hive.kubestellar.io';
 
 // isHostedHost decides whether the terminal auth gate applies to a request.
@@ -309,12 +443,14 @@ app.use('/terminal', (req, res, next) => {
       res.status(401).send('Terminal access requires authentication');
       return;
     }
-    // SECURITY (CWE-862, finding C3): authentication is hub-WIDE — the signed
-    // cookie only proves this is some real hub user, because it is scoped to
-    // .hive.kubestellar.io and every hive's domain receives it. AUTHORIZATION is
-    // per-hive: the user must be on THIS hive's allowlist. A cookie authorized on
-    // hive A must not open a shell on hive B.
-    if (!isAuthorizedForThisHive(user)) {
+    // SECURITY (CWE-862, finding C3 + follow-up): authentication is hub-WIDE —
+    // the signed hive_hub_user cookie only proves this is some real hub user,
+    // because it is scoped to .hive.kubestellar.io and every hive's domain
+    // receives it. AUTHORIZATION is per-hive. PRIMARY gate: a short-lived signed
+    // {user,hive,role,exp} assertion for THIS hive with a sufficient role.
+    // FALLBACK: the #2756 static allowlist + OpenShift fail-closed. A cookie
+    // authorized on hive A must not open a shell on hive B.
+    if (!authorizeTerminal(user, cookies[TERMINAL_ASSERTION_COOKIE])) {
       console.warn(`[terminal] 403: hub user ${JSON.stringify(user)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -405,10 +541,12 @@ server.on('upgrade', (req, socket, head) => {
         socket.destroy();
         return;
       }
-      // SECURITY (CWE-862, finding C3): per-hive authorization on the WS upgrade,
-      // mirroring the HTTP gate. A hub-authenticated user not on THIS hive's
-      // allowlist gets the socket closed, not a shell.
-      if (!isAuthorizedForThisHive(wsUser)) {
+      // SECURITY (CWE-862, finding C3 + follow-up): per-hive authorization on the
+      // WS upgrade, mirroring the HTTP gate. PRIMARY: signed {user,hive,role,exp}
+      // assertion for THIS hive; FALLBACK: #2756 static allowlist + fail-closed.
+      // A hub-authenticated user without a usable grant for THIS hive gets the
+      // socket closed, not a shell.
+      if (!authorizeTerminal(wsUser, cookies[TERMINAL_ASSERTION_COOKIE])) {
         console.warn(`[terminal-ws] 403: hub user ${JSON.stringify(wsUser)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
         socket.destroy();
         return;

@@ -229,6 +229,28 @@ function mintCookie(secret, username) {
   return `${username}.${sig}`;
 }
 
+// mintTerminalAssertion mirrors Go hub.MintTerminalAssertion / the proxy's
+// verifyTerminalAssertion: `<base64url(json{v,u,r,h,iat,exp})>.<base64url(HMAC)>`.
+// It signs with the DERIVED terminal sub-key (deriveTerminalKey), not the raw
+// master — matching the proxy's TERMINAL_SIGNING_KEY resolution for a spoke
+// provisioned with only HIVE_HUB_SECRET (its default in these tests). ttlSec and
+// version are overridable so tests can forge expired / wrong-version / wrong-hive
+// assertions. Default: this hive, 15-min TTL, current version.
+const TERMINAL_ASSERTION_VERSION = 'hive-terminal-v1';
+const INFO_TERMINAL_KEY = 'hive-terminal-v1';
+// deriveTerminalKey mirrors the Go deriveTerminalKeyFrom / proxy deriveTerminalKeyFrom.
+function deriveTerminalKey(master) {
+  return crypto.createHmac('sha256', master).update(INFO_TERMINAL_KEY).digest('hex');
+}
+function mintTerminalAssertion(secret, { username, role, hiveID, ttlSec = 900, version = TERMINAL_ASSERTION_VERSION, iatOffsetSec = 0 } = {}) {
+  const key = deriveTerminalKey(secret);
+  const now = Math.floor(Date.now() / 1000) + iatOffsetSec;
+  const claims = { v: version, u: username, r: role, h: hiveID, iat: now, exp: now + ttlSec };
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const sig = crypto.createHmac('sha256', key).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
 function startHiveBProxy() {
   return new Promise((resolve, reject) => {
     const proc = spawn('node', ['server.js'], {
@@ -282,10 +304,13 @@ async function teardownHiveB() {
 // header to match the URL authority, which would defeat the whole point — the
 // gate keys off the Host header to decide `isHosted`, and we must be able to
 // present an arbitrary hosted / port-suffixed / trailing-dot Host.
-function terminalHTTP(cookieVal, hostHeader) {
+function terminalHTTP(cookieVal, hostHeader, assertionVal) {
   return new Promise((resolve, reject) => {
     const headers = { Host: hostHeader };
-    if (cookieVal) headers.Cookie = `hive_hub_user=${cookieVal}`;
+    const cookieParts = [];
+    if (cookieVal) cookieParts.push(`hive_hub_user=${cookieVal}`);
+    if (assertionVal) cookieParts.push(`hive_terminal_assertion=${assertionVal}`);
+    if (cookieParts.length) headers.Cookie = cookieParts.join('; ');
     const req = httpRequest({
       host: '127.0.0.1', port: HIVE_B_PROXY_PORT, path: '/terminal/',
       method: 'GET', headers,
@@ -301,10 +326,13 @@ function terminalHTTP(cookieVal, hostHeader) {
 
 // WS terminal upgrade. Resolves {opened:true} if the socket opens (allowed) or
 // {opened:false} if it is closed/errored before/at open (denied).
-function terminalWS(cookieVal, hostHeader) {
+function terminalWS(cookieVal, hostHeader, assertionVal) {
   return new Promise((resolve) => {
     const headers = { Host: hostHeader };
-    if (cookieVal) headers.Cookie = `hive_hub_user=${cookieVal}`;
+    const cookieParts = [];
+    if (cookieVal) cookieParts.push(`hive_hub_user=${cookieVal}`);
+    if (assertionVal) cookieParts.push(`hive_terminal_assertion=${assertionVal}`);
+    if (cookieParts.length) headers.Cookie = cookieParts.join('; ');
     const ws = new WebSocket(`ws://127.0.0.1:${HIVE_B_PROXY_PORT}/terminal/`, { headers });
     const done = (opened) => { try { ws.close(); } catch { /* ignore */ } resolve({ opened }); };
     const t = setTimeout(() => done(false), 4000);
@@ -376,6 +404,110 @@ async function testC3_ForgedSigStillRejected() {
   const resp = await terminalHTTP(cookie, HOSTED_HOST);
   assert.equal(resp.status, 401, `forged-signature cookie must be 401, got ${resp.status}`);
   console.log('  ✓ forged-signature cookie (even for allowlisted name) → 401');
+}
+
+// ---------------------------------------------------------------------------
+// Finding C3 FOLLOW-UP — short-lived signed {user,hive,role,exp} assertion.
+//
+// Reuses hive B (secret HIVE_B_SECRET, id HIVE_B_ID, static allowlist
+// alice:owner,carol:read). `dave` is deliberately NOT on the static allowlist,
+// so any decision that lets dave in must be coming from the SIGNED ASSERTION —
+// the new PRIMARY gate — and any decision that keeps dave out proves the
+// FALLBACK to the #2756 static allowlist still holds when the assertion is
+// unusable. The hub cookie carries authentication; the assertion carries
+// per-hive authorization.
+// ---------------------------------------------------------------------------
+
+// PRIMARY: a valid, this-hive, sufficient-role assertion admits a user who is
+// NOT on the static allowlist — the whole point of the upgrade.
+async function testC3F_ValidAssertionAdmitsNonAllowlistedUser() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 200, `dave with a valid owner assertion should reach terminal, got ${resp.status}`);
+  const { opened } = await terminalWS(cookie, HOSTED_HOST, assertion);
+  assert.ok(opened, 'dave with a valid owner assertion WS should open');
+  console.log('  ✓ valid {user,hive,owner,exp} assertion → terminal opens (primary gate, beyond static list)');
+}
+
+// read-write is a sufficient terminal role too.
+async function testC3F_ReadWriteRoleSufficient() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'read-write', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 200, `dave with a read-write assertion should reach terminal, got ${resp.status}`);
+  console.log('  ✓ read-write role assertion → terminal opens');
+}
+
+// EXPIRED assertion → not usable → falls back to static allowlist → dave denied.
+async function testC3F_ExpiredAssertionDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  // iatOffset -1000s, ttl 600s → issued & expired well before now (beyond skew).
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: HIVE_B_ID, ttlSec: 600, iatOffsetSec: -1000 });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `dave with an EXPIRED assertion must fall back and be 403, got ${resp.status}`);
+  const { opened } = await terminalWS(cookie, HOSTED_HOST, assertion);
+  assert.ok(!opened, 'dave with an EXPIRED assertion WS must be closed');
+  console.log('  ✓ expired assertion → denied (fallback: dave not on static list)');
+}
+
+// WRONG-HIVE assertion (minted for another hive id) → not usable → denied.
+async function testC3F_WrongHiveAssertionDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'some-other-hive' });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `dave with a WRONG-HIVE assertion must be 403, got ${resp.status}`);
+  const { opened } = await terminalWS(cookie, HOSTED_HOST, assertion);
+  assert.ok(!opened, 'dave with a WRONG-HIVE assertion WS must be closed');
+  console.log('  ✓ wrong-hive assertion → denied (hive_id binding enforced)');
+}
+
+// INSUFFICIENT ROLE (read) assertion → not a sufficient terminal grant → falls
+// back to static allowlist → dave denied.
+async function testC3F_InsufficientRoleDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'read', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `dave with a read-only assertion must be 403, got ${resp.status}`);
+  console.log('  ✓ read-only role assertion → denied (owner/read-write required for a shell)');
+}
+
+// FORGED assertion (wrong signing secret) → signature fails → not usable → denied.
+async function testC3F_ForgedAssertionDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion('wrong-secret', { username: 'dave', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `dave with a FORGED-signature assertion must be 403, got ${resp.status}`);
+  console.log('  ✓ forged-signature assertion → denied');
+}
+
+// WRONG-VERSION token (e.g. an SSO handoff "hive-sso-v1") is NOT a terminal grant.
+async function testC3F_WrongVersionDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'dave');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: HIVE_B_ID, version: 'hive-sso-v1' });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `dave with a wrong-version token must be 403, got ${resp.status}`);
+  console.log('  ✓ wrong-version token (SSO handoff shape) → denied (token families not confusable)');
+}
+
+// USER MISMATCH: a valid assertion for alice presented alongside bob's hub
+// cookie must NOT admit bob — the assertion user must equal the authenticated
+// cookie user. (bob is also not on the static allowlist, so it falls through.)
+async function testC3F_UserMismatchDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'bob');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'alice', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403, `bob presenting alice's assertion must be 403, got ${resp.status}`);
+  console.log('  ✓ assertion-user ≠ cookie-user → denied (binding to authenticated user)');
+}
+
+// FALLBACK PRESERVED: an allowlisted user with NO assertion cookie still reaches
+// the terminal via the #2756 static allowlist — the upgrade is additive.
+async function testC3F_StaticAllowlistFallbackPreserved() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'alice');
+  const resp = await terminalHTTP(cookie, HOSTED_HOST /* no assertion */);
+  assert.equal(resp.status, 200, `alice (static allowlist) with no assertion must still reach terminal, got ${resp.status}`);
+  console.log('  ✓ no assertion + static allowlist → terminal opens (fallback preserved)');
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +670,17 @@ try {
   await testC3_AuthorizedUserWS();
   await testC3_ForeignUserWS();
   await testC3_ForeignUserWS_PortSuffixHost();
+
+  console.log('\nSigned terminal assertion (C3 follow-up):');
+  await testC3F_ValidAssertionAdmitsNonAllowlistedUser();
+  await testC3F_ReadWriteRoleSufficient();
+  await testC3F_ExpiredAssertionDenied();
+  await testC3F_WrongHiveAssertionDenied();
+  await testC3F_InsufficientRoleDenied();
+  await testC3F_ForgedAssertionDenied();
+  await testC3F_WrongVersionDenied();
+  await testC3F_UserMismatchDenied();
+  await testC3F_StaticAllowlistFallbackPreserved();
 
   console.log('\n✓ C3 tests passed\n');
 } catch (e) {

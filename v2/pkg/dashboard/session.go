@@ -8,6 +8,8 @@ import (
 	"os"
 	"sort"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/hub"
 )
 
 // userSession is a per-user server-side session created after a successful,
@@ -220,6 +222,64 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string) {
 		SameSite: http.SameSiteLaxMode,
 	})
 }
+
+// setTerminalAssertionCookie mints a short-lived, HMAC-signed {user,hive,role,exp}
+// assertion (hub.MintTerminalAssertion) and writes it as the hive_terminal_assertion
+// cookie. This is the C3 follow-up upgrade over the static per-hive username
+// allowlist: instead of the proxy consulting a list injected at PROVISION time,
+// it now verifies a FRESH, EXPIRING, role-carrying grant the spoke minted for
+// THIS user on THIS hive at LOGIN time.
+//
+// Called right after a per-user session is established (device-flow login and
+// hub SSO handoff), where {username, role} are already authoritatively resolved
+// against this hive's own allowlist. A no-op (no cookie) when the hive has no
+// terminal signing key (not hub-hosted / no derivable key) or no HiveID — in that
+// case the proxy simply falls back to the #2756 static-allowlist / ingress path,
+// so there is no regression.
+//
+// The signing key is the SPOKE-LOCAL, SYMMETRIC terminal key (hub.TerminalSigningKey):
+// the spoke mints here and the proxy verifies on the same spoke, so this is NOT
+// the (now-asymmetric, C2 #2761) SSO signing path — it is decoupled from it.
+//
+// The cookie is Path=/terminal-scoped, HttpOnly and Secure — it is a bearer
+// grant for a shell, so it never reaches page JS and never travels in the clear.
+// It is deliberately NOT Domain=.hive.kubestellar.io: unlike the hub-wide
+// hive_hub_user cookie (which every hive's domain receives and which was the root
+// of C3), this assertion is bound to THIS hive by its signed HiveID claim AND
+// only sent to this hive's host.
+func (s *Server) setTerminalAssertionCookie(w http.ResponseWriter, r *http.Request, username, role string) {
+	key := hub.TerminalSigningKey()
+	if key == "" {
+		return
+	}
+	hiveID := ""
+	if s.deps != nil && s.deps.Config != nil {
+		hiveID = s.deps.Config.HiveID
+	}
+	if hiveID == "" {
+		return
+	}
+	tok := hub.MintTerminalAssertion(key, username, role, hiveID, time.Now())
+	if tok == "" {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     terminalAssertionCookieName,
+		Value:    tok,
+		Path:     "/terminal",
+		MaxAge:   int(terminalAssertionCookieMaxAge.Seconds()),
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// terminalAssertionCookieMaxAge caps how long the browser retains the assertion
+// cookie. It matches the signed assertion's own TTL (hub.terminalAssertionTTL,
+// 15 min): the cookie's lifetime and the token's expiry should agree so a stale
+// cookie is dropped by the browser at roughly the same time the proxy would
+// reject it as expired anyway. The proxy's exp check is authoritative regardless.
+const terminalAssertionCookieMaxAge = 15 * time.Minute
 
 // clearSessionCookie expires the per-user session cookie on the client.
 func clearSessionCookie(w http.ResponseWriter) {

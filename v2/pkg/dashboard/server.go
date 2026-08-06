@@ -34,6 +34,13 @@ const maxSSEClients = 100
 const sessionCookieName = "hive_session"
 const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 
+// terminalAssertionCookieName carries the short-lived, HMAC-signed
+// {user,hive,role,exp} assertion the Node proxy verifies as the PRIMARY per-hive
+// terminal gate (finding C3 follow-up). It is Path=/terminal-scoped and NOT
+// domain-widened to .hive.kubestellar.io (unlike the hub-wide hive_hub_user
+// cookie), so the browser only ever sends it to THIS hive's own terminal path.
+const terminalAssertionCookieName = "hive_terminal_assertion"
+
 // proxyAuthHeader is the proof-of-proxy header the hub's auth-check injects
 // (value = this hive's dashboard token) so a hub-proxied spoke can verify a
 // request actually transited the hub nginx rather than being forged on the pod

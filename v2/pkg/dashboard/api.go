@@ -1669,6 +1669,11 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setSessionCookie(w, r, sid)
+		// Mint the short-lived per-hive terminal assertion cookie the Node proxy
+		// verifies as its PRIMARY per-hive gate (finding C3 follow-up). Same
+		// {user,hive,role} just authorized for this session, bound to THIS hive
+		// with an expiry. No-op on non-hosted hives.
+		s.setTerminalAssertionCookie(w, r, username, role)
 	}
 
 	// Audit the successful login with the authenticated GitHub username as the
@@ -1782,6 +1787,11 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, r, sid)
+	// Mint the short-lived per-hive terminal assertion cookie the Node proxy
+	// verifies as its PRIMARY per-hive gate (finding C3 follow-up). The role here
+	// is the spoke's authoritative allowlist role (resolved above), bound to THIS
+	// hive with an expiry. No-op on non-hosted hives.
+	s.setTerminalAssertionCookie(w, r, username, role)
 	s.audit.Log(username, "login", auditDetail("method", "hub sso handoff", "role", role), "")
 	if s.deps != nil && s.deps.Logger != nil {
 		s.deps.Logger.Info("user authenticated via hub SSO handoff", "username", username, "role", role)
