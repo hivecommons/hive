@@ -30,6 +30,19 @@ spec:
           # scratch state to /tmp, /run and /home — so runAsNonRoot and
           # readOnlyRootFilesystem are intentionally NOT set (they would break
           # agent launch). Everything else is dropped.
+          #
+          # allowPrivilegeEscalation is deliberately NOT set to false (C6): the
+          # agent-UID switch runs through the SUID su-exec helper, and
+          # `allowPrivilegeEscalation: false` sets the kernel no_new_privs bit,
+          # which DISABLES all SUID binaries — it would break agent launch
+          # outright. C6 is instead mitigated in the image (v2/Dockerfile): the
+          # su-exec source is pinned by commit SHA + SHA256-verified, and the
+          # helper is chmod 4750 root:hive-launch (launcher-group-only, not
+          # world-exec 4755), so only the `dev` launcher — not agent UIDs — can
+          # exec it. Fully removing SUID (dev switches UIDs via CAP_SETUID
+          # instead) is not viable here: it needs ambient/inheritable caps that
+          # the hub's netadmin_reconcile would wipe when it JSON-Patch-replaces
+          # the whole securityContext with {NET_ADMIN} on drift. See PR body.
           securityContext:
             seccompProfile:
               type: RuntimeDefault

@@ -41,16 +41,53 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)
-# for the manager's dev→agent UID switches.
-RUN curl -sL -o /tmp/su-exec.c https://raw.githubusercontent.com/ncopa/su-exec/master/su-exec.c \
+# for the manager's dev→agent UID switches (pkg/agent/manager.go,
+# pkg/dashboard/workspace_cleanup.go, deploy/ttyd-tmux.sh — all invoked by the
+# non-root `dev` process AFTER the entrypoint's `exec gosu dev`, so a SUID
+# helper or CAP_SETUID is genuinely required to switch to agent UIDs at runtime).
+#
+# SECURITY (C6, CWE-250/269). Two hardening measures over the old
+# `curl master | gcc | chmod u+s` (which produced a world-executable
+# setuid-root binary, mode 4755, that ANY agent UID could run as
+# `su-exec root sh` → root in the pod holding the org App key + all agent
+# tokens + iptables control):
+#
+#  1. SUPPLY CHAIN: pin su-exec.c by COMMIT SHA (not the moving `master` ref)
+#     and verify its SHA256 before compiling. An upstream force-push or a
+#     MITM'd raw.githubusercontent.com can no longer swap the source under us.
+#
+#  2. PRIVILEGE ISOLATION: the binary is owned root:hive-launch mode 4750, NOT
+#     world-exec 4755. Only root and members of the `hive-launch` group may
+#     exec it. The sole member of hive-launch is `dev` (UID 1001), the process
+#     that legitimately launches agents. Agent UIDs (2001+) are in group `node`
+#     — NOT hive-launch — so an agent trying `su-exec root sh` now gets EACCES
+#     at exec, restoring the per-UID isolation the world-exec bit collapsed.
+#     Note: root:node 4750 would NOT be enough — `dev` AND every agent share
+#     group node, so a node-group SUID is still agent-executable. A dedicated
+#     launcher group is what actually excludes the agents.
+#
+# Full removal of SUID (make dev switch UIDs via CAP_SETUID/CAP_SETGID instead)
+# was considered and rejected — see PR body: it needs ambient/inheritable caps
+# that fight `allowPrivilegeEscalation: false`, and the hub's netadmin_reconcile
+# JSON-Patches the whole securityContext to `{NET_ADMIN}` on drift, silently
+# wiping any SETUID/SETGID grant on live hives.
+ARG SU_EXEC_COMMIT=89c016e6e08749d583efdeda04b9f73e1218e253
+ARG SU_EXEC_SHA256=0c90fe15804f2670037b90e72eb496579fe00d2c15765e5fe2ddec0f5afa35fa
+RUN curl -sL -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/${SU_EXEC_COMMIT}/su-exec.c" \
+ && echo "${SU_EXEC_SHA256}  /tmp/su-exec.c" | sha256sum -c - \
  && gcc -Wall -o /usr/local/bin/su-exec /tmp/su-exec.c \
- && chmod u+s /usr/local/bin/su-exec \
  && rm /tmp/su-exec.c \
  && apt-get purge -y gcc libc6-dev && apt-get autoremove -y
 
 # Non-root user for agent processes (Claude Code refuses --dangerously-skip-permissions as root)
-# node:24-slim already has group 1000 (node), so reuse it
-RUN useradd -m -u 1001 -g node -s /bin/bash dev
+# node:24-slim already has group 1000 (node), so reuse it as dev's primary group.
+# `hive-launch` is a dedicated supplementary group whose ONLY member is dev; it
+# gates exec of the SUID su-exec helper (chmod 4750 below) so agent UIDs — which
+# are in group node but NOT hive-launch — cannot run it. See the su-exec C6 note.
+RUN groupadd --system hive-launch \
+ && useradd -m -u 1001 -g node -G hive-launch -s /bin/bash dev \
+ && chown root:hive-launch /usr/local/bin/su-exec \
+ && chmod 4750 /usr/local/bin/su-exec
 
 # --- Layer 2: ttyd (pinned version for reproducible builds) ---
 ARG TTYD_VERSION=1.7.7
