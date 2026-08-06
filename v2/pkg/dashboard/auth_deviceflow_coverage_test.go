@@ -331,7 +331,7 @@ func TestCovDF_SSO_ValidNoAllowlist(t *testing.T) {
 	t.Setenv("HIVE_HUB_SECRET", secret)
 	s, deps, _ := dfServer(t, "complete", "octocat")
 	deps.Config.HiveID = "hive-abc"
-	tok := hub.MintSSOToken(hub.SpokeSSOKey(), "alice", config.RoleOwner, "hive-abc", time.Now())
+	tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(secret), "alice", config.RoleOwner, "hive-abc", time.Now())
 	rec := doGet(s, "/sso?token="+tok)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("valid sso: want 303, got %d (%s)", rec.Code, rec.Body.String())
@@ -348,7 +348,7 @@ func TestCovDF_SSO_ValidWithAllowlist(t *testing.T) {
 	deps.Config.HiveID = "hive-abc"
 	deps.Config.Dashboard.AuthorizedUsers = []string{"owner1:owner", "alice:read"}
 	deps.Config.Dashboard.HubProxied = false
-	tok := hub.MintSSOToken(hub.SpokeSSOKey(), "alice", config.RoleOwner, "hive-abc", time.Now())
+	tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(secret), "alice", config.RoleOwner, "hive-abc", time.Now())
 	rec := doGet(s, "/sso?token="+tok)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("allowlisted sso: want 303, got %d", rec.Code)
@@ -362,7 +362,7 @@ func TestCovDF_SSO_NotAuthorized(t *testing.T) {
 	deps.Config.HiveID = "hive-abc"
 	deps.Config.Dashboard.AuthorizedUsers = []string{"someoneelse"}
 	deps.Config.Dashboard.HubProxied = false
-	tok := hub.MintSSOToken(hub.SpokeSSOKey(), "alice", config.RoleOwner, "hive-abc", time.Now())
+	tok := hub.MintSSOToken(hub.SSOSigningSeedFromMaster(secret), "alice", config.RoleOwner, "hive-abc", time.Now())
 	rec := doGet(s, "/sso?token="+tok)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("unauthorized sso: want 403, got %d", rec.Code)
