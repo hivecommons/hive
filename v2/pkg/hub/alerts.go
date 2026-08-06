@@ -236,9 +236,20 @@ type alertAck struct {
 	ConditionFirstSeen time.Time `json:"conditionFirstSeen"`
 }
 
+// alertAckKeySep separates hive ID from alert type inside an alertAckKey. NUL
+// because it can appear in neither a hive ID nor an alert type, so the key can
+// always be split back apart unambiguously.
+const alertAckKeySep = "\x00"
+
 // alertAckKey is the map key for an acknowledgement: one per (hive, type).
 func alertAckKey(hiveID, alertType string) string {
-	return hiveID + "\x00" + alertType
+	return hiveID + alertAckKeySep + alertType
+}
+
+// alertAckKeyHive recovers the hive ID from an alertAckKey.
+func alertAckKeyHive(key string) string {
+	hiveID, _, _ := strings.Cut(key, alertAckKeySep)
+	return hiveID
 }
 
 // alertState is the hub's observation memory for alert evaluation. Alerts are
@@ -344,15 +355,32 @@ func (a *alertState) markCondition(hiveID, alertType string, now time.Time) time
 // condition goes away its FirstSeen is forgotten, so when it returns it gets a
 // fresh FirstSeen that no stored ack matches.
 //
-// active is the set of currently-firing alertAckKey values.
-func (a *alertState) retainConditions(active map[string]bool) {
+// active is the set of currently-firing alertAckKey values. evaluated is the
+// set of hive IDs that were actually PRESENT in the snapshot this evaluation
+// ran over — and eviction is limited to those hives. That scoping is the fix
+// for the bug that made Acknowledge fail with "no active alert of that type
+// for this hive" on every click: evaluateAlerts runs against the CALLER's
+// visible hives (handleMyHives scopes the list per user), but this state is
+// shared hub-wide. A non-admin's dashboard poll, whose snapshot legitimately
+// omits every hive it cannot see, used to evict the firstSeen entries (and
+// stored acks) for ALL of those hives — so by the time the admin's ack POST
+// arrived, the condition it targeted had been wiped from shared state and
+// setAck refused it. A hive that is absent from the snapshot is no evidence
+// its condition cleared; only a hive that was evaluated and did NOT fire is.
+func (a *alertState) retainConditions(evaluated, active map[string]bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for key := range a.firstSeen {
-		if !active[key] {
-			delete(a.firstSeen, key)
-			delete(a.acks, key)
+		if active[key] {
+			continue
 		}
+		if !evaluated[alertAckKeyHive(key)] {
+			// This hive was outside the evaluated snapshot (a scoped caller
+			// cannot see it) — leave its state for an evaluation that can.
+			continue
+		}
+		delete(a.firstSeen, key)
+		delete(a.acks, key)
 	}
 }
 
@@ -721,6 +749,11 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 	// active tracks every condition firing this pass, so retainConditions can
 	// forget (and un-acknowledge) the ones that have cleared.
 	active := make(map[string]bool)
+	// evaluated tracks which hives this snapshot actually contained, so
+	// retention never evicts state for a hive a SCOPED caller simply could not
+	// see (see retainConditions). Drift-sourced alerts count too: their hive
+	// fired, so it was observed this pass.
+	evaluated := make(map[string]bool, len(hives))
 
 	add := func(hiveID, hiveName, alertType, severity, reason string) {
 		firstSeen := state.markCondition(hiveID, alertType, now)
@@ -746,6 +779,7 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		if h.ID == "" {
 			continue
 		}
+		evaluated[h.ID] = true
 
 		// --- Rule: provisioning errored. Applies to placeholders too: a pool
 		// slot that failed to provision is exactly the admin's problem. ---
@@ -908,12 +942,15 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		if d.HiveID == "" || d.Type == "" {
 			continue
 		}
+		evaluated[d.HiveID] = true
 		add(d.HiveID, d.HiveName, d.Type, d.Severity, d.Reason)
 	}
 
-	// Conditions that did not fire this pass are forgotten, which also clears
-	// their acknowledgement so a re-occurrence is not permanently silenced.
-	state.retainConditions(active)
+	// Conditions that were evaluated this pass but did not fire are forgotten,
+	// which also clears their acknowledgement so a re-occurrence is not
+	// permanently silenced. Hives OUTSIDE this snapshot are untouched — a
+	// scoped caller must never evict shared state for hives it cannot see.
+	state.retainConditions(evaluated, active)
 
 	// Most urgent first; within a severity, group by type then hive so the list
 	// is stable across polls.
@@ -1051,6 +1088,15 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	return evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
 }
 
+// alertAcksFileMu serialises writers of the acks file. Two concurrent ack
+// POSTs used to run saveAlertAcks concurrently, and both wrote the SAME tmp
+// path with os.WriteFile — the second open truncates while the first is
+// mid-write, so the interleaved bytes that got renamed into place were not
+// JSON. That is exactly the corruption the live hub logged ("failed to parse
+// persisted alert acks: invalid character ..."), which then cost every
+// persisted ack on the next restart.
+var alertAcksFileMu sync.Mutex
+
 // saveAlertAcks persists acknowledgements to the PVC so a silenced alert stays
 // silenced across a hub restart or upgrade. Mirrors saveHubBanners: atomic
 // tmp+rename, failures logged not fatal (a lost ack merely un-silences an
@@ -1059,6 +1105,8 @@ func (s *HubServer) saveAlertAcks() {
 	if s == nil || s.alerts == nil {
 		return
 	}
+	alertAcksFileMu.Lock()
+	defer alertAcksFileMu.Unlock()
 	snapshot := s.alerts.snapshotAcks()
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
@@ -1079,8 +1127,21 @@ func (s *HubServer) saveAlertAcks() {
 	}
 }
 
+// alertAcksQuarantineSuffix is appended to alertAcksPath when the file on disk
+// is not parseable, so the bad bytes are preserved for inspection instead of
+// being silently overwritten — and so the ack system starts FRESH rather than
+// staying wedged. Only the most recent corrupt file is kept: repeated
+// corruption overwrites the previous quarantine rather than growing the PVC.
+const alertAcksQuarantineSuffix = ".corrupt"
+
 // loadAlertAcks reads persisted acknowledgements on startup, dropping expired
 // ones and rewriting the file if any were pruned. A missing file is normal.
+//
+// A CORRUPT file must not disable acking: the stored acks are a convenience
+// (they only re-silence alerts across a restart), so the recovery is to
+// quarantine the bad file and continue with an empty ack store — the next ack
+// writes a fresh, valid file. Before this, the parse failure left the corrupt
+// bytes in place and the error re-logged on every boot.
 func (s *HubServer) loadAlertAcks() {
 	if s == nil || s.alerts == nil {
 		return
@@ -1094,7 +1155,14 @@ func (s *HubServer) loadAlertAcks() {
 	}
 	var stored map[string]alertAck
 	if err := json.Unmarshal(data, &stored); err != nil {
-		s.logger.Error("failed to parse persisted alert acks", "error", err)
+		quarantine := alertAcksPath + alertAcksQuarantineSuffix
+		if renameErr := os.Rename(alertAcksPath, quarantine); renameErr != nil {
+			s.logger.Error("failed to quarantine corrupt alert acks file",
+				"error", renameErr, "parseError", err)
+			return
+		}
+		s.logger.Error("persisted alert acks were corrupt — quarantined and starting fresh",
+			"error", err, "quarantined", quarantine)
 		return
 	}
 	if s.alerts.loadAcks(stored, time.Now()) {
