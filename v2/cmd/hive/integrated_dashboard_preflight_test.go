@@ -198,8 +198,32 @@ func TestHostedPreflightRejectsExistingControllerLease(t *testing.T) {
 	if err := os.WriteFile(leasePath, []byte("stale-or-live\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateDir); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
+	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
 		t.Fatalf("existing controller lease was accepted: %v", err)
+	}
+}
+
+func TestHostedPreflightAllowsExactManagedRuntimeForRebind(t *testing.T) {
+	stateDir := t.TempDir()
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
+	manager, _, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	if active, err := manager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("activate exact managed runtime: active=%v err=%v", active, err)
+	}
+	original := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(manager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(original) })
+
+	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true); err != nil {
+		t.Fatalf("exact managed update runtime rejected: %v", err)
+	}
+	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "other/repository", true); err == nil {
+		t.Fatal("different repository runtime accepted for managed update")
+	}
+	if err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil {
+		t.Fatal("fresh setup accepted an existing runtime")
 	}
 }
 

@@ -129,7 +129,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	} else if installed && !managedUpdate {
 		return nil, fmt.Errorf("Visual Hive is already installed; use status and doctor instead of preflight")
 	}
-	if err := ensureNoVisualRuntimeBeforeSetup(stateRoot); err != nil {
+	if err := ensureNoVisualRuntimeBeforeSetup(stateRoot, request.Repository, managedUpdate); err != nil {
 		return nil, err
 	}
 	runtimeIdentity, err := dashboardPreflightResolveRuntimeIdentity(providerCommand, visualCommand, visualArgs)
@@ -235,10 +235,13 @@ func ensureManagedRepositoryContractBeforeSetup(
 	return true, nil
 }
 
-func ensureNoVisualRuntimeBeforeSetup(stateRoot string) error {
+func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManagedUpdate bool) error {
 	if manager := dashboardNormalVisualRuntime.Load(); manager != nil {
 		if binding, active := manager.ActiveBinding(); active {
-			return fmt.Errorf("Visual Hive controller is already active for %s", binding.Repository)
+			if !allowManagedUpdate || !strings.EqualFold(strings.TrimSpace(binding.Repository), strings.TrimSpace(repository)) ||
+				filepath.Clean(binding.StateDir) != filepath.Clean(stateRoot) {
+				return fmt.Errorf("Visual Hive controller is already active for %s", binding.Repository)
+			}
 		}
 	}
 	leasePath := filepath.Join(stateRoot, "integrated", "daemon.lease")
