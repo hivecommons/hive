@@ -44,6 +44,15 @@ const (
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"
+	// AuditActionPRMerged is the audit action recorded when the hive merges a
+	// PR as the App bot over REST (MergePR). It closes the create→merge loop on
+	// the dashboard audit log: issue created → PR created → PR merged.
+	AuditActionPRMerged = "pr_merged"
+	// AuditActionAdvisoryCommented is the audit action recorded when the hive
+	// FIRST posts the advisory digest comment on the advisory issue. The digest
+	// is refreshed (EditComment) roughly once a minute; those updates are NOT
+	// audited — only the initial creation, a once-per-issue event.
+	AuditActionAdvisoryCommented = "advisory_commented"
 )
 
 // System "agent" names recorded for creations no single coding agent

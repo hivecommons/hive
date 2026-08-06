@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
@@ -13,6 +14,10 @@ import (
 type CreatePRResult struct {
 	Number int
 	URL    string
+	// Author is the login GitHub recorded on the created (or pre-existing) PR —
+	// the App bot the hive relayed as (e.g. "kubestellar-hive[bot]"). Taken from
+	// the API response, not assumed, so the audit log records the true author.
+	Author string
 	// AlreadyExisted is true when an open PR for this head branch was already
 	// present, so we returned it instead of opening a duplicate.
 	AlreadyExisted bool
@@ -60,7 +65,7 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	} else if existing != nil {
 		c.logger.Info("CreatePR: open PR already exists for head, reusing",
 			slog.String("repo", repo), slog.String("head", head), slog.Int("number", existing.GetNumber()))
-		return CreatePRResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
+		return CreatePRResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), Author: existing.GetUser().GetLogin(), AlreadyExisted: true}, nil
 	}
 
 	pr, _, err := c.client.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
@@ -74,14 +79,14 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 		// reuse rather than a hard failure.
 		if strings.Contains(err.Error(), "A pull request already exists") {
 			if existing, lookErr := c.findOpenPRForHead(ctx, owner, repo, head); lookErr == nil && existing != nil {
-				return CreatePRResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), AlreadyExisted: true}, nil
+				return CreatePRResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), Author: existing.GetUser().GetLogin(), AlreadyExisted: true}, nil
 			}
 		}
 		return CreatePRResult{}, fmt.Errorf("creating PR %s/%s %s->%s: %w", owner, repo, head, base, err)
 	}
 	c.logger.Info("CreatePR: opened PR as the App bot",
 		slog.String("repo", repo), slog.String("head", head), slog.Int("number", pr.GetNumber()))
-	return CreatePRResult{Number: pr.GetNumber(), URL: pr.GetHTMLURL()}, nil
+	return CreatePRResult{Number: pr.GetNumber(), URL: pr.GetHTMLURL(), Author: pr.GetUser().GetLogin()}, nil
 }
 
 // MergePRResult is what MergePR returns after a successful merge.
@@ -134,6 +139,15 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	c.logger.Info("MergePR: merged PR as the App bot over REST",
 		slog.String("repo", owner+"/"+repo), slog.Int("number", number),
 		slog.String("method", mergeMethod), slog.String("sha", res.GetSHA()))
+	// Audit the merge UNCONDITIONALLY so the dashboard audit log shows the full
+	// create→merge loop. The merge is performed by the hive itself (not a single
+	// coding agent), so it is attributed to the governor flow, mirroring the
+	// hive-issue-created attribution in advisory.go.
+	c.recordCreationAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
+		"repo", owner+"/"+repo,
+		"number", strconv.Itoa(number),
+		"method", mergeMethod,
+		"sha", res.GetSHA())
 	return MergePRResult{SHA: res.GetSHA(), Merged: res.GetMerged(), Message: res.GetMessage()}, nil
 }
 

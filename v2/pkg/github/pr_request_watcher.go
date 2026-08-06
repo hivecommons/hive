@@ -250,6 +250,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	c.recordCreationAudit(AuditActionAgentPRCreated, meta,
 		"repo", req.Repo,
 		"number", strconv.Itoa(res.Number),
+		"author", res.Author,
 		"url", res.URL,
 		"reused", strconv.FormatBool(res.AlreadyExisted))
 	c.writePRResult(path, resp)

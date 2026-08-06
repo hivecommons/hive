@@ -81,6 +81,7 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	c.recordCreationAudit(AuditActionHiveIssueCreated, meta,
 		"repo", owner+"/"+repo,
 		"number", strconv.Itoa(issue.GetNumber()),
+		"author", issue.GetUser().GetLogin(),
 		"url", issue.GetHTMLURL(),
 		"flow", "advisory")
 
@@ -92,6 +93,12 @@ const (
 	advisoryDigestPrefix    = "## 🐝 Advisory Digest"
 	githubCommentCharLimit  = 65536
 	truncationFooterPadding = 200
+	// advisoryDigestAuditInterval is how often (in digest posts) an
+	// advisory_commented audit entry is emitted, in addition to the very first
+	// post. The digest is refreshed ~once a minute; a value of 50 yields roughly
+	// one audit pulse per ~50 minutes, enough to show the loop is alive without
+	// flooding the dashboard audit log.
+	advisoryDigestAuditInterval = 50
 )
 
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
@@ -109,21 +116,45 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 		c.logger.Warn("could not search for existing digest comment, creating new", slog.String("error", err.Error()))
 	}
 
+	var author string
 	if commentID > 0 {
-		_, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
+		edited, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
 			Body: gh.Ptr(digest),
 		})
 		if err != nil {
 			return fmt.Errorf("updating advisory digest comment on %s#%d: %w", repo, issueNum, err)
 		}
-		return nil
+		author = edited.GetUser().GetLogin()
+	} else {
+		comment, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, issueNum, &gh.IssueComment{
+			Body: gh.Ptr(digest),
+		})
+		if err != nil {
+			return fmt.Errorf("posting advisory digest to %s#%d: %w", repo, issueNum, err)
+		}
+		author = comment.GetUser().GetLogin()
 	}
 
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repoName, issueNum, &gh.IssueComment{
-		Body: gh.Ptr(digest),
-	})
-	if err != nil {
-		return fmt.Errorf("posting advisory digest to %s#%d: %w", repo, issueNum, err)
+	// Audit the FIRST post and every advisoryDigestAuditInterval-th one, not the
+	// ~once-a-minute refreshes in between: auditing every update would flood the
+	// audit log (1000s/day) and evict the discrete create→merge events. A
+	// periodic pulse still proves the advisory loop is alive on the dashboard.
+	c.advisoryMu.Lock()
+	if c.advisoryDigestPosts == nil {
+		c.advisoryDigestPosts = make(map[string]int)
+	}
+	key := fmt.Sprintf("%s/%s#%d", owner, repoName, issueNum)
+	c.advisoryDigestPosts[key]++
+	count := c.advisoryDigestPosts[key]
+	c.advisoryMu.Unlock()
+
+	if count == 1 || count%advisoryDigestAuditInterval == 0 {
+		c.recordCreationAudit(AuditActionAdvisoryCommented, InvocationMeta{Agent: AttributionAgentGovernor},
+			"repo", owner+"/"+repoName,
+			"number", strconv.Itoa(issueNum),
+			"author", author,
+			"post_count", strconv.Itoa(count),
+			"flow", "advisory-digest")
 	}
 	return nil
 }

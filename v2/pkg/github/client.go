@@ -55,6 +55,14 @@ type Client struct {
 	// the PR-request watcher goroutine may already be reading them.
 	attribMu    sync.RWMutex
 	attribution AttributionHooks
+	// advisoryDigestPosts counts how many times the advisory digest has been
+	// (re)posted per "owner/repo#issue" since this process started. The digest
+	// is refreshed ~once a minute, so PostAdvisoryDigest audits only the 1st
+	// post and every advisoryDigestAuditInterval-th one — a periodic pulse that
+	// proves the loop is alive without flooding the audit log. Guarded by
+	// advisoryMu.
+	advisoryMu          sync.Mutex
+	advisoryDigestPosts map[string]int
 }
 
 // GoGitHub returns the underlying go-github client for direct API access.
