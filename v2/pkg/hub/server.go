@@ -690,8 +690,15 @@ type HubServer struct {
 	// the real addVanityHostToIngress runs; set by tests, which have no cluster to
 	// kubectl to.
 	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
-	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu  sync.RWMutex
+	// vanityRepairInFlight tracks hive IDs whose retroactive vanity-URL repair
+	// is currently running in the background (kickVanityURLRepairAsync), so the
+	// heartbeat path starts at most one per hive. On an unreachable cluster a
+	// single repair attempt spends minutes in kubectl dial timeouts while beats
+	// keep arriving every ~2 min; without this guard the attempts pile up
+	// goroutines all hanging against the same dead cluster.
+	vanityRepairInFlight sync.Map                         // hive ID → struct{}
+	heartbeatHealth      map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu    sync.RWMutex
 
 	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
 	// having a live dashboard session. It powers the "logged into their hive right
@@ -1622,13 +1629,26 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.adoptSpokeForge(payload.HiveID, payload.GitHubHost)
 
 	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
-	// feature existed, also BEFORE building the project config, so the URL-only
-	// push below delivers it on this very beat. VanityURL is otherwise written
-	// only at assign time, so those hives would display and open their raw
-	// placeholder host forever. No-op (and silent) for unclaimed placeholders,
-	// hives that already have a vanity URL, and hives whose vanity host the hub
-	// cannot make servable (heartbeat-only clusters keep their placeholder).
-	s.repairVanityURLForHive(payload.HiveID)
+	// feature existed. VanityURL is otherwise written only at assign time, so
+	// those hives would display and open their raw placeholder host forever.
+	// No-op for unclaimed placeholders and hives that already have a vanity URL.
+	//
+	// ASYNC, deliberately. The repair shells out to kubectl against the hive's
+	// cluster (existingVanityHost, then addVanityHostToIngress), and on a
+	// cluster the hub cannot reach (vllm-d is heartbeat-only/firewalled) each
+	// call blocks until its TCP dial times out — ~90s per beat observed live.
+	// The spoke's heartbeat client gives up after heartbeatTimeout (10s), so
+	// running the repair synchronously here meant EVERY response built below —
+	// including the claimed-project config that is the ONLY channel by which an
+	// assignment can reach a heartbeat-only spoke — was written to a connection
+	// the spoke had already abandoned. The claim never landed, the spoke kept
+	// reporting its placeholder org, and the assignStuckResetTimeout sweep
+	// auto-reset the assignment at 15m, every time (the vllmd-14 wedge; EPM and
+	// vllmd-13 before it). Backgrounding the repair trades the same-beat URL
+	// push (the URL now lands on a later beat, once minted) for a response the
+	// spoke actually receives — and on unreachable clusters the repair never
+	// succeeded anyway.
+	s.kickVanityURLRepairAsync(payload.HiveID)
 
 	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg

@@ -1100,8 +1100,12 @@ const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying 
 //     the spoke, so that call fails and the hive correctly keeps its working
 //     placeholder host.
 //
-// Called on each heartbeat, so it must be cheap and silent in the overwhelmingly
-// common no-op case — every guard below returns before any network call or write.
+// Kicked from each heartbeat via kickVanityURLRepairAsync — in the BACKGROUND,
+// never on the request path: the kubectl calls below can hang for minutes
+// against an unreachable cluster, and a heartbeat response delayed past the
+// spoke's 10s client timeout is a response the spoke never sees (which is how
+// claim delivery to vllm-d silently broke). The guards below still return
+// before any network call or write in the overwhelmingly common no-op case.
 func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
@@ -1141,6 +1145,19 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
 		return false
 	}
+	// Re-load before writing. makeVanityHostServable (and existingVanityHost
+	// above) can block for minutes in kubectl against a slow/unreachable
+	// cluster, and the heartbeat path keeps load-modify-writing this hive's
+	// record meanwhile — adoptSpokeProjectConfig latching ClaimDelivered /
+	// ACMMDelivered, the forge handshakes. Saving through the record loaded
+	// before that window would silently revert every field written during it.
+	h = loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.VanityURL != "" {
+		return false // another path minted one while we were blocked — keep it
+	}
 	h.VanityURL = "https://" + vanityHost
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url repair: failed to save hive", "hive", hiveID, "error", err)
@@ -1150,6 +1167,44 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
 		"cluster", cluster.ID, "vanity_url", h.VanityURL)
 	return true
+}
+
+// kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
+// most one attempt per hive at a time.
+//
+// It exists because the repair is only cheap on its NO-OP paths. When it
+// actually has work to do it shells out to kubectl against the hive's cluster
+// (existingVanityHost, then addVanityHostToIngress), and against a cluster the
+// hub cannot reach — vllm-d is heartbeat-only — those calls hang until their
+// TCP dials time out: ~90 seconds per attempt observed live. Called
+// synchronously from handleHeartbeat, that stall pushed every heartbeat
+// response past the spoke's 10s client timeout (heartbeatTimeout), so the
+// claimed-project config the response carried never reached the spoke and
+// fresh assignments on heartbeat-only clusters could never complete (the
+// vllmd-14 / vllmd-13 / EPM wedge).
+//
+// The same cheap guards repairVanityURLForHive starts with run inline here, so
+// the overwhelmingly common no-op case (already has a vanity URL, unclaimed
+// placeholder, incomplete claim, no cluster domain) spawns no goroutine at all.
+func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status == statusAvailable || h.VanityURL != "" ||
+		h.Org == "" || h.PrimaryRepo == "" {
+		return
+	}
+	if cluster := s.clusterForHive(h); cluster == nil || cluster.Domain == "" {
+		return
+	}
+	// One in-flight attempt per hive: beats arrive every ~2 min while a failing
+	// attempt can take minutes, and stacking attempts would pile goroutines up
+	// against the same dead cluster for no benefit.
+	if _, inFlight := s.vanityRepairInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+		return
+	}
+	go func() {
+		defer s.vanityRepairInFlight.Delete(hiveID)
+		s.repairVanityURLForHive(hiveID)
+	}()
 }
 
 // existingVanityHost returns the host an already-created vanity route/ingress
