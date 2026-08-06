@@ -1465,6 +1465,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					entry.UpgradeStartedAt = h.UpgradeStartedAt
 				}
 			}
+			// A true Upgrading flag must ALWAYS carry a start time. The chain
+			// above only carries the clock forward for HUB-armed upgrades
+			// (h.UpgradeTarget != ""); a spoke-REPORTED upgrade left the
+			// rebuilt entry with a zero clock every beat, so the "Upgrading"
+			// badge rendered without its elapsed counter and the stuck-upgrade
+			// alert (which gates on a non-zero clock) was blind. Carry the
+			// previous beat's clock forward when there is one — re-stamping a
+			// live clock would repeat the #2725 reset-every-retry bug — and
+			// stamp now only when no clock has ever existed.
+			stampObservedUpgrade(&entry, h.UpgradeStartedAt)
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)
 			const sparkSampleInterval = 15 * 60 // seconds
 			const sparkMaxPoints = 672
@@ -1513,6 +1523,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().Unix()
 		entry.IssueHistory = []SparkPoint{{T: now, V: entry.ActionableIssues}}
 		entry.PRHistory = []SparkPoint{{T: now, V: entry.ActionablePRs}}
+		// A brand-new hive whose FIRST heartbeat already reports Upgrading has
+		// no previous beat to carry a clock from — stamp it now so the badge
+		// never renders without its elapsed counter.
+		stampObservedUpgrade(&entry, time.Time{})
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -2801,13 +2815,31 @@ func (s *HubServer) loadRegistry() {
 func (s *HubServer) recoverArmedUpgrades() {
 	type armed struct{ id, target string }
 	var recovered []armed
+	stamped := 0
 	s.mu.Lock()
 	if s.heartbeatUpgrade == nil {
 		s.heartbeatUpgrade = make(map[string]string)
 	}
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
-		if !h.Upgrading || h.UpgradeTarget == "" {
+		if !h.Upgrading {
+			continue
+		}
+		// A true Upgrading flag must always carry a start time — the dashboard
+		// badge and the stuck-upgrade alert both gate their elapsed clock on a
+		// non-zero UpgradeStartedAt. The registry persists the field (json
+		// "upgradeStartedAt"), so a normal restart rehydrates the REAL clock
+		// and this guard does not fire — re-stamping a live clock here would
+		// reset every in-flight upgrade's elapsed time on each hub roll, the
+		// exact #2725 reset bug. Only a latch that never had a clock (armed
+		// before the field existed, or spoke-reported upgrading persisted
+		// before the observed-upgrade stamp) gets one now, instead of the
+		// badge rendering without its counter until the next re-arm.
+		if h.UpgradeStartedAt.IsZero() {
+			h.UpgradeStartedAt = time.Now()
+			stamped++
+		}
+		if h.UpgradeTarget == "" {
 			continue
 		}
 		// A recorded terminal failure must stay terminal — re-arming it would
@@ -2819,6 +2851,12 @@ func (s *HubServer) recoverArmedUpgrades() {
 		recovered = append(recovered, armed{id: h.ID, target: h.UpgradeTarget})
 	}
 	s.mu.Unlock()
+	if stamped > 0 {
+		// Persist the repaired clocks (saveCh is buffered, so a request made
+		// before saveLoop starts is not lost) — otherwise a crash-looping hub
+		// would re-stamp them to now on every restart.
+		s.requestSave()
+	}
 	for _, a := range recovered {
 		s.logger.Info("recovered armed upgrade from registry after restart",
 			"hive_id", a.id, "target", a.target)

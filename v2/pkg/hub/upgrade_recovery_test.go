@@ -249,3 +249,87 @@ func TestTriggerAutoUpgradesNotStaleManualRepopulates(t *testing.T) {
 		t.Errorf("in-flight manual upgrade must be re-populated after a hub restart, got %q", got)
 	}
 }
+
+// TestRecoverArmedUpgradesStampsZeroClockPreservesLiveClock covers the restart
+// half of the badge-without-timer bug: the registry persists UpgradeStartedAt
+// (json "upgradeStartedAt"), so recovery must NEVER re-stamp a rehydrated
+// non-zero clock — the hub rolls often, and a re-stamp per roll is the #2725
+// reset bug all over again. Only a latch that never had a clock (armed before
+// the field existed, or a persisted spoke-reported upgrade) gets stamped, so
+// the dashboard badge always carries its elapsed counter and the
+// stuck-upgrade alert is never blind after a restart.
+func TestRecoverArmedUpgradesStampsZeroClockPreservesLiveClock(t *testing.T) {
+	persisted := time.Now().Add(-42 * time.Minute)
+	s := &HubServer{logger: slog.Default()}
+	s.registry.Hives = []RegistryEntry{
+		// Rehydrated from disk with its real clock — must survive untouched.
+		{ID: "with-clock", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeStartedAt: persisted},
+		// Latched with a lost/never-set clock — must be stamped now.
+		{ID: "zero-clock", Upgrading: true, UpgradeTarget: "fc32ae4"},
+		// Spoke-reported upgrading (no target): nothing to arm, but the badge
+		// still renders, so it must get a clock too.
+		{ID: "spoke-reported", Upgrading: true},
+		// Not upgrading — must keep a zero clock.
+		{ID: "idle"},
+	}
+
+	before := time.Now()
+	s.recoverArmedUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if got := s.registry.Hives[0].UpgradeStartedAt; !got.Equal(persisted) {
+		t.Errorf("recovery must not re-stamp a persisted clock (that resets every in-flight timer on each hub roll), got %v want %v", got, persisted)
+	}
+	if got := s.registry.Hives[1].UpgradeStartedAt; got.IsZero() || got.Before(before) {
+		t.Errorf("a recovered latch with a zero clock must be stamped now, got %v", got)
+	}
+	if got := s.registry.Hives[2].UpgradeStartedAt; got.IsZero() {
+		t.Error("a persisted spoke-reported upgrade must get a clock at recovery")
+	}
+	if got := s.registry.Hives[3].UpgradeStartedAt; !got.IsZero() {
+		t.Errorf("a non-upgrading entry must keep a zero clock, got %v", got)
+	}
+	// Delivery re-arming is unchanged by the stamping.
+	if got := s.heartbeatUpgrade["with-clock"]; got != "fc32ae4" {
+		t.Errorf("with-clock must still be re-armed, got %q", got)
+	}
+	if got := s.heartbeatUpgrade["zero-clock"]; got != "fc32ae4" {
+		t.Errorf("zero-clock must still be re-armed, got %q", got)
+	}
+	if _, armed := s.heartbeatUpgrade["spoke-reported"]; armed {
+		t.Error("a targetless latch must not be armed for delivery")
+	}
+}
+
+// TestUpgradeStartedAtRoundTripsThroughRegistryAndRecovery pins the full
+// restart story: the clock serializes to the registry JSON, deserializes
+// intact, and survives recoverArmedUpgrades — so a hub restart never resets
+// an in-flight upgrade's elapsed time.
+func TestUpgradeStartedAtRoundTripsThroughRegistryAndRecovery(t *testing.T) {
+	started := time.Now().Add(-13 * time.Minute).UTC().Truncate(time.Second)
+	reg := Registry{Hives: []RegistryEntry{{
+		ID: "h1", Upgrading: true, UpgradeTarget: "fc32ae4", UpgradeStartedAt: started,
+	}}}
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatalf("marshal registry: %v", err)
+	}
+	var loaded Registry
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal registry: %v", err)
+	}
+	if !loaded.Hives[0].UpgradeStartedAt.Equal(started) {
+		t.Fatalf("UpgradeStartedAt must round-trip through the registry JSON, got %v want %v", loaded.Hives[0].UpgradeStartedAt, started)
+	}
+
+	s := &HubServer{logger: slog.Default()}
+	s.registry = loaded
+	s.recoverArmedUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.registry.Hives[0].UpgradeStartedAt.Equal(started) {
+		t.Fatalf("recovery must keep the rehydrated clock, got %v want %v", s.registry.Hives[0].UpgradeStartedAt, started)
+	}
+}

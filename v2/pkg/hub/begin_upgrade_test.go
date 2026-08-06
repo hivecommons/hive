@@ -134,3 +134,79 @@ func TestClearUpgradeLatchZeroesEverything(t *testing.T) {
 		t.Fatal("an upgrade begun after a clear must time from zero")
 	}
 }
+
+// TestStampObservedUpgradeStampsFirstObservation: a spoke-REPORTED upgrade
+// (Upgrading=true with no hub-armed clock and no previous beat to carry one
+// from) must be stamped now — the dashboard badge only renders its elapsed
+// counter, and the stuck-upgrade alert only fires, when the clock is non-zero.
+func TestStampObservedUpgradeStampsFirstObservation(t *testing.T) {
+	e := RegistryEntry{ID: "h1", Upgrading: true}
+	before := time.Now()
+	stampObservedUpgrade(&e, time.Time{})
+	if e.UpgradeStartedAt.IsZero() {
+		t.Fatal("an observed upgrade with no prior clock must be stamped")
+	}
+	if e.UpgradeStartedAt.Before(before) {
+		t.Fatalf("first observation must stamp now, got %v (before test start %v)", e.UpgradeStartedAt, before)
+	}
+}
+
+// TestStampObservedUpgradeCarriesPreviousClockForward: the heartbeat handler
+// rebuilds the registry entry from scratch every beat, so a spoke-reported
+// upgrade's clock lives only in the PREVIOUS entry. It must be carried
+// forward, never re-stamped — a re-stamp per beat would pin the counter near
+// zero for the whole upgrade (the #2725 reset bug in a new coat).
+func TestStampObservedUpgradeCarriesPreviousClockForward(t *testing.T) {
+	prev := time.Now().Add(-20 * time.Minute)
+	e := RegistryEntry{ID: "h1", Upgrading: true}
+	stampObservedUpgrade(&e, prev)
+	if !e.UpgradeStartedAt.Equal(prev) {
+		t.Fatalf("observed upgrade must carry the previous beat's clock forward, got %v want %v", e.UpgradeStartedAt, prev)
+	}
+}
+
+// TestStampObservedUpgradeNeverTouchesALiveClock: an entry whose clock is
+// already set (a hub-armed upgrade stamped by beginUpgrade) must pass through
+// untouched regardless of what the previous beat carried.
+func TestStampObservedUpgradeNeverTouchesALiveClock(t *testing.T) {
+	orig := time.Now().Add(-45 * time.Minute)
+	e := RegistryEntry{ID: "h1", Upgrading: true, UpgradeStartedAt: orig}
+	stampObservedUpgrade(&e, time.Now())
+	if !e.UpgradeStartedAt.Equal(orig) {
+		t.Fatalf("a live clock must never be re-stamped, got %v want %v", e.UpgradeStartedAt, orig)
+	}
+}
+
+// TestStampObservedUpgradeIgnoresNonUpgrading: a hive that is not upgrading
+// must keep a zero clock — the invariant is bidirectional (non-zero clock
+// implies an upgrade genuinely in flight; see clearUpgradeLatch).
+func TestStampObservedUpgradeIgnoresNonUpgrading(t *testing.T) {
+	e := RegistryEntry{ID: "h1"}
+	stampObservedUpgrade(&e, time.Now().Add(-time.Hour))
+	if !e.UpgradeStartedAt.IsZero() {
+		t.Fatalf("a non-upgrading entry must keep a zero clock, got %v", e.UpgradeStartedAt)
+	}
+}
+
+// TestObservedStampThenSameTargetBeginUpgradePreserves: an upgrade first
+// stamped by the observed path, then re-entered by a hub-armed retry toward
+// the SAME target, must keep the observed stamp — the two stamping paths
+// share one invariant, so mixing them must not reset the clock either.
+func TestObservedStampThenSameTargetBeginUpgradePreserves(t *testing.T) {
+	s := newBeginUpgradeServer(RegistryEntry{ID: "h1", Upgrading: true, UpgradeTarget: "target-a"})
+	stampObservedUpgrade(&s.registry.Hives[0], time.Time{})
+	if s.registry.Hives[0].UpgradeStartedAt.IsZero() {
+		t.Fatal("observed stamp must have set the clock")
+	}
+	// Backdate the observed stamp so preserve-vs-restamp is unambiguous.
+	obs := time.Now().Add(-10 * time.Minute)
+	s.registry.Hives[0].UpgradeStartedAt = obs
+
+	s.mu.Lock()
+	s.beginUpgrade(0, "target-a") // same-target retry
+	s.mu.Unlock()
+
+	if !s.registry.Hives[0].UpgradeStartedAt.Equal(obs) {
+		t.Fatalf("a same-target beginUpgrade after an observed stamp must preserve the clock, got %v want %v", s.registry.Hives[0].UpgradeStartedAt, obs)
+	}
+}

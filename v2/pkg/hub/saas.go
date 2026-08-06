@@ -94,6 +94,32 @@ func (s *HubServer) clearUpgradeLatch(i int) {
 	h.UpgradeStartedAt = time.Time{}
 }
 
+// stampObservedUpgrade extends the beginUpgrade invariant to upgrades the hub
+// merely OBSERVES rather than arms: whenever an entry ends up Upgrading=true
+// from ANY source, it must carry a non-zero UpgradeStartedAt — the dashboard
+// row only renders the elapsed counter, and the stuck-upgrade alert only
+// fires, when the clock is non-zero. The spoke-reported path (a heartbeat
+// whose payload says Upgrading with no hub-side target) rebuilt the registry
+// entry from scratch every beat with a zero clock, so the badge rendered
+// without its counter and the alert was blind for the whole upgrade.
+//
+// prevStart is the previous beat's clock for the same entry (zero when there
+// is no previous state, e.g. a first heartbeat). Carrying it forward — never
+// re-stamping a live clock — is what keeps this compatible with the #2725
+// rule that a retry of the same upgrade preserves its original start time.
+// Entries that are not Upgrading, or already carry a clock (the hub-armed
+// paths route through beginUpgrade), are left untouched.
+func stampObservedUpgrade(entry *RegistryEntry, prevStart time.Time) {
+	if !entry.Upgrading || !entry.UpgradeStartedAt.IsZero() {
+		return
+	}
+	if !prevStart.IsZero() {
+		entry.UpgradeStartedAt = prevStart
+		return
+	}
+	entry.UpgradeStartedAt = time.Now()
+}
+
 type SaaSUser struct {
 	GitHubUsername string            `json:"github_username"`
 	CreatedAt      string            `json:"created_at"`
