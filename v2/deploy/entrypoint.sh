@@ -1187,7 +1187,19 @@ elif [ -f /data/proxy-ca.pem ]; then
 fi
 
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
-hive "$@" &
+# The image CMD includes --config /etc/hive/hive.yaml. When that ConfigMap
+# mount is read-only and a durable runtime config already exists, the boot
+# selection above exports HIVE_CONFIG to the PVC path. Passing only the
+# original CMD would silently override that selection, so Save(), watcher,
+# pack reconciliation, setup, status, and doctor would all keep targeting the
+# read-only seed. Append the effective path last; Go's flag parser applies the
+# final value. Preserve every operator-provided argument and keep the ordinary
+# writable/config-seed path byte-for-byte unchanged.
+if [ -n "${HIVE_CONFIG:-}" ] && [ "$HIVE_CONFIG" != "$HIVE_CONFIG_PATH" ]; then
+  hive "$@" --config "$HIVE_CONFIG" &
+else
+  hive "$@" &
+fi
 HIVE_PID=$!
 
 sleep 1
