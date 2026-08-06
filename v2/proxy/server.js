@@ -40,6 +40,74 @@ const SESSION_KEY = deriveSessionKey();
 // hub cookie rather than a shared dashboard token.
 const IS_HOSTED = SESSION_KEY !== '';
 
+// HIVE_ID is this spoke's own hive identity, injected by the hub at provision
+// time (mirrors the HIVE_ID env the Go dashboard reads). It is the anchor for
+// per-hive terminal authorization: a hub-user cookie is authenticated hub-wide
+// (the `hive_hub_user` cookie is scoped to .hive.kubestellar.io, so ANY hive's
+// domain receives it), so the signature check alone proves only "some hub user",
+// never "a user allowed on THIS hive".
+const HIVE_ID = process.env.HIVE_ID || '';
+
+// HIVE_AUTHORIZED_USERS is this hive's per-hive allowlist, injected by the hub
+// (authorizedUsersForHive): a comma-separated list of `username` or
+// `username:role` entries (owner + everyone with this hive in their SaaS
+// Hives map). It is the proxy's INDEPENDENT, per-hive authorization source —
+// the one defense that also holds on OpenShift Routes, which have no nginx
+// auth-proxy in front of the pod to call /api/saas/auth-check.
+//
+// SECURITY (CWE-862, finding C3): without a per-hive check, one cookie from any
+// free GitHub account that completed hub OAuth opened a shell in EVERY tenant's
+// pod. We parse the allowlist into a lowercase username set (GitHub logins are
+// case-insensitive) and require the verified cookie user to be a member.
+const HIVE_AUTHORIZED_USERS = parseAuthorizedUsernames(process.env.HIVE_AUTHORIZED_USERS || '');
+
+// parseAuthorizedUsernames turns "owner:owner,alice:read,bob" into a Set of
+// lowercased usernames. It mirrors the Go parseAuthorizedUsers split (comma
+// list, ":role" suffix optional) but keeps only the identity, which is all the
+// terminal gate needs — role granularity stays with the dashboard/API layer.
+function parseAuthorizedUsernames(raw) {
+  const set = new Set();
+  for (const entry of raw.split(',')) {
+    const name = entry.split(':')[0].trim().toLowerCase();
+    if (name) set.add(name);
+  }
+  return set;
+}
+
+// isAuthorizedForThisHive reports whether a verified hub username is allowed to
+// open a terminal on THIS hive.
+//
+// Fail-closed policy: when the allowlist is populated (the normal hosted case —
+// authorizedUsersForHive always emits at least the owner), a user absent from it
+// is rejected. When the allowlist is EMPTY (env unset/blank), the proxy has no
+// independent per-hive data; hosted nginx hives still enforce authorization at
+// the ingress auth-url (finding C3 defense #1), so the proxy defers rather than
+// locking everyone out of a legitimately-allowlist-less hive. This keeps the
+// proxy check a strict tightening on top of the ingress, never a new outage.
+function isAuthorizedForThisHive(username) {
+  if (!username) return false;
+  if (HIVE_AUTHORIZED_USERS.size === 0) return true; // no local allowlist → defer to ingress
+  return HIVE_AUTHORIZED_USERS.has(username.toLowerCase());
+}
+
+const HOSTED_SUFFIX = '.hive.kubestellar.io';
+
+// isHostedHost decides whether the terminal auth gate applies to a request.
+//
+// SECURITY (CWE-862 bypass): the raw Host header can carry a :port suffix and a
+// trailing FQDN dot, both of which a naive `host.endsWith('.hive.kubestellar.io')`
+// would MISS — turning `hive-b.hive.kubestellar.io:443` or `hive-b.hive.kubestellar.io.`
+// into a "non-hosted" request that skips the gate entirely and proxies straight
+// to ttyd. Normalize first: lowercase, drop the port, strip a single trailing
+// dot, THEN suffix-match.
+function isHostedHost(rawHost) {
+  let host = (rawHost || '').toLowerCase();
+  const colon = host.indexOf(':');
+  if (colon !== -1) host = host.slice(0, colon);
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  return host.endsWith(HOSTED_SUFFIX);
+}
+
 // SECURITY (fail closed on empty dashboard token — CWE-306).
 //
 // The prior guard only fired when NODE_ENV === 'production', but NODE_ENV is
@@ -202,7 +270,7 @@ const ttydProxy = createProxyMiddleware({
 });
 app.use('/terminal', (req, res, next) => {
   const host = req.headers.host || '';
-  const isHosted = host.endsWith('.hive.kubestellar.io');
+  const isHosted = isHostedHost(host);
   if (isHosted) {
     const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
       const [k, ...v] = c.trim().split('=');
@@ -218,6 +286,20 @@ app.use('/terminal', (req, res, next) => {
         return;
       }
       res.status(401).send('Terminal access requires authentication');
+      return;
+    }
+    // SECURITY (CWE-862, finding C3): authentication is hub-WIDE — the signed
+    // cookie only proves this is some real hub user, because it is scoped to
+    // .hive.kubestellar.io and every hive's domain receives it. AUTHORIZATION is
+    // per-hive: the user must be on THIS hive's allowlist. A cookie authorized on
+    // hive A must not open a shell on hive B.
+    if (!isAuthorizedForThisHive(user)) {
+      console.warn(`[terminal] 403: hub user ${JSON.stringify(user)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
+      if (req.headers.upgrade === 'websocket') {
+        req.socket.destroy();
+        return;
+      }
+      res.status(403).send('Not authorized for this hive');
       return;
     }
   }
@@ -289,7 +371,7 @@ server.on('upgrade', (req, socket, head) => {
   }
   if (req.url.startsWith('/terminal')) {
     const host = req.headers.host || '';
-    const isHosted = host.endsWith('.hive.kubestellar.io');
+    const isHosted = isHostedHost(host);
     if (isHosted) {
       const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
         const [k, ...v] = c.trim().split('=');
@@ -297,7 +379,16 @@ server.on('upgrade', (req, socket, head) => {
         return acc;
       }, {});
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
-      if (!verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user'])) {
+      const wsUser = verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user']);
+      if (!wsUser) {
+        socket.destroy();
+        return;
+      }
+      // SECURITY (CWE-862, finding C3): per-hive authorization on the WS upgrade,
+      // mirroring the HTTP gate. A hub-authenticated user not on THIS hive's
+      // allowlist gets the socket closed, not a shell.
+      if (!isAuthorizedForThisHive(wsUser)) {
+        console.warn(`[terminal-ws] 403: hub user ${JSON.stringify(wsUser)} not authorized for hive ${JSON.stringify(HIVE_ID)}`);
         socket.destroy();
         return;
       }
