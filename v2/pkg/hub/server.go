@@ -1594,24 +1594,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// bug. (No-op for unclaimed placeholders and for empty/zero reported values.)
 	s.adoptSpokeProjectConfig(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, clampInt(payload.ACMMLevel, 0, 6))
 
-	// Retroactively fill a blank github_host from this hive's cluster BEFORE
-	// building the project config, so a hive assigned before assign-time
-	// backfill existed starts receiving its GitHub Enterprise API URL on this
-	// very beat. No-op (and silent) for every hive that already has a host, is
-	// an unclaimed placeholder, or sits on a non-GHE cluster.
-	s.repairGitHubHostForHive(payload.HiveID)
-	// Beyond filling a BLANK host, repair a persisted host that is set but WRONG
-	// from the forge the spoke actually reports it runs against (public→GHE only,
-	// never demoting a legit public pin). Closes the vllmd-06 class: meta said
-	// github.com while the spoke ran api_url github.ibm.com.
+	// FORGE IS PER-HIVE: a hive's forge comes from its own recorded github_host
+	// (empty = public github.com), never from its cluster's default — a cluster
+	// hosts hives of both forges. The per-beat blank-fill-from-cluster and the
+	// cluster-keyed "GHE guard" that used to run here are gone: on 2026-08-05
+	// the guard rewrote github_host on every vllm-d hive whose spoke reported
+	// the public App — github.com projects included — and 9 spokes were flipped
+	// onto an App that 404'd every token mint.
+	//
+	// Repair a persisted host that is set but WRONG from the forge the spoke
+	// actually reports it runs against (public→GHE only, never demoting a legit
+	// public pin, and never trusting a spoke whose App auth is failing). Closes
+	// the vllmd-06 class: meta said github.com while the spoke ran api_url
+	// github.ibm.com.
 	s.reconcileGitHubHostFromSpoke(&payload)
-	// Never-blank-for-GHE guard. The two repairs above trust a blank host or a
-	// GHE-reporting spoke; neither catches a claimed GHE-cluster hive that is
-	// POSITIVELY reporting the public github.com forge (blank api_url + public
-	// app_id) with no public pin — the EPM symptom. Re-deliver the cluster forge
-	// so the spoke stops silently talking to github.com. No-op (and silent) for
-	// every hive not in that exact state.
-	s.guardGHEHiveNotOnPublicForge(&payload)
+	// Restore a github_host the cluster-keyed guard STOMPED: a claimed hive
+	// whose provision request explicitly records public github.com, whose meta
+	// now says GHE, and whose spoke is failing App auth on that GHE forge, gets
+	// its recorded host set back to github.com — after which the per-hive
+	// identity reconcile below re-delivers its public App on this same beat.
+	// No-op (and silent) for every hive not in that exact state.
+	s.repairMisflippedForgeFromRequest(&payload)
 
 	// Close the FORGE handshake before building the project config, so the beat
 	// on which the spoke first reports the requested host is also the beat the

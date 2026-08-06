@@ -90,6 +90,43 @@ func TestResolveHiveIdentityForgeMapShape(t *testing.T) {
 			t.Errorf("AppID = %d, want 0 — this cluster names no public App to hand out", got.AppID)
 		}
 	})
+
+	// FORGE IS PER-HIVE (the 2026-08-05 regression). A CLAIMED hive that records
+	// no host means public github.com — the field's documented meaning — and
+	// must NOT inherit its cluster's GHE forge: vllm-d hosts github.com projects
+	// (ibm/alchemy-logging) beside its github.ibm.com ones.
+	t.Run("a CLAIMED hive with no recorded host is public, even on the GHE cluster (alchemy)", func(t *testing.T) {
+		got := ResolveHiveIdentity(&SaaSHive{
+			ID: "alchemy", Status: statusAssigned, Org: "ibm",
+		}, cluster)
+		if !sameGitHubHost(got.Forge, publicForgeHost) {
+			t.Fatalf("Forge = %q, want public — a claimed hive's empty github_host means github.com, never the cluster's forge", got.Forge)
+		}
+		if got.AppID == testGHEAppID {
+			t.Errorf("a claimed blank-host hive was handed the GHE App %d — the exact flip that degraded 9 spokes", testGHEAppID)
+		}
+		// The public election must carry EXPLICIT public urls so a spoke wrongly
+		// sitting on GHE urls is moved off them (empty would mean "unchanged").
+		if got.APIURL != config.DefaultGitHubAPIURL || got.BaseURL != config.DefaultGitHubBaseURL {
+			t.Errorf("public election urls = api=%q base=%q, want explicit public urls", got.APIURL, got.BaseURL)
+		}
+	})
+
+	t.Run("a CLAIMED hive recording github.com stays public on the GHE cluster", func(t *testing.T) {
+		got := ResolveHiveIdentity(&SaaSHive{
+			ID: "alchemy-explicit", Status: statusAssigned, Org: "ibm", GitHubHost: publicForgeHost,
+		}, cluster)
+		if !sameGitHubHost(got.Forge, publicForgeHost) || got.AppID == testGHEAppID {
+			t.Errorf("got forge=%q app=%d — an explicit github.com host must never be overridden by the cluster", got.Forge, got.AppID)
+		}
+	})
+
+	t.Run("an UNCLAIMED placeholder still inherits the cluster default", func(t *testing.T) {
+		got := ResolveHiveIdentity(&SaaSHive{ID: "pool-1", Status: statusAvailable}, cluster)
+		if got.AppID != testGHEAppID || !sameGitHubHost(got.Forge, identGHEHost) {
+			t.Errorf("got app=%d forge=%q, want the cluster default — the placeholder pool serves the cluster's forge", got.AppID, got.Forge)
+		}
+	})
 }
 
 // TestBackfillGitHubHostForgeMapShape proves the assign/approve-time backfill
@@ -111,139 +148,285 @@ func TestBackfillGitHubHostForgeMapShape(t *testing.T) {
 	}
 }
 
-// TestGuardGHEHiveNotOnPublicForge exercises the never-blank-for-GHE guard: a
-// claimed GHE-cluster hive that is POSITIVELY reporting the public github.com
-// forge is repaired by re-recording the cluster's GHE host, while every
-// legitimate public case is left untouched.
-func TestGuardGHEHiveNotOnPublicForge(t *testing.T) {
+// TestNoClusterKeyedForgeFlip pins the 2026-08-05 regression closed: a CLAIMED
+// hive on a GHE-default cluster whose spoke reports the public forge must NEVER
+// have its github_host rewritten to the cluster's forge, and must never be
+// delivered the GHE App — unless its OWN recorded host is the GHE host. The
+// vllm-d cluster hosts github.com projects (ibm/alchemy-logging) beside its
+// github.ibm.com ones; cluster membership proves nothing about one hive.
+func TestNoClusterKeyedForgeFlip(t *testing.T) {
+	withTempAppKeyDir(t)
 	oldHives := saasHivesDir
 	saasHivesDir = t.TempDir()
 	t.Cleanup(func() { saasHivesDir = oldHives })
+	storeKeyFor(t, "vllm-d")
 
 	newHub := func() *HubServer {
 		return &HubServer{
 			logger: slog.New(slog.NewTextHandler(nopWriter{}, nil)),
 			clusters: map[string]ClusterConfig{
 				"hive-oke": *hiveOKECluster(),
-				// The GHE cluster in the forge-map shape — the shape that hid the bug.
-				"vllm-d": *vllmDForgeMapCluster(),
+				"vllm-d":   *vllmDForgeMapCluster(),
 			},
 		}
 	}
 
-	// A spoke report that names the public forge with the public app_id.
+	// A healthy github.com spoke: public forge, public App.
 	publicReport := func(id string) *HeartbeatPayload {
 		return &HeartbeatPayload{
 			HiveID:       id,
+			ClusterID:    "vllm-d",
 			GitHubAPIURL: "", // blank api_url = api.github.com
 			GitHubAppID:  config.PublicGitHubAppID,
 		}
 	}
 
-	run := func(t *testing.T, hive *SaaSHive, payload *HeartbeatPayload) (bool, string) {
-		t.Helper()
-		if err := saveSaaSHive(hive); err != nil {
+	for _, hive := range []*SaaSHive{
+		// The alchemy class: claimed for a github.com org, host recorded public.
+		{ID: "alchemy-explicit", Status: statusAssigned, ClusterID: "vllm-d", Org: "ibm", GitHubHost: "github.com"},
+		// Same class, host never recorded — empty means public github.com.
+		{ID: "alchemy-blank", Status: statusAssigned, ClusterID: "vllm-d", Org: "ibm", GitHubHost: ""},
+	} {
+		t.Run(hive.ID, func(t *testing.T) {
+			if err := saveSaaSHive(hive); err != nil {
+				t.Fatal(err)
+			}
+			s := newHub()
+			payload := publicReport(hive.ID)
+
+			// The full heartbeat repair surface must leave the record alone…
+			s.reconcileGitHubHostFromSpoke(payload)
+			s.repairMisflippedForgeFromRequest(payload)
+			if got := loadSaaSHive(hive.ID); got == nil || got.GitHubHost != hive.GitHubHost {
+				t.Fatalf("github_host was rewritten to %q — the cluster-keyed flip is back", got.GitHubHost)
+			}
+			// …and the identity delivery must not hand it the GHE App.
+			if cfg := s.appKeySyncForHeartbeat(payload); cfg != nil && cfg.AppID == testGHEAppID {
+				t.Fatalf("a github.com project on the GHE cluster was delivered the GHE App %d — the exact 9-spoke regression", testGHEAppID)
+			}
+		})
+	}
+
+	t.Run("REVERSE: a public-host hive whose spoke was flipped onto the GHE App is delivered its public identity back", func(t *testing.T) {
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "alchemy-flipped", Status: statusAssigned, ClusterID: "vllm-d",
+			Org: "ibm", GitHubHost: publicForgeHost,
+		}); err != nil {
 			t.Fatal(err)
 		}
 		s := newHub()
-		changed := s.guardGHEHiveNotOnPublicForge(payload)
+		// The 23:56Z state: the spoke adopted app 5686 + GHE urls, but kept its
+		// old PUBLIC installation_id — which 404s under the GHE App.
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:               "alchemy-flipped",
+			ClusterID:            "vllm-d",
+			GitHubAPIURL:         identGHEAPIURL,
+			GitHubBaseURL:        identGHEBaseURL,
+			GitHubAppID:          testGHEAppID,
+			GitHubInstallationID: 146551814,
+		})
+		if cfg == nil || cfg.AppID != testPublicAppID {
+			t.Fatalf("the mis-flipped spoke must be delivered its public App back, got %+v", cfg)
+		}
+		// EXPLICIT public urls: the spoke sits on GHE urls, and empty means
+		// "unchanged" on the wire — the set would half-apply and be refused.
+		if cfg.APIURL != config.DefaultGitHubAPIURL || cfg.BaseURL != config.DefaultGitHubBaseURL {
+			t.Errorf("public restore urls = api=%q base=%q, want explicit public urls", cfg.APIURL, cfg.BaseURL)
+		}
+		// The app_id changes (GHE -> public), so the installation resets with it;
+		// RediscoverAndAdopt then re-adopts the old public installation, which is
+		// valid again under app %d.
+		if !cfg.ResetInstallation || cfg.InstallationID != 0 {
+			t.Errorf("reverse delivery must reset installation_id (got reset=%v id=%d)", cfg.ResetInstallation, cfg.InstallationID)
+		}
+	})
+
+	t.Run("a GHE-host hive whose spoke runs public IS still repaired (EPM, delivery-side)", func(t *testing.T) {
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "epm", Status: statusAssigned, ClusterID: "vllm-d", Org: "epm", GitHubHost: identGHEHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		s := newHub()
+		cfg := s.appKeySyncForHeartbeat(publicReport("epm"))
+		if cfg == nil || cfg.AppID != testGHEAppID {
+			t.Fatalf("a hive whose OWN host is GHE must still be moved off the public App, got %+v", cfg)
+		}
+		// The app_id changes, so the stale public installation_id must be reset
+		// with it — it belongs to the previous App and would 404 under this one.
+		if !cfg.ResetInstallation || cfg.InstallationID != 0 {
+			t.Errorf("app-changing delivery must reset installation_id (got reset=%v id=%d)", cfg.ResetInstallation, cfg.InstallationID)
+		}
+	})
+}
+
+// TestRepairMisflippedForgeFromRequest exercises the restore for records the
+// removed cluster-keyed guard STOMPED: hub meta and spoke both say GHE, the
+// spoke is failing auth on it, and the hive's own provision request records
+// public github.com — the one surviving record of the org's real host.
+func TestRepairMisflippedForgeFromRequest(t *testing.T) {
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	oldReqs := provisionRequestsDir
+	provisionRequestsDir = t.TempDir()
+	t.Cleanup(func() { provisionRequestsDir = oldReqs })
+
+	newHub := func() *HubServer {
+		return &HubServer{
+			logger:   slog.New(slog.NewTextHandler(nopWriter{}, nil)),
+			clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+		}
+	}
+
+	// The mis-flipped state: meta stomped to GHE, spoke adopted the GHE forge
+	// and is dying on it (404 on token mint -> not-installed + banner).
+	misflipped := func(id string) *SaaSHive {
+		return &SaaSHive{
+			ID: id, Status: statusAssigned, ClusterID: "vllm-d",
+			Owner: "alchemist", Org: "ibm", GitHubHost: identGHEHost,
+		}
+	}
+	brokenGHEReport := func(id string) *HeartbeatPayload {
+		return &HeartbeatPayload{
+			HiveID:            id,
+			ClusterID:         "vllm-d",
+			GitHubAPIURL:      identGHEAPIURL,
+			GitHubBaseURL:     identGHEBaseURL,
+			GitHubAppID:       testGHEAppID,
+			GitHubAppRequired: true,
+			GitHubAppState:    spokeAppStateNotInstalled,
+		}
+	}
+	publicRequest := func(id string) *ProvisionRequest {
+		return &ProvisionRequest{
+			Username: "alchemist", Org: "ibm", GitHubHost: githubHostPublic,
+			Status: provisionStatusApproved, AssignedHive: id,
+		}
+	}
+
+	run := func(t *testing.T, h *SaaSHive, req *ProvisionRequest, payload *HeartbeatPayload) (bool, string) {
+		t.Helper()
+		if err := saveSaaSHive(h); err != nil {
+			t.Fatal(err)
+		}
+		if req != nil {
+			if err := saveProvisionRequest(req); err != nil {
+				t.Fatal(err)
+			}
+		}
+		changed := newHub().repairMisflippedForgeFromRequest(payload)
 		got := ""
-		if reloaded := loadSaaSHive(hive.ID); reloaded != nil {
+		if reloaded := loadSaaSHive(h.ID); reloaded != nil {
 			got = reloaded.GitHubHost
 		}
 		return changed, got
 	}
 
-	t.Run("claimed GHE hive running public is repaired to the GHE host", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "epm-blank", Status: statusAssigned, ClusterID: "vllm-d", Org: "epm", GitHubHost: ""},
-			publicReport("epm-blank"),
-		)
-		if !changed || got != identGHEHost {
-			t.Errorf("got (changed=%v, host=%q), want (true, %s)", changed, got, identGHEHost)
+	t.Run("the mis-flipped alchemy hive is restored to public", func(t *testing.T) {
+		changed, got := run(t, misflipped("flip-1"), publicRequest("flip-1"), brokenGHEReport("flip-1"))
+		if !changed || got != publicForgeHost {
+			t.Fatalf("got (changed=%v, host=%q), want (true, %s)", changed, got, publicForgeHost)
 		}
 	})
 
-	t.Run("a persisted-but-public github_host on a GHE cluster is repaired", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "epm-public", Status: statusAssigned, ClusterID: "vllm-d", Org: "epm", GitHubHost: "github.com"},
-			publicReport("epm-public"),
-		)
-		if !changed || got != identGHEHost {
-			t.Errorf("got (changed=%v, host=%q), want (true, %s)", changed, got, identGHEHost)
-		}
-	})
-
-	t.Run("an explicit public pin is never repaired", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "pinned", Status: statusAssigned, ClusterID: "vllm-d", GitHubBaseURL: githubHostPublic, GitHubHost: "github.com"},
-			publicReport("pinned"),
-		)
-		if changed || got != "github.com" {
-			t.Errorf("got (changed=%v, host=%q), want (false, github.com) — a public pin is a decision", changed, got)
-		}
-	})
-
-	t.Run("a GHE hive already recording the GHE host is a no-op (spoke just not converged)", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "converging", Status: statusAssigned, ClusterID: "vllm-d", GitHubHost: identGHEHost},
-			publicReport("converging"),
-		)
+	t.Run("a request naming the GHE host restores nothing (genuine GHE hive)", func(t *testing.T) {
+		req := publicRequest("flip-2")
+		req.GitHubHost = identGHEHost
+		changed, got := run(t, misflipped("flip-2"), req, brokenGHEReport("flip-2"))
 		if changed || got != identGHEHost {
-			t.Errorf("got (changed=%v, host=%q), want (false, %s)", changed, got, identGHEHost)
+			t.Errorf("got (changed=%v, host=%q) — a GHE request must keep its GHE host", changed, got)
 		}
 	})
 
-	t.Run("an in-flight forge switch is never raced", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "switching", Status: statusAssigned, ClusterID: "vllm-d", GitHubHost: "github.com", RequestedGitHubHost: identGHEHost},
-			publicReport("switching"),
-		)
-		if changed || got != "github.com" {
-			t.Errorf("got (changed=%v, host=%q), want (false, github.com) — the switch owns the host", changed, got)
+	t.Run("a silent (pre-host-field) request is UNKNOWN, never evidence", func(t *testing.T) {
+		req := publicRequest("flip-3")
+		req.GitHubHost = ""
+		changed, got := run(t, misflipped("flip-3"), req, brokenGHEReport("flip-3"))
+		if changed || got != identGHEHost {
+			t.Errorf("got (changed=%v, host=%q) — silence must not flip a hive public", changed, got)
 		}
 	})
 
-	t.Run("a public-cluster hive running public is correct and untouched", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "console", Status: statusAssigned, ClusterID: "hive-oke", GitHubHost: ""},
-			publicReport("console"),
-		)
-		if changed || got != "" {
-			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — public cluster running public is fine", changed, got)
+	t.Run("a HEALTHY spoke on GHE is never touched, whatever the paperwork says", func(t *testing.T) {
+		payload := brokenGHEReport("flip-4")
+		payload.GitHubAppRequired = false
+		payload.GitHubAppState = ""
+		changed, got := run(t, misflipped("flip-4"), publicRequest("flip-4"), payload)
+		if changed || got != identGHEHost {
+			t.Errorf("got (changed=%v, host=%q) — a working hive must not be flipped", changed, got)
 		}
 	})
 
-	t.Run("an unclaimed placeholder is skipped", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "placeholder", Status: statusAvailable, ClusterID: "vllm-d", GitHubHost: ""},
-			publicReport("placeholder"),
-		)
-		if changed || got != "" {
-			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — assign owns a placeholder", changed, got)
+	t.Run("an operator forge switch outranks the request record", func(t *testing.T) {
+		h := misflipped("flip-5")
+		h.ForgeDelivered = true // a completed deliberate switch to GHE
+		changed, got := run(t, h, publicRequest("flip-5"), brokenGHEReport("flip-5"))
+		if changed || got != identGHEHost {
+			t.Errorf("got (changed=%v, host=%q) — a completed switch is a decision", changed, got)
 		}
 	})
 
-	t.Run("a spoke too old to report (no app_id) is UNKNOWN, never a fault", func(t *testing.T) {
-		changed, got := run(t,
-			&SaaSHive{ID: "old-spoke", Status: statusAssigned, ClusterID: "vllm-d", GitHubHost: ""},
-			&HeartbeatPayload{HiveID: "old-spoke"}, // no api_url, no app_id
-		)
-		if changed || got != "" {
-			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — silence is not evidence", changed, got)
+	t.Run("a request assigned to a DIFFERENT hive is no authority", func(t *testing.T) {
+		req := publicRequest("some-other-hive")
+		changed, got := run(t, misflipped("flip-6"), req, brokenGHEReport("flip-6"))
+		if changed || got != identGHEHost {
+			t.Errorf("got (changed=%v, host=%q) — another hive's request proves nothing here", changed, got)
 		}
 	})
 
 	t.Run("nil payload / nil server are safe", func(t *testing.T) {
 		s := newHub()
-		if s.guardGHEHiveNotOnPublicForge(nil) {
+		if s.repairMisflippedForgeFromRequest(nil) {
 			t.Error("nil payload must be a no-op")
 		}
 		var nilServer *HubServer
-		if nilServer.guardGHEHiveNotOnPublicForge(&HeartbeatPayload{HiveID: "x"}) {
+		if nilServer.repairMisflippedForgeFromRequest(&HeartbeatPayload{HiveID: "x"}) {
 			t.Error("nil server must be a no-op")
 		}
 	})
+}
+
+// TestBrokenSpokeForgeReportNotAdopted pins the reconcile stand-down: a spoke
+// FAILING App auth on the GHE forge it reports must not have that forge adopted
+// into the hive record — adopting it would launder a mis-delivery into meta and
+// fight the restore above.
+func TestBrokenSpokeForgeReportNotAdopted(t *testing.T) {
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	s := &HubServer{
+		logger:   slog.New(slog.NewTextHandler(nopWriter{}, nil)),
+		clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+	}
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "restored", Status: statusAssigned, ClusterID: "vllm-d",
+		Owner: "alchemist", Org: "ibm", GitHubHost: publicForgeHost,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	payload := &HeartbeatPayload{
+		HiveID:            "restored",
+		ClusterID:         "vllm-d",
+		GitHubHost:        identGHEHost,
+		GitHubAPIURL:      identGHEAPIURL,
+		GitHubAppID:       testGHEAppID,
+		GitHubAppRequired: true,
+		GitHubAppState:    spokeAppStateNotInstalled,
+	}
+	if s.reconcileGitHubHostFromSpoke(payload) {
+		t.Fatal("a failing spoke's forge report was adopted — the restore would be undone on the next beat")
+	}
+	if h := loadSaaSHive("restored"); h == nil || h.GitHubHost != publicForgeHost {
+		t.Fatalf("github_host = %q, want %q", h.GitHubHost, publicForgeHost)
+	}
+	// The same report from a HEALTHY spoke still repairs public→GHE (vllmd-06).
+	payload.GitHubAppRequired = false
+	payload.GitHubAppState = ""
+	if !s.reconcileGitHubHostFromSpoke(payload) {
+		t.Fatal("a healthy spoke's positive GHE report must still be adopted (the vllmd-06 repair)")
+	}
 }
 
 // TestGHEClaimDeliversCompleteAtomicSet proves the heartbeat App-config path
@@ -301,6 +484,51 @@ func TestGHEClaimDeliversCompleteAtomicSet(t *testing.T) {
 	}); err != nil {
 		t.Errorf("delivered a half-identity: %v", err)
 	}
+	// installation_id is PART of the atomic set: the delivery changes the app_id
+	// (public -> GHE), so the spoke's public installation_id — valid only under
+	// the public App — must be reset with it, never retained to 404 on
+	// /app/installations/<id>/access_tokens.
+	if !cfg.ResetInstallation {
+		t.Error("app-changing delivery did not reset installation_id — the 2026-08-05 9-spoke 404")
+	}
+	if cfg.InstallationID != 0 {
+		t.Errorf("app-changing delivery carried installation_id %d, want 0", cfg.InstallationID)
+	}
+}
+
+// TestSameAppDeliveryPreservesInstallation is the other half of the atomic-set
+// rule: a delivery that does NOT change the spoke's app_id (a key-only repair)
+// must leave installation_id strictly alone.
+func TestSameAppDeliveryPreservesInstallation(t *testing.T) {
+	withTempAppKeyDir(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	storeKeyFor(t, "vllm-d")
+
+	s := &HubServer{
+		logger:   appKeyTestLogger(),
+		clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+	}
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "ghe-keyless", Status: statusAssigned, ClusterID: "vllm-d",
+		Org: "epm", GitHubHost: identGHEHost,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The spoke already runs the RIGHT App but holds no key: a key-only push.
+	cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+		HiveID:               "ghe-keyless",
+		ClusterID:            "vllm-d",
+		GitHubAppID:          testGHEAppID,
+		GitHubInstallationID: 12345,
+	})
+	if cfg == nil {
+		t.Fatal("expected a key delivery for a keyless spoke")
+	}
+	if cfg.ResetInstallation {
+		t.Error("a same-app delivery reset installation_id — a key-only fault must never clear a working installation")
+	}
 }
 
 // TestPublicHiveStillFineWithBlankForge is the don't-break-public guard: a
@@ -341,9 +569,77 @@ func TestPublicHiveStillFineWithBlankForge(t *testing.T) {
 		t.Errorf("a converged public hive was pushed a forge change: app_id=%d api_url=%q base_url=%q — blank must stay blank",
 			cfg.AppID, cfg.APIURL, cfg.BaseURL)
 	}
-	// And the guard must never fire on it.
-	if s.guardGHEHiveNotOnPublicForge(payload) {
-		t.Error("the never-blank-for-GHE guard fired on a legitimate public hive")
+	// And no repair may touch its record.
+	if s.repairMisflippedForgeFromRequest(payload) {
+		t.Error("the mis-flip restore fired on a legitimate public hive")
+	}
+}
+
+// TestStaleInstallationReset covers the self-heal for the genuine-GHE half of
+// the 2026-08-05 fleet: spokes whose app identity is fully converged on the GHE
+// App but whose installation_id still belongs to the PREVIOUS (public) App —
+// the pre-atomic-set deliveries swapped app_id and left the old id in place, so
+// every token mint 404s while every config field looks right.
+func TestStaleInstallationReset(t *testing.T) {
+	withTempAppKeyDir(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	s := &HubServer{
+		logger:   appKeyTestLogger(),
+		clusters: map[string]ClusterConfig{"vllm-d": *vllmDForgeMapCluster()},
+	}
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "certus", Status: statusAssigned, ClusterID: "vllm-d",
+		Org: "certus", GitHubHost: identGHEHost,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	broken := func() *HeartbeatPayload {
+		return &HeartbeatPayload{
+			HiveID:               "certus",
+			ClusterID:            "vllm-d",
+			GitHubAPIURL:         identGHEAPIURL,
+			GitHubBaseURL:        identGHEBaseURL,
+			GitHubAppID:          testGHEAppID, // converged on the hub's own answer
+			GitHubInstallationID: 146551814,    // the old PUBLIC App's installation
+			GitHubAppRequired:    true,
+			GitHubAppState:       spokeAppStateNotInstalled, // 404 on token mint
+		}
+	}
+
+	cfg := s.appKeySyncForHeartbeat(broken())
+	if cfg == nil || !cfg.ResetInstallation {
+		t.Fatalf("converged-app + failing-auth + stale installation must deliver a reset, got %+v", cfg)
+	}
+	if cfg.AppID != 0 || cfg.PrivateKey != "" {
+		t.Errorf("the reset must ride bare — app identity is already correct (got app_id=%d has_key=%v)", cfg.AppID, cfg.PrivateKey != "")
+	}
+
+	// Read-back idempotence: once the spoke reports installation 0, nothing more.
+	confirmed := broken()
+	confirmed.GitHubInstallationID = 0
+	if cfg := s.appKeySyncForHeartbeat(confirmed); cfg != nil && cfg.ResetInstallation {
+		t.Error("reset re-delivered after the spoke confirmed installation 0")
+	}
+
+	// A HEALTHY converged spoke is never reset, whatever id it holds.
+	healthy := broken()
+	healthy.GitHubAppRequired = false
+	healthy.GitHubAppState = ""
+	if cfg := s.appKeySyncForHeartbeat(healthy); cfg != nil && cfg.ResetInstallation {
+		t.Error("a healthy spoke's installation was reset — positive failure evidence is required")
+	}
+
+	// An operator-armed reset outranks this path (delivered elsewhere).
+	h := loadSaaSHive("certus")
+	h.RequestedAppReset = true
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
+	}
+	if cfg := s.appKeySyncForHeartbeat(broken()); cfg != nil && cfg.ResetInstallation {
+		t.Error("automatic reset fired while an operator reset owns the field")
 	}
 }
 

@@ -772,208 +772,150 @@ func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
 	return forge
 }
 
-// repairGitHubHostsFromClusters retroactively fills in a blank GitHubHost on
-// hives that were ALREADY assigned, using their cluster's GHE defaults.
+// FORGE IS PER-HIVE. Two repairs used to live here that keyed a hive's forge on
+// its CLUSTER's default — repairGitHubHostForHive (filled a blank github_host
+// from the cluster forge on every beat) and guardGHEHiveNotOnPublicForge
+// (rewrote a blank-or-public github_host to the cluster's GHE host whenever the
+// spoke reported the public forge). Both are gone, on purpose.
 //
-// backfillGitHubHostFromCluster only runs at assign time, so every hive claimed
-// before that fix keeps GitHubHost == "" forever — and with it an empty
-// github_api_url pushed on every heartbeat, which the spoke reads as "leave
-// mine alone". Those hives sit on a github.ibm.com cluster while talking to
-// api.github.com (hosted-available-vllmd-01 in org "katamari" is the live
-// example). Nothing else ever repairs them.
+// A cluster hosts hives of BOTH forges: vllm-d carries github.ibm.com projects
+// (certus, EPM, …) beside github.com projects (ibm/alchemy-logging — the org
+// "ibm" lives on public github.com). At 23:56Z on 2026-08-05, minutes after the
+// cluster-keyed guard shipped, it rewrote github_host on every vllm-d hive whose
+// spoke reported the public App — github.com projects included — and the
+// delivery that followed flipped their spokes onto app 5686 / github.ibm.com,
+// degrading 9 of them with "404 Not Found" on every token mint. Cluster
+// membership proves nothing about any one hive's forge; only the hive's own
+// recorded github_host (empty = public github.com, the field's documented
+// meaning) does.
 //
-// It is deliberately conservative and idempotent:
-//   - It only ever fills a BLANK GitHubHost. An explicitly set host is never
-//     overwritten, and neither is an explicit "public" override — that resolves
-//     to an empty effective base URL, which backfillGitHubHostFromCluster
-//     already refuses to record.
-//   - It changes nothing when the hive's cluster has no GHE host configured.
-//   - Unclaimed placeholders are skipped: assign owns those, and it now
-//     backfills the host itself.
-//   - Every change is logged with before/after.
-//
-// Returns the number of hives changed.
-//
-// It runs LAZILY, per hive, from the heartbeat path (repairGitHubHostForHive)
-// rather than as a startup sweep. A goroutine at hub start would walk the hive
-// directory concurrently with the first heartbeats already writing to it, for
-// no benefit: a hive that never beats does not need repairing, and one that
-// does gets repaired on its very next beat.
-//
-// NOTE: this repairs the HOST only. A hive that also carries the public
-// app_id/installation_id is NOT fixed by this — the GitHub App still has to be
-// installed on the target org before installation auto-discovery can self-heal
-// it. See gitHubAppStillRequiredNote.
-func (s *HubServer) repairGitHubHostsFromClusters() int {
-	repaired := 0
-	for _, h := range listSaaSHives() {
-		if s.repairGitHubHostForHive(h.ID) {
-			repaired++
-		}
-	}
-	if repaired > 0 {
-		s.logger.Info("github host repair: complete", "hives_repaired", repaired,
-			"note", gitHubAppStillRequiredNote)
-	}
-	return repaired
-}
+// What remains, all keyed on per-hive evidence:
+//   - assign/approve record github_host from the pasted org URL (and
+//     backfillGitHubHostFromCluster fills it ONCE, at claim time, for legacy
+//     requests that named no host);
+//   - reconcileGitHubHostFromSpoke adopts the forge a HEALTHY spoke positively
+//     reports it runs;
+//   - repairMisflippedForgeFromRequest (below) restores a github_host the
+//     cluster-keyed guard stomped, from the provision request's own record;
+//   - the wrong-forge identity repair (decideAppKeySync /
+//     appKeyReasonWrongForgeApp) re-delivers the hive's OWN forge — in both
+//     directions — when the spoke's app_id provably belongs to another forge.
 
-// repairGitHubHostForHive applies the retroactive host repair to a SINGLE hive,
-// reporting whether it changed anything. Called on each heartbeat, so it must
-// be cheap and silent in the overwhelmingly common no-op case — every guard
-// below returns before any write.
-func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
-	h := loadSaaSHive(hiveID)
-	if h == nil {
-		return false
-	}
-	if h.Status == statusAvailable {
-		return false // unclaimed placeholder — assign backfills it at claim time
-	}
-	if h.GitHubHost != "" {
-		return false // explicitly set — never clobber
-	}
-	// backfillGitHubHostFromCluster also returns "" for an explicit "public"
-	// override (effectiveGitHubBaseURL resolves the sentinel to public) and for
-	// a cluster with no GHE host, so both are covered by this one check.
-	host := backfillGitHubHostFromCluster(h, s.clusterForHive(h))
-	if host == "" {
-		return false
-	}
-	h.GitHubHost = host
-	if err := saveSaaSHive(h); err != nil {
-		s.logger.Error("github host repair: failed to save hive",
-			"hive", hiveID, "error", err)
-		return false
-	}
-	s.logger.Info("github host repair: filled blank github_host from cluster defaults",
-		"hive", hiveID,
-		"cluster", clusterIDForHive(h),
-		"org", h.Org,
-		"github_host_before", "",
-		"github_host_after", host,
-		"github_api_url_after", gheAPIURLForHost(host),
-		"note", gitHubAppStillRequiredNote)
-	return true
-}
-
-// guardGHEHiveNotOnPublicForge is the never-blank-for-GHE guard. It fires when a
-// CLAIMED hive on a GHE-default cluster is actively reporting that it runs the
-// PUBLIC github.com forge — a blank/api.github.com api_url with the public
-// app_id — while nothing about the hive elected public. That pairing is the EPM
-// symptom: a hive whose org lives on github.ibm.com silently talking to
-// github.com, authenticating as nothing. It reports whether it changed anything.
+// repairMisflippedForgeFromRequest restores a claimed hive's github_host after
+// the 2026-08-05 cluster-keyed guard stomped it, using the hive's own provision
+// request — the surviving record of which forge the org actually lives on — as
+// the authority. It reports whether it changed anything.
 //
-// WHY THIS IS DISTINCT FROM THE OTHER TWO REPAIRS
+// THE STATE IT REPAIRS. The removed guard rewrote github_host from blank /
+// "github.com" to the cluster's GHE host, and the delivery that followed
+// flipped the spoke's whole github block onto the GHE App. Hub record and spoke
+// now AGREE on the wrong forge, so no drift-based repair can see the fault; the
+// only remaining evidence of the hive's true forge is the provision request the
+// owner filed, which records the org's host explicitly ("public" or a pasted
+// GHE host — the onboarding form always sends one).
 //
-//	repairGitHubHostForHive       fills a BLANK github_host from cluster defaults.
-//	reconcileGitHubHostFromSpoke  corrects a WRONG github_host from the forge the
-//	                              spoke reports.
+// Every gate is positive evidence, and ALL must hold:
+//   - the hive is CLAIMED, with no operator flow owning the host: no in-flight
+//     forge switch (RequestedGitHubHost) and no COMPLETED one either
+//     (ForgeDelivered — a deliberate later switch outranks the original
+//     request);
+//   - its recorded github_host is currently a GHE host;
+//   - its own provision request (matched by AssignedHive) EXPLICITLY records
+//     public github.com. A blank request host is treated as unknown — requests
+//     filed before the host field existed carry "", and flipping a genuine GHE
+//     hive public on that silence would recreate this incident in reverse;
+//   - the spoke POSITIVELY reports it is running that same GHE forge (it
+//     adopted the mis-delivery) AND reports failing App auth
+//     (spokeAppAuthFailing) — a healthy hive is never touched, whatever the
+//     paperwork says.
 //
-// Neither closes this case. reconcileGitHubHostFromSpoke only trusts a spoke
-// that POSITIVELY reports a GHE host; a spoke running the wrong (public) forge
-// reports github.com, which that function reads as "unknown, stand down". And
-// repairGitHubHostForHive no-ops once github_host is non-blank. So a GHE hive
-// that ended up on github.com — blank host filled to public by an older build,
-// or a stale record — had no repair path at all: it reported public forever and
-// nothing corrected it. This guard is the one writer that treats a positive
-// public report on a GHE cluster as the fault it is.
-//
-// It is deliberately conservative and one-directional, mirroring its siblings:
-//   - Only a CLAIMED hive (assign owns an unclaimed placeholder's host).
-//   - Only when the hive's CLUSTER defaults to GHE (forge-map shape included via
-//     clusterDefaultForge) — a public cluster legitimately runs public.
-//   - NEVER against an explicit public pin (github_base_url "public"/github.com):
-//     that is a deliberate decision, exactly the appKeyReasonPublicHiveOnGHECluster
-//     case, and must keep running github.com.
-//   - NEVER while an operator forge SWITCH is in flight (RequestedGitHubHost set):
-//     the switch path owns the host and could be moving the hive TO public.
-//   - Only when the spoke POSITIVELY reports the public forge. A spoke too old to
-//     report its api_url sends "" — but "" from an old spoke is UNKNOWN, so the
-//     signal is taken only alongside a github.com app_id, which an old spoke does
-//     report. Silence is never evidence.
-//
-// The repair itself is to (re)set github_host to the cluster's GHE default. That
-// is enough: on the next beat ResolveHiveIdentity resolves the GHE App and
-// appKeySyncForHeartbeat delivers the COMPLETE atomic set (app_id, app_slug,
-// api_url, base_url), while projectConfigForHiveID pushes the GHE api_url — the
-// hub re-delivers the cluster forge rather than the spoke silently proceeding on
-// github.com. As with the host repair, the GitHub App must still be installed on
-// the org before auto-discovery can adopt an installation (gitHubAppStillRequiredNote).
-func (s *HubServer) guardGHEHiveNotOnPublicForge(payload *HeartbeatPayload) bool {
+// The write restores github_host to public github.com. The same beat's identity
+// reconcile then resolves the hive's public App (per-hive election), the
+// wrong-forge repair delivers the complete public set — explicit public urls,
+// public app_id, and an installation reset riding with the app change — and the
+// spoke's RediscoverAndAdopt re-adopts its old public installation, which is
+// valid again under the restored app_id.
+func (s *HubServer) repairMisflippedForgeFromRequest(payload *HeartbeatPayload) bool {
 	if s == nil || payload == nil {
 		return false
 	}
 	h := loadSaaSHive(payload.HiveID)
-	if h == nil || h.Status == statusAvailable {
-		return false // unclaimed placeholder — assign owns its host
+	if !hiveClaimed(h) {
+		return false // unclaimed placeholder (or no record) — assign owns its host
 	}
-	// An explicit public pin is a decision, not a fault.
-	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
-		return false
+	if h.RequestedGitHubHost != "" || h.ForgeDelivered {
+		return false // an operator forge switch owns (or deliberately set) the host
 	}
-	// A forge switch owns the host while it runs — it may be moving TO public.
-	if h.RequestedGitHubHost != "" {
-		return false
+	current := forgeHostLabel(h.GitHubHost)
+	if h.GitHubHost == "" || isPublicForgeHost(current) {
+		return false // nothing GHE recorded — nothing to restore
 	}
-	cluster := s.clusterForHive(h)
-	if cluster == nil {
-		return false
+	req := loadProvisionRequest(h.Owner)
+	if req == nil || req.AssignedHive != h.ID {
+		return false // no surviving request record for THIS hive — no authority
 	}
-	clusterForge := clusterDefaultForge(cluster)
-	if isPublicForgeHost(clusterForge) {
-		return false // public cluster — running public is correct
+	reqHost := strings.TrimSpace(req.GitHubHost)
+	requestSaysPublic := strings.EqualFold(reqHost, githubHostPublic) ||
+		(reqHost != "" && isPublicForgeHost(forgeHostLabel(reqHost)))
+	if !requestSaysPublic {
+		return false // request names GHE, or is silent — silence is not evidence
 	}
-	// Does the SPOKE positively report it is running the public forge? Judge the
-	// forge it reports, base-or-api. A blank/api.github.com api_url on its own is
-	// ambiguous (an old spoke sends ""), so require the public app_id alongside —
-	// which an old spoke DOES report — before treating this as a positive public
-	// report rather than silence.
+	// The spoke must have adopted the mis-delivered GHE forge AND be failing on
+	// it. A spoke still on public, or one that is healthy, is not this fault.
 	spokeForge := config.GitHubConfig{
 		BaseURL: strings.TrimSpace(payload.GitHubBaseURL),
 		APIURL:  strings.TrimSpace(payload.GitHubAPIURL),
 	}.HostLabel()
-	spokeOnPublic := isPublicForgeHost(spokeForge) && payload.GitHubAppID == config.PublicGitHubAppID
-	if !spokeOnPublic {
+	if !sameGitHubHost(forgeHostLabel(spokeForge), current) {
 		return false
 	}
-	// If the hive already records the GHE host, the resolver is already delivering
-	// the GHE identity and the spoke just has not converged yet — do not churn the
-	// record. Only act when the host is blank or itself public.
-	if h.GitHubHost != "" && !isPublicForgeHost(forgeHostLabel(h.GitHubHost)) {
+	if !spokeAppAuthFailing(payload) {
 		return false
 	}
 	before := h.GitHubHost
-	h.GitHubHost = clusterForge
+	h.GitHubHost = publicForgeHost
 	if err := saveSaaSHive(h); err != nil {
-		s.logger.Error("github forge guard: failed to save hive",
+		s.logger.Error("github forge restore: failed to save hive",
 			"hive", payload.HiveID, "error", err)
 		return false
 	}
-	s.logger.Warn("github forge guard: a claimed GHE-cluster hive was running the PUBLIC github.com forge — re-delivering the cluster forge",
+	s.logger.Warn("github forge restore: a public-github.com hive was mis-flipped onto its cluster's GHE forge — restoring the host its provision request records",
 		"hive", payload.HiveID,
-		"cluster", cluster.ID,
 		"org", h.Org,
+		"owner", h.Owner,
 		"github_host_before", before,
-		"github_host_after", clusterForge,
+		"github_host_after", publicForgeHost,
+		"request_github_host", reqHost,
 		"spoke_app_id", payload.GitHubAppID,
-		"spoke_api_url", strings.TrimSpace(payload.GitHubAPIURL),
-		"github_api_url_after", gheAPIURLForHost(clusterForge),
-		"note", gitHubAppStillRequiredNote)
+		"spoke_app_state", strings.TrimSpace(payload.GitHubAppState),
+	)
 	return true
+}
+
+// spokeAppAuthFailing reports whether a spoke POSITIVELY reports that its
+// GitHub App auth is not working: the app-required banner is raised and its own
+// classification names a credential/installation fault. Silence — an old spoke
+// reporting neither field — is never read as failure.
+func spokeAppAuthFailing(payload *HeartbeatPayload) bool {
+	if payload == nil || !payload.GitHubAppRequired {
+		return false
+	}
+	switch strings.TrimSpace(payload.GitHubAppState) {
+	case spokeAppStateNotInstalled, spokeAppStateWrongInstallation, "key-invalid", "key-missing":
+		return true
+	}
+	return false
 }
 
 // reconcileGitHubHostFromSpoke repairs a persisted github_host that is not merely
 // BLANK but WRONG, using the forge the spoke actually reports it is running
 // against. It reports whether it changed anything.
 //
-// Why, on top of the blank-fill: repairGitHubHostForHive only ever fills a BLANK
-// host from cluster defaults; it
-// refuses to touch an already-set value. But a hive can carry a persisted host
-// that is set AND wrong: assigned from a pasted github.com URL, or seeded with a
-// stale record, while the repo actually lives on GitHub Enterprise (vllmd-06 is
-// the live example — meta said github.com but the spoke ran api_url
-// github.ibm.com). Nothing repaired those; each needed a hand-edit.
+// Why: a hive can carry a persisted host that is set AND wrong — assigned from
+// a pasted github.com URL, or seeded with a stale record, while the repo
+// actually lives on GitHub Enterprise (vllmd-06 is the live example — meta said
+// github.com but the spoke ran api_url github.ibm.com). Nothing repaired those;
+// each needed a hand-edit.
 //
 // The spoke's OWN reported forge is authoritative: it is what the running hive is
 // actually configured against. Read it base-or-api across the two reported fields
@@ -1026,6 +968,17 @@ func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool
 	// An explicit public pin is a DECISION, not a fault: leave it alone even if the
 	// spoke momentarily reports a GHE host (its cluster default leaking through).
 	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
+		return false
+	}
+	// A BROKEN spoke's forge report is not evidence of intent. A spoke whose App
+	// auth is failing may be running a forge it was mis-delivered (the
+	// 2026-08-05 flip left 9 spokes positively reporting github.ibm.com they
+	// could not authenticate against); adopting that report would launder the
+	// mis-delivery into the hive's record and fight the restore that
+	// repairMisflippedForgeFromRequest performs. Only a spoke that is actually
+	// WORKING on the forge it reports (the vllmd-06 class this reconcile exists
+	// for) is authoritative about it.
+	if spokeAppAuthFailing(payload) {
 		return false
 	}
 	current := githubHostLabel(h.GitHubHost) // normalize for a like-for-like compare

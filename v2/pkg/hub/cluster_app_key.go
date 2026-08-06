@@ -552,7 +552,7 @@ const (
 	// public pin instead of forcing the cluster GHE app_id.
 	appKeyReasonPublicHiveOnGHECluster = "hive is pinned to public github.com on a GHE-default cluster"
 	// appKeyReasonWrongForgeApp repairs a spoke carrying an App registered on a
-	// DIFFERENT GitHub host than the one the hive actually talks to.
+	// DIFFERENT GitHub host than the one the HIVE ITSELF talks to.
 	//
 	// appKeyReasonDifferentApp protects a deliberate pin, and that protection is
 	// right whenever both Apps live on the same forge — an operator may genuinely
@@ -568,11 +568,15 @@ const (
 	// host. That is exactly how a live GHE hive ended up emitting an install link
 	// for the github.com App slug and 404ing on GitHub Enterprise.
 	//
-	// The discriminator is narrow and evidence-based: the hive is NOT public-pinned
-	// (that case is already handled above and must keep its github.com App), its
-	// cluster declares a GHE base URL, and the spoke's app_id differs from the
-	// cluster's. Under those three conditions the spoke's App cannot be the
-	// cluster's forge's App, so the cluster identity is the only workable one.
+	// The discriminator is narrow, evidence-based and — since the 2026-08-05
+	// fleet regression — PER-HIVE, never per-cluster: the spoke's own reported
+	// app_id names a forge (config.ForgeOfAppID / the fleet's forge-app map)
+	// that is not the forge the HIVE's own recorded host elects. It fires in
+	// BOTH directions: a GHE-host hive whose spoke runs the public App (the EPM
+	// class), and a public-host hive whose spoke was wrongly flipped onto the
+	// GHE App (the alchemy class, mis-flipped by the cluster-keyed guard #2713
+	// shipped). Judging it on the CLUSTER's forge instead is exactly what
+	// force-flipped every github.com project on the vllm-d cluster to app 5686.
 	appKeyReasonWrongForgeApp = "hive carries an app_id registered on a different github host"
 )
 
@@ -637,13 +641,17 @@ const (
 // reconcile finally honouring the same public pin that resolveProvisionAppID and
 // effectiveGitHubBaseURL already honour on the provisioning path.
 //
-// WRONG-FORGE APP — clusterIsGHE carries the one fact this function cannot see
-// for itself: whether the cluster's App lives on a GitHub Enterprise host rather
-// than public github.com. Combined with a non-public-pinned hive whose app_id
-// differs from the cluster's, that proves the spoke's App was issued by a
-// different forge and therefore names nothing on the host this hive uses. See
-// appKeyReasonWrongForgeApp.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, clusterIsGHE bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
+// WRONG-FORGE APP — spokeOnWrongForge carries the one fact this function cannot
+// see for itself: that the App the spoke reports was issued by a DIFFERENT forge
+// than the one this HIVE's own recorded host elects (computed by the caller from
+// the spoke's app_id via the app-id→forge map, against the hive's resolved
+// forge). Combined with a non-zero spoke app_id that differs from the identity
+// being delivered, that proves the spoke's App names nothing on the host this
+// hive uses. It is judged on the HIVE's forge, never the cluster's: a cluster
+// hosts hives of BOTH forges (vllm-d carries github.ibm.com projects beside
+// github.com ones), so cluster membership alone proves nothing about any one
+// hive. See appKeyReasonWrongForgeApp.
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, spokeOnWrongForge bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
 	if cluster == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
 	}
@@ -696,12 +704,16 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 	//
 	// Requires a POSITIVE, non-zero app_id disagreement: zero means "too old to
 	// report", and silence is never evidence of a fault (same contract as the
-	// per-hive exception above).
+	// per-hive exception above). spokeOnWrongForge is itself only ever true on
+	// positive evidence — a spoke app_id whose issuing forge is KNOWN and differs
+	// from the forge the hive's own recorded host elects — so an unrecognised
+	// App ID (a third forge, a self-hosted deployment) stays protected as a
+	// deliberate pin.
 	//
 	// Like the sentinel repair this does NOT require the hub to hold the cluster's
 	// key — correcting a cross-forge app_id/app_slug is a non-secret change and is
 	// the whole fix for a hive whose owner has yet to install the App at all.
-	if clusterIsGHE && spokeAppID != 0 && spokeAppID != cluster.AppID {
+	if spokeOnWrongForge && spokeAppID != 0 && spokeAppID != cluster.AppID {
 		return appKeySyncDecision{
 			Push:            true,
 			PushKey:         cluster.HasKey(),
@@ -799,24 +811,57 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 		hive = hiveOpt[0]
 	}
 	identity := s.appIdentityForHive(hive, clusterID)
-	// Does this cluster's DEFAULT App live on a GitHub Enterprise host? Read from
-	// cluster config, never inferred from the App ID — an App ID is an opaque
-	// number and carries no forge information.
+	// Is the SPOKE running an App from a forge other than the one this HIVE's
+	// own recorded host elects? Judged per-hive, never per-cluster.
 	//
-	// Judged on clusterDefaultForge, NOT on a bare `github_base_url != ""`. The
-	// flat github_base_url is only one of the two shapes a GHE cluster can take:
-	// the 2026-07-31 rework lets a cluster declare `default_forge` +　a `forges`
-	// map and leave the flat URL blank. A flat-only read then reported such a
-	// cluster as PUBLIC, so the wrong-forge app_id repair below (gated on
-	// clusterIsGHE) never fired for it and a spoke stuck on the public app_id
-	// against github.ibm.com stayed broken — the EPM symptom, on the delivery
-	// side. clusterDefaultForge honours default_forge, so a GHE default is
-	// recognised however it is written.
-	clusterIsGHE := false
-	if c, ok := s.clusters[clusterID]; ok {
-		clusterIsGHE = !isPublicForgeHost(clusterDefaultForge(&c))
+	// The 2026-08-05 fleet regression is why this is emphatically NOT
+	// "clusterIsGHE": #2713 shipped this branch keyed on clusterDefaultForge, so
+	// every hive on the GHE-default vllm-d cluster whose spoke reported the
+	// public App — including the github.com projects that cluster also hosts
+	// (ibm/alchemy-logging: org "ibm" lives on public github.com) — was
+	// "repaired" onto app 5686 / github.ibm.com and 404'd on every token mint.
+	// A cluster hosts hives of BOTH forges; cluster membership proves nothing
+	// about any one hive's forge.
+	//
+	// The per-hive signal needs two pieces of POSITIVE evidence:
+	//   - the hive's own forge is known: it recorded a host (electedForgeForHive)
+	//     or it is a CLAIMED hive, whose empty github_host means public
+	//     github.com by the field's own contract. A nil record or an unclaimed
+	//     placeholder yields no evidence and the repair stands down.
+	//   - the spoke's reported app_id maps to a KNOWN forge (forgeOfSpokeAppID)
+	//     that differs from the forge of the identity resolved FOR THIS HIVE.
+	//     An unrecognised App ID is a deliberate pin, not evidence.
+	//
+	// This also gives the repair its REVERSE direction: a public-host hive whose
+	// spoke reports the GHE App (the mis-flipped alchemy class) resolves a
+	// public identity above, its spoke's app_id maps to the GHE forge, and the
+	// same branch flips it back.
+	spokeOnWrongForge := false
+	hiveForgeKnown := false
+	if hive != nil {
+		var cl *ClusterConfig
+		if c, ok := s.clusters[clusterID]; ok {
+			cl = &c
+		}
+		hiveForgeKnown = electedForgeForHive(hive, cl) != "" || hiveClaimed(hive)
 	}
-	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, clusterIsGHE, spokeAppID, identity)
+	if hiveForgeKnown && identity != nil && identity.Forge != "" {
+		if spokeForge := s.forgeOfSpokeAppID(spokeAppID); spokeForge != "" && !sameGitHubHost(spokeForge, identity.Forge) {
+			spokeOnWrongForge = true
+		}
+	}
+	// The public pin is honoured BY the per-hive identity now: a public-pinned
+	// hive resolves the PUBLIC App above, so delivering that identity is the pin
+	// being enforced, not violated. Suppressing delivery on the pin (the old
+	// behaviour, from when this path could only answer with the cluster's GHE
+	// App) would leave a public-pinned spoke that was wrongly flipped onto the
+	// GHE App broken forever — the hub would hold the right answer and refuse to
+	// send it. Only a GHE identity may still be suppressed by the pin, and the
+	// per-hive resolver can no longer produce one for a public-pinned hive.
+	if hivePublicPinned && identity != nil && isPublicForgeHost(identity.Forge) {
+		hivePublicPinned = false
+	}
+	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, spokeOnWrongForge, spokeAppID, identity)
 	// A spoke carrying the sentinel is broken and must be legible even when the
 	// hub can do nothing about it — that silence is what made this bug cost days
 	// of debugging while the dashboard blamed the installation ID. Logged BEFORE
@@ -922,6 +967,40 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 		return nil
 	}
 
+	// installation_id IS PART OF THE ATOMIC SET. An installation belongs to ONE
+	// App: whenever the delivered identity CHANGES the spoke's app_id, the old
+	// installation_id is the previous App's and can never mint a token under the
+	// new one — reused, it 404s on POST /app/installations/<id>/access_tokens,
+	// which is exactly how the 2026-08-05 delivery (app swap with the old
+	// installation_id left in place) degraded 9 spokes at 23:56Z. So an
+	// app-changing delivery carries an explicit ResetInstallation: the spoke
+	// drops the stale id, HasUsableApp() goes false, the "Install GitHub App /
+	// Set ID" banner is raised, and the 2-minute self-heal ticker's
+	// RediscoverAndAdopt re-establishes the correct installation for the
+	// delivered App (automatically, when the App is already installed on the
+	// org — the flip-back case, where the old id becomes discoverable again).
+	//
+	// Conservative on silence, as everywhere: a zero spoke app_id (too old to
+	// report) never resets, and the placeholder sentinel never does either —
+	// a sentinel hive's installation_id was entered by its owner FOR the real
+	// App being delivered, not for a previous App, and must be preserved.
+	// When the app_id is UNCHANGED, installation_id is left strictly alone.
+	resetInstallation := spokeAppID != 0 &&
+		spokeAppID != config.PlaceholderAppID &&
+		identity.AppID != spokeAppID
+	deliveredInstallationID := installationID
+	if resetInstallation {
+		deliveredInstallationID = 0
+	}
+	if resetInstallation && logger != nil {
+		logger.Info("heartbeat: delivered app identity changes the spoke's app_id — resetting installation_id with it (atomic set)",
+			"hive_id", hiveID,
+			"cluster_id", clusterID,
+			"spoke_app_id", spokeAppID,
+			"to_app_id", identity.AppID,
+		)
+	}
+
 	// Emit the COMPLETE set. The guard above validated app_id/app_slug against
 	// the forge URLs this hive resolved to; sending the App without those URLs
 	// would ship a set the spoke cannot reassemble, and leave it to be completed
@@ -932,13 +1011,40 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 	// election resolves to empty URLs, which the spoke reads as "unchanged" —
 	// correct, because empty is also how every healthy public spoke is stored.
 	return &HeartbeatGitHubAppConfig{
-		AppID:          identity.AppID,
-		InstallationID: installationID,
-		PrivateKey:     privateKey,
-		AppSlug:        identity.AppSlug,
-		APIURL:         identity.APIURL,
-		BaseURL:        identity.BaseURL,
+		AppID:             identity.AppID,
+		InstallationID:    deliveredInstallationID,
+		ResetInstallation: resetInstallation,
+		PrivateKey:        privateKey,
+		AppSlug:           identity.AppSlug,
+		APIURL:            identity.APIURL,
+		BaseURL:           identity.BaseURL,
 	}
+}
+
+// forgeOfSpokeAppID maps a spoke-reported app_id to the forge that issued it,
+// or "" when the App is unknown to this hub.
+//
+// Two sources, both positive evidence only: the build's own forge-identity
+// table (config.ForgeOfAppID — the public and known-GHE Apps), then the fleet's
+// cluster configs (forgeAppsAcrossFleet — an App any cluster names on any
+// forge, forge-map shape included). Zero and the placeholder sentinel map to
+// nothing: silence is never evidence.
+func (s *HubServer) forgeOfSpokeAppID(appID int64) string {
+	if appID == 0 || appID == config.PlaceholderAppID {
+		return ""
+	}
+	if f := config.ForgeOfAppID(appID); f != "" {
+		return forgeHostLabel(f)
+	}
+	if s == nil {
+		return ""
+	}
+	for host, app := range s.forgeAppsAcrossFleet() {
+		if app.AppID == appID {
+			return forgeHostLabel(host)
+		}
+	}
+	return ""
 }
 
 // clusterAPIURLForIdentity and clusterBaseURLForIdentity read the cluster's
@@ -1209,6 +1315,14 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		if strings.TrimSpace(payload.GitHubAppKeyFingerprint) != "" {
 			s.noteAppKeyConverged(payload.HiveID)
 		}
+		if cfg == nil {
+			// Nothing else to deliver: check for the one fault a converged app
+			// identity can still hide — a stale installation_id left behind by an
+			// app swap that predates the atomic-set rule above (the 2026-08-05
+			// deliveries swapped app_id and left each spoke's old installation_id
+			// in place). See staleInstallationResetForHeartbeat.
+			cfg = s.staleInstallationResetForHeartbeat(payload, sh, clusterID)
+		}
 		return cfg
 	}
 	if !s.allowAppKeyDelivery(payload.HiveID) {
@@ -1219,4 +1333,87 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 	}
 	s.noteAppKeyDelivered(payload.HiveID)
 	return cfg
+}
+
+// Spoke-reported App auth states this hub acts on. They mirror the stable wire
+// tokens of github.AppAuthState.String() — declared here as named constants so
+// the heartbeat consumers do not depend on a literal typed twice.
+const (
+	// spokeAppStateNotInstalled is what a spoke reports after a 404 from GitHub
+	// on an App endpoint — including POST /app/installations/<id>/access_tokens
+	// with an installation_id that does not belong to the configured App.
+	spokeAppStateNotInstalled = "not-installed"
+	// spokeAppStateWrongInstallation is the spoke's classification when the App
+	// authenticated but the installation resolves to a different account.
+	spokeAppStateWrongInstallation = "wrong-installation"
+)
+
+// staleInstallationResetForHeartbeat repairs the one fault a CONVERGED App
+// identity can still hide: an installation_id that belongs to a PREVIOUS App.
+//
+// An installation is issued for exactly one App. A delivery that swaps a
+// spoke's app_id while leaving its installation_id in place (what the
+// 2026-08-05 forge deliveries did, before installation_id joined the atomic
+// set) leaves a spoke whose every field looks coherent — app_id, slug, urls all
+// name one forge — while every token mint dies with
+// "POST .../app/installations/<id>/access_tokens: 404 Not Found". On later
+// beats the app_id matches what the hub would deliver, so the ordinary
+// reconcile sees nothing to do, and the spoke stays degraded forever.
+//
+// This is the standing, automatic form of the operator's "Reset App" button
+// (handleResetApp / RequestedAppReset), gated on POSITIVE evidence only:
+//
+//   - the spoke reports a NON-ZERO installation_id (zero would make the reset a
+//     no-op, and is also the read-back that stops re-delivery — idempotence),
+//   - the spoke's own app_id MATCHES the identity the hub resolves for this
+//     hive (the app is converged; the installation is the last stale piece —
+//     an app-id mismatch is the wrong-forge/mismatch repair's job, which now
+//     carries its own reset),
+//   - the spoke POSITIVELY reports failing App auth: github_app_required is
+//     raised AND its classified state is not-installed / wrong-installation —
+//     the two classifications a stale installation produces (404 / wrong
+//     account). A healthy spoke clears the flag on its next successful write,
+//     and silence (an old spoke reporting neither field) never triggers.
+//   - the hive is CLAIMED and no operator flow owns the field: an armed
+//     RequestedAppReset already delivers this, and an in-flight forge switch
+//     (RequestedGitHubHost) owns the whole identity.
+//
+// Clearing the installation makes HasUsableApp() false on the spoke, raising
+// the "Install GitHub App / Set ID" banner and starting the RediscoverAndAdopt
+// self-heal ticker, which adopts the correct installation automatically when
+// the delivered App is already installed on the org.
+func (s *HubServer) staleInstallationResetForHeartbeat(payload *HeartbeatPayload, sh *SaaSHive, clusterID string) *HeartbeatGitHubAppConfig {
+	if s == nil || payload == nil {
+		return nil
+	}
+	if payload.GitHubInstallationID == 0 || payload.GitHubAppID == 0 {
+		return nil
+	}
+	if !hiveClaimed(sh) {
+		return nil
+	}
+	if sh.RequestedAppReset || sh.RequestedGitHubHost != "" {
+		return nil // an operator flow owns this field right now
+	}
+	if !payload.GitHubAppRequired {
+		return nil
+	}
+	state := strings.TrimSpace(payload.GitHubAppState)
+	if state != spokeAppStateNotInstalled && state != spokeAppStateWrongInstallation {
+		return nil
+	}
+	identity := s.appIdentityForHive(sh, clusterID)
+	if identity == nil || identity.AppID == 0 || identity.AppID != payload.GitHubAppID {
+		return nil // not converged on the hub's answer — other repairs own this
+	}
+	if s.logger != nil {
+		s.logger.Warn("heartbeat: spoke's app identity is converged but its installation_id cannot mint tokens — resetting it so the install/rediscover flow re-establishes it",
+			"hive_id", payload.HiveID,
+			"cluster_id", clusterID,
+			"app_id", payload.GitHubAppID,
+			"stale_installation_id", payload.GitHubInstallationID,
+			"spoke_app_state", state,
+		)
+	}
+	return &HeartbeatGitHubAppConfig{ResetInstallation: true}
 }

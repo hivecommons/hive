@@ -160,6 +160,27 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	}
 
 	elected := electedForgeForHive(h, cluster)
+	// FORGE IS PER-HIVE, NOT PER-CLUSTER. A CLAIMED hive that records no host
+	// defaults to PUBLIC github.com — the documented meaning of an empty
+	// github_host ("empty means public github.com", SaaSHive) — NOT to its
+	// cluster's forge. The vllm-d cluster hosts BOTH github.ibm.com projects
+	// (certus, EPM, …) AND github.com projects (ibm/alchemy-logging: the org
+	// "ibm" lives on public github.com). Inheriting the CLUSTER's GHE forge for
+	// a claimed hive that never recorded a GHE host is what force-flipped every
+	// github.com project on that cluster onto app 5686 / github.ibm.com at
+	// 23:56Z on 2026-08-05 and degraded 9 spokes with
+	// "404 Not Found on /app/installations/<id>/access_tokens".
+	//
+	// The cluster default (rule 2) still applies where it is legitimate: an
+	// UNCLAIMED placeholder (its pool exists to serve the cluster's forge) and a
+	// nil/status-less record (silence about the hive is not evidence about its
+	// forge). A claimed hive's forge comes only from its own recorded host —
+	// and a genuinely-GHE hive always has one: assign records it from the pasted
+	// org URL, backfillGitHubHostFromCluster fills it at claim time, and
+	// reconcileGitHubHostFromSpoke adopts it from a healthy spoke's own report.
+	if elected == "" && hiveClaimed(h) {
+		elected = publicForgeHost
+	}
 	if elected == "" || sameGitHubHost(elected, clusterForge) {
 		return id
 	}
@@ -250,6 +271,18 @@ func ResolveHiveIdentityInFleet(h *SaaSHive, cluster *ClusterConfig, forgeApps m
 		}
 	}
 	return id
+}
+
+// hiveClaimed reports whether a hive record is a CLAIMED hive — one with a real
+// owner/org whose forge is a per-hive fact — as opposed to an unclaimed
+// placeholder (statusAvailable) whose identity legitimately follows its
+// cluster's default until assign records the real host.
+//
+// An empty Status is treated as NOT claimed: hives claimed by pre-#2333 code
+// carry "", and "" is indistinguishable from "unknown", so the conservative
+// reading (keep the previous cluster-default behaviour) is the safe one.
+func hiveClaimed(h *SaaSHive) bool {
+	return h != nil && h.Status != "" && h.Status != statusAvailable
 }
 
 // electedForgeForHive returns the forge a hive has RECORDED for itself, or ""
