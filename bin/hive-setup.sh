@@ -277,7 +277,7 @@ services:
       - NTFY_SERVER=\${NTFY_SERVER}
       - NTFY_TOPIC=\${NTFY_TOPIC}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3001/api/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3001/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -312,7 +312,7 @@ run "cd ${HIVE_DIR}/v2/deploy && docker compose -f docker-compose.${TARGET_REPO_
 log "  Waiting for dashboard..."
 HEALTH_OK=false
 for i in $(seq 1 15); do
-  if curl -sf http://localhost:3001/api/health &>/dev/null; then
+  if curl -sf http://127.0.0.1:3001/api/health &>/dev/null; then
     HEALTH_OK=true
     break
   fi
