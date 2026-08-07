@@ -88,6 +88,11 @@ type UsageBucket struct {
 	// fleet total is zero (avoids a divide-by-zero producing NaN in JSON,
 	// which would be invalid and break the UI parse).
 	SharePct float64 `json:"sharePct"`
+	// HiveIDs are the registry ids of the hives that contributed to this
+	// bucket, so the dashboard can link a rollup row back to its hive rows
+	// in the fleet table. Sorted for deterministic output. The ids are
+	// hub-assigned (not user-controlled), but the UI escapes them anyway.
+	HiveIDs []string `json:"hiveIds,omitempty"`
 }
 
 // UsageHive identifies a single hive in the zero-consumption list.
@@ -169,6 +174,9 @@ func buildUsageBuckets(hives []RegistryEntry, keyOf func(RegistryEntry) string, 
 			b.Tokens += h.TotalTokens24h
 		}
 		b.Hives++
+		if id := strings.TrimSpace(h.ID); id != "" {
+			b.HiveIDs = append(b.HiveIDs, id)
+		}
 	}
 	out := make([]UsageBucket, 0, len(agg))
 	for _, b := range agg {
@@ -177,6 +185,7 @@ func buildUsageBuckets(hives []RegistryEntry, keyOf func(RegistryEntry) string, 
 			// 2^53, so no precision is lost in the ratio.
 			b.SharePct = float64(b.Tokens) / float64(total) * 100
 		}
+		sort.Strings(b.HiveIDs)
 		out = append(out, *b)
 	}
 	sort.Slice(out, func(i, j int) bool {

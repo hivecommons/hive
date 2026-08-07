@@ -11812,6 +11812,31 @@ const dashboardHTML = `<!DOCTYPE html>
       renderUsagePanel();
     }
 
+    /* jumpToUsageBucket links a usage rollup row back to the fleet table.
+       One contributing hive → jump straight to (and highlight) its row via
+       the same jumpToHiveRow the alerts panel uses. Several → put the bucket
+       key in the hive search box (it matches org, repo, cluster and user)
+       so the table narrows to exactly that bucket's hives, then scroll to
+       the table. Falls back to the first id when the key is the synthetic
+       "(unattributed)" bucket, which the search text would never match. */
+    function jumpToUsageBucket(key, hiveIds) {
+      hiveIds = hiveIds || [];
+      if (hiveIds.length === 1) { jumpToHiveRow(hiveIds[0], key); return; }
+      if (!hiveIds.length) return;
+      var isSynthetic = !key || key.charAt(0) === '(';
+      if (isSynthetic) { jumpToHiveRow(hiveIds[0], key); return; }
+      var el = document.getElementById('hive-search');
+      if (el) el.value = key;
+      _dashSearchQuery = key;
+      /* A search only narrows what is rendered — make sure hidden sections
+         cannot swallow the result, mirroring jumpToHiveRow's widening. */
+      expandAllHiveSections();
+      renderHives(_allDashHives, true);
+      var table = document.querySelector('.hive-table') || document.getElementById('hive-search-row');
+      if (table) table.scrollIntoView({behavior: 'smooth', block: 'start'});
+      hiveToast('Hive list filtered to ' + key + ' (' + hiveIds.length + ' hives) — Clear to reset', 'info');
+    }
+
     /* Renders one rollup dimension as a compact table. rows are already sorted
        by consumption descending server-side. */
     function renderUsageSection(title, rows, key) {
@@ -11827,8 +11852,21 @@ const dashboardHTML = `<!DOCTYPE html>
       for (var i = 0; i < shown; i++) {
         var r = rows[i] || {};
         var pct = Number(r.sharePct) || 0;
+        /* The key cell links back to the fleet table: one hive jumps to its
+           row, several filter the table to the bucket. encodeURIComponent
+           then esc() so a user-influenced key can neither break out of the
+           attribute nor the onclick string. */
+        var ids = r.hiveIds || [];
+        var keyCell;
+        if (ids.length) {
+          keyCell = '<a href="#" onclick="jumpToUsageBucket(decodeURIComponent(\'' + esc(encodeURIComponent(String(r.key || ''))) + '\'),JSON.parse(decodeURIComponent(\'' + esc(encodeURIComponent(JSON.stringify(ids))) + '\')));return false"' +
+            ' style="color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)"' +
+            ' title="' + esc(r.key) + ' — show ' + (ids.length === 1 ? 'this hive' : 'these ' + ids.length + ' hives') + ' in the table">' + esc(r.key) + '</a>';
+        } else {
+          keyCell = esc(r.key);
+        }
         html += '<tr>' +
-          '<td style="padding:2px 6px 2px 0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.key) + '">' + esc(r.key) + '</td>' +
+          '<td style="padding:2px 6px 2px 0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.key) + '">' + keyCell + '</td>' +
           '<td style="padding:2px 6px;text-align:right;white-space:nowrap">' + fmtTokens(r.tokens) + '</td>' +
           '<td style="padding:2px 6px;text-align:right;color:var(--muted);white-space:nowrap">' + (Number(r.hives) || 0) + '</td>' +
           /* Inline share bar — cheap visual ranking without a chart library. */
@@ -11888,7 +11926,7 @@ const dashboardHTML = `<!DOCTYPE html>
           var dot = h.online
             ? '<span style="color:#3fb950" title="Online but consuming nothing — idle or stuck">●</span>'
             : '<span style="color:var(--muted)" title="Offline">○</span>';
-          chips += '<span style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:0.7rem" title="' + esc((h.org || '') + (h.owner ? ' · ' + h.owner : '')) + '">' + dot + ' ' + esc(h.name || h.id) + '</span>';
+          chips += '<span onclick="jumpToHiveRow(decodeURIComponent(\'' + esc(encodeURIComponent(String(h.id || ''))) + '\'),decodeURIComponent(\'' + esc(encodeURIComponent(String(h.name || h.id || ''))) + '\'))" style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:0.7rem;cursor:pointer" title="' + esc((h.org || '') + (h.owner ? ' · ' + h.owner : '')) + ' — show this hive in the table">' + dot + ' ' + esc(h.name || h.id) + '</span>';
         }
         var zMore = '';
         if (zero.length > USAGE_ZERO_TOP_N) {
