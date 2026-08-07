@@ -939,6 +939,117 @@ func TestVisualWorkControllerDenialCreatesNoIssueIntent(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeIssueCloseDoesNotDependOnSpecialistRuntimeState(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*Controller, *governor.Governor)
+	}{
+		{name: "paused role", change: func(_ *Controller, gov *governor.Governor) {
+			gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+				"idle":  {Cadences: map[string]string{"quality": "1m"}},
+				"quiet": {Cadences: map[string]string{"quality": "pause"}},
+			}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}})
+			gov.SetMode(governor.ModeQuiet)
+		}},
+		{name: "unconfigured role", change: func(_ *Controller, gov *governor.Governor) {
+			gov.UpdateAgents(map[string]config.AgentConfig{})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := beads.NewStore(filepath.Join(t.TempDir(), "quality"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lifecycle, err := visualhive.NewLifecycleStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			fingerprint := strings.Repeat("7", 64)
+			presentDigest := strings.Repeat("8", 64)
+			present := &visualhive.ValidatedBundle{Validation: visualhive.Validation{Trusted: true}, Manifest: visualhive.Manifest{
+				BundleID: "runtime-state-present", OverallDigest: presentDigest,
+				Source:           visualhive.Source{Repository: "owner/repo", RepositoryID: "123", Ref: "refs/heads/main", CommitSHA: strings.Repeat("d", 40), WorkflowRunID: "42"},
+				ReplayProtection: visualhive.ReplayProtection{Key: strings.Repeat("9", 64)},
+				Observations: []visualhive.Observation{{
+					Fingerprint: "runtime-state/source", RepositoryFingerprint: fingerprint, PublicationRole: "canonical", RootCauseKey: "runtime-state/source",
+					State: "present", IssueKind: "visual_regression", Severity: "high", OwningAgentHint: "hive/quality",
+					Title: "runtime-independent close", Body: "evidence bound", AffectedContracts: []string{"contract/app"},
+					ValidationCommand: "go test ./...", FirstSeenAt: "2026-07-09T12:00:00Z",
+				}},
+			}}
+			apply, err := lifecycle.ApplyBundle(present, store, visualhive.ApplyLifecycleOptions{TargetRef: "main", DisableIssuePublication: true, MaxActiveIssues: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			externalRef := "visual-hive://owner/repo/" + fingerprint
+			bead := store.FindByExternalRef(externalRef)
+			if bead == nil {
+				t.Fatal("present finding has no controller bead")
+			}
+			if err := store.Update(bead.ID, func(value *beads.Bead) {
+				value.Status = beads.StatusBlocked
+				value.Metadata["visual_hive_controller_owned"] = true
+				value.Metadata["visual_hive_admission_state"] = "pending"
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+				"idle": {Cadences: map[string]string{"quality": "1m"}},
+			}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			issues := &controllerIssueClient{governor: gov}
+			controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
+				Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(), ACMMLevel: 5,
+				Automation: integrated.AutomationIssues, MaxActiveIssues: 1, VisualHiveRef: strings.Repeat("c", 40), TestCommands: [][]string{{"go", "test", "./..."}},
+			}, 5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.baseTree = func(context.Context, integrated.Config, string) (string, error) { return strings.Repeat("f", 40), nil }
+			presentPacket := completeControllerPacket("runtime-state-present", presentDigest)
+			work := visualhive.AdmittedVisualWork{
+				SourceExternalRef: externalRef, Packet: presentPacket, FindingFingerprint: "runtime-state/source", RepositoryFingerprint: fingerprint,
+				ObservationState: "present", Role: "quality", RoutingAllowed: true, RoutingReason: "verified route",
+				AffectedContracts: []string{"contract/app"}, ValidationCommands: []string{"go test ./..."}, ReproductionCommands: []string{"go test ./..."},
+			}
+			opened := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(presentDigest)}, presentPacket, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply})
+			if len(opened.Decisions) != 1 || !opened.Decisions[0].Allowed || issues.upserts != 1 {
+				t.Fatalf("initial issue was not admitted and opened: result=%+v issues=%+v", opened, issues)
+			}
+
+			absentDigest := strings.Repeat("6", 64)
+			absent := *present
+			absent.Manifest = present.Manifest
+			absent.Manifest.BundleID, absent.Manifest.OverallDigest = "runtime-state-absent", absentDigest
+			absent.Manifest.ReplayProtection = visualhive.ReplayProtection{Key: strings.Repeat("5", 64)}
+			absent.Manifest.Scan = visualhive.Scan{Scope: "full", AuthoritativeForResolution: true, EvaluatedContracts: []string{"contract/app"}}
+			absent.Manifest.Observations = append([]visualhive.Observation(nil), present.Manifest.Observations...)
+			absent.Manifest.Observations[0].State = "absent"
+			absent.Validation = visualhive.Validation{Trusted: true, Authoritative: true}
+			absentApply, err := lifecycle.ApplyBundle(&absent, store, visualhive.ApplyLifecycleOptions{TargetRef: "main", DisableIssuePublication: true, MaxActiveIssues: 1})
+			if err != nil || absentApply.Resolved != 1 {
+				t.Fatalf("authoritative absence = %+v err=%v", absentApply, err)
+			}
+			test.change(controller, gov)
+			absentPacket := completeControllerPacket("runtime-state-absent", absentDigest)
+			work.Packet, work.ObservationState = absentPacket, "absent"
+			history := len(gov.AdmissionHistory())
+			closed := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(absentDigest)}, absentPacket, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: absentApply})
+			persisted := store.FindByExternalRef(externalRef)
+			finding, _ := lifecycle.Finding(fingerprint)
+			if len(closed.Errors) != 0 || len(closed.Decisions) != 0 || issues.closes != 1 || len(gov.AdmissionHistory()) != history ||
+				persisted == nil || persisted.Status != beads.StatusClosed || visualBeadAdmissionState(persisted) != "authoritative_lifecycle_synced" ||
+				finding.Status != visualhive.StatusIssueClosed || finding.PendingIssueAction != "" {
+				t.Fatalf("runtime state stranded authoritative close: result=%+v issues=%+v bead=%+v finding=%+v", closed, issues, persisted, finding)
+			}
+			replay := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(absentDigest)}, absentPacket, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: absentApply})
+			if len(replay.Errors) != 0 || len(replay.Decisions) != 0 || issues.closes != 1 || len(gov.AdmissionHistory()) != history {
+				t.Fatalf("authoritative close replay duplicated work: result=%+v issues=%+v", replay, issues)
+			}
+		})
+	}
+}
+
 func TestTransientAdmissionDenialsReevaluateOnlyWhenTheirLiveInputsChange(t *testing.T) {
 	newGovernor := func() *governor.Governor {
 		return governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{

@@ -1564,6 +1564,56 @@ func (s *LifecycleStore) QueueAdmittedIssueAction(repositoryFingerprint string, 
 	return true, nil
 }
 
+// QueueAuthoritativeIssueClose creates the Hive-owned close intent for an
+// existing lifecycle issue after exhaustive, verified target-branch evidence
+// has resolved its finding. Closing an already-published issue is lifecycle
+// reconciliation, not new specialist work: it must remain possible while the
+// finding's normal role is paused or no longer configured. The issue action is
+// still authorized by ProcessOutbox and remains bound to the exact packet,
+// persisted issue identity, and immutable lifecycle writer.
+func (s *LifecycleStore) QueueAuthoritativeIssueClose(repositoryFingerprint string, packet VerifiedPacketIdentity) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finding := s.state.Findings[repositoryFingerprint]
+	if finding == nil {
+		return false, fmt.Errorf("finding %s is not present", repositoryFingerprint)
+	}
+	if finding.LastBundleDigest != packet.PacketDigest || finding.LastBundleID != packet.PacketID {
+		return false, fmt.Errorf("resolved finding does not match the verified reconciliation packet")
+	}
+	if finding.Status != StatusResolved || finding.ResolvedAt == nil || finding.PendingIssueAction != OutboxCloseIssue {
+		return false, fmt.Errorf("finding is not awaiting an authoritative issue close")
+	}
+	if finding.IssueNumber <= 0 || strings.TrimSpace(finding.IssueURL) == "" {
+		return false, fmt.Errorf("authoritative issue close requires the persisted GitHub issue identity")
+	}
+	manifest := Manifest{
+		BundleID: packet.PacketID, OverallDigest: packet.PacketDigest,
+		Source: Source{CommitSHA: packet.BaseSHA, WorkflowRunID: packet.WorkflowRunID},
+	}
+	now := time.Now().UTC()
+	entry := outboxForFinding(OutboxCloseIssue, finding, manifest, now)
+	backup := cloneLifecycleState(s.state)
+	if !s.enqueueLocked(entry) {
+		return false, nil
+	}
+	if err := s.auditLockedStrict(LifecycleAuditEntry{
+		Action: "queue_authoritative_issue_close", Allowed: true, Repository: finding.Repository,
+		RepositoryFingerprint: repositoryFingerprint, BundleID: packet.PacketID,
+		Detail: "verified authoritative absence durably preceded lifecycle close intent",
+	}); err != nil {
+		s.state = backup
+		return false, err
+	}
+	s.state.UpdatedAt = now
+	s.sortStateLocked()
+	if err := s.persistLocked(); err != nil {
+		s.state = backup
+		return false, err
+	}
+	return true, nil
+}
+
 // CancelPendingIssuePublication durably consumes issue side effects when an
 // operator downgrades the installation to advisory authority. Findings and
 // beads remain intact; no GitHub mutation is attempted or implied.
