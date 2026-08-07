@@ -2356,6 +2356,15 @@ func main() {
 	// store, before anything is written to the PVC.
 	agentMgr.SetRecordPromptCallback(dashSrv.RecordPrompt)
 
+	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
+	// change) into the durable audit store behind the dashboard's Audit Log.
+	// Injected as an interface because pkg/dashboard already imports pkg/agent,
+	// so the manager cannot reach the audit store directly without an import
+	// cycle. Motivating case: an agent configured with a backend its hive image
+	// did not support failed at every launch for a day, visible only as a WARN
+	// line inside the pod.
+	agentMgr.SetAuditSink(dashSrv.AgentAuditSink())
+
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
 	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {
