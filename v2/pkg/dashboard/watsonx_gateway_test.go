@@ -241,6 +241,86 @@ func TestWatsonxUpsert_DerivesEndpointFromRegion(t *testing.T) {
 	}
 }
 
+// Discovery for a watsonx gateway with a missing/invalid API key must FAIL —
+// no model population (not even the static Granite fallback) until a valid
+// watsonx.ai API key is entered. The IAM mint failure is the key-validity
+// verdict here.
+func TestWatsonxDiscover_InvalidKeyReturnsNoModels(t *testing.T) {
+	srv := newFullServer(t)
+	// Minter that always fails the exchange (invalid key).
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"errorMessage":"Provided API key could not be found"}`, http.StatusBadRequest)
+	}))
+	defer fake.Close()
+	origMinter := watsonx.DefaultMinter
+	watsonx.DefaultMinter = watsonx.NewTokenMinterForTest(fake.URL+"/identity/token", nil)
+	t.Cleanup(func() { watsonx.DefaultMinter = origMinter })
+
+	body := `{"name":"watsonx","kind":"watsonx","endpoint":"` + fake.URL + `/ml/gateway","project_id":"p","api_key":"bad-key-1234567890"}`
+	req := httptest.NewRequest("POST", "/api/config/governor/gateways/discover", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysDiscover(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (verdict travels in the body)", w.Code)
+	}
+	var out struct {
+		OK     bool     `json:"ok"`
+		Models []string `json:"models"`
+		Error  string   `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.OK {
+		t.Fatalf("ok = true for an invalid key, want an error verdict: %s", w.Body.String())
+	}
+	if len(out.Models) != 0 {
+		t.Fatalf("models populated for an invalid key: %v", out.Models)
+	}
+	if out.Error == "" {
+		t.Fatal("error text missing for an invalid key")
+	}
+	if strings.Contains(w.Body.String(), "bad-key-1234567890") {
+		t.Fatal("response echoed the key")
+	}
+}
+
+// Once the key HAS been validated (IAM mint succeeded), a failure to list
+// models still offers the static Granite fallback so the dropdown is not a
+// dead end — fallback is allowed only behind a validated key.
+func TestWatsonxDiscover_ValidKeyListingFailureFallsBack(t *testing.T) {
+	srv := newFullServer(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/identity/token") {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"access_token": "IAM-JWT", "expires_in": 3600})
+			return
+		}
+		http.Error(w, "upstream models outage", http.StatusBadGateway)
+	}))
+	defer fake.Close()
+	origMinter := watsonx.DefaultMinter
+	watsonx.DefaultMinter = watsonx.NewTokenMinterForTest(fake.URL+"/identity/token", nil)
+	t.Cleanup(func() { watsonx.DefaultMinter = origMinter })
+
+	body := `{"name":"watsonx","kind":"watsonx","endpoint":"` + fake.URL + `/ml/gateway","project_id":"p","api_key":"good-key-1234567890"}`
+	req := httptest.NewRequest("POST", "/api/config/governor/gateways/discover", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysDiscover(w, req)
+	var out struct {
+		OK       bool     `json:"ok"`
+		Models   []string `json:"models"`
+		Fallback bool     `json:"fallback"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.OK || !out.Fallback || len(out.Models) == 0 {
+		t.Fatalf("validated key + listing outage should fall back to Granite list, got: %s", w.Body.String())
+	}
+}
+
 // The static Granite fallback list is non-empty and carries current granite ids,
 // so a watsonx model dropdown is never empty when live discovery cannot run.
 func TestGraniteFallbackNonEmpty(t *testing.T) {

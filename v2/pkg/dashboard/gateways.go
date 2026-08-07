@@ -426,17 +426,19 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	}
 	bearer, headers, err := gatewayProbeAuth(kind, key, projectID)
 	if err != nil {
-		// For watsonx a mint failure (no/invalid key yet) still offers the
-		// static Granite list so the Default Model dropdown is never a dead end.
-		if kind == config.GatewayKindWatsonx {
-			jsonResponse(w, map[string]interface{}{"ok": true, "models": watsonx.GraniteFallbackModels, "fallback": true})
-			return
-		}
+		// A watsonx mint failure means the key is missing or invalid — model
+		// population must NOT happen until a valid key is entered, so this is
+		// an error, never a fallback list (operator requirement: discovery and
+		// population only after a valid watsonx.ai API key).
 		jsonResponse(w, map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), key)})
 		return
 	}
 	models, err := fetchModelsWithHeaders(endpoint, bearer, headers)
 	if err != nil {
+		// For watsonx the key has already been VALIDATED (the IAM mint above
+		// succeeded); only the model listing failed. Offering the static
+		// Granite list here keeps the Default Model dropdown usable without
+		// ever populating models for an unvalidated key.
 		if kind == config.GatewayKindWatsonx {
 			jsonResponse(w, map[string]interface{}{"ok": true, "models": watsonx.GraniteFallbackModels, "fallback": true})
 			return
