@@ -269,17 +269,22 @@ func TestHandleRole_WithHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleRole_WithCookie(t *testing.T) {
+func TestHandleRole_WithSessionCookie(t *testing.T) {
 	srv := newFullServer(t)
+	sid := srv.createUserSession("session-user", "read")
 	req := httptest.NewRequest("GET", "/api/role", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "cookie-user"})
 	w := httptest.NewRecorder()
 	srv.handleRole(w, req)
 
 	var result map[string]string
 	json.NewDecoder(w.Body).Decode(&result)
-	if result["user"] != "cookie-user" {
-		t.Errorf("user = %q, want cookie-user", result["user"])
+	if result["user"] != "session-user" {
+		t.Errorf("user = %q, want session-user", result["user"])
+	}
+	if result["role"] != "read" {
+		t.Errorf("role = %q, want read", result["role"])
 	}
 }
 

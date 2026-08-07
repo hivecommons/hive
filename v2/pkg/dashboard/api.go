@@ -433,10 +433,9 @@ func sanitizeFilenameComponent(s string) string {
 func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	user := r.Header.Get("X-Hive-User")
-	if user == "" {
-		if cookie, err := r.Cookie("hive_hub_user"); err == nil && cookie.Value != "" {
-			user = cookie.Value
-		}
+	if sess := s.sessionFromRequest(r); sess != nil {
+		user = sess.Username
+		role = sess.Role
 	}
 	if role == "" {
 		role = "owner"
@@ -1589,14 +1588,12 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// Issue a per-user session (opaque random id → username+role) instead of a
 	// single shared cookie. Each authenticated user gets their own session so
 	// requests resolve to the user that owns their cookie — never a shared one.
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
-			return
-		}
-		setSessionCookie(w, r, sid)
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
+		return
 	}
+	setSessionCookie(w, r, sid)
 
 	// Audit the successful login with the authenticated GitHub username as the
 	// actor (not the request's X-Hive-User, which has no session yet at this
