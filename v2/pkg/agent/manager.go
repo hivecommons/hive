@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -674,12 +675,30 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	return []string{"tmux"}
 }
 
+func (m *Manager) agentExecUserSpec(agent *AgentProcess) string {
+	if agent.UID <= 0 {
+		return ""
+	}
+	agentUser := fmt.Sprintf("hive-%s", agent.Name)
+	if _, err := user.Lookup(agentUser); err == nil {
+		return agentUser
+	}
+	return fmt.Sprintf("%d:%d", agent.UID, os.Getgid())
+}
+
+func outputErr(prefix string, err error, output []byte) error {
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return fmt.Errorf("%s: %w: %s", prefix, err, msg)
+}
+
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		suExecArgs := append([]string{agentUser, base[0]}, tmuxArgs...)
+		suExecArgs := append([]string{m.agentExecUserSpec(agent), base[0]}, tmuxArgs...)
 		return exec.Command("su-exec", suExecArgs...)
 	}
 	return exec.Command(base[0], tmuxArgs...)
@@ -697,15 +716,14 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 
 	var cmd *exec.Cmd
 	if agent.UID > 0 {
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		suExecArgs := []string{"su-exec", agentUser}
+		suExecArgs := []string{"su-exec", m.agentExecUserSpec(agent)}
 		tmuxArgs := append(m.tmuxBaseArgs(agent), "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 		cmd = exec.Command(suExecArgs[0], append(suExecArgs[1:], tmuxArgs...)...)
 	} else {
 		cmd = exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 	}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("creating tmux session for %s: %w", agent.Name, err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return outputErr(fmt.Sprintf("creating tmux session for %s", agent.Name), err, output)
 	}
 
 	// tmux creates /tmp/tmux-{uid}/ with mode 700; ttyd runs as dev (uid 1001,
@@ -714,8 +732,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	// agent user who owns the directory. Use su-exec to chmod as the agent.
 	if agent.UID > 0 {
 		tmuxDir := fmt.Sprintf("/tmp/tmux-%d", agent.UID)
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		_ = exec.Command("su-exec", agentUser, "chmod", "710", tmuxDir).Run()
+		_ = exec.Command("su-exec", m.agentExecUserSpec(agent), "chmod", "710", tmuxDir).Run()
 	}
 
 	// Pre-create the agent-owned CODEX_HOME before launch (codex won't create
@@ -4301,7 +4318,7 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 		return
 	}
 	dir := codexHomePath(agent.Name)
-	agentUser := fmt.Sprintf("hive-%s", agent.Name)
+	agentUser := m.agentExecUserSpec(agent)
 	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
 		m.logger.Warn("failed to pre-create codex home", "agent", agent.Name, "dir", dir, "error", err)
 	}
