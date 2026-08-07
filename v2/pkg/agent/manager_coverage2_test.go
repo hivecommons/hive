@@ -1539,8 +1539,8 @@ func TestConfigHasTokens_MissingField(t *testing.T) {
 func TestClearExpiredTokens_Logic(t *testing.T) {
 	// Test the JSON manipulation clearExpiredTokens does
 	input := map[string]interface{}{
-		"copilotTokens":  map[string]interface{}{"user1": "token"},
-		"loggedInUsers":  []interface{}{"user1"},
+		"copilotTokens":    map[string]interface{}{"user1": "token"},
+		"loggedInUsers":    []interface{}{"user1"},
 		"lastLoggedInUser": "user1",
 		"otherSetting":     "keep",
 	}
@@ -1735,6 +1735,33 @@ func TestTmuxBaseArgs_WithoutSocket(t *testing.T) {
 	args := m.tmuxBaseArgs(agent)
 	if len(args) != 1 || args[0] != "tmux" {
 		t.Errorf("tmuxBaseArgs without socket = %v, want [tmux]", args)
+	}
+}
+
+func TestValidTmuxKillSessionTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantOK     bool
+		wantTarget string
+	}{
+		{name: "non-kill command", args: []string{"has-session", "-t", "user"}, wantOK: true},
+		{name: "hive target", args: []string{"kill-session", "-t", "hive-agent"}, wantOK: true, wantTarget: "hive-agent"},
+		{name: "hive equals target", args: []string{"kill-session", "-t=hive-agent"}, wantOK: true, wantTarget: "hive-agent"},
+		{name: "empty target", args: []string{"kill-session", "-t", ""}, wantOK: false},
+		{name: "missing target", args: []string{"kill-session", "-t"}, wantOK: false},
+		{name: "missing flag", args: []string{"kill-session"}, wantOK: false},
+		{name: "non-hive target", args: []string{"kill-session", "-t", "work"}, wantOK: false, wantTarget: "work"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTarget, gotOK := validTmuxKillSessionTarget(tt.args)
+			if gotOK != tt.wantOK || gotTarget != tt.wantTarget {
+				t.Fatalf("validTmuxKillSessionTarget(%v) = (%q, %v), want (%q, %v)",
+					tt.args, gotTarget, gotOK, tt.wantTarget, tt.wantOK)
+			}
+		})
 	}
 }
 

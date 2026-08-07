@@ -411,7 +411,7 @@ contribute-hive backend="" mode="docker": check-version
       # Start ollama silently if needed for goose
       if [[ "$BACKEND" == "goose" && "${GOOSE_PROVIDER:-}" == "ollama" ]]; then
         # Kill any existing ollama that might spam logs to this terminal
-        pkill -f "ollama serve" 2>/dev/null || true
+        pgrep -u "$(id -u)" -f "ollama serve" 2>/dev/null | while read -r pid; do kill "$pid" 2>/dev/null || true; done
         sleep 1
         echo "Starting ollama (silent)..."
         OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > /dev/null 2>&1 &

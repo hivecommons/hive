@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,12 +24,30 @@ func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 }
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "hive-agent-stubs-*")
+	dir, err := os.MkdirTemp(".", ".hive-agent-stubs-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "TestMain: MkdirTemp: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: Abs: %v\n", err)
+		os.Exit(1)
+	}
+
+	tmuxDir, err := os.MkdirTemp(".", ".hive-agent-tmux-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: tmux MkdirTemp: %v\n", err)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	tmuxDir, err = filepath.Abs(tmuxDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: tmux Abs: %v\n", err)
+		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(tmuxDir)
+		os.Exit(1)
+	}
 
 	stubBinDir = dir
 
@@ -43,10 +62,29 @@ func TestMain(m *testing.M) {
 	}
 
 	originalPath := os.Getenv("PATH")
+	originalTMUX := os.Getenv("TMUX")
+	originalTMUXTmpDir := os.Getenv("TMUX_TMPDIR")
 	os.Setenv("PATH", dir+":"+originalPath)
-	defer os.Setenv("PATH", originalPath)
+	os.Unsetenv("TMUX")
+	os.Setenv("TMUX_TMPDIR", tmuxDir)
 
-	os.Exit(m.Run())
+	code := m.Run()
+
+	os.Setenv("PATH", originalPath)
+	if originalTMUX == "" {
+		os.Unsetenv("TMUX")
+	} else {
+		os.Setenv("TMUX", originalTMUX)
+	}
+	if originalTMUXTmpDir == "" {
+		os.Unsetenv("TMUX_TMPDIR")
+	} else {
+		os.Setenv("TMUX_TMPDIR", originalTMUXTmpDir)
+	}
+	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(tmuxDir)
+
+	os.Exit(code)
 }
 
 func discardLogger() *slog.Logger {

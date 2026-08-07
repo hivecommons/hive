@@ -757,7 +757,38 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	return []string{"tmux"}
 }
 
+func validTmuxKillSessionTarget(args []string) (string, bool) {
+	if len(args) == 0 || args[0] != "kill-session" {
+		return "", true
+	}
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-t":
+			if i+1 >= len(args) {
+				return "", false
+			}
+			target := args[i+1]
+			return target, strings.HasPrefix(target, "hive-")
+		case strings.HasPrefix(arg, "-t="):
+			target := strings.TrimPrefix(arg, "-t=")
+			return target, strings.HasPrefix(target, "hive-")
+		}
+	}
+	return "", false
+}
+
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
+	if target, ok := validTmuxKillSessionTarget(args); !ok {
+		agentName := ""
+		if agent != nil {
+			agentName = agent.Name
+		}
+		if m.logger != nil {
+			m.logger.Warn("refusing unsafe tmux kill-session target", "target", target, "agent", agentName)
+		}
+		return exec.Command("false")
+	}
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
@@ -5305,8 +5336,10 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 	// root, matching ownerUID==0 would SIGKILL every root process. This is a real
 	// bug signal, so warn loudly and kill nothing.
 	if uid < minAgentUID {
-		logger.Warn("refusing to kill by uid, would target system/root processes",
-			"uid", uid, "min_agent_uid", minAgentUID)
+		if logger != nil {
+			logger.Warn("refusing to kill by uid, would target system/root processes",
+				"uid", uid, "min_agent_uid", minAgentUID)
+		}
 		return 0
 	}
 

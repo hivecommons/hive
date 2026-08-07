@@ -122,6 +122,30 @@ func TestKillAgentProcesses_FakeProc(t *testing.T) {
 	}
 }
 
+func TestKillAgentProcesses_RefusesUnsafeUID(t *testing.T) {
+	root := t.TempDir()
+	withFakeProc(t, root)
+
+	writeProcEntry(t, root, os.Getpid(), "hive\x00test", "", 0)
+	if killed := killAgentProcesses(0, discardLogger()); killed != 0 {
+		t.Errorf("uid 0 cleanup should be refused, got %d kills", killed)
+	}
+	if killed := killAgentProcesses(-1, discardLogger()); killed != 0 {
+		t.Errorf("negative uid cleanup should be refused, got %d kills", killed)
+	}
+}
+
+func TestKillAgentProcesses_SkipsCurrentProcess(t *testing.T) {
+	root := t.TempDir()
+	withFakeProc(t, root)
+
+	const targetUID = 4242
+	writeProcEntry(t, root, os.Getpid(), "hive\x00test", "", targetUID)
+	if killed := killAgentProcesses(targetUID, discardLogger()); killed != 0 {
+		t.Errorf("current process should be skipped, got %d kills", killed)
+	}
+}
+
 func TestKillAgentProcesses_ReadDirError(t *testing.T) {
 	withFakeProc(t, filepath.Join(t.TempDir(), "missing"))
 	if killed := killAgentProcesses(1, discardLogger()); killed != 0 {
