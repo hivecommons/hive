@@ -1694,7 +1694,7 @@ func TestReadCoveragePreamble_MissingTarget(t *testing.T) {
 
 func TestBackendBinary_InferenceBackends(t *testing.T) {
 	// vllm, llm-d, and litellm should map to claude binary
-	for _, backend := range []string{"vllm", "llm-d", "litellm"} {
+	for _, backend := range config.InferenceBackends {
 		path, err := backendBinary(backend)
 		if err != nil {
 			t.Errorf("backendBinary(%q) error: %v", backend, err)

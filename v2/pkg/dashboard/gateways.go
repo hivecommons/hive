@@ -34,14 +34,13 @@ const watsonxProbeMintTimeout = 10 * time.Second
 
 // watsonxEndpointForRegion builds the watsonx model-gateway base URL for a
 // region slug, falling back to the default region when blank. Mirrors how the
-// UI preset fills the endpoint; kept server-side too so the region template has
-// one source of truth.
+// UI preset fills the endpoint.
+//
+// The template itself now lives in pkg/watsonx so the AGENT LAUNCH path can
+// resolve the same endpoint for an agent whose backend is "watsonx"; this is a
+// thin delegate kept for call-site readability inside the dashboard.
 func watsonxEndpointForRegion(region string) string {
-	region = strings.TrimSpace(region)
-	if region == "" {
-		region = watsonxDefaultRegion
-	}
-	return fmt.Sprintf(watsonxBaseURLTemplate, region)
+	return watsonx.EndpointForRegion(region)
 }
 
 // gatewayProbeAuth resolves the bearer + extra request headers a /v1/models
@@ -73,17 +72,12 @@ const (
 	// as the preset endpoint when the UI picks the OpenRouter gateway kind.
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 
-	// watsonxBaseURLTemplate is the watsonx model-gateway base URL with a
-	// %s placeholder for the region slug (us-south, eu-de, jp-tok, …). hive
-	// appends /v1/models and /v1/chat/completions to reach watsonx's
-	// OpenAI-compatible surface (.../ml/gateway/v1/...). Used as the preset
-	// endpoint when the UI picks the watsonx gateway kind. Mirrors
-	// openRouterBaseURL for consistency.
-	watsonxBaseURLTemplate = "https://%s.ml.cloud.ibm.com/ml/gateway"
-
-	// watsonxDefaultRegion is the region the preset offers when none is chosen,
-	// so the endpoint template resolves to a concrete URL out of the box.
-	watsonxDefaultRegion = "us-south"
+	// watsonxBaseURLTemplate / watsonxDefaultRegion alias the canonical values
+	// in pkg/watsonx. They are NOT redefined here: the agent launch path needs
+	// the same template, and two copies is exactly how the gateway half and the
+	// agent half of watsonx support were able to disagree.
+	watsonxBaseURLTemplate = watsonx.BaseURLTemplate
+	watsonxDefaultRegion   = watsonx.DefaultRegion
 
 	// gatewaySecretFileMode / gatewaySecretDirMode keep gateway key files
 	// owner-only, matching the LiteLLM key store (litellmKeyFileMode).

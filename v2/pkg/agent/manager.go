@@ -397,6 +397,22 @@ func (m *Manager) routableBackend(backend string) bool {
 	return fnp != nil && *fnp != nil && (*fnp)(backend)
 }
 
+// validateBackendName reports whether backend is one the launcher can actually
+// dispatch: an agentic CLI, a model-gateway backend, or a configured gateway
+// name. An empty backend is valid (it means "the hive default").
+//
+// This is the manager-side half of the accept-then-fail fix. It dispatches on
+// the SAME canonical lists as config.ValidateBackend and backendBinary, so a
+// backend accepted by any write path is one the launch path can start.
+// Safe to call while holding m.mu (routableBackend reads atomically).
+func (m *Manager) validateBackendName(backend string) error {
+	if backend == "" || config.IsCLIBackend(backend) || m.routableBackend(backend) {
+		return nil
+	}
+	return fmt.Errorf("unsupported backend %q (supported: %s; or the name of a configured model gateway)",
+		backend, strings.Join(config.SupportedBackends(), ", "))
+}
+
 // SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
 func (m *Manager) SetAppAuth(auth AppTokenMinter) {
 	m.mu.Lock()
@@ -3706,6 +3722,14 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 	return filterPaneOutput(a.lastPaneCapture, n)
 }
 
+// backendBinary maps an agent backend to the CLI binary that is actually
+// exec'd for it. Every model-gateway backend (config.InferenceBackends: vllm,
+// llm-d, litellm, watsonx) launches the SAME claude CLI, pointed at hive's
+// local OpenAI-compatible translator via ANTHROPIC_BASE_URL — the backend name
+// selects the upstream route, not the binary. Those entries are therefore
+// derived from the canonical list rather than written out here, so a backend
+// added to config.InferenceBackends can never again be accepted by config and
+// then rejected at kick time with "unknown backend".
 func backendBinary(backend string) (string, error) {
 	binaries := map[string]string{
 		"claude":  "claude",
@@ -3714,9 +3738,9 @@ func backendBinary(backend string) (string, error) {
 		"goose":   "goose",
 		"pi":      "goose",
 		"bob":     "bob",
-		"vllm":    "claude",
-		"llm-d":   "claude",
-		"litellm": "claude",
+	}
+	for _, b := range config.InferenceBackends {
+		binaries[b] = "claude"
 	}
 
 	binary, ok := binaries[backend]
@@ -5520,6 +5544,18 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	// Refuse a backend the launcher cannot dispatch, at SET time. Previously
+	// any string was accepted here and the agent was then restarted into it,
+	// failing only at launch with "unknown backend: <x>" — the agent stops
+	// working and the operator gets no signal at the moment of the change.
+	// routableBackend covers configured gateway names (resolved live), so a
+	// gateway-named backend still passes.
+	if err := m.validateBackendName(backend); err != nil {
+		return err
+	}
+
+	// Captured after validation so a rejected switch records no audit event:
+	// the override is only mutated below, once the backend is known routable.
 	prevBackend := agent.effectiveBackend()
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
