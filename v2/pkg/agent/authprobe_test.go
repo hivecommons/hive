@@ -1,11 +1,17 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // writeClaudeCreds writes a credentials.json with a non-expired OAuth token at
@@ -148,6 +154,310 @@ func TestAgentAuthState_PaneLoginPromptWins(t *testing.T) {
 	avail, known := m.AgentAuthState("scanner", 2007, "claude", true /*running*/, true /*needsLogin*/)
 	if !known || avail {
 		t.Fatalf("pane at login prompt must report needs-login; got (avail=%v, known=%v)", avail, known)
+	}
+}
+
+func TestAgentAuthState_CopilotCredentials(t *testing.T) {
+	emptySharedPaths(t)
+	t.Setenv("HOME", t.TempDir())
+
+	m := &Manager{copilotAuthToken: "cached-token"}
+	if avail, known := m.AgentAuthState("planner", 0, "copilot", false, false); !known || !avail {
+		t.Fatalf("cached token: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+
+	m.copilotAuthToken = ""
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := filepath.Join(home, ".copilot", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatalf("mkdir copilot config dir: %v", err)
+	}
+	if err := os.WriteFile(cfg, []byte("// generated\n{\"copilotTokens\":{\"user\":\"gho_test\"}}\n"), 0o600); err != nil {
+		t.Fatalf("write copilot config: %v", err)
+	}
+	if avail, known := m.AgentAuthState("planner", 0, "copilot", false, false); !known || !avail {
+		t.Fatalf("home config token: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+
+	paths := agentCopilotConfigPaths("planner", 0, "copilot")
+	if len(paths) < 4 || paths[0] != cfg {
+		t.Fatalf("agentCopilotConfigPaths should prefer HOME config; got %v, want first %q", paths, cfg)
+	}
+	if !containsPath(paths, sharedCopilotConfigPath) {
+		t.Fatalf("agentCopilotConfigPaths should retain shared fallback; got %v", paths)
+	}
+
+	if avail, known := m.AgentAuthState("planner", 0, "copilot", false, false); !known || !avail {
+		t.Fatalf("copilot config should still authenticate after path checks: got (avail=%v, known=%v)", avail, known)
+	}
+	m.copilotAuthToken = ""
+	t.Setenv("HOME", t.TempDir())
+	emptySharedPaths(t)
+	if avail, known := m.AgentAuthState("planner", 0, "copilot", false, false); !known || avail {
+		t.Fatalf("copilot without tokens: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	}
+}
+
+func TestAgentAuthState_BobAPIKeyGate(t *testing.T) {
+	m := &Manager{}
+	t.Setenv("HOME", "")
+	if home := AgentHome("shared", 0, "claude"); home != "/data/home" {
+		t.Fatalf("fallback HOME = %q, want /data/home", home)
+	}
+	if home := AgentHome("claude-agent", 2001, "claude"); home != "/data/home" {
+		t.Fatalf("claude per-UID home = %q, want /data/home", home)
+	}
+	if avail, known := m.AgentAuthState("custom", 0, "custom-backend", false, false); avail || known {
+		t.Fatalf("custom non-interactive backend: got (avail=%v, known=%v), want unknown", avail, known)
+	}
+	if avail, known := m.AgentAuthState("gem", 0, "gemini", false, false); avail || known {
+		t.Fatalf("gemini probe: got (avail=%v, known=%v), want unknown", avail, known)
+	}
+
+	if avail, known := m.AgentAuthState("writer", 0, bobBackend, false, true); !known || avail {
+		t.Fatalf("bob without key: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	}
+
+	m.SetBobAPIKeyResolver(func() string { return "bob-key" })
+	if avail, known := m.AgentAuthState("writer", 0, bobBackend, false, true); !known || !avail {
+		t.Fatalf("bob with key: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+}
+
+func TestAgentAuthAvailableResolvesProcessState(t *testing.T) {
+	emptySharedPaths(t)
+	m := &Manager{
+		agents: map[string]*AgentProcess{
+			"runner": {
+				Name:  "runner",
+				UID:   2001,
+				State: StateRunning,
+				Config: config.AgentConfig{
+					Backend: "claude",
+				},
+			},
+			"override": {
+				Name:            "override",
+				State:           StateStopped,
+				Config:          config.AgentConfig{Backend: "claude"},
+				BackendOverride: "litellm",
+			},
+		},
+	}
+
+	if avail, known := m.AgentAuthAvailable("missing"); avail || known {
+		t.Fatalf("missing agent: got (avail=%v, known=%v), want unknown", avail, known)
+	}
+
+	if avail, known := m.AgentAuthAvailable("runner"); avail || known {
+		t.Fatalf("running claude agent: got (avail=%v, known=%v), want unknown/no badge", avail, known)
+	}
+
+	m.agents["runner"].paneMu.Lock()
+	m.agents["runner"].NeedsLogin = true
+	m.agents["runner"].paneMu.Unlock()
+	if avail, known := m.AgentAuthAvailable("runner"); !known || avail {
+		t.Fatalf("login prompt: got (avail=%v, known=%v), want needs-login", avail, known)
+	}
+
+	if avail, known := m.AgentAuthAvailable("override"); !known || !avail {
+		t.Fatalf("backend override to inference: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+}
+
+func TestCheckBlockedThrashPausesLoopingAgent(t *testing.T) {
+	m := &Manager{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		agents: map[string]*AgentProcess{
+			"writer": {Name: "writer", State: StateStopped},
+		},
+	}
+
+	m.checkBlockedThrash("writer", "ordinary output")
+	if m.thrash != nil {
+		t.Fatalf("non-matching output should not initialize thrash state: %#v", m.thrash)
+	}
+
+	for i := 0; i < thrashThreshold-1; i++ {
+		m.checkBlockedThrash("writer", "git push blocked: advisory mode")
+	}
+	if m.agents["writer"].Paused {
+		t.Fatal("agent paused before blocked-action threshold")
+	}
+
+	m.checkBlockedThrash("writer", "blocked by hive policy: push denied")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		paused := m.agents["writer"].Paused
+		trigger := m.agents["writer"].PausedTrigger
+		m.mu.RUnlock()
+		if paused {
+			if trigger != "thrash-breaker" {
+				t.Fatalf("pause trigger = %q, want thrash-breaker", trigger)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("agent was not paused after repeated blocked-action output")
+}
+
+func TestPermissionsWatcherRepairsBobStateDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), bobStateDirBase)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir bob state dir: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat bob state dir: %v", err)
+	}
+	fixEntry(dir, info, logger)
+
+	info, err = os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat repaired bob state dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got&bobStateDirGroupRWX != bobStateDirGroupRWX {
+		t.Fatalf("bob state dir mode = %v, want group rwx bits", got)
+	}
+
+	fixBobStateDirGroupWrite(dir, info.Mode(), logger)
+	again, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat idempotent bob state dir: %v", err)
+	}
+	if again.Mode().Perm() != info.Mode().Perm() {
+		t.Fatalf("idempotent repair changed mode from %v to %v", info.Mode().Perm(), again.Mode().Perm())
+	}
+}
+
+func TestPermissionsWatcherEnsuresAndWalksRedirectedDirs(t *testing.T) {
+	root := t.TempDir()
+	watched := filepath.Join(root, "watched")
+	goose := filepath.Join(root, "goose", "logs")
+	oldWatched, oldGoose := WatchedHomeDirs, GooseLogsDir
+	WatchedHomeDirs = []string{watched}
+	GooseLogsDir = goose
+	t.Cleanup(func() {
+		WatchedHomeDirs = oldWatched
+		GooseLogsDir = oldGoose
+	})
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ensureWatchedDirs(logger)
+	for _, dir := range []string{watched, goose} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("expected %s to be created: %v", dir, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("%s is not a directory", dir)
+		}
+	}
+
+	nestedBob := filepath.Join(watched, "agent", bobStateDirBase)
+	if err := os.MkdirAll(nestedBob, 0o755); err != nil {
+		t.Fatalf("mkdir nested bob dir: %v", err)
+	}
+	fixPermissions(logger)
+	info, err := os.Stat(nestedBob)
+	if err != nil {
+		t.Fatalf("stat nested bob dir: %v", err)
+	}
+	if info.Mode().Perm()&bobStateDirGroupRWX != bobStateDirGroupRWX {
+		t.Fatalf("nested bob dir mode = %v, want group rwx bits", info.Mode().Perm())
+	}
+
+	nonDir := filepath.Join(root, "not-dir")
+	if err := os.WriteFile(nonDir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write non-dir: %v", err)
+	}
+	WatchedHomeDirs = []string{nonDir}
+	fixPermissions(logger)
+}
+
+type fakeFileInfo struct {
+	name  string
+	mode  os.FileMode
+	isDir bool
+	sys   any
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return f.isDir }
+func (f fakeFileInfo) Sys() any           { return f.sys }
+
+func TestFixEntryWithSyntheticOwnership(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dir := filepath.Join(t.TempDir(), "dir")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	fixEntry(dir, fakeFileInfo{
+		name:  "dir",
+		mode:  0o700 | os.ModeDir,
+		isDir: true,
+		sys:   &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+	}, logger)
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got&DirPerms != DirPerms {
+		t.Fatalf("dir mode = %v, want %v bits", got, DirPerms)
+	}
+
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	fixEntry(file, fakeFileInfo{
+		name: "file",
+		mode: 0o600,
+		sys:  &syscall.Stat_t{Uid: DevUID, Gid: NodeGID},
+	}, logger)
+	info, err = os.Stat(file)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if got := info.Mode().Perm(); got&FilePerms != FilePerms {
+		t.Fatalf("file mode = %v, want %v bits", got, FilePerms)
+	}
+
+	fixEntry(file, fakeFileInfo{name: "no-stat", mode: 0o600, sys: struct{}{}}, logger)
+	fixEntry(file, fakeFileInfo{
+		name: "other-owner",
+		mode: 0o600,
+		sys:  &syscall.Stat_t{Uid: uint32(DevUID + 100), Gid: NodeGID},
+	}, logger)
+	fixEntry(file, fakeFileInfo{
+		name: "root-owned",
+		mode: 0o600,
+		sys:  &syscall.Stat_t{Uid: 0, Gid: 0},
+	}, logger)
+}
+
+func TestCoverageGuardsForRestartAndBobRelaunch(t *testing.T) {
+	m := &Manager{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		agents: map[string]*AgentProcess{},
+	}
+	if err := m.RestartThenSendKick(context.Background(), "missing", "hello"); err == nil {
+		t.Fatal("RestartThenSendKick missing agent succeeded, want error")
+	}
+	if got := m.RelaunchBobAgentsAwaitingKey(context.Background()); got != nil {
+		t.Fatalf("RelaunchBobAgentsAwaitingKey without key = %v, want nil", got)
+	}
+	m.SetBobAPIKeyResolver(func() string { return "key" })
+	if got := m.RelaunchBobAgentsAwaitingKey(context.Background()); len(got) != 0 {
+		t.Fatalf("RelaunchBobAgentsAwaitingKey with no candidates = %v, want empty", got)
 	}
 }
 

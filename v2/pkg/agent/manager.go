@@ -962,6 +962,9 @@ func backendDefersStartupKick(backend string) bool {
 }
 
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	backend := agent.Config.Backend
 	if agent.BackendOverride != "" {
 		backend = agent.BackendOverride
