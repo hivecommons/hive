@@ -5284,7 +5284,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	models := s.fetchInferenceModelsForBackend(backend, endpoints)
 	fallback := false
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
@@ -5356,6 +5356,72 @@ func intersectEntitled(discovered, entitled []string) []string {
 		}
 	}
 	return out
+}
+
+// fetchInferenceModelsForBackend discovers a backend's models, honouring the
+// AUTH SCHEME of the gateway that backend resolves to. The plain path sends the
+// resolved key as a raw bearer, which is correct for litellm/vllm/llm-d — but a
+// watsonx gateway needs an IAM-minted bearer plus the X-IBM-Project-ID header,
+// so sending the raw IBM Cloud key returns 401 and the dropdown silently fell
+// back to unrelated static aliases. Reuses the same gatewayProbeAuth +
+// fetchModelsWithHeaders pair the Model Gateways tab's discover/test paths use,
+// so the agent's model dropdown and the gateway form agree on what is available.
+// Falls back to the legacy raw-key path whenever no gateway resolves for this
+// name (env-configured vllm/llm-d endpoints), keeping existing behaviour.
+func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []string) []string {
+	gw := s.resolveGatewayForBackend(backend)
+	if gw == nil || !gatewayKindNeedsProbeAuth(gw.Kind) {
+		return fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	}
+	bearer, headers, err := gatewayProbeAuth(gw.Kind, gw.ResolveAPIKey(), gw.ProjectID)
+	if err != nil {
+		s.logger.Warn("gateway auth for model discovery failed",
+			"backend", backend, "kind", gw.Kind, "error", err)
+		return nil
+	}
+	seen := make(map[string]bool)
+	var all []string
+	for _, ep := range endpoints {
+		models, err := fetchModelsWithHeaders(ep, bearer, headers)
+		if err != nil {
+			s.logger.Warn("model discovery failed",
+				"backend", backend, "kind", gw.Kind, "endpoint", ep, "error", err)
+			continue
+		}
+		for _, m := range models {
+			if !seen[m] {
+				seen[m] = true
+				all = append(all, m)
+			}
+		}
+	}
+	return all
+}
+
+// gatewayKindNeedsProbeAuth reports whether a gateway kind requires the
+// gatewayProbeAuth path (a minted bearer and/or extra headers) rather than the
+// raw key. Only watsonx does today; keeping it a predicate means a future kind
+// with its own auth scheme is a one-line change here rather than a new branch in
+// every discovery caller.
+func gatewayKindNeedsProbeAuth(kind string) bool {
+	return kind == config.GatewayKindWatsonx
+}
+
+// resolveGatewayForBackend finds the configured gateway an agent backend routes
+// through. Agent backends name a gateway directly (registerGatewayEndpoints
+// keys the endpoint registry by gateway NAME), and the built-in gateway methods
+// share their name with their kind, so match on either.
+func (s *Server) resolveGatewayForBackend(backend string) *config.GatewayConfig {
+	if s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	for _, gw := range s.deps.Config.Governor.ResolvedGateways() {
+		if strings.EqualFold(gw.Name, backend) || strings.EqualFold(gw.Kind, backend) {
+			out := gw
+			return &out
+		}
+	}
+	return nil
 }
 
 // inferenceAPIKey returns the bearer key used for a backend's model

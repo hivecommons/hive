@@ -12332,6 +12332,51 @@ function burnAreaChart() {
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 
+    // ensureGatewayMethodConfigured is the SHARED guard for the agent-config
+    // dialog flows (CLI pin / create): picking a gateway-backed method whose
+    // gateway is missing (or has no key) must not silently save a method the
+    // agent cannot actually run — an operator once set backend: watsonx with no
+    // watsonx gateway and the agent failed to launch for a day with only
+    // "unknown backend: watsonx" in the log. litellm keeps its dedicated
+    // endpoint+key prompt (it has a legacy governor.litellm block the others do
+    // not); every other gateway method routes to the Model Gateways tab, which
+    // is where its key is entered. Resolves true when the method is (or has just
+    // been) configured, false when the user backs out — same contract as
+    // ensureLiteLLMConfigured, so all three call sites treat every method alike.
+    async function ensureGatewayMethodConfigured(method) {
+      if (method === 'litellm') return ensureLiteLLMConfigured();
+      if (!GATEWAY_METHODS.includes(method)) return true;
+      // A live (non-fallback) discovery proves the method is genuinely usable
+      // (possibly via HIVE_*_ENDPOINT env, which never appears in the gateway
+      // list) — mirrors the same check maybeOpenMethodConfig makes.
+      const cached = _inferenceModelCache[method];
+      if (cached && !cached.fallback) return true;
+      let gateways = [];
+      try {
+        const r = await fetch('/api/config/governor/gateways');
+        if (!r.ok) return true; // presence check is best-effort — never block on it
+        const d = await r.json();
+        gateways = d.gateways || [];
+      } catch (e) { return true; }
+      // Require BOTH a matching gateway and a key on it: a watsonx gateway saved
+      // without a key mints no IAM token, so model discovery and inference fail
+      // exactly as if no gateway existed at all.
+      const gw = gateways.find(g => g && (g.kind === method || g.name === method));
+      if (gw && gw.hasKey) return true;
+      const why = gw
+        ? `The ${method} gateway has no API key — ${method} needs one before this agent can run.`
+        : `No ${method} gateway is configured — ${method} needs an API key before this agent can run.`;
+      if (!(await hiveConfirm(`${why}\n\nOpen Governor Config → Model Gateways to set it up? Unsaved changes in this dialog will be discarded.`))) {
+        return false;
+      }
+      // Land directly on a NEW gateway form pre-set to this method's kind
+      // (endpoint/preset already filled), consumed once by loadGateways().
+      _pendingGatewayPresetKind = method;
+      closeConfigDialog();
+      openConfigDialog('governor', null, 'Model Gateways');
+      return false;
+    }
+
     // Prompts for the LiteLLM endpoint + API key when litellm is picked in
     // the agent-config dialog flows (CLI pin / create), where navigating to
     // Governor Config would discard unsaved edits. The agent-card METHOD
@@ -14968,6 +15013,64 @@ function burnAreaChart() {
       }
     }
 
+    // refreshMethodModelsAfterGatewaySave re-runs live model discovery for the
+    // method a just-saved gateway backs, then repaints the model dropdown of
+    // every agent already using that method. This is the "once the key is
+    // entered, auto-discovery and population occur" half of the onboarding flow:
+    // without it the operator saves the key and still sees a stale/empty model
+    // list until a manual refresh. Re-uses fetchInferenceModels (force=true to
+    // bypass its TTL cache, since the key that makes discovery succeed was only
+    // just written) and the existing updateModelDropdown repaint path.
+    async function refreshMethodModelsAfterGatewaySave(kind, name) {
+      // A gateway is reachable from an agent under its NAME, and the built-in
+      // methods share their name with their kind — refresh both spellings.
+      const methods = [];
+      [kind, name].forEach(m => {
+        if (m && INFERENCE_BACKENDS.includes(m) && !methods.includes(m)) methods.push(m);
+      });
+      if (!methods.includes(name) && name && _configuredGateways.includes(name)) methods.push(name);
+      for (const method of methods) {
+        let models = [];
+        try {
+          models = await fetchInferenceModels(method, true);
+        } catch (e) { continue; }
+        if (!models.length) continue;
+        const cached = _inferenceModelCache[method];
+        if (cached && cached.fallback) {
+          // Discovery still is not working (bad key/region/project): say so
+          // rather than letting unverified aliases masquerade as discovered.
+          showToast(`${method} gateway saved, but model discovery did not return a live list — check the key and try Test.`, 'error');
+          continue;
+        }
+        showToast(`${method}: ${models.length} model${models.length === 1 ? '' : 's'} discovered`, 'success');
+        // Repaint the dropdown for every agent on this method so a discovered
+        // model can be picked right away.
+        for (const a of (window._lastAgents || []).filter(x => x.cli === method)) {
+          await updateModelDropdown(a.name, method);
+        }
+      }
+    }
+
+    // Inline feedback for the add/edit form's live model discovery, rendered in
+    // the same #gw-form-result strip the save-time probe uses so a discovery
+    // failure and a save failure look alike. Kept separate from showGatewayProbe
+    // because discovery runs while typing (debounced) and must not claim the
+    // gateway was saved.
+    function showGatewayFormProbeError(msg) {
+      const el = document.getElementById('gw-form-result');
+      if (!el) return;
+      el.style.display = 'block';
+      el.style.color = 'var(--red)';
+      el.textContent = msg;
+    }
+
+    function clearGatewayFormProbeError() {
+      const el = document.getElementById('gw-form-result');
+      if (!el) return;
+      el.style.display = 'none';
+      el.textContent = '';
+    }
+
     async function deleteGateway(name) {
       if (!confirm('Delete gateway "' + name + '"? Agents that route through it must be repointed first.')) return;
       try {
@@ -15171,8 +15274,19 @@ function burnAreaChart() {
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        // Never show an empty dropdown with no explanation: a bad key, wrong
+        // region/project or an unreachable endpoint must say so, with the
+        // server's own error text, rather than looking like "no models exist".
+        if (!res.ok || !data.ok) {
+          showGatewayFormProbeError(data.error || 'Model discovery failed — check the endpoint and API key.');
+        } else if (!_gatewayFormModels.length) {
+          showGatewayFormProbeError('Connected, but the gateway returned no models. Check the key\'s entitlements' + (kindEl && kindEl.value === 'watsonx' ? ' and the project id.' : '.'));
+        } else {
+          clearGatewayFormProbeError();
+        }
       } catch (e) {
         _gatewayFormModels = [];
+        showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
       if (host) host.innerHTML = gatewayDefaultModelFieldHtml(current);
@@ -15225,6 +15339,12 @@ function burnAreaChart() {
         showToast('Gateway "' + payload.name + '" saved', 'success');
         closeGatewayForm();
         loadGateways();
+        // Close the loop back to the agent that sent the operator here: now
+        // that the key is stored, re-run discovery for this method and push the
+        // result into the agent model dropdowns, so a model can be picked
+        // immediately with no manual refresh. Force-bypasses the TTL cache
+        // because the key that makes discovery succeed was just written.
+        refreshMethodModelsAfterGatewaySave(payload.kind, payload.name);
       } catch (e) {
         showToast('Failed to save gateway: ' + e.message, 'error');
       }
@@ -17456,11 +17576,12 @@ function burnAreaChart() {
       return { type: 'github', owner: owner, repo: repo, path: path, ref: ref };
     }
 
-    // onchange handler for the CLI Pin Value select — prompts for the
-    // LiteLLM endpoint (and reverts the selection on cancel) before
-    // recording the change.
+    // onchange handler for the CLI Pin Value select — ensures the selected
+    // gateway method is actually configured (prompting for the LiteLLM
+    // endpoint, or routing to Model Gateways for the others) and reverts the
+    // selection when it is not, before recording the change.
     async function onCliPinChange(sel) {
-      if (sel.value === 'litellm' && !(await ensureLiteLLMConfigured())) {
+      if (!(await ensureGatewayMethodConfigured(sel.value))) {
         sel.value = sel.dataset.prev || 'claude';
         return;
       }
@@ -17806,7 +17927,7 @@ function burnAreaChart() {
           showToast('Name must be lowercase letters, numbers, and hyphens', 'error');
           return;
         }
-        if (generalData.cliPinValue === 'litellm' && !(await ensureLiteLLMConfigured())) return;
+        if (!(await ensureGatewayMethodConfigured(generalData.cliPinValue))) return;
         const agent = {
           backend: generalData.cliPinValue || 'copilot',
           model: generalData.model || '',
@@ -17867,9 +17988,11 @@ function burnAreaChart() {
         showToast('No changes to save', 'info');
         return;
       }
-      // Pinning an agent to litellm requires a configured endpoint —
-      // prompt (and abort the save on cancel) before PUTting the section.
-      if (dirty.general && dirty.general.cliPinValue === 'litellm' && !(await ensureLiteLLMConfigured())) return;
+      // Pinning an agent to a gateway method requires that gateway to be
+      // configured WITH a key — prompt (and abort the save when the operator
+      // backs out or is routed to Model Gateways) before PUTting the section.
+      if (dirty.general && dirty.general.cliPinValue !== undefined &&
+          !(await ensureGatewayMethodConfigured(dirty.general.cliPinValue))) return;
       const base = _configState.type === 'governor' ? '/api/config/governor' : `/api/config/agent/${_configState.agent}`;
       let success = true;
       for (const [section, values] of Object.entries(dirty)) {
