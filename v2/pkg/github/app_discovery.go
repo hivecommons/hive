@@ -241,6 +241,41 @@ func (a *AppAuth) VerifyInstallationForOrg(ctx context.Context, installationID i
 	return nil
 }
 
+// InstallationAccountLogin returns the account login that owns installationID.
+// It authenticates as the App with a JWT and does not mint or persist an
+// installation token.
+func (a *AppAuth) InstallationAccountLogin(ctx context.Context, installationID int64) (string, error) {
+	if a == nil {
+		return "", fmt.Errorf("no app auth configured")
+	}
+	if a.key == nil {
+		return "", fmt.Errorf("app private key not loaded")
+	}
+	if installationID <= 0 {
+		return "", fmt.Errorf("installation ID must be positive")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, tokenMintTimeout)
+	defer cancel()
+
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return "", fmt.Errorf("generating JWT: %w", err)
+	}
+	inst, _, err := a.newJWTClient(jwtToken).Apps.GetInstallation(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("getting app installation %d: %w", installationID, err)
+	}
+	if inst == nil || inst.GetID() != installationID {
+		return "", fmt.Errorf("%w: installation %d was not returned by GitHub", ErrNoInstallationForOrg, installationID)
+	}
+	login := strings.TrimSpace(inst.GetAccount().GetLogin())
+	if login == "" {
+		return "", fmt.Errorf("%w: installation %d has no account login", ErrNoInstallationForOrg, installationID)
+	}
+	return login, nil
+}
+
 // AppID returns the configured GitHub App ID.
 func (a *AppAuth) AppID() int64 { return a.appID }
 

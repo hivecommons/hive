@@ -79,10 +79,43 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 	if err != nil {
 		return nil, fmt.Errorf("reading app key %s: %w", keyFile, err)
 	}
+	key, err := parseAppPrivateKey(keyData)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", keyFile, err)
+	}
 
+	return &AppAuth{
+		appID:          appID,
+		installationID: installationID,
+		key:            key,
+		logger:         logger,
+		cachePath:      cachePath,
+		apiURL:         apiURL,
+	}, nil
+}
+
+// NewAppAuthFromPEM constructs App authentication from an in-memory PEM private
+// key. It is for hub-side flows that already hold the fleet App key in memory
+// and must not write it to a temporary file just to authenticate as the App.
+func NewAppAuthFromPEM(appID, installationID int64, privateKeyPEM string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
+	key, err := parseAppPrivateKey([]byte(privateKeyPEM))
+	if err != nil {
+		return nil, err
+	}
+	return &AppAuth{
+		appID:          appID,
+		installationID: installationID,
+		key:            key,
+		logger:         logger,
+		cachePath:      TokenCachePath,
+		apiURL:         apiURL,
+	}, nil
+}
+
+func parseAppPrivateKey(keyData []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", keyFile)
+		return nil, fmt.Errorf("no PEM block found")
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
@@ -97,15 +130,7 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 			return nil, fmt.Errorf("PKCS8 key is not RSA")
 		}
 	}
-
-	return &AppAuth{
-		appID:          appID,
-		installationID: installationID,
-		key:            key,
-		logger:         logger,
-		cachePath:      cachePath,
-		apiURL:         apiURL,
-	}, nil
+	return key, nil
 }
 
 // newJWTClient builds a go-github client authenticated with the App JWT for

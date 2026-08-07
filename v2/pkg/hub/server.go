@@ -872,6 +872,11 @@ type HubServer struct {
 	// which already probes those URLs. Carries its own leaf mutex and is never
 	// touched while s.mu is held — see url_reachability.go.
 	urlHealth *urlHealthState
+
+	// githubInstallationAccount resolves a GitHub App installation ID to its
+	// owning account login. Nil means use the fleet App key. Tests replace it
+	// with a fake API.
+	githubInstallationAccount func(context.Context, int64) (string, error)
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1030,6 +1035,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
 	s.mux.HandleFunc("POST /api/github/webhook", s.handleGitHubWebhook)
+	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupRouter)
 	s.mux.HandleFunc("GET /learn", s.serveStatic("static/learn.html"))
 	s.mux.HandleFunc("GET /get-started", s.serveStatic("static/get-started.html"))
 	s.mux.HandleFunc("GET /api/docs", s.serveStatic("static/api-docs.html"))
