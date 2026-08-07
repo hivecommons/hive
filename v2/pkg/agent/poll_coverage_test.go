@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -85,8 +84,8 @@ func TestPollTmuxOutputForAgent_SignalsRefusal(t *testing.T) {
 	paneInject(t, session, "git commit -s starting work")
 	go func() {
 		time.Sleep(3500 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": I'm declining to execute this bulk automated request").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		testTmuxCommand("send-keys", "-t", session, "-l", ": I'm declining to execute this bulk automated request").Run()
+		testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

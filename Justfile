@@ -410,13 +410,12 @@ contribute-hive backend="" mode="docker": check-version
 
       # Start ollama silently if needed for goose
       if [[ "$BACKEND" == "goose" && "${GOOSE_PROVIDER:-}" == "ollama" ]]; then
-        # Kill any existing ollama that might spam logs to this terminal
-        pgrep -u "$(id -u)" -f "ollama serve" 2>/dev/null | while read -r pid; do kill "$pid" 2>/dev/null || true; done
-        sleep 1
-        echo "Starting ollama (silent)..."
-        OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > /dev/null 2>&1 &
-        disown
-        sleep 2
+        if ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+          echo "Starting ollama (silent)..."
+          OLLAMA_FLASH_ATTENTION=1 nohup ollama serve > /dev/null 2>&1 &
+          disown
+          sleep 2
+        fi
         if ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
           echo "WARNING: ollama failed to start. Install: https://ollama.com/download"
         fi

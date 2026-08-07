@@ -1729,37 +1729,37 @@ func TestTmuxBaseArgs_WithSocket(t *testing.T) {
 	}
 }
 
-func TestTmuxBaseArgs_WithoutSocket(t *testing.T) {
+func TestTmuxBaseArgs_WithDefaultSocket(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 	agent := &AgentProcess{Name: "test", tmuxSocket: ""}
 	args := m.tmuxBaseArgs(agent)
-	if len(args) != 1 || args[0] != "tmux" {
-		t.Errorf("tmuxBaseArgs without socket = %v, want [tmux]", args)
+	if len(args) != 3 || args[1] != "-L" || args[2] != defaultTmuxSocket {
+		t.Errorf("tmuxBaseArgs with default socket = %v, want [tmux -L %s]", args, defaultTmuxSocket)
 	}
 }
 
-func TestValidTmuxKillSessionTarget(t *testing.T) {
+func TestValidateTmuxKillSessionArgs(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantOK     bool
-		wantTarget string
+		name    string
+		args    []string
+		wantErr bool
 	}{
-		{name: "non-kill command", args: []string{"has-session", "-t", "user"}, wantOK: true},
-		{name: "hive target", args: []string{"kill-session", "-t", "hive-agent"}, wantOK: true, wantTarget: "hive-agent"},
-		{name: "hive equals target", args: []string{"kill-session", "-t=hive-agent"}, wantOK: true, wantTarget: "hive-agent"},
-		{name: "empty target", args: []string{"kill-session", "-t", ""}, wantOK: false},
-		{name: "missing target", args: []string{"kill-session", "-t"}, wantOK: false},
-		{name: "missing flag", args: []string{"kill-session"}, wantOK: false},
-		{name: "non-hive target", args: []string{"kill-session", "-t", "work"}, wantOK: false, wantTarget: "work"},
+		{name: "non kill command", args: []string{"has-session", "-t", "work"}, wantErr: false},
+		{name: "hive target", args: []string{"kill-session", "-t", "hive-agent"}, wantErr: false},
+		{name: "hive target equals", args: []string{"kill-session", "-t=hive-agent"}, wantErr: false},
+		{name: "missing target", args: []string{"kill-session"}, wantErr: true},
+		{name: "empty target", args: []string{"kill-session", "-t", ""}, wantErr: true},
+		{name: "non hive target", args: []string{"kill-session", "-t", "work"}, wantErr: true},
+		{name: "kill all other sessions", args: []string{"kill-session", "-a", "-t", "hive-agent"}, wantErr: true},
+		{name: "kill all in combined flags", args: []string{"kill-session", "-at", "hive-agent", "-t", "hive-agent"}, wantErr: true},
+		{name: "kill all in reversed combined flags", args: []string{"kill-session", "-ta", "hive-agent"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotTarget, gotOK := validTmuxKillSessionTarget(tt.args)
-			if gotOK != tt.wantOK || gotTarget != tt.wantTarget {
-				t.Fatalf("validTmuxKillSessionTarget(%v) = (%q, %v), want (%q, %v)",
-					tt.args, gotTarget, gotOK, tt.wantTarget, tt.wantOK)
+			err := validateTmuxKillSessionArgs(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTmuxKillSessionArgs(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
 			}
 		})
 	}

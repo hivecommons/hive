@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"os/exec"
 	"testing"
 	"time"
 
@@ -23,14 +22,14 @@ func TestDismissInferencePrompts_PressEnter(t *testing.T) {
 	m.mu.RUnlock()
 	agent.tmuxSession = session
 
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Press Enter to continue").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": Press Enter to continue").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	go func() {
 		time.Sleep(1200 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": esc to interrupt").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		testTmuxCommand("send-keys", "-t", session, "-l", ": esc to interrupt").Run()
+		testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}()
 
 	done := make(chan struct{})
@@ -57,16 +56,16 @@ func TestDismissInferencePrompts_FixWith(t *testing.T) {
 	agent.tmuxSession = session
 
 	// Selection menu whose selected line begins with "Fix with".
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Enter to confirm").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ Fix with Claude").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": Enter to confirm").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", "❯ Fix with Claude").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": esc to interrupt").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		testTmuxCommand("send-keys", "-t", session, "-l", ": esc to interrupt").Run()
+		testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}()
 
 	done := make(chan struct{})

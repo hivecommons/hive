@@ -85,11 +85,11 @@ func inferenceReadyStub(t *testing.T) {
 // a real CLI.
 func newRawTmuxSession(t *testing.T, session string) {
 	t.Helper()
-	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", session).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "kill-session", "-t", session).Run()
+		_ = testTmuxCommand("kill-session", "-t", session).Run()
 	})
 }
 
@@ -100,10 +100,10 @@ func paneInject(t *testing.T, session, text string) {
 	t.Helper()
 	// Send as a literal string; ": " makes bash treat the rest as a no-op arg
 	// so nothing executes but the text is echoed into the visible pane.
-	if err := exec.Command("tmux", "send-keys", "-t", session, "-l", ": "+text).Run(); err != nil {
+	if err := testTmuxCommand("send-keys", "-t", session, "-l", ": "+text).Run(); err != nil {
 		t.Fatalf("send-keys: %v", err)
 	}
-	_ = exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 }
 
@@ -111,10 +111,10 @@ func paneInject(t *testing.T, session, text string) {
 func paneInjectLines(t *testing.T, session string, lines ...string) {
 	t.Helper()
 	for _, ln := range lines {
-		if err := exec.Command("tmux", "send-keys", "-t", session, "-l", ": "+ln).Run(); err != nil {
+		if err := testTmuxCommand("send-keys", "-t", session, "-l", ": "+ln).Run(); err != nil {
 			t.Fatalf("send-keys: %v", err)
 		}
-		_ = exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}
 	time.Sleep(500 * time.Millisecond)
 }
@@ -522,14 +522,14 @@ func TestConfirmMenuOption_SelectsOption(t *testing.T) {
 	// comment prefix so it appears at column 0 (selectedMenuOption requires the
 	// trimmed line to start with "❯"). bash prints a harmless "command not
 	// found" below, but the typed line itself is visible in the pane.
-	if err := exec.Command("tmux", "send-keys", "-t", session, "-l", ": Bypass Permissions mode Enter to confirm").Run(); err != nil {
+	if err := testTmuxCommand("send-keys", "-t", session, "-l", ": Bypass Permissions mode Enter to confirm").Run(); err != nil {
 		t.Fatal(err)
 	}
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	if err := exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 2. Yes I accept").Run(); err != nil {
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+	if err := testTmuxCommand("send-keys", "-t", session, "-l", "❯ 2. Yes I accept").Run(); err != nil {
 		t.Fatal(err)
 	}
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 	// want "accept" is on the selected ❯ line -> confirm immediately.
 	if !m.confirmMenuOption(agent, "Bypass Permissions mode", "accept", "Down") {
