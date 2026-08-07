@@ -2891,11 +2891,23 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 	}
 }
 
-// InferenceBackends is the canonical list of self-hosted inference backend
+// InferenceBackends is the canonical list of model-gateway / inference backend
 // IDs. It lives in the config package (a leaf in the import graph) so the
 // agent and proxy packages can share it without an import cycle
 // (proxy → agent → config).
-var InferenceBackends = []string{"vllm", "llm-d", "litellm"}
+//
+// These are NOT agentic CLIs. Every one of them names a model endpoint that
+// hive fronts with its own OpenAI-compatible translator and drives with the
+// claude CLI; auth is an API key (or, for watsonx, an IAM bearer minted from
+// one) supplied by config, never an interactive login.
+//
+// "watsonx" is here because IBM watsonx.ai is a model gateway in exactly that
+// sense. It was previously supported ONLY as a `gateways:` kind and as an
+// onboarding UI option, while the agent launcher had no case for it — so
+// `backend: watsonx` was accepted by config and then rejected hours later at
+// kick time with "unknown backend: watsonx". Anything that enumerates gateway
+// backends must read THIS list rather than repeating the members inline.
+var InferenceBackends = []string{"vllm", "llm-d", "litellm", "watsonx"}
 
 // IsInferenceBackend returns true if the backend name is a self-hosted
 // inference backend rather than a CLI tool.
@@ -2906,6 +2918,72 @@ func IsInferenceBackend(backend string) bool {
 		}
 	}
 	return false
+}
+
+// CLIBackends is the canonical list of agentic-CLI agent backends — backends
+// that launch a real coding CLI binary rather than routing to a model gateway.
+//
+// This exists so the CONFIG VALIDATOR and the LAUNCHER dispatch on one list.
+// They used to keep separate inline sets, which is the drift that let
+// `backend: watsonx` be accepted at config-set time and then fail at kick time
+// with "unknown backend: watsonx". Adding a backend in one place only is now a
+// visible omission rather than a silent accept-then-fail.
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini"}
+
+// IsCLIBackend returns true if the backend launches an agentic CLI binary.
+func IsCLIBackend(backend string) bool {
+	for _, b := range CLIBackends {
+		if b == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportedBackends returns every backend name valid independent of this
+// hive's configuration: the agentic CLIs plus the model-gateway backends. A
+// configured gateway NAME is additionally valid as a backend, but that is
+// config-dependent and so is checked separately by the validator.
+func SupportedBackends() []string {
+	out := make([]string, 0, len(CLIBackends)+len(InferenceBackends))
+	out = append(out, CLIBackends...)
+	out = append(out, InferenceBackends...)
+	return out
+}
+
+// ValidateBackend reports whether backend is a usable agent backend for this
+// config, returning a descriptive error naming the supported values when it is
+// not. An empty backend is valid (it means "the hive default").
+//
+// This is the single gate the config write path uses so an unsupported backend
+// is refused AT SET TIME with a clear message, instead of being persisted and
+// surfacing later as an agent that silently never launches.
+func (g GovernorConfig) ValidateBackend(backend string) error {
+	if backend == "" {
+		return nil
+	}
+	if IsCLIBackend(backend) || IsInferenceBackend(backend) {
+		return nil
+	}
+	for _, gw := range g.ResolvedGateways() {
+		if gw.Name != "" && strings.EqualFold(gw.Name, backend) {
+			return nil
+		}
+	}
+	var gatewayNames []string
+	for _, gw := range g.ResolvedGateways() {
+		if gw.Name != "" {
+			gatewayNames = append(gatewayNames, gw.Name)
+		}
+	}
+	msg := fmt.Sprintf("unsupported backend %q (supported: %s",
+		backend, strings.Join(SupportedBackends(), ", "))
+	if len(gatewayNames) > 0 {
+		msg += fmt.Sprintf("; or a configured gateway name: %s", strings.Join(gatewayNames, ", "))
+	} else {
+		msg += "; or the name of a gateway configured under the Model Gateways tab"
+	}
+	return fmt.Errorf("%s)", msg)
 }
 
 func (c *Config) validate() error {
@@ -2937,25 +3015,14 @@ func (c *Config) validate() error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
-	// A configured gateway name is a valid agent backend: naming a gateway as
-	// the backend routes that agent through it. Names are matched
-	// case-insensitively to mirror ResolveGateway.
-	gatewayNames := map[string]bool{}
-	for _, gw := range c.Governor.ResolvedGateways() {
-		if gw.Name != "" {
-			gatewayNames[strings.ToLower(gw.Name)] = true
-		}
-	}
 	for name, agent := range c.Agents {
-		validBackends := map[string]bool{"claude": true, "copilot": true, "goose": true, "codex": true, "pi": true, "bob": true, "aider": true}
-		// Inference backends (vllm, llm-d, litellm) are valid persisted
-		// agent backends too — they launch the claude CLI routed through
-		// the inference translator.
-		for _, b := range InferenceBackends {
-			validBackends[b] = true
-		}
-		if agent.Backend != "" && !validBackends[agent.Backend] && !gatewayNames[strings.ToLower(agent.Backend)] {
-			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, aider, an inference backend: %s, or a configured gateway name)", name, agent.Backend, strings.Join(InferenceBackends, ", "))
+		// One gate, shared with the config write path (dashboard agent-config
+		// save) and agreeing with what the launcher can actually dispatch. A
+		// configured gateway name is valid too: naming a gateway as the backend
+		// routes that agent through it, matched case-insensitively to mirror
+		// ResolveGateway.
+		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
+			return fmt.Errorf("agent %s: %w", name, err)
 		}
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {

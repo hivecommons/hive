@@ -2525,7 +2525,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 	if v, ok := body["cliPinValue"]; ok {
 		if str, ok := v.(string); ok && str != "" {
-			agentCfg.Backend = sanitizeString(str)
+			backend := sanitizeString(str)
+			// Validate at set time against the same list the launcher
+			// dispatches on — persisting an unsupported backend produces an
+			// agent that is accepted now and fails to launch later.
+			if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			agentCfg.Backend = backend
 			agentCfg.BackendOwner = config.FieldOwnerOperator
 			backendChanged = true
 		}
@@ -2778,7 +2786,16 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	// Operator edits claim ownership so the pack apply that runs on every
 	// restart cannot reconcile the choice back to the pack default.
 	if body.Backend != "" {
-		agentCfg.Backend = sanitizeString(body.Backend)
+		backend := sanitizeString(body.Backend)
+		// Refuse an unsupported backend HERE, at set time, with a message that
+		// names what is valid. Without this the value is persisted happily and
+		// the failure surfaces hours later as "unknown backend: <x>" on the
+		// kick path, with the agent silently never launching.
+		if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
 	}
 	if body.Model != "" {
@@ -4650,6 +4667,12 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 
 	if body.Backend == "" {
 		body.Backend = "claude"
+	}
+	// Reject an unsupported backend before the agent is created, rather than
+	// creating an agent that can never launch.
+	if err := s.deps.Config.Governor.ValidateBackend(body.Backend); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	agentCfg := config.AgentConfig{

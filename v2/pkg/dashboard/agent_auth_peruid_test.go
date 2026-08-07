@@ -28,7 +28,7 @@ func TestAgentCLIUnauthenticated_InferenceBackendNeverNeedsLogin(t *testing.T) {
 	// empty shared credential path produces.
 	probe := func(string) (bool, bool) { return false, true }
 
-	for _, backend := range []string{"litellm", "vllm", "llm-d"} {
+	for _, backend := range config.InferenceBackends {
 		for _, state := range []agent.ProcessState{agent.StateRunning, agent.StateStopped} {
 			p := &agent.AgentProcess{
 				State:  state,

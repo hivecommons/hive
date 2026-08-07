@@ -2460,23 +2460,7 @@ func main() {
 					// key (NOT the raw key), and scopes billing/limits by a
 					// project id sent as X-IBM-Project-ID. Mint (cached) and set
 					// both here; every other kind sends the resolved key verbatim.
-					apiKey := gw.ResolveAPIKey()
-					var extraHeaders map[string]string
-					if strings.EqualFold(gw.Kind, config.GatewayKindWatsonx) {
-						token, terr := watsonx.DefaultMinter.Token(context.Background(), apiKey)
-						if terr != nil {
-							logger.Warn("watsonx IAM token mint failed; agent inference will fail until the key/project are valid",
-								"agent", agentName, "gateway", backend, "error", terr.Error())
-							// Leave apiKey as-is (the raw key). watsonx will reject
-							// it, surfacing a clear upstream 401 rather than a
-							// silent success — better than dropping the route.
-						} else {
-							apiKey = token
-						}
-						if gw.ProjectID != "" {
-							extraHeaders = map[string]string{watsonx.ProjectIDHeader: gw.ProjectID}
-						}
-					}
+					apiKey, extraHeaders := resolveGatewayAuth(gw, agentName, backend, logger)
 					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
 						Backend:      backend,
 						Endpoint:     endpoint,
@@ -2539,6 +2523,41 @@ func main() {
 						Model:    model,
 						APIKey:   apiKey,
 						CABundle: caBundle,
+					})
+					return
+				}
+				if backend == config.GatewayKindWatsonx {
+					// Built-in "watsonx" backend: the operator set
+					// `backend: watsonx` without a gateway literally NAMED
+					// watsonx (a named one is handled by the gateway branch
+					// above). Resolve the watsonx gateway by KIND so the
+					// endpoint, IBM Cloud key, project id and region all come
+					// from the existing `gateways:` plumbing rather than being
+					// re-derived here.
+					gw := resolveWatsonxGateway(cfg)
+					if gw == nil {
+						logger.Warn("watsonx backend selected but no watsonx gateway is configured; add one under the Model Gateways tab",
+							"agent", agentName, "model", model)
+						return
+					}
+					// Region-only gateways are legal (the guided form can save a
+					// region without an endpoint), so fall back to the shared
+					// region template — the same helper the dashboard preset uses.
+					endpoint := strings.TrimSpace(gw.Endpoint)
+					if endpoint == "" {
+						endpoint = watsonx.EndpointForRegion(gw.Region)
+					}
+					if model == "" {
+						model = gw.DefaultModel
+					}
+					apiKey, extraHeaders := resolveGatewayAuth(gw, agentName, backend, logger)
+					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						APIKey:       apiKey,
+						CABundle:     gw.CABundle,
+						ExtraHeaders: extraHeaders,
 					})
 					return
 				}
@@ -5269,6 +5288,62 @@ func runHub(logger *slog.Logger) {
 		os.Exit(1)
 	}
 	logger.Info("hub server stopped")
+}
+
+// resolveWatsonxGateway finds the gateway backing the built-in "watsonx" agent
+// backend. It prefers a gateway explicitly NAMED watsonx, then falls back to
+// the first gateway of KIND watsonx — so `backend: watsonx` works whether the
+// operator named their gateway "watsonx" or something descriptive like
+// "ibm-granite-prod". Returns nil when no watsonx gateway is configured.
+func resolveWatsonxGateway(cfg *config.Config) *config.GatewayConfig {
+	gws := cfg.Governor.ResolvedGateways()
+	for i := range gws {
+		if strings.EqualFold(gws[i].Name, config.GatewayKindWatsonx) &&
+			strings.EqualFold(gws[i].Kind, config.GatewayKindWatsonx) {
+			gw := gws[i]
+			return &gw
+		}
+	}
+	for i := range gws {
+		if strings.EqualFold(gws[i].Kind, config.GatewayKindWatsonx) {
+			gw := gws[i]
+			return &gw
+		}
+	}
+	return nil
+}
+
+// resolveGatewayAuth resolves the bearer token and non-secret extra headers an
+// agent's inference route should present for a gateway.
+//
+// For every kind except watsonx this is the resolved API key verbatim and no
+// extra headers. watsonx authenticates its OpenAI-compatible model gateway with
+// a SHORT-LIVED IAM bearer minted from the IBM Cloud API key (not the raw key)
+// and scopes billing/limits by a project id sent as X-IBM-Project-ID, so both
+// are set here via the shared process-wide minter (pkg/watsonx.DefaultMinter),
+// whose cache means one token is reused across inference, probes and discovery.
+//
+// Shared by the named-gateway branch and the built-in "watsonx" backend branch
+// so the two cannot authenticate differently. Never logs the key or the token.
+func resolveGatewayAuth(gw *config.GatewayConfig, agentName, backend string, logger *slog.Logger) (string, map[string]string) {
+	apiKey := gw.ResolveAPIKey()
+	if !strings.EqualFold(gw.Kind, config.GatewayKindWatsonx) {
+		return apiKey, nil
+	}
+	if token, err := watsonx.DefaultMinter.Token(context.Background(), apiKey); err != nil {
+		logger.Warn("watsonx IAM token mint failed; agent inference will fail until the key/project are valid",
+			"agent", agentName, "gateway", backend, "error", err.Error())
+		// Leave apiKey as-is (the raw key). watsonx will reject it, surfacing a
+		// clear upstream 401 rather than a silent success — better than dropping
+		// the route entirely.
+	} else {
+		apiKey = token
+	}
+	var extraHeaders map[string]string
+	if gw.ProjectID != "" {
+		extraHeaders = map[string]string{watsonx.ProjectIDHeader: gw.ProjectID}
+	}
+	return apiKey, extraHeaders
 }
 
 func envOrDefault(key, fallback string) string {

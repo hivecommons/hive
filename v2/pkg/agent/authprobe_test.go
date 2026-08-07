@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // writeClaudeCreds writes a credentials.json with a non-expired OAuth token at
@@ -54,7 +56,7 @@ func TestAgentAuthState_InferenceBackendNeverNeedsLogin(t *testing.T) {
 	emptySharedPaths(t)
 	m := &Manager{}
 
-	for _, backend := range []string{"litellm", "vllm", "llm-d"} {
+	for _, backend := range config.InferenceBackends {
 		for _, running := range []bool{true, false} {
 			// Even a pane that looks like a login prompt cannot make an
 			// API-key backend "need login" — there is no login to perform.
