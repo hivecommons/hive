@@ -85,10 +85,39 @@ func TestGatewayGuardRequiresKeyNotJustPresence(t *testing.T) {
 	if !strings.Contains(html, "if (gw && gw.hasKey) return true;") {
 		t.Error("the guard must require hasKey, not merely a gateway of the right kind")
 	}
-	// A live (non-fallback) discovery proves the method works even without a
-	// named gateway (env-configured endpoints) — do not interrupt then.
-	if !strings.Contains(html, "if (cached && !cached.fallback) return true;") {
-		t.Error("a live non-fallback discovery must short-circuit the guard")
+	// A live (non-fallback) discovery WITH MODELS proves the method works even
+	// without a named gateway (env-configured endpoints) — do not interrupt
+	// then. The length check matters: a 404 from an unconfigured backend used
+	// to be cached as an empty non-fallback "discovery" that silently skipped
+	// the guard (the Model Gateways redirect never appeared).
+	if !strings.Contains(html, "if (cached && !cached.fallback && cached.models && cached.models.length) return true;") {
+		t.Error("a live non-fallback discovery must short-circuit the guard only when it returned models")
+	}
+}
+
+// The method-switch redirect (big agent card → maybeOpenMethodConfig) must
+// fire when the method's gateway is missing OR keyless, and a non-OK
+// /api/inference/models response (404 for an unconfigured backend) must never
+// be cached as a successful discovery — that combination silently suppressed
+// the Model Gateways dialog when an operator picked watsonx/litellm on a hive
+// with no gateway configured.
+func TestMethodSwitchRedirectFiresWithoutConfiguredGateway(t *testing.T) {
+	html := indexHTML(t)
+	cases := []struct {
+		name    string
+		snippet string
+	}{
+		{"non-OK discovery is not cached", "if (!resp.ok) {"},
+		{"switch redirect requires a keyed gateway", "if (!gw || !gw.hasKey) {"},
+		{"cache short-circuit needs actual models", "if (cached && !cached.fallback && cached.models && cached.models.length) return;"},
+		{"keyless gateway names the reason", "'The ' + backend + ' gateway has no API key'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(html, tc.snippet) {
+				t.Errorf("method-switch redirect path is missing %q", tc.snippet)
+			}
+		})
 	}
 }
 

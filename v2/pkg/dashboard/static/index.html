@@ -6773,6 +6773,15 @@
       }
       try {
         const resp = await fetch(`/api/inference/models/${encodeURIComponent(backend)}`);
+        // A non-OK response (404 for a backend with no registered endpoint —
+        // e.g. watsonx/litellm before any gateway is configured) is NOT a
+        // discovery result. Caching it as {models:[], fallback:false} made the
+        // maybeOpenMethodConfig/ensureGatewayMethodConfigured guards read it
+        // as a successful live discovery and silently skip the Model Gateways
+        // redirect when the operator picked the method (#2778 regression).
+        if (!resp.ok) {
+          return INFERENCE_MODELS[backend] || [];
+        }
         const data = await resp.json();
         // data.fallback: endpoint discovery failed and the server returned
         // static common aliases — mark them as unverified against the key.
@@ -12350,7 +12359,7 @@ function burnAreaChart() {
       // (possibly via HIVE_*_ENDPOINT env, which never appears in the gateway
       // list) — mirrors the same check maybeOpenMethodConfig makes.
       const cached = _inferenceModelCache[method];
-      if (cached && !cached.fallback) return true;
+      if (cached && !cached.fallback && cached.models && cached.models.length) return true;
       let gateways = [];
       try {
         const r = await fetch('/api/config/governor/gateways');
@@ -12522,13 +12531,19 @@ function burnAreaChart() {
         // genuinely configured (possibly via HIVE_*_ENDPOINT env, which never
         // appears in the gateway list) — nothing to fix.
         const cached = _inferenceModelCache[backend];
-        if (cached && !cached.fallback) return;
+        if (cached && !cached.fallback && cached.models && cached.models.length) return;
         const r = await fetch('/api/config/governor/gateways');
         if (!r.ok) return;
         const d = await r.json();
-        const has = (d.gateways || []).some(g => g && (g.kind === backend || g.name === backend));
-        if (!has) {
-          showToast('No ' + backend + ' gateway configured — opening Governor Config → Model Gateways', 'info');
+        // Same contract as ensureGatewayMethodConfigured: the method needs a
+        // matching gateway AND a key on it — a keyless watsonx gateway mints
+        // no IAM token, so discovery/inference fail exactly as if no gateway
+        // existed.
+        const gw = (d.gateways || []).find(g => g && (g.kind === backend || g.name === backend));
+        if (!gw || !gw.hasKey) {
+          const why = gw ? 'The ' + backend + ' gateway has no API key'
+            : 'No ' + backend + ' gateway configured';
+          showToast(why + ' — opening Governor Config → Model Gateways', 'info');
           // Guided jump: land the user directly on a NEW gateway form pre-set to
           // this method's kind (endpoint/preset already filled) instead of an
           // empty list they must then "+ Add" from. Consumed by loadGateways().
