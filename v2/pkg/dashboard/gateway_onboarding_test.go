@@ -77,13 +77,18 @@ func TestGatewayGuardMirrorsLiteLLMAndOpensModelGateways(t *testing.T) {
 	}
 }
 
-// A gateway that exists but carries no API key must NOT satisfy the guard: a
-// keyless watsonx gateway mints no IAM token, so it fails exactly like a missing
-// one. Conversely a configured+keyed gateway must not interrupt the operator.
+// A gateway that exists but carries no API key must NOT satisfy the guard for
+// key-requiring kinds: a keyless watsonx gateway mints no IAM token and a
+// keyless openrouter gateway cannot authenticate, so both fail exactly like a
+// missing gateway. Self-hosted vllm/llm-d are commonly unauthenticated, so
+// presence alone satisfies them. A configured+keyed gateway never interrupts.
 func TestGatewayGuardRequiresKeyNotJustPresence(t *testing.T) {
 	html := indexHTML(t)
-	if !strings.Contains(html, "if (gw && gw.hasKey) return true;") {
-		t.Error("the guard must require hasKey, not merely a gateway of the right kind")
+	if !strings.Contains(html, "if (gw && (gw.hasKey || !GATEWAY_KEY_REQUIRED_METHODS.includes(method))) return true;") {
+		t.Error("the guard must require hasKey for key-requiring kinds and accept keyless self-hosted gateways")
+	}
+	if !strings.Contains(html, "const GATEWAY_KEY_REQUIRED_METHODS = ['openrouter', 'watsonx'];") {
+		t.Error("openrouter and watsonx are the key-requiring gateway methods")
 	}
 	// A live (non-fallback) discovery WITH MODELS proves the method works even
 	// without a named gateway (env-configured endpoints) — do not interrupt
@@ -108,9 +113,10 @@ func TestMethodSwitchRedirectFiresWithoutConfiguredGateway(t *testing.T) {
 		snippet string
 	}{
 		{"non-OK discovery is not cached", "if (!resp.ok) {"},
-		{"switch redirect requires a keyed gateway", "if (!gw || !gw.hasKey) {"},
+		{"switch redirect requires a keyed gateway for key-requiring kinds", "if (!gw || (!gw.hasKey && GATEWAY_KEY_REQUIRED_METHODS.includes(backend))) {"},
 		{"cache short-circuit needs actual models", "if (cached && !cached.fallback && cached.models && cached.models.length) return;"},
 		{"keyless gateway names the reason", "'The ' + backend + ' gateway has no API key'"},
+		{"a rejected gateway-method switch routes to the form", "dismissToast(toast, `No ${backend} gateway configured — opening Governor Config → Model Gateways`, 'info');"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

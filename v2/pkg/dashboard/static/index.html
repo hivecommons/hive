@@ -12367,14 +12367,16 @@ function burnAreaChart() {
         const d = await r.json();
         gateways = d.gateways || [];
       } catch (e) { return true; }
-      // Require BOTH a matching gateway and a key on it: a watsonx gateway saved
-      // without a key mints no IAM token, so model discovery and inference fail
-      // exactly as if no gateway existed at all.
+      // Require a matching gateway; for key-requiring kinds (hosted services:
+      // watsonx needs an IAM-minted token, openrouter a bearer key) also
+      // require the key. Self-hosted vllm/llm-d gateways are commonly
+      // unauthenticated, so mere presence (or an env-configured endpoint,
+      // caught by the discovery check above) satisfies them.
       const gw = gateways.find(g => g && (g.kind === method || g.name === method));
-      if (gw && gw.hasKey) return true;
+      if (gw && (gw.hasKey || !GATEWAY_KEY_REQUIRED_METHODS.includes(method))) return true;
       const why = gw
         ? `The ${method} gateway has no API key — ${method} needs one before this agent can run.`
-        : `No ${method} gateway is configured — ${method} needs an API key before this agent can run.`;
+        : `No ${method} gateway is configured — ${method} needs ${GATEWAY_KEY_REQUIRED_METHODS.includes(method) ? 'an endpoint and API key' : 'an endpoint'} before this agent can run.`;
       if (!(await hiveConfirm(`${why}\n\nOpen Governor Config → Model Gateways to set it up? Unsaved changes in this dialog will be discarded.`))) {
         return false;
       }
@@ -12504,6 +12506,11 @@ function burnAreaChart() {
     // Config → Model Gateways). The check is per-method — an openrouter
     // gateway does not satisfy a vllm selection.
     const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d', 'watsonx'];
+    // Hosted gateway kinds that cannot work without an API key (watsonx mints
+    // an IAM token from it; openrouter authenticates with a bearer key).
+    // Self-hosted vllm/llm-d endpoints are commonly unauthenticated, so a
+    // configured gateway (or env endpoint) without a key is legitimate there.
+    const GATEWAY_KEY_REQUIRED_METHODS = ['openrouter', 'watsonx'];
 
     // maybeOpenMethodConfig runs AFTER a method switch is saved: the choice is
     // never blocked, but when the selected method's backing config is absent
@@ -12536,11 +12543,12 @@ function burnAreaChart() {
         if (!r.ok) return;
         const d = await r.json();
         // Same contract as ensureGatewayMethodConfigured: the method needs a
-        // matching gateway AND a key on it — a keyless watsonx gateway mints
-        // no IAM token, so discovery/inference fail exactly as if no gateway
-        // existed.
+        // matching gateway, plus a key when the kind requires one (watsonx
+        // mints an IAM token from it, openrouter authenticates with it).
+        // Self-hosted vllm/llm-d are commonly unauthenticated — presence (or
+        // the live-discovery check above) is enough for them.
         const gw = (d.gateways || []).find(g => g && (g.kind === backend || g.name === backend));
-        if (!gw || !gw.hasKey) {
+        if (!gw || (!gw.hasKey && GATEWAY_KEY_REQUIRED_METHODS.includes(backend))) {
           const why = gw ? 'The ' + backend + ' gateway has no API key'
             : 'No ' + backend + ' gateway configured';
           showToast(why + ' — opening Governor Config → Model Gateways', 'info');
@@ -12559,7 +12567,23 @@ function burnAreaChart() {
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
-      if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
+      if (!data.ok) {
+        // A gateway method can FAIL the switch itself when nothing routes it —
+        // openrouter is valid only as a configured gateway NAME (it is not in
+        // the server's InferenceBackends list), so with no openrouter gateway
+        // the server rejects the switch with "unsupported backend". A dead-end
+        // error toast tells the operator nothing actionable; route them to the
+        // Model Gateways form pre-set to this kind instead, like every other
+        // unconfigured gateway method.
+        if (GATEWAY_METHODS.includes(backend)) {
+          dismissToast(toast, `No ${backend} gateway configured — opening Governor Config → Model Gateways`, 'info');
+          _pendingGatewayPresetKind = backend;
+          openConfigDialog('governor', null, 'Model Gateways');
+          return;
+        }
+        dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error');
+        return;
+      }
       dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
       // The selection is saved; if its backing config is missing, land the
       // user on the Governor Config tab that fixes it (never blocks).
