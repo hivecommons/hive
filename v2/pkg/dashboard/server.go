@@ -668,6 +668,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
+	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupCallback)
 	// SSO handoff: exchange a hub-minted, HMAC-signed token for a local session
 	// so a hub-authenticated user opens this (direct-route) spoke without a
 	// second GitHub device-flow login. Public path (see isPublicPath) because
@@ -906,6 +907,11 @@ func isPublicPath(path string) bool {
 		// token IS the credential. The handler itself verifies the token and
 		// the authorized_users allowlist before minting a session, so exposing
 		// the path unauthenticated does not weaken the allowlist gate.
+		return true
+	case path == "/gh-setup":
+		// GitHub App Setup URL return: GitHub redirects a fresh browser here
+		// after install, often without a hive session. The handler accepts only
+		// IDs verified by an App-JWT lookup against this app and this hive's org.
 		return true
 	default:
 		return false

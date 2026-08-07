@@ -2546,7 +2546,7 @@
           <li>Set the permissions below, then click "Create GitHub App"</li>
           <li>On the app page, note the <strong>App ID</strong> and <strong>Client ID</strong></li>
           <li>Generate a private key (.pem file) and save it to <code>./secrets/gh-app-key.pem</code></li>
-          <li>Install the app on your org/repos and note the <strong>Installation ID</strong> (from the URL after install)</li>
+          <li>Install the app on your org/repos. If the app's <strong>Setup URL</strong> is set to this hive's <code>/gh-setup</code> URL, finishing the install in the same browser configures the Installation ID automatically; otherwise note the <strong>Installation ID</strong> from the URL after install.</li>
           <li>Update <code>hive.yaml</code>:</li>
         </ol>
         <pre style="background:var(--panel-strong);color:var(--text);padding:12px;border-radius:6px;font-size:0.75rem;overflow-x:auto">github:
@@ -12259,6 +12259,22 @@ function burnAreaChart() {
       setTimeout(() => dismissToast(el), TOAST_DURATION_MS);
       return el;
     }
+    function handleGitHubSetupToast() {
+      if (!window.URL || !window.URLSearchParams || !history.replaceState) return;
+      const url = new URL(window.location.href);
+      const flag = url.searchParams.get('ghSetup');
+      if (!flag) return;
+      if (flag === 'ok') {
+        showToast('GitHub App installed and configured automatically', 'success');
+      } else if (flag === 'requested') {
+        showToast('Install requested — an org admin must approve; this hive will configure itself once approved', 'info');
+      } else {
+        showToast('GitHub App setup could not be completed automatically. Check the Installation ID and app org.', 'error');
+      }
+      url.searchParams.delete('ghSetup');
+      history.replaceState({}, document.title, url.pathname + (url.search ? url.search : '') + url.hash);
+    }
+    handleGitHubSetupToast();
     // dismissToast removes a toast, or (with newMsg) rewrites an in-flight
     // toast into its result. `force` bypasses stickiness for the user-initiated
     // click/× path, so a sticky error can still be dismissed on demand.

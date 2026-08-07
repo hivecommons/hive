@@ -226,3 +226,161 @@ func TestAutoDiscoverGitHubInstallationIDPersistsLikeManualSetID(t *testing.T) {
 			gotAppID, gotInstallationID, gotKeyFile, testHubDeliveredAppID, testHubDeliveredInstallationID, keyFile)
 	}
 }
+func TestGitHubSetupCallback_ValidInstallConfigures(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	var gotInstallationID int64
+	deps.ReinitGitHubFunc = func(appID, installationID int64, keyFile string) error {
+		gotInstallationID = installationID
+		return nil
+	}
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=ok" {
+		t.Fatalf("redirect = %q, want /?ghSetup=ok", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 4242 {
+		t.Fatalf("installation_id = %d, want 4242", deps.Config.GitHub.InstallationID)
+	}
+	if gotInstallationID != 4242 {
+		t.Fatalf("reinit installation_id = %d, want 4242", gotInstallationID)
+	}
+	if entries := s.GetAudit().Recent(1); len(entries) != 1 || entries[0].Action != "config_github" {
+		t.Fatalf("audit entry = %#v, want config_github", entries)
+	}
+}
+
+func TestGitHubSetupCallback_RequestDoesNotConfigure(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=request")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup request: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=requested" {
+		t.Fatalf("redirect = %q, want /?ghSetup=requested", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_MismatchedOrgRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "other-org")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_NonNumericIDRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=abc")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_AlreadyConfiguredUnauthenticatedRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+	deps.Config.GitHub.InstallationID = 1111
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 1111 {
+		t.Fatalf("installation_id = %d, want unchanged 1111", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_UpdateForSameInstallationAllowed(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+	deps.Config.GitHub.InstallationID = 4242
+
+	rec := doGet(s, "/gh-setup?setup_action=update&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=ok" {
+		t.Fatalf("redirect = %q, want /?ghSetup=ok", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 4242 {
+		t.Fatalf("installation_id = %d, want unchanged 4242", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func setupCallbackServer(t *testing.T, accountLogin string) (*Server, *Dependencies, *httptest.Server) {
+	t.Helper()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app/installations/4242" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": 4242,
+			"account": map[string]any{
+				"login": accountLogin,
+				"type":  "Organization",
+			},
+		})
+	}))
+
+	s, deps := apiServer(t)
+	deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	deps.Config.Project.Org = "myorg"
+	deps.Config.GitHub.AppID = testHubDeliveredAppID
+	deps.Config.GitHub.InstallationID = 0
+	deps.Config.GitHub.APIURL = api.URL
+	deps.Config.GitHub.KeyFile = writeTestAppKey(t)
+	return s, deps, api
+}
+
+func writeTestAppKey(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating RSA key: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "gh-app-key.pem")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("creating key file: %v", err)
+	}
+	if err := pem.Encode(f, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		_ = f.Close()
+		t.Fatalf("writing key PEM: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing key file: %v", err)
+	}
+	return path
+}

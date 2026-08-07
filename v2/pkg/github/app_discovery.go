@@ -202,6 +202,45 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 	return 0, fmt.Errorf("%w: app %d has no installation for %q (direct lookup: %v)", ErrNoInstallationForOrg, a.appID, org, directErr)
 }
 
+// VerifyInstallationForOrg verifies that installationID is an installation of
+// this GitHub App whose account login matches org. It uses an App JWT, not an
+// installation token, so it is safe to call before the hive has accepted or
+// configured the installation ID.
+func (a *AppAuth) VerifyInstallationForOrg(ctx context.Context, installationID int64, org string) error {
+	if a == nil {
+		return fmt.Errorf("no app auth configured")
+	}
+	if a.key == nil {
+		return fmt.Errorf("app private key not loaded")
+	}
+	org = strings.TrimSpace(org)
+	if org == "" {
+		return fmt.Errorf("target org is empty")
+	}
+	if installationID <= 0 {
+		return fmt.Errorf("installation ID must be positive")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, tokenMintTimeout)
+	defer cancel()
+
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return fmt.Errorf("generating JWT: %w", err)
+	}
+	inst, _, err := a.newJWTClient(jwtToken).Apps.GetInstallation(ctx, installationID)
+	if err != nil {
+		return fmt.Errorf("getting app installation %d: %w", installationID, err)
+	}
+	if inst == nil || inst.GetID() != installationID {
+		return fmt.Errorf("%w: installation %d was not returned by GitHub", ErrNoInstallationForOrg, installationID)
+	}
+	if acct := inst.GetAccount().GetLogin(); acct == "" || !strings.EqualFold(acct, org) {
+		return fmt.Errorf("%w: installation %d belongs to %q, not %q", ErrNoInstallationForOrg, installationID, inst.GetAccount().GetLogin(), org)
+	}
+	return nil
+}
+
 // AppID returns the configured GitHub App ID.
 func (a *AppAuth) AppID() int64 { return a.appID }
 

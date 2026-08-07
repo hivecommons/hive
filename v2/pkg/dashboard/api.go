@@ -5103,6 +5103,24 @@ func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Re
 
 // --- GitHub config endpoint ---
 
+type githubConfigUpdate struct {
+	AppID          *int64
+	InstallationID *int64
+	KeyFile        string
+	PrivateKey     string
+}
+
+type githubConfigUpdateError struct {
+	message string
+	code    int
+}
+
+func (e *githubConfigUpdateError) Error() string { return e.message }
+
+func newGitHubConfigUpdateError(message string, code int) *githubConfigUpdateError {
+	return &githubConfigUpdateError{message: message, code: code}
+}
+
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AppID          *int64 `json:"app_id"`
@@ -5120,6 +5138,28 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result, err := s.applyGitHubConfigUpdate(r, githubConfigUpdate{
+		AppID:          body.AppID,
+		InstallationID: body.InstallationID,
+		KeyFile:        body.KeyFile,
+		PrivateKey:     body.PrivateKey,
+	})
+	if err != nil {
+		code := http.StatusInternalServerError
+		if updateErr, ok := err.(*githubConfigUpdateError); ok {
+			code = updateErr.code
+		}
+		jsonError(w, err.Error(), code)
+		return
+	}
+	jsonResponse(w, result)
+}
+
+func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdate) (map[string]interface{}, error) {
+	if s.deps == nil || s.deps.Config == nil {
+		return nil, newGitHubConfigUpdateError("config not available", http.StatusInternalServerError)
+	}
+
 	s.githubConfigMu.Lock()
 	defer s.githubConfigMu.Unlock()
 
@@ -5131,8 +5171,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	// Refuse up front, before mutating anything, and name the cause.
 	if cfg.SourcePath == "" {
 		s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
-		jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
-		return
+		return nil, newGitHubConfigUpdateError("config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
 	}
 
 	if body.PrivateKey != "" {
@@ -5142,13 +5181,11 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
 			s.logger.Warn("could not create key directory", "path", keyPath, "error", err)
-			jsonError(w, fmt.Sprintf("failed to create key directory: %v", err), http.StatusInternalServerError)
-			return
+			return nil, newGitHubConfigUpdateError(fmt.Sprintf("failed to create key directory: %v", err), http.StatusInternalServerError)
 		}
 		const keyFileMode = 0o600
 		if err := os.WriteFile(keyPath, []byte(body.PrivateKey), keyFileMode); err != nil {
-			jsonError(w, fmt.Sprintf("failed to write key file: %v", err), http.StatusInternalServerError)
-			return
+			return nil, newGitHubConfigUpdateError(fmt.Sprintf("failed to write key file: %v", err), http.StatusInternalServerError)
 		}
 		cfg.GitHub.KeyFile = keyPath
 		s.logger.Info("github app private key written", "path", keyPath)
@@ -5167,14 +5204,12 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if strings.Contains(err.Error(), "source path") {
 			s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
-			jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
-			return
+			return nil, newGitHubConfigUpdateError("config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
 		}
 		s.logger.Error("failed to persist github config", "error", err)
-		jsonError(w, "failed to save config", http.StatusInternalServerError)
-		return
+		return nil, newGitHubConfigUpdateError("failed to save config", http.StatusInternalServerError)
 	}
-	jsonResponse(w, result)
+	return result, nil
 }
 
 func requestAuditUser(r *http.Request) string {
@@ -5294,6 +5329,115 @@ func (s *Server) AutoDiscoverGitHubInstallationID(ctx context.Context, force boo
 	}
 	s.logger.Info("github app installation auto-discovered", "org", org, "installation_id", id)
 	return id, nil
+}
+
+func (s *Server) handleGitHubAppSetupCallback(w http.ResponseWriter, r *http.Request) {
+	redirect := func(flag string) {
+		http.Redirect(w, r, "/?ghSetup="+flag, http.StatusSeeOther)
+	}
+
+	action := strings.TrimSpace(r.URL.Query().Get("setup_action"))
+	switch action {
+	case "request":
+		s.logger.Info("github app setup callback recorded pending approval request")
+		redirect("requested")
+		return
+	case "install", "update":
+	default:
+		s.logger.Warn("github app setup callback rejected: unsupported setup_action", "setup_action", action)
+		redirect("error")
+		return
+	}
+
+	rawID := strings.TrimSpace(r.URL.Query().Get("installation_id"))
+	installationID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || installationID <= 0 {
+		s.logger.Warn("github app setup callback rejected: invalid installation_id", "installation_id", rawID)
+		redirect("error")
+		return
+	}
+
+	if err := s.verifyGitHubSetupInstallation(r, installationID); err != nil {
+		s.logger.Warn("github app setup callback rejected", "installation_id", installationID, "error", err)
+		redirect("error")
+		return
+	}
+
+	if err := s.persistGitHubSetupInstallation(r, installationID); err != nil {
+		s.logger.Warn("github app setup callback failed to persist installation", "installation_id", installationID, "error", err)
+		redirect("error")
+		return
+	}
+
+	redirect("ok")
+}
+
+func (s *Server) verifyGitHubSetupInstallation(r *http.Request, installationID int64) error {
+	if s.deps == nil || s.deps.Config == nil {
+		return fmt.Errorf("config not available")
+	}
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 && cfg.GitHub.InstallationID != installationID && !s.requestHasGitHubSetupAdmin(r) {
+		return fmt.Errorf("installation_id is already configured; authenticated admin required to replace it")
+	}
+	if !cfg.GitHub.HasApp() {
+		return fmt.Errorf("github app_id is not configured")
+	}
+	keyFile := cfg.GitHub.KeyFile
+	if s.deps.ResolveAppKeyFileFunc != nil {
+		keyFile = s.deps.ResolveAppKeyFileFunc(cfg.GitHub.KeyFile, cfg.GitHub.AppID)
+	}
+	if strings.TrimSpace(keyFile) == "" {
+		return fmt.Errorf("github app key file is not configured")
+	}
+	auth, err := github.NewAppAuth(cfg.GitHub.AppID, installationID, keyFile, s.logger, cfg.GitHub.ResolvedAPIURL())
+	if err != nil {
+		return err
+	}
+	ctx := r.Context()
+	if s.deps.Ctx != nil {
+		ctx = s.deps.Ctx
+	}
+	// /gh-setup is public because GitHub redirects a fresh browser here without
+	// a hive session. We still do not trust the query string: the App JWT call
+	// below proves the ID exists for this App and that its account is exactly
+	// this hive's configured org, preventing installation hijacking.
+	return auth.VerifyInstallationForOrg(ctx, installationID, cfg.Project.Org)
+}
+
+func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID int64) error {
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 && cfg.GitHub.InstallationID != installationID && !s.requestHasGitHubSetupAdmin(r) {
+		return fmt.Errorf("installation_id is already configured; authenticated admin required to replace it")
+	}
+	cfg.GitHub.InstallationID = installationID
+	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r),
+		auditDetail("source", "setup_url", "installation_id", strconv.FormatInt(installationID, 10)))
+	if err != nil {
+		return err
+	}
+	if result["reinit"] == "failed" {
+		return fmt.Errorf("reinitializing github client after setup callback: %v", result["reinit_error"])
+	}
+	return nil
+}
+
+func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
+	if sess := s.sessionFromRequest(r); sess != nil {
+		return sess.Role == "owner" || sess.Role == "read-write"
+	}
+	role := r.Header.Get("X-Hive-Role")
+	if role != "owner" && role != "read-write" {
+		return false
+	}
+	if s.directRouteAuthzEnabled() {
+		return false
+	}
+	proof := r.Header.Get(proxyAuthHeader)
+	return s.authToken != "" && proof != "" && secureCompare(proof, s.authToken)
 }
 
 // --- Sidebar endpoints ---

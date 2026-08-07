@@ -242,6 +242,11 @@ github:
   # key_file: /secrets/gh-app-key.pem
 ```
 
+For GitHub App setup, configure the app's **Setup URL** to
+`https://<hive-host>/gh-setup` and enable **Redirect on update**. After an
+operator installs the app from the dashboard banner, GitHub redirects back and
+the hive verifies and saves the installation ID automatically.
+
 ## Build from Source
 
 ```bash
