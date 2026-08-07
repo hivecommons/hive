@@ -17,7 +17,7 @@ services:
       - HIVE_LEVEL=${HIVE_LEVEL:-}
       - HIVE_REPO=${HIVE_REPO:-}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3002/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3002/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3

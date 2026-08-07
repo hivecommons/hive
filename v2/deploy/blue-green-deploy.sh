@@ -11,7 +11,7 @@ set -euo pipefail
 COMPOSE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$COMPOSE_DIR"
 
-HEALTH_URL="http://localhost:3001/api/health"
+HEALTH_URL="http://127.0.0.1:3001/api/health"
 HEALTH_INTERVAL_S=5
 HEALTH_TIMEOUT_S=180
 
@@ -94,7 +94,7 @@ docker run -d \
     -v "${DATA_VOL}:/data" \
     -v "${SECRETS_DIR}:/secrets:ro" \
     $ENV_ARGS \
-    --health-cmd "curl -sf http://localhost:3001/api/health" \
+    --health-cmd "curl -sf http://127.0.0.1:3001/api/health" \
     --health-interval 10s \
     --health-timeout 5s \
     --health-retries 5 \
@@ -107,7 +107,7 @@ docker run -d \
 log "Waiting for hive-next to become healthy..."
 elapsed=0
 while [ "$elapsed" -lt "$HEALTH_TIMEOUT_S" ]; do
-    if docker exec hive-next curl -sf http://localhost:3001/api/health >/dev/null 2>&1; then
+    if docker exec hive-next curl -sf http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
         log "hive-next is healthy!"
         break
     fi
