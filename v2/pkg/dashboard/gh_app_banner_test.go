@@ -257,6 +257,19 @@ func TestInstallIdInputIsCrossBrowserHardened(t *testing.T) {
 	if !strings.Contains(btnTag, `type="button"`) {
 		t.Errorf("Set-ID button must be type=\"button\" (a default <button> is type=submit and an implicit form submit resets the field in Firefox before submitGitHubInstallationID runs):\n%s", btnTag)
 	}
+	// The save button must LOOK like a button: it inherits the banner's solid
+	// primary .gh-app-btn recipe. An inline transparent override once made it
+	// read as static text — operators typed the ID and never clicked (user
+	// report: "set id does not look like a button").
+	if strings.Contains(btnTag, "background:transparent") {
+		t.Errorf("the save-installation-ID button must not be a transparent ghost — it is the submit affordance:\n%s", btnTag)
+	}
+	// And its label must say what it does with what: "Set ID" told users
+	// neither the verb's object nor that pressing it was required.
+	btnClose := strings.Index(html[btnOpen:], "</button>")
+	if btnLabel := html[btnOpen+btnEnd+1 : btnOpen+btnClose]; !strings.Contains(btnLabel, "Save Installation ID") {
+		t.Errorf("save button label = %q, want %q", btnLabel, "Save Installation ID")
+	}
 
 	// Isolate the install-ID input's start tag: it must disable autocomplete
 	// and wire an Enter-key submit.

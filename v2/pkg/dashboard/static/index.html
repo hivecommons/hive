@@ -2805,9 +2805,13 @@
          type=submit, and if this banner were ever wrapped in a form (or Firefox
          treated an ancestor as one), the click would trigger an implicit submit
          that navigates/resets the page and clears the input before the handler
-         ran — a Firefox-vs-Safari difference. type=button removes that path. -->
-    <button type="button" onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
-    <button type="button" onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
+         ran — a Firefox-vs-Safari difference. type=button removes that path.
+         No inline ghost override: this button SUBMITS the typed ID, so it gets
+         the banner's solid primary recipe (.gh-app-btn). The old transparent
+         style made it read as static text — operators typed the ID and never
+         realized a click was required. -->
+    <button type="button" onclick="submitGitHubInstallationID()" class="gh-app-btn" style="margin-right:8px" id="gh-app-set-id-btn">Save Installation ID</button>
+    <button type="button" onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line-strong);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
   <div id="hub-banner" style="display:none"></div>
@@ -6068,7 +6072,7 @@
         if (typeof hiveToast === 'function') hiveToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
         return;
       }
-      if (btn) { btn.disabled = true; btn.textContent = 'Setting...'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
       try {
         // Persists installation_id and live-reinits the GitHub client (no
         // restart) via the existing config-github handler.
@@ -6096,7 +6100,7 @@
       } catch(e) {
         if (typeof hiveToast === 'function') hiveToast('Error: ' + e.message, 'error');
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Set ID'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Save Installation ID'; }
       }
     }
 
