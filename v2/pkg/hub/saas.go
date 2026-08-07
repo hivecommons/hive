@@ -527,7 +527,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 		// against the hub secret. A legacy unsigned cookie or a forged value
 		// fails here and is treated as logged out, so the user re-authenticates
 		// through the normal login flow (which re-mints a signed cookie).
-		if username, ok := verifyHubUserCookieValue(s.hubSecret, cookie.Value); ok {
+		if username, ok := s.verifyHubUserDual(cookie.Value); ok {
 			if loadSaaSUser(username) != nil {
 				return username
 			}

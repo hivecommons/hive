@@ -66,6 +66,27 @@ func (s *HubServer) heartbeatKey() string {
 	return deriveDomainKey(s.hubSecret, infoHeartbeatKey)
 }
 
+// sessionCookieKey returns the derived session key the hub signs the
+// hive_hub_user cookie with after the C2 session-key cutover. A v4 spoke's Node
+// proxy verifies the cookie against deriveDomainKey(master, infoSessionKey), so
+// the hub must mint with the SAME derived key (not the raw master) for the
+// spoke's standalone /terminal to accept the session. Returns "" for an empty
+// master, so mintHubUserCookieValue stays fail-closed (no unsigned cookie).
+func (s *HubServer) sessionCookieKey() string {
+	return deriveDomainKey(s.hubSecret, infoSessionKey)
+}
+
+// verifyHubUserDual verifies the hive_hub_user cookie against the derived
+// session key (how cookies are minted after the C2 session-key cutover) OR
+// the raw master (legacy cookies still in browsers). Additive: never rejects
+// a value the single-key check would have accepted.
+func (s *HubServer) verifyHubUserDual(value string) (string, bool) {
+	if u, ok := verifyHubUserCookieValue(s.sessionCookieKey(), value); ok {
+		return u, true
+	}
+	return verifyHubUserCookieValue(s.hubSecret, value)
+}
+
 // ssoSigningSeed returns the hex-encoded 32-byte Ed25519 SEED the hub signs v4
 // SSO handoff tokens with. This is PRIVATE-key material (it can mint tokens) and
 // must never leave the hub. Returns "" for an empty master so minting stays
