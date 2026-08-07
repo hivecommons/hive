@@ -2449,9 +2449,20 @@
     .wb-trail i:nth-child(2){ left:40px; animation-delay:.18s; }
     .wb-trail i:nth-child(3){ left:48px; animation-delay:.36s; }
     @keyframes wb-puff{ 0%{ opacity:.4; transform:translateY(0) scale(1);} 100%{ opacity:0; transform:translateY(5px) scale(.4);} }
+    /* Compact ACMM loading overlay: keep the shared bee/hive visuals, but center
+       the rendezvous over the status label instead of using the banner's
+       right-edge hive target. */
+    .acmm-loading-stage .wb-hive{ right:auto; left:calc(50% - 7px); }
+    .acmm-loading-stage .wb-flyer{ animation-name:acmm-wb-fly; }
+    @keyframes acmm-wb-fly{
+      0%,6%    { transform:translateX(calc(50% - 84px)); }
+      46%,54%  { transform:translateX(calc(50% - 35px)); }
+      94%,100% { transform:translateX(calc(50% - 84px)); }
+    }
     @media (prefers-reduced-motion: reduce){
       .wb-flyer,.wb-facing,.wb-bob,.wb-bee,.wb-trail,.wb-trail i,.wb-hive{ animation:none !important; }
       .wb-flyer{ transform:translateX(calc(50% - 30px)); }
+      .acmm-loading-stage .wb-flyer{ transform:translateX(calc(50% - 35px)); }
       .wb-hive{ transform:translateY(-50%); }
     }
   </style>
@@ -13712,7 +13723,7 @@ function burnAreaChart() {
         // the level label. The .wb-stage sets width/height so the bee's flight
         // bounds are defined; slightly narrower than the welcome banner to suit
         // the compact overlay.
-        inner.innerHTML = '<div class="wb-stage" aria-hidden="true" style="width:220px;height:64px;margin:0 auto 12px">' + beeStageHtml() + '</div><div id="acmm-loading-text" style="font-size:0.9rem;font-weight:600"></div>';
+        inner.innerHTML = '<div class="wb-stage acmm-loading-stage" aria-hidden="true" style="width:220px;height:64px;margin:0 auto 12px">' + beeStageHtml() + '</div><div id="acmm-loading-text" style="font-size:0.9rem;font-weight:600"></div>';
         el.appendChild(inner);
         document.querySelector('#acmm-overlay .config-modal').style.position = 'relative';
         document.querySelector('#acmm-overlay .config-modal').appendChild(el);
