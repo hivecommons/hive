@@ -1165,7 +1165,8 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 }
 
 // kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
-// most one attempt per hive at a time.
+// most one attempt per hive at a time, registered with provisionWG so tests can
+// drain it before swapping the package-level saas*Dir vars.
 //
 // It exists because the repair is only cheap on its NO-OP paths. When it
 // actually has work to do it shells out to kubectl against the hive's cluster
@@ -1196,7 +1197,9 @@ func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 	if _, inFlight := s.vanityRepairInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
 		return
 	}
+	provisionWG.Add(1)
 	go func() {
+		defer provisionWG.Done()
 		defer s.vanityRepairInFlight.Delete(hiveID)
 		s.repairVanityURLForHive(hiveID)
 	}()

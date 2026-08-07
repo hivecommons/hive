@@ -78,7 +78,8 @@ func assignedVllmdHive(id string) *SaaSHive {
 func TestHeartbeatDeliversClaimWhileVanityRepairBlocked(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s, _, _ := newBlockedVanityHub(t)
+	s, _, release := newBlockedVanityHub(t)
+	defer release()
 
 	const id = "hosted-available-vllmd-14"
 	if err := saveSaaSHive(assignedVllmdHive(id)); err != nil {
