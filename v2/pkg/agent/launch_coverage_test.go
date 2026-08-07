@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -26,13 +25,13 @@ func TestStart_CLIAlreadyRunning(t *testing.T) {
 	m.mu.RUnlock()
 
 	// Pre-create the session and render a CLI marker.
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 	// Inject a marker; forceRelaunch defaults to false.
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": goose is ready").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": goose is ready").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
@@ -62,12 +61,12 @@ func TestStart_InferenceCLIAlreadyRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": esc to interrupt bypass permissions on Claude").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": esc to interrupt bypass permissions on Claude").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
@@ -91,12 +90,12 @@ func TestStart_CopilotAdoptsRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": Copilot ready").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Copilot ready").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
@@ -122,17 +121,17 @@ func TestDismissInferencePrompts_NavigatesNegative(t *testing.T) {
 	agent.tmuxSession = session
 
 	// Render a selection prompt with a negative selected option.
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Enter to confirm").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 1. No, exit").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": Enter to confirm").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", "❯ 1. No, exit").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	// Run dismissal briefly; flip the pane to ready shortly after so it returns.
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": esc to interrupt").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		testTmuxCommand("send-keys", "-t", session, "-l", ": esc to interrupt").Run()
+		testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}()
 
 	done := make(chan struct{})
@@ -161,16 +160,16 @@ func TestDismissInferencePrompts_BypassConsent(t *testing.T) {
 	m.mu.RUnlock()
 	agent.tmuxSession = session
 
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Bypass Permissions mode").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 2. Yes, I accept").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": Bypass Permissions mode").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", "❯ 2. Yes, I accept").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": esc to interrupt").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+		testTmuxCommand("send-keys", "-t", session, "-l", ": esc to interrupt").Run()
+		testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}()
 
 	done := make(chan struct{})

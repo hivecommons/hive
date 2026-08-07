@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -203,10 +202,10 @@ func TestConfirmMenuOption_NavigatesToOption(t *testing.T) {
 
 	// Title present, but the selected ❯ line does NOT contain the wanted text,
 	// so confirmMenuOption presses navKey and re-reads (up to max steps).
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Detected a custom API key").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 1. No (recommended)").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": Detected a custom API key").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", "❯ 1. No (recommended)").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(300 * time.Millisecond)
 
 	// Wanted "Yes" is never on the selected line -> exhausts nav steps -> false.

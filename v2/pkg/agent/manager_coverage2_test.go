@@ -1539,8 +1539,8 @@ func TestConfigHasTokens_MissingField(t *testing.T) {
 func TestClearExpiredTokens_Logic(t *testing.T) {
 	// Test the JSON manipulation clearExpiredTokens does
 	input := map[string]interface{}{
-		"copilotTokens":  map[string]interface{}{"user1": "token"},
-		"loggedInUsers":  []interface{}{"user1"},
+		"copilotTokens":    map[string]interface{}{"user1": "token"},
+		"loggedInUsers":    []interface{}{"user1"},
 		"lastLoggedInUser": "user1",
 		"otherSetting":     "keep",
 	}
@@ -1729,12 +1729,39 @@ func TestTmuxBaseArgs_WithSocket(t *testing.T) {
 	}
 }
 
-func TestTmuxBaseArgs_WithoutSocket(t *testing.T) {
+func TestTmuxBaseArgs_WithDefaultSocket(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 	agent := &AgentProcess{Name: "test", tmuxSocket: ""}
 	args := m.tmuxBaseArgs(agent)
-	if len(args) != 1 || args[0] != "tmux" {
-		t.Errorf("tmuxBaseArgs without socket = %v, want [tmux]", args)
+	if len(args) != 3 || args[1] != "-L" || args[2] != defaultTmuxSocket {
+		t.Errorf("tmuxBaseArgs with default socket = %v, want [tmux -L %s]", args, defaultTmuxSocket)
+	}
+}
+
+func TestValidateTmuxKillSessionArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{name: "non kill command", args: []string{"has-session", "-t", "work"}, wantErr: false},
+		{name: "hive target", args: []string{"kill-session", "-t", "hive-agent"}, wantErr: false},
+		{name: "hive target equals", args: []string{"kill-session", "-t=hive-agent"}, wantErr: false},
+		{name: "missing target", args: []string{"kill-session"}, wantErr: true},
+		{name: "empty target", args: []string{"kill-session", "-t", ""}, wantErr: true},
+		{name: "non hive target", args: []string{"kill-session", "-t", "work"}, wantErr: true},
+		{name: "kill all other sessions", args: []string{"kill-session", "-a", "-t", "hive-agent"}, wantErr: true},
+		{name: "kill all in combined flags", args: []string{"kill-session", "-at", "hive-agent", "-t", "hive-agent"}, wantErr: true},
+		{name: "kill all in reversed combined flags", args: []string{"kill-session", "-ta", "hive-agent"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTmuxKillSessionArgs(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTmuxKillSessionArgs(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+		})
 	}
 }
 

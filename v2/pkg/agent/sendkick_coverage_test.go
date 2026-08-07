@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"os/exec"
 	"testing"
 	"time"
 
@@ -28,14 +27,14 @@ func TestSendKick_DeliversToReadyPane(t *testing.T) {
 	session := agent.tmuxSession
 	m.mu.RUnlock()
 
-	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", session).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", session).Run()
+	defer testTmuxCommand("kill-session", "-t", session).Run()
 	// Render a ready input prompt so the crash/consent checks pass and
 	// waitForInputPromptForAgent returns on its first tick.
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": goose is ready").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", session, "-l", ": goose is ready").Run()
+	testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	m.mu.Lock()

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,11 @@ import (
 
 var stubBinDir string
 
+func testTmuxCommand(args ...string) *exec.Cmd {
+	tmuxArgs := append([]string{"-L", defaultTmuxSocket}, args...)
+	return exec.Command("tmux", tmuxArgs...)
+}
+
 func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 	m := NewManager(map[string]config.AgentConfig{
 		ap.Name: ap.Config,
@@ -23,6 +29,8 @@ func testEnvPairs(ap *AgentProcess) []agentEnvPair {
 }
 
 func TestMain(m *testing.M) {
+	defaultTmuxSocket = fmt.Sprintf("hive-test-%d-%d", os.Getpid(), time.Now().UnixNano())
+
 	dir, err := os.MkdirTemp("", "hive-agent-stubs-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "TestMain: MkdirTemp: %v\n", err)

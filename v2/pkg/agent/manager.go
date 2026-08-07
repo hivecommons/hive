@@ -50,6 +50,8 @@ const (
 	proxyCACertPath      = "/data/proxy-ca.pem"
 )
 
+var defaultTmuxSocket string
+
 type AgentProcess struct {
 	Name              string
 	ID                string
@@ -754,10 +756,20 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	if agent.tmuxSocket != "" {
 		return []string{"tmux", "-L", agent.tmuxSocket}
 	}
+	if defaultTmuxSocket != "" {
+		return []string{"tmux", "-L", defaultTmuxSocket}
+	}
 	return []string{"tmux"}
 }
 
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
+	if err := validateTmuxKillSessionArgs(args); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("refusing unsafe tmux kill-session", "agent", agent.Name, "error", err)
+		}
+		return exec.Command("false")
+	}
+
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
@@ -766,6 +778,37 @@ func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
 		return exec.Command("su-exec", suExecArgs...)
 	}
 	return exec.Command(base[0], tmuxArgs...)
+}
+
+func validateTmuxKillSessionArgs(args []string) error {
+	if len(args) == 0 || args[0] != "kill-session" {
+		return nil
+	}
+
+	target := ""
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case strings.HasPrefix(arg, "-t="):
+			target = strings.TrimPrefix(arg, "-t=")
+		case strings.HasPrefix(arg, "-target="):
+			target = strings.TrimPrefix(arg, "-target=")
+		case arg == "-t" || arg == "-target":
+			if i+1 < len(args) {
+				target = args[i+1]
+			}
+		case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(strings.TrimPrefix(arg, "-"), "a"):
+			return fmt.Errorf("kill-session -a is not allowed")
+		}
+	}
+
+	if target == "" {
+		return fmt.Errorf("missing target")
+	}
+	if !strings.HasPrefix(target, "hive-") {
+		return fmt.Errorf("target %q is not hive-namespaced", target)
+	}
+	return nil
 }
 
 func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
@@ -785,7 +828,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		tmuxArgs := append(m.tmuxBaseArgs(agent), "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 		cmd = exec.Command(suExecArgs[0], append(suExecArgs[1:], tmuxArgs...)...)
 	} else {
-		cmd = exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		base := m.tmuxBaseArgs(agent)
+		tmuxArgs := append(base[1:], "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		cmd = exec.Command(base[0], tmuxArgs...)
 	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("creating tmux session for %s: %w", agent.Name, err)
@@ -890,7 +935,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 }
 
 func (m *Manager) tmuxSessionExists(session string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", session)
+	cmd := m.tmuxRawCmd("has-session", "-t", session)
 	return cmd.Run() == nil
 }
 
@@ -1732,9 +1777,9 @@ func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
 			output := m.captureTmuxPane(session)
 			if strings.Contains(output, "Confirm folder trust") || strings.Contains(output, "Do you trust the files") {
 				time.Sleep(paneCaptureSleep)
-				_ = exec.Command("tmux", "send-keys", "-t", session, "2").Run()
+				_ = m.tmuxRawCmd("send-keys", "-t", session, "2").Run()
 				time.Sleep(enterDelay)
-				_ = exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
+				_ = m.tmuxRawCmd("send-keys", "-t", session, "Enter").Run()
 				m.logger.Info("auto-answered folder trust prompt", "session", session)
 				time.Sleep(trustCooldown)
 			}
@@ -2339,13 +2384,19 @@ func (m *Manager) waitForInputPrompt(session string) bool {
 }
 
 func (m *Manager) captureTmuxPane(session string) string {
-	cmd := exec.Command("tmux", "capture-pane", "-t", session, "-p",
+	cmd := m.tmuxRawCmd("capture-pane", "-t", session, "-p",
 		"-S", fmt.Sprintf("-%d", tmuxCaptureLines))
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return string(out)
+}
+
+func (m *Manager) tmuxRawCmd(args ...string) *exec.Cmd {
+	base := m.tmuxBaseArgs(&AgentProcess{})
+	tmuxArgs := append(base[1:], args...)
+	return exec.Command(base[0], tmuxArgs...)
 }
 
 // captureTmuxPaneForAgent captures pane content using the agent's tmux socket.

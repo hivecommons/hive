@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -26,10 +25,10 @@ func TestCheckAndRestartCrashedAgents_BarePaneRestarts(t *testing.T) {
 	m.mu.RUnlock()
 
 	// Create a live session with a bare shell (no CLI marker).
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 
 	old := time.Now().Add(-2 * time.Minute) // past cliBootGraceSeconds
 	m.mu.Lock()
@@ -54,10 +53,10 @@ func TestCheckAndRestartCrashedAgents_BootGrace(t *testing.T) {
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 
 	recent := time.Now() // within grace
 	m.mu.Lock()
@@ -81,13 +80,13 @@ func TestCheckAndRestartCrashedAgents_InferenceHealthy(t *testing.T) {
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 	// Live CLI marker, not a consent screen.
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": Claude esc to interrupt").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Claude esc to interrupt").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	old := time.Now().Add(-2 * time.Minute)
@@ -114,13 +113,13 @@ func TestCheckAndRestartCrashedAgents_ConsentStuck(t *testing.T) {
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
-	if err := exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
+	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
 		t.Skipf("cannot create tmux session: %v", err)
 	}
-	defer exec.Command("tmux", "kill-session", "-t", agent.tmuxSession).Run()
+	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
 	// Render a consent screen: title + default negative option + ❯ menu line.
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "-l", ": Bypass Permissions mode No, exit").Run()
-	exec.Command("tmux", "send-keys", "-t", agent.tmuxSession, "Enter").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Bypass Permissions mode No, exit").Run()
+	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
 	time.Sleep(400 * time.Millisecond)
 
 	old := time.Now().Add(-2 * time.Minute)
