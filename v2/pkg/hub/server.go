@@ -650,6 +650,32 @@ func secureCompareHub(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// heartbeatBearerOK reports whether the Authorization header carries a valid
+// heartbeat bearer, accepting EITHER scheme so this v2 hub authenticates old and
+// new spokes at once (dual-path, additive — never one instead of the other):
+//
+//   - the legacy RAW master s.hubSecret, presented by the 33 existing spokes; and
+//   - the DERIVED heartbeatKey() (HMAC-SHA256(master, "hive-heartbeat-v1")),
+//     presented by a v4 spoke that self-derived it from the same HIVE_HUB_SECRET.
+//
+// Both comparisons are constant-time via secureCompareHub. The caller keeps its
+// outer `if s.hubSecret != ""` guard, so an unconfigured hub still authenticates
+// nothing here — this only widens WHICH bearer a configured hub accepts, and only
+// ever adds the new scheme alongside the old one.
+func (s *HubServer) heartbeatBearerOK(auth string) bool {
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	tok := strings.TrimPrefix(auth, "Bearer ")
+	if secureCompareHub(tok, s.hubSecret) {
+		return true
+	}
+	if hk := s.heartbeatKey(); hk != "" && secureCompareHub(tok, hk) {
+		return true
+	}
+	return false
+}
+
 // heartbeatHealthStaleness is the maximum age of heartbeat-reported health
 // data before it is considered stale and displayed with a warning.
 const heartbeatHealthStaleness = 5 * time.Minute
@@ -1067,7 +1093,9 @@ func (s *HubServer) Shutdown(timeout time.Duration) error {
 func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		// Dual-path: accept the legacy raw-secret bearer (old spokes) OR the
+		// derived heartbeat key (v4 spokes). See heartbeatBearerOK.
+		if !s.heartbeatBearerOK(auth) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -2148,7 +2176,9 @@ func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		// Dual-path: accept the legacy raw-secret bearer (old spokes) OR the
+		// derived heartbeat key (v4 spokes). See heartbeatBearerOK.
+		if !s.heartbeatBearerOK(auth) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
