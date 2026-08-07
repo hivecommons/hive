@@ -19,9 +19,9 @@ const (
 	// heartbeat cadence while the App banner is showing), but the self-heal
 	// tick would otherwise re-discover on EVERY beat for a hive whose App is
 	// genuinely not installed on the org — burning App-JWT rate limit forever.
-	// One hour is far shorter than any realistic "admin installs the App"
-	// turnaround and far longer than the heartbeat.
-	InstallationDiscoveryTTL = 1 * time.Hour
+	// Five minutes matches the spoke's slow auto-discovery poll, so delayed org
+	// admin approval is picked up promptly without hammering the App API.
+	InstallationDiscoveryTTL = 5 * time.Minute
 
 	// discoveryListPerPage is the page size used when falling back to
 	// GET /app/installations. GitHub caps per_page at 100.
@@ -63,6 +63,19 @@ func ResetInstallationDiscoveryCache() {
 	discoveryCacheMu.Lock()
 	defer discoveryCacheMu.Unlock()
 	discoveryCache = map[string]discoveryCacheEntry{}
+}
+
+// ForgetInstallationDiscovery removes this App/org discovery result from the
+// cache. Use it for explicit operator-driven checks so a recent negative poll
+// cannot mask an installation an org admin just approved.
+func (a *AppAuth) ForgetInstallationDiscovery(org string) {
+	if a == nil {
+		return
+	}
+	key := discoveryCacheKey(a.apiURL, a.appID, org)
+	discoveryCacheMu.Lock()
+	defer discoveryCacheMu.Unlock()
+	delete(discoveryCache, key)
 }
 
 // ErrNoInstallationForOrg means the App JWT authenticated fine but no
@@ -155,6 +168,8 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 		directErr = fmt.Errorf("direct org lookup: not found")
 	}
 
+	var matchedID int64
+	matches := 0
 	opts := &gh.ListOptions{PerPage: discoveryListPerPage}
 	for page := 0; page < discoveryMaxPages; page++ {
 		installs, listResp, listErr := jwtClient.Apps.ListInstallations(ctx, opts)
@@ -167,7 +182,8 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 			}
 			if strings.EqualFold(in.GetAccount().GetLogin(), org) {
 				if id := in.GetID(); id != 0 {
-					return id, nil
+					matchedID = id
+					matches++
 				}
 			}
 		}
@@ -175,6 +191,12 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 			break
 		}
 		opts.Page = listResp.NextPage
+	}
+	if matches == 1 {
+		return matchedID, nil
+	}
+	if matches > 1 {
+		return 0, fmt.Errorf("%w: app %d has %d installations for %q", ErrNoInstallationForOrg, a.appID, matches, org)
 	}
 
 	return 0, fmt.Errorf("%w: app %d has no installation for %q (direct lookup: %v)", ErrNoInstallationForOrg, a.appID, org, directErr)

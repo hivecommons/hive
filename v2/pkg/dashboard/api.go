@@ -5120,6 +5120,9 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+
 	cfg := s.deps.Config
 
 	// saveConfig() silently no-ops when the config has no source path, so
@@ -5160,10 +5163,38 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		cfg.GitHub.InstallationID = *body.InstallationID
 	}
 
-	if err := s.saveConfig(); err != nil {
+	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
+	if err != nil {
+		if strings.Contains(err.Error(), "source path") {
+			s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
+			jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
+			return
+		}
 		s.logger.Error("failed to persist github config", "error", err)
 		jsonError(w, "failed to save config", http.StatusInternalServerError)
 		return
+	}
+	jsonResponse(w, result)
+}
+
+func requestAuditUser(r *http.Request) string {
+	user := r.Header.Get("X-Hive-User")
+	if user == "" {
+		return "local"
+	}
+	return user
+}
+
+// finishGitHubConfigUpdateLocked is the shared tail of the manual
+// PUT /api/config/github flow and automatic installation-ID discovery. The
+// caller must hold githubConfigMu and must have already mutated s.deps.Config.
+func (s *Server) finishGitHubConfigUpdateLocked(auditUser, detail string) (map[string]interface{}, error) {
+	cfg := s.deps.Config
+	if cfg.SourcePath == "" {
+		return nil, fmt.Errorf("config has no source path")
+	}
+	if err := s.saveConfig(); err != nil {
+		return nil, err
 	}
 
 	result := map[string]interface{}{
@@ -5201,9 +5232,68 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.auditFromRequest(r, "config_github", "", "")
+	s.AuditLog(auditUser, "config_github", detail, "")
 	s.refreshAndPersist()
-	jsonResponse(w, result)
+	return result, nil
+}
+
+// AutoDiscoverGitHubInstallationID tries to fill an empty github.installation_id
+// from the App-level GitHub API, then persists and reinitializes through the
+// same path used by PUT /api/config/github. All failures are soft; callers keep
+// showing the manual installation-ID flow.
+func (s *Server) AutoDiscoverGitHubInstallationID(ctx context.Context, force bool) (int64, error) {
+	if s == nil || s.deps == nil || s.deps.Config == nil || s.deps.GHAppAuth == nil || !s.deps.GHAppAuth.HasKey() {
+		return 0, nil
+	}
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 {
+		return 0, nil
+	}
+	org := strings.TrimSpace(cfg.Project.Org)
+	if org == "" {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if force {
+		s.deps.GHAppAuth.ForgetInstallationDiscovery(org)
+	}
+
+	id, err := s.deps.GHAppAuth.DiscoverInstallationID(ctx, org)
+	if err != nil {
+		s.logger.Warn("github app installation auto-discovery failed; manual installation ID entry remains available",
+			"org", org, "error", err)
+		return 0, err
+	}
+	if id == 0 {
+		return 0, nil
+	}
+
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+	if cfg.GitHub.InstallationID != 0 {
+		return 0, nil
+	}
+	cfg.GitHub.InstallationID = id
+	result, err := s.finishGitHubConfigUpdateLocked("system",
+		auditDetail("source", "auto_discovery", "org", org, "installation_id", strconv.FormatInt(id, 10)))
+	if err != nil {
+		cfg.GitHub.InstallationID = 0
+		s.logger.Warn("github app installation auto-discovered but could not be persisted; manual installation ID entry remains available",
+			"org", org, "installation_id", id, "error", err)
+		return 0, err
+	}
+	if result["reinit"] == "failed" {
+		cfg.GitHub.InstallationID = 0
+		if saveErr := s.saveConfig(); saveErr != nil {
+			s.logger.Warn("github app installation auto-discovery reinit failed and rollback could not be persisted",
+				"org", org, "installation_id", id, "reinit_error", result["reinit_error"], "rollback_error", saveErr)
+		}
+		return 0, fmt.Errorf("reinitializing github client after auto-discovery: %v", result["reinit_error"])
+	}
+	s.logger.Info("github app installation auto-discovered", "org", org, "installation_id", id)
+	return id, nil
 }
 
 // --- Sidebar endpoints ---

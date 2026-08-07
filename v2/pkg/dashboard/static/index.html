@@ -2789,7 +2789,7 @@
     <span style="font-size:1.5rem">&#9888;&#65039;</span>
     <div style="flex:1">
       <div class="gh-app-title">GitHub App Not Installed</div>
-      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.</div>
+      <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.</div>
     </div>
     <!-- autocomplete=off + name-less: Firefox form history would otherwise
          offer/refill a stored value and, on Linux, could clear the field on a
@@ -5951,8 +5951,8 @@
           var isGHE = data.githubBaseURL && data.githubBaseURL !== 'https://github.com';
           if (title) title.textContent = isGHE ? 'GitHub App Not Installed on ' + data.githubBaseURL.replace('https://', '') : 'GitHub App Not Installed';
           if (desc) desc.textContent = isGHE
-            ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
-            : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
+            ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.'
+            : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository; this hive checks every few minutes and will configure itself, or you can paste the Installation ID below.';
           /* A GitHub Enterprise host whose App slug was never configured yields
              an EMPTY install URL from the server, deliberately: the public
              "kubestellar-hive" slug names no App on an enterprise host, so a

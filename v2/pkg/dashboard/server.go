@@ -188,6 +188,7 @@ type Server struct {
 	readyAt time.Time
 
 	githubAppMu         sync.RWMutex
+	githubConfigMu      sync.Mutex
 	githubAppRequired   bool
 	githubAppInstallURL string
 	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
@@ -1362,6 +1363,11 @@ func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "recheck not configured", http.StatusNotImplemented)
 		return
 	}
+	ctx := r.Context()
+	if s.deps != nil && s.deps.Ctx != nil {
+		ctx = s.deps.Ctx
+	}
+	_, _ = s.AutoDiscoverGitHubInstallationID(ctx, true)
 	ok := s.RecheckGitHubApp()
 	w.Header().Set("Content-Type", "application/json")
 	if ok {

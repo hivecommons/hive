@@ -5,11 +5,20 @@ package dashboard
 // hub-delivered to the per-app-id path with key_file deliberately left empty.
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
 )
 
 // Live values from the spoke the bug was observed on (hosted-available-
@@ -145,5 +154,75 @@ func TestConfigGitHub_UnpersistableSaveIsAnError(t *testing.T) {
 	}
 	if reinitCalls != 0 {
 		t.Fatalf("reinit attempted despite refused save: %d calls", reinitCalls)
+	}
+}
+
+func TestAutoDiscoverGitHubInstallationIDPersistsLikeManualSetID(t *testing.T) {
+	ghpkg.ResetInstallationDiscoveryCache()
+	s, deps := apiServer(t)
+	deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	deps.Config.Project.Org = "open-source"
+	deps.Config.GitHub.AppID = testHubDeliveredAppID
+	deps.Config.GitHub.InstallationID = 0
+	deps.Config.GitHub.KeyFile = ""
+
+	keyFile := filepath.Join(t.TempDir(), "gh-app-key.pem")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("writing key: %v", err)
+	}
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/installations" && r.URL.Path != "/orgs/open-source/installation" {
+			t.Fatalf("unexpected discovery path %s", r.URL.Path)
+		}
+		if r.URL.Path == "/orgs/open-source/installation" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"id": testHubDeliveredInstallationID, "account": map[string]any{"login": "open-source"}},
+		})
+	}))
+	defer api.Close()
+
+	auth, err := ghpkg.NewAppAuth(testHubDeliveredAppID, 0, keyFile, deps.Logger, api.URL)
+	if err != nil {
+		t.Fatalf("NewAppAuth: %v", err)
+	}
+	deps.GHAppAuth = auth
+	deps.ResolveAppKeyFileFunc = func(configured string, appID int64) string {
+		return keyFile
+	}
+	var gotAppID, gotInstallationID int64
+	var gotKeyFile string
+	reinitCalls := 0
+	deps.ReinitGitHubFunc = func(appID, installationID int64, keyFile string) error {
+		reinitCalls++
+		gotAppID, gotInstallationID, gotKeyFile = appID, installationID, keyFile
+		return nil
+	}
+
+	id, err := s.AutoDiscoverGitHubInstallationID(context.Background(), false)
+	if err != nil {
+		t.Fatalf("AutoDiscoverGitHubInstallationID: %v", err)
+	}
+	if id != testHubDeliveredInstallationID {
+		t.Fatalf("id = %d, want %d", id, testHubDeliveredInstallationID)
+	}
+	if deps.Config.GitHub.InstallationID != testHubDeliveredInstallationID {
+		t.Fatalf("config installation_id = %d, want %d", deps.Config.GitHub.InstallationID, testHubDeliveredInstallationID)
+	}
+	if reinitCalls != 1 {
+		t.Fatalf("ReinitGitHubFunc calls = %d, want 1", reinitCalls)
+	}
+	if gotAppID != testHubDeliveredAppID || gotInstallationID != testHubDeliveredInstallationID || gotKeyFile != keyFile {
+		t.Fatalf("reinit args = (%d, %d, %q), want (%d, %d, %q)",
+			gotAppID, gotInstallationID, gotKeyFile, testHubDeliveredAppID, testHubDeliveredInstallationID, keyFile)
 	}
 }

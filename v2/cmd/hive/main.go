@@ -552,12 +552,10 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	var out githubAuth
 	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
 
-	// HasUsableApp() rejects config.PlaceholderAppID. A placeholder paired with
-	// a real installation_id — exactly what happens the instant an owner
-	// installs the App on a pre-provisioned hive — used to satisfy a bare
-	// `AppID != 0` test and commit this process to App auth it could never
-	// perform.
-	if cfg.GitHub.HasUsableApp() {
+	// HasApp() rejects config.PlaceholderAppID. Build AppAuth as soon as a real
+	// app_id and key are present, even when installation_id is still empty: the
+	// App JWT is exactly what automatic installation-ID discovery needs.
+	if cfg.GitHub.HasApp() {
 		appAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, appKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 		if err != nil {
 			// A genuinely-configured App whose key is missing or malformed is a
@@ -585,6 +583,12 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 
 	if out.AppAuth != nil {
 		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
+		if cfg.GitHub.InstallationID == 0 {
+			out.Failure = "The GitHub App is configured but has no installation. Install the app on your org; this hive will discover the installation automatically."
+			out.State = github.AppStateNotInstalled
+			logger.Warn("GitHub App configured without installation_id — starting in dashboard-only mode while auto-discovery polls")
+			return out
+		}
 		// Correct a stale/wrong installation_id BEFORE building the client, so
 		// the very first token this process mints is scoped to the right org
 		// rather than 403ing on every write until the self-heal tick runs.
@@ -2098,6 +2102,33 @@ func main() {
 		}
 	}
 
+	// If the App credentials are present but github.installation_id is still
+	// empty, discover it automatically. This covers the delayed approval path:
+	// a non-admin requests installation, an org admin approves later, and the
+	// spoke adopts the installation ID without requiring anyone to paste it.
+	{
+		const githubAppDiscoveryInterval = 5 * time.Minute
+		tryDiscover := func() {
+			if cfg.GitHub.InstallationID != 0 {
+				return
+			}
+			_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
+		}
+		go func() {
+			tryDiscover()
+			ticker := time.NewTicker(githubAppDiscoveryInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					tryDiscover()
+				}
+			}
+		}()
+	}
+
 	// Self-heal the "GitHub App not installed" banner. This handles:
 	// 1. GitHub App credentials arrived after startup (via heartbeat/webhook)
 	// 2. ReinitGitHubFunc succeeded but cleared githubAppRequired before
@@ -2138,6 +2169,7 @@ func main() {
 						if !dashSrv.IsGitHubAppRequired() {
 							continue
 						}
+						_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
 						// Re-run the same read+write verification the manual
 						// Re-check button uses. It clears the flag on success
 						// (installed AND write-verified) and leaves it set on a
