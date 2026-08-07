@@ -56,9 +56,11 @@ var interactiveAuthBackends = map[string]bool{
 }
 
 // BackendRequiresInteractiveAuth reports whether a backend authenticates via an
-// interactive login the operator must perform. Inference backends (litellm,
-// vllm, llm-d) authenticate with an API key supplied by config and therefore
-// NEVER require a login — showing them a login badge is always a false alarm.
+// interactive login the operator must perform. Model-gateway backends
+// (config.InferenceBackends: litellm, vllm, llm-d, watsonx) authenticate with
+// an API key supplied by config — watsonx with an IAM bearer minted from that
+// key — and therefore NEVER require a login. Showing them a 🔑 badge is always
+// a false alarm.
 func BackendRequiresInteractiveAuth(backend string) bool {
 	if config.IsInferenceBackend(backend) {
 		return false

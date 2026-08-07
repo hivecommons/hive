@@ -385,7 +385,7 @@ agents:
 }
 
 func TestValidate_ValidBackends(t *testing.T) {
-	validBackends := []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "vllm", "llm-d", "litellm"}
+	validBackends := SupportedBackends()
 	for _, backend := range validBackends {
 		t.Run(backend, func(t *testing.T) {
 			yaml := `
