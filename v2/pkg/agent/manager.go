@@ -640,7 +640,38 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	return []string{"tmux"}
 }
 
+func validTmuxKillSessionTarget(args []string) (string, bool) {
+	if len(args) == 0 || args[0] != "kill-session" {
+		return "", true
+	}
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-t":
+			if i+1 >= len(args) {
+				return "", false
+			}
+			target := args[i+1]
+			return target, strings.HasPrefix(target, "hive-")
+		case strings.HasPrefix(arg, "-t="):
+			target := strings.TrimPrefix(arg, "-t=")
+			return target, strings.HasPrefix(target, "hive-")
+		}
+	}
+	return "", false
+}
+
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
+	if target, ok := validTmuxKillSessionTarget(args); !ok {
+		agentName := ""
+		if agent != nil {
+			agentName = agent.Name
+		}
+		if m.logger != nil {
+			m.logger.Warn("refusing unsafe tmux kill-session target", "target", target, "agent", agentName)
+		}
+		return exec.Command("false")
+	}
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
@@ -3930,7 +3961,9 @@ func matchesAuthError(output string) bool {
 func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess) {
 	m.tmuxSendKeysForAgent(agent, "C-c", "")
 	time.Sleep(paneCaptureSleep)
-	killAgentProcesses(agent.UID, m.logger)
+	if agent.UID > 0 {
+		killAgentProcesses(agent.UID, m.logger)
+	}
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -3981,7 +4014,9 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 				continue
 			}
 
-			killAgentProcesses(agent.UID, m.logger)
+			if agent.UID > 0 {
+				killAgentProcesses(agent.UID, m.logger)
+			}
 			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 			agent.forceRelaunch = true
 			if err := m.Restart(ctx, agent.Name); err != nil {
@@ -5181,6 +5216,12 @@ func environHasMarker(environ, marker string) bool {
 // sends SIGKILL to each. Hung copilot binaries ignore SIGINT, so brute-force
 // cleanup is needed to prevent orphan accumulation on the shared SQLite store.
 func killAgentProcesses(uid int, logger *slog.Logger) int {
+	if uid <= 0 {
+		if logger != nil {
+			logger.Warn("refusing unsafe UID process cleanup", "uid", uid)
+		}
+		return 0
+	}
 	procPath := procRoot
 	entries, err := os.ReadDir(procPath)
 	if err != nil {
@@ -5195,6 +5236,9 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
+			continue
+		}
+		if pid == os.Getpid() {
 			continue
 		}
 

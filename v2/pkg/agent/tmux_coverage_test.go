@@ -80,9 +80,9 @@ func inferenceReadyStub(t *testing.T) {
 	overrideStub(t, "claude", "bypass permissions on")
 }
 
-// newRawTmuxSession creates a bare tmux session (UID 0, shared server) and
-// registers cleanup. Returns the session name. Used to drive pane-inspection
-// helpers without spawning a real CLI.
+// newRawTmuxSession creates a bare tmux session on the package test tmux server
+// and registers cleanup. Used to drive pane-inspection helpers without spawning
+// a real CLI.
 func newRawTmuxSession(t *testing.T, session string) {
 	t.Helper()
 	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
