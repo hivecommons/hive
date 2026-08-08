@@ -2,11 +2,21 @@ package hub
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 // A 503 from a routed hostname with no backend is the exact failure that hid
 // behind a green dot: the HTTP exchange SUCCEEDS, so any check based on
@@ -58,6 +68,84 @@ func TestPublicURLSelfProbeStatusSemantics(t *testing.T) {
 	}
 }
 
+func TestPublicURLSelfProbeClassifiesTransportErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "dns lookup server misbehaving is unknown",
+			err: &url.Error{Op: "Get", URL: "https://hive.example.com", Err: &net.DNSError{
+				Err:    "server misbehaving",
+				Name:   "hive.example.com",
+				Server: "10.96.5.5:53",
+			}},
+			want: PublicURLSelfCheckUnknown,
+		},
+		{
+			name: "connection refused is fail",
+			err:  &url.Error{Op: "Get", URL: "https://hive.example.com", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}},
+			want: PublicURLSelfCheckFail,
+		},
+		{
+			name: "dns timeout on port 53 is unknown",
+			err: &url.Error{Op: "Get", URL: "https://hive.example.com", Err: &net.OpError{
+				Op:   "read",
+				Net:  "udp",
+				Addr: &net.UDPAddr{IP: net.ParseIP("10.96.5.5"), Port: 53},
+				Err:  os.ErrDeadlineExceeded,
+			}},
+			want: PublicURLSelfCheckUnknown,
+		},
+		{
+			name: "tls handshake rejection is fail",
+			err:  &url.Error{Op: "Get", URL: "https://hive.example.com", Err: syscall.ECONNRESET},
+			want: PublicURLSelfCheckFail,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, tc.err
+			})}
+			got := publicURLSelfProbe(context.Background(), "https://hive.example.com", client)
+			if got.Status != tc.want {
+				t.Fatalf("status = %q, want %q (check=%+v)", got.Status, tc.want, got)
+			}
+			if got.Error == "" {
+				t.Fatalf("error should be preserved, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestPublicURLSelfCheckGatesConsecutiveFailures(t *testing.T) {
+	var consecutive int
+	var stable *PublicURLSelfCheck
+	ok := PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: http.StatusUnauthorized}
+	if got := gatedPublicURLSelfCheck(ok, &consecutive, &stable); got.Status != PublicURLSelfCheckOK {
+		t.Fatalf("initial ok = %+v", got)
+	}
+	fail := PublicURLSelfCheck{Status: PublicURLSelfCheckFail, HTTPStatus: http.StatusBadGateway, Error: "HTTP 502"}
+	for i := 1; i < publicURLSelfCheckMinConsecutiveFailures; i++ {
+		got := gatedPublicURLSelfCheck(fail, &consecutive, &stable)
+		if got.Status != PublicURLSelfCheckOK {
+			t.Fatalf("failure %d should report previous stable ok, got %+v", i, got)
+		}
+	}
+	got := gatedPublicURLSelfCheck(fail, &consecutive, &stable)
+	if got.Status != PublicURLSelfCheckFail {
+		t.Fatalf("confirmed failure = %+v, want fail", got)
+	}
+
+	consecutive = 0
+	stable = nil
+	got = gatedPublicURLSelfCheck(fail, &consecutive, &stable)
+	if got.Status != PublicURLSelfCheckUnknown || got.Error == "" {
+		t.Fatalf("unconfirmed failure with no stable state should be unknown and preserve the error, got %+v", got)
+	}
+}
+
 func TestURLHealthStateCountsConsecutiveFailures(t *testing.T) {
 	u := newURLHealthState()
 	if n := u.observe("h1", urlProbeResult{Status: 503}); n != 1 {
@@ -90,6 +178,19 @@ func TestURLHealthStateForgetDropsRecycledSlots(t *testing.T) {
 	}
 	if failures["kept"] != 1 {
 		t.Error("a hive still in the registry must be retained")
+	}
+}
+
+func TestURLHealthStateCriticalEvaluationsClearImmediately(t *testing.T) {
+	u := newURLHealthState()
+	if n := u.criticalEvaluation("h1", true); n != 1 {
+		t.Fatalf("first critical evaluation = %d, want 1", n)
+	}
+	if n := u.criticalEvaluation("h1", false); n != 0 {
+		t.Fatalf("cleared evaluation = %d, want 0", n)
+	}
+	if n := u.criticalEvaluation("h1", true); n != 1 {
+		t.Fatalf("after clear = %d, want 1", n)
 	}
 }
 
@@ -159,7 +260,10 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	for i := 0; i < urlUnreachableMinFailures; i++ {
 		s.urlHealth.observe("broken", urlProbeResult{Status: 503})
 	}
-	alerts := s.urlUnreachableAlerts(hives, now)
+	var alerts []Alert
+	for i := 0; i < urlUnreachableMinAlertEvaluations; i++ {
+		alerts = s.urlUnreachableAlerts(hives, now)
+	}
 	if len(alerts) != 1 || alerts[0].HiveID != "broken" {
 		t.Fatalf("want exactly one alert for the broken hive, got %+v", alerts)
 	}
@@ -207,9 +311,9 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 		{"hub ok self ok", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, "", ""},
 		{"hub ok self fail", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
 		{"hub fail fresh self ok", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
-		{"hub fail fresh self unknown", true, true, nil, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
+		{"hub fail fresh self unknown", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
 		{"hub fail fresh self fail", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
-		{"hub fail stale self unknown", true, false, nil, AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail stale self unknown", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, AlertTypeURLUnreachable, AlertSeverityCritical},
 		{"hub fail stale self ok", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLUnreachable, AlertSeverityCritical},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -233,7 +337,10 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 				h.LastHeartbeat = fresh
 				h.Online = true
 			}
-			got := s.urlUnreachableAlerts([]RegistryEntry{h}, now)
+			var got []Alert
+			for i := 0; i < urlUnreachableMinAlertEvaluations; i++ {
+				got = s.urlUnreachableAlerts([]RegistryEntry{h}, now)
+			}
 			if tc.wantType == "" {
 				if len(got) != 0 {
 					t.Fatalf("want no alerts, got %+v", got)
@@ -247,6 +354,61 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 				t.Fatalf("alert = (%s,%s), want (%s,%s): %+v", got[0].Type, got[0].Severity, tc.wantType, tc.wantLevel, got[0])
 			}
 		})
+	}
+}
+
+func TestURLUnreachableCriticalFlapSuppression(t *testing.T) {
+	now := time.Now()
+	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
+	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
+	s := &HubServer{urlHealth: newURLHealthState()}
+	for i := 0; i < urlUnreachableMinFailures; i++ {
+		s.urlHealth.observe("h1", urlProbeResult{Status: 503})
+	}
+	h := RegistryEntry{ID: "h1", Name: "org/repo", ClusterID: "c1", RegisteredAt: oldEnough, DashboardURL: "https://dead.example.com", LastHeartbeat: stale}
+	for i := 1; i < urlUnreachableMinAlertEvaluations; i++ {
+		if got := s.urlUnreachableAlerts([]RegistryEntry{h}, now); len(got) != 0 {
+			t.Fatalf("evaluation %d should be suppressed, got %+v", i, got)
+		}
+	}
+	if got := s.urlUnreachableAlerts([]RegistryEntry{h}, now); len(got) != 1 {
+		t.Fatalf("persistent condition should alert, got %+v", got)
+	}
+	s.urlHealth.observe("h1", urlProbeResult{Status: 302, Healthy: true})
+	if got := s.urlUnreachableAlerts([]RegistryEntry{h}, now); len(got) != 0 {
+		t.Fatalf("first success should clear immediately, got %+v", got)
+	}
+	for i := 0; i < urlUnreachableMinFailures; i++ {
+		s.urlHealth.observe("h1", urlProbeResult{Status: 503})
+	}
+	if got := s.urlUnreachableAlerts([]RegistryEntry{h}, now); len(got) != 0 {
+		t.Fatalf("after clear the hysteresis should restart, got %+v", got)
+	}
+}
+
+func TestURLUnreachableSuppressesUnassignedPlaceholders(t *testing.T) {
+	now := time.Now()
+	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
+	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
+	s := &HubServer{urlHealth: newURLHealthState()}
+	for i := 0; i < urlUnreachableMinFailures; i++ {
+		s.urlHealth.observe("ph", urlProbeResult{Status: 503})
+	}
+	ph := RegistryEntry{
+		ID:                 "ph",
+		Name:               "available-oke-13/placeholder",
+		Org:                "available-oke-13",
+		ProvStatus:         "available",
+		ClusterID:          "c1",
+		RegisteredAt:       oldEnough,
+		DashboardURL:       "https://placeholder.example.com",
+		LastHeartbeat:      stale,
+		PublicURLSelfCheck: &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503},
+	}
+	for i := 0; i < urlUnreachableMinAlertEvaluations; i++ {
+		if got := s.urlUnreachableAlerts([]RegistryEntry{ph}, now); len(got) != 0 {
+			t.Fatalf("placeholder URL alerts should be suppressed, got %+v", got)
+		}
 	}
 }
 
