@@ -114,6 +114,13 @@ func TestFormatPRList_TruncatesTitle(t *testing.T) {
 	}
 }
 
+func TestFormatMergeEligibleDataShowsQueuedMarker(t *testing.T) {
+	result := formatMergeEligibleData([]byte(`{"merge_eligible":[{"number":7,"repo":"acme/widget","title":"fix it","queued":true}]}`))
+	if !strings.Contains(result, "#7 acme/widget [hive/automerge queued]") {
+		t.Fatalf("queued marker missing from merge-eligible output: %s", result)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // substituteTemplate
 // ---------------------------------------------------------------------------

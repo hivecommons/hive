@@ -6405,6 +6405,27 @@
       setIfChanged(el, html);
     }
 
+    function dashboardRoleAtLeast(role, tier) {
+      const rank = { 'read': 1, 'read-write': 2, 'merger': 3, 'owner': 4 };
+      return (rank[role] || 0) >= (rank[tier] || 0);
+    }
+
+    async function queuePRAutoMerge(owner, repo, number, btn) {
+      if (btn && btn.dataset.busy === '1') return;
+      if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Queueing…'; }
+      try {
+        const resp = await fetch('/api/prs/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + '/' + number + '/queue-automerge', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        showToast('Queued #' + number + ' for auto-merge on green CI', 'success');
+        if (btn) { btn.textContent = 'Queued'; btn.disabled = true; }
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Queue failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (btn) { btn.dataset.busy = ''; btn.textContent = 'Queue auto-merge'; }
+      }
+    }
+
     function renderRepos(repos) {
       const el = document.getElementById('repos');
       // Definitive single-host badge in the section header: every repo in this
@@ -6443,8 +6464,19 @@
           const mergeIcon = p.mergeable ? '<span class="pill-merge-icon">✓</span>' : '';
           const mergeClass = p.mergeable ? ' mergeable' : '';
           const prAge = pillAge(p.created_at);
-          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '');
-          return `<a class="repo-pr-pill${mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>`;
+          const labels = (p.labels || []).map(l => String(l).toLowerCase());
+          const queued = labels.includes('hive/automerge');
+          const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '');
+          const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
+          const parts = (r.full || r.name || '').split('/');
+          const owner = parts.length > 1 ? parts[0] : '';
+          const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
+          const queueBtn = canQueue
+            ? (queued
+                ? '<span class="repo-pr-pill mergeable" title="Already queued for Hive auto-merge on green CI">Queued</span>'
+                : `<button class="repo-pr-pill" style="cursor:pointer" onclick="event.preventDefault();event.stopPropagation();queuePRAutoMerge(${JSON.stringify(owner)},${JSON.stringify(repoName)},${p.number},this)">Queue auto-merge</button>`)
+            : '';
+          return `<a class="repo-pr-pill${mergeClass}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}</a>${queueBtn}`;
         }).join('');
         const allPills = issuePills + prPills;
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
@@ -18450,6 +18482,8 @@ function burnAreaChart() {
     }
 
     function showGHAuthState(loggedIn, username, avatarURL, role) {
+      if (username) window._hiveUser = username;
+      if (role) window._hiveRole = role;
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');

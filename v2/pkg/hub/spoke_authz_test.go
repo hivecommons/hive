@@ -56,19 +56,21 @@ func TestAuthorizedUsersForHive_OwnerNotDuplicated(t *testing.T) {
 	}
 }
 
-func TestAuthorizedUsersForHive_GrantedUserGetsReadNotWrite(t *testing.T) {
+func TestAuthorizedUsersForHive_GrantedRolesPropagateToDirectRoute(t *testing.T) {
 	saasUsersDir = t.TempDir()
-	// A non-owner user whose stored role is "owner" for the hive must still be
-	// downgraded to read on the direct route (only the provisioned owner writes).
-	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "escalate", Hives: map[string]string{"abc123": "owner"}}); err != nil {
+	// Direct-route spokes enforce the same role ladder as hub-proxied spokes.
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "maint", Hives: map[string]string{"abc123": "merger"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "coowner", Hives: map[string]string{"abc123": "owner"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := &SaaSHive{ID: "abc123", Owner: "clubanderson"}
 	got := authorizedUsersForHive(h)
-	if !strings.Contains(got, "escalate:read") {
-		t.Fatalf("non-owner grant must be downgraded to read, got %q", got)
+	if !strings.Contains(got, "maint:merger") {
+		t.Fatalf("merger grant must propagate, got %q", got)
 	}
-	if strings.Contains(got, "escalate:owner") {
-		t.Fatalf("non-owner must not get owner role, got %q", got)
+	if !strings.Contains(got, "coowner:owner") {
+		t.Fatalf("co-owner grant must propagate, got %q", got)
 	}
 }

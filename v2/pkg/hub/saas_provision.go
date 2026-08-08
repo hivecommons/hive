@@ -1511,14 +1511,11 @@ func countUserHives(username string) int {
 // spoke needs to enforce per-user device-flow authorization on its direct
 // (non-hub-proxied) route. Format: "owner:owner,viewer1:read,viewer2:read".
 //
-// The owner always comes first with role "owner" (read-write). Every OTHER
-// SaaS user the hub granted this hive (any of "owner"/"read-write"/"read") is
-// appended as "read" — a read-only viewer on the direct route. Granting a
-// non-owner write access on the direct route is deliberately deferred (only the
-// single provisioned owner is write-capable there); see the PR notes for the
-// multi-user-grant follow-up. This fails safe: a grant can never widen access
-// beyond read on the direct route. Usernames are sanitized to guard the env
-// value, and the owner is de-duplicated so they appear exactly once.
+// The owner always comes first with role "owner". Every OTHER SaaS user the hub
+// granted this hive is appended with the exact validated role stored in the hub
+// user record, so direct-route spokes enforce the same read/read-write/merger
+// tiers as hub-proxied spokes. Usernames are sanitized to guard the env value,
+// and the owner is de-duplicated so they appear exactly once.
 func authorizedUsersForHive(h *SaaSHive) string {
 	entries := make([]string, 0, 4)
 	seen := map[string]bool{}
@@ -1528,14 +1525,18 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		seen[strings.ToLower(owner)] = true
 	}
 	for _, u := range listAllSaaSUsers() {
-		if _, ok := u.Hives[h.ID]; !ok {
+		role, ok := u.Hives[h.ID]
+		if !ok {
 			continue
+		}
+		if !config.ValidRole(role) {
+			role = saasRoleRead
 		}
 		name := sanitize(u.GitHubUsername)
 		if name == "" || seen[strings.ToLower(name)] {
 			continue
 		}
-		entries = append(entries, name+":"+saasRoleRead)
+		entries = append(entries, name+":"+role)
 		seen[strings.ToLower(name)] = true
 	}
 	return strings.Join(entries, ",")

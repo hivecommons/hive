@@ -2083,7 +2083,31 @@ const (
 	// "cbrooker27:read-write", no lookup could ever match, and every login was
 	// rejected as unauthorized despite the grant being present and correct.
 	RoleReadWrite = "read-write"
+	// RoleMerger can do everything read-write can, plus approve/queue other
+	// people's PRs for the existing auto-merge-on-green sweep. The spoke
+	// enforces the "never your own PR" rule server-side.
+	RoleMerger = "merger"
 )
+
+var roleRanks = map[string]int{
+	RoleRead:      1,
+	RoleReadWrite: 2,
+	RoleMerger:    3,
+	RoleOwner:     4,
+}
+
+// ValidRole reports whether role is one of the hive access tiers.
+func ValidRole(role string) bool {
+	_, ok := roleRanks[strings.ToLower(strings.TrimSpace(role))]
+	return ok
+}
+
+// RoleAtLeast reports whether role includes all capabilities of tier.
+func RoleAtLeast(role, tier string) bool {
+	roleRank, okRole := roleRanks[strings.ToLower(strings.TrimSpace(role))]
+	tierRank, okTier := roleRanks[strings.ToLower(strings.TrimSpace(tier))]
+	return okRole && okTier && roleRank >= tierRank
+}
 
 // AuthorizedRole resolves a GitHub username against the spoke's authorized-users
 // allowlist and returns the user's role and whether they are authorized.
@@ -2141,7 +2165,7 @@ func splitAuthorizedEntry(entry string) (name, role string) {
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
 		name = strings.TrimSpace(entry[:idx])
 		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
-		if role != RoleOwner && role != RoleRead && role != RoleReadWrite {
+		if !ValidRole(role) {
 			// Unknown role suffix — treat the whole thing as a bare username so
 			// a stray colon can never silently downgrade or escalate access.
 			return strings.TrimSpace(entry), ""

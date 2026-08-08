@@ -1044,7 +1044,7 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Hive-Role", role)
 		w.Header().Set("X-Hive-User", r.Header.Get("X-Hive-User"))
-		if role == "read" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		if config.ValidRole(role) && !config.RoleAtLeast(role, config.RoleReadWrite) && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !strings.HasPrefix(r.URL.Path, "/api/contribute") && r.URL.Path != "/api/gh-user-auth/status" {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return

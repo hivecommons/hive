@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -186,6 +187,11 @@ type IssueCluster struct {
 
 var HoldLabels = []string{"hold", "on-hold", "hold/review"}
 var PermanentExemptLabels = []string{"do-not-merge"}
+
+// AutoMergeQueuedLabel is the GitHub label a human merger/owner action applies
+// to mark a PR as approved for the hive's existing auto-merge-on-green sweep.
+const AutoMergeQueuedLabel = "hive/automerge"
+
 var exemptFiles = []string{"ADOPTERS.md", "ADOPTERS.MD"}
 
 const slaThresholdMinutes = 30
@@ -654,6 +660,63 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	}
 	owner, repoName := c.splitRepo(repo)
 	_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
+}
+
+// GetPRAuthor returns the current author login for an open PR.
+func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (string, error) {
+	if c == nil {
+		return "", ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	if err != nil {
+		return "", err
+	}
+	return safeGetLogin(pr.GetUser()), nil
+}
+
+// QueuePRAutoMerge approves a PR as the hive App and marks it for the
+// auto-merge-on-green sweep. The caller enforces role and self-queue policy.
+func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, queuedBy string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	if err := c.ensureLabel(ctx, owner, repoName, AutoMergeQueuedLabel); err != nil {
+		return fmt.Errorf("ensuring %s label: %w", AutoMergeQueuedLabel, err)
+	}
+	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
+	if strings.TrimSpace(queuedBy) == "" {
+		body = "Approved for Hive auto-merge on green CI."
+	}
+	_, _, err := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
+		Body:  gh.Ptr(body),
+		Event: gh.Ptr("APPROVE"),
+	})
+	if err != nil {
+		return fmt.Errorf("approving PR: %w", err)
+	}
+	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, []string{AutoMergeQueuedLabel}); err != nil {
+		return fmt.Errorf("adding %s label: %w", AutoMergeQueuedLabel, err)
+	}
+	return nil
+}
+
+func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) error {
+	if _, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name); err == nil {
+		return nil
+	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {
+		return err
+	}
+	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
+		Name:        gh.Ptr(name),
+		Color:       gh.Ptr("8250df"),
+		Description: gh.Ptr("Approved by a Hive merger/owner for auto-merge on green CI"),
+	})
+	if ghErr, ok := err.(*gh.ErrorResponse); ok && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+		return nil
+	}
 	return err
 }
 

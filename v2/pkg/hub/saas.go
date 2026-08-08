@@ -2495,7 +2495,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				result[i].RecentEvents = s.timeline.recent(h.ID, myHivesRecentEventCount)
 			}
 		}
-		if h.Role == "owner" || h.Role == "read-write" || isAdmin {
+		if config.RoleAtLeast(h.Role, config.RoleReadWrite) || isAdmin {
 			reqs := loadAccessRequests(h.ID)
 			var pending []PendingAccessRequest
 			for _, req := range reqs {
@@ -5408,8 +5408,8 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"username and role required"}`, http.StatusBadRequest)
 		return
 	}
-	if body.Role != "read" && body.Role != "read-write" && body.Role != "owner" {
-		http.Error(w, `{"error":"role must be read, read-write, or owner"}`, http.StatusBadRequest)
+	if !config.ValidRole(body.Role) {
+		http.Error(w, `{"error":"role must be read, read-write, merger, or owner"}`, http.StatusBadRequest)
 		return
 	}
 	target := ensureSaaSUser(body.Username)
@@ -5585,7 +5585,7 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := user.Hives[hiveID]
-	if role != "owner" && role != "read-write" && username != hubAdminUsername {
+	if !config.RoleAtLeast(role, config.RoleReadWrite) && username != hubAdminUsername {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5619,7 +5619,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	approverRole := approverUser.Hives[hiveID]
-	if approverRole != "owner" && approverRole != "read-write" && approver != hubAdminUsername {
+	if !config.RoleAtLeast(approverRole, config.RoleReadWrite) && approver != hubAdminUsername {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5632,8 +5632,11 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		body.Role = "read"
 	}
 
-	roleRank := map[string]int{"read": 1, "read-write": 2, "owner": 3}
-	if approver != hubAdminUsername && roleRank[body.Role] >= roleRank[approverRole] {
+	if !config.ValidRole(body.Role) {
+		http.Error(w, `{"error":"role must be read, read-write, merger, or owner"}`, http.StatusBadRequest)
+		return
+	}
+	if approver != hubAdminUsername && config.RoleAtLeast(body.Role, approverRole) {
 		http.Error(w, `{"error":"cannot grant a role equal to or higher than your own"}`, http.StatusForbidden)
 		return
 	}
@@ -5674,7 +5677,7 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	denierRole := denierUser.Hives[hiveID]
-	if denierRole != "owner" && denierRole != "read-write" && denier != hubAdminUsername {
+	if !config.RoleAtLeast(denierRole, config.RoleReadWrite) && denier != hubAdminUsername {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -7851,6 +7854,7 @@ const dashboardHTML = `<!DOCTYPE html>
     .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
     .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
     .role-read-write { background: rgba(116,223,154,0.15); color: var(--green); border: 1px solid rgba(116,223,154,0.3); }
+    .role-merger { background: rgba(163,113,247,0.15); color: #a371f7; border: 1px solid rgba(163,113,247,0.3); }
     /* Editable role pill: a <select> styled to match the role badges. Options
        render in the native menu (dark on most platforms); the closed control
        keeps the role color. */
@@ -8516,7 +8520,7 @@ const dashboardHTML = `<!DOCTYPE html>
       return html;
     }
     function roleBadge(role) {
-      var cls = role === 'owner' ? 'role-owner' : role === 'read-write' ? 'role-read-write' : 'role-read';
+      var cls = role === 'owner' ? 'role-owner' : role === 'merger' ? 'role-merger' : role === 'read-write' ? 'role-read-write' : 'role-read';
       return '<span class="role-badge ' + cls + '">' + esc(role) + '</span>';
     }
 
@@ -8530,10 +8534,14 @@ const dashboardHTML = `<!DOCTYPE html>
 
        Role colours live here and are reused by the hover panel's rows so a
        face in the row and its line in the panel read as the same role. */
-    var ACCESS_ROLE_COLORS = {'owner': '#d29922', 'read-write': '#3fb950'};
+    var ACCESS_ROLE_COLORS = {'owner': '#d29922', 'merger': '#a371f7', 'read-write': '#3fb950'};
     var ACCESS_ROLE_COLOR_DEFAULT = '#6b7280';
     function accessRoleColor(role) {
       return ACCESS_ROLE_COLORS[role] || ACCESS_ROLE_COLOR_DEFAULT;
+    }
+    function roleAtLeast(role, tier) {
+      var rank = {'read': 1, 'read-write': 2, 'merger': 3, 'owner': 4};
+      return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
     /* Faces shown inline before collapsing the rest into a "+N" chip. The hive
@@ -12709,7 +12717,7 @@ const dashboardHTML = `<!DOCTYPE html>
           if (h.role === 'owner') {
             actions += '<br style="margin-bottom:4px"><button onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="margin-top:6px;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.65rem;white-space:nowrap" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
-        } else if (isHosted && (h.role === 'owner' || h.role === 'read-write')) {
+        } else if (isHosted && (roleAtLeast(h.role, 'read-write'))) {
           actions = '<button onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="padding:3px 10px;background:var(--blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap;margin-right:4px">Permissions</button>';
           if (h.role === 'owner') {
             actions += '<button onclick="deleteHive(\'' + esc(h.id) + '\')" style="padding:3px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap">Delete</button>';
@@ -12735,10 +12743,10 @@ const dashboardHTML = `<!DOCTYPE html>
         if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" style="' + mi + '">API Docs</a>');
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
-        if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="' + mi + '">Permissions</div>');
+        if (isHosted && (roleAtLeast(h.role, 'read-write'))) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="' + mi + '">Permissions</div>');
         /* Timeline is owner-or-admin, matching the API's authorization. */
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Activity Timeline</div>');
-        if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
+        if (roleAtLeast(h.role, 'read-write') || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         /* Reset App clears ONLY the spoke's installation_id, which makes
            HasUsableApp() false and prompts the owner to install the App again.
@@ -12916,11 +12924,11 @@ const dashboardHTML = `<!DOCTYPE html>
            spoke too old to report a SHA) — surface the dot beside the dash so
            folding Drift into Version never hides a signal. */
         } else { versionCell = '<span style="color:var(--muted)">—</span>' + (driftDot ? ' ' + driftDot : ''); }
-        var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
+        var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))
           ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:0.6rem;display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
           : '';
         var pendingPill = '';
-        if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
+        if (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write'))) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
         // 12 columns after the 15-to-9 fold. The visible cells are: bulk-select,
@@ -12996,7 +13004,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
           '</div>';
         var pendingExpandRow = '';
-        if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
+        if (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')) && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
             var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');
             var note = (pr.note || '').trim();
@@ -13880,7 +13888,7 @@ const dashboardHTML = `<!DOCTYPE html>
     function renderPendingBanner(hives) {
       var existing = document.getElementById('pending-banner');
       if (existing) existing.remove();
-      var pending = (hives || []).filter(function(h) { return (h.role === 'owner' || h.role === 'read-write') && h.pendingRequestCount > 0; });
+      var pending = (hives || []).filter(function(h) { return (roleAtLeast(h.role, 'read-write')) && h.pendingRequestCount > 0; });
       if (!pending.length) return;
       var total = pending.reduce(function(sum, h) { return sum + h.pendingRequestCount; }, 0);
       var banner = document.createElement('div');
@@ -16725,6 +16733,7 @@ const dashboardHTML = `<!DOCTYPE html>
           <select id="access-role" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
             <option value="read">Read</option>
             <option value="read-write">Read-Write</option>
+            <option value="merger">Merger</option>
             <option value="owner">Owner</option>
           </select>
           <button onclick="addAccess()" class="btn-primary" style="padding:8px 16px;font-size:0.8rem">Add</button>
@@ -16895,7 +16904,7 @@ const dashboardHTML = `<!DOCTYPE html>
             '<div style="display:flex;align-items:center;justify-content:space-between">' +
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(r.username) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span></div>' +
             '<div style="display:flex;gap:4px">' +
-            '<select id="req-role-' + esc(r.username) + '" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read">Read</option><option value="read-write">Read-Write</option></select>' +
+            '<select id="req-role-' + esc(r.username) + '" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read">Read</option><option value="read-write">Read-Write</option><option value="merger">Merger</option></select>' +
             '<button onclick="approveRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
             '<button onclick="denyRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
             '</div></div>' + noteHtml + '</div>';
@@ -16969,7 +16978,7 @@ const dashboardHTML = `<!DOCTYPE html>
           // The role pill is an editable dropdown: changing it POSTs the new role
           // (the add endpoint upserts). The last owner's role is locked (shown as
           // a static pill) so the hive can't be left without an owner.
-          var ROLES = ['read', 'read-write', 'owner'];
+          var ROLES = ['read', 'read-write', 'merger', 'owner'];
           var roleControl = isLastOwner ?
             '<span class="role-badge role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem" title="The last owner\'s role cannot be changed">' + esc(u.role) + '</span>' :
             '<select class="role-select role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem;padding:2px 6px;border-radius:9999px;cursor:pointer" title="Change this user\'s permission" onchange="changeAccessRole(\'' + esc(u.username) + '\', this.value, \'' + esc(u.role) + '\')">' +

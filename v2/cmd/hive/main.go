@@ -4910,6 +4910,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		Title  string   `json:"title"`
 		Author string   `json:"author"`
 		Labels []string `json:"labels,omitempty"`
+		Queued bool     `json:"queued,omitempty"`
 		// Mergeable is a tri-state string ("yes"/"no"/"unknown"), not a bool.
 		// A bool here defaulted to false for every PR, because the value was
 		// read from a list endpoint that never returns it.
@@ -4970,11 +4971,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		}
 
 		dco := "unknown"
+		queued := false
 		for _, l := range pr.Labels {
 			if l == "dco-signoff: yes" {
 				dco = "yes"
 			} else if l == "dco-signoff: no" {
 				dco = "no"
+			}
+			if strings.EqualFold(l, github.AutoMergeQueuedLabel) {
+				queued = true
 			}
 		}
 		eligible = append(eligible, eligiblePR{
@@ -4983,6 +4988,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Title:     pr.Title,
 			Author:    pr.Author,
 			Labels:    pr.Labels,
+			Queued:    queued,
 			Mergeable: mergeableJSON(pr.Mergeable),
 			DCO:       dco,
 		})

@@ -558,11 +558,16 @@ func (s *Scheduler) buildMergeEligibleList() string {
 	if err != nil {
 		return "(none)\n"
 	}
+	return formatMergeEligibleData(data)
+}
+
+func formatMergeEligibleData(data []byte) string {
 	var payload struct {
 		Items []struct {
 			Number int    `json:"number"`
 			Repo   string `json:"repo"`
 			Title  string `json:"title"`
+			Queued bool   `json:"queued"`
 		} `json:"merge_eligible"`
 	}
 	if json.Unmarshal(data, &payload) != nil || len(payload.Items) == 0 {
@@ -570,7 +575,11 @@ func (s *Scheduler) buildMergeEligibleList() string {
 	}
 	var b strings.Builder
 	for _, pr := range payload.Items {
-		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		queued := ""
+		if pr.Queued {
+			queued = " [hive/automerge queued]"
+		}
+		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
 	}
 	return b.String()
 }
@@ -617,7 +626,7 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 - Writes are authored by the App bot identity, not a personal account. Do not
   set git user.name/user.email to a human, and do not pass 'gh pr create' or
   'git commit' an explicit --author: let the App identity stand.
-- To OPEN A PULL REQUEST, use ` + "`hive-open-pr`" + ` — the hive opens it with the
+- To OPEN A PULL REQUEST, use `+"`hive-open-pr`"+` — the hive opens it with the
   App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
     hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
@@ -952,14 +961,14 @@ func keywordSample(keywords []string) string {
 }
 
 var noiseLabels = map[string]bool{
-	"triage/accepted":   true,
-	"ai-fix-requested":  true,
-	"kind/bug":          true,
-	"kind/feature":      true,
-	"kind/task":         true,
-	"good first issue":  true,
-	"help wanted":       true,
-	"hold":              true,
+	"triage/accepted":  true,
+	"ai-fix-requested": true,
+	"kind/bug":         true,
+	"kind/feature":     true,
+	"kind/task":        true,
+	"good first issue": true,
+	"help wanted":      true,
+	"hold":             true,
 }
 
 func isNoiseLabel(label string) bool {

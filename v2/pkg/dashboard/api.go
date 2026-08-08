@@ -93,6 +93,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
+	s.mux.HandleFunc("POST /api/prs/{owner}/{repo}/{number}/queue-automerge", s.handleQueuePRAutoMerge)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)
 	s.mux.HandleFunc("PUT /api/config/agent/{name}/general", s.handleAgentConfigGeneral)
@@ -1889,6 +1890,79 @@ func (s *Server) handleSummaries(w http.ResponseWriter, r *http.Request) {
 		"prs":    allPRs,
 		"hold":   status.Hold.Items,
 	})
+}
+
+func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = config.RoleOwner
+	}
+	user := strings.TrimSpace(r.Header.Get("X-Hive-User"))
+	if !config.RoleAtLeast(role, config.RoleMerger) {
+		jsonError(w, "merger or owner access required", http.StatusForbidden)
+		return
+	}
+	if !config.RoleAtLeast(role, config.RoleOwner) && user == "" {
+		jsonError(w, "authenticated GitHub user required", http.StatusForbidden)
+		return
+	}
+	if s.deps == nil || s.deps.GHClient == nil {
+		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
+		return
+	}
+	number, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil || number <= 0 {
+		jsonError(w, "invalid pull request number", http.StatusBadRequest)
+		return
+	}
+	owner := strings.TrimSpace(r.PathValue("owner"))
+	repoName := strings.TrimSpace(r.PathValue("repo"))
+	if owner == "" || repoName == "" || strings.Contains(owner, "/") || strings.Contains(repoName, "/") {
+		jsonError(w, "invalid repository", http.StatusBadRequest)
+		return
+	}
+	repo := owner + "/" + repoName
+	if !s.prQueueRepoAllowed(repo) {
+		jsonError(w, "repository is not managed by this hive", http.StatusForbidden)
+		return
+	}
+	author, err := s.deps.GHClient.GetPRAuthor(r.Context(), repo, number)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !config.RoleAtLeast(role, config.RoleOwner) && strings.EqualFold(author, user) {
+		jsonError(w, "mergers cannot queue their own pull requests", http.StatusForbidden)
+		return
+	}
+	if err := s.deps.GHClient.QueuePRAutoMerge(r.Context(), repo, number, user); err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	detail := auditDetail("repo", repo, "pr", strconv.Itoa(number), "author", author)
+	s.auditFromRequest(r, "queue-pr-automerge", detail, "")
+	jsonResponse(w, map[string]any{
+		"status": "queued",
+		"repo":   repo,
+		"number": number,
+		"label":  github.AutoMergeQueuedLabel,
+	})
+}
+
+func (s *Server) prQueueRepoAllowed(repo string) bool {
+	if s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	for _, configured := range s.deps.Config.Project.Repos {
+		full := configured
+		if !strings.Contains(full, "/") {
+			full = s.deps.Config.Project.Org + "/" + full
+		}
+		if strings.EqualFold(full, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Agent config endpoints ---
@@ -5476,10 +5550,10 @@ func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID 
 
 func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
 	if sess := s.sessionFromRequest(r); sess != nil {
-		return sess.Role == "owner" || sess.Role == "read-write"
+		return config.RoleAtLeast(sess.Role, config.RoleReadWrite)
 	}
 	role := r.Header.Get("X-Hive-Role")
-	if role != "owner" && role != "read-write" {
+	if !config.RoleAtLeast(role, config.RoleReadWrite) {
 		return false
 	}
 	if s.directRouteAuthzEnabled() {

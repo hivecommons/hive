@@ -568,6 +568,13 @@ hive has no fleet-registry entry (never heartbeated). So a hive with
 `owner: <someone>` in its `meta.json` appears in that person's My Hives (and the
 admin's) as soon as the file exists.
 
+**Contributor tiers.** Manage Access grants four ordered roles:
+`read` < `read-write` < `merger` < `owner`. `merger` inherits read-write
+dashboard access and can approve/queue **other people's** PRs for the hive
+auto-merge-on-green flow. The spoke enforces the self-merge ban against the
+GitHub login bound to the session; owners are exempt because they already have
+repository-level merge authority.
+
 > **`meta.json` requirement is why heartbeats can be accepted but upgrades fail.**
 > The heartbeat path is separate from `loadSaaSHive`. A hive can heartbeat and
 > appear "online" while a missing `meta.json` makes the **Upgrade** button (and
