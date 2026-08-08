@@ -26,7 +26,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null } = {}) {
+function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -40,6 +40,10 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
     if (/backend_binary/.test(cmd)) return `${backend}\n`;
     if (/backend_perm_flag/.test(cmd)) return '--allow-all\n';
     if (/capture-pane/.test(cmd)) {
+      // paneText, when given, is returned verbatim — for tests that need a
+      // REAL pane rendering (e.g. a codex modal menu) rather than one of the
+      // three synthetic states below.
+      if (paneText !== null) return paneText;
       const state = cliStates[Math.min(stateIdx++, cliStates.length - 1)];
       // Panes that getCLIState()/checkTmuxIdle() classify per backend.
       if (state === 'ready') return '/ commands for help\n';
@@ -657,6 +661,110 @@ test('interactive mode still delivers via tmux send-keys (unchanged default path
     const literalSends = relay.__tmuxSends().filter(c => / -l /.test(c));
     assert.ok(literalSends.some(c => c.includes('foo/bar#7')),
       'interactive mode must still type the prompt into tmux');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// Unresponsive-backend recovery: blocking modal prompts must be classified and
+// dismissed with the RIGHT key, and a CLI that never reaches its prompt must
+// hand its task back instead of silently holding it.
+// ---------------------------------------------------------------------------
+
+// Real captures from a running ghcr.io/kubestellar/hive-contributor container.
+// Note both keep codex's banner chrome ("OpenAI Codex (v0.146.0)", the "›"
+// input marker) on screen BEHIND the modal — which is exactly why the ready
+// patterns have to be checked after the modal patterns, not before.
+const CODEX_TRUST_PANE = [
+  'dev@codex-contributor:~/workspace$ codex --dangerously-bypass-approvals-and-sandbox',
+  '> You are in /home/dev/workspace',
+  '',
+  '  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection.',
+  '',
+  '› 1. Yes, continue',
+  '  2. No, quit',
+  '',
+  '  Press enter to continue',
+  '╭─────────────────────────────────────────────────────╮',
+  '│ >_ OpenAI Codex (v0.146.0)                          │',
+  '╰─────────────────────────────────────────────────────╯',
+].join('\n');
+
+const CODEX_UPDATE_PANE = [
+  'dev@codex-contributor:~/workspace$ codex --dangerously-bypass-approvals-and-sandbox',
+  '  ✨ Update available! 0.146.0 -> 0.147.0',
+  '  Release notes: https://github.com/openai/codex/releases/latest',
+  '› 1. Update now (runs `npm install -g @openai/codex`)',
+  '  2. Skip',
+  '  3. Skip until next version',
+  '  Press enter to continue',
+].join('\n');
+
+test('codex trust prompt is classified as onboarding, not ready, despite the banner behind it', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_TRUST_PANE });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'onboarding',
+      'a pane blocked on the trust menu must not be reported ready — a task prompt typed there is swallowed by the menu');
+  } finally { teardown(relay); }
+});
+
+test('codex update nudge is classified as onboarding, not ready', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_UPDATE_PANE });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'onboarding');
+  } finally { teardown(relay); }
+});
+
+test('numbered menus get an explicit selection, not a bare Enter', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_TRUST_PANE });
+  try {
+    // "1. Yes, continue" — Enter alone just re-renders the menu forever.
+    assert.strictEqual(relay.blockingPromptKey(CODEX_TRUST_PANE), '1');
+    // "3. Skip until next version" — deliberately NOT "1. Update now", which
+    // would run npm install -g inside the container.
+    assert.strictEqual(relay.blockingPromptKey(CODEX_UPDATE_PANE), '3');
+    // A plain yes/no confirm still takes a bare Enter.
+    assert.strictEqual(relay.blockingPromptKey('Do you trust this folder? (y/n)'), null);
+  } finally { teardown(relay); }
+});
+
+test('a CLI that never becomes ready hands its task BACK to the hub instead of silently holding it', () => {
+  const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
+  try {
+    relay.setCliReady(false);
+    relay.setCurrentTask({ task_id: 'ct-stuck-1', kind: 'issue', repo: 'foo/bar', number: 5, title: 'stuck' });
+    relay.setPendingTask('a queued prompt');
+    relay.__sent.length = 0;
+
+    // What armCLIReadyWait's catch path does on CLI_READY_TIMEOUT_MS.
+    relay.failCurrentTask('CLI never became ready: CLI did not become ready within timeout', { skipReady: true });
+
+    const failures = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failures.length, 1, 'the hub must be told, or the slot is held until the hub times out');
+    assert.strictEqual(failures[0].task_id, 'ct-stuck-1');
+    assert.match(failures[0].reason, /never became ready/);
+    assert.strictEqual(relay.getCurrentTask(), null, 'task must be released locally too');
+  } finally { teardown(relay); }
+});
+
+test('handing back a task from a wedged CLI does NOT re-advertise ready', () => {
+  const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
+  try {
+    relay.setCurrentTask({ task_id: 'ct-stuck-2', kind: 'issue', repo: 'foo/bar', number: 6, title: 'stuck' });
+    relay.__sent.length = 0;
+    relay.failCurrentTask('CLI never became ready', { skipReady: true });
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 0,
+      'claiming to be free while the CLI is still wedged would pull in another unrunnable task every timeout window');
+  } finally { teardown(relay); }
+});
+
+test('an ordinary task failure still re-advertises ready (skipReady is opt-in)', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    relay.setCurrentTask({ task_id: 'ct-normal', kind: 'issue', repo: 'foo/bar', number: 7, title: 'x' });
+    relay.__sent.length = 0;
+    relay.failCurrentTask('some ordinary failure');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 1,
+      'the pre-existing failure path must be unchanged');
   } finally { teardown(relay); }
 });
 

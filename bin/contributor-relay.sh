@@ -378,13 +378,46 @@ function recoverWedgedShell() {
   } catch (_) {}
 }
 
-function getCLIState() {
+// capturePaneText returns the current pane contents, or "" if tmux can't be
+// reached. Extracted so the readiness classifier and the blocking-prompt
+// dismissal can look at the SAME text without capturing twice, and so the
+// dismissal can see WHICH prompt is on screen rather than re-deriving it from
+// a state enum that has already thrown that detail away.
+function capturePaneText() {
   try {
-    const output = execSync(
+    return execSync(
       `tmux capture-pane -t ${TMUX_SESSION} -p 2>/dev/null`,
       { encoding: 'utf8', timeout: 15000 }
-    );
-    const text = output.toString();
+    ).toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+// blockingPromptKey returns the keystroke that dismisses whatever modal prompt
+// is on screen, or null meaning "a bare Enter is the right answer".
+//
+// Some CLIs gate startup behind a NUMBERED menu rather than a yes/no confirm.
+// For those a bare Enter does nothing useful — it just re-renders the menu — so
+// the relay would "dismiss" in a loop until CLI_READY_TIMEOUT_MS and the task
+// would be dropped. Each entry names the exact prompt it answers, so an
+// unrelated menu is never blind-fired at.
+function blockingPromptKey(text) {
+  // codex: "Do you trust the contents of this directory?" → 1. Yes, continue
+  if (/Do you trust the contents of this directory/.test(text)) return '1';
+  // codex: "✨ Update available! x -> y" → 3. Skip until next version.
+  // Deliberately NOT "1. Update now": that shells out to `npm install -g`
+  // inside the container — slow, needs network, can fail half-way, and drifts
+  // the CLI version out from under the image. "Skip until next version" also
+  // persists, so this prompt stops coming back on every restart the way a
+  // plain "Skip" would.
+  if (/Update available!/.test(text) && /Skip until next version/.test(text)) return '3';
+  return null;
+}
+
+function getCLIState() {
+  try {
+    const text = capturePaneText();
     if (BACKEND === 'claude') {
       if (/Not logged in|Please run \/login/.test(text)) return 'needs-login';
       if (/bypass permissions|Welcome back|Try "how does|medium.*effort|@gmail\.com|@.*\.com.*Organization/.test(text)) return 'ready';
@@ -412,6 +445,13 @@ function getCLIState() {
       // that happened to end in a '>' — including partially drawn frames.
       if (/Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/.test(text)) return 'ready';
     } else if (BACKEND === 'codex') {
+      // Order matters, as it does for bob above: codex draws its version banner
+      // and input chrome BEHIND a modal prompt, so the 'ready' patterns below
+      // match a pane that is actually blocked on a menu. Classifying the modals
+      // first is what stops the relay from typing a task prompt into a
+      // "1. Yes, continue / 2. No, quit" list, where it is swallowed.
+      if (/Do you trust the contents of this directory/.test(text)) return 'onboarding';
+      if (/Update available!/.test(text) && /Skip until next version/.test(text)) return 'onboarding';
       if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
       if (/pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text)) return 'ready';
@@ -438,8 +478,15 @@ function waitForCLI() {
         console.log('CLI ready — accepting tasks');
         resolve();
       } else if (state === 'onboarding') {
-        console.log('Auto-dismissing trust/onboarding dialog...');
-        try { execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 }); } catch (_) {}
+        // A numbered menu needs its option typed before Enter; a yes/no confirm
+        // takes a bare Enter. blockingPromptKey() tells the two apart from the
+        // pane text, so this no longer loops uselessly on menu-shaped prompts.
+        const key = blockingPromptKey(capturePaneText());
+        console.log(`Auto-dismissing trust/onboarding dialog${key ? ` (selecting "${key}")` : ''}...`);
+        try {
+          if (key) execSync(`tmux send-keys -t ${TMUX_SESSION} ${key} Enter`, { timeout: 15000 });
+          else execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+        } catch (_) {}
         setTimeout(check, CLI_READY_POLL_MS);
       } else if (state === 'needs-login' && !loginMessageShown) {
         loginMessageShown = true;
@@ -466,6 +513,10 @@ function waitForCLI() {
 
 let cliReady = false;
 let pendingTask = null;
+// True once a CLI-readiness wait has timed out and we handed its task back.
+// Used so the eventual recovery re-advertises availability to the hub, which
+// we deliberately withheld at failure time (see armCLIReadyWait).
+let cliReadyFailed = false;
 
 if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
   // Headless mode has no tmux pane to scrape for readiness. Each task spawns
@@ -483,10 +534,49 @@ if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
     writeHeadlessStatus(HEADLESS_STATE_WAITING);
   }
 } else {
+  armCLIReadyWait();
+}
+
+// armCLIReadyWait waits for the CLI to reach its prompt and, crucially, does
+// something sane when it never does.
+//
+// The old code was `.catch(e => console.error(e.message))`. That silently
+// abandoned the task: cliReady stayed false, pendingTask kept holding the
+// prompt, and the HUB WAS NEVER TOLD — so from the hub's side this contributor
+// was still working on the issue, and the slot stayed held until the hub's own
+// timeout eventually revoked it. Any cause of an unresponsive backend (an
+// unrecognized modal prompt, a crashed pane, a half-finished login, a hung
+// update) produced the same black hole.
+//
+// Now the task is handed straight back so another contributor can pick it up,
+// and the relay keeps waiting rather than declaring itself available: it does
+// NOT re-advertise 'ready' until the CLI genuinely reaches its prompt.
+// Otherwise it would immediately accept another task it still cannot run and
+// churn one task per timeout window forever.
+function armCLIReadyWait() {
+  const hadFailed = cliReadyFailed;
   waitForCLI().then(() => {
     cliReady = true;
+    cliReadyFailed = false;
+    // Only re-advertise if we previously withdrew by failing a task; the normal
+    // startup path is already advertised by the auth_ok handler.
+    if (hadFailed) send({ type: 'ready', seq: nextSeq() });
     flushPendingTask();
-  }).catch(e => console.error(e.message));
+  }).catch(e => {
+    cliReadyFailed = true;
+    console.error(e.message);
+    // Drop the queued prompt first: if the CLI later recovers, flushing a
+    // prompt for a task the hub has already reassigned would have this
+    // contributor silently working on someone else's issue.
+    pendingTask = null;
+    if (currentTask) {
+      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true });
+    }
+    // Keep waiting. The CLI may still come up (a slow login, an operator
+    // attaching to clear a prompt we don't recognize), and when it does the
+    // handler above re-advertises availability.
+    armCLIReadyWait();
+  });
 }
 
 const ENTER_COUNT = 3;
@@ -703,10 +793,9 @@ function relaunchCLI() {
   // classifier positively confirms it, or a task prompt sent in the meantime
   // is typed as literal keystrokes into a bare shell (issue #2203, bug 2).
   cliReady = false;
-  waitForCLI().then(() => {
-    cliReady = true;
-    flushPendingTask();
-  }).catch(e => console.error(`CLI did not become ready after relaunch: ${e.message}`));
+  // Same recovery contract as the startup path: a relaunch that never reaches
+  // a prompt must hand its task back rather than sit on it silently.
+  armCLIReadyWait();
   return launchCmd;
 }
 
@@ -868,7 +957,13 @@ function failCurrentTask(reason, opts) {
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
-  send({ type: 'ready', seq: nextSeq() });
+  // skipReady: the caller knows this contributor cannot run anything right now
+  // (the CLI never reached its prompt), so it hands the task back WITHOUT
+  // claiming to be free. Advertising 'ready' here would just pull in another
+  // task the CLI still cannot run. The caller re-advertises on recovery.
+  if (!(opts && opts.skipReady)) {
+    send({ type: 'ready', seq: nextSeq() });
+  }
 }
 
 function startProgressReporting() {
@@ -1215,6 +1310,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     setLastResetAtCount: (v) => { lastResetAtCount = v; },
     getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
+    setCurrentTask: (v) => { currentTask = v; },
+    blockingPromptKey,
+    getCLIState,
     setWs: (w) => { ws = w; },
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
