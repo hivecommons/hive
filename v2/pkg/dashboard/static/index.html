@@ -3805,7 +3805,11 @@
     let _ocSummaryScrollTop = null;
 
     function pauseInfoIcon(a) {
-      if (!a.paused || a.offByCadence) return '';
+      // A manual/persisted pause carries its reason/trigger even when the
+      // current governor mode's cadence is also pause/off — the operator
+      // pause is the state that needs explaining, so never hide the icon
+      // behind offByCadence.
+      if (!a.paused) return '';
       const reason = a.pausedReason || 'unknown';
       const trigger = a.pausedTrigger || 'unknown';
       const at = a.pausedAt ? new Date(a.pausedAt).toLocaleString() : 'unknown';
@@ -3859,9 +3863,15 @@
       if (!a) { detail.classList.remove('active'); return; }
       detail.classList.add('active');
 
-      const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
-      const isPaused = a.paused === true && !isOff && !isOnDemand;
+      // Manual/persisted pause WINS over the governor's per-mode cadence.
+      // The old `paused && !offByCadence` derivation let an operator-paused
+      // agent whose current-mode cadence was also pause/off fall through to
+      // the off-healthy (hollow GREEN) styling with a "▶ start" button —
+      // the operator could not see it was paused, and the toggle then sent
+      // a no-op re-pause instead of the intended resume.
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = a.offByCadence === true && !isPaused && !isOnDemand;
       // Down = process not alive ('stopped', 'failed', …) — anything but
       // 'running'. Matching only 'stopped' let 'failed' agents render the
       // green idle styling here (#2465).
@@ -4143,9 +4153,11 @@
     }
 
     function _sidebarRenderAgent(a) {
-      const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
-      const isPaused = a.paused === true && !isOff && !isOnDemand;
+      // Manual/persisted pause wins over offByCadence — see the agent-detail
+      // renderer for the incident this ordering prevents.
+      const isPaused = a.paused === true && !isOnDemand;
+      const isOff = a.offByCadence === true && !isPaused && !isOnDemand;
       // Down = the PROCESS is not alive ('stopped', 'failed', or never
       // launched — anything but 'running'). The dot used to read only the
       // 'stopped' state, so a failed/crash-looping agent fell through to the
@@ -5538,9 +5550,11 @@
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       const cards = sortedAgents.map(a => {
-        const isOff = a.offByCadence === true;
         const isOnDemand = a.onDemand === true;
-        const isPaused = a.paused === true && !isOff && !isOnDemand;
+        // Manual/persisted pause wins over offByCadence — see the agent-detail
+        // renderer for the incident this ordering prevents.
+        const isPaused = a.paused === true && !isOnDemand;
+        const isOff = a.offByCadence === true && !isPaused && !isOnDemand;
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
         const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
@@ -6379,8 +6393,11 @@
         if (!row) return '';
         const agentData = agents.find(a => a.name === aname);
         const isWorking = agentData && agentData.busy === 'working';
-        const agentPaused = agentData && agentData.paused === true && !agentData.offByCadence;
-        const agentOff = agentData && agentData.offByCadence === true;
+        // Manual/persisted pause wins over offByCadence (matches the card/
+        // sidebar/detail renderers) — the row badge must say "paused", not
+        // "off", when the operator paused the agent.
+        const agentPaused = agentData && agentData.paused === true;
+        const agentOff = agentData && agentData.offByCadence === true && !agentPaused;
         const agentOnDemand = agentData && agentData.onDemand === true;
         const cells = modes.map(m => {
           const val = row[m] || '?';
@@ -12446,18 +12463,36 @@ function burnAreaChart() {
     }
 
     async function toggleAgent(agent, currentlyPaused) {
-      const action = currentlyPaused ? 'resume' : 'pause';
-      const label = currentlyPaused ? 'Resuming' : 'Pausing';
+      // Server-authoritative toggle. The caller's belief (a stale DOM
+      // dataset) once inverted the action: a persisted-paused agent rendered
+      // un-paused, so the operator's "start it" click sent a silent no-op
+      // re-pause and the agent stayed paused indefinitely. Two defenses:
+      // (1) re-sync the real state from /api/agent-state before choosing
+      // pause-vs-resume, (2) render from the response's authoritative
+      // state/changed fields instead of assuming the action succeeded as
+      // intended.
+      let believedPaused = currentlyPaused;
+      try {
+        const st = await (await fetch(`/api/agent-state/${agent}`)).json();
+        if (st && st.ok === true && typeof st.paused === 'boolean') believedPaused = st.paused;
+      } catch (e) { /* best-effort — fall back to the caller's belief */ }
+      const action = believedPaused ? 'resume' : 'pause';
+      const label = believedPaused ? 'Resuming' : 'Pausing';
       const toast = showToast(`${label} ${agent}...`, 'info', true);
       const res = await fetch(`/api/${action}/${agent}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `${action} failed: ${data.error || 'unknown'}`, 'error'); return; }
-      // Optimistic DOM update — reflect state immediately without waiting for SSE
+      // Authoritative post-request state from the server. Older servers that
+      // omit `state` fall back to the pre-fix assumption.
+      const nowPaused = (data.state === 'paused' || data.state === 'running')
+        ? data.state === 'paused'
+        : action === 'pause';
+      // DOM update from the AUTHORITATIVE state (not a blind optimistic
+      // assumption) — reflect it immediately without waiting for SSE.
       const cards = document.querySelectorAll('.agent-card');
       for (const card of cards) {
         const nameEl = card.querySelector('.agent-name');
         if (!nameEl || !nameEl.textContent.includes(agent)) continue;
-        const nowPaused = action === 'pause';
         card.className = card.className.replace(/\b(paused|off|idle|working|stopped)\b/g, '').trim() + (nowPaused ? ' paused' : ' idle');
         const stateEl = card.querySelector('.agent-state');
         if (stateEl) { stateEl.className = `agent-state ${nowPaused ? 'paused' : 'idle'}`; stateEl.textContent = nowPaused ? 'paused' : 'idle'; }
@@ -12474,7 +12509,7 @@ function burnAreaChart() {
       }
       // Update in-memory agent state so cadence table re-renders correctly
       const agentObj = (window._lastAgents || []).find(a => a.name === agent);
-      if (agentObj) { agentObj.paused = (action === 'pause'); }
+      if (agentObj) { agentObj.paused = nowPaused; }
       // The focused agent-detail panel renders its own toggle button — the
       // .agent-card loop above never reaches it, so re-render it from the
       // just-updated state or the button stays stale until navigation.
@@ -12484,7 +12519,16 @@ function burnAreaChart() {
         renderGovernor(lastData.governor, lastData.cadenceMatrix || [], lastData);
       }
       renderDebugSection();
-      dismissToast(toast, `${agent} ${action}d`, 'success');
+      if (data.changed === false) {
+        // No-op transition: tell the operator the REAL state so the next
+        // click does the right thing (the button above was just re-rendered
+        // from that state).
+        dismissToast(toast, nowPaused
+          ? `${agent} was already paused — click ▶ resume to start it`
+          : `${agent} was already running — click ⏸ pause to stop it`, 'info');
+      } else {
+        dismissToast(toast, `${agent} ${action}d`, 'success');
+      }
     }
 
     async function restartAgent(agent) {
