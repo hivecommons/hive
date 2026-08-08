@@ -220,6 +220,8 @@ func buildSecurity(cfg *config.Config) *FrontendSecurity {
 	sec.IoscanCanaries = cfg.Ioscan.Canaries
 	sec.ReviewRequireApproval = cfg.Review.RequireApproval
 	sec.ReviewFanOut = cfg.Review.FanOut
+	sec.RetroEnabled = cfg.Retro.Enabled
+	sec.OTelEnabled = cfg.EffectiveOTel().Enabled
 	sec.SandboxEnabled = cfg.AgentSandbox.Enabled
 	sec.TotalAgents = len(cfg.Agents)
 	for name, a := range cfg.Agents {
