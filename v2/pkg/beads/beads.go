@@ -123,6 +123,11 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0770); err != nil {
 		return nil, fmt.Errorf("creating beads dir %s: %w", dir, err)
 	}
+	// The hive process runs as dev (1001) but agents write beads as their own
+	// UIDs (2001+) sharing only the node group — the dir must be group-writable
+	// with setgid, and MkdirAll's mode is clipped by the umask, so set it
+	// explicitly. Best-effort: an already-correct or foreign-owned dir is fine.
+	_ = os.Chmod(dir, 0o2770)
 
 	s := &Store{
 		dir:   dir,

@@ -14,11 +14,9 @@ import (
 // issue-sourced epic into the architect's store as a different UID in the shared
 // node group, so the dir must be writable by the group, not owner-only.
 //
-// Perms are subject to the process umask, so we can't assert an exact 0770. We
-// assert instead that (a) the dir exists and (b) the OWNER-write bit is present
-// (a floor that would fail if the mode were accidentally read-only), and, when
-// the umask permits it, that the GROUP-write bit made it through — the actual
-// regression guard for the 0755->0770 change.
+// NewStore explicitly chmods after creation so the result is not clipped by
+// umask. It must also keep the directory private to owner+node group; world
+// read/traverse would weaken the per-UID agent isolation boundary.
 func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not meaningful on Windows")
@@ -40,14 +38,11 @@ func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
 	if !fi.IsDir() {
 		t.Fatalf("expected a directory at %s", dir)
 	}
-	mode := fi.Mode().Perm()
-	if mode&0200 == 0 {
-		t.Errorf("dir mode %o lacks owner-write bit", mode)
+	if mode := fi.Mode().Perm(); mode != 0o770 {
+		t.Errorf("dir mode = %o, want 770", mode)
 	}
-	// Group-write is the point of the fix. If the current umask masks the group
-	// bit off (e.g. 0027), we can't observe it — assert only when the umask allows.
-	if umaskAllowsGroupWrite(t) && mode&0020 == 0 {
-		t.Errorf("dir mode %o lacks group-write bit (0770 regression?)", mode)
+	if runtime.GOOS == "linux" && fi.Mode()&os.ModeSetgid == 0 {
+		t.Errorf("dir mode %v lacks setgid bit", fi.Mode())
 	}
 
 	// Minting a bead must persist a beads.json — proving the store is writable and

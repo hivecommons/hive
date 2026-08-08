@@ -532,8 +532,18 @@ if [ -f /data/proxy-ca-bundle.pem ]; then
 else
   export SSL_CERT_FILE=/data/proxy-ca.pem
 fi
+# The image ships Go at /usr/local/go/bin but /etc/profile resets PATH to the
+# Debian default, so agent shells lose it — and agents then report "no Go
+# toolchain" when asked to run tests.
+case ":$PATH:" in *:/usr/local/go/bin:*) ;; *) export PATH="$PATH:/usr/local/go/bin" ;; esac
 BASHRC
   chmod 644 /data/home/.bashrc 2>/dev/null || true
+  # Login shells (tmux default-command) read ~/.profile, not ~/.bashrc — chain
+  # them so both shell flavors get the same environment.
+  if [ ! -f /data/home/.profile ]; then
+    printf '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"\n' > /data/home/.profile 2>/dev/null || true
+    chmod 644 /data/home/.profile 2>/dev/null || true
+  fi
 
   # ── Per-agent UID isolation ──────────────────────────────────────────
   # Extract agent names from config + pack YAML, create system users,
