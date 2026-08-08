@@ -86,9 +86,9 @@ func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 }
 
 func TestProtectedPathViolationsTable(t *testing.T) {
-	files := []string{"policies/guard.yaml", "OWNERS", "pkg/safe.go"}
+	files := []string{"policies/guard.yaml", "OWNERS", "hive.yaml.dashboard", "pkg/safe.go"}
 	got := ProtectedPathViolations(files, DefaultProtectedPaths)
-	if strings.Join(got, ",") != "policies/guard.yaml,OWNERS" {
+	if strings.Join(got, ",") != "policies/guard.yaml,OWNERS,hive.yaml.dashboard" {
 		t.Fatalf("got %v", got)
 	}
 }

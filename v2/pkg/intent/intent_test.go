@@ -20,6 +20,7 @@ func TestClassify(t *testing.T) {
 		{"removed test escalates", PR{AgentAuthor: true, Files: []ChangedFile{{Filename: "tests/e2e_test.go", Status: "removed"}}}, Tier1},
 		{"guardrail workflow", PR{AgentAuthor: true, Files: []ChangedFile{{Filename: ".github/workflows/ci.yml"}}}, Tier3},
 		{"guardrail owners", PR{AgentAuthor: true, Files: []ChangedFile{{Filename: "OWNERS"}}}, Tier3},
+		{"guardrail dashboard overlay", PR{AgentAuthor: true, Files: []ChangedFile{{Filename: "hive.yaml.dashboard"}}}, Tier3},
 		{"feature label", PR{AgentAuthor: true, Title: "add widget", Labels: []string{"enhancement"}, Files: []ChangedFile{{Filename: "pkg/widget/widget.go"}}}, Tier2},
 		{"default bugfix chore", PR{AgentAuthor: true, Files: []ChangedFile{{Filename: "pkg/foo/foo.go"}}}, Tier1},
 	}

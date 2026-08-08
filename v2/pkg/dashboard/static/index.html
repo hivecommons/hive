@@ -4146,7 +4146,7 @@
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotState}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
-          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
+          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''}${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
@@ -4322,7 +4322,7 @@
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
-      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
+      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? '<span class="status-badge done" title="Sandboxed">S</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
     }
 
     function _sidebarBuildGroups(agents) {
@@ -5733,7 +5733,7 @@
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' <span class="status-badge done" title="Sandboxed runner active">sandboxed</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
@@ -14194,7 +14194,7 @@ function burnAreaChart() {
     // hub-synced user/role data. It sits next to Model Gateways because both
     // are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Security', 'Features', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -14795,6 +14795,7 @@ function burnAreaChart() {
         case 'Health': return renderGovHealth(d.health || {});
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
+        case 'Security': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
@@ -16554,6 +16555,10 @@ function burnAreaChart() {
           <input type="text" id="cfg-launch-cmd" value="${esc(g.launchCmd || '')}" onchange="markDirty('general','launchCmd',this.value)">
         </div>
         <div class="config-toggle">
+          <div class="config-toggle-switch ${g.sandboxEnabled ? 'on' : ''}" id="cfg-agent-sandbox" data-action="toggleConfigSwitch" data-section="general" data-key="sandboxEnabled"></div>
+          <span class="config-toggle-label">Run in sandbox <span class="config-info">i<span class="config-tooltip">Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.</span></span>${g.sandboxEffective ? ' <span class="status-badge done">sandboxed</span>' : ''}</span>
+        </div>
+        <div class="config-toggle">
           <div class="config-toggle-switch ${g.clearOnKick !== false ? 'on' : ''}" id="cfg-clear-on-kick" data-action="toggleConfigSwitch" data-section="general" data-key="clearOnKick"></div>
           <span class="config-toggle-label">Clear on Kick <span class="config-info">i<span class="config-tooltip">Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.</span></span></span>
         </div>
@@ -17653,6 +17658,7 @@ function burnAreaChart() {
             <button class="btn" onclick="closeConfigDialog();openACMMDialog()" title="Open the ACMM maturity level selector">Change&hellip;</button>
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
+          <div style="margin-top:8px">${securityPostureStripHtml()}</div>
         </div>
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="attribution" data-key="attributionTrailer"></div>
@@ -17757,17 +17763,28 @@ function burnAreaChart() {
     }
 
     function renderGovAgents(agents) {
-      const list = agents.map(a =>
-        `<li><span class="agent-link" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a)}">${esc(a)}</span><button class="remove-agent" data-action="removeAgent" data-agent="${esc(a)}">✕</button></li>`
-      ).join('');
+      const sec = (_configState.data || {}).security || {};
+      const live = window._lastAgents || [];
+      const liveMap = {};
+      live.forEach(a => { liveMap[a.name] = a; });
+      const list = agents.map(a => {
+        const name = typeof a === 'string' ? a : (a && a.name) || '';
+        const sandboxed = (liveMap[name] && liveMap[name].sandboxed) || false;
+        const badge = sandboxed ? ' <span class="status-badge done" title="This agent is opted into the sandbox and the global sandbox gate is on">sandboxed</span>' : '';
+        return `<li><span class="agent-link" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(name)}">${esc(name)}</span>${badge}<button class="remove-agent" data-action="removeAgent" data-agent="${esc(name)}">✕</button></li>`;
+      }).join('');
+      const sandboxNote = sec.agentSandboxEnabled
+        ? `${sec.sandboxedAgents || 0}/${sec.totalAgents || agents.length} agents sandboxed`
+        : 'Sandbox global gate is off — per-agent opt-ins are staged but not active.';
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Managed agents. Click name to configure.</p>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">Managed agents. Click name to configure.</p>
+        <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">${esc(sandboxNote)}</div>
         <ul class="config-agent-list">${list}</ul>
         <div class="config-list-add" style="margin-top:12px">
           <input type="text" id="cfg-new-agent" placeholder="agent name" title="Internal name for the new agent. Used as the tmux session name and config file name. Use lowercase with no spaces (e.g. scanner, code-reviewer).">
           <select id="cfg-copy-from" style="margin-left:6px;font-size:0.75rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px" title="Optionally copy configuration from an existing agent. Select 'blank' to start with default settings.">
             <option value="">blank</option>
-            ${agents.map(a => '<option value="' + esc(a) + '">copy ' + esc(a) + '</option>').join('')}
+            ${agents.map(a => { const name = typeof a === 'string' ? a : (a && a.name) || ''; return '<option value="' + esc(name) + '">copy ' + esc(name) + '</option>'; }).join('')}
           </select>
           <button onclick="addAgent()" title="Create the new agent with the specified name and optional copied config">+ Add Agent</button>
         </div>`;
@@ -18277,6 +18294,84 @@ function burnAreaChart() {
         </div>`;
     }
 
+    function securityPostureStripHtml() {
+      const sec = ((window._lastStatus || {}).security) || ((_configState.data || {}).security) || {};
+      const level = (window._lastStatus || {}).acmmLevel || 0;
+      const parts = [
+        level > 0 ? ('L' + level) : 'L?',
+        sec.intentEnforced || sec.intentEnforce ? 'intent enforced' : 'intent report-only',
+        'ioscan fail-' + ((sec.ioscanFailMode || 'open') === 'closed' ? 'closed' : 'open'),
+        (sec.ioscanCanaries ? 'canaries on' : 'canaries off'),
+        'sandbox ' + (sec.sandboxedAgents || 0) + '/' + (sec.totalAgents || 0) + ' agents',
+      ];
+      return '<div style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:0.72rem;color:var(--muted)" title="Effective security posture from the dashboard overlay and running config">' + esc(parts.join(' · ')) + '</div>';
+    }
+
+    function securityWarningsHtml(sec) {
+      const level = (window._lastStatus || {}).acmmLevel || 0;
+      const warnings = [];
+      if (level >= 6 && !sec.intentEnforce) warnings.push('L6 is fully autonomous; intent enforcement is recommended before merge automation.');
+      if (level >= 5 && (sec.ioscanFailMode || 'open') === 'open') warnings.push('L5+ with ioscan fail-open keeps work flowing, but fail-closed gives stronger prompt-injection protection.');
+      if (sec.reviewRequireApproval && (sec.reviewCapableAgents || 0) === 0) warnings.push('Review approval is required, but no enabled review-capable agents were detected.');
+      if (!warnings.length) return '';
+      return '<div style="border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);background:color-mix(in srgb, var(--amber) 10%, transparent);border-radius:8px;padding:10px 12px;margin:0 0 14px;color:var(--amber);font-size:0.76rem;line-height:1.5"><strong>Coherence warnings (non-blocking)</strong><ul style="margin:6px 0 0 18px;padding:0">' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>';
+    }
+
+    function renderGovSecurity(sec) {
+      sec = sec || {};
+      const failMode = sec.ioscanFailMode || 'open';
+      const classifierToggle = Object.prototype.hasOwnProperty.call(sec, 'classifierEnabled')
+        ? `<div class="config-toggle">
+            <div class="config-toggle-switch ${sec.classifierEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="classifierEnabled"></div>
+            <span class="config-toggle-label">Classifier enabled <span class="config-info">i<span class="config-tooltip">Enable the optional classifier security control when this backend supports it.</span></span></span>
+          </div>`
+        : '';
+      return `
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:10px">Operator security controls saved through the dashboard overlay.</p>
+        <div style="margin-bottom:14px">${securityPostureStripHtml()}</div>
+        ${securityWarningsHtml(sec)}
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
+          <span class="config-toggle-label">Input/Output scanning (ioscan) <span class="config-info">i<span class="config-tooltip">Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.</span></span></span>
+        </div>
+        <div class="config-field">
+          <label>ioscan fail mode <span class="config-info">i<span class="config-tooltip">open redacts and continues; closed blocks kicks with critical injection findings.</span></span></label>
+          <select onchange="markDirty('security','ioscanFailMode',this.value)">
+            <option value="open" ${failMode === 'open' ? 'selected' : ''}>open — redact and continue</option>
+            <option value="closed" ${failMode === 'closed' ? 'selected' : ''}>closed — block critical findings</option>
+          </select>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.ioscanCanaries ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanCanaries"></div>
+          <span class="config-toggle-label">ioscan canaries <span class="config-info">i<span class="config-tooltip">Plant per-kick exfiltration markers and scan egress for leaks.</span></span></span>
+        </div>
+        ${classifierToggle}
+        <hr style="border-color:var(--border);margin:16px 0">
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
+          <span class="config-toggle-label">Enforce intent authorization on merges</span>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.reviewRequireApproval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="reviewRequireApproval"></div>
+          <span class="config-toggle-label">Require structured review approval before merge</span>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.reviewFanOut ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="reviewFanOut"></div>
+          <span class="config-toggle-label">Fan out review work to review-capable agents</span>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${sec.agentSandboxEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="agentSandboxEnabled"></div>
+          <span class="config-toggle-label">Enable agent sandbox runner <span class="config-info">i<span class="config-tooltip">Global gate for per-agent sandbox opt-ins. Agents still opt in from their own General tab.</span></span></span>
+        </div>
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Quality loops</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${sec.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="retroEnabled"></div>
+            <span class="config-toggle-label">Retro loop enabled</span>
+          </div>
+        </div>`;
+    }
+
     // renderGovFeatures renders the "Features" tab: four already-functional
     // opt-in capabilities exposed as toggles so operators need not hand-edit
     // hive.yaml. Each control marks the shared 'features' dirty section, which
@@ -18774,6 +18869,7 @@ function burnAreaChart() {
         if (_configState.promptTemplateDirty && _configState.promptTemplateValue) {
           agent.kick_template = _configState.promptTemplateValue;
         }
+        if (generalData.sandboxEnabled !== undefined) agent.sandbox = { enabled: generalData.sandboxEnabled };
         const ps = collectPromptSource();
         if (ps) agent.prompt_source = ps;
         try {
@@ -18870,6 +18966,7 @@ function burnAreaChart() {
             if (savedGeneral.emoji !== undefined) liveAgent.emoji = savedGeneral.emoji;
             if (savedGeneral.color !== undefined) liveAgent.color = savedGeneral.color;
             if (savedGeneral.sortOrder !== undefined) liveAgent.sortOrder = savedGeneral.sortOrder;
+            if (savedGeneral.sandboxEnabled !== undefined) liveAgent.sandboxed = savedGeneral.sandboxEnabled && (((window._lastStatus || {}).security || {}).sandboxEnabled !== false);
           }
         }
         _configState.dirty = {};

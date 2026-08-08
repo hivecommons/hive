@@ -222,8 +222,61 @@ func BuildFrontendStatus(
 		ACMMPackAgents:  buildACMMPackAgents(cfg),
 		SystemResources: collectSystemResources(),
 		Platform:        buildPlatform(cfg),
+		Security:        buildSecurity(cfg),
 	}
 	return payload
+}
+
+// buildSecurity summarizes operator-facing security posture from effective
+// config. It is additive and secret-free, so older dashboards can ignore it.
+func buildSecurity(cfg *config.Config) *FrontendSecurity {
+	sec := &FrontendSecurity{}
+	if cfg == nil {
+		return sec
+	}
+	sec.IntentEnforced = cfg.Intent.Enforce
+	sec.IoscanEnabled = cfg.Ioscan.IsEnabled()
+	sec.IoscanFailMode = "open"
+	if cfg.Ioscan.FailClosed() {
+		sec.IoscanFailMode = "closed"
+	}
+	sec.IoscanCanaries = cfg.Ioscan.Canaries
+	sec.ReviewRequireApproval = cfg.Review.RequireApproval
+	sec.ReviewFanOut = cfg.Review.FanOut
+	sec.SandboxEnabled = cfg.AgentSandbox.Enabled
+	sec.TotalAgents = len(cfg.Agents)
+	for name, a := range cfg.Agents {
+		if a.SandboxEnabled(cfg.AgentSandbox) {
+			sec.SandboxedAgents++
+		}
+		if dashboardAgentReviewCapable(name, a, cfg.Review.ReviewerAgents) {
+			sec.ReviewCapableAgents++
+		}
+	}
+	return sec
+}
+
+func dashboardAgentReviewCapable(name string, a config.AgentConfig, allowed []string) bool {
+	if !a.Enabled || a.Paused || a.OnDemand {
+		return false
+	}
+	if len(allowed) > 0 {
+		for _, n := range allowed {
+			if strings.TrimSpace(n) == name {
+				return true
+			}
+		}
+		return false
+	}
+	fields := append([]string{name, a.Role}, a.Aliases...)
+	fields = append(fields, a.LaneKeywords...)
+	fields = append(fields, a.DetectKeywords...)
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), "review") {
+			return true
+		}
+	}
+	return false
 }
 
 // buildPlatform surfaces the v4 spoke capabilities (forge, mint, skills) from
@@ -407,6 +460,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			BeadRole:      agentCfg.GetBeadRole(),
 			Managed:       agentCfg.Managed,
 			OnDemand:      agentCfg.OnDemand,
+			Sandboxed:     agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			Session:       name,
 			State:         string(proc.State),
 			Busy:          busy,

@@ -291,6 +291,21 @@ type StatusPayload struct {
 	// nil-safe: a github-only, mint-off hive with no skills dir still gets a
 	// populated (all-zero) block, so existing status output is unchanged.
 	Platform *FrontendPlatform `json:"platform,omitempty"`
+	Security *FrontendSecurity `json:"security,omitempty"`
+}
+
+// FrontendSecurity summarizes the effective operator security posture for compact dashboard display.
+type FrontendSecurity struct {
+	IntentEnforced        bool   `json:"intentEnforced"`
+	IoscanEnabled         bool   `json:"ioscanEnabled"`
+	IoscanFailMode        string `json:"ioscanFailMode"`
+	IoscanCanaries        bool   `json:"ioscanCanaries"`
+	ReviewRequireApproval bool   `json:"reviewRequireApproval"`
+	ReviewFanOut          bool   `json:"reviewFanOut"`
+	ReviewCapableAgents   int    `json:"reviewCapableAgents"`
+	SandboxEnabled        bool   `json:"sandboxEnabled"`
+	SandboxedAgents       int    `json:"sandboxedAgents"`
+	TotalAgents           int    `json:"totalAgents"`
 }
 
 // FrontendPlatform reports the v4 spoke capabilities (forge, mint, skills) for
@@ -403,6 +418,7 @@ type FrontendAgent struct {
 	NeedsRestart     bool   `json:"needsRestart,omitempty"`
 	ProxyViolations  int    `json:"proxyViolations"`
 	OnDemand         bool   `json:"onDemand,omitempty"`
+	Sandboxed        bool   `json:"sandboxed,omitempty"`
 	LastError        string `json:"lastError,omitempty"`
 	StallNudges      int    `json:"stallNudges,omitempty"`
 	ActionNudges     int    `json:"actionNudges,omitempty"`
