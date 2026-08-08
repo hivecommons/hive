@@ -35,10 +35,10 @@ if (rawHubList.length > 1 && rawTokenList.length !== rawHubList.length) {
 const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
-const GH_TOKEN_CACHE = fs.existsSync('/var/run/hive-metrics')
+const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
   ? '/var/run/hive-metrics/gh-app-token.cache'
-  : '/tmp/hive-gh-token.cache';
-const TASK_FILE = '/tmp/contributor-task.json';
+  : '/tmp/hive-gh-token.cache');
+const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
 // The relay can deliver a task to the backend CLI in one of two ways:
@@ -144,6 +144,8 @@ const hubs = rawHubList.map((url, i) => ({
   lastPong: Date.now(),
   connectGeneration: 0,
   reconnectTimer: null,
+  authenticated: false,
+  authFailed: false,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -183,6 +185,23 @@ function sendTo(hub, msg) {
 // hub whose task we just finished.
 function send(msg) {
   sendTo((currentTask && currentTask._hub) || hubs[activeHubIndex], msg);
+}
+
+function currentTaskHub() {
+  return (currentTask && currentTask._hub) || hubs[activeHubIndex];
+}
+
+function advanceActiveHub(fromHub) {
+  const fromIndex = hubs.indexOf(fromHub);
+  const start = fromIndex >= 0 ? fromIndex : activeHubIndex;
+  for (let offset = 1; offset <= hubs.length; offset++) {
+    const idx = (start + offset) % hubs.length;
+    if (!hubs[idx].authFailed) {
+      activeHubIndex = idx;
+      return hubs[idx];
+    }
+  }
+  return null;
 }
 
 function injectGhToken(token) {
@@ -1171,8 +1190,10 @@ function handleMessage(data, hub) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
+      hub.authenticated = true;
+      hub.authFailed = false;
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
-      if (currentTask && hub === currentTask._hub) {
+      if (currentTask && hub === currentTaskHub()) {
         console.log(`Reconnected while working on ${currentTask.repo}#${currentTask.number} — resuming`);
         sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
         sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
@@ -1204,10 +1225,21 @@ function handleMessage(data, hub) {
         process.exit(1);
       } else {
         console.error(`Continuing with the remaining ${hubs.filter(h => !h.authFailed).length} hub(s).`);
+        if (!currentTask && hub === hubs[activeHubIndex]) {
+          const next = advanceActiveHub(hub);
+          if (next && next.authenticated) {
+            sendTo(next, { type: 'ready', seq: nextSeq() });
+          }
+        }
       }
       break;
 
     case 'task_assign':
+      if (!currentTask && hub !== hubs[activeHubIndex]) {
+        console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — hub is not the active polling slot`);
+        sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
+        break;
+      }
       if (currentTask) {
         console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — already working on ${currentTask.repo}#${currentTask.number}`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Already has active task' });
@@ -1253,6 +1285,10 @@ function handleMessage(data, hub) {
       break;
 
     case 'token_refresh':
+      if (!currentTask || currentTaskHub() !== hub) {
+        console.log(`Ignoring token_refresh from ${hub.url} — it does not own the active task`);
+        break;
+      }
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -1261,6 +1297,14 @@ function handleMessage(data, hub) {
       break;
 
     case 'task_revoke':
+      if (!currentTask) {
+        console.log(`Ignoring task_revoked from ${hub.url} for ${msg.task_id} — no active task`);
+        break;
+      }
+      if (currentTaskHub() !== hub || currentTask.task_id !== msg.task_id) {
+        console.log(`Ignoring task_revoked from ${hub.url} for ${msg.task_id} — active task belongs to another hub`);
+        break;
+      }
       console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
       currentTask = null;
       taskAssignedAt = 0;
@@ -1279,6 +1323,10 @@ function handleMessage(data, hub) {
       break;
 
     case 'task_unavailable':
+      if (hub !== hubs[activeHubIndex]) {
+        console.log(`Ignoring task_unavailable from inactive hub ${hub.url}`);
+        break;
+      }
       // #2436 finding 1/2/3 (and #2546): the hub explicitly declined to assign
       // work and told us why (reason: no_work / token_mint_failed /
       // tier_disabled / concurrency_limit) — this ack is NEVER silent. Surface
@@ -1295,7 +1343,7 @@ function handleMessage(data, hub) {
       setTimeout(() => {
         if (currentTask) return; // picked up work elsewhere in the meantime
         if (hubs.length > 1 && hub === hubs[activeHubIndex]) {
-          activeHubIndex = (activeHubIndex + 1) % hubs.length;
+          advanceActiveHub(hub);
         }
         const next = hubs[activeHubIndex];
         // If `next` isn't connected/authenticated yet, its own auth_ok
