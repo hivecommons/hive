@@ -703,11 +703,16 @@ func (c *Client) GetPRAuthor(ctx context.Context, repo string, number int) (stri
 	return safeGetLogin(pr.GetUser()), nil
 }
 
-// QueuePRAutoMerge approves a PR as the hive App and marks it for the
-// auto-merge-on-green sweep. The caller enforces role and self-queue policy.
+// QueuePRAutoMerge approves a PR as the hive App and marks it for Hive's
+// auto-merge-on-green sweep. The approval body records who queued the PR so
+// the sweep can re-check the self-merge ban before it squashes anything.
 func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, queuedBy string) error {
 	if c == nil {
 		return ErrNoGitHubClient
+	}
+	queuedBy = strings.TrimSpace(queuedBy)
+	if queuedBy == "" {
+		return errors.New("queuedBy is required for auto-merge audit and self-merge checks")
 	}
 	owner, repoName := c.splitRepo(repo)
 	label := c.AutoMergeLabel()
@@ -715,9 +720,6 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
-	if strings.TrimSpace(queuedBy) == "" {
-		body = "Approved for Hive auto-merge on green CI."
-	}
 	_, _, err := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
 		Body:  gh.Ptr(body),
 		Event: gh.Ptr("APPROVE"),

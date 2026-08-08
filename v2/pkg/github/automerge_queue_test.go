@@ -93,6 +93,23 @@ func TestQueuePRAutoMergeUsesConfiguredLabel(t *testing.T) {
 	}
 }
 
+func TestQueuePRAutoMergeRequiresQueuedBy(t *testing.T) {
+	called := false
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatalf("unexpected request for missing queuedBy: %s %s", r.Method, r.URL.Path)
+	}))
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	if err := c.QueuePRAutoMerge(context.Background(), "acme/widget", 7, " "); err == nil {
+		t.Fatal("QueuePRAutoMerge returned nil error for blank queuedBy")
+	}
+	if called {
+		t.Fatal("GitHub API should not be called without queuedBy")
+	}
+}
+
 func TestGetPRAuthor(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" {

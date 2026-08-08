@@ -2103,8 +2103,9 @@ const (
 	// rejected as unauthorized despite the grant being present and correct.
 	RoleReadWrite = "read-write"
 	// RoleMerger can do everything read-write can, plus approve/queue other
-	// people's PRs for the existing auto-merge-on-green sweep. The spoke
-	// enforces the "never your own PR" rule server-side.
+	// people's PRs for Hive's auto-merge-on-green sweep. Both the dashboard
+	// queue endpoint and the sweep enforce the "never your own PR" rule
+	// server-side.
 	RoleMerger = "merger"
 )
 
