@@ -54,6 +54,7 @@ type Config struct {
 	Intent     IntentConfig     `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
+	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -3787,6 +3788,13 @@ type EscalationConfig struct {
 	// Threshold is the distinct-red-attempt count that triggers escalation.
 	// Zero means DefaultEscalationThreshold.
 	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+}
+
+// ReviewConfig gates the optional structured review-swarm merge gate. The zero
+// value preserves existing behavior: merge eligibility does not require a
+// review-verdicts.json aggregate approval unless an operator opts in.
+type ReviewConfig struct {
+	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
 }
 
 // DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated

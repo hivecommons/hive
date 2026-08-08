@@ -51,6 +51,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
 	"github.com/kubestellar/hive/v2/pkg/retro"
+	"github.com/kubestellar/hive/v2/pkg/review"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/timeline"
@@ -4332,7 +4333,7 @@ func runEvalCycle(
 	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, logger)
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, logger)
 
 	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
 	// that is red on a required check AND stale (its red head SHA unchanged past
@@ -5785,7 +5786,7 @@ func fullRepoName(repo, org string) string {
 	return org + "/" + repo
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, logger *slog.Logger) {
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, requireReviewApproval bool, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
@@ -5828,6 +5829,17 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 
 	var eligible []eligiblePR
 	var failing []failingPR
+	var reviewArtifact review.Artifact
+	reviewLoaded := false
+	if requireReviewApproval {
+		var err error
+		reviewArtifact, err = review.LoadArtifact("")
+		if err != nil {
+			logger.Warn("review approval required but review-verdicts.json is unavailable; merge eligibility will fail closed", "error", err)
+		} else {
+			reviewLoaded = true
+		}
+	}
 	for _, pr := range actionable.PRs.Items {
 		if pr.Draft {
 			continue
@@ -5883,6 +5895,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			} else if l == "dco-signoff: no" {
 				dco = "no"
 			}
+		}
+		if requireReviewApproval && (!reviewLoaded || !reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA)) {
+			continue
 		}
 		eligible = append(eligible, eligiblePR{
 			Number:    pr.Number,

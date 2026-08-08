@@ -201,6 +201,12 @@ governor:
 #   long_stall_days: 7
 #   recent_closed_window_s: 604800
 
+# Review swarm merge gate — optional structured multi-perspective PR review.
+# Default is false to preserve existing merge eligibility behavior; when true,
+# merge-eligible.json requires an aggregate approve in review-verdicts.json.
+# review:
+#   require_approval: false
+
 # GitHub authentication — use ONE of these methods
 github:
   # Option 1: Personal access token (simplest)
