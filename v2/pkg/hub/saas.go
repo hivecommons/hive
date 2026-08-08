@@ -2728,6 +2728,35 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if host, org, reposFromOrg := normalizeProjectRef(req.Org); org != "" && (host != "" || len(reposFromOrg) > 0) {
+		if host != "" {
+			req.GitHubBaseURL = "https://" + host
+			req.GitHubAPIURL = gheAPIURLForHost(host)
+		}
+		req.Org = org
+		if len(reposFromOrg) > 0 {
+			prefix := strings.Join(reposFromOrg, "/")
+			if strings.TrimSpace(req.Repos) == "" {
+				req.Repos = prefix
+			}
+			if strings.TrimSpace(req.PrimaryRepo) == "" {
+				req.PrimaryRepo = prefix
+			}
+		}
+	} else if originalFirstRepo := firstCSV(req.Repos); originalFirstRepo != "" {
+		host, org, reposFromShifted := normalizeProjectRef(req.Org + "/" + originalFirstRepo)
+		if host != "" && org != "" && strings.Contains(req.Org, ".") {
+			req.GitHubBaseURL = "https://" + host
+			req.GitHubAPIURL = gheAPIURLForHost(host)
+			req.Org = org
+			repos := replaceFirstCSV(req.Repos, strings.Join(reposFromShifted, "/"))
+			req.Repos = repos
+			if strings.TrimSpace(req.PrimaryRepo) == "" || strings.TrimSpace(req.PrimaryRepo) == originalFirstRepo {
+				req.PrimaryRepo = firstCSV(repos)
+			}
+		}
+	}
+
 	if req.Org == "" || req.Repos == "" {
 		http.Error(w, `{"error":"org and repos are required"}`, http.StatusBadRequest)
 		return

@@ -4997,6 +4997,55 @@ func sameForgeHost(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
+func configuredProjectOrgForGitHubApp(cfg *config.Config, logger *slog.Logger) string {
+	if cfg == nil {
+		return ""
+	}
+	org := strings.TrimSpace(cfg.Project.Org)
+	if org == "" {
+		return ""
+	}
+	forgeHost := strings.TrimSpace(cfg.GitHub.HostLabel())
+	if forgeHost == "" {
+		forgeHost = "github.com"
+	}
+	if !strings.Contains(org, ".") || !sameForgeHost(org, forgeHost) {
+		return org
+	}
+
+	primary := strings.TrimSpace(cfg.Project.PrimaryRepo)
+	if primary == "" && len(cfg.Project.Repos) > 0 {
+		primary = strings.TrimSpace(cfg.Project.Repos[0])
+	}
+	derived := firstRepoPathSegment(primary)
+	if derived == "" || strings.EqualFold(derived, org) {
+		return org
+	}
+	if logger != nil {
+		logger.Warn("project org is configured as the GitHub forge host; deriving GitHub App organization from primary repo",
+			"configured_org", org, "derived_org", derived, "primary_repo", primary, "forge_host", forgeHost)
+	}
+	return derived
+}
+
+func firstRepoPathSegment(ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "https://")
+	ref = strings.TrimPrefix(ref, "http://")
+	ref = strings.Trim(ref, "/")
+	if ref == "" {
+		return ""
+	}
+	parts := strings.Split(ref, "/")
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
 // handleGovernorRepoCheckAccess verifies that this hive's GitHub App can access
 // a repo the operator is about to add, and — when it cannot — returns the
 // per-forge App install/authorize URL so the Repos tab can guide the user to
@@ -5284,7 +5333,7 @@ func (s *Server) AutoDiscoverGitHubInstallationID(ctx context.Context, force boo
 	if cfg.GitHub.InstallationID != 0 {
 		return 0, nil
 	}
-	org := strings.TrimSpace(cfg.Project.Org)
+	org := configuredProjectOrgForGitHubApp(cfg, s.logger)
 	if org == "" {
 		return 0, nil
 	}
@@ -5402,7 +5451,7 @@ func (s *Server) verifyGitHubSetupInstallation(r *http.Request, installationID i
 	// a hive session. We still do not trust the query string: the App JWT call
 	// below proves the ID exists for this App and that its account is exactly
 	// this hive's configured org, preventing installation hijacking.
-	return auth.VerifyInstallationForOrg(ctx, installationID, cfg.Project.Org)
+	return auth.VerifyInstallationForOrg(ctx, installationID, configuredProjectOrgForGitHubApp(cfg, s.logger))
 }
 
 func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID int64) error {

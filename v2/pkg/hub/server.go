@@ -469,6 +469,69 @@ func normalizeOrgRef(s string) (host, org string) {
 	return "", parts[0]
 }
 
+// normalizeProjectRef splits a GitHub project reference into forge host, org,
+// and repo path segments. Public GitHub's ordinary "org/repo" shape is left as
+// (host="", org="org", repos=["repo"]); a leading GitHub forge host is stripped,
+// so "github.ibm.com/org/repo" becomes (host="github.ibm.com", org="org",
+// repos=["repo"]). Dotted orgs such as "my.org/repo" remain public org/repo
+// refs, matching normalizeOrgRef's host-vs-org rule.
+func normalizeProjectRef(s string) (host, org string, repos []string) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return "", "", nil
+	}
+	rawParts := strings.Split(s, "/")
+	parts := make([]string, 0, len(rawParts))
+	for _, p := range rawParts {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 {
+		return "", "", nil
+	}
+	if looksLikeGitHubForgeHost(parts[0]) {
+		host = parts[0]
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return host, "", nil
+	}
+	org = parts[0]
+	if len(parts) > 1 {
+		repos = append(repos, parts[1:]...)
+	}
+	return host, org, repos
+}
+
+func firstCSV(s string) string {
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func replaceFirstCSV(s, first string) string {
+	parts := strings.Split(s, ",")
+	for i := range parts {
+		if strings.TrimSpace(parts[i]) != "" {
+			if strings.TrimSpace(first) == "" {
+				parts = append(parts[:i], parts[i+1:]...)
+			} else {
+				parts[i] = first
+			}
+			return strings.Join(parts, ",")
+		}
+	}
+	return strings.TrimSpace(first)
+}
+
 // looksLikeGitHubForgeHost reports whether a bare label is a GitHub forge
 // hostname (github.com or a GitHub Enterprise host like github.ibm.com) rather
 // than an org name. GitHub Enterprise hosts are conventionally "github.<org
