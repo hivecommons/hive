@@ -819,6 +819,34 @@ function paneLooksBlockedOnHuman(text) {
     /\b(?:choose|select|option|pick|which|how (?:should|to) proceed|what (?:would|should).+like)\b/i.test(recent) &&
     currentMenuLine &&
     (recent.match(/(?:^|\n)\s*(?:[❯>]\s*)?\d+[\).]\s+\S+/g) || []).length >= 2;
+
+  // Elicitation / fill-in-a-form prompt (kubestellar/hive#2844). Goose (and any
+  // backend that raises an MCP elicitation) can pause mid-turn and render a form
+  // for the operator to fill in. Such a pane usually ends in a bare "> " or
+  // still shows goose's "> Enter to send" hint, so the per-backend classifier
+  // sees hasIdlePrompt && hasCompletionMarker and calls the turn DONE — the exact
+  // false "complete" this function exists to prevent. A form does NOT necessarily
+  // carry a trailing "?", a y/N, a numbered menu, or a permission keyword, so the
+  // checks above miss it. Detect it POSITIVELY and CONTEXTUALLY: require an
+  // explicit request-for-input lead-in AND a form/field structure (or one of
+  // goose's own elicitation-timeout markers). Requiring both — the lead-in is the
+  // load-bearing half — keeps ordinary finished output that merely contains a
+  // "label: value" line (e.g. "opened a PR: https://…") from matching, the same
+  // bare-substring lesson as the /login false-positive fix.
+  const hasInputRequestLeadIn =
+    /\b(?:needs?|need)\s+(?:some\s+|more\s+|the\s+following\s+)?(?:information|input|details|details? to proceed)\b/i.test(recent) ||
+    /\b(?:please\s+)?(?:fill\s+in|provide|enter|supply|complete|specify)\b.*\b(?:the\s+following|form|field|details|information|value|below)\b/i.test(recent) ||
+    /\b(?:the\s+following|these)\s+(?:information|details|fields|values)\b.*\b(?:required|needed|to proceed)\b/i.test(recent) ||
+    /\bwaiting\s+for\s+(?:your\s+|user\s+)?(?:input|response|answer)\b/i.test(recent);
+  const hasFormStructure =
+    /\[\s*[^\]\n]*\s*\]/.test(recent) ||             // a bracketed input/field or [ Submit ]/[ Cancel ] button
+    /^\s*\S.*:\s*(?:_+|\[.*\]|)\s*$/m.test(recent);  // "Label:" field rows (optionally blank/underscore/bracket)
+  // Goose bounds elicitation with its own timeout; these strings are an
+  // unambiguous "was blocked on a human" signal all on their own.
+  const hasElicitationMarker =
+    /\bElicitation request timed out\b/i.test(recent) ||
+    /\bTimeout waiting for user response\b/i.test(recent);
+  const hasElicitationForm = (hasInputRequestLeadIn && hasFormStructure) || hasElicitationMarker;
   const blockingPatterns = [
     // Confirmation prompts and TUI continuation screens.
     /\[[Yy]\/[Nn]\]|\([Yy]\/[Nn]\)|\b[Yy]es\/[Nn]o\b/,
@@ -833,7 +861,7 @@ function paneLooksBlockedOnHuman(text) {
     /\b(?:Paste|Enter).*(?:API key|token|code|password)\b/i,
   ];
 
-  return hasQuestion || hasNumberedMenu || blockingPatterns.some(re => re.test(beforePrompt));
+  return hasQuestion || hasNumberedMenu || hasElicitationForm || blockingPatterns.some(re => re.test(beforePrompt));
 }
 
 function classifyTmuxPane(text) {
