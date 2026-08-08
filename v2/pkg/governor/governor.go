@@ -265,12 +265,6 @@ func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
 	g.updateCadences()
 }
 
-func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.agents = agents
-}
-
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
