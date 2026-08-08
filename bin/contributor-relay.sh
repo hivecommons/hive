@@ -69,6 +69,13 @@ const HEADLESS_STATE_WORKING = 'working'; // one-shot CLI invocation running
 const HEADLESS_STATE_DONE = 'done';       // last task completed (exit 0)
 const HEADLESS_STATE_FAILED = 'failed';   // last task failed (non-zero/spawn error)
 
+// Interactive pane classifier states. Keep this vocabulary small and explicit:
+// "not complete" splits into active work vs. human input needed so the relay
+// never reports success for a turn that is actually sitting at a question.
+const PANE_STATE_WORKING = 'WORKING';
+const PANE_STATE_BLOCKED_ON_HUMAN = 'BLOCKED_ON_HUMAN';
+const PANE_STATE_IDLE_COMPLETE = 'IDLE_COMPLETE';
+
 // Cap on captured child output kept in memory / sent to the hub, so a chatty
 // CLI cannot grow the buffer without bound. The tail is what matters for an
 // audit trail, mirroring TMUX_TAIL_LINES on the interactive path.
@@ -705,6 +712,118 @@ function bobIsRunning() {
   }
 }
 
+function recentPaneLines(text, limit = 12) {
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(-limit);
+}
+
+function paneLooksBlockedOnHuman(text) {
+  const lines = recentPaneLines(text);
+  if (lines.length === 0) return false;
+  const recent = lines.join('\n');
+  const last = lines[lines.length - 1];
+  const beforePrompt = [...lines].reverse().find(line =>
+    !/^([>$❯]|goose>|G\s*>|> Enter to send|\/ commands.*help)$/i.test(line)
+  ) || last;
+  const currentMenuLine = /^(?:[❯>]\s*)?(?:\d+[\).]|[A-Za-z][\).])\s+\S+/.test(beforePrompt);
+
+  const hasQuestion = /\?\s*$/.test(beforePrompt);
+  const hasNumberedMenu =
+    /\b(?:choose|select|option|pick|which|how (?:should|to) proceed|what (?:would|should).+like)\b/i.test(recent) &&
+    currentMenuLine &&
+    (recent.match(/(?:^|\n)\s*(?:[❯>]\s*)?\d+[\).]\s+\S+/g) || []).length >= 2;
+  const blockingPatterns = [
+    // Confirmation prompts and TUI continuation screens.
+    /\[[Yy]\/[Nn]\]|\([Yy]\/[Nn]\)|\b[Yy]es\/[Nn]o\b/,
+    /\b(?:continue|proceed|confirm|approve|allow|deny|accept|reject|choose|select)\b.*\?/i,
+    /\bPress Enter to continue\b/i,
+    /\bEnter to confirm\b/i,
+    // Permission/auth/onboarding prompts seen from Claude/Copilot/Goose/Bob.
+    /\b(?:approval|consent|trust this folder|Do you trust|Confirm folder trust)\b/i,
+    /\bpermission\b.*\b(?:allow|approve|confirm|continue|proceed)\b/i,
+    /\b(?:allow|approve|confirm|continue|proceed)\b.*\bpermission\b/i,
+    /\b(?:Allow|Approve|Run|Execute)\b.*\b(?:command|tool|edit|file|operation)\b/i,
+    /\b(?:Paste|Enter).*(?:API key|token|code|password)\b/i,
+  ];
+
+  return hasQuestion || hasNumberedMenu || blockingPatterns.some(re => re.test(beforePrompt));
+}
+
+function classifyTmuxPane(text) {
+  let hasIdlePrompt, hasCompletionMarker, isWorking;
+
+  if (BACKEND === 'claude') {
+    const lastLines = text.split('\n').slice(-15).join('\n');
+    hasIdlePrompt = /bypass permissions|shift\+tab to cycle/.test(text);
+    hasCompletionMarker = /[✻✶✽] \S+ed for \d+[ms]|Honking|tokens\)/.test(text);
+    isWorking = /─.*Bash\(|Reading|Editing|Writing|Searching/.test(lastLines) || /ing…/.test(lastLines);
+  } else if (BACKEND === 'copilot') {
+    hasIdlePrompt = /\/ commands.*help/.test(text);
+    hasCompletionMarker = true;
+    isWorking = /esc cancel/.test(text);
+  } else if (BACKEND === 'gemini') {
+    hasIdlePrompt = />\s*$|❯\s*$/.test(text);
+    hasCompletionMarker = /completed|Done|finished/i.test(text);
+    isWorking = /Thinking|Running|Searching/i.test(text);
+  } else if (BACKEND === 'goose') {
+    hasIdlePrompt = /goose is ready|> Enter to send|>\s*$|goose>|G\s*>/.test(text);
+    hasCompletionMarker = true;
+    isWorking = /working|running|executing|calling/i.test(text);
+  } else if (BACKEND === 'bob') {
+    const BOB_IDLE_CHROME = /Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/;
+    const BOB_SPINNER = /\(esc to cancel/;
+    const bobRunning = bobIsRunning();
+    hasIdlePrompt = BOB_IDLE_CHROME.test(text) || !bobRunning;
+    hasCompletionMarker = true;
+    isWorking = bobRunning && BOB_SPINNER.test(text);
+  } else if (BACKEND === 'codex') {
+    hasIdlePrompt = /codex>|>\s*$/.test(text);
+    hasCompletionMarker = /completed|done|finished/i.test(text);
+    isWorking = /running|executing|thinking/i.test(text);
+  } else if (BACKEND === 'pi') {
+    hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
+    hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
+    isWorking = /Reading|Writing|Bash|Editing|thinking|running/i.test(text);
+  } else if (BACKEND === 'agy') {
+    hasIdlePrompt = /\? for shortcuts/.test(text);
+    hasCompletionMarker = true;
+    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(text);
+  } else {
+    hasIdlePrompt = />\s*$|\$\s*$/.test(text);
+    hasCompletionMarker = /completed|done|finished/i.test(text);
+    isWorking = false;
+  }
+
+  if (paneLooksBlockedOnHuman(text)) return PANE_STATE_BLOCKED_ON_HUMAN;
+  if (isWorking) return PANE_STATE_WORKING;
+  if (hasIdlePrompt && hasCompletionMarker) return PANE_STATE_IDLE_COMPLETE;
+  return PANE_STATE_WORKING;
+}
+
+function checkTmuxPaneState() {
+  try {
+    const output = execSync(
+      `tmux capture-pane -t ${TMUX_SESSION} -p 2>/dev/null`,
+      { encoding: 'utf8', timeout: 15000 }
+    );
+    const text = output.toString();
+    const hasNetworkError = BACKEND === 'goose' && /Network error:|Please resend your message|Could not connect/i.test(text);
+    if (hasNetworkError && /> Enter to send/.test(text)) {
+      console.log('Goose network error detected — pressing Enter to retry');
+      try {
+        execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+      } catch (_) {}
+      return PANE_STATE_WORKING;
+    }
+    return classifyTmuxPane(text);
+  } catch (_) {
+    return PANE_STATE_WORKING;
+  }
+}
+
 // Relaunch the backend CLI in the tmux session using the flags from
 // backends.conf, the same way contributor-agent.sh first launched it.
 function relaunchCLI() {
@@ -732,100 +851,7 @@ function flushPendingTask() {
 }
 
 function checkTmuxIdle() {
-  try {
-    const output = execSync(
-      `tmux capture-pane -t ${TMUX_SESSION} -p 2>/dev/null`,
-      { encoding: 'utf8', timeout: 15000 }
-    );
-    const text = output.toString();
-    let hasIdlePrompt, hasCompletionMarker, isWorking;
-
-    if (BACKEND === 'claude') {
-      const lastLines = text.split('\n').slice(-15).join('\n');
-      hasIdlePrompt = /bypass permissions|shift\+tab to cycle/.test(text);
-      hasCompletionMarker = /[✻✶✽] \S+ed for \d+[ms]|Honking|tokens\)/.test(text);
-      isWorking = /─.*Bash\(|Reading|Editing|Writing|Searching/.test(lastLines) || /ing…/.test(lastLines);
-    } else if (BACKEND === 'copilot') {
-      hasIdlePrompt = /\/ commands.*help/.test(text);
-      hasCompletionMarker = true;
-      isWorking = /esc cancel/.test(text);
-    } else if (BACKEND === 'gemini') {
-      hasIdlePrompt = />\s*$|❯\s*$/.test(text);
-      hasCompletionMarker = /completed|Done|finished/i.test(text);
-      isWorking = /Thinking|Running|Searching/i.test(text);
-    } else if (BACKEND === 'goose') {
-      const hasNetworkError = /Network error:|Please resend your message|Could not connect/i.test(text);
-      if (hasNetworkError && /> Enter to send/.test(text)) {
-        console.log('Goose network error detected — pressing Enter to retry');
-        try {
-          execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
-        } catch (_) {}
-        return false;
-      }
-      hasIdlePrompt = /goose is ready|> Enter to send|>\s*$|goose>|G\s*>/.test(text);
-      hasCompletionMarker = true;
-      isWorking = /working|running|executing|calling/i.test(text);
-    } else if (BACKEND === 'bob') {
-      // Matched against real bobshell 1.0.6 panes. Every part of the previous
-      // classifier was wrong on real output, and each was independently fatal:
-      //
-      //   hasIdlePrompt /bob>|>\s*$/ NEVER matched. bob's idle prompt is drawn
-      //     inside a box ("│ >   Enter your prompt, / for commands, …  │"), so
-      //     the '>' is never at end-of-line and there is no "bob>" anywhere.
-      //     Since idle is ANDed in, task_complete could never fire for bob:
-      //     a finished task stayed "in progress" until the 30-min timeout, and
-      //     the hub then heard task_failed for work bob had actually done.
-      //
-      //   isWorking /running|executing|thinking/i was permanently TRUE. bob
-      //     prints a static banner "You are running Bob Shell in your home
-      //     directory" and echoes its <thinking> block; both stay in the pane
-      //     forever, so this never cleared even on a fully idle bob.
-      //
-      // Instead: reuse the same prompt chrome getCLIState() already verifies
-      // for 'ready', and detect work via bob's live spinner line, which reads
-      // "◡ <task title> (esc to cancel, 5s)" only while a turn is running.
-      // hasCompletionMarker is true because bob has no completion token —
-      // returning to the idle prompt with no spinner IS the completion signal
-      // (same convention as the copilot/goose branches above).
-      const BOB_IDLE_CHROME = /Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/;
-      const BOB_SPINNER = /\(esc to cancel/;
-      // bob exits after finishing a turn ("Bob goes to sleep 💤"). Process
-      // liveness is the only reliable completion signal: bob does not repaint
-      // over its last frame on the way out, so a finished pane keeps a frozen
-      // spinner line ("◡ <title> (esc to cancel, 5s)") and the "goes to sleep"
-      // notice often scrolls out of the visible pane entirely. Screen-scraping
-      // alone therefore reports a completed turn as still working. Conversely
-      // the trailing shell prompt cannot stand in for "exited" either — it is
-      // also present mid-turn, left over from before bob was launched.
-      // Once bob has exited its chrome scrolls away, so an exited bob counts
-      // as idle on its own: there is no prompt left to look for.
-      const bobRunning = bobIsRunning();
-      hasIdlePrompt = BOB_IDLE_CHROME.test(text) || !bobRunning;
-      hasCompletionMarker = true;
-      isWorking = bobRunning && BOB_SPINNER.test(text);
-    } else if (BACKEND === 'codex') {
-      hasIdlePrompt = /codex>|>\s*$/.test(text);
-      hasCompletionMarker = /completed|done|finished/i.test(text);
-      isWorking = /running|executing|thinking/i.test(text);
-    } else if (BACKEND === 'pi') {
-      hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
-      hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
-      isWorking = /Reading|Writing|Bash|Editing|thinking|running/i.test(text);
-    } else if (BACKEND === 'agy') {
-      // agy shows "? for shortcuts" at its idle prompt and a model name in
-      // the status line. When working it shows tool names and progress.
-      hasIdlePrompt = /\? for shortcuts/.test(text);
-      hasCompletionMarker = true;
-      isWorking = /Running|Searching|Reading|Writing|Editing/i.test(text);
-    } else {
-      hasIdlePrompt = />\s*$|\$\s*$/.test(text);
-      hasCompletionMarker = /completed|done|finished/i.test(text);
-      isWorking = false;
-    }
-    return hasIdlePrompt && hasCompletionMarker && !isWorking;
-  } catch (_) {
-    return false;
-  }
+  return checkTmuxPaneState() === PANE_STATE_IDLE_COMPLETE;
 }
 
 const TASK_GRACE_PERIOD_MS = 180000;
@@ -959,9 +985,9 @@ function progressTick() {
     }
   } catch (_) {}
 
-  const idle = checkTmuxIdle();
+  const paneState = checkTmuxPaneState();
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  if (idle) {
+  if (paneState === PANE_STATE_IDLE_COMPLETE) {
     console.log(`Task ${currentTask.task_id} completed — agent idle`);
     // Successful completion clears this work item's crash-retry budget.
     cliRestartCounts.delete(taskKey(currentTask));
@@ -1004,6 +1030,17 @@ function progressTick() {
     } else {
       send({ type: 'ready', seq: nextSeq() });
     }
+  } else if (paneState === PANE_STATE_BLOCKED_ON_HUMAN) {
+    console.warn(`Task ${currentTask.task_id} is blocked waiting for human input`);
+    send({
+      type: 'task_progress',
+      seq: nextSeq(),
+      task_id: currentTask.task_id,
+      status: 'blocked_on_human',
+      attention: true,
+      summary: 'Agent is waiting for human input in the tmux pane',
+      tmux_output: tmuxLines,
+    });
   } else {
     send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, status: 'working', tmux_output: tmuxLines });
   }
@@ -1214,6 +1251,11 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     failCurrentTask,
     startProgressReporting,
     progressTick,
+    classifyTmuxPane,
+    paneLooksBlockedOnHuman,
+    PANE_STATE_WORKING,
+    PANE_STATE_BLOCKED_ON_HUMAN,
+    PANE_STATE_IDLE_COMPLETE,
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     cleanup,

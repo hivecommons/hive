@@ -44,6 +44,7 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
       // Panes that getCLIState()/checkTmuxIdle() classify per backend.
       if (state === 'ready') return '/ commands for help\n';
       if (state === 'working') return '/ commands for help\nesc cancel\n';
+      if (typeof state === 'string' && state.includes('\n')) return state;
       return 'dev@host:~$ \n';
     }
     if (/cmdline|ps -eo/.test(cmd)) {
@@ -507,6 +508,103 @@ test('restart backoff grows and is capped', () => {
     assert.ok(b2 > b1 && b3 > b2, `backoff must grow: ${b1}, ${b2}, ${b3}`);
     assert.strictEqual(relay.restartBackoffMs(50), relay.restartBackoffMs(60),
       'backoff must saturate at the cap');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#2844 — interactive completion detection must distinguish a
+// finished turn from a backend prompt that is waiting for human input.
+// ---------------------------------------------------------------------------
+
+test('interactive pane classifier distinguishes complete, blocked, and working states', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    const fixtures = [
+      {
+        name: 'finished turn',
+        pane: 'Implemented the fix and opened a PR.\n> Enter to send\n',
+        want: relay.PANE_STATE_IDLE_COMPLETE,
+      },
+      {
+        name: 'finished turn with numbered summary',
+        pane: 'Completed:\n1. Added tests\n2. Ran validation\n> Enter to send\n',
+        want: relay.PANE_STATE_IDLE_COMPLETE,
+      },
+      {
+        name: 'finished turn mentioning permission error',
+        pane: 'Fixed the permission error and added regression coverage.\n> Enter to send\n',
+        want: relay.PANE_STATE_IDLE_COMPLETE,
+      },
+      {
+        name: 'finished turn after answered confirmation',
+        pane: 'Continue with this command? [y/n]\ny\nDone.\n> Enter to send\n',
+        want: relay.PANE_STATE_IDLE_COMPLETE,
+      },
+      {
+        name: 'question with trailing question mark',
+        pane: 'Should I open a pull request for this change?\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'numbered option menu',
+        pane: 'Choose how to proceed:\n1. Open a PR\n2. File a follow-up issue\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'yes/no confirmation',
+        pane: 'Continue with these changes? [y/n]\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'permission prompt',
+        pane: 'Allow command to run?\n[y/n]\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'permission prompt with working verb',
+        pane: 'Approve running this command? [y/n]\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'permission prompt without idle input chrome',
+        pane: 'Bypass Permissions mode\n❯ 1. No, exit\n  2. Yes, I accept\nEnter to confirm\n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'actively working',
+        pane: 'calling tool github.create_pull_request\n> Enter to send\n',
+        want: relay.PANE_STATE_WORKING,
+      },
+    ];
+
+    for (const tc of fixtures) {
+      assert.strictEqual(relay.classifyTmuxPane(tc.pane), tc.want, tc.name);
+    }
+  } finally { teardown(relay); }
+});
+
+test('claude bypass-permissions idle footer is not itself a blocked prompt', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const pane = '✻ Worked for 1s\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n';
+    assert.strictEqual(relay.classifyTmuxPane(pane), relay.PANE_STATE_IDLE_COMPLETE);
+  } finally { teardown(relay); }
+});
+
+test('blocked interactive panes report attention instead of task_complete', () => {
+  const blockedPane = 'Should I open a pull request for this change?\n> \n';
+  const relay = loadRelay({ backend: 'goose', cliStates: [blockedPane, blockedPane] });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 'ct-blocked');
+    relay.__crashTick();
+
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete'),
+      'blocked panes must never be reported as completed');
+    const progress = relay.__sent.find(m => m.type === 'task_progress' && m.status === 'blocked_on_human');
+    assert.ok(progress, `expected blocked_on_human progress, got: ${JSON.stringify(relay.__sent)}`);
+    assert.strictEqual(progress.attention, true, 'blocked status must request human attention');
+    assert.ok(relay.getCurrentTask(), 'the task must remain active while waiting for a human');
   } finally { teardown(relay); }
 });
 
