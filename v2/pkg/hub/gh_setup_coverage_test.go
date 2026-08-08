@@ -95,3 +95,25 @@ func TestGitHubSetupChooserEscapesLabels(t *testing.T) {
 		t.Fatalf("unroutable hive should be omitted from chooser: %q", body)
 	}
 }
+
+func TestGitHubSetupRouterNoMatchAndChooser(t *testing.T) {
+	s := &HubServer{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	s.githubInstallationAccount = func(context.Context, int64) (string, error) { return "ExampleOrg", nil }
+
+	rec := httptest.NewRecorder()
+	s.handleGitHubAppSetupRouter(rec, httptest.NewRequest(http.MethodGet, "/gh-setup?installation_id=42", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "No matching hive yet") {
+		t.Fatalf("no-match callback code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	s.registry.Hives = []RegistryEntry{
+		{ID: "one", Org: "ExampleOrg", ProjectName: "One", DashboardURL: "one.example.com", GitHubAppID: config.PublicGitHubAppID},
+		{ID: "two", Org: "ExampleOrg", ProjectName: "Two", DashboardURL: "two.example.com", GitHubAppID: config.PublicGitHubAppID},
+	}
+	rec = httptest.NewRecorder()
+	s.handleGitHubAppSetupRouter(rec, httptest.NewRequest(http.MethodGet, "/gh-setup?installation_id=42&setup_action=update", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "Choose a hive") || !strings.Contains(body, "https://one.example.com/gh-setup?installation_id=42&amp;setup_action=update") || !strings.Contains(body, "https://two.example.com/gh-setup?installation_id=42&amp;setup_action=update") {
+		t.Fatalf("chooser callback code=%d body=%q", rec.Code, body)
+	}
+}
