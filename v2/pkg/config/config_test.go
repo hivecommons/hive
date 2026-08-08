@@ -895,14 +895,14 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 
 func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	cfg := &Config{
-		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:    GitHubConfig{Token: "t"},
+		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
 		Dashboard: DashboardConfig{Port: 8080},
 		Governor: GovernorConfig{
 			EvalIntervalS: 600,
-			Labels: LabelsConfig{Exempt: []string{"custom-label"}},
-			Sensing: SensingConfig{TTLSeconds: 1800, PullbackSeconds: 1800},
+			Labels:        LabelsConfig{Exempt: []string{"custom-label"}},
+			Sensing:       SensingConfig{TTLSeconds: 1800, PullbackSeconds: 1800},
 		},
 	}
 	cfg.applyDefaults()
@@ -961,7 +961,7 @@ github:
 	cfg.Project.Repos = append(cfg.Project.Repos, "repo-c")
 	cfg.Governor.Modes["surge"] = ModeConfig{
 		Threshold: 200,
-		Cadences:  map[string]string{"scanner": "pause"},
+		Cadences:  map[string]Cadence{"scanner": "pause"},
 	}
 
 	if err := cfg.Save(); err != nil {

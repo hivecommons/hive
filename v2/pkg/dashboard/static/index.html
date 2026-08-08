@@ -6282,6 +6282,7 @@
         const agentOnDemand = agentData && agentData.onDemand === true;
         const cells = modes.map(m => {
           const val = row[m] || '?';
+          const tip = row[`${m}Title`] || `Click to adjust ${aname} ${m} cadence`;
           const isActive = m === currentMode;
           const isOff = val === 'off';
           const showOff = isOff && !agentOnDemand;
@@ -6291,7 +6292,7 @@
           const stateCls = showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
           const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand) ? '<span class="active-dot"></span>' : '';
           const badge = showOnDemand ? '<span class="on-demand-badge">on demand</span>' : showOff ? '<span class="off-badge">off</span>' : showPaused ? '<span class="pause-badge">paused</span>' : val;
-          return `<td class="${colCls}${stateCls}">${dot}${badge}</td>`;
+          return `<td class="${colCls}${stateCls}" title="${esc(tip)}">${dot}${badge}</td>`;
         }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
         const pauseBadge = agentOnDemand ? '<span class="on-demand-badge">on demand</span>' : agentPaused ? '<span class="pause-badge">paused</span>' : agentOff ? '<span class="off-badge">off</span>' : '';
@@ -16023,19 +16024,90 @@ function burnAreaChart() {
       return Math.round(num * SECONDS_PER_MIN);
     }
 
+    function browserTimeZone() {
+      return (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+    }
+    function cadenceModeValue(v) {
+      if (v && typeof v === 'object') return v.cron ? 'cron' : 'times';
+      return 'interval';
+    }
+    function cadenceSummary(v) {
+      if (!v || typeof v !== 'object') return `Every ${cadenceToHuman(v || 0)}`;
+      const tz = v.tz || browserTimeZone();
+      if (v.cron) return `Cron "${v.cron}" (${tz})`;
+      const times = (v.times || []).join(' and ');
+      const days = (v.days || []).join(', ') || 'every day';
+      return `At ${times || '—'}, ${days} (${tz})`;
+    }
+    function readCadenceBuilder(mode) {
+      const kind = document.getElementById(`cad-${mode}-kind`)?.value || 'interval';
+      if (kind === 'interval') return cadenceFromHuman(document.getElementById(`cad-${mode}-interval`)?.value || '30m');
+      if (kind === 'cron') return {
+        cron: (document.getElementById(`cad-${mode}-cron`)?.value || '30 9 * * 1-5').trim(),
+        tz: browserTimeZone()
+      };
+      const days = Array.from(document.querySelectorAll(`[data-cadence-day="${mode}"]:checked`)).map(el => el.value);
+      return {
+        times: (document.getElementById(`cad-${mode}-times`)?.value || '09:00').split(',').map(s => s.trim()).filter(Boolean),
+        days,
+        tz: browserTimeZone()
+      };
+    }
+    function cadenceChanged(mode) {
+      const value = readCadenceBuilder(mode);
+      if (!_configState.data.cadences) _configState.data.cadences = {};
+      _configState.data.cadences[mode] = value;
+      markDirty('cadences', mode, value);
+      const summary = document.getElementById(`cad-${mode}-summary`);
+      if (summary) summary.textContent = cadenceSummary(value);
+    }
+    function cadenceSetPreset(mode, preset) {
+      if (!_configState.data.cadences) _configState.data.cadences = {};
+      let value;
+      if (preset === 'hours') {
+        value = 4 * SECONDS_PER_HOUR;
+      } else {
+        value = { times: ['09:00'], days: preset === 'daily' ? [] : ['mon','tue','wed','thu','fri'], tz: browserTimeZone() };
+      }
+      _configState.data.cadences[mode] = value;
+      markDirty('cadences', mode, value);
+      renderConfigTab(_configState.tab);
+    }
+    function renderCadenceBuilder(mode, value) {
+      const kind = cadenceModeValue(value);
+      const interval = kind === 'interval' ? cadenceToHuman(value || 0) : '30m';
+      const times = kind === 'times' ? (value.times || []).join(',') : '09:00';
+      const cron = kind === 'cron' ? (value.cron || '') : '30 9 * * 1-5';
+      const selectedDays = new Set(kind === 'times' ? (value.days || []) : []);
+      const days = ['mon','tue','wed','thu','fri','sat','sun'].map(d => `<label style="display:inline-flex;gap:3px;align-items:center;margin-right:6px"><input type="checkbox" data-cadence-day="${mode}" value="${d}" ${selectedDays.size===0 || selectedDays.has(d) ? 'checked' : ''} onchange="cadenceChanged('${mode}')">${d}</label>`).join('');
+      return `<div class="config-field" style="border:1px solid var(--border);border-radius:8px;padding:10px">
+        <label>${mode[0].toUpperCase()+mode.slice(1)} cadence</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">
+          <button type="button" onclick="cadenceSetPreset('${mode}','daily')">Daily at…</button>
+          <button type="button" onclick="cadenceSetPreset('${mode}','weekdays')">Weekdays at…</button>
+          <button type="button" onclick="cadenceSetPreset('${mode}','hours')">Every N hours</button>
+        </div>
+        <select id="cad-${mode}-kind" onchange="cadenceChanged('${mode}');renderConfigTab(_configState.tab)"><option value="interval" ${kind==='interval'?'selected':''}>Interval</option><option value="times" ${kind==='times'?'selected':''}>Times</option><option value="cron" ${kind==='cron'?'selected':''}>Custom cron</option></select>
+        ${kind === 'interval' ? `<input id="cad-${mode}-interval" type="text" value="${esc(interval)}" placeholder="30m, 4h, 0=off" onchange="cadenceChanged('${mode}')">` : ''}
+        ${kind === 'times' ? `<input id="cad-${mode}-times" type="text" value="${esc(times)}" placeholder="09:00,17:00" onchange="cadenceChanged('${mode}')"><div style="margin-top:6px">${days}</div>` : ''}
+        ${kind === 'cron' ? `<input id="cad-${mode}-cron" type="text" value="${esc(cron)}" placeholder="30 9 * * 1-5" onchange="cadenceChanged('${mode}')"><div style="font-size:.7rem;color:var(--muted)">5-field cron. Timezone saved from this browser: ${esc(browserTimeZone())}</div>` : ''}
+        <div id="cad-${mode}-summary" style="font-size:.72rem;color:var(--muted);margin-top:6px">${esc(cadenceSummary(value))}</div>
+      </div>`;
+    }
+
     function renderAgentCadences(c) {
       return `
         <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
           <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
           <b>Why use it.</b> It lets you run the agent slowly when there's little to do and faster when work piles up, controlling token spend.
           <b>Where it shows up.</b> These intervals drive the governor's kick timing and appear in the Governor cadence table.
-          <b>How to configure.</b> Enter a duration like <code>30m</code> or <code>2h</code> (units <code>m</code>/<code>h</code>) per mode; <code>0</code> disables the agent in that mode.
+          <b>How to configure.</b> Use intervals, exact times in this browser's timezone, or a 5-field cron expression. Interval and time-of-day modes are mutually exclusive.
         </div>
         <div class="config-field-row4">
-          <div class="config-field"><label>Idle <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in idle mode (0 actionable issues). Set to 0 to disable this agent during idle. Default varies by agent role.</span></span></label><input type="text" value="${cadenceToHuman(c.idle)}" onchange="markDirty('cadences','idle',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
-          <div class="config-field"><label>Quiet <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in quiet mode (few actionable issues). Agents typically run at a moderate pace in this mode.</span></span></label><input type="text" value="${cadenceToHuman(c.quiet)}" onchange="markDirty('cadences','quiet',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
-          <div class="config-field"><label>Busy <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in busy mode (many actionable issues). Agents run more frequently to handle the workload.</span></span></label><input type="text" value="${cadenceToHuman(c.busy)}" onchange="markDirty('cadences','busy',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
-          <div class="config-field"><label>Surge <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in surge mode (critical issue count). Maximum agent activity. Watch your token budget at this pace.</span></span></label><input type="text" value="${cadenceToHuman(c.surge)}" onchange="markDirty('cadences','surge',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
+          ${renderCadenceBuilder('idle', c.idle)}
+          ${renderCadenceBuilder('quiet', c.quiet)}
+          ${renderCadenceBuilder('busy', c.busy)}
+          ${renderCadenceBuilder('surge', c.surge)}
         </div>`;
     }
 

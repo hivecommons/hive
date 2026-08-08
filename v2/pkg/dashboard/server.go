@@ -436,11 +436,15 @@ type FrontendBudget struct {
 }
 
 type FrontendCadence struct {
-	Agent string `json:"agent"`
-	Idle  string `json:"idle"`
-	Quiet string `json:"quiet"`
-	Busy  string `json:"busy"`
-	Surge string `json:"surge"`
+	Agent      string `json:"agent"`
+	Idle       string `json:"idle"`
+	Quiet      string `json:"quiet"`
+	Busy       string `json:"busy"`
+	Surge      string `json:"surge"`
+	IdleTitle  string `json:"idleTitle,omitempty"`
+	QuietTitle string `json:"quietTitle,omitempty"`
+	BusyTitle  string `json:"busyTitle,omitempty"`
+	SurgeTitle string `json:"surgeTitle,omitempty"`
 }
 
 type FrontendHold struct {

@@ -125,7 +125,7 @@ type AgentDefinitionSpec struct {
 	LaneKeywords    []string                  `yaml:"laneKeywords,omitempty" json:"laneKeywords,omitempty"`
 	DetectKeywords  []string                  `yaml:"detectKeywords,omitempty" json:"detectKeywords,omitempty"`
 	Aliases         []string                  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
-	Cadences        map[string]string         `yaml:"cadences,omitempty" json:"cadences,omitempty"`
+	Cadences        map[string]config.Cadence `yaml:"cadences,omitempty" json:"cadences,omitempty"`
 	PromptTemplate  string                    `yaml:"promptTemplate,omitempty" json:"promptTemplate,omitempty"`
 	Channels        []config.ChannelConfig    `yaml:"channels,omitempty" json:"channels,omitempty"`
 	Tools           *config.ToolsConfig       `yaml:"tools,omitempty" json:"tools,omitempty"`

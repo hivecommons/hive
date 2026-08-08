@@ -214,7 +214,7 @@ func TestBuildAgentOnlyStatus(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}

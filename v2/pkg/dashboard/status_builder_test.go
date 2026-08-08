@@ -81,7 +81,7 @@ func TestLookupCadence(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -100,7 +100,7 @@ func TestLookupCadenceForMode(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"busy": {Cadences: map[string]string{"scanner": "5m"}},
+				"busy": {Cadences: map[string]config.Cadence{"scanner": "5m"}},
 			},
 		},
 	}
@@ -260,10 +260,10 @@ func TestBuildCadenceMatrix(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Cadences: map[string]string{"scanner": "15m", "supervisor": "pause"}},
-				"quiet": {Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Cadences: map[string]string{}},
-				"surge": {Cadences: map[string]string{}},
+				"idle":  {Cadences: map[string]config.Cadence{"scanner": "15m", "supervisor": "pause"}},
+				"quiet": {Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Cadences: map[string]config.Cadence{}},
+				"surge": {Cadences: map[string]config.Cadence{}},
 			},
 		},
 	}
@@ -367,7 +367,7 @@ func TestBuildAgents(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -426,7 +426,7 @@ func TestBuildAgents_OffByCadence(t *testing.T) {
 			Modes: map[string]config.ModeConfig{
 				// SURGE mode pauses scanner but keeps quality on a timer;
 				// brainstorm is paused too but is on-demand, so it must be excluded.
-				"surge": {Cadences: map[string]string{
+				"surge": {Cadences: map[string]config.Cadence{
 					"scanner":    "pause",
 					"quality":    "15m",
 					"brainstorm": "pause",
@@ -460,7 +460,7 @@ func TestBuildFrontendStatus(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
@@ -600,10 +600,10 @@ func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Cadences: map[string]string{"scanner": "15m"}},
-				"busy":  {Cadences: map[string]string{"scanner": "5m"}},
-				"quiet": {Cadences: map[string]string{"scanner": "30m"}},
-				"surge": {Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"busy":  {Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"quiet": {Cadences: map[string]config.Cadence{"scanner": "30m"}},
+				"surge": {Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 		},
 	}
@@ -680,7 +680,7 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
@@ -802,10 +802,10 @@ func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Cadences: map[string]string{"scanner": "pause"}},
-				"quiet": {Cadences: map[string]string{"scanner": ""}},
-				"busy":  {Cadences: map[string]string{}},
-				"surge": {Cadences: map[string]string{}},
+				"idle":  {Cadences: map[string]config.Cadence{"scanner": "pause"}},
+				"quiet": {Cadences: map[string]config.Cadence{"scanner": ""}},
+				"busy":  {Cadences: map[string]config.Cadence{}},
+				"surge": {Cadences: map[string]config.Cadence{}},
 			},
 		},
 	}
@@ -880,10 +880,10 @@ func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Cadences: map[string]string{"scanner": "15m"}},
-				"quiet": {Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Cadences: map[string]string{"scanner": "5m"}},
-				"surge": {Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"quiet": {Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"surge": {Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 		},
 	}

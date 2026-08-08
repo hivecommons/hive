@@ -1327,7 +1327,7 @@ func main() {
 					continue
 				}
 				if mode.Cadences == nil {
-					mode.Cadences = make(map[string]string)
+					mode.Cadences = make(map[string]config.Cadence)
 				}
 				for agentName, cadence := range agentCadences {
 					mode.Cadences[agentName] = cadence
@@ -4712,10 +4712,10 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		agents[name] = as
 	}
 
-	cadenceOverrides := make(map[string]map[string]string)
+	cadenceOverrides := make(map[string]map[string]config.Cadence)
 	for modeName, mode := range cfg.Governor.Modes {
 		if len(mode.Cadences) > 0 {
-			cadenceOverrides[modeName] = make(map[string]string, len(mode.Cadences))
+			cadenceOverrides[modeName] = make(map[string]config.Cadence, len(mode.Cadences))
 			for agentName, cadence := range mode.Cadences {
 				cadenceOverrides[modeName][agentName] = cadence
 			}

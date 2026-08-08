@@ -266,11 +266,12 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			lastKick = formatHumanTime(*proc.LastKick)
 		}
 
-		cadence := lookupCadenceForMode(name, currentMode, cfg)
-		if cadence == "" {
-			cadence = lookupCadence(name, cfg)
+		cadenceValue := lookupCadenceValueForMode(name, currentMode, cfg)
+		if cadenceValue == "" {
+			cadenceValue = lookupCadenceValue(name, cfg)
 		}
-		nextKick := computeNextKick(proc.LastKick, cadence)
+		cadence := cadenceDisplay(cadenceValue)
+		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
 
 		// offByCadence: the agent's cadence for the CURRENT governor mode is a
 		// non-kicking value ("pause"/"off"), so the governor will never kick it
@@ -672,6 +673,21 @@ func computeNextKick(lastKick *time.Time, cadence string) string {
 	return formatHumanTime(next)
 }
 
+func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+	if cadence == "" || cadence.IsPaused() {
+		return ""
+	}
+	base := time.Now()
+	if lastKick != nil && cadence.Mode() == config.CadenceModeInterval {
+		base = *lastKick
+	}
+	next, ok := cadence.NextAfter(base)
+	if !ok {
+		return ""
+	}
+	return formatHumanTime(next)
+}
+
 func parseCadenceDuration(cadence string) time.Duration {
 	cadence = strings.TrimSpace(cadence)
 	if cadence == "" || cadence == "off" || cadence == "pause" || cadence == "on demand" {
@@ -708,12 +724,30 @@ func lookupCadence(agentName string, cfg *config.Config) string {
 }
 
 func lookupCadenceForMode(agentName, modeName string, cfg *config.Config) string {
+	return cadenceDisplay(lookupCadenceValueForMode(agentName, modeName, cfg))
+}
+
+func lookupCadenceValue(agentName string, cfg *config.Config) config.Cadence {
+	return lookupCadenceValueForMode(agentName, "idle", cfg)
+}
+
+func lookupCadenceValueForMode(agentName, modeName string, cfg *config.Config) config.Cadence {
 	if mode, ok := cfg.Governor.Modes[modeName]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c
 		}
 	}
 	return ""
+}
+
+func cadenceDisplay(c config.Cadence) string {
+	if c == "" {
+		return ""
+	}
+	if c.Mode() == config.CadenceModeInterval {
+		return c.Interval()
+	}
+	return c.ShortLabel(time.Now())
 }
 
 func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
@@ -1069,7 +1103,9 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 		}
 
 		for modeName, mode := range cfg.Governor.Modes {
-			cadence := mode.Cadences[name]
+			rawCadence := mode.Cadences[name]
+			cadence := cadenceDisplay(rawCadence)
+			title := cadenceTooltip(rawCadence)
 			if cadence == "" || cadence == "pause" {
 				cadence = "off"
 			}
@@ -1081,17 +1117,33 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 			switch modeName {
 			case "idle":
 				entry.Idle = cadence
+				entry.IdleTitle = title
 			case "quiet":
 				entry.Quiet = cadence
+				entry.QuietTitle = title
 			case "busy":
 				entry.Busy = cadence
+				entry.BusyTitle = title
 			case "surge":
 				entry.Surge = cadence
+				entry.SurgeTitle = title
 			}
 		}
 		matrix = append(matrix, entry)
 	}
+
 	return matrix
+}
+
+func cadenceTooltip(c config.Cadence) string {
+	if c == "" || c.IsPaused() {
+		return ""
+	}
+	next, ok := c.NextAfter(time.Now())
+	if !ok {
+		return c.HumanSummary()
+	}
+	return c.HumanSummary() + " — next: " + formatHumanTime(next)
 }
 
 func buildHold(actionable *github.ActionableResult) FrontendHold {

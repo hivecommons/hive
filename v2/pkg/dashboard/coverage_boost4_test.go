@@ -416,10 +416,10 @@ func newDeepTestServer(t *testing.T) *Server {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
-				"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-				"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 		},
 	}

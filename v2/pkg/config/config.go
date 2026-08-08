@@ -1265,8 +1265,8 @@ type BudgetConfig struct {
 }
 
 type ModeConfig struct {
-	Threshold int               `yaml:"threshold"`
-	Cadences  map[string]string `yaml:"cadences"`
+	Threshold int                `yaml:"threshold"`
+	Cadences  map[string]Cadence `yaml:"cadences"`
 }
 
 // UnmarshalYAML implements custom unmarshaling for ModeConfig.
@@ -1280,18 +1280,18 @@ type ModeConfig struct {
 // This method separates "threshold" into the Threshold field and collects
 // all other keys into the Cadences map.
 func (m *ModeConfig) UnmarshalYAML(value *yaml.Node) error {
-	var raw map[string]string
+	var raw map[string]Cadence
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 
-	m.Cadences = make(map[string]string)
+	m.Cadences = make(map[string]Cadence)
 
 	const thresholdKey = "threshold"
 	if v, ok := raw[thresholdKey]; ok {
 		var t int
-		if _, err := fmt.Sscanf(v, "%d", &t); err != nil {
-			return fmt.Errorf("invalid threshold value %q: %w", v, err)
+		if _, err := fmt.Sscanf(v.Interval(), "%d", &t); err != nil {
+			return fmt.Errorf("invalid threshold value %q: %w", v.Interval(), err)
 		}
 		m.Threshold = t
 	}
@@ -3014,6 +3014,13 @@ func (c *Config) validate() error {
 	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
+	}
+	for modeName, mode := range c.Governor.Modes {
+		for agentName, cadence := range mode.Cadences {
+			if err := cadence.Validate(); err != nil {
+				return fmt.Errorf("governor mode %s cadence for %s: %w", modeName, agentName, err)
+			}
+		}
 	}
 	for name, agent := range c.Agents {
 		// One gate, shared with the config write path (dashboard agent-config

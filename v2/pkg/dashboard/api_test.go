@@ -32,10 +32,10 @@ func testDeps(t *testing.T) *Dependencies {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
-				"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-				"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 			Labels: config.LabelsConfig{Exempt: []string{"hold"}},
 		},
@@ -557,7 +557,7 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"busy": {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
+				"busy": {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
 			},
 		},
 	}
@@ -1098,6 +1098,42 @@ func TestHandleAgentConfigCadences_Pause(t *testing.T) {
 	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandleAgentConfigCadences_StructuredTimesRoundTrip(t *testing.T) {
+	s, _ := apiServer(t)
+	body := map[string]any{"idle": map[string]any{
+		"times": []string{"09:00", "17:00"},
+		"days":  []string{"mon", "tue", "wed", "thu", "fri"},
+		"tz":    "America/New_York",
+	}}
+	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rec = doGet(s, "/api/config/agent/scanner")
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	cadences := got["cadences"].(map[string]any)
+	idle := cadences["idle"].(map[string]any)
+	if idle["tz"] != "America/New_York" || len(idle["times"].([]any)) != 2 {
+		t.Fatalf("idle cadence = %#v", idle)
+	}
+}
+
+func TestHandleAgentConfigCadences_RejectsMutualExclusion(t *testing.T) {
+	s, _ := apiServer(t)
+	body := map[string]any{"idle": map[string]any{
+		"interval": "5m",
+		"times":    []string{"09:00"},
+		"tz":       "UTC",
+	}}
+	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
 
