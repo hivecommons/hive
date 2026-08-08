@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-dashboard-route-reader
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-dashboard-route-reader
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-dashboard-route-reader
