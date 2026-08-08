@@ -1398,6 +1398,7 @@ func TestIsKnownAlertType(t *testing.T) {
 		{AlertTypeHealthCheckFailing, true},
 		{AlertTypeTokenBurn, true},
 		{AlertTypeProvisionError, true},
+		{AlertTypeURLPrivateNetwork, true},
 		{"", false},
 		{"made-up", false},
 	} {

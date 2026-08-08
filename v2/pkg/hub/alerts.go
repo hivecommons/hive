@@ -96,11 +96,15 @@ const (
 	AlertTypeAdvisoryStale = "advisory-stale"
 	// AlertTypeURLUnreachable — the PUBLIC dashboard URL the hub links users to
 	// did not serve. Distinct from every other alert here in that it is the only
-	// one measured from OUTSIDE the spoke: a hive can be online, heartbeating and
-	// reporting every health check green while its vanity Route/Ingress, DNS or
-	// certificate is broken and the link in the hub table returns 503. Raised by
-	// the auth-audit loop, which already makes this HTTPS request.
+	// one that can be measured either by the spoke itself or, for stale/offline
+	// hives, from OUTSIDE the spoke.
 	AlertTypeURLUnreachable = "url-unreachable"
+	// AlertTypeURLPrivateNetwork means the hub's public-network probe could not
+	// reach the dashboard URL, but the hive is still heartbeating and the spoke
+	// either reports the URL healthy from its own network or is too old to send
+	// that self-check. It is informational: this is a vantage-point mismatch, not
+	// evidence that the hive's link is dead for its intended users.
+	AlertTypeURLPrivateNetwork = "url-private-network"
 	// AlertTypeAgentsInactive — one or more agents are RUNNING but not doing
 	// any work: their tmux session has gone, they are sitting on a login
 	// prompt, or they have produced nothing while work is queued. Deliberately
@@ -1244,6 +1248,7 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeAdvisoryStale:       true,
 	AlertTypeAgentsInactive:      true,
 	AlertTypeURLUnreachable:      true,
+	AlertTypeURLPrivateNetwork:   true,
 	AlertTypeInferenceAuthFailed: true,
 }
 

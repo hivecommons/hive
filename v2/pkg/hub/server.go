@@ -138,18 +138,23 @@ type RegistryEntry struct {
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
 	PrimaryRepo        string `json:"primaryRepo"`
 	DashboardURL       string `json:"dashboardUrl"`
-	SnapshotURL        string `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int    `json:"acmmLevel"`
-	AgentCount         int    `json:"agentCount"`
-	GovernorMode       string `json:"governorMode"`
-	TotalTokens24h     int64  `json:"totalTokens24h"`
-	ActionableIssues   int    `json:"actionableIssues"`
-	ActionablePRs      int    `json:"actionablePRs"`
-	ContributorCount   int    `json:"contributorCount"`
-	ActiveContributors int    `json:"activeContributors"`
-	Owner              string `json:"owner,omitempty"`
-	ClusterID          string `json:"clusterId,omitempty"`
-	ClusterName        string `json:"clusterName,omitempty"`
+	// PublicURLSelfCheck is the spoke's own reachability verdict for
+	// DashboardURL. It is intentionally separate from the hub-side probe:
+	// private-network hives may be unreachable from the public hub while alive
+	// from their own cluster. Nil means an old spoke did not report it.
+	PublicURLSelfCheck *PublicURLSelfCheck `json:"publicUrlSelfCheck,omitempty"`
+	SnapshotURL        string              `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int                 `json:"acmmLevel"`
+	AgentCount         int                 `json:"agentCount"`
+	GovernorMode       string              `json:"governorMode"`
+	TotalTokens24h     int64               `json:"totalTokens24h"`
+	ActionableIssues   int                 `json:"actionableIssues"`
+	ActionablePRs      int                 `json:"actionablePRs"`
+	ContributorCount   int                 `json:"contributorCount"`
+	ActiveContributors int                 `json:"activeContributors"`
+	Owner              string              `json:"owner,omitempty"`
+	ClusterID          string              `json:"clusterId,omitempty"`
+	ClusterName        string              `json:"clusterName,omitempty"`
 	// Namespace is the Kubernetes namespace this hive's spoke runs in. For a
 	// hub-provisioned (hosted) hive it is hostedNamespaceForHive(sh) —
 	// "hive-hosted-<id>" — overlaid from the authoritative SaaSHive record on
@@ -1273,6 +1278,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
 		DashboardURL:       payload.DashboardURL,
+		PublicURLSelfCheck: sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
 		SnapshotURL:        payload.SnapshotURL,
 		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
@@ -3225,6 +3231,23 @@ func sanitizeProseField(s string) string {
 	out := strings.Join(strings.Fields(b.String()), " ")
 	if runes := []rune(out); len(runes) > maxProseFieldRunes {
 		out = string(runes[:maxProseFieldRunes])
+	}
+	return out
+}
+
+func sanitizePublicURLSelfCheck(in *PublicURLSelfCheck) *PublicURLSelfCheck {
+	if in == nil {
+		return nil
+	}
+	status := sanitizeHeartbeatField(in.Status)
+	if status != PublicURLSelfCheckOK && status != PublicURLSelfCheckFail {
+		return nil
+	}
+	out := &PublicURLSelfCheck{
+		Status:     status,
+		CheckedAt:  sanitizeHeartbeatField(in.CheckedAt),
+		Error:      sanitizeProseField(in.Error),
+		HTTPStatus: clampInt(in.HTTPStatus, 0, 599),
 	}
 	return out
 }
