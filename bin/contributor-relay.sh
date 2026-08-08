@@ -173,8 +173,16 @@ function sendTo(hub, msg) {
 // hub regardless of currentTask/activeHubIndex (auth handshake, rejecting a
 // task from a hub that isn't getting the active slot, per-hub ping/pong) use
 // sendTo() directly.
+// The `|| hubs[activeHubIndex]` fallback is load-bearing, not defensive
+// padding: not every currentTask comes from a task_assign. The synthetic
+// pr-review task built after every PR_REVIEW_EVERY_N completions is assembled
+// locally and has no _hub, so keying strictly off currentTask._hub sent its
+// progress and completion frames to `undefined` — silently dropped, leaving
+// the hub to watch the contributor go mute mid-review and time it out.
+// Falling back to the active hub is also the correct target there: it is the
+// hub whose task we just finished.
 function send(msg) {
-  sendTo(currentTask ? currentTask._hub : hubs[activeHubIndex], msg);
+  sendTo((currentTask && currentTask._hub) || hubs[activeHubIndex], msg);
 }
 
 function injectGhToken(token) {

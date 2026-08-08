@@ -899,6 +899,30 @@ test('currentTask stays JSON-serializable after task_assign attaches its owning 
   } finally { teardown(relay); }
 });
 
+test('a currentTask with no recorded hub still reaches the hub (regression: synthetic pr-review task)', () => {
+  const relay = loadRelay({ env: {
+    HIVE_HUB: 'wss://hub-a.example/contribute,wss://hub-b.example/contribute',
+    HIVE_REGISTRATION_TOKEN: 'tok-a,tok-b',
+  } });
+  try {
+    const hubs = relay.getHubs();
+    const sentA = [];
+    hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
+    hubs[1].ws = { readyState: 1, send: () => {} };
+
+    // The pr-review task the relay builds for itself after every
+    // PR_REVIEW_EVERY_N completions is assembled locally and never carries a
+    // _hub. Routing strictly on currentTask._hub sent its frames to
+    // `undefined`, so the hub saw the contributor go silent mid-review.
+    relay.setCurrentTask({ task_id: 'pr-review-1', kind: 'review', repo: 'foo/bar', number: 0, title: 'Review open PRs' });
+    relay.failCurrentTask('done reviewing');
+
+    assert.ok(sentA.length > 0,
+      'frames for a hubless currentTask must fall back to the active hub, not be dropped');
+    assert.ok(sentA.some(m => m.type === 'task_failed' && m.task_id === 'pr-review-1'));
+  } finally { teardown(relay); }
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;
