@@ -6489,7 +6489,7 @@
           const mergeClass = p.mergeable ? ' mergeable' : '';
           const prAge = pillAge(p.created_at);
           const labels = (p.labels || []).map(l => String(l).toLowerCase());
-          const queued = labels.includes('hive/automerge');
+          const queued = labels.includes((window._hiveAutoMergeLabel || 'lgtm').toLowerCase());
           const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
@@ -18709,6 +18709,7 @@ function burnAreaChart() {
         const roleResp = await fetch('/api/role');
         const roleData = await roleResp.json();
         if (roleData.user) {
+          if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
           showGHAuthState(true, roleData.user, 'https://github.com/' + roleData.user + '.png', roleData.role);
           return;
         }

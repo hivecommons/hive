@@ -13,7 +13,7 @@ func TestPRAutoMergeButtonGatingPinned(t *testing.T) {
 		"p.author.toLowerCase() === window._hiveUser.toLowerCase()",
 		"Queue auto-merge",
 		"/queue-automerge",
-		"hive/automerge",
+		"_hiveAutoMergeLabel",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("dashboard PR auto-merge UI missing snippet %q", snippet)

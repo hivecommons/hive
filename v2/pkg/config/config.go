@@ -1242,6 +1242,14 @@ func (c *LiteLLMConfig) Validate() error {
 
 type LabelsConfig struct {
 	Exempt []string `yaml:"exempt"`
+	// AutoMerge is the label a merger/owner queue action applies to a PR.
+	// Configurable because the label has to live in someone else's
+	// repository, where the local convention already exists: Prow-style
+	// projects have used `lgtm` for exactly this decision for years, and a
+	// hive that hard-codes its own name either collides with that or forces
+	// every managed repo to grow a second label meaning the same thing.
+	// Defaults to DefaultAutoMergeLabel.
+	AutoMerge string `yaml:"automerge"`
 }
 
 type SensingConfig struct {
@@ -2089,6 +2097,13 @@ const (
 	RoleMerger = "merger"
 )
 
+// DefaultAutoMergeLabel is the label applied when a hive does not configure
+// `governor.labels.automerge`. `lgtm` is the long-standing Prow/Kubernetes
+// convention for "a second person signed off on this", which is exactly the
+// decision the merger tier records, so a managed repository usually already
+// has it and already understands it.
+const DefaultAutoMergeLabel = "lgtm"
+
 var roleRanks = map[string]int{
 	RoleRead:      1,
 	RoleReadWrite: 2,
@@ -2714,6 +2729,9 @@ func (c *Config) applyDefaults() {
 			"auto-qa-tuning-report", "adopters",
 			"changes-requested", "waiting-on-author",
 		}
+	}
+	if strings.TrimSpace(c.Governor.Labels.AutoMerge) == "" {
+		c.Governor.Labels.AutoMerge = DefaultAutoMergeLabel
 	}
 	if len(c.Governor.Sensing.GHRatePatterns) == 0 {
 		c.Governor.Sensing.GHRatePatterns = []string{

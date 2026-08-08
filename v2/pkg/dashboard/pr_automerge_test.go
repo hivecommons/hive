@@ -37,7 +37,7 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 						"number": 7,
 						"user":   map[string]string{"login": tt.author},
 					})
-				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/hive/automerge":
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+ghpkg.AutoMergeQueuedLabel:
 					http.NotFound(w, r)
 				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
 					w.WriteHeader(http.StatusCreated)
@@ -112,5 +112,14 @@ func TestQueuePRAutoMergeRejectsRepoOutsideHive(t *testing.T) {
 	}
 	if called {
 		t.Fatal("GitHub API should not be called for unauthorized repo")
+	}
+}
+
+// /api/role is served before GitHub credentials exist, so the label lookup it
+// performs must survive a nil deps/client rather than panicking the dashboard.
+func TestAutoMergeLabelNilDeps(t *testing.T) {
+	s := &Server{}
+	if got := s.autoMergeLabel(); got != ghpkg.AutoMergeQueuedLabel {
+		t.Fatalf("nil-deps label = %q, want %q", got, ghpkg.AutoMergeQueuedLabel)
 	}
 }

@@ -12,7 +12,7 @@ func TestQueuePRAutoMergeApprovesThenLabels(t *testing.T) {
 	var sawReview, sawLabel bool
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/hive/automerge":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+AutoMergeQueuedLabel:
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
 			w.WriteHeader(http.StatusCreated)

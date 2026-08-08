@@ -441,7 +441,23 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "owner"
 	}
-	jsonResponse(w, map[string]string{"role": role, "user": user})
+	jsonResponse(w, map[string]string{
+		"role": role,
+		"user": user,
+		// The queue label is server-configured, so the dashboard must be told
+		// it rather than hard-coding a name that a hive may have changed.
+		"automerge_label": s.autoMergeLabel(),
+	})
+}
+
+// autoMergeLabel reports the configured queue label. /api/role is served
+// before GitHub credentials are required, so deps and the client may both be
+// nil here even though handleQueuePRAutoMerge rejects that state outright.
+func (s *Server) autoMergeLabel() string {
+	if s == nil || s.deps == nil {
+		return github.AutoMergeQueuedLabel
+	}
+	return s.deps.GHClient.AutoMergeLabel()
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -1945,7 +1961,7 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		"status": "queued",
 		"repo":   repo,
 		"number": number,
-		"label":  github.AutoMergeQueuedLabel,
+		"label":  s.deps.GHClient.AutoMergeLabel(),
 	})
 }
 

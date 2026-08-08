@@ -575,6 +575,21 @@ auto-merge-on-green flow. The spoke enforces the self-merge ban against the
 GitHub login bound to the session; owners are exempt because they already have
 repository-level merge authority.
 
+Queueing a PR approves it as the hive App and applies a label. That label is
+configurable, because it is applied in a repository the hive does not own and
+whose review conventions already exist:
+
+```yaml
+governor:
+  labels:
+    automerge: lgtm
+```
+
+It defaults to `lgtm`, the long-standing Prow/Kubernetes label for "a second
+person signed off", which is the decision the merger tier records. Set it to
+whatever the managed repositories already use — the label is created on demand
+if it does not exist.
+
 > **`meta.json` requirement is why heartbeats can be accepted but upgrades fail.**
 > The heartbeat path is separate from `loadSaaSHive`. A hive can heartbeat and
 > appear "online" while a missing `meta.json` makes the **Upgrade** button (and

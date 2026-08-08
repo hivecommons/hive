@@ -14,6 +14,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -31,6 +33,10 @@ type Client struct {
 	reposMu      sync.RWMutex
 	repos        []string
 	exemptLabels []string
+	// autoMergeLabel is the configured merger-queue label. Guarded because
+	// config reload re-applies it while request handlers read it.
+	autoMergeLabelMu sync.RWMutex
+	autoMergeLabel   string
 	logger       *slog.Logger
 	appAuth      *AppAuth // nil for token-authenticated clients
 	// prAuthz gates PR-open requests from the request-file watcher against the
@@ -188,9 +194,11 @@ type IssueCluster struct {
 var HoldLabels = []string{"hold", "on-hold", "hold/review"}
 var PermanentExemptLabels = []string{"do-not-merge"}
 
-// AutoMergeQueuedLabel is the GitHub label a human merger/owner action applies
-// to mark a PR as approved for the hive's existing auto-merge-on-green sweep.
-const AutoMergeQueuedLabel = "hive/automerge"
+// AutoMergeQueuedLabel is the fallback label a merger/owner queue action
+// applies when a hive has not configured `governor.labels.automerge`. Prefer
+// Client.AutoMergeLabel(), which honours that configuration; this constant
+// exists so a nil or unconfigured client still has a sane value.
+const AutoMergeQueuedLabel = config.DefaultAutoMergeLabel
 
 var exemptFiles = []string{"ADOPTERS.md", "ADOPTERS.MD"}
 
@@ -683,8 +691,9 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return ErrNoGitHubClient
 	}
 	owner, repoName := c.splitRepo(repo)
-	if err := c.ensureLabel(ctx, owner, repoName, AutoMergeQueuedLabel); err != nil {
-		return fmt.Errorf("ensuring %s label: %w", AutoMergeQueuedLabel, err)
+	label := c.AutoMergeLabel()
+	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
+		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
 	if strings.TrimSpace(queuedBy) == "" {
@@ -697,8 +706,8 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	if err != nil {
 		return fmt.Errorf("approving PR: %w", err)
 	}
-	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, []string{AutoMergeQueuedLabel}); err != nil {
-		return fmt.Errorf("adding %s label: %w", AutoMergeQueuedLabel, err)
+	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, []string{label}); err != nil {
+		return fmt.Errorf("adding %s label: %w", label, err)
 	}
 	return nil
 }
@@ -781,6 +790,36 @@ func (c *Client) SetExemptLabels(labels []string) {
 		return
 	}
 	c.exemptLabels = labels
+}
+
+// SetAutoMergeLabel is nil-receiver safe for the same reason as SetRepos. An
+// empty or whitespace-only value keeps the default rather than clearing it,
+// so a partially-populated config cannot produce an unnamed label.
+func (c *Client) SetAutoMergeLabel(label string) {
+	if c == nil {
+		return
+	}
+	if strings.TrimSpace(label) == "" {
+		return
+	}
+	c.autoMergeLabelMu.Lock()
+	defer c.autoMergeLabelMu.Unlock()
+	c.autoMergeLabel = strings.TrimSpace(label)
+}
+
+// AutoMergeLabel returns the configured queue label, falling back to the
+// default when unset. Nil-receiver safe so callers can report the label even
+// when the hive booted without GitHub credentials.
+func (c *Client) AutoMergeLabel() string {
+	if c == nil {
+		return AutoMergeQueuedLabel
+	}
+	c.autoMergeLabelMu.RLock()
+	defer c.autoMergeLabelMu.RUnlock()
+	if c.autoMergeLabel == "" {
+		return AutoMergeQueuedLabel
+	}
+	return c.autoMergeLabel
 }
 
 func (c *Client) isExempt(labels []string) bool {

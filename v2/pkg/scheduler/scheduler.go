@@ -577,7 +577,7 @@ func formatMergeEligibleData(data []byte) string {
 	for _, pr := range payload.Items {
 		queued := ""
 		if pr.Queued {
-			queued = " [hive/automerge queued]"
+			queued = " [queued for auto-merge]"
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, queued, pr.Title))
 	}
