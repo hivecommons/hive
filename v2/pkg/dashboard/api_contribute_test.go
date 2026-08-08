@@ -293,6 +293,37 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	}
 }
 
+func TestContributeLandingHasCustomCSSHelp(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute/leaderboard", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute/leaderboard = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		`id="custom-css-info-btn"`,
+		`Custom CSS`,
+		`?style=owner/repo/path/theme.css@ref`,
+		`?style=castrojo/themes/lb/bluefin.css@main`,
+		`repo&rsquo;s <code>HEAD</code>`,
+		`Public GitHub repos only`,
+		`sanitized server-side`,
+		`128 KiB`,
+		`<code>/</code> and <code>/snapshot</code>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("custom CSS help missing %q", want)
+		}
+	}
+}
+
 // TestContributeLandingHasKubernetesMode pins the #2549 discoverability
 // addition: the /contribute run-mode surface must offer a Kubernetes path
 // alongside containerized and host, wired to `just contribute-k8s`, and it must
