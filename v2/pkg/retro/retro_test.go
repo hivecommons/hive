@@ -2,6 +2,7 @@ package retro
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/timeline"
 )
 
@@ -212,6 +214,132 @@ func TestLaneFilesAdvisoryOnceAndMarksAnalyzed(t *testing.T) {
 	}
 	if got.Meta(metadataAnalyzedAt) == "" {
 		t.Fatalf("source bead missing %s", metadataAnalyzedAt)
+	}
+}
+
+func TestBuildAnalysisPromptBounds(t *testing.T) {
+	rec := RetroRecord{
+		BeadID:         "b1",
+		Title:          strings.Repeat("title ", 200),
+		Type:           beads.TypeTask,
+		Actor:          "scanner",
+		IssueRef:       "o/r#1",
+		PRRef:          "o/r#2",
+		PRState:        "merged",
+		KicksReceived:  6,
+		CIFailureCount: 5,
+		FixAttempts:    4,
+		DriftPauses:    1,
+		ClaimToClose:   9 * 24 * time.Hour,
+	}
+	findings := []Finding{{Pattern: PatternExcessiveFixAttempts, Severity: "medium", Detail: strings.Repeat("detail ", 2000)}}
+	msgs := buildAnalysisPrompt(rec, findings)
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %d, want 2", len(msgs))
+	}
+	if len([]rune(msgs[1].Content)) > maxPromptChars {
+		t.Fatalf("prompt length = %d, want <= %d", len([]rune(msgs[1].Content)), maxPromptChars)
+	}
+	if strings.Contains(msgs[1].Content, strings.Repeat("title ", 50)) {
+		t.Fatal("record title was not compacted")
+	}
+}
+
+type fakeAnalysisClient struct {
+	replies []string
+	err     error
+	calls   int
+}
+
+func (f *fakeAnalysisClient) Complete(context.Context, []chatMessage, int) (string, error) {
+	f.calls++
+	if f.err != nil {
+		return "", f.err
+	}
+	if f.calls > len(f.replies) {
+		return f.replies[len(f.replies)-1], nil
+	}
+	return f.replies[f.calls-1], nil
+}
+
+func TestAnalysisRetriesInvalidJSON(t *testing.T) {
+	client := &fakeAnalysisClient{replies: []string{
+		`{"root_cause_hypothesis":"","process_improvement":"x","generalizable":false,"generalizable_lesson":""}`,
+		`{"root_cause_hypothesis":"CI failures were discovered late.","process_improvement":"Add pre-submit checks before opening PRs.","generalizable":true,"generalizable_lesson":"Run the same validation locally before opening PRs so repeated CI-only failures are caught earlier."}`,
+	}}
+	analyzer := newAnalyzerWithClient("m", client)
+	got, err := analyzer.Analyze(context.Background(), RetroRecord{BeadID: "b"}, []Finding{{Pattern: PatternExcessiveFixAttempts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("calls = %d, want 2", client.calls)
+	}
+	if !got.Generalizable || got.GeneralizableLesson == "" {
+		t.Fatalf("unexpected analysis: %#v", got)
+	}
+}
+
+func TestLaneFailOpenOnAnalysisError(t *testing.T) {
+	source := newStore(t, "analysis-error-source")
+	retroStore := newStore(t, "analysis-error-retro")
+	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Update(b.ID, func(bd *beads.Bead) {
+		bd.Status = beads.StatusClosed
+		bd.Metadata = map[string]interface{}{"pr_ref": "kubestellar/hive#42", "pr_state": "merged", "fix_attempts": "3"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lane := NewLane(map[string]*beads.Store{"scanner": source, Actor: retroStore}, retroStore, nil, nil, Config{ScanIntervalS: 1}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	lane.SetAnalyzer(newAnalyzerWithClient("m", &fakeAnalysisClient{err: errors.New("model down")}))
+	if created := lane.Run(context.Background()); created != 1 {
+		t.Fatalf("created = %d, want deterministic advisory despite model error", created)
+	}
+	advisories := retroStore.List(beads.ListFilter{})
+	if advisories[0].Meta(metadataAnalysisRootCause) != "" || strings.Contains(advisories[0].Notes, "Model-generated") {
+		t.Fatalf("advisory should not be enriched on model error: %#v", advisories[0])
+	}
+}
+
+type fakeKnowledgeSink struct {
+	lessons []knowledge.RetroLesson
+}
+
+func (f *fakeKnowledgeSink) IngestRetroLesson(_ context.Context, lesson knowledge.RetroLesson) (string, bool, error) {
+	f.lessons = append(f.lessons, lesson)
+	return "retro-lesson-test", true, nil
+}
+
+func TestLaneEnrichesAdvisoryAndFeedsKnowledge(t *testing.T) {
+	source := newStore(t, "analysis-source")
+	retroStore := newStore(t, "analysis-retro")
+	b, err := source.Create("hard issue", beads.TypeTask, beads.PriorityMedium, "scanner", "kubestellar/hive#2809")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Update(b.ID, func(bd *beads.Bead) {
+		bd.Status = beads.StatusClosed
+		bd.Metadata = map[string]interface{}{"pr_ref": "kubestellar/hive#42", "pr_state": "merged", "fix_attempts": "3"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeAnalysisClient{replies: []string{`{"root_cause_hypothesis":"Validation ran too late.","process_improvement":"Run targeted checks before opening a PR.","generalizable":true,"generalizable_lesson":"Run targeted validation before opening PRs when changes affect CI-sensitive code paths."}`}}
+	sink := &fakeKnowledgeSink{}
+	lane := NewLane(map[string]*beads.Store{"scanner": source, Actor: retroStore}, retroStore, nil, nil, Config{ScanIntervalS: 1}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	lane.SetAnalyzer(newAnalyzerWithClient("m", client))
+	lane.SetKnowledgeSink(sink)
+	if created := lane.Run(context.Background()); created != 1 {
+		t.Fatalf("created = %d, want 1", created)
+	}
+	advisory := retroStore.List(beads.ListFilter{})[0]
+	if advisory.Meta(metadataAnalysisRootCause) == "" || !strings.Contains(advisory.Notes, "Model-generated retro analysis") {
+		t.Fatalf("advisory not enriched: %#v", advisory)
+	}
+	if len(sink.lessons) != 1 || sink.lessons[0].SourcePR != "kubestellar/hive#42" {
+		t.Fatalf("lessons = %#v, want one sourced lesson", sink.lessons)
 	}
 }
 

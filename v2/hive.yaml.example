@@ -190,9 +190,11 @@ governor:
   #   api_key_env: HIVE_BOB_API_KEY       # env var NAME holding the key (default)
   #   api_key_file: /secrets/bob_api_key  # or a mounted key file (default path)
 
-# Retro lane — deterministic post-completion analysis. Disabled by default;
+# Retro lane — post-completion analysis. Disabled by default;
 # when enabled it scans recently completed beads with closed/merged PR metadata
 # and files rule-based findings as local advisory beads (no GitHub posts).
+# Optional analysis_model enables bounded LLM root-cause/improvement analysis
+# via governor.litellm and feeds generalized lessons into the knowledge graph.
 # retro:
 #   enabled: false
 #   scan_interval_s: 3600
@@ -200,6 +202,7 @@ governor:
 #   max_kicks: 5
 #   long_stall_days: 7
 #   recent_closed_window_s: 604800
+#   analysis_model: ""   # empty disables all LLM calls (default)
 
 # Review swarm merge gate — optional structured multi-perspective PR review.
 # Default is false to preserve existing merge eligibility behavior; when true,

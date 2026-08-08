@@ -227,18 +227,21 @@ type PlanningConfig struct {
 	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
 }
 
-// RetroConfig gates the deterministic post-completion retro lane. It is off by
+// RetroConfig gates the post-completion retro lane. It is off by
 // default: an absent `retro:` block or `enabled: false` yields zero behavior
 // change. When enabled, the lane periodically scans done/closed beads that have
 // a closed/merged PR association, reconstructs a compact trajectory from local
-// ledgers, and files rule-based findings as advisory beads.
+// ledgers, and files rule-based findings as advisory beads. analysis_model is
+// additionally opt-in; when empty, no model is called and only deterministic
+// phase-1 behavior runs.
 type RetroConfig struct {
-	Enabled             bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ScanIntervalS       int  `yaml:"scan_interval_s,omitempty" json:"scan_interval_s,omitempty"`
-	MaxFixAttempts      int  `yaml:"max_fix_attempts,omitempty" json:"max_fix_attempts,omitempty"`
-	MaxKicks            int  `yaml:"max_kicks,omitempty" json:"max_kicks,omitempty"`
-	LongStallDays       int  `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
-	RecentClosedWindowS int  `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
+	Enabled             bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ScanIntervalS       int    `yaml:"scan_interval_s,omitempty" json:"scan_interval_s,omitempty"`
+	MaxFixAttempts      int    `yaml:"max_fix_attempts,omitempty" json:"max_fix_attempts,omitempty"`
+	MaxKicks            int    `yaml:"max_kicks,omitempty" json:"max_kicks,omitempty"`
+	LongStallDays       int    `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
+	RecentClosedWindowS int    `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
+	AnalysisModel       string `yaml:"analysis_model,omitempty" json:"analysis_model,omitempty"`
 }
 
 // planFromLabelMinACMM is the lowest ACMM level at which the label trigger fires

@@ -11,6 +11,7 @@ import (
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/escalation"
+	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/timeline"
 )
 
@@ -33,6 +34,9 @@ const (
 	metadataSourceIssue         = "retro_source_issue"
 	metadataPattern             = "retro_pattern"
 	metadataRecordWallClock     = "retro_wall_clock"
+	metadataAnalysisRootCause   = "retro_analysis_root_cause"
+	metadataAnalysisImprovement = "retro_analysis_improvement"
+	metadataLessonSlug          = "retro_lesson_slug"
 	PatternExcessiveFixAttempts = "excessive_fix_attempts"
 	PatternExcessiveKicks       = "excessive_kicks"
 	PatternLongStall            = "long_stall"
@@ -46,6 +50,9 @@ type Config struct {
 	MaxKicks            int
 	LongStallDays       int
 	RecentClosedWindowS int
+	AnalysisModel       string
+	AnalysisEndpoint    string
+	AnalysisAPIKey      string
 }
 
 type Thresholds struct {
@@ -84,11 +91,17 @@ type AttemptReader interface {
 	Attempts(repo string, number int) int
 }
 
+type KnowledgeSink interface {
+	IngestRetroLesson(ctx context.Context, lesson knowledge.RetroLesson) (slug string, created bool, err error)
+}
+
 type Lane struct {
 	stores        map[string]*beads.Store
 	advisoryStore *beads.Store
 	timeline      *timeline.Store
 	attempts      AttemptReader
+	analyzer      *Analyzer
+	knowledge     KnowledgeSink
 	logger        *slog.Logger
 	interval      time.Duration
 	thresholds    Thresholds
@@ -104,16 +117,29 @@ func NewLane(stores map[string]*beads.Store, advisoryStore *beads.Store, tl *tim
 	if logger == nil {
 		logger = slog.Default()
 	}
+	analyzer, err := NewAnalyzer(cfg.AnalysisEndpoint, cfg.AnalysisAPIKey, cfg.AnalysisModel)
+	if err != nil {
+		logger.Warn("retro: LLM analysis disabled", "error", err)
+	}
 	return &Lane{
 		stores:        stores,
 		advisoryStore: advisoryStore,
 		timeline:      tl,
 		attempts:      attempts,
+		analyzer:      analyzer,
 		logger:        logger,
 		interval:      time.Duration(intervalS) * time.Second,
 		thresholds:    thresholdsFromConfig(cfg),
 		recentWindow:  time.Duration(cfg.RecentClosedWindowS) * time.Second,
 	}
+}
+
+func (l *Lane) SetAnalyzer(analyzer *Analyzer) {
+	l.analyzer = analyzer
+}
+
+func (l *Lane) SetKnowledgeSink(sink KnowledgeSink) {
+	l.knowledge = sink
 }
 
 func (l *Lane) Due(now time.Time) bool {
@@ -145,8 +171,10 @@ func (l *Lane) Run(ctx context.Context) int {
 				continue
 			}
 			findings := Detect(record, l.thresholds)
+			analysis := l.analyze(ctx, record, findings)
+			l.ingestLesson(ctx, record, analysis)
 			for _, f := range findings {
-				if l.createAdvisory(record, f) {
+				if l.createAdvisory(record, f, analysis) {
 					created++
 				}
 			}
@@ -195,7 +223,38 @@ func completedAt(b *beads.Bead) time.Time {
 	return time.Time{}
 }
 
-func (l *Lane) createAdvisory(r RetroRecord, f Finding) bool {
+func (l *Lane) analyze(ctx context.Context, r RetroRecord, findings []Finding) *Analysis {
+	if len(findings) == 0 || l.analyzer == nil {
+		return nil
+	}
+	analysis, err := l.analyzer.Analyze(ctx, r, findings)
+	if err != nil {
+		l.logger.Warn("retro: LLM analysis skipped", "source_bead", r.BeadID, "error", err)
+		return nil
+	}
+	return &analysis
+}
+
+func (l *Lane) ingestLesson(ctx context.Context, r RetroRecord, analysis *Analysis) {
+	if analysis == nil || !analysis.Generalizable || l.knowledge == nil {
+		return
+	}
+	slug, created, err := l.knowledge.IngestRetroLesson(ctx, knowledge.RetroLesson{
+		Lesson:     analysis.GeneralizableLesson,
+		SourceBead: r.BeadID,
+		SourcePR:   r.PRRef,
+		SourceDate: r.ClosedAt,
+	})
+	if err != nil {
+		l.logger.Warn("retro: lesson ingestion skipped", "source_bead", r.BeadID, "error", err)
+		return
+	}
+	if created {
+		l.logger.Info("retro: lesson ingested", "source_bead", r.BeadID, "slug", slug)
+	}
+}
+
+func (l *Lane) createAdvisory(r RetroRecord, f Finding, analysis *Analysis) bool {
 	if l.openDuplicate(f.Title) {
 		return false
 	}
@@ -216,12 +275,35 @@ func (l *Lane) createAdvisory(r RetroRecord, f Finding) bool {
 		metadataPattern:         f.Pattern,
 		metadataRecordWallClock: r.ClaimToClose.String(),
 	}
+	if analysis != nil {
+		meta[metadataAnalysisRootCause] = analysis.RootCauseHypothesis
+		meta[metadataAnalysisImprovement] = analysis.ProcessImprovement
+	}
 	for k, v := range meta {
 		if v != "" {
 			_ = l.advisoryStore.SetMetadata(b.ID, k, v)
 		}
 	}
+	if analysis != nil {
+		_ = l.advisoryStore.Update(b.ID, func(bd *beads.Bead) {
+			bd.Notes = advisoryNotes(f, analysis)
+		})
+	}
 	return true
+}
+
+func advisoryNotes(f Finding, analysis *Analysis) string {
+	var b strings.Builder
+	b.WriteString(f.Detail)
+	if analysis == nil {
+		return b.String()
+	}
+	b.WriteString("\n\nModel-generated retro analysis:\n")
+	b.WriteString("- Root-cause hypothesis: ")
+	b.WriteString(analysis.RootCauseHypothesis)
+	b.WriteString("\n- Actionable process improvement: ")
+	b.WriteString(analysis.ProcessImprovement)
+	return b.String()
 }
 
 func (l *Lane) openDuplicate(title string) bool {

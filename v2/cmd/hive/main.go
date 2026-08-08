@@ -3733,12 +3733,19 @@ func main() {
 			MaxKicks:            cfg.Retro.MaxKicks,
 			LongStallDays:       cfg.Retro.LongStallDays,
 			RecentClosedWindowS: cfg.Retro.RecentClosedWindowS,
+			AnalysisModel:       cfg.Retro.AnalysisModel,
+			AnalysisEndpoint:    cfg.Governor.LiteLLM.ResolveEndpoint(),
+			AnalysisAPIKey:      cfg.Governor.LiteLLM.ResolveAPIKey(),
 		}, logger)
+		if knowledgeAPI != nil {
+			retroLane.SetKnowledgeSink(knowledgeAPI)
+		}
 		logger.Info("retro lane enabled",
 			"scan_interval_s", cfg.Retro.ScanIntervalS,
 			"max_fix_attempts", cfg.Retro.MaxFixAttempts,
 			"max_kicks", cfg.Retro.MaxKicks,
-			"long_stall_days", cfg.Retro.LongStallDays)
+			"long_stall_days", cfg.Retro.LongStallDays,
+			"analysis_enabled", cfg.Retro.AnalysisModel != "")
 	}
 
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
