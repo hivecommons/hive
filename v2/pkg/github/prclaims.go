@@ -489,13 +489,27 @@ func (l *ClaimLedger) Save() error {
 	return nil
 }
 
+// RedStaleFunc reports whether the claiming PR (prRepo, prNumber) is red on a
+// required check AND stale (its red head SHA unchanged past the staleness
+// threshold). Fix #3 uses it to DECIDE NOT to suppress a claimed issue: a
+// healthy claiming PR (green/pending, or a freshly-changed head) still
+// suppresses its issue, but a red+stale one releases the issue so the work can
+// be re-taken. It is supplied by the caller so this package stays free of the
+// escalation-store dependency; a nil func means "never release" (old behavior).
+// GENERIC: the predicate keys only off check state + commit staleness.
+type RedStaleFunc func(prRepo string, prNumber int) bool
+
 // FilterClaimedIssues removes from result every issue an open hive-authored PR
 // already claims, logging each suppression with the claiming PR's URL.
+//
+// redStale (may be nil) is Fix #3's release valve: when it reports the claiming
+// PR is red+stale, the issue is NOT suppressed — it is kept actionable so a
+// fresh fix can happen instead of the issue being frozen behind a dead PR.
 //
 // It mutates result in place (Issues.Items, Issues.Count, Issues.SLAViolations)
 // and returns the number of issues suppressed. A nil result or nil ledger is a
 // no-op, so callers need no extra guards.
-func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, logger *slog.Logger) int {
+func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, logger *slog.Logger) int {
 	if result == nil || ledger == nil || len(ledger.claims) == 0 {
 		return 0
 	}
@@ -505,6 +519,25 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, logger *
 		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
 		if !ok {
 			kept = append(kept, issue)
+			continue
+		}
+		// Fix #3: release (do NOT suppress) when the claiming PR is red on a
+		// required check AND stale. The claiming PR lives in claim.PRRepo /
+		// claim.PRNumber (which may differ from the issue's repo for cross-repo
+		// closes). A healthy PR — green, pending, or a recently-moved head —
+		// fails this predicate and is still suppressed, exactly as before.
+		if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+			kept = append(kept, issue)
+			if logger != nil {
+				logger.Info("releasing issue: claiming PR red+stale",
+					"repo", issue.Repo,
+					"issue", issue.Number,
+					"issue_title", issue.Title,
+					"claimed_by_pr", claim.PRNumber,
+					"pr_repo", claim.PRRepo,
+					"pr_url", claim.PRURL,
+				)
+			}
 			continue
 		}
 		suppressed++
@@ -548,6 +581,7 @@ func ApplyDuplicatePRGuard(
 	ledger *ClaimLedger,
 	identity HiveIdentity,
 	result *ActionableResult,
+	redStale RedStaleFunc,
 	logger *slog.Logger,
 ) int {
 	if ledger == nil || result == nil {
@@ -568,7 +602,7 @@ func ApplyDuplicatePRGuard(
 		logger.Warn("duplicate-PR guard: failed to persist claim ledger", "error", saveErr)
 	}
 
-	suppressed := FilterClaimedIssues(result, ledger, logger)
+	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
 	if logger != nil {
 		logger.Info("duplicate-PR guard applied",
 			"claims", len(ledger.claims),

@@ -49,6 +49,16 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
+	// terminally BECAUSE a required check failed (not a true conflict or a
+	// permission error), the watcher calls this instead of silently abandoning
+	// the PR, so the fix loop re-dispatches an agent to fix the red check. It
+	// returns true if the re-engagement was accepted (dispatch recorded) or
+	// false when the loop-safety cap for this PR's red head SHA is exhausted (so
+	// a permanently-red PR is not nudged forever). nil is a no-op — the watcher
+	// falls back to the original quarantine behavior. Set by
+	// SetMergeReEngageHook.
+	mergeReEngage MergeReEngageFunc
 	// attribution holds the invocation-attribution hooks (trailer gate,
 	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
 	// attribMu because the hooks are installed in stages during startup while
@@ -123,6 +133,20 @@ type PullRequest struct {
 	// four days in the 2026-08 seedMission incident.
 	FailingChecks    []string `json:"failing_checks,omitempty"`
 	CIFailureExcerpt string   `json:"ci_failure_excerpt,omitempty"`
+}
+
+// HasFailingRequiredCheck reports whether this PR has a completed, non-meta
+// (required) check whose conclusion was failure/action_required. It is the
+// GENERIC "this PR is red because a required check failed" predicate shared by
+// the merge-watcher re-engagement (#2), claim-suppression release (#3), and the
+// governor stuck-PR reaper (#4). It keys ONLY off the check state that
+// EnrichCIStatus already computed (CIStatus + FailingChecks) — it never inspects
+// a specific linter, language, or check name, so nothing here is
+// project-specific. CIStatus=="failure" is only ever set when at least one
+// non-meta check failed (isMetaCheck already excludes tide/guardrails/netlify/
+// copilot), so the FailingChecks guard is belt-and-suspenders.
+func (p PullRequest) HasFailingRequiredCheck() bool {
+	return p.CIStatus == "failure" && len(p.FailingChecks) > 0
 }
 
 // Mergeable is a tri-state mergeability verdict for a pull request.

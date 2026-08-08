@@ -243,3 +243,107 @@ func TestMergeRequestWatcher_BadJSONQuarantined(t *testing.T) {
 		t.Error("malformed request should be quarantined as .bad")
 	}
 }
+
+// --- Fix #2: re-engagement on a failing-required-check terminal merge failure ---
+
+func TestIsRequiredCheckMergeBlocker(t *testing.T) {
+	// GENERIC: these key off GitHub's branch-protection vocabulary only, never a
+	// specific check/linter/language name.
+	reEngage := []string{
+		"Required status check \"x\" is expected",
+		"At least 1 approving review is required by reviewers ... required status checks have not",
+		"Changes must be made through a pull request",
+		"the base branch requires all commits to be signed ... has not succeeded",
+	}
+	for _, m := range reEngage {
+		if !isRequiredCheckMergeBlocker(m) {
+			t.Errorf("expected re-engageable required-check blocker: %q", m)
+		}
+	}
+	unfixable := []string{
+		"Pull Request is not mergeable", // conflict-family, not a check
+		"merge conflict between base and head",
+		"Resource not accessible by integration",
+		"403 Forbidden: you do not have permission",
+	}
+	for _, m := range unfixable {
+		if isRequiredCheckMergeBlocker(m) {
+			t.Errorf("unfixable blocker must NOT re-engage: %q", m)
+		}
+	}
+}
+
+// requiredCheckMergeServer always fails PUT /merge with a required-check message.
+func requiredCheckMergeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge") {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = io.WriteString(w, `{"message":"Required status check \"build\" is expected."}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func TestMergeWatcher_ReEngagesOnRequiredCheckFailure(t *testing.T) {
+	srv := requiredCheckMergeServer(t)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	var reEngagedRepo string
+	var reEngagedNum int
+	var calls int
+	allow := true
+	c.SetMergeReEngageHook(func(repo string, number int) bool {
+		calls++
+		reEngagedRepo, reEngagedNum = repo, number
+		return allow
+	})
+
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	// Drive to the terminal attempt: mergeRequestMaxAttempts tries.
+	for i := 0; i < mergeRequestMaxAttempts; i++ {
+		c.ProcessMergeRequestsOnce(context.Background())
+	}
+
+	if calls != 1 {
+		t.Fatalf("re-engage hook should fire exactly once at terminal failure, got %d", calls)
+	}
+	if reEngagedRepo != "o/r" || reEngagedNum != 42 {
+		t.Fatalf("hook got (%q,%d), want (o/r,42)", reEngagedRepo, reEngagedNum)
+	}
+	// The PR is quarantined (merge cannot succeed until green) but the fix loop
+	// now owns it — a re-engaged terminal failure must NOT be silently dropped.
+	if _, err := os.Stat(reqPath + ".exhausted"); err != nil {
+		t.Fatalf("terminal request should be quarantined (.exhausted): %v", err)
+	}
+}
+
+func TestMergeWatcher_UnfixableBlockerStillQuarantinesNoReEngage(t *testing.T) {
+	// 405 "not mergeable" is the conflict-family message the base mock returns —
+	// it must NOT trigger re-engagement.
+	srv := newMergeMockServer(t, http.StatusMethodNotAllowed, nil)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	var calls int
+	c.SetMergeReEngageHook(func(repo string, number int) bool { calls++; return true })
+
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	for i := 0; i < mergeRequestMaxAttempts; i++ {
+		c.ProcessMergeRequestsOnce(context.Background())
+	}
+	if calls != 0 {
+		t.Fatalf("unfixable blocker must not re-engage the fix loop, got %d calls", calls)
+	}
+	if _, err := os.Stat(reqPath + ".exhausted"); err != nil {
+		t.Fatalf("unfixable terminal failure should still quarantine: %v", err)
+	}
+}

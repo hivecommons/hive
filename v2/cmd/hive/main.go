@@ -1294,6 +1294,14 @@ func main() {
 		// SHA (no unpinned "merge whatever HEAD is now") AND the (repo, number)
 		// must appear in the governor's current merge-eligible list — so an
 		// injected agent cannot land an arbitrary reachable PR of its choosing.
+		// Fix #2: on a terminal merge failure caused by a failing REQUIRED check,
+		// re-engage the fix loop instead of abandoning the PR. The hook records a
+		// re-engagement under the escalation store's per-red-SHA cap (shared with
+		// the reaper so a PR is never double-dispatched beyond its budget) and
+		// returns whether the cap still allowed a dispatch. The PR is already
+		// surfaced into CI_FAILING by writeMergeEligible each eval tick; the hook
+		// is the loop-safety authority that decides when to STOP nudging.
+		ghClient.SetMergeReEngageHook(mergeReEngageHook(cfg))
 		ghClient.StartMergeRequestWatcher(ctx, bindMergeAuthz(agentMgr.AuthorizeMerge), nil)
 	}
 
@@ -4238,6 +4246,13 @@ func runEvalCycle(
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
 
+	// Fold this pass's CI state into the fix-loop staleness clock BEFORE any
+	// consumer reads it, so the claim-suppression guard (#3), the merge watcher
+	// (#2), and the stuck-PR reaper (#4) all key off a consistent, current
+	// signal within the same tick. This only records first-seen-red times; the
+	// distinct-SHA attempt counting still happens in runEscalationSweep below.
+	recordRedStaleness(cfg, actionable)
+
 	// Duplicate-PR guard: drop issues an open hive-authored PR already claims,
 	// before the governor counts the queue or the scheduler builds kicks. A
 	// restart storm otherwise re-offers the same issue on every fresh agent
@@ -4261,6 +4276,18 @@ func runEvalCycle(
 	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
 
 	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, logger)
+
+	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
+	// that is red on a required check AND stale (its red head SHA unchanged past
+	// RedPRStaleAfter). writeMergeEligible already surfaces every red PR into
+	// ci-failing.json (the CI_FAILING kick block), so the PR is already in the
+	// work list; the reaper's job is to guarantee a STALE one is not silently
+	// abandoned, to dedup the dispatch via the escalation store's re-engagement
+	// cap (so a permanently-red PR is not re-nudged every tick forever), and to
+	// stand down for PRs already escalated to a human. Composes with the merge
+	// watcher (#2): both go through the same TryReEngage cap, so the same PR is
+	// never double-dispatched within a red-SHA's budget.
+	reapStuckRedPRs(cfg, actionable, escalatedPRs, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -5079,6 +5106,128 @@ var (
 
 const escalationLedgerPath = "/data/metrics/fix-streaks.json"
 
+// getEscalationStore lazily loads the shared fix-loop ledger (staleness clock +
+// distinct-SHA attempt counts + re-engagement caps). It is the SINGLE
+// loop-safety/dedup authority shared by the re-engagement paths (#2 merge
+// watcher, #3 claim release, #4 reaper) and the human-escalation sweep, so they
+// all agree on which red PRs are stale, how many times each has been
+// re-nudged, and which have crossed the human-escalation threshold.
+func getEscalationStore() *escalation.Store {
+	escalationStoreOnce.Do(func() {
+		escalationStore = escalation.Load(escalationLedgerPath)
+	})
+	return escalationStore
+}
+
+// hivePRObservations projects the enumerated hive-authored PRs into escalation
+// observations (repo fully-qualified, Red == a required check failed). Shared by
+// recordRedStaleness and the reaper so both classify PRs identically. A PR is
+// "red" here strictly per HasFailingRequiredCheck — GENERIC check state, never a
+// specific linter or language.
+func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult) []escalation.Observation {
+	if actionable == nil {
+		return nil
+	}
+	fullRepo := func(repo string) string {
+		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+			return cfg.Project.Org + "/" + repo
+		}
+		return repo
+	}
+	isAgentAuthor := func(author string) bool {
+		return author == cfg.Project.AIAuthor || strings.HasSuffix(author, "[bot]")
+	}
+	var obs []escalation.Observation
+	for _, pr := range actionable.PRs.Items {
+		if !isAgentAuthor(pr.Author) {
+			continue
+		}
+		obs = append(obs, escalation.Observation{
+			Repo:    fullRepo(pr.Repo),
+			Number:  pr.Number,
+			HeadSHA: pr.HeadSHA,
+			Red:     pr.HasFailingRequiredCheck(),
+			Excerpt: pr.CIFailureExcerpt,
+		})
+	}
+	return obs
+}
+
+// recordRedStaleness updates the shared staleness clock (first-seen-red per red
+// head SHA) for every hive-authored PR in this pass. It must run before the
+// claim guard and the reaper so their StaleRed() reads reflect the current tick.
+// A disabled escalation subsystem skips it (the whole fix-loop machinery is off).
+func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult) {
+	if cfg.Escalation.Disabled || actionable == nil {
+		return
+	}
+	getEscalationStore().ObserveRed(hivePRObservations(cfg, actionable))
+}
+
+// mergeReEngageHook builds the Fix #2 re-engagement callback for the merge
+// watcher. It normalizes the repo, then records a re-engagement under the shared
+// escalation store's per-red-SHA cap. Passing an empty head SHA tells the store
+// to reuse the red head SHA it last observed for this PR (the eval cycle's
+// ObserveRed keeps it current), so the merge watcher does not need to re-fetch
+// the head. Returns false when the cap is exhausted, so the watcher can log that
+// the escalation path now owns the PR. A disabled escalation subsystem yields a
+// nil hook (watcher falls back to quarantine-only).
+func mergeReEngageHook(cfg *config.Config) github.MergeReEngageFunc {
+	if cfg.Escalation.Disabled {
+		return nil
+	}
+	fullRepo := func(repo string) string {
+		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+			return cfg.Project.Org + "/" + repo
+		}
+		return repo
+	}
+	return func(repo string, number int) bool {
+		// Empty head SHA: reuse the store's tracked current red SHA for this PR
+		// (do not reset the cap counter). The eval cycle records it via
+		// ObserveRed; if the store has never seen this PR red, TryReEngage still
+		// allows the first MaxReEngagements nudges.
+		return getEscalationStore().TryReEngage(fullRepo(repo), number, "")
+	}
+}
+
+// reapStuckRedPRs is Fix #4: the governor's backstop sweep. For each
+// hive-authored PR that is red on a required check AND stale (StaleRed) AND not
+// already escalated to a human, it records a re-engagement (deduped + capped via
+// the escalation store) and logs the fix dispatch. The PR is already present in
+// ci-failing.json via writeMergeEligible, so recording the re-engagement is what
+// guarantees a stale PR is treated as actionable rather than abandoned, while
+// the cap prevents re-firing every tick on a permanently-red, never-moving head.
+// Entirely generic: it keys only off check state + staleness, never a linter.
+func reapStuckRedPRs(cfg *config.Config, actionable *github.ActionableResult, escalatedPRs map[string]bool, logger *slog.Logger) {
+	if cfg.Escalation.Disabled || actionable == nil {
+		return
+	}
+	store := getEscalationStore()
+	for _, o := range hivePRObservations(cfg, actionable) {
+		if !o.Red {
+			continue
+		}
+		key := escalation.Key(o.Repo, o.Number)
+		if escalatedPRs[key] {
+			// Already handed to a human (needs-human label); kick builders skip
+			// it and we must not re-dispatch automated fixes.
+			continue
+		}
+		if !store.StaleRed(o.Repo, o.Number, o.HeadSHA) {
+			continue // still churning (fresh red SHA) — leave it to the fix agent
+		}
+		if !store.TryReEngage(o.Repo, o.Number, o.HeadSHA) {
+			// Re-engagement cap reached for this red SHA: stop nudging. The
+			// distinct-SHA escalation path owns it from here.
+			continue
+		}
+		logger.Info("reaper: re-dispatching fix for stuck red PR",
+			"repo", o.Repo, "pr", o.Number, "head_sha", o.HeadSHA,
+			"re_engagements", store.ReEngagements(o.Repo, o.Number))
+	}
+}
+
 // runEscalationSweep folds this enumeration pass into the fix-loop breaker
 // ledger and fires the one-time escalation actions (evidence comment +
 // needs-human label + ntfy) for any agent-authored PR that just crossed the
@@ -5098,9 +5247,7 @@ func runEscalationSweep(
 	if cfg.Escalation.Disabled || ghClient == nil || actionable == nil {
 		return escalated
 	}
-	escalationStoreOnce.Do(func() {
-		escalationStore = escalation.Load(escalationLedgerPath)
-	})
+	getEscalationStore()
 
 	fullRepo := func(repo string) string {
 		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
@@ -5339,7 +5486,50 @@ func applyDuplicatePRGuard(
 	if claimLedger == nil {
 		return
 	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
+	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+}
+
+// claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR
+// (prRepo, prNumber), report whether it is red on a required check AND stale.
+// It looks up the PR's live CI state + head SHA from this pass's enumeration and
+// consults the shared staleness clock. A PR not found in the enumeration, or one
+// that is green/pending, or one whose red head only just appeared, returns false
+// — so a HEALTHY claiming PR still suppresses its issue. Returns a nil func when
+// escalation is disabled, preserving the original unconditional-suppress
+// behavior. GENERIC: keys only off check state + staleness.
+func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult) github.RedStaleFunc {
+	if cfg.Escalation.Disabled || actionable == nil {
+		return nil
+	}
+	fullRepo := func(repo string) string {
+		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+			return cfg.Project.Org + "/" + repo
+		}
+		return repo
+	}
+	// Index this pass's PRs by bare-repo#number so a claim's PRRepo (which may
+	// be bare or "owner/repo") resolves regardless of prefix.
+	type prState struct {
+		red     bool
+		headSHA string
+		repo    string
+	}
+	index := map[string]prState{}
+	for _, pr := range actionable.PRs.Items {
+		index[fmt.Sprintf("%s#%d", bareRepoName(pr.Repo), pr.Number)] = prState{
+			red:     pr.HasFailingRequiredCheck(),
+			headSHA: pr.HeadSHA,
+			repo:    fullRepo(pr.Repo),
+		}
+	}
+	store := getEscalationStore()
+	return func(prRepo string, prNumber int) bool {
+		st, ok := index[fmt.Sprintf("%s#%d", bareRepoName(prRepo), prNumber)]
+		if !ok || !st.red {
+			return false // not enumerated, or healthy → keep suppressing
+		}
+		return store.StaleRed(st.repo, prNumber, st.headSHA)
+	}
 }
 
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, logger *slog.Logger) {

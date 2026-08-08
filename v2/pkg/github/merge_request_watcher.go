@@ -92,6 +92,52 @@ type MergeResponse struct {
 // A nil authorizer DENIES everything (fail closed).
 type MergeRequestAuthorizer func(agent string, fileUID int, repo string, number int, expectSHA string) error
 
+// MergeReEngageFunc is Fix #2's re-engagement hook (see Client.mergeReEngage).
+// Called when a merge attempt fails terminally because a REQUIRED CHECK failed
+// (classified from the merge error). It should surface the PR into the fix-loop
+// work set (CI_FAILING) and record the dispatch under a loop-safety cap keyed on
+// the PR's current red head SHA. It returns true when a fix was (re)dispatched
+// and false when the cap for this red SHA is exhausted — the watcher logs
+// accordingly. The repo is passed in whatever form the request used; the hook
+// normalizes. GENERIC: the caller keys only off check state + staleness.
+type MergeReEngageFunc func(repo string, number int) bool
+
+// SetMergeReEngageHook installs the Fix #2 re-engagement hook. Safe to call
+// once at startup before the watcher goroutine runs; a nil hook restores the
+// original quarantine-only behavior.
+func (c *Client) SetMergeReEngageHook(fn MergeReEngageFunc) {
+	if c == nil {
+		return
+	}
+	c.mergeReEngage = fn
+}
+
+// isRequiredCheckMergeBlocker classifies a merge-attempt error string as
+// "blocked by a failing/pending REQUIRED status check" versus a blocker a fix
+// agent cannot resolve by pushing code (a true merge conflict or a permission
+// error). GitHub returns 405 with a message like "Required status check ... is
+// expected" / "... has not succeeded" when protection gates the merge. This is
+// deliberately a coarse, GENERIC string match on GitHub's own protection
+// vocabulary — it names NO specific check, linter, or language, so it works for
+// any project's branch-protection rules. A conflict ("not mergeable", "merge
+// conflict") or an auth error ("not accessible", "permission", "403") is NOT a
+// re-engageable check failure and keeps the original quarantine path.
+func isRequiredCheckMergeBlocker(errMsg string) bool {
+	m := strings.ToLower(errMsg)
+	// Unfixable-by-code blockers take precedence: never re-engage these.
+	for _, deny := range []string{"merge conflict", "not accessible by integration", "permission", "403", "must be a member"} {
+		if strings.Contains(m, deny) {
+			return false
+		}
+	}
+	for _, want := range []string{"required status check", "required status checks", "changes must be made through a pull request", "expected", "has not succeeded", "checks have not"} {
+		if strings.Contains(m, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // StartMergeRequestWatcher runs a loop that merges PRs for request files dropped
 // in MergeRequestDir. It returns immediately; the loop runs until ctx is
 // cancelled. A nil client (no GitHub creds) makes this a no-op. authz enforces
@@ -204,9 +250,33 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		c.writeMergeResult(path, resp)
 		if attempts >= mergeRequestMaxAttempts {
 			// Terminal: a PR that still won't merge after N tries is blocked by
-			// something a retry can't fix (failing required check, true conflict,
-			// permission). Quarantine so it stops burning API budget; the result
-			// file records why, and the next kick can re-request if state changes.
+			// something a retry can't fix. Fix #2: classify WHY. If the blocker
+			// is a FAILED REQUIRED CHECK, do not just abandon it — re-engage the
+			// fix loop (surface it into CI_FAILING via the hook) so an agent is
+			// dispatched to fix the red check and push a new commit. Only a
+			// genuinely-unfixable blocker (true conflict / permission) keeps the
+			// quarantine-and-forget path. The hook's own cap prevents an infinite
+			// re-engagement loop on a permanently-red PR.
+			if c.mergeReEngage != nil && isRequiredCheckMergeBlocker(err.Error()) {
+				reEngaged := c.mergeReEngage(req.Repo, req.Number)
+				// Quarantine the MERGE request either way (the merge cannot
+				// succeed until the check goes green), but record that the fix
+				// loop owns the PR now rather than that it was abandoned.
+				_ = os.Rename(path, path+".exhausted")
+				if reEngaged {
+					c.logger.Info("merge-request watcher: merge blocked by failing required check — re-engaged fix loop",
+						slog.String("repo", req.Repo), slog.Int("number", req.Number),
+						slog.Int("attempts", attempts), slog.String("error", err.Error()))
+				} else {
+					c.logger.Warn("merge-request watcher: merge blocked by failing required check — re-engagement cap reached, escalation path owns it",
+						slog.String("repo", req.Repo), slog.Int("number", req.Number),
+						slog.Int("attempts", attempts), slog.String("error", err.Error()))
+				}
+				return
+			}
+			// Unfixable blocker (true conflict / permission) — quarantine so it
+			// stops burning API budget; the result file records why, and the
+			// next kick can re-request if state changes.
 			_ = os.Rename(path, path+".exhausted")
 			c.logger.Warn("merge-request watcher: merge failed, giving up after max attempts",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number),

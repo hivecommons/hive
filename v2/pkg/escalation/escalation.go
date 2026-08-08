@@ -29,6 +29,26 @@ const DefaultThreshold = 3
 // without limit on a pathological PR.
 const maxTrackedSHAs = 20
 
+// RedPRStaleAfter is how long a PR's CURRENT red head SHA must have gone
+// unchanged before the re-engagement machinery treats it as "stuck" (rather
+// than "still churning"). It is a zero-API staleness signal: we record when
+// each red head SHA was first seen and compare to now — no GitHub commit-date
+// fetch is needed. Ten minutes is long enough that a fix agent actively pushing
+// new commits (each a new SHA, each resetting the clock) is never mistaken for
+// a stalled PR, but short enough that a genuinely abandoned red PR is re-engaged
+// within a couple of governor ticks. This keys ONLY off GitHub check state +
+// commit staleness — it is entirely language/linter-agnostic.
+const RedPRStaleAfter = 10 * time.Minute
+
+// MaxReEngagements bounds how many times the re-engagement machinery (merge
+// watcher #2 / governor reaper #4) may re-dispatch a fix for the SAME red head
+// SHA of a PR before it stops and leaves the PR to the distinct-SHA escalation
+// path. Without this cap a permanently-red PR whose head never moves would be
+// re-dispatched every tick forever. Distinct from DefaultThreshold, which
+// counts distinct red SHAs (real fix attempts); this counts re-nudges of an
+// unchanged red SHA.
+const MaxReEngagements = 3
+
 // Entry is the persisted per-PR attempt record.
 type Entry struct {
 	// RedSHAs are the distinct head SHAs observed with failing CI, oldest
@@ -42,6 +62,20 @@ type Entry struct {
 	// pass failed to fetch annotations.
 	LastExcerpt string    `json:"last_excerpt,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at"`
+
+	// CurRedSHA is the head SHA of the CURRENT red observation. FirstRedAt is
+	// when that SHA was first seen red. Together they are the zero-API
+	// staleness signal used by the re-engagement paths (#2/#3/#4): a red SHA
+	// unchanged for longer than RedPRStaleAfter is "stale/stuck". A new red
+	// SHA (an agent pushed a fix that is still red) resets both, so an actively
+	// worked PR never reads as stale.
+	CurRedSHA  string    `json:"cur_red_sha,omitempty"`
+	FirstRedAt time.Time `json:"first_red_at,omitempty"`
+	// ReEngagements counts how many times a fix has been re-dispatched for the
+	// CURRENT red SHA (CurRedSHA). Reset to 0 whenever CurRedSHA changes or the
+	// PR goes green. The re-engagement cap (MaxReEngagements) reads this so a
+	// permanently-red, never-moving PR is not nudged forever.
+	ReEngagements int `json:"re_engagements,omitempty"`
 }
 
 // Store is the on-PVC attempt ledger. All methods are safe for concurrent use.
@@ -49,6 +83,9 @@ type Store struct {
 	mu      sync.Mutex
 	path    string
 	entries map[string]*Entry // key: "repo#number"
+	// clock is the time source; nil means time.Now().UTC(). Overridable via
+	// SetClock so staleness/re-engagement tests are deterministic.
+	clock func() time.Time
 }
 
 // Load reads the ledger at path, returning an empty usable store on any error
@@ -121,10 +158,19 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 				e.RedSHAs = e.RedSHAs[len(e.RedSHAs)-maxTrackedSHAs:]
 			}
 		}
+		// Maintain the zero-API staleness clock: a change of red head SHA means
+		// the branch moved (a fix was pushed, still red) — reset the first-seen
+		// time and the per-SHA re-engagement counter so a freshly-pushed red SHA
+		// is treated as "just started", not stale.
+		if o.HeadSHA != "" && o.HeadSHA != e.CurRedSHA {
+			e.CurRedSHA = o.HeadSHA
+			e.FirstRedAt = s.now()
+			e.ReEngagements = 0
+		}
 		if o.Excerpt != "" {
 			e.LastExcerpt = o.Excerpt
 		}
-		e.UpdatedAt = time.Now().UTC()
+		e.UpdatedAt = s.now()
 		results[key] = Result{
 			Attempts:    len(e.RedSHAs),
 			Escalated:   e.Escalated,
@@ -169,6 +215,130 @@ func (s *Store) Attempts(repo string, number int) int {
 	defer s.mu.Unlock()
 	if e := s.entries[Key(repo, number)]; e != nil {
 		return len(e.RedSHAs)
+	}
+	return 0
+}
+
+// nowFn is the store's clock, overridable for tests via SetClock.
+func (s *Store) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now().UTC()
+}
+
+// SetClock overrides the store's time source. Intended for tests so staleness
+// can be exercised deterministically without sleeping.
+func (s *Store) SetClock(fn func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = fn
+}
+
+// ObserveRed folds a set of CI observations into the staleness clock WITHOUT
+// touching the distinct-SHA attempt count that drives human escalation. It
+// records the first-seen time of each PR's current red head SHA (resetting it
+// when the SHA changes) and clears the record for PRs that went green. This is
+// called early in the eval cycle so the claim-suppression guard (#3), the merge
+// watcher (#2), and the reaper (#4) all read a consistent, current staleness
+// signal within the same tick. Idempotent: re-observing the same red SHA leaves
+// FirstRedAt unchanged.
+func (s *Store) ObserveRed(obs []Observation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for _, o := range obs {
+		key := Key(o.Repo, o.Number)
+		if !o.Red {
+			// Green now: drop the staleness/re-engagement record so a future
+			// regression starts a fresh clock. (Attempt history is managed by
+			// Sweep, not here.)
+			if e := s.entries[key]; e != nil {
+				e.CurRedSHA = ""
+				e.FirstRedAt = time.Time{}
+				e.ReEngagements = 0
+			}
+			continue
+		}
+		if o.HeadSHA == "" {
+			continue
+		}
+		e := s.entries[key]
+		if e == nil {
+			e = &Entry{}
+			s.entries[key] = e
+		}
+		if o.HeadSHA != e.CurRedSHA {
+			e.CurRedSHA = o.HeadSHA
+			e.FirstRedAt = now
+			e.ReEngagements = 0
+		}
+		if o.Excerpt != "" {
+			e.LastExcerpt = o.Excerpt
+		}
+		e.UpdatedAt = now
+	}
+	s.saveLocked()
+}
+
+// StaleRed reports whether the PR's CURRENT red head SHA (headSHA) has been
+// unchanged and red for at least RedPRStaleAfter. It is the single source of
+// truth for "this red PR is stuck, not churning". A PR whose headSHA does not
+// match the tracked CurRedSHA (the branch moved and we have not observed it yet)
+// is treated as NOT stale — fail safe toward leaving healthy/fresh PRs alone.
+// Keys only off check state + commit staleness; nothing language-specific.
+func (s *Store) StaleRed(repo string, number int, headSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	if e == nil || e.CurRedSHA == "" || headSHA == "" || e.CurRedSHA != headSHA {
+		return false
+	}
+	if e.FirstRedAt.IsZero() {
+		return false
+	}
+	return s.now().Sub(e.FirstRedAt) >= RedPRStaleAfter
+}
+
+// TryReEngage atomically decides whether the re-engagement paths (#2/#4) may
+// dispatch another fix for the PR's current red head SHA, and if so records the
+// attempt. It returns true at most MaxReEngagements times per red SHA: the cap
+// is what stops a permanently-red, never-moving PR from being nudged every tick
+// forever. A changed head SHA resets the counter (via ObserveRed/Sweep), so a
+// PR that is actively being fixed is never blocked by the cap. Returns false
+// once the cap is reached (the distinct-SHA escalation path then owns the PR).
+func (s *Store) TryReEngage(repo string, number int, headSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := Key(repo, number)
+	e := s.entries[key]
+	if e == nil {
+		e = &Entry{}
+		s.entries[key] = e
+	}
+	// If the tracked SHA differs from the observed head, sync to the observed
+	// head and reset the counter — the branch moved.
+	if headSHA != "" && headSHA != e.CurRedSHA {
+		e.CurRedSHA = headSHA
+		e.FirstRedAt = s.now()
+		e.ReEngagements = 0
+	}
+	if e.ReEngagements >= MaxReEngagements {
+		return false
+	}
+	e.ReEngagements++
+	e.UpdatedAt = s.now()
+	s.saveLocked()
+	return true
+}
+
+// ReEngagements returns how many re-engagements have fired for the PR's current
+// red SHA. Exposed for tests and observability.
+func (s *Store) ReEngagements(repo string, number int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.entries[Key(repo, number)]; e != nil {
+		return e.ReEngagements
 	}
 	return 0
 }

@@ -298,7 +298,7 @@ func TestFilterClaimedIssues(t *testing.T) {
 				Count: len(tt.items),
 				Items: tt.items,
 			}}
-			got := FilterClaimedIssues(result, ledger, testLogger())
+			got := FilterClaimedIssues(result, ledger, nil, testLogger())
 			if got != tt.wantSuppressed {
 				t.Fatalf("suppressed = %d, want %d", got, tt.wantSuppressed)
 			}
@@ -318,11 +318,11 @@ func TestFilterClaimedIssues(t *testing.T) {
 }
 
 func TestFilterClaimedIssuesNilSafety(t *testing.T) {
-	if got := FilterClaimedIssues(nil, nil, testLogger()); got != 0 {
+	if got := FilterClaimedIssues(nil, nil, nil, testLogger()); got != 0 {
 		t.Errorf("nil result/ledger should be a no-op, got %d", got)
 	}
 	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
-	if got := FilterClaimedIssues(&ActionableResult{}, ledger, nil); got != 0 {
+	if got := FilterClaimedIssues(&ActionableResult{}, ledger, nil, nil); got != 0 {
 		t.Errorf("empty ledger should suppress nothing, got %d", got)
 	}
 }
@@ -710,7 +710,7 @@ func TestApplyDuplicatePRGuardFailClosed(t *testing.T) {
 	result := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{
 		{Repo: "spyre-inference", Number: 100},
 	}}}
-	if got := ApplyDuplicatePRGuard(context.Background(), okClient, ledger, identity, result, testLogger()); got != 1 {
+	if got := ApplyDuplicatePRGuard(context.Background(), okClient, ledger, identity, result, nil, testLogger()); got != 1 {
 		t.Fatalf("cycle 1 suppressed = %d, want 1", got)
 	}
 
@@ -730,7 +730,7 @@ func TestApplyDuplicatePRGuardFailClosed(t *testing.T) {
 	result2 := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{
 		{Repo: "spyre-inference", Number: 100},
 	}}}
-	got := ApplyDuplicatePRGuard(context.Background(), failClient, restarted, identity, result2, testLogger())
+	got := ApplyDuplicatePRGuard(context.Background(), failClient, restarted, identity, result2, nil, testLogger())
 	if got != 1 {
 		t.Fatalf("fail-closed: suppressed = %d, want 1 (API down must NOT re-offer the claimed issue)", got)
 	}
@@ -749,7 +749,7 @@ func TestApplyDuplicatePRGuardClosedPRReleasesClaim(t *testing.T) {
 	okClient := NewClientForTest(okSrv.URL, "torch-spyre", []string{"spyre-inference"}, testLogger())
 	ledger, _ := LoadClaimLedger(path, testLogger())
 	ApplyDuplicatePRGuard(context.Background(), okClient, ledger,
-		identity, &ActionableResult{Issues: IssueResult{Items: []Issue{{Repo: "spyre-inference", Number: 100}}}}, testLogger())
+		identity, &ActionableResult{Issues: IssueResult{Items: []Issue{{Repo: "spyre-inference", Number: 100}}}}, nil, testLogger())
 
 	// PR #423 is now closed without merging, so the repo returns no open PRs.
 	emptySrv := prClaimServer(t, []map[string]any{}, http.StatusOK)
@@ -758,7 +758,7 @@ func TestApplyDuplicatePRGuardClosedPRReleasesClaim(t *testing.T) {
 	result := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{
 		{Repo: "spyre-inference", Number: 100},
 	}}}
-	if got := ApplyDuplicatePRGuard(context.Background(), emptyClient, ledger, identity, result, testLogger()); got != 0 {
+	if got := ApplyDuplicatePRGuard(context.Background(), emptyClient, ledger, identity, result, nil, testLogger()); got != 0 {
 		t.Fatalf("suppressed = %d, want 0 (a closed PR must release its claim)", got)
 	}
 	if result.Issues.Count != 1 {
@@ -773,13 +773,63 @@ func TestApplyDuplicatePRGuardClosedPRReleasesClaim(t *testing.T) {
 }
 
 func TestApplyDuplicatePRGuardNilInputs(t *testing.T) {
-	if got := ApplyDuplicatePRGuard(context.Background(), nil, nil, HiveIdentity{}, nil, testLogger()); got != 0 {
+	if got := ApplyDuplicatePRGuard(context.Background(), nil, nil, HiveIdentity{}, nil, nil, testLogger()); got != 0 {
 		t.Errorf("nil ledger/result should be a no-op, got %d", got)
 	}
 	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
 	// A nil client must fail closed (empty ledger => nothing to suppress), not panic.
 	if got := ApplyDuplicatePRGuard(context.Background(), nil, ledger, HiveIdentity{AIAuthor: "x"},
-		&ActionableResult{}, testLogger()); got != 0 {
+		&ActionableResult{}, nil, testLogger()); got != 0 {
 		t.Errorf("nil client should suppress nothing, got %d", got)
+	}
+}
+
+// TestFilterClaimedIssues_RedStaleReleases is Fix #3: a claimed issue whose
+// claiming PR is red+stale is RELEASED (kept actionable), while a healthy
+// claiming PR still suppresses its issue. GENERIC: the predicate keys only off
+// check state + staleness, supplied by the caller.
+func TestFilterClaimedIssues_RedStaleReleases(t *testing.T) {
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+	// Two claims: PR #101 claims issue #1 (red+stale), PR #202 claims issue #2
+	// (healthy). Both issues are otherwise actionable.
+	ledger.Reconcile([]IssueClaim{
+		{Repo: "r", Issue: 1, PRNumber: 101, PRRepo: "r", PRURL: "u1", PRAuthor: "bot"},
+		{Repo: "r", Issue: 2, PRNumber: 202, PRRepo: "r", PRURL: "u2", PRAuthor: "bot"},
+	}, true)
+
+	result := &ActionableResult{Issues: IssueResult{Count: 2, Items: []Issue{
+		{Repo: "r", Number: 1, Title: "one"},
+		{Repo: "r", Number: 2, Title: "two"},
+	}}}
+
+	// redStale reports true only for the red+stale claiming PR #101.
+	redStale := func(prRepo string, prNumber int) bool {
+		return prRepo == "r" && prNumber == 101
+	}
+
+	suppressed := FilterClaimedIssues(result, ledger, redStale, testLogger())
+	// Only issue #2 (healthy claiming PR) is suppressed; #1 is released.
+	if suppressed != 1 {
+		t.Fatalf("suppressed = %d, want 1 (only the healthy-claim issue)", suppressed)
+	}
+	if result.Issues.Count != 1 || result.Issues.Items[0].Number != 1 {
+		t.Fatalf("issue #1 must be released (kept actionable); got %+v", result.Issues.Items)
+	}
+}
+
+// TestFilterClaimedIssues_NilRedStalePreservesSuppression proves the release
+// valve is opt-in: a nil predicate reproduces the original unconditional
+// suppression, so healthy deployments are byte-for-byte unaffected.
+func TestFilterClaimedIssues_NilRedStalePreservesSuppression(t *testing.T) {
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+	ledger.Reconcile([]IssueClaim{
+		{Repo: "r", Issue: 1, PRNumber: 101, PRRepo: "r", PRURL: "u1", PRAuthor: "bot"},
+	}, true)
+	result := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{{Repo: "r", Number: 1}}}}
+	if got := FilterClaimedIssues(result, ledger, nil, testLogger()); got != 1 {
+		t.Fatalf("nil predicate must suppress unconditionally, got %d", got)
+	}
+	if result.Issues.Count != 0 {
+		t.Fatalf("claimed issue must be suppressed with nil predicate; got %+v", result.Issues.Items)
 	}
 }
