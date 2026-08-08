@@ -3048,6 +3048,7 @@
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
       <h2 style="margin:0; cursor:pointer" class="section-label section-header-toggle" onclick="toggleSection('agents-section')"><span class="section-chevron">▼</span> Agents</h2>
       <button id="agents-compact-all-btn" onclick="event.stopPropagation();toggleAllAgentsCompact()" style="font-size:0.7rem;padding:2px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer" title="Toggle all agent cards between compact and expanded view"></button>
+      <button id="fleet-breaker-btn" onclick="event.stopPropagation();toggleFleetBreaker()" style="display:none;font-size:0.7rem;font-weight:600;padding:2px 12px;border-radius:4px;cursor:pointer;margin-left:auto" title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."></button>
     </div>
     <div class="section-body">
       <div class="agents" id="agents"></div>
@@ -3481,6 +3482,65 @@
       const btn = document.getElementById('agents-compact-all-btn');
       if (btn) btn.textContent = localStorage.getItem(ALL_AGENTS_COMPACT_KEY) === '1' ? '⊞ Expand All' : '⊟ Compact All';
     }
+
+    // ── Fleet breaker (kill-switch) ──
+    // A single control that pauses every running agent at once ("engage") and
+    // restores exactly the agents it paused ("release"). On-demand agents and
+    // any agent the operator paused themselves are never touched by a release —
+    // that invariant is enforced server-side (Manager.EngageBreaker/
+    // ReleaseBreaker); the UI only reflects and triggers it.
+    let _fleetBreakerEngaged = false;
+    function _renderFleetBreaker(engaged, agents) {
+      _fleetBreakerEngaged = !!engaged;
+      const btn = document.getElementById('fleet-breaker-btn');
+      if (!btn) return;
+      btn.style.display = '';
+      const count = (agents || []).length;
+      if (_fleetBreakerEngaged) {
+        btn.textContent = '▶ Release (breaker)';
+        btn.style.background = 'var(--red, #ef4444)';
+        btn.style.color = '#fff';
+        btn.style.border = '1px solid var(--red, #ef4444)';
+        btn.title = 'Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
+          ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.';
+      } else {
+        btn.textContent = '⏸ Pause All (breaker)';
+        btn.style.background = 'var(--surface)';
+        btn.style.color = 'var(--muted)';
+        btn.style.border = '1px solid var(--border)';
+        btn.title = 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
+      }
+      // When engaged, make it obvious the whole fleet is held.
+      const section = document.getElementById('agents-section');
+      if (section) section.style.outline = _fleetBreakerEngaged ? '2px solid var(--red, #ef4444)' : '';
+    }
+    async function refreshFleetBreakerState() {
+      try {
+        const res = await fetch('/api/breaker');
+        const data = await res.json();
+        if (data && data.ok) _renderFleetBreaker(data.engaged, data.agents);
+      } catch (e) { /* leave last-known state on transient error */ }
+    }
+    async function toggleFleetBreaker() {
+      const engaging = !_fleetBreakerEngaged;
+      const path = engaging ? '/api/breaker/engage' : '/api/breaker/release';
+      const btn = document.getElementById('fleet-breaker-btn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const data = await res.json();
+        if (!data.ok) { showToast('Fleet breaker failed: ' + (data.error || 'unknown'), 'error'); return; }
+        const n = (data.agents || []).length;
+        if (engaging) showToast('Fleet breaker engaged — paused ' + n + ' agent' + (n === 1 ? '' : 's'), 'success');
+        else showToast('Fleet breaker released — resumed ' + n + ' agent' + (n === 1 ? '' : 's'), 'success');
+        _renderFleetBreaker(data.engaged, data.agents);
+      } catch (e) {
+        showToast('Fleet breaker failed: ' + e.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+    document.addEventListener('DOMContentLoaded', refreshFleetBreakerState);
 
     // ── Layout mode (Dark / Light) ──
     const LAYOUT_KEY = 'hive-layout-mode';
@@ -11152,6 +11212,9 @@ function burnAreaChart() {
         }
       }
       window._lastBudget = data.budget || {};
+      // Keep the fleet-breaker toggle in sync with server truth on every status
+      // refresh (another operator may have engaged it, or a restart restored it).
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       updateInferenceModelsFromSSE(data.inferenceBackends);
       if (data.agents) injectAgentStyles(data.agents);
       // Display the Hive ID in header badges
