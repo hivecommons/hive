@@ -191,9 +191,21 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
-			if queuedBy := parseHiveQueueReview(review.GetBody()); queuedBy != "" {
-				latest = queuedBy
+			queuedBy := parseHiveQueueReview(review.GetBody())
+			if queuedBy == "" {
+				continue
 			}
+			// Verify the username embedded in the review body matches the actual
+			// reviewer's GitHub login. Without this check a collaborator could post
+			// a forged body (e.g. "Approved by @someone-else …") to corrupt the
+			// audit trail or circumvent the self-merge ban in trySweepQueuedPR.
+			reviewerLogin := review.GetUser().GetLogin()
+			if !strings.EqualFold(reviewerLogin, queuedBy) {
+				c.warn("automerge: ignoring review with mismatched reviewer identity",
+					"reviewer", reviewerLogin, "body_claims", queuedBy)
+				continue
+			}
+			latest = queuedBy
 		}
 		if resp.NextPage == 0 {
 			break
