@@ -443,6 +443,10 @@ func (g *Governor) updateCadences() {
 				continue
 			}
 			entry.Interval = dur
+			if ac, ok := g.agents[agentName]; ok && ac.ReplicaIndex > 1 && ac.ReplicaCount > 1 && g.state.LastKick[agentName].IsZero() {
+				offset := time.Duration(int64(dur) * int64(ac.ReplicaIndex-1) / int64(ac.ReplicaCount))
+				g.state.LastKick[agentName] = g.now().Add(-dur + offset)
+			}
 		}
 		cadences[agentName] = entry
 	}
@@ -453,9 +457,18 @@ func (g *Governor) updateCadences() {
 // resolveCadence returns the configured cadence string for one agent in one
 // mode, falling back to the idle mode's entry when the mode defines none.
 func (g *Governor) resolveCadence(modeName, agentName string) (config.Cadence, bool) {
+	baseName := agentName
+	if ac, ok := g.agents[agentName]; ok && ac.ReplicaOf != "" {
+		baseName = ac.ReplicaOf
+	}
 	if mode, ok := g.cfg.Modes[modeName]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c, true
+		}
+		if baseName != agentName {
+			if c, ok := mode.Cadences[baseName]; ok {
+				return c, true
+			}
 		}
 	}
 	if modeName == idleModeKey {
@@ -464,6 +477,11 @@ func (g *Governor) resolveCadence(modeName, agentName string) (config.Cadence, b
 	if mode, ok := g.cfg.Modes[idleModeKey]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c, true
+		}
+		if baseName != agentName {
+			if c, ok := mode.Cadences[baseName]; ok {
+				return c, true
+			}
 		}
 	}
 	return "", false

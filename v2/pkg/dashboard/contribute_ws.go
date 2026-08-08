@@ -257,6 +257,7 @@ type WSMessage struct {
 type WSTaskAssign struct {
 	TaskID string `json:"task_id"`
 	Kind   string `json:"kind"`
+	Role   string `json:"role,omitempty"`
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
@@ -1725,6 +1726,19 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			requestedRole := normalizeAgentRole(msg.Role)
+			probeContributor := &ContributorConnection{profile: profile}
+			if requestedRole != "" {
+				if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
+					_ = sendJSON(conn, WSMessage{Type: "auth_failed", Reason: reason, Role: requestedRole})
+					h.logger.Warn("[contribute-ws] agent role claim rejected",
+						"username", profile.GitHubUsername, "tier", profile.TrustTier,
+						"role", requestedRole, "reason", reason)
+					conn.Close()
+					return
+				}
+			}
+
 			profile.LastActive = time.Now().UTC().Format(time.RFC3339)
 			if msg.CLIBackend != "" {
 				profile.CLIBackend = msg.CLIBackend
@@ -1735,8 +1749,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if profile.AvatarURL == "" {
 				profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
 			}
-			if msg.Role != "" {
-				profile.PreferredRole = msg.Role
+			if requestedRole != "" {
+				profile.PreferredRole = requestedRole
 			}
 			_ = saveContributorProfile(profile)
 
@@ -1764,7 +1778,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				profile:      profile,
 				cliBackend:   msg.CLIBackend,
 				model:        msg.Model,
-				role:         msg.Role,
+				role:         requestedRole,
 				connectedAt:  time.Now(),
 				lastPong:     time.Now(),
 				capabilities: caps,
@@ -1796,7 +1810,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				ContributorID: profile.ContributorID,
 				TrustTier:     profile.TrustTier,
 				Permissions:   perms,
-				Role:          msg.Role,
+				Role:          requestedRole,
 				// #2567: advertise the protocol version and the server capability
 				// set so a client can learn what this deployed hub supports without
 				// probing. Additive — an existing client ignores these unknown fields.
@@ -1811,9 +1825,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				"username", profile.GitHubUsername,
 				"tier", profile.TrustTier,
 				"cli", msg.CLIBackend,
-				"role", msg.Role,
+				"role", requestedRole,
 			)
-			h.addActivity(profile.GitHubUsername, "joined", msg.Role, msg.CLIBackend, msg.Model, "")
+			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, "")
 
 			select {
 			case authDone <- contributor:
@@ -1900,6 +1914,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				taskDesc := fmt.Sprintf("%s %s#%d: %s", task.Kind, task.Repo, task.Number, task.Title)
+				if task.Role != "" {
+					taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
+				}
 				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, taskDesc)
 				h.logger.Info("[contribute-ws] task assigned",
 					"username", contributor.profile.GitHubUsername,
@@ -1969,6 +1986,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					contributor.currentTask = &WSTaskAssign{
 						TaskID: msg.TaskID,
 						Kind:   msg.Kind,
+						Role:   msg.Role,
 						// #2644: canonicalise the CLIENT-supplied repo to the same
 						// repo.Full form selectTask assigned it under, so the
 						// activeIssues double-assign guard and the failure/completion
@@ -2612,6 +2630,9 @@ const (
 	// all filters (cooldown, disabled repos, allow/deny, skip-assigned, own-work),
 	// the candidate set is empty. There is simply nothing admissible to do now.
 	taskUnavailableNoMatchingWork = "no_matching_work"
+	// taskUnavailableRoleNotPermitted: the relay requested a spoke agent role, but
+	// the hive config/tier/grant policy does not allow this contributor to claim it.
+	taskUnavailableRoleNotPermitted = "agent_role_not_permitted"
 )
 
 // identityOf returns the stable key that groups a contributor's live
@@ -2808,6 +2829,18 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		// trivial and harmless (#2546).
 		return h.taskUnavailable(taskUnavailableHubNotReady)
 	}
+
+	requestedRole := ""
+	if c != nil {
+		requestedRole = normalizeAgentRole(c.role)
+	}
+	if requestedRole != "" {
+		if ok, reason := h.roleClaimAllowed(c, requestedRole); !ok {
+			h.logger.Warn("[contribute-ws] refusing task: agent role not permitted",
+				"username", identityOf(c), "role", requestedRole, "reason", reason)
+			return h.taskUnavailable(taskUnavailableRoleNotPermitted)
+		}
+	}
 	if h.server.deps != nil && h.server.deps.Config != nil && h.server.deps.Config.Hub.ContributeSuspended {
 		// #2546: the operator suspended the whole contribute queue. Previously this
 		// returned a bare nil and the contributor waited in silence, unable to tell
@@ -2989,6 +3022,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		title    string
 		url      string
 		labels   []string
+		lane     string
 		isOwn    bool
 		// interestMatch is true when the issue carries a label the contributor has
 		// opted into (#2637). It is a SOFT priority tier below own-work: matching
@@ -3073,8 +3107,12 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
+			lane, _ := issue["lane"].(string)
 			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
+			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {
+				continue
+			}
 
 			// Apply the title / author / label contribute filters. Each is a
 			// single list plus a mode (allow = only matching pass; deny = matching
@@ -3110,6 +3148,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
 				labels: labels,
+				lane:   lane,
 				// "Own work" is the only #2390 signal available today: the
 				// candidate was authored by the connected contributor. When the
 				// username is unknown (empty), nothing is own → we keep today's
@@ -3218,6 +3257,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// itself carries the #2545 workspace-clone instruction (real checkout into
 	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
 	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
+	if requestedRole != "" {
+		prompt = buildRoleTaskPrompt(chosen.repoFull, chosen.number, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
+	}
 
 	// #2568: mint a fresh assignment generation for this task. It is stamped on the
 	// connection, shipped in task_assign below, and echoed back by the relay so a
@@ -3228,6 +3270,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.currentTask = &WSTaskAssign{
 		TaskID: taskID,
 		Kind:   "issue",
+		Role:   requestedRole,
 		Repo:   chosen.repoFull,
 		Number: chosen.number,
 		Title:  chosen.title,
@@ -3268,6 +3311,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		TaskID:  taskID,
 		TaskGen: gen,
 		Kind:    "issue",
+		Role:    requestedRole,
 		Repo:    chosen.repoFull,
 		Number:  chosen.number,
 		Title:   chosen.title,

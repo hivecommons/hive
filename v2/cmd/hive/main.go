@@ -2422,6 +2422,22 @@ func main() {
 		// fields; a fetch failure keeps each agent's baked definition. Runs before
 		// initAgentConfigDrivenSystems so downstream systems see the merged config.
 		defsrc.ApplyToConfig(context.Background(), cfg, definitionResolver, logger)
+		if err := cfg.ExpandAgentReplicas(); err != nil {
+			logger.Warn("failed to expand agent replicas after config reload", "error", err)
+		}
+		addedAgents := agentMgr.ReconcileAgents(cfg.EnabledAgents())
+		for _, added := range addedAgents {
+			if ac, ok := cfg.Agents[added]; ok && !ac.OnDemand {
+				go func(name string) {
+					logger.Info("audit: starting reconciled agent", "name", name, "trigger", "config-reload")
+					if err := agentMgr.Start(ctx, name); err != nil {
+						logger.Warn("failed to start reconciled agent", "name", name, "error", err)
+					}
+				}(added)
+			}
+		}
+		gov.UpdateAgents(cfg.EnabledAgents())
+
 		initAgentConfigDrivenSystems(cfg)
 
 		// Rebuild GitHub App auth when its identity changed. AppAuth captures

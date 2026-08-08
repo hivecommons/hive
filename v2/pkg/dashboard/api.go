@@ -2283,6 +2283,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
 			"cavemanMode":      agentCfg.CavemanMode,
+			"replicas":         agentCfg.Replicas,
 		},
 		"cadences":       cadences,
 		"models":         models,
@@ -2772,6 +2773,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.StaleTimeout = int(f)
 		}
 	}
+	if v, ok := body["replicas"]; ok {
+		if f, ok := v.(float64); ok {
+			agentCfg.Replicas = int(f)
+		}
+	}
 	if v, ok := body["restartStrategy"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.RestartStrategy = sanitizeString(s)
@@ -2960,19 +2966,63 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	previousAgents := map[string]struct{}{}
+	if s.deps.AgentMgr != nil {
+		for existing := range s.deps.AgentMgr.AllStatuses() {
+			previousAgents[existing] = struct{}{}
+		}
+	}
 	if err := s.mutateConfig(func(candidate *config.Config) error {
 		if _, exists := candidate.Agents[name]; !exists {
 			return fmt.Errorf("agent %s no longer exists", name)
 		}
 		candidate.Agents[name] = agentCfg
+		if err := candidate.ExpandAgentReplicas(); err != nil {
+			return err
+		}
 		return nil
 	}); err != nil {
 		jsonError(w, "failed to persist agent config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	committed := s.configSnapshot()
+	if committed == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if s.deps.AgentMgr != nil {
+		for added, ac := range committed.Agents {
+			if _, existed := previousAgents[added]; existed || !ac.Enabled || ac.OnDemand {
+				continue
+			}
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
+				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
+			}
+		}
+	}
+	if baseCfg, ok := committed.Agents[name]; ok {
+		agentCfg = baseCfg
+	}
+
+	// Sync the updated config into the agent process so that status builders
+	// (which read from AgentProcess.Config, not the global config map) reflect
+	// changes like display_name immediately. Replicas materialized by the
+	// coordinator are already present in the manager before this point.
+	if s.deps.AgentMgr != nil {
+		if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+			s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+		}
+		for replica, replicaCfg := range committed.Agents {
+			if replicaCfg.ReplicaOf != name {
+				continue
+			}
+			if err := s.deps.AgentMgr.UpdateConfig(replica, replicaCfg); err != nil {
+				s.logger.Warn("failed to sync replica config to process", "agent", replica, "error", err)
+			}
+		}
+	}
 
 	s.deps.AgentMgr.SyncModeFiles(s.deps.AgentMgr.GetACMMLevel())
-	committed := s.configSnapshot()
 	// Sync the committed config into the agent process so status builders reflect
 	// fields such as display_name and repository-backed prompt metadata immediately.
 	if err := s.deps.AgentMgr.UpdateConfig(name, committed.Agents[name]); err != nil {
