@@ -844,6 +844,9 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 	if len(cfg.Governor.Labels.Exempt) == 0 {
 		t.Error("expected default exempt labels")
 	}
+	if cfg.Governor.Labels.AutoMerge != DefaultAutoMergeLabel {
+		t.Errorf("automerge label = %q, want %q", cfg.Governor.Labels.AutoMerge, DefaultAutoMergeLabel)
+	}
 	if cfg.Governor.Sensing.TTLSeconds != defaultSensingTTLSeconds {
 		t.Errorf("sensing_ttl = %d", cfg.Governor.Sensing.TTLSeconds)
 	}
@@ -901,7 +904,7 @@ func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 		Dashboard: DashboardConfig{Port: 8080},
 		Governor: GovernorConfig{
 			EvalIntervalS: 600,
-			Labels:        LabelsConfig{Exempt: []string{"custom-label"}},
+			Labels:        LabelsConfig{Exempt: []string{"custom-label"}, AutoMerge: "ship-it"},
 			Sensing:       SensingConfig{TTLSeconds: 1800, PullbackSeconds: 1800},
 		},
 	}
@@ -915,6 +918,9 @@ func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	}
 	if len(cfg.Governor.Labels.Exempt) != 1 || cfg.Governor.Labels.Exempt[0] != "custom-label" {
 		t.Errorf("exempt = %v", cfg.Governor.Labels.Exempt)
+	}
+	if cfg.Governor.Labels.AutoMerge != "ship-it" {
+		t.Errorf("automerge label = %q, want ship-it", cfg.Governor.Labels.AutoMerge)
 	}
 	if cfg.Governor.Sensing.TTLSeconds != 1800 {
 		t.Errorf("ttl = %d", cfg.Governor.Sensing.TTLSeconds)

@@ -4092,7 +4092,7 @@ func runEvalCycle(
 		atomicWrite("/data/last-actionable.json", data)
 	}
 
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, logger)
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, cfg.Governor.Labels.AutoMerge, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -4934,12 +4934,13 @@ func applyDuplicatePRGuard(
 	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org, autoMergeLabel string, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
 		holdSet[key] = true
 	}
+	autoMergeLabel = normalizedAutoMergeLabel(autoMergeLabel)
 
 	type eligiblePR struct {
 		Number int      `json:"number"`
@@ -5015,7 +5016,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			} else if l == "dco-signoff: no" {
 				dco = "no"
 			}
-			if strings.EqualFold(l, github.AutoMergeQueuedLabel) {
+			if l == autoMergeLabel {
 				queued = true
 			}
 		}
@@ -5055,6 +5056,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		return
 	}
 	atomicWrite(ciFailingPath, failData)
+}
+
+func normalizedAutoMergeLabel(label string) string {
+	if label = strings.TrimSpace(label); label != "" {
+		return label
+	}
+	return github.AutoMergeQueuedLabel
 }
 
 func atomicWrite(path string, data []byte) {

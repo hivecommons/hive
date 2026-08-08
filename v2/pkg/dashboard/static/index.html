@@ -6488,8 +6488,8 @@
           const mergeIcon = p.mergeable ? '<span class="pill-merge-icon">✓</span>' : '';
           const mergeClass = p.mergeable ? ' mergeable' : '';
           const prAge = pillAge(p.created_at);
-          const labels = (p.labels || []).map(l => String(l).toLowerCase());
-          const queued = labels.includes((window._hiveAutoMergeLabel || 'lgtm').toLowerCase());
+          const labels = (p.labels || []).map(l => String(l));
+          const queued = labels.includes(window._hiveAutoMergeLabel || 'lgtm');
           const prTip = (p.title || '') + (p.author ? ' — @' + p.author : '') + (prAge ? ' (' + prAge + ')' : '') + (p.mergeable ? ' (merge eligible)' : '') + (queued ? ' (queued for auto-merge)' : '');
           const canQueue = dashboardRoleAtLeast(window._hiveRole || 'read', 'merger') && (window._hiveUser || dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) && !(p.author && window._hiveUser && p.author.toLowerCase() === window._hiveUser.toLowerCase());
           const parts = (r.full || r.name || '').split('/');
