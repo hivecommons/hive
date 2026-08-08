@@ -285,6 +285,7 @@ type ClassifierConfig struct {
 // absent intent: block preserves existing merge eligibility behavior.
 type IntentConfig struct {
 	Enforce               bool     `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	AlignmentModel        string   `yaml:"alignment_model,omitempty" json:"alignment_model,omitempty"`
 	TestPathPatterns      []string `yaml:"test_path_patterns,omitempty" json:"test_path_patterns,omitempty"`
 	DocsPathPatterns      []string `yaml:"docs_path_patterns,omitempty" json:"docs_path_patterns,omitempty"`
 	GuardrailPathPatterns []string `yaml:"guardrail_path_patterns,omitempty" json:"guardrail_path_patterns,omitempty"`

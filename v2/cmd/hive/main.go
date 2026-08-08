@@ -5416,7 +5416,7 @@ func runEscalationSweep(
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 
-const (
+var (
 	ciFailingPath      = "/var/run/hive-metrics/ci-failing.json"
 	intentVerdictsPath = "/var/run/hive-metrics/intent-verdicts.json"
 )
@@ -5648,6 +5648,19 @@ func writeIntentVerdicts(
 		GuardrailPathPatterns: cfg.Intent.GuardrailPathPatterns,
 		FeatureSignals:        cfg.Intent.FeatureSignals,
 	}
+	var alignmentReviewer *intent.AlignmentReviewer
+	if strings.TrimSpace(cfg.Intent.AlignmentModel) != "" {
+		endpoint, apiKey, _ := cfg.Governor.ResolveReviewer()
+		var err error
+		alignmentReviewer, err = intent.NewAlignmentReviewer(intent.AlignmentReviewerConfig{
+			Endpoint: endpoint,
+			APIKey:   apiKey,
+			Model:    cfg.Intent.AlignmentModel,
+		})
+		if err != nil {
+			logger.Warn("intent alignment reviewer disabled", "error", err)
+		}
+	}
 	type verdictRecord struct {
 		Repo       string         `json:"repo"`
 		Number     int            `json:"number"`
@@ -5704,12 +5717,40 @@ func writeIntentVerdicts(
 		}, intentCfg)
 		evidence := intent.BuildEvidenceForRepo(body, fullRepo, beadStores, approved)
 		verdict := intent.Evaluate(class, evidence)
+		issueTexts, issueErr := fetchIntentIssueTexts(ctx, ghClient, fullRepo, body)
+		if issueErr != nil {
+			logger.Warn("intent alignment issue evidence fetch failed", "repo", fullRepo, "number", pr.Number, "error", issueErr)
+		}
+		refs := intent.LinkedIssueRefs(body, fullRepo)
+		alignCtx := intent.BuildAlignmentContext(intent.PR{
+			Title:       pr.Title,
+			Body:        body,
+			Labels:      pr.Labels,
+			Files:       files,
+			Author:      pr.Author,
+			AgentAuthor: true,
+		}, issueTexts, beadStores, refs)
+		alignment := intent.EvaluateAlignment(alignCtx, class.Tier, intentCfg)
+		if alignmentReviewer != nil {
+			modelVerdict, err := alignmentReviewer.Review(ctx, alignCtx)
+			if err != nil {
+				logger.Warn("intent alignment model review failed open", "repo", fullRepo, "number", pr.Number, "error", err)
+				alignment = intent.MergeAlignment(alignment, nil, err)
+			} else {
+				alignment = intent.MergeAlignment(alignment, &modelVerdict, nil)
+			}
+		}
+		verdict.Alignment = &alignment
 		verdicts[key] = verdict
 		record.Verdict = verdict
 		record.Classify = class.Reason
 		records = append(records, record)
 		if !verdict.Authorized {
 			logger.Info("intent authorization denied", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", verdict.Reason, "enforce", cfg.Intent.Enforce)
+		}
+		if alignment.Misaligned() {
+			logger.Info("intent alignment denied", "repo", fullRepo, "number", pr.Number, "reason", alignment.Rationale, "enforce", cfg.Intent.Enforce)
+			recordIntentAlignmentAdvisory(beadStores, fullRepo, pr.Number, alignment, logger)
 		}
 	}
 	payload := map[string]any{
@@ -5758,11 +5799,95 @@ func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo st
 		}
 		fileOpts.Page = resp.NextPage
 	}
+	if reported := pr.GetChangedFiles(); reported > len(files) {
+		return "", nil, false, fmt.Errorf("incomplete PR file list: GitHub reported %d changed files but API returned %d; intent alignment requires the complete changed-file list", reported, len(files))
+	}
 	approved, err := hasMaintainerApproval(ctx, client, owner, repoName, number)
 	if err != nil {
 		return "", nil, false, err
 	}
 	return pr.GetBody(), files, approved, nil
+}
+
+func fetchIntentIssueTexts(ctx context.Context, ghClient *github.Client, defaultRepo, body string) ([]intent.TextEvidence, error) {
+	if ghClient == nil || ghClient.GoGitHub() == nil {
+		return nil, github.ErrNoGitHubClient
+	}
+	client := ghClient.GoGitHub()
+	refs := intent.LinkedIssueRefs(body, defaultRepo)
+	out := make([]intent.TextEvidence, 0, len(refs))
+	for _, ref := range refs {
+		repo := ref.Repo
+		if repo == "" {
+			repo = defaultRepo
+		}
+		owner, repoName, ok := strings.Cut(repo, "/")
+		if !ok || owner == "" || repoName == "" {
+			continue
+		}
+		issue, _, err := client.Issues.Get(ctx, owner, repoName, ref.Number)
+		if err != nil {
+			return out, fmt.Errorf("getting linked issue %s#%d: %w", repo, ref.Number, err)
+		}
+		out = append(out, intent.TextEvidence{
+			Source: fmt.Sprintf("issue %s#%d", repo, ref.Number),
+			Title:  issue.GetTitle(),
+			Body:   issue.GetBody(),
+		})
+	}
+	return out, nil
+}
+
+func recordIntentAlignmentAdvisory(stores map[string]*beads.Store, repo string, number int, alignment intent.AlignmentVerdict, logger *slog.Logger) {
+	store := stores["intent"]
+	if store == nil {
+		store = stores["quality"]
+	}
+	if store == nil {
+		for _, candidate := range stores {
+			if candidate != nil {
+				store = candidate
+				break
+			}
+		}
+	}
+	if store == nil {
+		return
+	}
+	title := fmt.Sprintf("Intent alignment drift in %s#%d", repo, number)
+	ref := fmt.Sprintf("gh-%s#%d", repo, number)
+	for _, b := range store.List(beads.ListFilter{}) {
+		if b.Type == beads.TypeAdvisory && b.Title == title && b.ExternalRef == ref && b.Status != beads.StatusClosed && b.Status != beads.StatusDone {
+			return
+		}
+	}
+	b, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, "intent", ref)
+	if err != nil {
+		logger.Warn("failed to record intent alignment advisory", "repo", repo, "number", number, "error", err)
+		return
+	}
+	_ = store.Update(b.ID, func(bead *beads.Bead) {
+		bead.Notes = alignmentSummary(alignment)
+	})
+}
+
+func alignmentSummary(alignment intent.AlignmentVerdict) string {
+	var parts []string
+	if alignment.Rationale != "" {
+		parts = append(parts, alignment.Rationale)
+	}
+	for _, f := range alignment.DeterministicFindings {
+		if f.Status == intent.AlignmentStatusMisaligned {
+			parts = append(parts, f.Code+": "+f.Reason+" ("+strings.Join(f.Files, ", ")+")")
+		}
+	}
+	if alignment.Model != nil && alignment.Model.Status == intent.AlignmentStatusMisaligned {
+		parts = append(parts, "model: "+alignment.Model.Rationale)
+	}
+	if len(parts) == 0 {
+		return "intent alignment check reported misalignment"
+	}
+	return strings.Join(parts, "\n")
 }
 
 func hasMaintainerApproval(ctx context.Context, client *gh.Client, owner, repo string, number int) (bool, error) {
@@ -5887,8 +6012,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		}
 		fullRepo := fullRepoName(pr.Repo, org)
 		if enforceIntent {
-			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.Authorized {
-				logger.Info("excluding PR from merge-eligible due to intent authorization", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", verdict.Reason)
+			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.MergeAllowed() {
+				reason := verdict.Reason
+				if verdict.Authorized && verdict.Alignment != nil && verdict.Alignment.Misaligned() {
+					reason = intent.ReasonAlignmentMisaligned + ": " + verdict.Alignment.Rationale
+				}
+				logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", reason)
 				continue
 			}
 		}

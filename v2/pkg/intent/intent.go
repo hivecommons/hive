@@ -21,22 +21,28 @@ const (
 )
 
 const (
-	ReasonTier0Additive      = "tier 0 additive docs/test-only change"
-	ReasonTestWeakening      = "test weakening detected"
-	ReasonTier3Guardrail     = "guardrail-critical path touched"
-	ReasonTier2FeatureSignal = "feature signal detected"
-	ReasonTier1Default       = "bugfix/chore default"
-	ReasonLinkedIssue        = "linked issue evidence present"
-	ReasonApprovedPlan       = "approved plan evidence present"
-	ReasonHumanApproval      = "human approval evidence present"
-	ReasonTier3NeedsApproval = "tier 3 requires human approval"
-	ReasonTier2NeedsPlan     = "tier 2 requires approved plan or human approval"
-	ReasonTier1NeedsIssue    = "tier 1 requires linked issue"
+	ReasonTier0Additive       = "tier 0 additive docs/test-only change"
+	ReasonTestWeakening       = "test weakening detected"
+	ReasonTier3Guardrail      = "guardrail-critical path touched"
+	ReasonTier2FeatureSignal  = "feature signal detected"
+	ReasonTier1Default        = "bugfix/chore default"
+	ReasonLinkedIssue         = "linked issue evidence present"
+	ReasonApprovedPlan        = "approved plan evidence present"
+	ReasonHumanApproval       = "human approval evidence present"
+	ReasonTier3NeedsApproval  = "tier 3 requires human approval"
+	ReasonTier2NeedsPlan      = "tier 2 requires approved plan or human approval"
+	ReasonTier1NeedsIssue     = "tier 1 requires linked issue"
+	ReasonAlignmentMisaligned = "intent alignment check reported misalignment"
 )
 
 const (
 	BeadPlanStatusKey      = "plan_status"
 	BeadPlanApprovedStatus = "approved"
+	BeadParentEpicKey      = "parent_epic"
+
+	AlignmentStatusAligned    = "aligned"
+	AlignmentStatusMisaligned = "misaligned"
+	AlignmentStatusUnclear    = "unclear"
 )
 
 const linkedIssuePattern = `(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+(?:(?:([\w.-]+/[\w.-]+)#)|#)(\d+)\b`
@@ -114,11 +120,22 @@ type Evidence struct {
 }
 
 type Verdict struct {
-	Tier       Tier     `json:"tier"`
-	Authorized bool     `json:"authorized"`
-	Reason     string   `json:"reason"`
-	Evidence   Evidence `json:"evidence"`
-	AgentPR    bool     `json:"agent_pr"`
+	Tier       Tier              `json:"tier"`
+	Authorized bool              `json:"authorized"`
+	Reason     string            `json:"reason"`
+	Evidence   Evidence          `json:"evidence"`
+	AgentPR    bool              `json:"agent_pr"`
+	Alignment  *AlignmentVerdict `json:"alignment,omitempty"`
+}
+
+// MergeAllowed reports whether the verdict may enter merge-eligible.json when
+// intent.enforce is enabled. It preserves the phase-1 authorization gate and
+// adds phase-2 alignment misalignment as an equivalent exclusion reason.
+func (v Verdict) MergeAllowed() bool {
+	if !v.Authorized {
+		return false
+	}
+	return v.Alignment == nil || !v.Alignment.Misaligned()
 }
 
 func Classify(pr PR, cfg Config) Classification {
