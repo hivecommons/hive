@@ -347,3 +347,29 @@ func TestImpersonationNoPrivilegeEscalation(t *testing.T) {
 		t.Errorf("non-admin self-minted grant honored: eff=%q imp=%v; want bob/false", eff, imp)
 	}
 }
+
+func TestImpersonationStatusReportsActiveGrant(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	mkUser(t, hubAdminUsername)
+	mkUser(t, "alice")
+	now := time.Now()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/admin/impersonation", nil)
+	s.handleImpersonationStatus(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"impersonating":false`) {
+		t.Fatalf("status without grant code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/saas/admin/impersonation", nil)
+	req.AddCookie(testAuthCookie(hubAdminUsername))
+	req.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
+	s.handleImpersonationStatus(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `"impersonating":true`) || !strings.Contains(body, `"viewing_as":"alice"`) {
+		t.Fatalf("status with grant code=%d body=%q", rec.Code, body)
+	}
+}
