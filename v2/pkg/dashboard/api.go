@@ -67,6 +67,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/model/{agent}/{model}", s.handleModelSet)
 	s.mux.HandleFunc("POST /api/pause/{agent}", s.handlePause)
 	s.mux.HandleFunc("POST /api/resume/{agent}", s.handleResume)
+	s.mux.HandleFunc("GET /api/agent-state/{agent}", s.handleAgentState)
 	s.mux.HandleFunc("POST /api/pin/{agent}/{dimension}", s.handlePin)
 	s.mux.HandleFunc("POST /api/unpin/{agent}/{dimension}", s.handleUnpin)
 	s.mux.HandleFunc("POST /api/restart/{agent}", s.handleRestart)
@@ -1184,8 +1185,52 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "model_set", "agent": name, "model": model})
 }
 
+// pauseStateLabel names the authoritative pause-dimension state reported by
+// the pause/resume/agent-state endpoints. It deliberately says nothing about
+// process health — "running" here means "not operator-paused" (the governor
+// will kick it), matching what the pause/resume toggle controls.
+const (
+	pauseStatePaused  = "paused"
+	pauseStateRunning = "running"
+)
+
+func pauseStateLabel(paused bool) string {
+	if paused {
+		return pauseStatePaused
+	}
+	return pauseStateRunning
+}
+
+// pauseToggleResponse is the shared response shape for pause/resume. `changed`
+// distinguishes a real transition from a no-op: pausing an already-paused
+// agent used to return the same undifferentiated success as a real pause,
+// which let a dashboard with a stale belief silently re-pause an agent the
+// operator was trying to START (audit showed pause-pairs seconds apart while
+// the agent stayed paused indefinitely). `state` is the authoritative
+// post-request pause state the client must render from.
+func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, paused bool) {
+	jsonResponse(w, map[string]interface{}{
+		"ok":      true,
+		"status":  status,
+		"agent":   agent,
+		"changed": changed,
+		"state":   pauseStateLabel(paused),
+	})
+}
+
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	name := s.resolveAgentParam(r.PathValue("agent"))
+
+	// No-op guard: the agent is already paused. Do NOT call Pause again —
+	// that would clobber the original PausedAt/reason/trigger — and tell the
+	// client explicitly so it can correct its stale UI instead of believing
+	// it just paused a running agent. An unknown agent falls through to
+	// Pause, which returns the same 400 as before.
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && proc.Paused {
+		s.auditFromRequest(r, "pause", auditDetail("result", "noop-already-paused"), name)
+		pauseToggleResponse(w, "paused", name, false, true)
+		return
+	}
 
 	if err := s.deps.AgentMgr.Pause(name, "dashboard-api", "manual pause"); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1194,11 +1239,19 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFromRequest(r, "pause", "", name)
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "paused", "agent": name})
+	pauseToggleResponse(w, "paused", name, true, true)
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	name := s.resolveAgentParam(r.PathValue("agent"))
+
+	// No-op guard, mirror of handlePause: resuming an agent that is not
+	// paused must report changed:false with the authoritative state.
+	if proc, err := s.deps.AgentMgr.GetStatus(name); err == nil && proc != nil && !proc.Paused {
+		s.auditFromRequest(r, "resume", auditDetail("result", "noop-not-paused"), name)
+		pauseToggleResponse(w, "resumed", name, false, false)
+		return
+	}
 
 	if err := s.deps.AgentMgr.Resume(s.deps.Ctx, name, "dashboard-api", "manual resume"); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1207,7 +1260,27 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFromRequest(r, "resume", "", name)
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "resumed", "agent": name})
+	pauseToggleResponse(w, "resumed", name, true, false)
+}
+
+// handleAgentState is a lightweight authoritative pause-state probe. The
+// dashboard's pause/resume toggle calls it immediately before acting so the
+// action derives from the SERVER's persisted state rather than a stale DOM
+// dataset — the belt to the response contract's suspenders above.
+func (s *Server) handleAgentState(w http.ResponseWriter, r *http.Request) {
+	name := s.resolveAgentParam(r.PathValue("agent"))
+	proc, err := s.deps.AgentMgr.GetStatus(name)
+	if err != nil || proc == nil {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"ok":        true,
+		"agent":     name,
+		"paused":    proc.Paused,
+		"state":     pauseStateLabel(proc.Paused),
+		"procState": string(proc.State),
+	})
 }
 
 func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
