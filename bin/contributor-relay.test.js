@@ -12,7 +12,6 @@ const assert = require('assert');
 const Module = require('module');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 
 // Set for the whole run, not just during module load: the relay checks it at
 // CALL time in sleepMs() to skip its busy-wait, and the restart paths sleep for
@@ -26,7 +25,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null } = {}) {
+function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, env = {} } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -102,9 +101,14 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
   process.env.GOOSE_MODEL = '';
   process.env.HIVE_AGENT_SESSION = 'contributor';
   process.env.CONTRIBUTOR_MODE = mode;
+  Object.assign(process.env, env);
 
-  // Keep the relay's task-file write out of the real /tmp path used in prod.
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-test-'));
+  // Keep the relay's task-file/token writes out of the real prod paths.
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const tmpDir = fs.mkdtempSync(path.join(scratchRoot, 'relay-test-'));
+  process.env.HIVE_TASK_FILE = path.join(tmpDir, 'contributor-task.json');
+  process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
   // Point the headless status file at the test's tmp dir so probe writes don't
   // clobber a real one and can be asserted on.
   const headlessStatusFile = statusFile || path.join(tmpDir, 'headless-status.json');
@@ -144,6 +148,7 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
 
 function teardown(relay) {
   try { relay.cleanup(); } catch (_) {}
+  try { fs.rmSync(relay.__tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
 
 const tests = [];
@@ -605,6 +610,184 @@ test('blocked interactive panes report attention instead of task_complete', () =
     assert.ok(progress, `expected blocked_on_human progress, got: ${JSON.stringify(relay.__sent)}`);
     assert.strictEqual(progress.attention, true, 'blocked status must request human attention');
     assert.ok(relay.getCurrentTask(), 'the task must remain active while waiting for a human');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// Multi-hub (kubestellar/hive#multi-hive) — one relay/CLI session subscribed
+// to more than one hub via comma-separated HIVE_HUB/HIVE_REGISTRATION_TOKEN.
+// ---------------------------------------------------------------------------
+
+const MULTI_HUB_ENV = {
+  HIVE_HUB: 'wss://hub-a.example/contribute,wss://hub-b.example/contribute',
+  HIVE_REGISTRATION_TOKEN: 'tok-a,tok-b',
+};
+
+function attachHubSinks(relay) {
+  const hubs = relay.getHubs();
+  const sentA = [], sentB = [];
+  hubs[0].ws = { readyState: 1, send: p => sentA.push(JSON.parse(p)) };
+  hubs[1].ws = { readyState: 1, send: p => sentB.push(JSON.parse(p)) };
+  return { hubs, sentA, sentB };
+}
+
+function withImmediateTimers(fn) {
+  const origSetTimeout = global.setTimeout;
+  global.setTimeout = (cb) => { cb(); return 0; };
+  try { fn(); } finally { global.setTimeout = origSetTimeout; }
+}
+
+test('HIVE_HUB/HIVE_REGISTRATION_TOKEN comma lists parse into one hub per entry, matched by position', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const hubs = relay.getHubs();
+    assert.strictEqual(hubs.length, 2);
+    assert.ok(hubs[0].url.includes('hub-a.example'));
+    assert.ok(hubs[1].url.includes('hub-b.example'));
+    assert.strictEqual(hubs[0].regToken, 'tok-a');
+    assert.strictEqual(hubs[1].regToken, 'tok-b');
+  } finally { teardown(relay); }
+});
+
+test('only the active hub is sent ready on auth_ok; the other waits its turn', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
+    assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
+    assert.deepStrictEqual(sentB.map(m => m.type), []);
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[1]);
+    assert.deepStrictEqual(sentB.map(m => m.type), [], 'non-active hub stays silent on its own auth_ok');
+  } finally { teardown(relay); }
+});
+
+test('auth_failed on the active hub advances polling to an already-authenticated hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[1]);
+    assert.deepStrictEqual(sentB.map(m => m.type), [], 'non-active hub waits before the active hub fails');
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_failed', reason: 'bad token' }), hubs[0]);
+    assert.deepStrictEqual(sentA.map(m => m.type), []);
+    assert.deepStrictEqual(sentB.map(m => m.type), ['ready'], 'polling moved to the authenticated remaining hub');
+  } finally { teardown(relay); }
+});
+
+test('a task_assign is remembered by hub, and a rejection while busy is routed to the ASKING hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    withImmediateTimers(() => {
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hubs[0]);
+    });
+
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' }), hubs[1]);
+    const task = relay.getCurrentTask();
+    assert.strictEqual(task._hub, hubs[1], 'currentTask remembers which hub assigned it');
+    assert.ok(sentB.some(m => m.type === 'task_accepted'), 'task_accepted went to the assigning hub');
+    assert.strictEqual(sentA.filter(m => m.type === 'task_accepted').length, 0);
+
+    sentA.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't2', kind: 'issue', repo: 'foo/bar', number: 2, title: 'y' }), hubs[0]);
+    assert.ok(sentA.some(m => m.type === 'task_failed' && m.reason === 'Already has active task'),
+      'busy-rejection went to the hub that just asked, not silently dropped or misrouted to the active-task hub');
+    assert.strictEqual(sentB.filter(m => m.type === 'task_failed').length, 0);
+  } finally { teardown(relay); }
+});
+
+test('an idle non-active hub cannot assign work until the poll slot reaches it', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't2', kind: 'issue', repo: 'foo/bar', number: 2, title: 'y' }), hubs[1]);
+
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.ok(sentB.some(m => m.type === 'task_failed' && m.reason === 'Hub is not the active polling slot'),
+      'unexpected assignment must be rejected back to the hub that sent it');
+  } finally { teardown(relay); }
+});
+
+test('token_refresh, task_revoke, and blocked progress only affect the hub that owns the active task', () => {
+  const blockedPane = 'Should I open a pull request for this change?\n> \n';
+  const relay = loadRelay({ backend: 'goose', cliStates: [blockedPane, blockedPane], env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' }), hubs[0]);
+    const tokenPath = path.join(relay.__tmpDir, 'gh-token.cache');
+
+    relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'hub-b-token' }), hubs[1]);
+    assert.strictEqual(fs.existsSync(tokenPath), false, 'non-owning hub must not overwrite the active task token');
+
+    relay.__crashTick();
+    assert.ok(sentA.some(m => m.type === 'task_progress' && m.status === 'blocked_on_human'),
+      'blocked_on_human progress must go to the owning hub');
+    assert.strictEqual(sentB.filter(m => m.type === 'task_progress').length, 0,
+      'blocked_on_human progress must not leak to the non-owning hub');
+
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't1', reason: 'wrong hub' }), hubs[1]);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't1', 'non-owning hub must not revoke the active task');
+
+    relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'hub-a-token' }), hubs[0]);
+    assert.strictEqual(fs.readFileSync(tokenPath, 'utf8'), 'hub-a-token');
+
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 't1', reason: 'owner revoke' }), hubs[0]);
+    assert.strictEqual(relay.getCurrentTask(), null);
+    assert.ok(sentA.some(m => m.type === 'ready'), 'owning hub is asked for work after its revoke');
+    assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
+  } finally { teardown(relay); }
+});
+
+test('task_unavailable on the active hub rotates the poll slot to the next hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor' }), hubs[0]);
+    assert.deepStrictEqual(sentA.map(m => m.type), ['ready']);
+
+    withImmediateTimers(() => {
+      relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hubs[0]);
+    });
+    assert.deepStrictEqual(sentB.map(m => m.type), ['ready'], 'rotation sent ready to hub B, not hub A again');
+  } finally { teardown(relay); }
+});
+
+test('currentTask stays JSON-serializable after task_assign attaches its owning hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { hubs } = attachHubSinks(relay);
+    hubs[0].heartbeatInterval = setInterval(() => {}, 999999);
+    hubs[1].reconnectTimer = setTimeout(() => {}, 999999);
+    try {
+      withImmediateTimers(() => {
+        relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_work' }), hubs[0]);
+      });
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' }), hubs[1]);
+      assert.ok(relay.getCurrentTask(), 'task was accepted before serializing');
+      assert.doesNotThrow(() => JSON.stringify(relay.getCurrentTask()), 'currentTask must serialize even with its _hub set');
+    } finally {
+      clearInterval(hubs[0].heartbeatInterval);
+      clearTimeout(hubs[1].reconnectTimer);
+    }
+  } finally { teardown(relay); }
+});
+
+test('a currentTask with no recorded hub still reaches the hub', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const { sentA } = attachHubSinks(relay);
+
+    relay.setCurrentTask({ task_id: 'pr-review-1', kind: 'review', repo: 'foo/bar', number: 0, title: 'Review open PRs' });
+    relay.failCurrentTask('done reviewing');
+
+    assert.ok(sentA.some(m => m.type === 'task_failed' && m.task_id === 'pr-review-1'),
+      'frames for a hubless currentTask must fall back to the active hub, not be dropped');
   } finally { teardown(relay); }
 });
 

@@ -3701,6 +3701,7 @@ func main() {
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
 	defer ticker.Stop()
+	var lastAutoMergeSweep time.Time
 
 	var agentTicker *time.Ticker
 	if cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -3726,6 +3727,7 @@ func main() {
 	gov.ClearLastKicks()
 	logger.Info("cleared last kicks for startup — all eligible agents will be kicked on first eval")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, nil, logger)
+	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 
 	agentTickCh := func() <-chan time.Time {
@@ -3766,6 +3768,7 @@ func main() {
 				}
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, restarted, logger)
+			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -4864,6 +4867,39 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 				atomicWrite("/data/trend-history.json", trendData)
 			}
 		}
+	}
+}
+
+const autoMergeSweepInterval = time.Minute
+
+func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < autoMergeSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepQueuedAutoMerges(ctx, github.AutoMergeSweepOptions{
+		MaxMerges: github.DefaultAutoMergeSweepMaxMerges,
+		Audit: func(event github.AutoMergeSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
+				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
+			dashSrv.AuditLog("system", "automerge-sweep-merged", detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("automerge sweep failed", "error", err)
+		return
+	}
+	if len(result.Merged) > 0 || result.Seen > 0 {
+		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
 	}
 }
 

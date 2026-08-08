@@ -3,10 +3,10 @@ name: v2 CI
 on:
   push:
     branches: [v2]
-    paths: ['v2/**', 'bin/contributor-relay*']
+    paths: ['v2/**', 'bin/contributor-agent*', 'bin/contributor-relay*']
   pull_request:
     branches: [v2]
-    paths: ['v2/**', 'bin/contributor-relay*']
+    paths: ['v2/**', 'bin/contributor-agent*', 'bin/contributor-relay*']
 
 permissions:
   contents: read
@@ -51,6 +51,7 @@ jobs:
       - name: Contributor Relay Syntax + Tests
         working-directory: .
         run: |
+          bash bin/contributor-agent.test.sh
           cp bin/contributor-relay.sh "${RUNNER_TEMP}/contributor-relay.js"
           node --check "${RUNNER_TEMP}/contributor-relay.js"
           node bin/contributor-relay.test.js

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -591,8 +593,11 @@ type HeartbeatPayload struct {
 }
 
 const (
-	PublicURLSelfCheckOK   = "ok"
-	PublicURLSelfCheckFail = "fail"
+	PublicURLSelfCheckOK      = "ok"
+	PublicURLSelfCheckFail    = "fail"
+	PublicURLSelfCheckUnknown = "unknown"
+
+	publicURLSelfCheckMinConsecutiveFailures = 3
 )
 
 // PublicURLSelfCheck reports the spoke's own view of whether its public
@@ -752,9 +757,11 @@ var (
 	}
 	publicURLSelfProbeCache = struct {
 		sync.Mutex
-		url       string
-		nextProbe time.Time
-		result    *PublicURLSelfCheck
+		url                 string
+		nextProbe           time.Time
+		result              *PublicURLSelfCheck
+		stable              *PublicURLSelfCheck
+		consecutiveFailures int
 	}{}
 )
 
@@ -890,7 +897,12 @@ func publicURLSelfCheckFor(ctx context.Context, rawURL string, logger *slog.Logg
 	if publicURLSelfProbeCache.url == rawURL && publicURLSelfProbeCache.result != nil && now.Before(publicURLSelfProbeCache.nextProbe) {
 		return clonePublicURLSelfCheck(publicURLSelfProbeCache.result)
 	}
-	result := publicURLSelfProbe(ctx, rawURL, publicURLSelfProbeClient)
+	if publicURLSelfProbeCache.url != rawURL {
+		publicURLSelfProbeCache.stable = nil
+		publicURLSelfProbeCache.consecutiveFailures = 0
+	}
+	raw := publicURLSelfProbe(ctx, rawURL, publicURLSelfProbeClient)
+	result := gatedPublicURLSelfCheck(raw, &publicURLSelfProbeCache.consecutiveFailures, &publicURLSelfProbeCache.stable)
 	if result.Status == PublicURLSelfCheckFail && logger != nil {
 		logger.Debug("public URL self-check failed", "url", rawURL, "error", result.Error, "status", result.HTTPStatus)
 	}
@@ -906,6 +918,29 @@ func clonePublicURLSelfCheck(in *PublicURLSelfCheck) *PublicURLSelfCheck {
 	}
 	out := *in
 	return &out
+}
+
+func gatedPublicURLSelfCheck(raw PublicURLSelfCheck, consecutiveFailures *int, stable **PublicURLSelfCheck) PublicURLSelfCheck {
+	switch raw.Status {
+	case PublicURLSelfCheckOK:
+		*consecutiveFailures = 0
+		*stable = clonePublicURLSelfCheck(&raw)
+		return raw
+	case PublicURLSelfCheckFail:
+		*consecutiveFailures++
+		if *consecutiveFailures >= publicURLSelfCheckMinConsecutiveFailures {
+			*stable = clonePublicURLSelfCheck(&raw)
+			return raw
+		}
+		if stable != nil && *stable != nil {
+			return *clonePublicURLSelfCheck(*stable)
+		}
+		raw.Status = PublicURLSelfCheckUnknown
+		return raw
+	default:
+		*consecutiveFailures = 0
+		return raw
+	}
 }
 
 func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client) PublicURLSelfCheck {
@@ -926,13 +961,40 @@ func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, Error: terseProbeError(err)}
+		return PublicURLSelfCheck{Status: publicURLSelfCheckStatusForError(err), CheckedAt: checkedAt, Error: terseProbeError(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusInternalServerError {
 		return PublicURLSelfCheck{Status: PublicURLSelfCheckOK, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode}
 	}
 	return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode, Error: "HTTP " + itoa(resp.StatusCode)}
+}
+
+func publicURLSelfCheckStatusForError(err error) string {
+	if err == nil {
+		return PublicURLSelfCheckUnknown
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return PublicURLSelfCheckUnknown
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "server misbehaving") ||
+		strings.Contains(msg, "temporary failure in name resolution") {
+		return PublicURLSelfCheckUnknown
+	}
+	if strings.Contains(msg, ":53") && (strings.Contains(msg, "timeout") || strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "server misbehaving")) {
+		return PublicURLSelfCheckUnknown
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return PublicURLSelfCheckUnknown
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return PublicURLSelfCheckUnknown
+	}
+	return PublicURLSelfCheckFail
 }
 
 func terseProbeError(err error) string {
