@@ -3,10 +3,12 @@ package governor
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/v2/pkg/outputschema"
 )
 
 type Mode string
@@ -58,6 +60,17 @@ type RepoSnapshot struct {
 type KickRecord struct {
 	Timestamp time.Time `json:"timestamp"`
 	Agent     string    `json:"agent"`
+}
+
+type AgentReportRecord struct {
+	Timestamp time.Time `json:"timestamp"`
+	Agent     string    `json:"agent"`
+	Path      string    `json:"path"`
+	Valid     bool      `json:"valid"`
+	Lane      string    `json:"lane,omitempty"`
+	Kind      string    `json:"kind,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 type BudgetInfo struct {
@@ -184,10 +197,11 @@ type Governor struct {
 	mu     sync.RWMutex
 	logger *slog.Logger
 
-	modeHistory []ModeChange
-	evalHistory []EvalSnapshot
-	kickHistory []KickRecord
-	budget      BudgetInfo
+	modeHistory  []ModeChange
+	evalHistory  []EvalSnapshot
+	kickHistory  []KickRecord
+	agentReports map[string]AgentReportRecord
+	budget       BudgetInfo
 
 	// resumeKicks records the last crash-recovery resume kick granted per
 	// agent (see AllowResumeKick). In-memory only: after a process restart
@@ -218,11 +232,12 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 			Cadences: make(map[string]AgentCadence),
 			LastKick: make(map[string]time.Time),
 		},
-		logger:      logger,
-		modeHistory: []ModeChange{initialChange},
-		evalHistory: make([]EvalSnapshot, 0, evalHistoryCapacity),
-		kickHistory: make([]KickRecord, 0, kickHistoryCapacity),
-		resumeKicks: make(map[string]time.Time),
+		logger:       logger,
+		modeHistory:  []ModeChange{initialChange},
+		evalHistory:  make([]EvalSnapshot, 0, evalHistoryCapacity),
+		kickHistory:  make([]KickRecord, 0, kickHistoryCapacity),
+		agentReports: make(map[string]AgentReportRecord),
+		resumeKicks:  make(map[string]time.Time),
 		budget: BudgetInfo{
 			ByAgent: make(map[string]int64),
 			ByModel: make(map[string]int64),
@@ -573,11 +588,69 @@ func (g *Governor) AllowResumeKick(agentName string) bool {
 }
 
 func (g *Governor) RecordKick(agentName string) {
+	report, hasReport := g.validateAgentReportIfPresent(agentName)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := time.Now()
 	g.state.LastKick[agentName] = now
 	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName})
+	if hasReport {
+		g.agentReports[agentName] = report
+	}
+}
+
+func (g *Governor) validateAgentReportIfPresent(agentName string) (AgentReportRecord, bool) {
+	path := outputschema.AgentReportPath(agentName)
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return AgentReportRecord{}, false
+	}
+
+	record := AgentReportRecord{
+		Timestamp: time.Now(),
+		Agent:     agentName,
+		Path:      path,
+	}
+	if err != nil {
+		record.Error = err.Error()
+		if g.logger != nil {
+			g.logger.Warn("agent report could not be read", "agent", agentName, "path", path, "error", err)
+		}
+		return record, true
+	}
+
+	report, err := outputschema.Validate(raw)
+	if err != nil {
+		record.Error = err.Error()
+		if g.logger != nil {
+			g.logger.Warn("agent report validation failed",
+				"agent", agentName,
+				"path", path,
+				"error", err,
+				"corrective_prompt", outputschema.CorrectivePrompt(err),
+				"max_retries", outputschema.MaxValidationRetries,
+			)
+		}
+		return record, true
+	}
+
+	record.Valid = true
+	record.Lane = report.Lane
+	record.Kind = string(report.Kind)
+	record.Summary = report.Summary
+	if g.logger != nil {
+		g.logger.Info("agent report validated",
+			"agent", agentName,
+			"path", path,
+			"lane", report.Lane,
+			"kind", report.Kind,
+			"findings", len(report.Findings),
+			"prs_opened", len(report.PRsOpened),
+			"beads_filed", len(report.BeadsFiled),
+		)
+	}
+	return record, true
 }
 
 func (g *Governor) GetState() State {
@@ -773,6 +846,16 @@ func (g *Governor) KickHistory() []KickRecord {
 	defer g.mu.RUnlock()
 	result := make([]KickRecord, len(g.kickHistory))
 	copy(result, g.kickHistory)
+	return result
+}
+
+func (g *Governor) AgentReportRecords() map[string]AgentReportRecord {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	result := make(map[string]AgentReportRecord, len(g.agentReports))
+	for agent, record := range g.agentReports {
+		result[agent] = record
+	}
 	return result
 }
 
