@@ -772,9 +772,10 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v2":
     readonly HEADLESS_STATUS_FILE="/tmp/contributor-headless-status.json"
     # Backends with a verified non-interactive (headless) entry point — must
     # match HEADLESS_BACKENDS in bin/contributor-relay.sh. A headless pod on any
-    # OTHER backend (goose/bob/agy/pi) refuses work LOUDLY at startup, so we warn
+    # OTHER backend (bob/agy/pi) refuses work LOUDLY at startup, so we warn
     # here rather than emit a manifest that will crash-loop with no explanation.
-    readonly HEADLESS_BACKENDS="claude litellm copilot codex"
+    # goose joined this set in #2828 via its `goose run` one-shot sub-command.
+    readonly HEADLESS_BACKENDS="claude litellm copilot codex goose"
     # Memory sizing: the contributor image is ~2.7GiB unpacked and each task
     # spawns a real coding-CLI + a repo build/test, so requests are deliberately
     # generous. Named here so an operator can see and tune them, not magic YAML.

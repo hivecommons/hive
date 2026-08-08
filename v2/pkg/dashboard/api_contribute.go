@@ -1527,7 +1527,7 @@ var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hi
 // Backends with a verified headless (non-interactive) entry point — must match
 // HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
 // TTY, so only these run in a cluster; anything else refuses work at startup.
-var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1};
+var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1};
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
@@ -1566,7 +1566,7 @@ if(mode==='kubernetes'){
 // line — but model/env exports still belong before contribute-setup so the
 // generated ConfigMap picks them up. If the chosen backend has no headless
 // mode, prepend a visible warning comment (the Justfile also warns on stderr).
-var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot or Codex for Kubernetes.\n';
+var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot, Codex or Goose for Kubernetes.\n';
 var k8sPre=envLines+modelLine;
 cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
 }else if(mode==='host'){

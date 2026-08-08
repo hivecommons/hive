@@ -238,14 +238,17 @@ function buildLaunchCommand() {
 // status — the property the headless mode needs. Each entry says how to turn
 // (binary, perm-flags, prompt) into an argv:
 //
-//   flag — the sub-command/flag that selects one-shot mode; the prompt is
-//          passed as the single positional argument that follows it
-//          (`claude -p "<prompt>"`, `codex exec "<prompt>"`).
+//   flag — the sub-command/flag(s) that select one-shot mode. Either a single
+//          token, where the prompt follows as a bare positional
+//          (`claude -p "<prompt>"`, `codex exec "<prompt>"`), or an array of
+//          leading tokens when a sub-command AND a flag both precede the
+//          prompt (`goose run --no-session -t "<prompt>"`). Either way the
+//          prompt is appended as the final, distinct argv element.
 //
-// Backends NOT listed here have no known non-interactive entry point (goose /
-// bob / agy / pi drive an interactive TUI), so headless mode refuses them
-// LOUDLY at task time rather than silently stalling. Extending this table is
-// how a future PR adds a backend once its headless invocation is verified.
+// Backends NOT listed here have no known non-interactive entry point (bob /
+// agy / pi drive an interactive TUI), so headless mode refuses them LOUDLY at
+// task time rather than silently stalling. Extending this table is how a
+// future PR adds a backend once its headless invocation is verified.
 const HEADLESS_BACKENDS = {
   // claude -p "<prompt>" — print mode: runs the prompt non-interactively and
   // exits. Same perm flags as the interactive launch (bypass permissions).
@@ -257,6 +260,15 @@ const HEADLESS_BACKENDS = {
   copilot: { flag: '-p' },
   // codex exec "<prompt>" — Codex's non-interactive execution sub-command.
   codex: { flag: 'exec' },
+  // goose run --no-session -t "<prompt>" — goose's one-shot sub-command. The
+  // bare `goose` binary drives the interactive TUI, but `goose run` is a
+  // documented non-interactive entry point (#2828): `-t` takes the prompt as
+  // its VALUE (not a trailing positional), and --no-session skips creating or
+  // resuming a session file, which one-shot dispatch never needs. Verified
+  // against goose 1.37.0 — the version v2/Dockerfile pins via GOOSE_VERSION —
+  // that `run`, `-t` and `--no-session` all exist and that a failed run exits
+  // non-zero, which is the exit-code contract runHeadlessTask() relies on.
+  goose: { flag: ['run', '--no-session', '-t'] },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
@@ -267,17 +279,21 @@ function headlessSupportsBackend() {
 
 // buildHeadlessArgv turns a task prompt into the argv for a one-shot,
 // non-interactive backend invocation: [binary, ...permFlags, ...modelFlag,
-// oneShotFlag, prompt] (order adjusted per promptAsArg). Returns null for an
-// unsupported backend. Never shell-interpolates the prompt — it is passed as a
-// distinct argv element to execFile, so apostrophes/quotes in the prompt (the
-// exact #2203 wedge on the interactive path) cannot break anything here.
+// ...oneShotFlags, prompt]. Returns null for an unsupported backend. Never
+// shell-interpolates the prompt — it is passed as a distinct argv element to
+// execFile, so apostrophes/quotes in the prompt (the exact #2203 wedge on the
+// interactive path) cannot break anything here.
 function buildHeadlessArgv(prompt) {
   const spec = HEADLESS_BACKENDS[BACKEND];
   if (!spec) return null;
   const { cmd, perm } = resolveBackend();
   const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
   const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
-  const args = [...permArgs, ...modelArgs, spec.flag, prompt];
+  // spec.flag is a single token for most backends, or an array of leading
+  // tokens for backends needing a sub-command plus a flag (goose). Normalize
+  // to an array so both shapes spread the same way ahead of the prompt.
+  const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
+  const args = [...permArgs, ...modelArgs, ...oneShotArgs, prompt];
   return { bin: cmd, args };
 }
 

@@ -357,10 +357,54 @@ func TestContributeLandingHasWatsonxOption(t *testing.T) {
 		// CLIENTS metadata tile.
 		`watsonx:{name:'watsonx.ai',tag:'IBM'}`,
 		// Headless-capable: must be registered so Kubernetes mode does not warn.
-		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1}`,
+		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/contribute watsonx onboarding surface missing %q", want)
+		}
+	}
+}
+
+// TestContributeK8sHeadlessCapability enumerates every backend the Kubernetes
+// run-mode reasons about and pins whether it is headless-capable, so adding a
+// backend forces an explicit decision here rather than silently defaulting to
+// "no headless mode". goose is capable via its `goose run --no-session -t`
+// one-shot sub-command (#2828); bob/agy/pi drive an interactive TUI with no
+// known non-interactive entry point, so they must keep warning.
+func TestContributeK8sHeadlessCapability(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, tc := range []struct {
+		backend  string
+		headless bool
+		why      string
+	}{
+		{"claude", true, "claude -p print mode"},
+		{"litellm", true, "claude binary against a LiteLLM proxy"},
+		{"copilot", true, "copilot -p programmatic mode"},
+		{"codex", true, "codex exec sub-command"},
+		{"watsonx", true, "OpenAI-compatible endpoint via the claude binary"},
+		{"goose", true, "goose run --no-session -t one-shot sub-command (#2828)"},
+		{"bob", false, "interactive TUI, no known one-shot entry point"},
+		{"agy", false, "interactive TUI, no known one-shot entry point"},
+		{"pi", false, "interactive TUI, no known one-shot entry point"},
+	} {
+		// The capability map is emitted as a JS object literal keyed by backend.
+		present := strings.Contains(body, tc.backend+":1")
+		if present != tc.headless {
+			t.Errorf("K8S_HEADLESS_BACKENDS headless=%v for %q, want %v (%s)",
+				present, tc.backend, tc.headless, tc.why)
 		}
 	}
 }
