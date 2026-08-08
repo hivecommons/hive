@@ -91,6 +91,19 @@ project:
   ai_author: your-bot-user
 ```
 
+### Leaderboard custom stylesheet
+
+The ClankeR leaderboard accepts a shareable custom stylesheet parameter:
+
+`/contribute/leaderboard?style=owner/repo/path/to/theme.css@ref`
+
+The `@ref` suffix is optional and defaults to the repo's `HEAD`. Hive only
+accepts the `owner/repo/path.css` triplet form, fetches public GitHub raw content
+server-side without credentials, sanitizes CSS, strips external imports/URLs, and
+serves it from `/api/leaderboard/style` with a 128 KiB size cap. The sanitizer
+also scopes selectors to the leaderboard tab and removes legacy executable CSS
+vectors and CSS escape sequences.
+
 ## Agents
 
 Seven agents ship as defaults (scanner, ci-maintainer, quality, architect, supervisor, outreach, sec-check). Enable or disable each in config:

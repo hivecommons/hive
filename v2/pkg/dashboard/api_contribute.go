@@ -12,6 +12,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -295,6 +296,7 @@ func (s *Server) registerContributeRoutes() {
 
 	s.mux.HandleFunc("GET /leaderboard", s.handleLeaderboardPage)
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboardAPI)
+	s.mux.HandleFunc("GET /api/leaderboard/style", s.handleLeaderboardStyle)
 	// Central per-user "Me" profile — a HUB endpoint returning one contributor's
 	// cross-hive profile (identity/tier/stats/milestones/hives/rank), aggregated
 	// from central hub data (contributor store + LeaderboardForHub + federation
@@ -518,6 +520,24 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`,
 		contributorAutoPromoteAt, contributorTrustedAt,
 	)
+
+	customStyleHeadHTML := ""
+	customStyleNoticeHTML := ""
+	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
+		if _, src, err := getLeaderboardCustomStyle(r.Context(), rawStyle); err == nil {
+			styleKey := leaderboardCustomStyleCacheKey(src)
+			escapedSrc := html.EscapeString(styleKey)
+			styleKeyJSON, _ := json.Marshal(styleKey)
+			customStyleHeadHTML = fmt.Sprintf(
+				`<link id="leaderboard-custom-style-link" rel="stylesheet" href="/api/leaderboard/style?src=%s"><script>window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC=%s;</script>`,
+				url.QueryEscape(styleKey),
+				string(styleKeyJSON),
+			)
+			customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+		} else {
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -1361,7 +1381,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .stat{padding:16px 10px}
 .ops-grid{gap:24px}
 .ops-card-head{padding:18px 20px}
-</style></head><body>
+.lb-custom-style-note{margin:0 0 16px;padding:10px 12px;border:1px solid rgba(88,166,255,.35);border-radius:8px;background:rgba(88,166,255,.10);color:var(--cc-text);font-size:.86rem}
+.lb-custom-style-note code{color:var(--cc-accent)}
+.lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
+.lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
+</style>%s</head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
@@ -2042,6 +2066,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="ops">
 <h1>Leaderboard</h1>
 <p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
+%s
 <!-- Personal "Me" card. Pinned ABOVE the full standings. Hydrated from the HUB
      profile endpoint (/api/leaderboard/contributor/{username}) once we know the
      logged-in username (from /api/gh-user-auth/status). For an anonymous / unknown
@@ -2348,6 +2373,23 @@ function meStyleClass(){
   if(!(n>=1&&n<=ME_STYLE_COUNT))n=1;
   return n;
 }
+function leaderboardCustomStyleLabel(src){
+  var base=String(src||'').split('@')[0].split('/');
+  return base.length>=2?(base[0]+'/'+base[1]):'custom';
+}
+function clearLeaderboardCustomStyleParam(){
+  try{
+    var u=new URL(window.location.href);
+    if(!u.searchParams.has('style'))return;
+    u.searchParams.delete('style');
+    history.replaceState(null,'',u.pathname+(u.searchParams.toString()?('?'+u.searchParams.toString()):'')+u.hash);
+  }catch(e){}
+  window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC='';
+  var link=document.getElementById('leaderboard-custom-style-link');
+  if(link)link.remove();
+  var note=document.getElementById('leaderboard-custom-style-note');
+  if(note)note.remove();
+}
 
 function loadMeCard(){
   var mount=document.getElementById('me-card-mount');
@@ -2518,9 +2560,11 @@ function renderMeCard(mount,p){
     +((p.rank&&p.total)?(' — ranked #'+p.rank+' of '+p.total+' on this hive'):'')+'.';
 
   var styleOpts='';
+  var customStyleSrc=window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC||'';
   for(var i=1;i<=ME_STYLE_COUNT;i++){
-    styleOpts+='<option value="'+i+'"'+(i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
+    styleOpts+='<option value="'+i+'"'+(!customStyleSrc&&i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
   }
+  if(customStyleSrc)styleOpts+='<option value="custom" selected>Custom ('+esc(leaderboardCustomStyleLabel(customStyleSrc))+')</option>';
 
   var html=''
   +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
@@ -2558,8 +2602,12 @@ function renderMeCard(mount,p){
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
+    if(sel.value==='custom')return;
     var v=parseInt(sel.value,10);if(!(v>=1&&v<=ME_STYLE_COUNT))v=1;
     localStorage.setItem(ME_STYLE_KEY,String(v));
+    clearLeaderboardCustomStyleParam();
+    var customOpt=sel.querySelector('option[value="custom"]');
+    if(customOpt)customOpt.remove();
     var card=document.getElementById('me-card');
     if(card){for(var k=1;k<=ME_STYLE_COUNT;k++)card.classList.remove('me-card--style'+k);card.classList.add('me-card--style'+v);}
   });
@@ -4760,7 +4808,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows)
+</body></html>`, projectName, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
@@ -6174,7 +6222,11 @@ func (s *Server) countAgentActivity(agentName string) (prs, issues, findings int
 // query form still works on load for back-compat, but the canonical shareable
 // URL is now the path form.)
 func (s *Server) handleLeaderboardPage(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/contribute/leaderboard", http.StatusFound)
+	target := "/contribute/leaderboard"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
