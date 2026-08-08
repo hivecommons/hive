@@ -16,12 +16,12 @@ without distributing shared long-lived credentials.
 ## Decision
 
 Introduce the mint as an opt-in short-lived credential issuer
-([mint package](../../pkg/mint/mint.go)). It signs scoped JWTs with bounded TTLs,
+([mint package](https://github.com/kubestellar/hive/blob/v4/v2/pkg/mint/mint.go)). It signs scoped JWTs with bounded TTLs,
 verification that fails closed, and a JWKS endpoint for downstream Workload
 Identity Federation providers. Agent integration maps the same trust tiers used
 by agent modes (`advisor`, `newcomer`, `contributor`, `trusted`) to explicit
 scope strings such as `issues:read`, `contents:write`, and `pulls:merge`
-([agent minting](../../pkg/mint/agent.go)).
+([agent minting](https://github.com/kubestellar/hive/blob/v4/v2/pkg/mint/agent.go)).
 
 The mint supplements, rather than replaces, the existing GitHub App token path.
 When disabled, agent minting is a no-op. When enabled, empty agent identities,

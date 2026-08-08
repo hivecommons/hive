@@ -8,7 +8,7 @@ Hive agents can repair their own failing PRs, but an unbounded retry loop can
 keep re-dispatching blind fixes without surfacing the root CI error. The
 escalation package records the incident that forced this boundary: a console
 test split kept `main` red for days while scanner fix PRs missed the one-line
-failure in shard logs ([escalation package](../../pkg/escalation/escalation.go)).
+failure in shard logs ([escalation package](https://github.com/kubestellar/hive/blob/v4/v2/pkg/escalation/escalation.go)).
 
 ## Decision
 

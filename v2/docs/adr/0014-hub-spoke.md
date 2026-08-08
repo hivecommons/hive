@@ -7,7 +7,7 @@ Status: Accepted (retroactive)
 Hive needs a shared fleet view without requiring every operator's cluster to be
 reachable from the public hub. The architecture defines every hive as a spoke
 and the hosted site as the hub, both running the same image with `HIVE_MODE=hub`
-selecting the role ([architecture §8](../architecture.md#8-hub--spoke)). The hub
+selecting the role ([architecture §8](../architecture.md#8-hub-spoke)). The hub
 must maintain registry, leaderboard, provisioning, and operator controls even
 for firewalled spokes.
 
@@ -17,7 +17,7 @@ Use spoke-initiated heartbeats as the control channel. A spoke posts identity,
 repos, ACMM level, agents, governor state, contributors, leaderboard, health,
 version, image, and related status to `/api/heartbeat`; the hub persists a
 sanitized registry entry and marks the spoke online
-([heartbeat payload](../../pkg/hub/heartbeat.go), [hub registry](../../pkg/hub/server.go)).
+([heartbeat payload](https://github.com/kubestellar/hive/blob/v4/v2/pkg/hub/heartbeat.go), [hub registry](https://github.com/kubestellar/hive/blob/v4/v2/pkg/hub/server.go)).
 The heartbeat response carries callbacks for upgrade, branch switch, GitHub App
 config, banners, visibility, authorized users, project config, gateway config,
 and restart requests, letting the hub act even when it cannot open a connection

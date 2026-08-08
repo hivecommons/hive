@@ -13,7 +13,7 @@ them to internal launcher structures.
 
 Introduce `skillreg` as a concurrency-safe registry of named, versioned skill
 files plus a minimal bring-your-own-agent SDK contract
-([skill registry](../../pkg/skillreg/skillreg.go)). A skill is a Markdown body
+([skill registry](https://github.com/kubestellar/hive/blob/v4/v2/pkg/skillreg/skillreg.go)). A skill is a Markdown body
 with optional YAML front matter for name, version, description, and tags. Missing
 skill directories, unreadable files, and malformed front matter are skipped with
 logs so one bad catalog entry does not prevent Hive from loading.
@@ -25,7 +25,7 @@ caret-major, and greater-than-or-equal constraints, and `InjectionText` renders 
 single Markdown block for the kick path.
 
 Define the BYO-agent contract as `AgentSpec`: name, backend, model, operating
-mode, and default skills ([agent spec](../../pkg/skillreg/agentspec.go)). YAML
+mode, and default skills ([agent spec](https://github.com/kubestellar/hive/blob/v4/v2/pkg/skillreg/agentspec.go)). YAML
 agent specs are strict: malformed YAML, missing name/backend/model, or unknown
 modes fail before an agent can launch silently.
 

@@ -9,7 +9,7 @@ needs agents and schedulers to reason about work without baking GitHub names
 into every interface. The forge package defines this boundary explicitly: it is
 "not hardcoded to GitHub" and exposes neutral repositories, issues, and change
 requests while concrete adapters handle GitHub, GitLab, and Gitea/Forgejo
-details ([forge package](../../pkg/forge/forge.go)).
+details ([forge package](https://github.com/kubestellar/hive/blob/v4/v2/pkg/forge/forge.go)).
 
 ## Decision
 

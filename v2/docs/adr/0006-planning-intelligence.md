@@ -11,9 +11,9 @@ architect decomposition, a draft plan hidden from `Ready()`, a plan-review gate,
 and bounded stall replanning
 ([planning intelligence](../planning-intelligence.md)). The package code records
 the same metadata conventions and review transitions
-([decompose](../../pkg/planning/decompose.go),
-[plan review](../../pkg/planning/plan_review.go),
-[stall replan](../../pkg/planning/replan.go)).
+([decompose](https://github.com/kubestellar/hive/blob/v4/v2/pkg/planning/decompose.go),
+[plan review](https://github.com/kubestellar/hive/blob/v4/v2/pkg/planning/plan_review.go),
+[stall replan](https://github.com/kubestellar/hive/blob/v4/v2/pkg/planning/replan.go)).
 
 ## Decision
 

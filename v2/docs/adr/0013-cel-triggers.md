@@ -13,7 +13,7 @@ operator writes a bad rule.
 ## Decision
 
 Add CEL-based declarative triggers over a forge-neutral `NormalizedEvent`
-([CEL trigger engine](../../pkg/celtrigger/celtrigger.go)). Forge adapters map
+([CEL trigger engine](https://github.com/kubestellar/hive/blob/v4/v2/pkg/celtrigger/celtrigger.go)). Forge adapters map
 native events onto stable kinds such as `issue.opened`, `pr.labeled`,
 `pr.ready_for_review`, and `comment.created`; CEL expressions see only the
 `event` object with normalized fields such as repo, labels, title, author, body,
@@ -24,7 +24,7 @@ parse errors, type errors, empty expressions, or non-boolean results reject the
 engine at config load. Runtime evaluation errors are treated as no match. Matched
 rules are returned in descending priority, and `MatchAgents` de-duplicates agent
 names before the governor unions them with existing built-in triggers
-([config wiring](../../pkg/celtrigger/wire.go)).
+([config wiring](https://github.com/kubestellar/hive/blob/v4/v2/pkg/celtrigger/wire.go)).
 
 ## Consequences
 

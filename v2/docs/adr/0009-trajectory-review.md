@@ -17,8 +17,8 @@ Run a periodic trajectory-review lane from the governor tick. The lane snapshots
 running, non-exempt agents with their assigned intent and recent transcript,
 sends a bounded transcript tail to a second model through the existing
 OpenAI-compatible/LiteLLM endpoint, and asks for a compact JSON verdict
-([reviewer](../../pkg/trajectory/trajectory.go),
-[lane](../../pkg/trajectory/lane.go)). On divergence, the configured response is
+([reviewer](https://github.com/kubestellar/hive/blob/v4/v2/pkg/trajectory/trajectory.go),
+[lane](https://github.com/kubestellar/hive/blob/v4/v2/pkg/trajectory/lane.go)). On divergence, the configured response is
 to pause the agent and alert by default, or to alert only. The reviewer prompt
 instructs the model to judge direction, not single commands, and to answer
 non-divergent when unsure.

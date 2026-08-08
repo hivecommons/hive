@@ -233,7 +233,7 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
-Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard (see [`v2/examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml)).
+Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard (see [`v2/examples/agents/customized-agent.yaml`](https://github.com/kubestellar/hive/blob/v4/v2/examples/agents/customized-agent.yaml)).
 
 ## When to add what
 

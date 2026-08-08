@@ -1,0 +1,95 @@
+site_name: Hive
+site_url: https://kubestellar.github.io/hive/
+repo_url: https://github.com/kubestellar/hive
+repo_name: kubestellar/hive
+docs_dir: v2/docs
+site_dir: site
+
+# Keep the source of truth under v2/docs while placing mkdocs.yml at the
+# repository root so GitHub Pages CI can build with the standard mkdocs command.
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: README.md
+  - Getting Started:
+      - Overview: getting-started.md
+      - Agent configuration: agent-configuration.md
+      - Hive CLI: hivectl.md
+      - Hive lite enrollment: lite-enrollment.md
+      - Credly badges: credly-badges.md
+  - Architecture:
+      - Reference architecture: architecture.md
+      - CNCF reference architecture: cncf-reference-architecture.md
+      - ACMM policy matrix: acmm-policy-matrix.md
+      - Configuration layering: config-layering.md
+      - Planning intelligence: planning-intelligence.md
+      - Design:
+          - Knowledge system design: design/knowledge-system.md
+  - Security:
+      - Security threat model: security-threat-model.md
+      - Intent verification: intent-verification.md
+      - Trajectory review: trajectory-review.md
+      - Rootless Podman CI seam: podman-rootless-ci.md
+      - Architecture Decision Records:
+          - ADR index: adr/README.md
+          - "0001: Record architecture decisions": adr/0001-record-architecture-decisions.md
+          - "0002: MITM proxy network enforcement": adr/0002-mitm-proxy-network-enforcement.md
+          - "0003: ACMM autonomy levels": adr/0003-acmm-autonomy-levels.md
+          - "0004: Beads work ledger": adr/0004-beads-work-ledger.md
+          - "0005: Forge abstraction": adr/0005-forge-abstraction.md
+          - "0006: Planning intelligence": adr/0006-planning-intelligence.md
+          - "0007: Token mint": adr/0007-token-mint.md
+          - "0008: IOScan untrusted input": adr/0008-ioscan-untrusted-input.md
+          - "0009: Trajectory review": adr/0009-trajectory-review.md
+          - "0010: Escalation circuit breaker": adr/0010-escalation-circuit-breaker.md
+          - "0011: Knowledge graph": adr/0011-knowledge-graph.md
+          - "0012: Skill registry": adr/0012-skill-registry.md
+          - "0013: CEL triggers": adr/0013-cel-triggers.md
+          - "0014: Hub spoke": adr/0014-hub-spoke.md
+  - Operations:
+      - Agent configuration: agent-configuration.md
+      - Hive CLI: hivectl.md
+      - Manual provisioning: manual-provisioning.md
+      - Configuration layering: config-layering.md
+      - Cross-cluster migration: cross-cluster-migration.md
+      - Rootless Podman CI seam: podman-rootless-ci.md
+      - Retro lane: retro-lane.md
+      - Review swarm: review-swarm.md
+      - Docs site publishing: docs-site.md
+  - Features:
+      - Planning intelligence: planning-intelligence.md
+      - Trajectory review: trajectory-review.md
+      - Retro lane: retro-lane.md
+      - Review swarm: review-swarm.md
+      - Intent verification: intent-verification.md
+      - Sandbox isolation: sandbox-isolation.md
+      - Hive lite enrollment: lite-enrollment.md
+      - ACMM policy matrix: acmm-policy-matrix.md
+      - Credly badges: credly-badges.md
+  - Roadmap & Positioning:
+      - Public roadmap: roadmap.md
+      - Landscape and positioning: landscape.md

@@ -99,8 +99,8 @@ multi-agent fleet operation.
 
 ## Hive claims checked against this repo
 
-- Live fleet operations plane: [architecture](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick), [dashboard and observability](architecture.md#10-dashboard--observability).
-- Multi-runtime model: [architecture](architecture.md#9-model-backends--cost), [agent configuration](agent-configuration.md).
-- ACMM autonomy: [architecture](architecture.md#6-acmm--controlling-agent-autonomy), [ACMM matrix](acmm-policy-matrix.md).
-- Hub/spoke and contributor compute: [architecture](architecture.md#8-hub--spoke), [manual provisioning](manual-provisioning.md).
+- Live fleet operations plane: [architecture](architecture.md#3-the-governor-loop-from-queue-depth-to-a-kick), [dashboard and observability](architecture.md#10-dashboard-observability).
+- Multi-runtime model: [architecture](architecture.md#9-model-backends-cost), [agent configuration](agent-configuration.md).
+- ACMM autonomy: [architecture](architecture.md#6-acmm-controlling-agent-autonomy), [ACMM matrix](acmm-policy-matrix.md).
+- Hub/spoke and contributor compute: [architecture](architecture.md#8-hub-spoke), [manual provisioning](manual-provisioning.md).
 - MITM enforcement: [architecture](architecture.md#5-layered-guardrails-defense-in-depth), [ADR-0002](adr/0002-mitm-proxy-network-enforcement.md).

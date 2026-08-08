@@ -109,7 +109,7 @@ the threats they reduce.
 ## Reporting vulnerabilities
 
 Do not report suspected vulnerabilities in public issues, pull requests, or
-discussions. Follow the repository [Security Policy](../../SECURITY.md): use
+discussions. Follow the repository [Security Policy](https://github.com/kubestellar/hive/blob/v4/SECURITY.md): use
 GitHub private vulnerability reporting from the repository **Security** tab, or
 contact a maintainer directly if private reporting is unavailable. Include the
 affected component, branch/commit, impact, reproduction steps, and any relevant

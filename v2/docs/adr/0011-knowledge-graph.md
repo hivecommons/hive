@@ -15,20 +15,20 @@ needs to work when no external embedding service is available.
 
 Represent reusable lessons as typed facts with confidence, sources, tags,
 relationships, usage counts, and layer metadata
-([knowledge types](../../pkg/knowledge/types.go)). Store local vault pages and
+([knowledge types](https://github.com/kubestellar/hive/blob/v4/v2/pkg/knowledge/types.go)). Store local vault pages and
 remote layer clients behind one `KnowledgeAPI`, and prime agents by formatting a
 bounded set of selected facts into the kick prompt rather than letting agents
-query the store directly ([knowledge API](../../pkg/knowledge/api.go)).
+query the store directly ([knowledge API](https://github.com/kubestellar/hive/blob/v4/v2/pkg/knowledge/api.go)).
 
 Use a deterministic term-frequency embedder as the default semantic signal: text
 is tokenized, feature-hashed into a 256-dimensional vector, and L2-normalized,
 with embeddings cached only for the search/reindex pass
-([TF embedder](../../pkg/knowledge/embedding.go)). Persist fact relationships in
+([TF embedder](https://github.com/kubestellar/hive/blob/v4/v2/pkg/knowledge/embedding.go)). Persist fact relationships in
 a bbolt-backed graph store with SPO/POS/OSP indexes so facts can be traversed by
-subject, predicate, or object ([graph store](../../pkg/knowledge/graphstore.go)).
+subject, predicate, or object ([graph store](https://github.com/kubestellar/hive/blob/v4/v2/pkg/knowledge/graphstore.go)).
 The retro lane ingests model-generated lessons only after length, secret, and
 deduplication gates, then stores them as ordinary project facts derived from the
-source bead or PR ([retro lessons](../../pkg/knowledge/retro_lesson.go)).
+source bead or PR ([retro lessons](https://github.com/kubestellar/hive/blob/v4/v2/pkg/knowledge/retro_lesson.go)).
 
 ## Consequences
 

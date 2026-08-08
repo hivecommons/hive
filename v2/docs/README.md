@@ -34,7 +34,7 @@ precursor to a published docs site.
 - [Security threat model](security-threat-model.md) — actors, boundaries,
   layered defenses, known gaps, and reporting.
 - [Architecture Decision Records](adr/README.md) — lightweight ADR process and
-  records 0001-0010.
+  records 0001-0014.
 - [Intent verification](intent-verification.md) — tier-based change
   authorization for merge eligibility.
 - [Trajectory review](trajectory-review.md) — drift detection and agent pause
@@ -52,6 +52,8 @@ precursor to a published docs site.
   advisory beads.
 - [Review swarm](review-swarm.md) — structured review perspectives, verdicts,
   and merge-gate integration.
+- [Docs site publishing](docs-site.md) — MkDocs Material build, Pages
+  deployment, and operator setup checklist.
 
 ## Roadmap & Positioning
 
