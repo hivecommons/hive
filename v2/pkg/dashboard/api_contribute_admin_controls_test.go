@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // #2534 — Operator admin controls. Originally in a single "Management & Operations"
@@ -75,6 +77,12 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 		`data-role="tier"`,
 		`data-role="revoke"`,
 		`data-role="remove"`,
+		`data-role="agent-role-add"`,
+		`data-role="agent-role-remove"`,
+		`/agent-role-grants`,
+		`Agent roles`,
+		`&middot; as '+esc(c.role)`,
+		`HIVE_AGENT_ROLE=scanner`,
 		// Themed confirm modal (never native window.confirm).
 		`id="admin-confirm-back"`,
 		`function adminConfirm(`,
@@ -144,6 +152,7 @@ type contributorWriteCase struct {
 func contributorWriteCases() []contributorWriteCase {
 	return []contributorWriteCase{
 		{"trust", (*Server).handleContributorTrust, http.MethodPut, "/api/contributors/alice/trust", `{"tier":"trusted"}`},
+		{"agent_role_grants", (*Server).handleContributorAgentRoleGrants, http.MethodPut, "/api/contributors/alice/agent-role-grants", `{"agent_role_grants":["ci-maintainer"]}`},
 		{"revoke", (*Server).handleContributorRevoke, http.MethodPost, "/api/contributors/alice/revoke", ``},
 		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},
 		{"delete", (*Server).handleContributorDelete, http.MethodDelete, "/api/contributors/alice", ``},
@@ -218,6 +227,56 @@ func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
 				t.Errorf("role %q: tier not promoted: %+v", role, p)
 			}
 		})
+	}
+}
+
+func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{
+		GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "trusted",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, deps := apiServer(t)
+	deps.Config.Agents["ci-maintainer"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+	deps.Config.Agents["sec-check"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+	deps.Config.Hub.ContributeDelegatableRoles = []string{"scanner", "ci-maintainer", "sec-check", "supervisor"}
+
+	readReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["ci-maintainer"]}`))
+	readReq.Header.Set("Content-Type", "application/json")
+	readReq.Header.Set("X-Hive-Role", "read")
+	readRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusForbidden {
+		t.Fatalf("read viewer got %d, want 403 (body: %s)", readRec.Code, readRec.Body.String())
+	}
+	if p := findContributor("c-alice"); p == nil || len(p.AgentRoleGrants) != 0 {
+		t.Fatalf("read viewer mutated grants: %+v", p)
+	}
+
+	ownerReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["sec-check","ci-maintainer","ci-maintainer"]}`))
+	ownerReq.Header.Set("Content-Type", "application/json")
+	ownerReq.Header.Set("X-Hive-Role", "owner")
+	ownerRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(ownerRec, ownerReq)
+	if ownerRec.Code != http.StatusOK {
+		t.Fatalf("owner got %d, want 200 (body: %s)", ownerRec.Code, ownerRec.Body.String())
+	}
+	p := findContributor("c-alice")
+	if p == nil || strings.Join(p.AgentRoleGrants, ",") != "ci-maintainer,sec-check" {
+		t.Fatalf("grant round-trip mismatch: %+v", p)
+	}
+	if body := ownerRec.Body.String(); !strings.Contains(body, `"agent_role_grants":["ci-maintainer","sec-check"]`) {
+		t.Fatalf("response did not echo normalized grants: %s", body)
+	}
+
+	badReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["scanner"]}`))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("X-Hive-Role", "owner")
+	badRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("default non-privileged role got %d, want 400", badRec.Code)
 	}
 }
 

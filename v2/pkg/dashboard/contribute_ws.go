@@ -1249,6 +1249,7 @@ type ContributorLiveState struct {
 	CurrentTask *WSTaskAssign  `json:"current_task,omitempty"`
 	Tasks       []WSTaskAssign `json:"tasks,omitempty"`
 	Sessions    int            `json:"sessions"`
+	Role        string         `json:"role,omitempty"`
 }
 
 func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
@@ -1261,6 +1262,7 @@ func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
 		if c.profile != nil {
 			cid = c.profile.ContributorID
 		}
+		role := c.role
 		stale := time.Since(c.lastPong) > wsHeartbeatTimeout
 		var task *WSTaskAssign
 		if c.currentTask != nil && !stale {
@@ -1272,6 +1274,9 @@ func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
 			existing := out[cid]
 			existing.Active = true
 			existing.Sessions++
+			if role != "" {
+				existing.Role = role
+			}
 			if task != nil {
 				existing.CurrentTask = task
 				dupe := false
@@ -1349,6 +1354,10 @@ type FleetClanker struct {
 	// PUT /api/contribute/interests. Omitted when the contributor has declared
 	// none.
 	LabelInterests []string `json:"label_interests,omitempty"`
+	// AgentRoleGrants is the operator-managed grant list for privileged spoke
+	// agent roles. It is shown to owner/read-write viewers in the fleet row; the
+	// server-side mutation endpoint remains the enforcement boundary.
+	AgentRoleGrants []string `json:"agent_role_grants,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -1417,6 +1426,9 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			// so the snapshot never aliases the live profile slice).
 			if len(c.profile.LabelInterests) > 0 {
 				fc.LabelInterests = append([]string(nil), c.profile.LabelInterests...)
+			}
+			if len(c.profile.AgentRoleGrants) > 0 {
+				fc.AgentRoleGrants = append([]string(nil), c.profile.AgentRoleGrants...)
 			}
 		}
 		var task *WSTaskAssign

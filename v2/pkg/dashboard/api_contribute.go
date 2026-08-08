@@ -290,6 +290,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
+	s.mux.HandleFunc("PUT /api/contributors/{id}/agent-role-grants", s.handleContributorAgentRoleGrants)
 	s.mux.HandleFunc("POST /api/contributors/{id}/revoke", s.handleContributorRevoke)
 	s.mux.HandleFunc("POST /api/contributors/{id}/requeue", s.handleContributorRequeue)
 	s.mux.HandleFunc("DELETE /api/contributors/{id}", s.handleContributorDelete)
@@ -938,6 +939,12 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-act:hover{border-color:var(--cc-muted)}
 .admin-act.danger:hover{border-color:#f85149;color:#f85149}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
+.agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
+.agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
+.agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:#79c0ff}
+.agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
+.agent-role-chip button:hover{opacity:1;color:#f85149}
+.agent-role-add{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .admin-modal-back{display:none;position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:1000;align-items:center;justify-content:center}
 .admin-modal-back.show{display:flex}
 .admin-modal{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;max-width:420px;width:90%%;padding:22px}
@@ -1497,6 +1504,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 brew install just gh
 git clone -b v2 https://github.com/kubestellar/hive && cd hive
 export HIVE_HUB=%s
+# Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.
 just contribute-setup claude
 just contribute-hive</pre>
 </div>
@@ -1526,14 +1534,15 @@ macos:'brew install just gh',
 linux:'curl --proto \'=https\' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.local/bin\n(type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) && sudo mkdir -p -m 755 /etc/apt/keyrings && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && sudo mkdir -p -m 755 /etc/apt/sources.list.d && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt update && sudo apt install gh -y',
 windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
-var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
-var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive CLI local';
+var roleHelp='# Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.\n';
+var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
+var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
 // Kubernetes (#2549): register locally, then generate + apply a headless
 // contributor workload (Deployment, #2660) into a cluster you already have.
 // just contribute-k8s prints the manifest; it never touches your cluster on
 // its own, so you can read it before piping to kubectl. Only the headless-
 // capable backends run this way (see K8S_HEADLESS_BACKENDS).
-var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
+var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
 // Backends with a verified headless (non-interactive) entry point — must match
 // HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
 // TTY, so only these run in a cluster; anything else refuses work at startup.
@@ -1578,14 +1587,14 @@ if(mode==='kubernetes'){
 // mode, prepend a visible warning comment (the Justfile also warns on stderr).
 var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot, Codex or Goose for Kubernetes.\n';
 var k8sPre=envLines+modelLine;
-cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
+cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace('ROLEHELP',roleHelp).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
 }else if(mode==='host'){
 tpl=hostTpl;
 install=opt.getAttribute('data-host-install');
 if(!install)install='# '+cli+' uses your existing gh auth';
-cmds.textContent=tpl.replace('PREREQ',prereq).replace('INSTALL',install.replace(/\\n/g,'\n')).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
+cmds.textContent=tpl.replace('PREREQ',prereq).replace('INSTALL',install.replace(/\\n/g,'\n')).replace('ROLEHELP',roleHelp).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }else{
-cmds.textContent=containerTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
+cmds.textContent=containerTpl.replace('PREREQ',prereq).replace('ROLEHELP',roleHelp).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }
 if(typeof syncBranded==='function')syncBranded();
 }
@@ -2781,6 +2790,9 @@ function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s
 var adminEnabled=false;
 var adminHub=null;      // last-loaded Config.Hub.* snapshot (contribute_* fields)
 var adminDirty=false;   // filter edits pending Save
+var adminGrantableAgentRoles=[];
+var privilegedAgentRoles={};
+['ci-maintainer','sec-check','architect'].forEach(function(r){privilegedAgentRoles[r]=true;});
 
 function toast(msg,ok){
   var t=document.createElement('div');
@@ -3220,7 +3232,15 @@ onEl('admin-save-btn','click',function(){
 // endpoint; destructive ones go through the themed confirm.
 onEl('clanker-list','change',function(e){
   var sel=e.target;
-  if(!adminEnabled||sel.getAttribute('data-role')!=='tier')return;
+  if(!adminEnabled)return;
+  var controlRole=sel.getAttribute('data-role');
+  if(controlRole==='agent-role-add'){
+    var addRole=sel.value;
+    sel.value='';
+    if(addRole)updateContributorAgentRoleGrants(sel.getAttribute('data-cid'),null,addRole);
+    return;
+  }
+  if(controlRole!=='tier')return;
   var cid=sel.getAttribute('data-cid'),tier=sel.value;
   fetch('/api/contributors/'+encodeURIComponent(cid)+'/trust',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:tier})})
     .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
@@ -3231,6 +3251,10 @@ onEl('clanker-list','click',function(e){
   var b=e.target;
   if(!adminEnabled||b.tagName!=='BUTTON')return;
   var role=b.getAttribute('data-role');
+  if(role==='agent-role-remove'){
+    updateContributorAgentRoleGrants(b.getAttribute('data-cid'),b.getAttribute('data-agent-role'),null);
+    return;
+  }
   if(role!=='revoke'&&role!=='remove'&&role!=='requeue')return;
   var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
   if(role==='requeue'){
@@ -3296,6 +3320,7 @@ async function initAdmin(){
     var cr=await fetch('/api/config/governor');var cd=await cr.json();
     adminHub=(cd&&cd.hub)?cd.hub:{};
   }catch(e){adminHub={};}
+  syncGrantableAgentRoles(null);
   renderAdminControls();
   // Resume-all (#queue-hold): wire the header button once, now that we know the viewer
   // is owner/read-write. Visibility is still driven by ccRenderResumeAll (count-gated).
@@ -3347,6 +3372,45 @@ function clankerInterestsLine(interests){
   if(!interests||!interests.length)return '';
   var chips=interests.map(function(l){return '<span class="clanker-interest-chip">'+esc(l)+'</span>';}).join('');
   return '<div class="clanker-interests" title="This contributor&rsquo;s own opt-in label interests. Read-only here &mdash; they set these themselves."><span class="clanker-interests-label">prefers:</span>'+chips+'</div>';
+}
+function syncGrantableAgentRoles(policy){
+  var roles=(policy&&policy.agent_role_grantable_roles)||[];
+  if((!roles||!roles.length)&&adminHub&&adminHub.contribute_delegatable_roles){
+    roles=adminHub.contribute_delegatable_roles;
+  }
+  var seen={},out=[];
+  (roles||[]).forEach(function(r){
+    r=String(r||'').trim().toLowerCase();
+    if(r&&r!=='supervisor'&&privilegedAgentRoles[r]&&!seen[r]){seen[r]=true;out.push(r);}
+  });
+  adminGrantableAgentRoles=out.sort();
+}
+function clankerAgentRoleGrantControl(c,cid){
+  var grants=(c.agent_role_grants||[]).map(function(r){return String(r||'').trim().toLowerCase();}).filter(Boolean);
+  var seen={};grants=grants.filter(function(r){if(seen[r])return false;seen[r]=true;return true;}).sort();
+  var chips=grants.length?grants.map(function(r){
+    return '<span class="agent-role-chip">'+esc(r)+'<button type="button" aria-label="Remove '+esc(r)+' grant" title="Remove '+esc(r)+' grant" data-cid="'+cid+'" data-agent-role="'+esc(r)+'" data-role="agent-role-remove">&times;</button></span>';
+  }).join(''):'<span class="clanker-sub">none</span>';
+  var granted={};grants.forEach(function(r){granted[r]=true;});
+  var addOpts=adminGrantableAgentRoles.filter(function(r){return !granted[r];}).map(function(r){return '<option value="'+esc(r)+'">'+esc(r)+'</option>';}).join('');
+  var add=addOpts?('<select class="agent-role-add" title="Grant a privileged agent role" data-cid="'+cid+'" data-role="agent-role-add"><option value="">+ grant</option>'+addOpts+'</select>'):'';
+  var tip='Defaults scanner, quality and outreach need no grant. Privileged roles require trusted+ tier, hive allow-listing and this per-contributor grant. Supervisor is never delegatable.';
+  return '<div class="agent-role-grants"><span class="agent-role-grants__label">Agent roles</span><span class="info-affordance"><button type="button" class="info-btn" tabindex="-1" aria-label="How agent-role grants work" title="'+tip+'">&#9432;</button></span>'+chips+add+'</div>';
+}
+function updateContributorAgentRoleGrants(cid,removeRole,addRole){
+  if(!cid)return;
+  var row=null;
+  document.querySelectorAll('[data-role-grants-cid]').forEach(function(el){if(el.getAttribute('data-role-grants-cid')===cid)row=el;});
+  var grants=[];
+  if(row){
+    row.querySelectorAll('[data-agent-role]').forEach(function(b){var r=b.getAttribute('data-agent-role');if(r)grants.push(r);});
+  }
+  if(removeRole)grants=grants.filter(function(r){return r!==removeRole;});
+  if(addRole&&grants.indexOf(addRole)<0)grants.push(addRole);
+  fetch('/api/contributors/'+encodeURIComponent(cid)+'/agent-role-grants',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_role_grants:grants})})
+    .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+    .then(function(x){if(x.ok){toast('Agent-role grants updated',true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to update grants',false);}})
+    .catch(function(){toast('Failed to update grants',false);});
 }
 function renderClankers(list){
   list=list||[];
@@ -3408,11 +3472,12 @@ function renderClankers(list){
         ?('<span class="info-affordance"><button type="button" class="admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
           '<button type="button" class="info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
         :'';
-      actions='<div class="admin-actions">'+
+      actions='<div class="admin-actions" data-role-grants-cid="'+cid+'">'+
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
         requeueBtn+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
+        clankerAgentRoleGrantControl(c,cid)+
         '</div>';
     }
     // #command-center: at-a-glance status pill (working / reviewing / idle) and a
@@ -3421,7 +3486,9 @@ function renderClankers(list){
     // task in flight is "working" and no task is "idle".
     var st=c.current_task?'working':'idle';
     if(c.current_task&&/review|lgtm|approve/i.test((c.current_task.kind||'')+' '+(c.current_task.title||'')))st='reviewing';
-    var statusPill='<span class="clanker-status '+st+'">'+st+'</span>';
+    var statusText=st;
+    if(c.current_task&&c.role)statusText=st+' &middot; as '+esc(c.role);
+    var statusPill='<span class="clanker-status '+st+'">'+statusText+'</span>';
     var key=(c.github_username||c.contributor_id||'').toLowerCase();
     // Enter pop-in for a clanker we haven't seen in the previous render (army framing).
     var isNew=key&&!ccKnownClankers[key];
@@ -3578,6 +3645,7 @@ function renderPolicy(p){
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
     ['Disabled tiers',list(p.disabled_tiers)],
     ['Disabled repos',list(p.disabled_repos)],
+    ['Privileged agent-role grants',list(p.agent_role_grantable_roles)],
     ['Auto-promote at',esc(p.auto_promote_at)+' tasks that produced a PR &rarr; contributor'],
     ['Trusted at','~'+esc(p.trusted_at)+' PR tasks, then granted by a maintainer']
   ];
@@ -3592,6 +3660,7 @@ async function opsPoll(){
   try{
     var res=await fetch('/api/contribute/fleet');
     var data=await res.json();
+    syncGrantableAgentRoles(data&&data.policy);
     // Each panel renders independently — one failing does not block the others.
     safeRender('clankers',function(){renderClankers((data&&data.clankers)||[]);});
     safeRender('work',function(){renderWork((data&&data.work)||[]);});
@@ -5202,6 +5271,7 @@ type ContributeAdmissionPolicy struct {
 	SkipAssignedToOthers bool     `json:"skip_assigned_to_others"`
 	DisabledTiers        []string `json:"disabled_tiers,omitempty"`
 	DisabledRepos        []string `json:"disabled_repos,omitempty"`
+	AgentRoleGrantable   []string `json:"agent_role_grantable_roles,omitempty"`
 	AutoPromoteAt        int      `json:"auto_promote_at"`
 	TrustedAt            int      `json:"trusted_at"`
 }
@@ -5231,7 +5301,25 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 	p.SkipAssignedToOthers = h.ContributeSkipAssignedToOthers
 	p.DisabledTiers = h.DisabledTiers
 	p.DisabledRepos = h.DisabledRepos
+	p.AgentRoleGrantable = contributorAgentRoleGrantableRoles(s.deps.Config)
 	return p
+}
+
+func contributorAgentRoleGrantableRoles(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	set := cfg.Hub.ContributeDelegatableRoleSet()
+	roles := make([]string, 0, len(set))
+	for role := range set {
+		role = normalizeAgentRole(role)
+		if role == "" || role == "supervisor" || !roleClaimNeedsGrant[role] {
+			continue
+		}
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	return roles
 }
 
 // handleContributeFleet serves the read-only fleet/work/policy snapshot that the
@@ -5748,6 +5836,58 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 	}
 	s.logger.Info("contributor tier changed", "username", p.GitHubUsername, "tier", req.Tier)
 	jsonResponse(w, map[string]any{"ok": true, "trust_tier": req.Tier})
+}
+
+func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	id := r.PathValue("id")
+	p := findContributor(id)
+	if p == nil {
+		jsonError(w, "Contributor not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		AgentRoleGrants []string `json:"agent_role_grants"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	grantable := contributorAgentRoleGrantableRoles(nil)
+	if s.deps != nil {
+		grantable = contributorAgentRoleGrantableRoles(s.deps.Config)
+	}
+	allowed := make(map[string]bool, len(grantable))
+	for _, role := range grantable {
+		allowed[role] = true
+	}
+	seen := map[string]bool{}
+	grants := make([]string, 0, len(req.AgentRoleGrants))
+	for _, role := range req.AgentRoleGrants {
+		role = normalizeAgentRole(role)
+		if role == "" {
+			continue
+		}
+		if !allowed[role] {
+			jsonError(w, fmt.Sprintf("agent role %q is not a grantable delegated privileged role", role), http.StatusBadRequest)
+			return
+		}
+		if !seen[role] {
+			seen[role] = true
+			grants = append(grants, role)
+		}
+	}
+	sort.Strings(grants)
+	p.AgentRoleGrants = grants
+	if err := saveContributorProfile(p); err != nil {
+		jsonError(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("contributor agent-role grants changed", "username", p.GitHubUsername, "grants", strings.Join(grants, ","))
+	jsonResponse(w, map[string]any{"ok": true, "agent_role_grants": grants, "grantable_roles": grantable})
 }
 
 func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request) {
