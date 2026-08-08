@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/github"
@@ -27,7 +28,7 @@ func TestRecordEnumeratedIssues(t *testing.T) {
 		},
 	}
 
-	recordEnumeratedIssues(rec, actionable)
+	recordEnumeratedIssues(context.Background(), rec, actionable)
 
 	events := rec.store.Recent(0)
 	if len(events) != 2 {
@@ -53,7 +54,7 @@ func TestRecordEnumeratedIssues_BoundedPerCycle(t *testing.T) {
 	}
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: items}}
 
-	recordEnumeratedIssues(rec, actionable)
+	recordEnumeratedIssues(context.Background(), rec, actionable)
 
 	if got := len(rec.store.Recent(0)); got != maxTimelineEnumeratePerCycle {
 		t.Fatalf("recorded %d events, want cap of %d", got, maxTimelineEnumeratePerCycle)
@@ -63,7 +64,7 @@ func TestRecordEnumeratedIssues_BoundedPerCycle(t *testing.T) {
 func TestRecordKick(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 
-	recordKick(rec, "quality")
+	recordKick(context.Background(), rec, "quality")
 
 	events := rec.store.Recent(0)
 	if len(events) != 1 {
@@ -80,7 +81,7 @@ func TestRecordKick(t *testing.T) {
 func TestRecordKickIssueScoped(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 
-	recordKick(rec, "scanner", "org/repo#1", "org/repo#2")
+	recordKick(context.Background(), rec, "scanner", "org/repo#1", "org/repo#2")
 
 	events := rec.store.Recent(0)
 	if len(events) != 2 {
@@ -100,22 +101,22 @@ func TestRecordKickIssueScoped(t *testing.T) {
 // and a recorder returning a nil store must all be no-ops (never panic).
 func TestRecordHelpers_NilSafe(t *testing.T) {
 	// nil recorder
-	recordEnumeratedIssues(nil, &github.ActionableResult{})
-	recordKick(nil, "x")
+	recordEnumeratedIssues(context.Background(), nil, &github.ActionableResult{})
+	recordKick(context.Background(), nil, "x")
 
 	// nil actionable
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
-	recordEnumeratedIssues(rec, nil)
+	recordEnumeratedIssues(context.Background(), rec, nil)
 	if got := len(rec.store.Recent(0)); got != 0 {
 		t.Fatalf("nil actionable recorded %d events, want 0", got)
 	}
 
 	// recorder that returns a nil store
 	nilStore := &fakeLifecycleRecorder{store: nil}
-	recordEnumeratedIssues(nilStore, &github.ActionableResult{
+	recordEnumeratedIssues(context.Background(), nilStore, &github.ActionableResult{
 		Issues: github.IssueResult{Items: []github.Issue{{Repo: "r", Number: 1}}},
 	})
-	recordKick(nilStore, "x")
+	recordKick(context.Background(), nilStore, "x")
 }
 
 func TestIssueRef(t *testing.T) {

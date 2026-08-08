@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/timeline"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -313,5 +314,76 @@ func TestInit_InvalidEndpointReturnsError(t *testing.T) {
 		if serr := shutdown(context.Background()); serr != nil {
 			t.Errorf("no-op shutdown after error returned: %v", serr)
 		}
+	}
+}
+
+func TestTimelineSpanAttributes_GenAIAndHiveAttrs(t *testing.T) {
+	e := timeline.Event{
+		ID:       "evt-1",
+		IssueRef: "org/repo#7",
+		Kind:     timeline.KindKicked,
+		Agent:    "scanner",
+		Attrs: map[string]string{
+			"gen_ai.system": "claude",
+			"model":         "claude-sonnet-4-6",
+			"input_tokens":  "123",
+			"output_tokens": "45",
+			"lane":          "triage",
+			"acmm_level":    "4",
+			"governor_mode": "BUSY",
+		},
+	}
+
+	attrs := TimelineSpanAttributes(e)
+	strings := map[attribute.Key]string{}
+	ints := map[attribute.Key]int64{}
+	for _, kv := range attrs {
+		switch kv.Value.Type().String() {
+		case "STRING":
+			strings[kv.Key] = kv.Value.AsString()
+		case "INT64":
+			ints[kv.Key] = kv.Value.AsInt64()
+		}
+	}
+
+	if TimelineSpanName(e) != "agent.kick" {
+		t.Fatalf("span name = %q", TimelineSpanName(e))
+	}
+	if strings[AttrGenAISystem] != "claude" {
+		t.Errorf("gen_ai.system = %q", strings[AttrGenAISystem])
+	}
+	if strings[AttrGenAIRequestModel] != "claude-sonnet-4-6" {
+		t.Errorf("gen_ai.request.model = %q", strings[AttrGenAIRequestModel])
+	}
+	if ints[AttrGenAIUsageInputTokens] != 123 || ints[AttrGenAIUsageOutputTokens] != 45 {
+		t.Errorf("token attrs = %d/%d", ints[AttrGenAIUsageInputTokens], ints[AttrGenAIUsageOutputTokens])
+	}
+	if strings[AttrHiveAgent] != "scanner" || strings[AttrHiveLane] != "triage" {
+		t.Errorf("hive attrs = agent %q lane %q", strings[AttrHiveAgent], strings[AttrHiveLane])
+	}
+	if ints[AttrHiveACMMLevel] != 4 || strings[AttrHiveGovernorMode] != "BUSY" {
+		t.Errorf("governor attrs = acmm %d mode %q", ints[AttrHiveACMMLevel], strings[AttrHiveGovernorMode])
+	}
+}
+
+func TestStartTimelineSpan_RecordsMappedSpan(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	_, span := StartTimelineSpan(context.Background(), timeline.Event{
+		Kind:  timeline.KindPROpened,
+		Agent: "reviewer",
+		Attrs: map[string]string{"pr": "42"},
+	})
+	span.End()
+
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(ended))
+	}
+	if ended[0].Name() != "pr.opened" {
+		t.Fatalf("span name = %q, want pr.opened", ended[0].Name())
 	}
 }

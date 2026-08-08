@@ -49,14 +49,14 @@ func TestCovGov_Features(t *testing.T) {
 	if !cfg.Ioscan.IsEnabled() {
 		t.Errorf("ioscan not enabled")
 	}
-	if !cfg.Tracing.Enabled {
-		t.Errorf("tracing not enabled")
+	if !cfg.Tracing.Enabled || !cfg.OTel.Enabled {
+		t.Errorf("tracing/otel not enabled: tracing=%v otel=%v", cfg.Tracing.Enabled, cfg.OTel.Enabled)
 	}
-	if cfg.Tracing.Endpoint != "https://otel-collector:4318" {
-		t.Errorf("tracing endpoint = %q", cfg.Tracing.Endpoint)
+	if cfg.Tracing.Endpoint != "https://otel-collector:4318" || cfg.OTel.Endpoint != "https://otel-collector:4318" {
+		t.Errorf("tracing endpoint = %q otel endpoint = %q", cfg.Tracing.Endpoint, cfg.OTel.Endpoint)
 	}
-	if cfg.Tracing.SampleRatio != 0.5 {
-		t.Errorf("tracing sample ratio = %v", cfg.Tracing.SampleRatio)
+	if cfg.Tracing.SampleRatio != 0.5 || cfg.OTel.SampleRatio != 0.5 {
+		t.Errorf("tracing sample ratio = %v otel sample ratio = %v", cfg.Tracing.SampleRatio, cfg.OTel.SampleRatio)
 	}
 	if !cfg.Mint.Enabled {
 		t.Errorf("mint not enabled")
@@ -94,5 +94,20 @@ func TestCovGov_Features(t *testing.T) {
 	// Tracing endpoint set earlier must survive the partial update.
 	if cfg.Tracing.Endpoint != "https://otel-collector:4318" {
 		t.Errorf("tracing endpoint lost on partial update: %q", cfg.Tracing.Endpoint)
+	}
+}
+
+func TestCovGov_FeaturesEndpointOnlyPreservesLegacyEnabled(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.Tracing.Enabled = true
+
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"tracingEndpoint": "https://otel-new:4318",
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("endpoint-only update: %d", rec.Code)
+	}
+
+	if got := s.deps.Config.EffectiveOTel(); !got.Enabled || got.Endpoint != "https://otel-new:4318" {
+		t.Fatalf("effective otel after endpoint-only update = %+v", got)
 	}
 }

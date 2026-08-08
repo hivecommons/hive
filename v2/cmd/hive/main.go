@@ -920,20 +920,24 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize OpenTelemetry tracing. Off by default: with no tracing block
-	// (or tracing.enabled=false) this installs a no-op provider with zero
-	// export overhead. Never fatal — a tracing setup error must not stop hive.
+	// Initialize OpenTelemetry tracing. Off by default: with no otel block
+	// (or otel.enabled=false) this installs a no-op provider with zero export
+	// overhead. Never fatal — a tracing setup error must not stop hive.
+	otelCfg := cfg.EffectiveOTel()
 	traceShutdown, traceErr := tracing.Init(ctx, tracing.Config{
-		Enabled:     cfg.Tracing.Enabled,
-		Endpoint:    cfg.Tracing.Endpoint,
-		SampleRatio: cfg.Tracing.SampleRatio,
+		Enabled:     otelCfg.Enabled,
+		Endpoint:    otelCfg.Endpoint,
+		Headers:     otelCfg.Headers,
+		ServiceName: otelCfg.ServiceNameOrDefault(),
+		Insecure:    otelCfg.Insecure,
+		SampleRatio: otelCfg.SampleRatio,
 		HiveID:      cfg.HiveID,
 		Branch:      cfg.Policies.Branch,
 	})
 	if traceErr != nil {
 		logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
-	} else if cfg.Tracing.Enabled {
-		logger.Info("tracing enabled", "endpoint", cfg.Tracing.Endpoint)
+	} else if otelCfg.Enabled {
+		logger.Info("otel tracing enabled", "endpoint", otelCfg.Endpoint, "service_name", otelCfg.ServiceNameOrDefault())
 	}
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), traceShutdownTimeout)
@@ -4053,10 +4057,12 @@ type lifecycleRecorder interface {
 // Record itself is nil-safe. This must never slow or break the eval loop, so it
 // does no I/O and touches only the in-memory bounded ring.
 //
-// TODO(timeline-pr): also record KindPROpened / KindMerged once the eval loop
-// has cheap access to per-issue PR-open and merge transitions (the enumerate
-// result exposes open PRs but not the open→merged edge without extra state).
-func recordEnumeratedIssues(rec lifecycleRecorder, actionable *github.ActionableResult) {
+// PR-open/merge lifecycle spans are emitted by the same tracing mapper when
+// callers record those timeline events; this helper only has enumerated issues.
+func recordEnumeratedIssues(ctx context.Context, rec lifecycleRecorder, actionable *github.ActionableResult) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if rec == nil || actionable == nil {
 		return
 	}
@@ -4070,10 +4076,13 @@ func recordEnumeratedIssues(rec lifecycleRecorder, actionable *github.Actionable
 	}
 	for i := 0; i < limit; i++ {
 		issue := actionable.Issues.Items[i]
-		store.Record(timeline.Event{
+		event := timeline.Event{
 			IssueRef: issueRef(issue.Repo, issue.Number),
 			Kind:     timeline.KindEnumerated,
-		})
+		}
+		_, span := tracing.StartTimelineSpan(ctx, event)
+		store.Record(event)
+		span.End()
 	}
 }
 
@@ -4081,7 +4090,10 @@ func recordEnumeratedIssues(rec lifecycleRecorder, actionable *github.Actionable
 // supplied it records one issue-scoped event per ref so post-completion lanes
 // can reconstruct per-bead kick counts. With no refs, it records one
 // agent-scoped event. Guarded and nil-safe; no I/O.
-func recordKick(rec lifecycleRecorder, agent string, issueRefs ...string) {
+func recordKick(ctx context.Context, rec lifecycleRecorder, agent string, issueRefs ...string) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if rec == nil {
 		return
 	}
@@ -4094,18 +4106,24 @@ func recordKick(rec lifecycleRecorder, agent string, issueRefs ...string) {
 			if ref == "" {
 				continue
 			}
-			store.Record(timeline.Event{
+			event := timeline.Event{
 				IssueRef: ref,
 				Kind:     timeline.KindKicked,
 				Agent:    agent,
-			})
+			}
+			_, span := tracing.StartTimelineSpan(ctx, event)
+			store.Record(event)
+			span.End()
 		}
 		return
 	}
-	store.Record(timeline.Event{
+	event := timeline.Event{
 		Kind:  timeline.KindKicked,
 		Agent: agent,
-	})
+	}
+	_, span := tracing.StartTimelineSpan(ctx, event)
+	store.Record(event)
+	span.End()
 }
 
 // issueRef renders the canonical "repo#number" reference the timeline uses to
@@ -4265,7 +4283,8 @@ func runEvalCycle(
 	// Governor eval-cycle span. When tracing is disabled (the default) this is
 	// a no-op span with no allocation of note and no export — see pkg/tracing.
 	ctx, span := tracing.StartSpan(ctx, "governor.eval_cycle",
-		attribute.String("hive.id", cfg.HiveID))
+		attribute.String("hive.id", cfg.HiveID),
+		attribute.Int(tracing.AttrHiveACMMLevel, inferACMMLevel(cfg)))
 	defer span.End()
 
 	// A hive running without GitHub credentials (placeholder app_id, or a real
@@ -4327,7 +4346,7 @@ func runEvalCycle(
 	// nil store is a no-op (timeline.Store.Record is nil-safe), the loop is
 	// bounded by maxTimelineEnumeratePerCycle so a huge backlog never floods the
 	// bounded ring in one cycle, and no I/O happens on this path.
-	recordEnumeratedIssues(dashSrv, actionable)
+	recordEnumeratedIssues(ctx, dashSrv, actionable)
 
 	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
 
@@ -4403,6 +4422,12 @@ func runEvalCycle(
 	}
 
 	govState := gov.GetState()
+	span.SetAttributes(
+		attribute.String(tracing.AttrHiveGovernorMode, string(govState.Mode)),
+		attribute.Int("hive.queue.issues", govState.QueueIssues),
+		attribute.Int("hive.queue.prs", govState.QueuePRs),
+		attribute.Int("hive.queue.hold", govState.QueueHold),
+	)
 	logger.Info("governor eval complete",
 		"mode", govState.Mode,
 		"issues", govState.QueueIssues,
@@ -4460,17 +4485,29 @@ func runEvalCycle(
 	if len(agentsDue) > 0 {
 		messages := sched.BuildKickMessages(actionable, agentsDue)
 		for _, msg := range messages {
+			agentCfg := cfg.Agents[msg.Agent]
+			_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
+				msg.Agent,
+				agentCfg.Backend,
+				agentCfg.Model,
+				agentCfg.Role,
+				string(govState.Mode),
+				inferACMMLevel(cfg),
+			)...)
 			logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
 			if err := agentMgr.SendKick(msg.Agent, msg.Message); err != nil {
+				kickSpan.RecordError(err)
+				kickSpan.End()
 				logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
 				continue
 			}
+			kickSpan.End()
 			gov.RecordKick(msg.Agent)
 			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
 			// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 			// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
-			recordKick(dashSrv, msg.Agent, msg.IssueRefs...)
+			recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
 
 			// Log token state at time of kick for cost attribution
 			if tokenCollector != nil {

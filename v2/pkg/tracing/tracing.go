@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -25,9 +26,6 @@ import (
 )
 
 const (
-	// serviceName is the OTLP resource service.name for every hive span.
-	serviceName = "hive"
-
 	// instrumentationName is the default instrumentation scope used by the
 	// package-level Tracer() helper.
 	instrumentationName = "github.com/kubestellar/hive/v2/pkg/tracing"
@@ -62,6 +60,12 @@ type Config struct {
 	// SampleRatio is the head-based sampling ratio. Zero (the default) is
 	// treated as 1.0 (sample everything).
 	SampleRatio float64
+	// Headers are optional OTLP/HTTP headers, commonly used for collector auth.
+	Headers map[string]string
+	// ServiceName is the OTLP resource service.name for every hive span.
+	ServiceName string
+	// Insecure disables TLS for OTLP/HTTP, matching the exporter option.
+	Insecure bool
 	// HiveID and Branch are recorded as resource attributes for correlation.
 	HiveID string
 	Branch string
@@ -96,12 +100,22 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		// connection errors. Fail closed to a no-op instead of guessing.
 		return noopShutdown, nil
 	}
+	if len(cfg.Headers) > 0 {
+		opts = append(opts, otlptracehttp.WithHeaders(cfg.Headers))
+	}
+	if cfg.Insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
 
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return noopShutdown, err
 	}
 
+	serviceName := strings.TrimSpace(cfg.ServiceName)
+	if serviceName == "" {
+		serviceName = "hive"
+	}
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
@@ -131,6 +145,7 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
 	)
 	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	return tp.Shutdown, nil
 }

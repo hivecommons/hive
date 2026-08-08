@@ -337,6 +337,13 @@ flowchart LR
   `livez` probe catches the "HTTP up but eval loop / heartbeat stalled" case.
 - Notifications (`ntfy` / Slack / Discord) fire on budget warnings, SLA breaches,
   trajectory-drift pauses, and other governor events.
+- Optional OpenTelemetry export is configured with an `otel:` block in
+  `hive.yaml` and is off by default. When enabled, Hive exports OTLP/HTTP spans
+  for governor eval cycles, agent kicks, and recorded lifecycle/PR events; agent spans use
+  GenAI semantic convention attributes such as `gen_ai.system`,
+  `gen_ai.request.model`, and token usage fields when that data is available,
+  plus Hive attributes like `hive.agent`, `hive.lane`, `hive.acmm_level`, and
+  `hive.governor.mode`.
 
 ---
 

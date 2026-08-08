@@ -75,14 +75,19 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
 	}
-	if body.TracingEnabled != nil {
-		cfg.Tracing.Enabled = *body.TracingEnabled
-	}
-	if body.TracingEndpoint != nil {
-		cfg.Tracing.Endpoint = strings.TrimSpace(*body.TracingEndpoint)
-	}
-	if body.TracingSampleRatio != nil {
-		cfg.Tracing.SampleRatio = *body.TracingSampleRatio
+	if body.TracingEnabled != nil || body.TracingEndpoint != nil || body.TracingSampleRatio != nil {
+		merged := cfg.EffectiveOTel()
+		if body.TracingEnabled != nil {
+			merged.Enabled = *body.TracingEnabled
+		}
+		if body.TracingEndpoint != nil {
+			merged.Endpoint = strings.TrimSpace(*body.TracingEndpoint)
+		}
+		if body.TracingSampleRatio != nil {
+			merged.SampleRatio = *body.TracingSampleRatio
+		}
+		cfg.OTel = merged
+		cfg.Tracing = merged
 	}
 	if body.MintEnabled != nil {
 		cfg.Mint.Enabled = *body.MintEnabled
@@ -116,11 +121,12 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	if cfg.Planning.PlanFromLabel != nil {
 		planFromLabel = *cfg.Planning.PlanFromLabel
 	}
+	otelCfg := cfg.EffectiveOTel()
 	return map[string]interface{}{
 		"ioscanEnabled":      cfg.Ioscan.IsEnabled(),
-		"tracingEnabled":     cfg.Tracing.Enabled,
-		"tracingEndpoint":    cfg.Tracing.Endpoint,
-		"tracingSampleRatio": cfg.Tracing.SampleRatio,
+		"tracingEnabled":     otelCfg.Enabled,
+		"tracingEndpoint":    otelCfg.Endpoint,
+		"tracingSampleRatio": otelCfg.SampleRatio,
 		"mintEnabled":        cfg.Mint.Enabled,
 		"mintIssuer":         cfg.Mint.Issuer,
 		"planFromLabel":      planFromLabel,

@@ -895,14 +895,14 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 
 func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	cfg := &Config{
-		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:    GitHubConfig{Token: "t"},
+		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
 		Dashboard: DashboardConfig{Port: 8080},
 		Governor: GovernorConfig{
 			EvalIntervalS: 600,
-			Labels: LabelsConfig{Exempt: []string{"custom-label"}},
-			Sensing: SensingConfig{TTLSeconds: 1800, PullbackSeconds: 1800},
+			Labels:        LabelsConfig{Exempt: []string{"custom-label"}},
+			Sensing:       SensingConfig{TTLSeconds: 1800, PullbackSeconds: 1800},
 		},
 	}
 	cfg.applyDefaults()
@@ -1054,5 +1054,51 @@ func TestSave_AllowsValidConfig(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if string(data) == "old" {
 		t.Error("Save() did not write the new config")
+	}
+}
+
+func TestLoad_OTelConfig(t *testing.T) {
+	yaml := minimalValidYAML("my-org", "ghp_tok") + `
+otel:
+  enabled: true
+  endpoint: https://otel.example.com/v1/traces
+  service_name: hive-dev
+  insecure: true
+  headers:
+    authorization: Bearer ${OTEL_TOKEN}
+`
+	t.Setenv("OTEL_TOKEN", "test-token")
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	got := cfg.EffectiveOTel()
+	if !got.Enabled {
+		t.Fatal("OTel.Enabled = false, want true")
+	}
+	if got.Endpoint != "https://otel.example.com/v1/traces" {
+		t.Errorf("OTel.Endpoint = %q", got.Endpoint)
+	}
+	if got.ServiceNameOrDefault() != "hive-dev" {
+		t.Errorf("service_name = %q", got.ServiceNameOrDefault())
+	}
+	if !got.Insecure {
+		t.Error("OTel.Insecure = false, want true")
+	}
+	if got.Headers["authorization"] != "Bearer test-token" {
+		t.Errorf("authorization header = %q", got.Headers["authorization"])
+	}
+}
+
+func TestEffectiveOTel_LegacyTracingFallback(t *testing.T) {
+	cfg := &Config{Tracing: OTelConfig{Enabled: true, Endpoint: "https://legacy.example.com"}}
+	got := cfg.EffectiveOTel()
+	if !got.Enabled || got.Endpoint != "https://legacy.example.com" {
+		t.Fatalf("legacy tracing fallback = %+v", got)
+	}
+	if got.ServiceNameOrDefault() != DefaultOTelServiceName {
+		t.Errorf("default service name = %q", got.ServiceNameOrDefault())
 	}
 }

@@ -117,3 +117,90 @@ agents:
 		t.Errorf("without overlay, seed should win: got %q", got)
 	}
 }
+
+func TestLoadWithDashboardOverlay_OTelSurvivesShortOverlay(t *testing.T) {
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "hive.yaml")
+	seed := `
+project:
+  org: testorg
+  repos: [repo1]
+github:
+  token: ghp_test123456789
+agents:
+  scanner:
+    backend: copilot
+`
+	if err := os.WriteFile(seedPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	overlayPath := filepath.Join(dir, "hive.yaml.dashboard")
+	overlay := `
+otel:
+  enabled: true
+  endpoint: https://otel.example.com/v1/traces
+  service_name: hive-prod
+`
+	if err := os.WriteFile(overlayPath, []byte(overlay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origOverlay := DashboardOverlayFile
+	DashboardOverlayFile = overlayPath
+	t.Cleanup(func() { DashboardOverlayFile = origOverlay })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	cfg, err := LoadWithDashboardOverlay(seedPath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	got := cfg.EffectiveOTel()
+	if !got.Enabled || got.Endpoint != "https://otel.example.com/v1/traces" || got.ServiceName != "hive-prod" {
+		t.Fatalf("overlay otel not adopted: %+v", got)
+	}
+}
+
+func TestLoadWithDashboardOverlay_LegacyTracingMergesIntoPartialSeedOTel(t *testing.T) {
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "hive.yaml")
+	seed := `
+project:
+  org: testorg
+  repos: [repo1]
+github:
+  token: ghp_test123456789
+otel:
+  service_name: hive-seed
+agents:
+  scanner:
+    backend: copilot
+`
+	if err := os.WriteFile(seedPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	overlayPath := filepath.Join(dir, "hive.yaml.dashboard")
+	overlay := `
+tracing:
+  enabled: true
+  endpoint: https://legacy.example.com/v1/traces
+`
+	if err := os.WriteFile(overlayPath, []byte(overlay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origOverlay := DashboardOverlayFile
+	DashboardOverlayFile = overlayPath
+	t.Cleanup(func() { DashboardOverlayFile = origOverlay })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+	cfg, err := LoadWithDashboardOverlay(seedPath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	got := cfg.EffectiveOTel()
+	if !got.Enabled || got.Endpoint != "https://legacy.example.com/v1/traces" || got.ServiceName != "hive-seed" {
+		t.Fatalf("legacy tracing overlay did not merge into partial otel: %+v", got)
+	}
+}

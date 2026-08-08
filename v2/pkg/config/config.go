@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,10 @@ type Config struct {
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
-	Tracing       TracingConfig          `yaml:"tracing,omitempty"`
+	// OTel configures standards-based OTLP trace export. It is the preferred
+	// operator-facing block; Tracing is retained as a legacy alias.
+	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`
+	Tracing OTelConfig `yaml:"tracing,omitempty"`
 	// Triggers is an additive list of CEL-based declarative agent triggers.
 	// Default empty → existing label/governor triggering is unchanged.
 	Triggers   []TriggerRule    `yaml:"triggers,omitempty" json:"triggers,omitempty"`
@@ -82,23 +86,58 @@ type Config struct {
 	SourcePath string `yaml:"-" json:"-"`
 }
 
-// TracingConfig configures OpenTelemetry distributed tracing. It is additive
-// and OFF by default: a config with no `tracing:` block (or with
-// `tracing.enabled: false`) yields a zero-overhead no-op tracer. When enabled,
-// spans are exported over OTLP/HTTP to Endpoint (or the standard
-// OTEL_EXPORTER_OTLP_ENDPOINT env var when Endpoint is empty).
-type TracingConfig struct {
-	// Enabled turns tracing on. Default false — the zero value keeps every
-	// existing config a no-op with no exporter and no network activity.
-	Enabled bool `yaml:"enabled,omitempty"`
+// DefaultOTelServiceName is the OTLP resource service.name used when the
+// operator does not set otel.service_name.
+const DefaultOTelServiceName = "hive"
+
+// OTelConfig configures OpenTelemetry trace export. It is additive and OFF by
+// default: a config with no `otel:` block (or enabled:false) yields a
+// zero-overhead no-op tracer. When enabled, spans are exported over OTLP/HTTP
+// to Endpoint (or the standard OTEL_EXPORTER_OTLP_ENDPOINT env var when
+// Endpoint is empty).
+type OTelConfig struct {
+	// Enabled turns OTLP trace export on. Default false — the zero value keeps
+	// every existing config a no-op with no exporter and no network activity.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Endpoint is the OTLP/HTTP collector endpoint (host:port or full URL).
 	// When empty, the exporter falls back to OTEL_EXPORTER_OTLP_ENDPOINT.
-	// Never hardcode a default here — an unset endpoint means "use the env".
-	Endpoint string `yaml:"endpoint,omitempty"`
+	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// Headers are optional static OTLP/HTTP headers, commonly used for collector
+	// authentication. Values should come from env interpolation, not literals.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	// ServiceName is recorded as resource service.name. Empty defaults to "hive".
+	ServiceName string `yaml:"service_name,omitempty" json:"service_name,omitempty"`
+	// Insecure disables TLS for OTLP/HTTP. Leave false for https collectors.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
 	// SampleRatio is the head-based sampling ratio in [0.0, 1.0]. The zero
 	// value is treated as "sample everything" (1.0) so an operator who only
 	// sets enabled:true gets full traces; set explicitly to sample less.
-	SampleRatio float64 `yaml:"sample_ratio,omitempty"`
+	SampleRatio float64 `yaml:"sample_ratio,omitempty" json:"sample_ratio,omitempty"`
+}
+
+// ServiceNameOrDefault returns a valid resource service.name.
+func (o OTelConfig) ServiceNameOrDefault() string {
+	if name := strings.TrimSpace(o.ServiceName); name != "" {
+		return name
+	}
+	return DefaultOTelServiceName
+}
+
+// IsZero reports whether the block contains no operator-provided settings.
+func (o OTelConfig) IsZero() bool {
+	return !o.Enabled && o.Endpoint == "" && len(o.Headers) == 0 && o.ServiceName == "" && !o.Insecure && o.SampleRatio == 0
+}
+
+// EffectiveOTel returns the preferred otel block, falling back to the legacy
+// tracing block so existing configs continue to work unchanged.
+func (c *Config) EffectiveOTel() OTelConfig {
+	if c == nil {
+		return OTelConfig{}
+	}
+	if !c.OTel.IsZero() {
+		return c.OTel
+	}
+	return c.Tracing
 }
 
 // TriggerRule is one CEL-based declarative agent trigger. When Expr (a CEL
@@ -2544,6 +2583,13 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	// empty; the ~2-min saver then rewrote every layer tombstone-free and the
 	// deleted agents reappeared on an interval (#2439). Merge already skips and
 	// prunes tombstoned agents, so adopting them early is safe even when we bail.
+	if !overlay.OTel.IsZero() {
+		cfg.OTel = overlay.OTel
+		cfg.Tracing = overlay.OTel
+	} else if !overlay.Tracing.IsZero() {
+		cfg.Tracing = overlay.Tracing
+		cfg.OTel = mergeOTelOverride(cfg.OTel, overlay.Tracing)
+	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
@@ -3467,7 +3513,7 @@ func (c *Config) saveLocked() error {
 	if err := c.validateSaveGuard(); err != nil {
 		return fmt.Errorf("refusing to save invalid config: %w", err)
 	}
-	data, err := yaml.Marshal(c)
+	data, err := yaml.Marshal(c.redactedForPersist())
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
@@ -3649,7 +3695,76 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 			break
 		}
 	}
+	cp = *cp.redactedForPersist()
 	return yaml.Marshal(&cp)
+}
+
+func (c *Config) redactedForPersist() *Config {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.OTel.Headers = envRedactedHeaders(cp.OTel.Headers)
+	cp.Tracing.Headers = envRedactedHeaders(cp.Tracing.Headers)
+	return &cp
+}
+
+func mergeOTelOverride(base, override OTelConfig) OTelConfig {
+	merged := base
+	if override.Enabled {
+		merged.Enabled = true
+	}
+	if override.Endpoint != "" {
+		merged.Endpoint = override.Endpoint
+	}
+	if len(override.Headers) > 0 {
+		merged.Headers = override.Headers
+	}
+	if override.ServiceName != "" {
+		merged.ServiceName = override.ServiceName
+	}
+	if override.Insecure {
+		merged.Insecure = true
+	}
+	if override.SampleRatio != 0 {
+		merged.SampleRatio = override.SampleRatio
+	}
+	return merged
+}
+
+func envRedactedHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	out := make(map[string]string, len(headers))
+	for k, value := range headers {
+		out[k] = redactEnvExpandedValue(value)
+	}
+	return out
+}
+
+func redactEnvExpandedValue(value string) string {
+	type envValue struct {
+		name  string
+		value string
+	}
+	values := make([]envValue, 0)
+	for _, pair := range os.Environ() {
+		name, val, ok := strings.Cut(pair, "=")
+		if !ok || val == "" {
+			continue
+		}
+		values = append(values, envValue{name: name, value: val})
+	}
+	sort.SliceStable(values, func(i, j int) bool {
+		return len(values[i].value) > len(values[j].value)
+	})
+
+	redacted := value
+	for _, item := range values {
+		redacted = strings.ReplaceAll(redacted, item.value, "${"+item.name+"}")
+	}
+	return redacted
 }
 
 // WildcardMatch checks if text matches a pattern supporting:

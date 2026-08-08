@@ -199,3 +199,61 @@ func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
 		t.Errorf("overlay should not be written outside Kubernetes (stat err: %v)", err)
 	}
 }
+
+func TestDashboardOverlayBytes_RedactsOTelHeaders(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_TOKEN", "short7")
+	cfg := &Config{
+		OTel:    OTelConfig{Headers: map[string]string{"authorization": "Bearer short7"}},
+		Tracing: OTelConfig{Headers: map[string]string{"x-api-key": "short7"}},
+	}
+
+	data, err := cfg.dashboardOverlayBytes()
+	if err != nil {
+		t.Fatalf("dashboardOverlayBytes() error = %v", err)
+	}
+	body := string(data)
+	if strings.Contains(body, "short7") {
+		t.Fatalf("overlay leaked OTLP header secret: %s", body)
+	}
+	if !strings.Contains(body, "Bearer ${OTEL_EXPORTER_TOKEN}") || !strings.Contains(body, "${OTEL_EXPORTER_TOKEN}") {
+		t.Fatalf("overlay did not preserve env reference: %s", body)
+	}
+}
+
+func TestRedactEnvExpandedValue_LongestMatchFirst(t *testing.T) {
+	t.Setenv("OTEL_SHORT", "abc")
+	t.Setenv("OTEL_LONG", "abcdef")
+
+	got := redactEnvExpandedValue("Bearer abcdef")
+	if got != "Bearer ${OTEL_LONG}" {
+		t.Fatalf("redactEnvExpandedValue() = %q, want longest env match", got)
+	}
+}
+
+func TestSave_RedactsOTelHeadersInSource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
+	t.Setenv("OTEL_EXPORTER_TOKEN", "save-secret")
+	cfg := &Config{
+		SourcePath: path,
+		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
+		GitHub:     GitHubConfig{Token: "ghp_test123456789"},
+		Agents:     map[string]AgentConfig{"scanner": {Backend: "copilot", Enabled: true}},
+		OTel:       OTelConfig{Enabled: true, Headers: map[string]string{"authorization": "Bearer save-secret"}},
+	}
+
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	body := string(data)
+	if strings.Contains(body, "save-secret") {
+		t.Fatalf("saved config leaked OTLP header secret: %s", body)
+	}
+	if !strings.Contains(body, "Bearer ${OTEL_EXPORTER_TOKEN}") {
+		t.Fatalf("saved config did not preserve OTLP env reference: %s", body)
+	}
+}

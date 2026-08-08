@@ -226,6 +226,17 @@ notifications:
 #   bot_token: ${DISCORD_BOT_TOKEN}
 #   channel_id: "1234567890"
 
+# OpenTelemetry trace export (optional, off by default). When enabled, Hive
+# exports governor eval cycles, agent kicks, and recorded lifecycle
+# events as OTLP/HTTP spans with GenAI semantic convention attributes for model/backend usage.
+# otel:
+#   enabled: false
+#   endpoint: https://otel-collector.example.com/v1/traces
+#   service_name: hive
+#   insecure: false
+#   headers:
+#     authorization: Bearer ${OTEL_EXPORTER_TOKEN}
+
 # Dashboard — embedded web UI with SSE live updates
 # Security headers (CSP, X-Frame-Options, etc.) are always active.
 # Set auth_token to require Bearer auth on /api/* endpoints (except /api/health).
