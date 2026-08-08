@@ -396,7 +396,7 @@ func k8sAPIGet(path string) ([]byte, error) {
 		pool.AppendCertsFromPEM(caCert)
 		tlsConfig.RootCAs = pool
 	} else {
-		tlsConfig.InsecureSkipVerify = true
+		return nil, fmt.Errorf("cannot read k8s CA cert at %s, refusing to connect with TLS verification disabled: %w", k8sCACertPath, err)
 	}
 
 	client := &http.Client{
