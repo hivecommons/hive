@@ -2,11 +2,15 @@ package hub
 
 import (
 	"context"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -16,6 +20,15 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func newURLHealthTestHub(domain string) *HubServer {
+	return &HubServer{
+		urlHealth: newURLHealthState(),
+		clusters: map[string]ClusterConfig{
+			defaultClusterID: {ID: defaultClusterID, Domain: domain},
+		},
+	}
 }
 
 // A 503 from a routed hostname with no backend is the exact failure that hid
@@ -49,10 +62,28 @@ func TestPublicURLSelfProbeStatusSemantics(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Host != "vanity.example.com" {
+					t.Errorf("Host = %q, want public host", r.Host)
+				}
 				w.WriteHeader(tc.code)
 			}))
 			defer srv.Close()
-			got := publicURLSelfProbe(context.Background(), srv.URL, srv.Client())
+			u, err := url.Parse(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, port, err := net.SplitHostPort(u.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := strconv.Atoi(port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldPort := publicURLSelfProbePort
+			publicURLSelfProbePort = p
+			defer func() { publicURLSelfProbePort = oldPort }()
+			got := publicURLSelfProbe(context.Background(), "https://vanity.example.com", srv.Client())
 			if got.Status != tc.want {
 				t.Fatalf("status = %q, want %q (check=%+v)", got.Status, tc.want, got)
 			}
@@ -249,7 +280,7 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 
-	s := &HubServer{urlHealth: newURLHealthState()}
+	s := newURLHealthTestHub("example.com")
 	hives := []RegistryEntry{
 		{ID: "broken", Name: "org/broken", ClusterID: "c1", RegisteredAt: oldEnough, DashboardURL: "https://broken.example.com"},
 		{ID: "fine1", ClusterID: "c1", RegisteredAt: oldEnough, DashboardURL: "https://f1.example.com"},
@@ -275,14 +306,14 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	}
 
 	// A single failure is below the threshold — a blip must never alert.
-	s2 := &HubServer{urlHealth: newURLHealthState()}
+	s2 := newURLHealthTestHub("example.com")
 	s2.urlHealth.observe("broken", urlProbeResult{Status: 503})
 	if got := s2.urlUnreachableAlerts(hives, now); len(got) != 0 {
 		t.Errorf("one failure must not alert, got %+v", got)
 	}
 
 	// Whole cluster down -> suppressed into an outage, zero per-hive alerts.
-	s3 := &HubServer{urlHealth: newURLHealthState()}
+	s3 := newURLHealthTestHub("example.com")
 	for _, h := range hives {
 		for i := 0; i < urlUnreachableMinFailures; i++ {
 			s3.urlHealth.observe(h.ID, urlProbeResult{Status: 0})
@@ -304,34 +335,41 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 		hubFails  bool
 		freshHB   bool
 		self      *PublicURLSelfCheck
+		route     *RouteExistenceCheck
+		dashURL   string
 		wantType  string
 		wantLevel string
 	}{
-		{"hub ok self unknown", false, true, nil, "", ""},
-		{"hub ok self ok", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, "", ""},
-		{"hub ok self fail", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
-		{"hub fail fresh self ok", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
-		{"hub fail fresh self unknown", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
-		{"hub fail fresh self fail", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
-		{"hub fail stale self unknown", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, AlertTypeURLUnreachable, AlertSeverityCritical},
-		{"hub fail stale self ok", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub ok self unknown", false, true, nil, nil, "https://h1.example.com", "", ""},
+		{"hub ok self ok", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, nil, "https://h1.example.com", "", ""},
+		{"hub ok self fail", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, nil, "https://h1.example.com", AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"route missing", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, &RouteExistenceCheck{Status: RouteExistenceMissing, Host: "h1.example.com"}, "https://h1.example.com", AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"route unknown no regression", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, &RouteExistenceCheck{Status: RouteExistenceUnknown}, "https://h1.example.com", "", ""},
+		{"hub fail fresh self ok", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, nil, "https://h1.example.com", AlertTypeURLPrivateNetwork, AlertSeverityInfo},
+		{"hub fail fresh self unknown", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, nil, "https://h1.example.com", AlertTypeURLPrivateNetwork, AlertSeverityInfo},
+		{"hub fail fresh self fail", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, nil, "https://h1.example.com", AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail stale self unknown", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckUnknown, Error: "lookup failed"}, nil, "https://h1.example.com", AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail stale self ok", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, nil, "https://h1.example.com", AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"private healthy no chip", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, &RouteExistenceCheck{Status: RouteExistenceFound}, "https://spoke.apps.fmaas.example.net", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &HubServer{urlHealth: newURLHealthState()}
+			s := newURLHealthTestHub("example.com")
 			if tc.hubFails {
 				for i := 0; i < urlUnreachableMinFailures; i++ {
 					s.urlHealth.observe("h1", urlProbeResult{Status: 0})
 				}
 			}
+
 			h := RegistryEntry{
 				ID:                 "h1",
 				Name:               "org/repo",
 				ClusterID:          "c1",
 				RegisteredAt:       oldEnough,
-				DashboardURL:       "https://private.example.com",
+				DashboardURL:       tc.dashURL,
 				LastHeartbeat:      stale,
 				Online:             false,
 				PublicURLSelfCheck: tc.self,
+				RouteExists:        tc.route,
 			}
 			if tc.freshHB {
 				h.LastHeartbeat = fresh
@@ -357,11 +395,119 @@ func TestURLReachabilityDecisionMatrix(t *testing.T) {
 	}
 }
 
+func TestHubProbeDomainSuffixGating(t *testing.T) {
+	s := newURLHealthTestHub("hive.kubestellar.io")
+	if !s.hubFrontedDashboardURL("https://spoke.hive.kubestellar.io") {
+		t.Fatal("hub-fronted subdomain should be probed")
+	}
+	if s.hubFrontedDashboardURL("https://spoke.apps.fmaas-vllm-d.fmaas.res.ibm.com") {
+		t.Fatal("private/firewalled app domain must not be hub-probed")
+	}
+}
+
+func TestRouteExistenceProbeIngressRouteAndRBAC(t *testing.T) {
+	cases := []struct {
+		name        string
+		ingStatus   int
+		ingBody     string
+		routeStatus int
+		routeBody   string
+		want        string
+		wantKind    string
+	}{
+		{
+			name:      "ingress found",
+			ingStatus: http.StatusOK,
+			ingBody:   `{"items":[{"spec":{"rules":[{"host":"spoke.example.com"}]}}]}`,
+			want:      RouteExistenceFound,
+			wantKind:  "Ingress",
+		},
+		{
+			name:        "route found",
+			ingStatus:   http.StatusOK,
+			ingBody:     `{"items":[]}`,
+			routeStatus: http.StatusOK,
+			routeBody:   `{"items":[{"spec":{"host":"spoke.example.com"}}]}`,
+			want:        RouteExistenceFound,
+			wantKind:    "Route",
+		},
+		{
+			name:        "missing",
+			ingStatus:   http.StatusOK,
+			ingBody:     `{"items":[]}`,
+			routeStatus: http.StatusNotFound,
+			want:        RouteExistenceMissing,
+		},
+		{
+			name:      "no rbac unknown",
+			ingStatus: http.StatusForbidden,
+			ingBody:   `{}`,
+			want:      RouteExistenceUnknown,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+					t.Errorf("missing bearer auth")
+				}
+				switch {
+				case strings.Contains(r.URL.Path, "/ingresses"):
+					w.WriteHeader(tc.ingStatus)
+					_, _ = w.Write([]byte(tc.ingBody))
+				case strings.Contains(r.URL.Path, "/routes"):
+					status := tc.routeStatus
+					if status == 0 {
+						status = http.StatusNotFound
+					}
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(tc.routeBody))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			dir := t.TempDir()
+			oldDir, oldHost, oldPort := serviceAccountDir, kubernetesAPIHost, kubernetesAPIPort
+			serviceAccountDir = dir
+			u, err := url.Parse(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host, port, err := net.SplitHostPort(u.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kubernetesAPIHost = func() string { return host }
+			kubernetesAPIPort = func() string { return port }
+			defer func() {
+				serviceAccountDir = oldDir
+				kubernetesAPIHost = oldHost
+				kubernetesAPIPort = oldPort
+			}()
+			if err := os.WriteFile(filepath.Join(dir, "token"), []byte("tok"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "namespace"), []byte("hive"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+			if err := os.WriteFile(filepath.Join(dir, "ca.crt"), certPEM, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got := routeExistenceProbe(context.Background(), "spoke.example.com")
+			if got.Status != tc.want || got.Kind != tc.wantKind {
+				t.Fatalf("route existence = %+v, want status=%s kind=%s", got, tc.want, tc.wantKind)
+			}
+		})
+	}
+}
+
 func TestURLUnreachableCriticalFlapSuppression(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
-	s := &HubServer{urlHealth: newURLHealthState()}
+	s := newURLHealthTestHub("example.com")
 	for i := 0; i < urlUnreachableMinFailures; i++ {
 		s.urlHealth.observe("h1", urlProbeResult{Status: 503})
 	}
@@ -390,7 +536,7 @@ func TestURLUnreachableSuppressesUnassignedPlaceholders(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
 	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
-	s := &HubServer{urlHealth: newURLHealthState()}
+	s := newURLHealthTestHub("example.com")
 	for i := 0; i < urlUnreachableMinFailures; i++ {
 		s.urlHealth.observe("ph", urlProbeResult{Status: 503})
 	}

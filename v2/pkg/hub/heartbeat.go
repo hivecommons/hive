@@ -3,6 +3,8 @@ package hub
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -415,14 +418,19 @@ type HeartbeatPayload struct {
 	// OKE hub. Nil means an older spoke did not report the signal, so the hub
 	// treats it as UNKNOWN rather than a failure.
 	PublicURLSelfCheck *PublicURLSelfCheck `json:"public_url_self_check,omitempty"`
-	SnapshotURL        string              `json:"snapshot_url"`
-	Owner              string              `json:"owner,omitempty"`
-	HiveType           string              `json:"hive_type,omitempty"`
-	ClusterID          string              `json:"cluster_id,omitempty"`
-	IsPublic           bool                `json:"is_public"`
-	Version            string              `json:"version"`
-	GitHash            string              `json:"git_hash"`
-	GitBranch          string              `json:"git_branch,omitempty"`
+	// RouteExists is the spoke's in-cluster confirmation that an Ingress or
+	// OpenShift Route exists for DashboardURL's host in the spoke namespace.
+	// Missing is actionable; unknown (old spoke, no RBAC, no in-cluster API) is
+	// intentionally not.
+	RouteExists *RouteExistenceCheck `json:"route_exists,omitempty"`
+	SnapshotURL string               `json:"snapshot_url"`
+	Owner       string               `json:"owner,omitempty"`
+	HiveType    string               `json:"hive_type,omitempty"`
+	ClusterID   string               `json:"cluster_id,omitempty"`
+	IsPublic    bool                 `json:"is_public"`
+	Version     string               `json:"version"`
+	GitHash     string               `json:"git_hash"`
+	GitBranch   string               `json:"git_branch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, read
 	// in-cluster from the Deployment spec. GitHash says which commit the
 	// BINARY was built from; ImageRef says which TAG the deployment tracks —
@@ -598,16 +606,32 @@ const (
 	PublicURLSelfCheckUnknown = "unknown"
 
 	publicURLSelfCheckMinConsecutiveFailures = 3
+
+	RouteExistenceFound   = "found"
+	RouteExistenceMissing = "missing"
+	RouteExistenceUnknown = "unknown"
 )
 
-// PublicURLSelfCheck reports the spoke's own view of whether its public
-// dashboard URL is reachable. CheckedAt is RFC3339 UTC. HTTPStatus is set only
+// PublicURLSelfCheck reports the spoke's own view of whether its dashboard
+// listener is serving locally. CheckedAt is RFC3339 UTC. HTTPStatus is set only
 // when an HTTP response arrived; Error is a terse operator-safe cause on fail.
 type PublicURLSelfCheck struct {
 	Status     string `json:"status"`
 	CheckedAt  string `json:"checked_at,omitempty"`
 	Error      string `json:"error,omitempty"`
 	HTTPStatus int    `json:"http_status,omitempty"`
+}
+
+// RouteExistenceCheck reports whether the spoke can confirm that its namespace
+// contains an Ingress or OpenShift Route for the advertised dashboard host.
+// Unknown is deliberately non-fatal: missing RBAC, local development, or an API
+// transport error must never page as a missing route.
+type RouteExistenceCheck struct {
+	Status    string `json:"status"`
+	CheckedAt string `json:"checked_at,omitempty"`
+	Host      string `json:"host,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
@@ -749,6 +773,7 @@ var (
 var (
 	publicURLSelfProbeInterval = 5 * time.Minute
 	publicURLSelfProbeTimeout  = 8 * time.Second
+	publicURLSelfProbePort     = 3002
 	publicURLSelfProbeClient   = &http.Client{
 		Timeout: publicURLSelfProbeTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -762,6 +787,14 @@ var (
 		result              *PublicURLSelfCheck
 		stable              *PublicURLSelfCheck
 		consecutiveFailures int
+	}{}
+	routeExistenceProbeInterval = 5 * time.Minute
+	routeExistenceProbeTimeout  = 8 * time.Second
+	routeExistenceProbeCache    = struct {
+		sync.Mutex
+		host      string
+		nextProbe time.Time
+		result    *RouteExistenceCheck
 	}{}
 )
 
@@ -813,6 +846,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	payload.PublicURLSelfCheck = publicURLSelfCheckFor(ctx, payload.DashboardURL, logger)
+	payload.RouteExists = routeExistenceCheckFor(ctx, payload.DashboardURL, logger)
 
 	filtered := payload.Leaderboard[:0]
 	for _, lb := range payload.Leaderboard {
@@ -955,10 +989,21 @@ func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, publicURLSelfProbeTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
+	}
+	localURL := "http://127.0.0.1:" + itoa(publicURLSelfProbePort) + path
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, localURL, nil)
 	if err != nil {
 		return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, Error: "invalid dashboard URL"}
 	}
+	// Keep the public Host header while dialing the loopback listener so
+	// virtual-host routing is still exercised without depending on DNS.
+	req.Host = u.Host
 	resp, err := client.Do(req)
 	if err != nil {
 		return PublicURLSelfCheck{Status: publicURLSelfCheckStatusForError(err), CheckedAt: checkedAt, Error: terseProbeError(err)}
@@ -968,6 +1013,199 @@ func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client)
 		return PublicURLSelfCheck{Status: PublicURLSelfCheckOK, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode}
 	}
 	return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode, Error: "HTTP " + itoa(resp.StatusCode)}
+}
+
+func routeExistenceCheckFor(ctx context.Context, rawURL string, logger *slog.Logger) *RouteExistenceCheck {
+	host := dashboardHost(rawURL)
+	if host == "" {
+		return nil
+	}
+	now := time.Now()
+	routeExistenceProbeCache.Lock()
+	defer routeExistenceProbeCache.Unlock()
+	if routeExistenceProbeCache.host == host && routeExistenceProbeCache.result != nil && now.Before(routeExistenceProbeCache.nextProbe) {
+		return cloneRouteExistenceCheck(routeExistenceProbeCache.result)
+	}
+	result := routeExistenceProbe(ctx, host)
+	if result.Status == RouteExistenceMissing && logger != nil {
+		logger.Debug("dashboard route/ingress not found", "host", host)
+	} else if result.Status == RouteExistenceUnknown && logger != nil && result.Error != "" {
+		logger.Debug("dashboard route/ingress existence unknown", "host", host, "error", result.Error)
+	}
+	routeExistenceProbeCache.host = host
+	routeExistenceProbeCache.nextProbe = now.Add(routeExistenceProbeInterval)
+	routeExistenceProbeCache.result = &result
+	return cloneRouteExistenceCheck(&result)
+}
+
+func dashboardHost(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+func cloneRouteExistenceCheck(in *RouteExistenceCheck) *RouteExistenceCheck {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+var (
+	serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+	kubernetesAPIHost = func() string { return os.Getenv("KUBERNETES_SERVICE_HOST") }
+	kubernetesAPIPort = func() string { return os.Getenv("KUBERNETES_SERVICE_PORT") }
+)
+
+func routeExistenceProbe(ctx context.Context, host string) RouteExistenceCheck {
+	checkedAt := time.Now().UTC().Format(time.RFC3339)
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return RouteExistenceCheck{Status: RouteExistenceUnknown, CheckedAt: checkedAt, Error: "empty dashboard host"}
+	}
+	cfg, err := inClusterAPIConfig()
+	if err != nil {
+		return RouteExistenceCheck{Status: RouteExistenceUnknown, CheckedAt: checkedAt, Host: host, Error: err.Error()}
+	}
+	client, err := inClusterHTTPClient(cfg)
+	if err != nil {
+		return RouteExistenceCheck{Status: RouteExistenceUnknown, CheckedAt: checkedAt, Host: host, Error: err.Error()}
+	}
+	ingFound, ingUnknown, ingErr := ingressHostExists(ctx, client, cfg, host)
+	if ingFound {
+		return RouteExistenceCheck{Status: RouteExistenceFound, CheckedAt: checkedAt, Host: host, Kind: "Ingress"}
+	}
+	routeFound, routeUnknown, routeErr := routeHostExists(ctx, client, cfg, host)
+	if routeFound {
+		return RouteExistenceCheck{Status: RouteExistenceFound, CheckedAt: checkedAt, Host: host, Kind: "Route"}
+	}
+	if ingUnknown || routeUnknown {
+		if ingErr != "" {
+			return RouteExistenceCheck{Status: RouteExistenceUnknown, CheckedAt: checkedAt, Host: host, Error: ingErr}
+		}
+		return RouteExistenceCheck{Status: RouteExistenceUnknown, CheckedAt: checkedAt, Host: host, Error: routeErr}
+	}
+	return RouteExistenceCheck{Status: RouteExistenceMissing, CheckedAt: checkedAt, Host: host, Error: "no Ingress or Route for host"}
+}
+
+type inClusterConfig struct {
+	BaseURL   string
+	Token     string
+	Namespace string
+	CAPath    string
+}
+
+func inClusterAPIConfig() (*inClusterConfig, error) {
+	host, port := strings.TrimSpace(kubernetesAPIHost()), strings.TrimSpace(kubernetesAPIPort())
+	if host == "" || port == "" {
+		return nil, errors.New("not running in a Kubernetes cluster")
+	}
+	tokenBytes, err := os.ReadFile(filepath.Join(serviceAccountDir, "token"))
+	if err != nil {
+		return nil, errors.New("serviceaccount token unavailable")
+	}
+	nsBytes, err := os.ReadFile(filepath.Join(serviceAccountDir, "namespace"))
+	if err != nil {
+		return nil, errors.New("serviceaccount namespace unavailable")
+	}
+	return &inClusterConfig{
+		BaseURL:   "https://" + host + ":" + port,
+		Token:     strings.TrimSpace(string(tokenBytes)),
+		Namespace: strings.TrimSpace(string(nsBytes)),
+		CAPath:    filepath.Join(serviceAccountDir, "ca.crt"),
+	}, nil
+}
+
+func inClusterHTTPClient(cfg *inClusterConfig) (*http.Client, error) {
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	if ca, err := os.ReadFile(cfg.CAPath); err == nil {
+		roots.AppendCertsFromPEM(ca)
+	}
+	return &http.Client{
+		Timeout: routeExistenceProbeTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		},
+	}, nil
+}
+
+func ingressHostExists(ctx context.Context, client *http.Client, cfg *inClusterConfig, host string) (found, unknown bool, errText string) {
+	var list struct {
+		Items []struct {
+			Spec struct {
+				Rules []struct {
+					Host string `json:"host"`
+				} `json:"rules"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	unknown, errText = listKubernetesResource(ctx, client, cfg, "/apis/networking.k8s.io/v1/namespaces/"+url.PathEscape(cfg.Namespace)+"/ingresses", &list)
+	if unknown {
+		return false, true, errText
+	}
+	for _, item := range list.Items {
+		for _, rule := range item.Spec.Rules {
+			if strings.EqualFold(strings.TrimSpace(rule.Host), host) {
+				return true, false, ""
+			}
+		}
+	}
+	return false, false, ""
+}
+
+func routeHostExists(ctx context.Context, client *http.Client, cfg *inClusterConfig, host string) (found, unknown bool, errText string) {
+	var list struct {
+		Items []struct {
+			Spec struct {
+				Host string `json:"host"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	unknown, errText = listKubernetesResource(ctx, client, cfg, "/apis/route.openshift.io/v1/namespaces/"+url.PathEscape(cfg.Namespace)+"/routes", &list)
+	if unknown {
+		return false, true, errText
+	}
+	for _, item := range list.Items {
+		if strings.EqualFold(strings.TrimSpace(item.Spec.Host), host) {
+			return true, false, ""
+		}
+	}
+	return false, false, ""
+}
+
+func listKubernetesResource(ctx context.Context, client *http.Client, cfg *inClusterConfig, path string, out any) (unknown bool, errText string) {
+	reqCtx, cancel := context.WithTimeout(ctx, routeExistenceProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, cfg.BaseURL+path, nil)
+	if err != nil {
+		return true, "invalid Kubernetes API request"
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return true, terseProbeError(err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return false, ""
+	case http.StatusForbidden, http.StatusUnauthorized:
+		return true, "Kubernetes RBAC does not allow listing dashboard routes"
+	default:
+		return true, "Kubernetes API returned HTTP " + itoa(resp.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPayloadBytes)).Decode(out); err != nil {
+		return true, "could not decode Kubernetes API response"
+	}
+	return false, ""
 }
 
 func publicURLSelfCheckStatusForError(err error) string {
