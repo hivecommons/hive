@@ -49,12 +49,30 @@ export CONTRIBUTOR_MODE
 # Username is extracted from contributor.env (set during registration)
 export HIVE_CONTRIBUTOR_USERNAME="${CONTRIBUTOR_USERNAME:-unknown}"
 
+# Source backends.conf for binary detection.
+#
+# This MUST stay ABOVE the entrypoint.d hook seam below (kubestellar/hive#2833).
+# backends.conf defines backend_binary() / backend_perm_flag() as bash
+# FUNCTIONS, and sourcing a function definition silently replaces any earlier
+# one. Sourced after the hooks, it clobbered a hook's override with no warning,
+# so the one thing the seam most obviously invites — pointing a backend at a
+# different binary — was the one thing it could not do. Loading it first means
+# the hooks run last and win.
+BACKENDS_CONF="${SCRIPT_DIR}/../config/backends.conf"
+if [[ -f "$BACKENDS_CONF" ]]; then
+  source "$BACKENDS_CONF"
+elif [[ -f /usr/local/etc/hive/backends.conf ]]; then
+  source /usr/local/etc/hive/backends.conf
+fi
+
 # Extension seam for downstream images (kubestellar/hive#2393 item 4). A derived
 # image (e.g. projectbluefin/donate-clanker) can drop *.sh into
 # /etc/hive/entrypoint.d/ and/or set HIVE_PRE_AGENT_HOOK to run setup here —
-# after the full contributor env is exported, before backend detection and the
-# tmux launch — WITHOUT forking this entrypoint and re-implementing the tmux
-# wait/attach logic. Sourced (not exec'd) so hooks can export env the agent sees.
+# after the full contributor env is exported and after backends.conf has
+# defined the backend tables, but before backend detection and the tmux launch —
+# WITHOUT forking this entrypoint and re-implementing the tmux wait/attach
+# logic. Sourced (not exec'd) so hooks can export env the agent sees and can
+# redefine backend_binary()/backend_perm_flag() to add or retarget a backend.
 if [[ -d /etc/hive/entrypoint.d ]]; then
   for _hook in /etc/hive/entrypoint.d/*.sh; do
     [[ -r "$_hook" ]] || continue
@@ -66,14 +84,6 @@ fi
 if [[ -n "${HIVE_PRE_AGENT_HOOK:-}" ]]; then
   echo "Running HIVE_PRE_AGENT_HOOK"
   eval "$HIVE_PRE_AGENT_HOOK"
-fi
-
-# Source backends.conf for binary detection
-BACKENDS_CONF="${SCRIPT_DIR}/../config/backends.conf"
-if [[ -f "$BACKENDS_CONF" ]]; then
-  source "$BACKENDS_CONF"
-elif [[ -f /usr/local/etc/hive/backends.conf ]]; then
-  source /usr/local/etc/hive/backends.conf
 fi
 
 # LiteLLM backend: Claude Code pointed at the contributor's own LiteLLM proxy.

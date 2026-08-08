@@ -39,6 +39,14 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
+      # backends.conf defines the backend tables as bash functions, so whichever
+      # of {backends.conf, entrypoint.d hooks} is sourced last wins. Sourcing it
+      # after the hooks silently discarded a downstream image's override. This
+      # replays the real blocks in the order the entrypoint has them, so putting
+      # backends.conf back below the seam fails the PR.
+      - name: Contributor entrypoint.d hook override tests
+        run: bash deploy/test_contributor_hook_override.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
