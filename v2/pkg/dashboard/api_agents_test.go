@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ---------- agentDefinition JSON serialization ----------
@@ -39,7 +41,7 @@ func TestAgentDefinitionJSONTags(t *testing.T) {
 			LaneKeywords:    []string{"bug", "fix"},
 			DetectKeywords:  []string{"error"},
 			Aliases:         []string{"scan"},
-			Cadences:        map[string]string{"busy": "5m"},
+			Cadences:        map[string]config.Cadence{"busy": "5m"},
 			PromptTemplate:  "do the thing",
 		},
 	}

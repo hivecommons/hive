@@ -96,7 +96,15 @@ The contributor can then target a specific hive:
 HIVE_HUB=wss://drasi-hive.example.com:3001/contribute just contribute-hive
 ```
 
-Or register with multiple hives and switch between them.
+Or register with multiple hives and subscribe to them from one relay session (added by [@hanthor](https://github.com/hanthor) in [#2846](https://github.com/kubestellar/hive/pull/2846)):
+
+```bash
+export HIVE_HUB=wss://drasi-hive.example.com:3001/contribute,wss://keptn-hive.cncf.io:3001/contribute
+export HIVE_REGISTRATION_TOKEN=drasi-token,keptn-token
+just contribute-hive
+```
+
+Keep the tokens in the same order as the hub URLs. The relay uses one CLI/tmux session, keeps a separate WebSocket connection and heartbeat per hub, works on one task at a time, and only round-robins to the next hub when the active hub explicitly reports that no task is available.
 
 ## Federation Architecture
 

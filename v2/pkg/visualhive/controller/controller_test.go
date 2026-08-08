@@ -79,7 +79,7 @@ func TestVisualWorkControllerAdmitsBeforeIssueAndLeavesSchedulerDispatchPending(
 	}
 
 	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	evidence := completeControllerEvidence(packetDigest)
 	issueClient := &controllerIssueClient{governor: gov}
@@ -270,7 +270,7 @@ func TestVisualWorkControllerAdmitsBeforeIssueAndLeavesSchedulerDispatchPending(
 		t.Fatalf("exact role capability restore did not resume durable dispatch: %+v", resumed)
 	}
 	governorModes := config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}}, "busy": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}, "busy": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}
 	gov.UpdateConfigAndAgents(governorModes, exactAgent)
 	gov.SetMode(governor.ModeBusy)
@@ -281,12 +281,12 @@ func TestVisualWorkControllerAdmitsBeforeIssueAndLeavesSchedulerDispatchPending(
 	if resumed := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{evidence}, packet, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply}); len(resumed.DispatchPending) != 1 {
 		t.Fatalf("exact Governor mode restore did not resume durable dispatch: %+v", resumed)
 	}
-	governorModes.Modes["idle"] = config.ModeConfig{Cadences: map[string]string{"quality": "2m"}}
+	governorModes.Modes["idle"] = config.ModeConfig{Cadences: map[string]config.Cadence{"quality": "2m"}}
 	gov.UpdateConfigAndAgents(governorModes, exactAgent)
 	if held := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{evidence}, packet, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply}); len(held.DispatchPending) != 0 {
 		t.Fatalf("Governor cadence drift reused an earlier allow: %+v", held)
 	}
-	governorModes.Modes["idle"] = config.ModeConfig{Cadences: map[string]string{"quality": "1m"}}
+	governorModes.Modes["idle"] = config.ModeConfig{Cadences: map[string]config.Cadence{"quality": "1m"}}
 	gov.UpdateConfigAndAgents(governorModes, exactAgent)
 	if resumed := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{evidence}, packet, []visualhive.AdmittedVisualWork{work}, Result{Lifecycle: apply}); len(resumed.DispatchPending) != 1 {
 		t.Fatalf("exact Governor cadence restore did not resume durable dispatch: %+v", resumed)
@@ -577,7 +577,7 @@ func TestVisualWorkControllerIssueOnlyPersistsStageWithoutDispatch(t *testing.T)
 		value.Metadata["visual_hive_controller_owned"] = true
 		value.Metadata["visual_hive_admission_state"] = "pending"
 	})
-	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
 		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(), ACMMLevel: 4, Automation: integrated.AutomationIssues,
@@ -650,7 +650,7 @@ func TestVisualWorkControllerHeldRepairReevaluatesWithoutCountingItselfAsWIP(t *
 	}
 
 	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
@@ -739,7 +739,7 @@ func TestVisualWorkControllerSynchronizesIssueAndDeniesVerifiedOutOfPolicyRepair
 	}
 
 	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
@@ -833,7 +833,7 @@ func TestVisualWorkControllerHoldsUninstalledProducerRecipeBeforeIssue(t *testin
 	}
 
 	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
@@ -903,7 +903,7 @@ func TestVisualWorkControllerDenialCreatesNoIssueIntent(t *testing.T) {
 			bead.Metadata["visual_hive_admission_state"] = "pending"
 		})
 	}
-	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: false, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: false, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
 		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(), ACMMLevel: 5, Automation: integrated.AutomationRepairPR,
@@ -942,7 +942,7 @@ func TestVisualWorkControllerDenialCreatesNoIssueIntent(t *testing.T) {
 func TestTransientAdmissionDenialsReevaluateOnlyWhenTheirLiveInputsChange(t *testing.T) {
 	newGovernor := func() *governor.Governor {
 		return governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"quality": "1m"}},
+			"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 		}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}
 	baseRequest := func() governor.WorkAdmissionRequest {
@@ -995,7 +995,7 @@ func TestTransientAdmissionDenialsReevaluateOnlyWhenTheirLiveInputsChange(t *tes
 	})
 	t.Run("role configuration", func(t *testing.T) {
 		gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"quality": "1m"}},
+			"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 		}}, map[string]config.AgentConfig{"quality": {Enabled: false, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		request := baseRequest()
 		denied := gov.AdmitWork(request)
@@ -1184,7 +1184,7 @@ func TestMixedPacketAdmitsRoutedPeerAndNeverDispatchesManualHold(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	issues := &controllerIssueClient{governor: gov}
 	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
 		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(), ACMMLevel: 5, Automation: integrated.AutomationRepairPR,
@@ -1228,8 +1228,8 @@ func TestMixedPacketAdmitsRoutedPeerAndNeverDispatchesManualHold(t *testing.T) {
 		t.Fatalf("mixed replay duplicated or dispatched manual-held work: %+v", replay)
 	}
 	gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
-		"busy": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
+		"busy": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}})
 	gov.SetMode(governor.ModeBusy)
 	deferredReplay := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(digest)}, packet, []visualhive.AdmittedVisualWork{works[2]}, Result{Lifecycle: apply})

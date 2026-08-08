@@ -64,13 +64,18 @@ func TestCovG2_Role(t *testing.T) {
 		t.Errorf("role header = %d", rec.Code)
 	}
 
-	// With hive_hub_user cookie (no user header).
+	// The hub-wide hive_hub_user cookie is intentionally ignored by spoke
+	// dashboards; identity must come from the request headers or hive_session.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/role", nil)
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "bob"})
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("role cookie = %d", rec.Code)
+	}
+	body := decodeJSON(t, rec)
+	if body["user"] != "" {
+		t.Errorf("role must ignore hive_hub_user cookie, got user %v", body["user"])
 	}
 }
 

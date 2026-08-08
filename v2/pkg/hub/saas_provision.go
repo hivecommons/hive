@@ -594,6 +594,17 @@ type SaaSHive struct {
 	MigrationFrom      string `json:"migration_from,omitempty"`       // source cluster ID
 	MigrationTo        string `json:"migration_to,omitempty"`         // target cluster ID
 	MigrationStartedAt string `json:"migration_started_at,omitempty"` // RFC3339 timestamp
+
+	// AssignedAt (RFC3339) records WHEN this placeholder was last claimed — set by
+	// both claim paths (handleApproveProvision, handleAssignHive) the moment they
+	// flip Status to statusAssigned. It exists so the self-heal sweep can measure
+	// how long a placeholder has been stuck at Status=statusAssigned &&
+	// !ClaimDelivered and reset one that never completed its claim (a spoke frozen
+	// on an old image never reports the org/repos back, so ClaimDelivered stays
+	// false forever). Empty on records claimed before this field existed and on
+	// unclaimed placeholders; a zero/absent stamp makes the sweep skip the hive
+	// rather than reset it on an unknowable age.
+	AssignedAt string `json:"assigned_at,omitempty"`
 }
 
 type CreateHiveRequest struct {
@@ -734,122 +745,215 @@ func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
 	if h == nil || h.GitHubHost != "" || cluster == nil {
 		return ""
 	}
-	base := effectiveGitHubBaseURL(h, cluster)
-	if base == "" {
+	// A per-hive base URL is a stated DECISION and wins outright — including the
+	// "public" sentinel, which effectiveGitHubBaseURL resolves to "" and which
+	// must STAY public (return "") rather than being re-GHE'd from the cluster.
+	// So any non-empty github_base_url short-circuits the cluster fallback: a real
+	// per-hive host is recorded as-is, and the public sentinel records nothing.
+	if strings.TrimSpace(h.GitHubBaseURL) != "" {
+		base := effectiveGitHubBaseURL(h, cluster)
+		if base == "" {
+			return "" // explicit public pin — stay public
+		}
+		return githubHostLabel(base)
+	}
+	// No per-hive host at all: fall back to the cluster's DEFAULT forge, forge-map
+	// shape included. The old code read only the flat github_base_url via
+	// effectiveGitHubBaseURL, so a GHE cluster written as `default_forge` +
+	// `forges` map (blank flat github_base_url) resolved to public here and left
+	// GitHubHost blank — the spoke then kept api.github.com with the public app_id
+	// even though the cluster is GHE (the EPM placeholder). clusterDefaultForge
+	// honours default_forge, so a GHE default now backfills the GHE host however
+	// it is written. A public default still returns "" (nothing to record).
+	forge := clusterDefaultForge(cluster)
+	if isPublicForgeHost(forge) {
 		return "" // public github.com — nothing to record
 	}
-	return githubHostLabel(base)
+	return forge
 }
 
-// repairGitHubHostsFromClusters retroactively fills in a blank GitHubHost on
-// hives that were ALREADY assigned, using their cluster's GHE defaults.
+// FORGE IS PER-HIVE. Two repairs used to live here that keyed a hive's forge on
+// its CLUSTER's default — repairGitHubHostForHive (filled a blank github_host
+// from the cluster forge on every beat) and guardGHEHiveNotOnPublicForge
+// (rewrote a blank-or-public github_host to the cluster's GHE host whenever the
+// spoke reported the public forge). Both are gone, on purpose.
 //
-// backfillGitHubHostFromCluster only runs at assign time, so every hive claimed
-// before that fix keeps GitHubHost == "" forever — and with it an empty
-// github_api_url pushed on every heartbeat, which the spoke reads as "leave
-// mine alone". Those hives sit on a github.ibm.com cluster while talking to
-// api.github.com (hosted-available-vllmd-01 in org "katamari" is the live
-// example). Nothing else ever repairs them.
+// A cluster hosts hives of BOTH forges: vllm-d carries github.ibm.com projects
+// (certus, EPM, …) beside github.com projects (ibm/alchemy-logging — the org
+// "ibm" lives on public github.com). At 23:56Z on 2026-08-05, minutes after the
+// cluster-keyed guard shipped, it rewrote github_host on every vllm-d hive whose
+// spoke reported the public App — github.com projects included — and the
+// delivery that followed flipped their spokes onto app 5686 / github.ibm.com,
+// degrading 9 of them with "404 Not Found" on every token mint. Cluster
+// membership proves nothing about any one hive's forge; only the hive's own
+// recorded github_host (empty = public github.com, the field's documented
+// meaning) does.
 //
-// It is deliberately conservative and idempotent:
-//   - It only ever fills a BLANK GitHubHost. An explicitly set host is never
-//     overwritten, and neither is an explicit "public" override — that resolves
-//     to an empty effective base URL, which backfillGitHubHostFromCluster
-//     already refuses to record.
-//   - It changes nothing when the hive's cluster has no GHE host configured.
-//   - Unclaimed placeholders are skipped: assign owns those, and it now
-//     backfills the host itself.
-//   - Every change is logged with before/after.
-//
-// Returns the number of hives changed.
-//
-// It runs LAZILY, per hive, from the heartbeat path (repairGitHubHostForHive)
-// rather than as a startup sweep. A goroutine at hub start would walk the hive
-// directory concurrently with the first heartbeats already writing to it, for
-// no benefit: a hive that never beats does not need repairing, and one that
-// does gets repaired on its very next beat.
-//
-// NOTE: this repairs the HOST only. A hive that also carries the public
-// app_id/installation_id is NOT fixed by this — the GitHub App still has to be
-// installed on the target org before installation auto-discovery can self-heal
-// it. See gitHubAppStillRequiredNote.
-func (s *HubServer) repairGitHubHostsFromClusters() int {
-	repaired := 0
-	for _, h := range listSaaSHives() {
-		if s.repairGitHubHostForHive(h.ID) {
-			repaired++
-		}
-	}
-	if repaired > 0 {
-		s.logger.Info("github host repair: complete", "hives_repaired", repaired,
-			"note", gitHubAppStillRequiredNote)
-	}
-	return repaired
-}
+// What remains, all keyed on per-hive evidence:
+//   - assign/approve record github_host from the pasted org URL (and
+//     backfillGitHubHostFromCluster fills it ONCE, at claim time, for legacy
+//     requests that named no host);
+//   - reconcileGitHubHostFromSpoke backfills an EMPTY github_host from a spoke
+//     whose whole github block coherently, workingly names a forge — it never
+//     overwrites an explicit record (a spoke's report is downstream of hub
+//     delivery, so a contradiction is a mis-delivery echo, not evidence);
+//   - repairMisflippedForgeFromRequest (below) restores a github_host the
+//     cluster-keyed guard stomped, from the provision request's own record;
+//   - the wrong-forge identity repair (decideAppKeySync /
+//     appKeyReasonWrongForgeApp) re-delivers the hive's OWN forge — in both
+//     directions — when the spoke's app_id provably belongs to another forge.
 
-// repairGitHubHostForHive applies the retroactive host repair to a SINGLE hive,
-// reporting whether it changed anything. Called on each heartbeat, so it must
-// be cheap and silent in the overwhelmingly common no-op case — every guard
-// below returns before any write.
-func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
-	h := loadSaaSHive(hiveID)
-	if h == nil {
+// repairMisflippedForgeFromRequest restores a claimed hive's github_host after
+// the 2026-08-05 cluster-keyed guard stomped it, using the hive's own provision
+// request — the surviving record of which forge the org actually lives on — as
+// the authority. It reports whether it changed anything.
+//
+// THE STATE IT REPAIRS. The removed guard rewrote github_host from blank /
+// "github.com" to the cluster's GHE host, and the delivery that followed
+// flipped the spoke's whole github block onto the GHE App. Hub record and spoke
+// now AGREE on the wrong forge, so no drift-based repair can see the fault; the
+// only remaining evidence of the hive's true forge is the provision request the
+// owner filed, which records the org's host explicitly ("public" or a pasted
+// GHE host — the onboarding form always sends one).
+//
+// Every gate is positive evidence, and ALL must hold:
+//   - the hive is CLAIMED, with no operator flow owning the host: no in-flight
+//     forge switch (RequestedGitHubHost) and no COMPLETED one either
+//     (ForgeDelivered — a deliberate later switch outranks the original
+//     request);
+//   - its recorded github_host is currently a GHE host;
+//   - its own provision request (matched by AssignedHive) EXPLICITLY records
+//     public github.com. A blank request host is treated as unknown — requests
+//     filed before the host field existed carry "", and flipping a genuine GHE
+//     hive public on that silence would recreate this incident in reverse;
+//   - the spoke POSITIVELY reports it is running that same GHE forge (it
+//     adopted the mis-delivery) AND reports failing App auth
+//     (spokeAppAuthFailing) — a healthy hive is never touched, whatever the
+//     paperwork says.
+//
+// The write restores github_host to public github.com. The same beat's identity
+// reconcile then resolves the hive's public App (per-hive election), the
+// wrong-forge repair delivers the complete public set — explicit public urls,
+// public app_id, and an installation reset riding with the app change — and the
+// spoke's RediscoverAndAdopt re-adopts its old public installation, which is
+// valid again under the restored app_id.
+func (s *HubServer) repairMisflippedForgeFromRequest(payload *HeartbeatPayload) bool {
+	if s == nil || payload == nil {
 		return false
 	}
-	if h.Status == statusAvailable {
-		return false // unclaimed placeholder — assign backfills it at claim time
+	h := loadSaaSHive(payload.HiveID)
+	if !hiveClaimed(h) {
+		return false // unclaimed placeholder (or no record) — assign owns its host
 	}
-	if h.GitHubHost != "" {
-		return false // explicitly set — never clobber
+	if h.RequestedGitHubHost != "" || h.ForgeDelivered {
+		return false // an operator forge switch owns (or deliberately set) the host
 	}
-	// backfillGitHubHostFromCluster also returns "" for an explicit "public"
-	// override (effectiveGitHubBaseURL resolves the sentinel to public) and for
-	// a cluster with no GHE host, so both are covered by this one check.
-	host := backfillGitHubHostFromCluster(h, s.clusterForHive(h))
-	if host == "" {
+	current := forgeHostLabel(h.GitHubHost)
+	if h.GitHubHost == "" || isPublicForgeHost(current) {
+		return false // nothing GHE recorded — nothing to restore
+	}
+	req := loadProvisionRequest(h.Owner)
+	if req == nil || req.AssignedHive != h.ID {
+		return false // no surviving request record for THIS hive — no authority
+	}
+	reqHost := strings.TrimSpace(req.GitHubHost)
+	requestSaysPublic := strings.EqualFold(reqHost, githubHostPublic) ||
+		(reqHost != "" && isPublicForgeHost(forgeHostLabel(reqHost)))
+	if !requestSaysPublic {
+		return false // request names GHE, or is silent — silence is not evidence
+	}
+	// The spoke must have adopted the mis-delivered GHE forge AND be failing on
+	// it. A spoke still on public, or one that is healthy, is not this fault.
+	spokeForge := config.GitHubConfig{
+		BaseURL: strings.TrimSpace(payload.GitHubBaseURL),
+		APIURL:  strings.TrimSpace(payload.GitHubAPIURL),
+	}.HostLabel()
+	if !sameGitHubHost(forgeHostLabel(spokeForge), current) {
 		return false
 	}
-	h.GitHubHost = host
+	if !spokeAppAuthFailing(payload) {
+		return false
+	}
+	before := h.GitHubHost
+	h.GitHubHost = publicForgeHost
 	if err := saveSaaSHive(h); err != nil {
-		s.logger.Error("github host repair: failed to save hive",
-			"hive", hiveID, "error", err)
+		s.logger.Error("github forge restore: failed to save hive",
+			"hive", payload.HiveID, "error", err)
 		return false
 	}
-	s.logger.Info("github host repair: filled blank github_host from cluster defaults",
-		"hive", hiveID,
-		"cluster", clusterIDForHive(h),
+	s.logger.Warn("github forge restore: a public-github.com hive was mis-flipped onto its cluster's GHE forge — restoring the host its provision request records",
+		"hive", payload.HiveID,
 		"org", h.Org,
-		"github_host_before", "",
-		"github_host_after", host,
-		"github_api_url_after", gheAPIURLForHost(host),
-		"note", gitHubAppStillRequiredNote)
+		"owner", h.Owner,
+		"github_host_before", before,
+		"github_host_after", publicForgeHost,
+		"request_github_host", reqHost,
+		"spoke_app_id", payload.GitHubAppID,
+		"spoke_app_state", strings.TrimSpace(payload.GitHubAppState),
+	)
 	return true
 }
 
-// reconcileGitHubHostFromSpoke repairs a persisted github_host that is not merely
-// BLANK but WRONG, using the forge the spoke actually reports it is running
-// against. It reports whether it changed anything.
+// spokeAppAuthFailing reports whether a spoke POSITIVELY reports that its
+// GitHub App auth is not working: the app-required banner is raised and its own
+// classification names a credential/installation fault. Silence — an old spoke
+// reporting neither field — is never read as failure.
+func spokeAppAuthFailing(payload *HeartbeatPayload) bool {
+	if payload == nil || !payload.GitHubAppRequired {
+		return false
+	}
+	switch strings.TrimSpace(payload.GitHubAppState) {
+	case spokeAppStateNotInstalled, spokeAppStateWrongInstallation, "key-invalid", "key-missing":
+		return true
+	}
+	return false
+}
+
+// reconcileGitHubHostFromSpoke BACKFILLS an EMPTY persisted github_host from
+// the forge a demonstrably WORKING spoke reports it is running against. It
+// reports whether it changed anything.
 //
-// Why, on top of the blank-fill: repairGitHubHostForHive only ever fills a BLANK
-// host from cluster defaults; it
-// refuses to touch an already-set value. But a hive can carry a persisted host
-// that is set AND wrong: assigned from a pasted github.com URL, or seeded with a
-// stale record, while the repo actually lives on GitHub Enterprise (vllmd-06 is
-// the live example — meta said github.com but the spoke ran api_url
-// github.ibm.com). Nothing repaired those; each needed a hand-edit.
+// THE RECORDED HOST IS THE AUTHORITY; A SPOKE'S REPORT IS DOWNSTREAM OF IT.
+// A spoke's github block is whatever the hub last delivered (plus whatever a
+// mis-delivery left behind), so a spoke report can NEVER be treated as
+// independent evidence against an explicitly recorded host — adopting it just
+// launders the hub's own mis-delivery back into the record. That laundering is
+// exactly the feedback loop observed live on 2026-08-05
+// (hosted-kalantar-msb-soft-reflect-jsro, threatened on all 9): an operator
+// restored meta github_host to github.com and the spoke to the public App;
+// this reconcile then re-adopted github.ibm.com from a freshly-booted spoke
+// still carrying the mis-delivered GHE identity — a just-booted spoke has not
+// FAILED yet, so the auth-failing stand-down alone did not protect it — and
+// with meta back at GHE the wrong-forge repair re-delivered the GHE App with
+// an installation reset on the next beat. Every hand-repair reverted within
+// minutes; all six restored metas were re-stomped within ~30 minutes.
 //
-// The spoke's OWN reported forge is authoritative: it is what the running hive is
-// actually configured against. Read it base-or-api across the two reported fields
+// So this function now writes ONLY into an EMPTY github_host. An explicit
+// recorded host that contradicts the spoke is operator/request territory: the
+// forge-switch flow (RequestedGitHubHost) and the request-based restore
+// (repairMisflippedForgeFromRequest) are the paths allowed to change a
+// recorded host, and the wrong-forge delivery repair moves the SPOKE to match
+// the record — never the record to match the spoke. The former public→GHE
+// correction of an explicitly recorded github.com host (the vllmd-06 hand-edit
+// class) is deliberately no longer automatic: it was indistinguishable, from
+// the hub's side, from the mis-delivery laundering above.
+//
+// POSITIVE EVIDENCE ONLY for the empty-host backfill — "not failing yet" is
+// not "working" (the fresh-boot gap above), so adoption requires the spoke's
+// whole github block to coherently name the observed forge AND show a live
+// installation:
+//   - the spoke's reported app_id maps to the SAME forge it reports running
+//     (forgeOfSpokeAppID — leftover urls beside another forge's App are a
+//     mis-delivery artifact, not a forge);
+//   - a NON-ZERO installation_id (a spoke mid-reset/rediscovery is not
+//     evidence);
+//   - no positively reported auth failure (spokeAppAuthFailing).
+//
+// The spoke's forge is read base-or-api across the two reported fields
 // (GitHubHost from base_url, GitHubAPIURL from api_url) so a GHE spoke with a
-// blank base_url — the common state — is still recognised as GHE.
-//
-// CONSERVATIVE, ONE DIRECTION ONLY. It repairs public→GHE: a persisted github.com
-// host that the spoke reports as a GHE host is corrected to that GHE host. It does
-// NOT demote GHE→public, because a hive legitimately pinned to public github.com
-// on a GHE cluster (the appKeyReasonPublicHiveOnGHECluster case) reports
-// github.com by design, and overwriting a GHE record from a transient public read
-// could fight that pin. A blank/unknown spoke report changes nothing (silence is
-// not a mismatch — the same rule the heartbeat fields already follow). Every
+// blank base_url — the common state — is still recognised as GHE. A
+// blank/unknown report changes nothing, and public is never adopted (an empty
+// recorded host already means public github.com for a claimed hive). Every
 // change is logged with before/after.
 func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool {
 	if s == nil || payload == nil {
@@ -891,14 +995,40 @@ func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool
 	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
 		return false
 	}
-	current := githubHostLabel(h.GitHubHost) // normalize for a like-for-like compare
-	if current == observed {
-		return false // already correct — nothing to do
+	// AN EXPLICIT RECORDED HOST IS NEVER OVERWRITTEN FROM A SPOKE REPORT.
+	// The record (assign/approve, operator forge switch, request-based restore)
+	// is the authority; the spoke's github block is downstream of hub delivery,
+	// so a contradicting report is at best a mis-delivery echoing back — the
+	// 2026-08-05 loop that re-stomped six hand-restored metas within ~30
+	// minutes. If the record and the spoke disagree, the wrong-forge delivery
+	// repair moves the SPOKE onto the recorded forge; nothing here moves the
+	// record onto the spoke's.
+	if h.GitHubHost != "" {
+		return false
 	}
-	// Only repair public→GHE. If the persisted host is already some other GHE host,
-	// do not overwrite it from a single beat — that is an operator concern, not a
-	// safe automatic flip.
-	if h.GitHubHost != "" && current != config.DefaultGitHubBaseURL[len("https://"):] {
+	// EMPTY-host backfill, on positive working evidence only. "Has not failed"
+	// is not "working": a freshly-booted mis-delivered spoke reports the wrong
+	// forge's urls before its first token mint fails, so absence of a failure
+	// report proves nothing (the fresh-boot gap in the old stand-down).
+	//
+	// A BROKEN spoke's forge report is not evidence of intent. A spoke whose App
+	// auth is failing may be running a forge it was mis-delivered (the
+	// 2026-08-05 flip left 9 spokes positively reporting github.ibm.com they
+	// could not authenticate against); adopting that report would launder the
+	// mis-delivery into the hive's record and fight the restore that
+	// repairMisflippedForgeFromRequest performs.
+	if spokeAppAuthFailing(payload) {
+		return false
+	}
+	// The whole github block must coherently name the observed forge: an App of
+	// that forge, with a live (non-zero) installation. A spoke carrying GHE urls
+	// beside the public App — or beside a freshly-reset installation_id 0 — is a
+	// mis-delivery artifact or a repair in flight, never a forge election.
+	if payload.GitHubInstallationID == 0 {
+		return false
+	}
+	spokeAppForge := s.forgeOfSpokeAppID(payload.GitHubAppID)
+	if spokeAppForge == "" || !sameGitHubHost(spokeAppForge, observed) {
 		return false
 	}
 	before := h.GitHubHost
@@ -908,12 +1038,14 @@ func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool
 			"hive", payload.HiveID, "error", err)
 		return false
 	}
-	s.logger.Info("github host reconcile: corrected wrong github_host from spoke-reported forge",
+	s.logger.Info("github host reconcile: backfilled empty github_host from a working spoke's coherent forge report",
 		"hive", payload.HiveID,
 		"org", h.Org,
 		"github_host_before", before,
 		"github_host_after", observed,
 		"github_api_url_reported", strings.TrimSpace(payload.GitHubAPIURL),
+		"spoke_app_id", payload.GitHubAppID,
+		"spoke_installation_id", payload.GitHubInstallationID,
 		"note", gitHubAppStillRequiredNote)
 	return true
 }
@@ -963,8 +1095,12 @@ const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying 
 //     the spoke, so that call fails and the hive correctly keeps its working
 //     placeholder host.
 //
-// Called on each heartbeat, so it must be cheap and silent in the overwhelmingly
-// common no-op case — every guard below returns before any network call or write.
+// Kicked from each heartbeat via kickVanityURLRepairAsync — in the BACKGROUND,
+// never on the request path: the kubectl calls below can hang for minutes
+// against an unreachable cluster, and a heartbeat response delayed past the
+// spoke's 10s client timeout is a response the spoke never sees (which is how
+// claim delivery to vllm-d silently broke). The guards below still return
+// before any network call or write in the overwhelmingly common no-op case.
 func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
@@ -1004,6 +1140,19 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
 		return false
 	}
+	// Re-load before writing. makeVanityHostServable (and existingVanityHost
+	// above) can block for minutes in kubectl against a slow/unreachable
+	// cluster, and the heartbeat path keeps load-modify-writing this hive's
+	// record meanwhile — adoptSpokeProjectConfig latching ClaimDelivered /
+	// ACMMDelivered, the forge handshakes. Saving through the record loaded
+	// before that window would silently revert every field written during it.
+	h = loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.VanityURL != "" {
+		return false // another path minted one while we were blocked — keep it
+	}
 	h.VanityURL = "https://" + vanityHost
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("vanity url repair: failed to save hive", "hive", hiveID, "error", err)
@@ -1013,6 +1162,153 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
 		"cluster", cluster.ID, "vanity_url", h.VanityURL)
 	return true
+}
+
+// kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
+// most one attempt per hive at a time, registered with provisionWG so tests can
+// drain it before swapping the package-level saas*Dir vars.
+//
+// It exists because the repair is only cheap on its NO-OP paths. When it
+// actually has work to do it shells out to kubectl against the hive's cluster
+// (existingVanityHost, then addVanityHostToIngress), and against a cluster the
+// hub cannot reach — vllm-d is heartbeat-only — those calls hang until their
+// TCP dials time out: ~90 seconds per attempt observed live. Called
+// synchronously from handleHeartbeat, that stall pushed every heartbeat
+// response past the spoke's 10s client timeout (heartbeatTimeout), so the
+// claimed-project config the response carried never reached the spoke and
+// fresh assignments on heartbeat-only clusters could never complete (the
+// vllmd-14 / vllmd-13 / EPM wedge).
+//
+// The same cheap guards repairVanityURLForHive starts with run inline here, so
+// the overwhelmingly common no-op case (already has a vanity URL, unclaimed
+// placeholder, incomplete claim, no cluster domain) spawns no goroutine at all.
+func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status == statusAvailable || h.VanityURL != "" ||
+		h.Org == "" || h.PrimaryRepo == "" {
+		return
+	}
+	if cluster := s.clusterForHive(h); cluster == nil || cluster.Domain == "" {
+		return
+	}
+	// One in-flight attempt per hive: beats arrive every ~2 min while a failing
+	// attempt can take minutes, and stacking attempts would pile goroutines up
+	// against the same dead cluster for no benefit.
+	if _, inFlight := s.vanityRepairInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+		return
+	}
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		defer s.vanityRepairInFlight.Delete(hiveID)
+		s.repairVanityURLForHive(hiveID)
+	}()
+}
+
+// kickClaimClusterWorkAsync runs the cluster-facing side effects of a claim —
+// the namespace identity stamp and the vanity-host mint — in the BACKGROUND,
+// at most one attempt per hive at a time, registered with provisionWG so tests
+// can drain it before swapping the package-level saas*Dir vars (the same
+// contract every other background provision goroutine in this package follows).
+//
+// It exists for exactly the reason kickVanityURLRepairAsync does (#2730):
+// handleAssignHive and handleApproveProvision used to run this work
+// SYNCHRONOUSLY between persisting the assignment and writing the HTTP
+// response. Every call shells out to kubectl against the hive's cluster, and
+// against a cluster the hub cannot reach — vllm-d is heartbeat-only — those
+// calls hang until their TCP dials time out (~45s each, ~90s observed for the
+// vanity mint alone), so the admin's assign dialog sat on a pending fetch for
+// about a minute. Nothing here is needed for the response semantics: the claim
+// itself is persisted before the kick and delivered to the spoke over the
+// heartbeat channel (projectConfigForHiveID), the namespace stamp is
+// best-effort/cosmetic by contract, and a failed vanity mint already has a
+// retry path (the heartbeat-kicked repair above) plus a Warn log.
+//
+// Callers must kick AFTER the assignment is fully persisted: the goroutine
+// re-loads meta.json rather than closing over the handler's copy, so it never
+// writes through a record that predates concurrent heartbeat updates.
+func (s *HubServer) kickClaimClusterWorkAsync(hiveID string) {
+	// One in-flight claim work-set per hive, so an admin double-submitting the
+	// dialog (or re-assigning while a slow attempt is stuck against a dead
+	// cluster) does not stack goroutines against the same unreachable cluster.
+	if _, inFlight := s.claimWorkInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+		return
+	}
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		defer s.claimWorkInFlight.Delete(hiveID)
+		h := loadSaaSHive(hiveID)
+		if h == nil {
+			return
+		}
+		// Entry points 2/3 for namespace identity (see
+		// hosted_namespace_identity.go): the claim/assign moment is when the
+		// hive's real owner/org become known, so the namespace labels must be
+		// (re)written now. Best-effort and bounded, but the bound is still
+		// 2×15s of kubectl against an unreachable cluster — background-only.
+		stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
+		// Mint the vanity host under the SAME per-hive guard the heartbeat
+		// repair uses, so a beat-kicked repair and this claim-time mint never
+		// run concurrently against the same hive (concurrent minters would
+		// churn routes and race the adopt write).
+		if _, inFlight := s.vanityRepairInFlight.LoadOrStore(hiveID, struct{}{}); inFlight {
+			return // a repair attempt is already minting — let it win
+		}
+		defer s.vanityRepairInFlight.Delete(hiveID)
+		s.mintClaimVanityURL(hiveID)
+	}()
+}
+
+// mintClaimVanityURL is the vanity-minting half of a claim/(re)assignment —
+// the work handleAssignHive used to do inline before writing its response.
+// Behavior is unchanged from the synchronous version: prefer a name-bearing
+// host built from the hive's display name (Option B — see
+// hosted_namespace_identity.go), fall back to the org/repo-derived host, make
+// it servable through the same seam as the retroactive repair, and only adopt
+// a host that IS servable (the vllm-d 503 rule). On failure VanityURL stays
+// empty, every read path keeps the working placeholder host, and the
+// heartbeat-kicked repair retries later — exactly as before.
+//
+// The one addition over the inline version is the RE-LOAD before the adopt
+// write: this now runs after the handler has already responded, so the slow
+// kubectl window overlaps live heartbeat writes (ClaimDelivered/ACMMDelivered
+// latches, forge handshakes) and saving through a pre-window record would
+// silently revert them — the same hazard repairVanityURLForHive documents.
+func (s *HubServer) mintClaimVanityURL(hiveID string) {
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status == statusAvailable || h.VanityURL != "" {
+		return // unclaimed, gone, or already has one (stable-host idempotency)
+	}
+	cluster := s.clusterForHive(h)
+	if cluster == nil || cluster.Domain == "" {
+		return // nothing to derive a host from
+	}
+	vanityHost := hiveNameVanityHost(h.ProjectName, cluster.Domain)
+	if vanityHost == "" {
+		vanityHost = generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+	}
+	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
+		// Do NOT adopt a host we could not make servable — leaving VanityURL
+		// empty makes every read path fall back to the working placeholder
+		// host, and the heartbeat repair re-attempts adoption once a route
+		// exists (the cluster-wildcard/vllm-d case included).
+		s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
+			"keeping the working placeholder host; the heartbeat repair will retry",
+			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+		return
+	}
+	h = loadSaaSHive(hiveID)
+	if h == nil {
+		return
+	}
+	if h.VanityURL != "" {
+		return // another path minted one while we were in kubectl — keep it
+	}
+	h.VanityURL = "https://" + vanityHost
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("claim vanity mint: failed to save hive", "hive", hiveID, "error", err)
+	}
 }
 
 // existingVanityHost returns the host an already-created vanity route/ingress
@@ -1215,14 +1511,11 @@ func countUserHives(username string) int {
 // spoke needs to enforce per-user device-flow authorization on its direct
 // (non-hub-proxied) route. Format: "owner:owner,viewer1:read,viewer2:read".
 //
-// The owner always comes first with role "owner" (read-write). Every OTHER
-// SaaS user the hub granted this hive (any of "owner"/"read-write"/"read") is
-// appended as "read" — a read-only viewer on the direct route. Granting a
-// non-owner write access on the direct route is deliberately deferred (only the
-// single provisioned owner is write-capable there); see the PR notes for the
-// multi-user-grant follow-up. This fails safe: a grant can never widen access
-// beyond read on the direct route. Usernames are sanitized to guard the env
-// value, and the owner is de-duplicated so they appear exactly once.
+// The owner always comes first with role "owner". Every OTHER SaaS user the hub
+// granted this hive is appended with the exact validated role stored in the hub
+// user record, so direct-route spokes enforce the same read/read-write/merger
+// tiers as hub-proxied spokes. Usernames are sanitized to guard the env value,
+// and the owner is de-duplicated so they appear exactly once.
 func authorizedUsersForHive(h *SaaSHive) string {
 	entries := make([]string, 0, 4)
 	seen := map[string]bool{}
@@ -1232,14 +1525,18 @@ func authorizedUsersForHive(h *SaaSHive) string {
 		seen[strings.ToLower(owner)] = true
 	}
 	for _, u := range listAllSaaSUsers() {
-		if _, ok := u.Hives[h.ID]; !ok {
+		role, ok := u.Hives[h.ID]
+		if !ok {
 			continue
+		}
+		if !config.ValidRole(role) {
+			role = saasRoleRead
 		}
 		name := sanitize(u.GitHubUsername)
 		if name == "" || seen[strings.ToLower(name)] {
 			continue
 		}
-		entries = append(entries, name+":"+saasRoleRead)
+		entries = append(entries, name+":"+role)
 		seen[strings.ToLower(name)] = true
 	}
 	return strings.Join(entries, ",")

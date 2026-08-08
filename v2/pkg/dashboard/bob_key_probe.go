@@ -60,6 +60,15 @@ const (
 	bobAuthSchemeAPIKey = "Apikey "
 	bobAuthSchemeBearer = "Bearer "
 
+	// bobProbeUserAgent is the User-Agent the probe sends. The Cloudflare WAF
+	// in front of api.us-east.bob.ibm.com fingerprint-blocks generic HTTP
+	// clients: Go's default "Go-http-client/2.0" (and curl's UA) get an HTML
+	// 403 block page before bob's auth ever sees the key, while "bobshell"
+	// — the UA of bob's own CLI — passes through to the backend. Confirmed
+	// live 2026-08-07 from both a hive pod and a workstation: same request,
+	// default UA → Cloudflare 403; "bobshell" UA → backend verdict (200/401).
+	bobProbeUserAgent = "bobshell"
+
 	// bobKeyManageURL is where an operator creates a correctly-scoped key —
 	// surfaced in entitlement-failure details. Keep in sync with
 	// BOB_API_KEY_MANAGE_URL in static/index.html.
@@ -156,6 +165,7 @@ func probeBobAPIKey(key string) (reason, detail string) {
 		return bobTestReasonUnreachable, "building request: " + redactSecret(err.Error(), key)
 	}
 	req.Header.Set("Authorization", bobAuthHeaderValue(key))
+	req.Header.Set("User-Agent", bobProbeUserAgent)
 	client := &http.Client{Timeout: bobProbeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -6,9 +6,12 @@ import (
 	"log/slog"
 )
 
-// reconcileGitHubHostFromSpoke must repair a persisted host that is set but WRONG
-// (public→GHE) from the forge the spoke reports, while never demoting a legit
-// public pin and never firing on an unknown/blank report.
+// reconcileGitHubHostFromSpoke must backfill an EMPTY github_host from a spoke
+// whose whole github block coherently, workingly names a forge — and must NEVER
+// overwrite an explicit recorded host from a spoke report (the report is
+// downstream of hub delivery: adopting a contradiction launders a mis-delivery
+// back into the record, the 2026-08-05 revert loop), never demote a legit
+// public pin, and never fire on an unknown/blank report.
 func TestReconcileGitHubHostFromSpoke(t *testing.T) {
 	oldHives := saasHivesDir
 	saasHivesDir = t.TempDir()
@@ -34,15 +37,98 @@ func TestReconcileGitHubHostFromSpoke(t *testing.T) {
 		return changed, got
 	}
 
-	t.Run("wrong github.com host is corrected to spoke-reported GHE (base-or-api)", func(t *testing.T) {
-		// The vllmd-06 class: meta says github.com, spoke reports blank base_url but
-		// a GHE api_url. base-or-api must still recognise GHE.
+	t.Run("an explicit recorded host is NEVER overwritten from a spoke report", func(t *testing.T) {
+		// Even a fully coherent, working-looking GHE report cannot overwrite an
+		// explicitly recorded github.com host: the spoke's github block is
+		// downstream of hub delivery, so a contradiction is at best a
+		// mis-delivery echoing back. Adopting it is the 2026-08-05 revert loop:
+		// hand-restored metas were re-stomped GHE within ~30 minutes by exactly
+		// this path, and the wrong-forge repair then re-delivered the GHE App.
+		// The vllmd-06 class (meta github.com, repo genuinely on GHE) is now
+		// operator/forge-switch territory, deliberately.
 		changed, got := run(t,
 			&SaaSHive{ID: "vllmd-06", Status: "claimed", GitHubHost: "github.com"},
-			&HeartbeatPayload{HiveID: "vllmd-06", GitHubHost: "", GitHubAPIURL: "https://github.ibm.com/api/v3"},
+			&HeartbeatPayload{
+				HiveID:               "vllmd-06",
+				GitHubHost:           "github.ibm.com",
+				GitHubAPIURL:         "https://github.ibm.com/api/v3",
+				GitHubAppID:          testGHEAppID,
+				GitHubInstallationID: 42,
+			},
+		)
+		if changed || got != "github.com" {
+			t.Errorf("got (changed=%v, host=%q), want (false, github.com) — the recorded host is the authority", changed, got)
+		}
+	})
+
+	t.Run("an EMPTY host is backfilled from a coherent working GHE report", func(t *testing.T) {
+		// base-or-api: blank base_url with a GHE api_url still recognises GHE.
+		// Positive evidence complete: an App of that forge, live installation.
+		changed, got := run(t,
+			&SaaSHive{ID: "blank-working", Status: "claimed"},
+			&HeartbeatPayload{
+				HiveID:               "blank-working",
+				GitHubHost:           "",
+				GitHubAPIURL:         "https://github.ibm.com/api/v3",
+				GitHubAppID:          testGHEAppID,
+				GitHubInstallationID: 42,
+			},
 		)
 		if !changed || got != "github.ibm.com" {
 			t.Errorf("got (changed=%v, host=%q), want (true, github.ibm.com)", changed, got)
+		}
+	})
+
+	t.Run("empty host: a fresh-boot report with installation 0 is not evidence", func(t *testing.T) {
+		// The fresh-boot gap: a just-booted mis-delivered spoke has not failed
+		// yet, so "not failing" alone must not admit it. A zeroed installation
+		// is a repair in flight (ResetInstallation), never a forge election.
+		changed, got := run(t,
+			&SaaSHive{ID: "blank-reset", Status: "claimed"},
+			&HeartbeatPayload{
+				HiveID:               "blank-reset",
+				GitHubAPIURL:         "https://github.ibm.com/api/v3",
+				GitHubAppID:          testGHEAppID,
+				GitHubInstallationID: 0,
+			},
+		)
+		if changed || got != "" {
+			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — a mid-reset spoke proves nothing", changed, got)
+		}
+	})
+
+	t.Run("empty host: GHE urls beside the PUBLIC App are a mis-delivery artifact", func(t *testing.T) {
+		// The github block must coherently name ONE forge: leftover GHE urls
+		// with the public app_id are exactly what a half-applied mis-delivery
+		// (or a half-completed restore) looks like.
+		changed, got := run(t,
+			&SaaSHive{ID: "blank-incoherent", Status: "claimed"},
+			&HeartbeatPayload{
+				HiveID:               "blank-incoherent",
+				GitHubAPIURL:         "https://github.ibm.com/api/v3",
+				GitHubAppID:          testGitHubComAppID,
+				GitHubInstallationID: 42,
+			},
+		)
+		if changed || got != "" {
+			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — an incoherent block is not a forge", changed, got)
+		}
+	})
+
+	t.Run("empty host: an auth-failing spoke is never adopted", func(t *testing.T) {
+		changed, got := run(t,
+			&SaaSHive{ID: "blank-failing", Status: "claimed"},
+			&HeartbeatPayload{
+				HiveID:               "blank-failing",
+				GitHubAPIURL:         "https://github.ibm.com/api/v3",
+				GitHubAppID:          testGHEAppID,
+				GitHubInstallationID: 42,
+				GitHubAppRequired:    true,
+				GitHubAppState:       spokeAppStateNotInstalled,
+			},
+		)
+		if changed || got != "" {
+			t.Errorf("got (changed=%v, host=%q), want (false, \"\") — a failing spoke's forge is not its forge", changed, got)
 		}
 	})
 

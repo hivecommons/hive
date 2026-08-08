@@ -77,7 +77,7 @@ func TestContributeTabOrderSlugMappingIntact(t *testing.T) {
 
 // TestLeaderboardTierBadgesFromRealData asserts the leaderboard rows render a tier
 // medallion built from the REAL trust_tier the /api/leaderboard entry carries (via
-// tierBadge), that the four known tiers each have a per-tier accent class, and that
+// tierBadge), that the five known tiers each have a per-tier accent class, and that
 // the tasks-completed stat is emphasised as a bold numeral. Nothing fabricated.
 func TestLeaderboardTierBadgesFromRealData(t *testing.T) {
 	body := renderContributePage(t)
@@ -92,6 +92,7 @@ func TestLeaderboardTierBadgesFromRealData(t *testing.T) {
 		// Per-tier accent classes exist in the CSS (muted metal-ish tints).
 		`.tier-badge.tier-advisor`,
 		`.tier-badge.tier-trusted`,
+		`.tier-badge.tier-merger`,
 		`.tier-badge.tier-contributor`,
 		`.tier-badge.tier-newcomer`,
 		// Restrained gradient header band + strong count on the leaderboard card.

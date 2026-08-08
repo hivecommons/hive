@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime/debug"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -403,14 +406,21 @@ type HeartbeatPayload struct {
 	InferenceAuthError string         `json:"inference_auth_error,omitempty"`
 	Health             map[string]any `json:"health"`
 	DashboardURL       string         `json:"dashboard_url"`
-	SnapshotURL        string         `json:"snapshot_url"`
-	Owner              string         `json:"owner,omitempty"`
-	HiveType           string         `json:"hive_type,omitempty"`
-	ClusterID          string         `json:"cluster_id,omitempty"`
-	IsPublic           bool           `json:"is_public"`
-	Version            string         `json:"version"`
-	GitHash            string         `json:"git_hash"`
-	GitBranch          string         `json:"git_branch,omitempty"`
+	// PublicURLSelfCheck is the spoke's own end-to-end probe of the dashboard
+	// URL it is advertising to the hub. It exists because the hub's public
+	// network can be the wrong vantage point for private-network hives: a URL
+	// may be alive from the spoke's network while timing out from the public
+	// OKE hub. Nil means an older spoke did not report the signal, so the hub
+	// treats it as UNKNOWN rather than a failure.
+	PublicURLSelfCheck *PublicURLSelfCheck `json:"public_url_self_check,omitempty"`
+	SnapshotURL        string              `json:"snapshot_url"`
+	Owner              string              `json:"owner,omitempty"`
+	HiveType           string              `json:"hive_type,omitempty"`
+	ClusterID          string              `json:"cluster_id,omitempty"`
+	IsPublic           bool                `json:"is_public"`
+	Version            string              `json:"version"`
+	GitHash            string              `json:"git_hash"`
+	GitBranch          string              `json:"git_branch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, read
 	// in-cluster from the Deployment spec. GitHash says which commit the
 	// BINARY was built from; ImageRef says which TAG the deployment tracks —
@@ -430,6 +440,11 @@ type HeartbeatPayload struct {
 	Timestamp          string `json:"timestamp"`
 	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`
+	// RepoTargetMisconfigured carries an operator-facing config-shape issue
+	// detected by the spoke. It is visibility only: the spoke keeps running and
+	// the hub does not rewrite the project fields.
+	RepoTargetMisconfigured bool   `json:"repo_target_misconfigured,omitempty"`
+	RepoTargetIssue         string `json:"repo_target_issue,omitempty"`
 	// GitHubAppState is the spoke's classification of WHY App auth is failing
 	// (a github.AppAuthState token: "key-missing", "key-invalid",
 	// "not-installed", "wrong-installation", "insufficient-permissions").
@@ -575,6 +590,21 @@ type HeartbeatPayload struct {
 	GitHubAppKeysHeld map[string]string `json:"github_app_keys_held,omitempty"`
 }
 
+const (
+	PublicURLSelfCheckOK   = "ok"
+	PublicURLSelfCheckFail = "fail"
+)
+
+// PublicURLSelfCheck reports the spoke's own view of whether its public
+// dashboard URL is reachable. CheckedAt is RFC3339 UTC. HTTPStatus is set only
+// when an HTTP response arrived; Error is a terse operator-safe cause on fail.
+type PublicURLSelfCheck struct {
+	Status     string `json:"status"`
+	CheckedAt  string `json:"checked_at,omitempty"`
+	Error      string `json:"error,omitempty"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+}
+
 type StatusCollector func() *HeartbeatPayload
 
 // UpgradeCallback is called when the hub instructs this hive to upgrade
@@ -711,6 +741,23 @@ var (
 	waitForReadyMaxWait      = 3 * time.Minute
 )
 
+var (
+	publicURLSelfProbeInterval = 5 * time.Minute
+	publicURLSelfProbeTimeout  = 8 * time.Second
+	publicURLSelfProbeClient   = &http.Client{
+		Timeout: publicURLSelfProbeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	publicURLSelfProbeCache = struct {
+		sync.Mutex
+		url       string
+		nextProbe time.Time
+		result    *PublicURLSelfCheck
+	}{}
+)
+
 func waitForReady(ctx context.Context, logger *slog.Logger) {
 	const healthURL = "http://localhost:3001/api/health"
 	pollInterval := waitForReadyPollInterval
@@ -758,6 +805,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return nil
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	payload.PublicURLSelfCheck = publicURLSelfCheckFor(ctx, payload.DashboardURL, logger)
 
 	filtered := payload.Leaderboard[:0]
 	for _, lb := range payload.Leaderboard {
@@ -829,6 +877,75 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return &hbResp
 	}
 	return nil
+}
+
+func publicURLSelfCheckFor(ctx context.Context, rawURL string, logger *slog.Logger) *PublicURLSelfCheck {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	now := time.Now()
+	publicURLSelfProbeCache.Lock()
+	defer publicURLSelfProbeCache.Unlock()
+	if publicURLSelfProbeCache.url == rawURL && publicURLSelfProbeCache.result != nil && now.Before(publicURLSelfProbeCache.nextProbe) {
+		return clonePublicURLSelfCheck(publicURLSelfProbeCache.result)
+	}
+	result := publicURLSelfProbe(ctx, rawURL, publicURLSelfProbeClient)
+	if result.Status == PublicURLSelfCheckFail && logger != nil {
+		logger.Debug("public URL self-check failed", "url", rawURL, "error", result.Error, "status", result.HTTPStatus)
+	}
+	publicURLSelfProbeCache.url = rawURL
+	publicURLSelfProbeCache.nextProbe = now.Add(publicURLSelfProbeInterval)
+	publicURLSelfProbeCache.result = &result
+	return clonePublicURLSelfCheck(&result)
+}
+
+func clonePublicURLSelfCheck(in *PublicURLSelfCheck) *PublicURLSelfCheck {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func publicURLSelfProbe(ctx context.Context, rawURL string, client *http.Client) PublicURLSelfCheck {
+	checkedAt := time.Now().UTC().Format(time.RFC3339)
+	rawURL = strings.TrimSpace(rawURL)
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, Error: "invalid dashboard URL"}
+	}
+	if client == nil {
+		client = publicURLSelfProbeClient
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, publicURLSelfProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, Error: "invalid dashboard URL"}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, Error: terseProbeError(err)}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusInternalServerError {
+		return PublicURLSelfCheck{Status: PublicURLSelfCheckOK, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode}
+	}
+	return PublicURLSelfCheck{Status: PublicURLSelfCheckFail, CheckedAt: checkedAt, HTTPStatus: resp.StatusCode, Error: "HTTP " + itoa(resp.StatusCode)}
+}
+
+func terseProbeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	const maxProbeErrorRunes = 180
+	if len([]rune(msg)) <= maxProbeErrorRunes {
+		return msg
+	}
+	r := []rune(msg)
+	return string(r[:maxProbeErrorRunes-1]) + "…"
 }
 
 // SendUpgradingHeartbeat sends a final heartbeat to the hub indicating this

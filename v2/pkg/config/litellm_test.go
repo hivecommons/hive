@@ -113,7 +113,7 @@ governor:
 // ---------------------------------------------------------------------------
 
 func TestIsInferenceBackend_Config(t *testing.T) {
-	for _, b := range []string{"vllm", "llm-d", "litellm"} {
+	for _, b := range InferenceBackends {
 		if !IsInferenceBackend(b) {
 			t.Errorf("IsInferenceBackend(%q) = false, want true", b)
 		}

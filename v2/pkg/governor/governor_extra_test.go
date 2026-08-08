@@ -10,10 +10,10 @@ import (
 func testGovernor() *Governor {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m", "supervisor": "pause"}},
-			"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m"}},
-			"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-			"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m"}},
+			"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m", "supervisor": "pause"}},
+			"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m"}},
+			"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+			"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -282,7 +282,7 @@ func TestAgentsDueForKick(t *testing.T) {
 func TestUpdateCadences_InvalidDuration(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "not-a-duration"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "not-a-duration"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -361,7 +361,7 @@ func TestAgentsDueForKick_ZeroInterval(t *testing.T) {
 	// Test that agents with zero cadence interval are skipped
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "0"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "0"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -430,7 +430,7 @@ func TestSeedModeHistory_OverCapacity(t *testing.T) {
 func TestUpdateCadences_PausedAgent(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "paused"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "paused"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{

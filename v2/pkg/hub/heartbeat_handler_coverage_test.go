@@ -150,6 +150,57 @@ func TestHandleHeartbeatDeliversPending(t *testing.T) {
 	}
 }
 
+func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+
+	body := `{
+		"hive_id":"selfcheck",
+		"org":"testorg",
+		"primary_repo":"repo",
+		"repos":["repo"],
+		"dashboard_url":"https://selfcheck.hive.kubestellar.io",
+		"public_url_self_check":{"status":"ok","checked_at":"2026-08-08T10:15:00Z","http_status":401}
+	}`
+	rec := postHeartbeat(t, s, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(s.registry.Hives) != 1 || s.registry.Hives[0].PublicURLSelfCheck == nil {
+		t.Fatalf("self-check was not persisted: %+v", s.registry.Hives)
+	}
+	if got := s.registry.Hives[0].PublicURLSelfCheck; got.Status != PublicURLSelfCheckOK || got.HTTPStatus != http.StatusUnauthorized {
+		t.Fatalf("self-check = %+v, want ok/401", got)
+	}
+
+	// Older spokes omit the new field. The heartbeat must still be accepted and
+	// the registry must represent the signal as unknown, not as a failure.
+	oldBody := `{
+		"hive_id":"oldspoke",
+		"org":"testorg",
+		"primary_repo":"repo",
+		"repos":["repo"],
+		"dashboard_url":"https://oldspoke.hive.kubestellar.io"
+	}`
+	rec = postHeartbeat(t, s, oldBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("old-spoke status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var old *RegistryEntry
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == "oldspoke" {
+			old = &s.registry.Hives[i]
+		}
+	}
+	if old == nil {
+		t.Fatal("old spoke heartbeat did not register")
+	}
+	if old.PublicURLSelfCheck != nil {
+		t.Fatalf("old spoke should leave self-check unknown, got %+v", old.PublicURLSelfCheck)
+	}
+}
+
 func TestHandleHeartbeatSwitchTag(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

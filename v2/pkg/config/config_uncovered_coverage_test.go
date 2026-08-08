@@ -294,6 +294,20 @@ func TestGitHubConfig_AppInstallURL_BlankBaseGHEApi(t *testing.T) {
 	}
 }
 
+// TestGitHubConfig_AppInstallURL_PostResetDerivesFromForge is the vllmd-13
+// shape after an operator "Reset Forge App": raw base_url AND app_slug both
+// blank, with only the GHE api_url naming the forge. The RESOLVED identity
+// (base https://github.ibm.com, slug kubestellar-hive-ghe — exactly what the
+// Forge App tab displays) must still build the install link; returning ""
+// here is what suppressed the install banner while auth was not-installed.
+func TestGitHubConfig_AppInstallURL_PostResetDerivesFromForge(t *testing.T) {
+	g := GitHubConfig{APIURL: "https://github.ibm.com/api/v3"}
+	want := "https://github.ibm.com/github-apps/" + EnterpriseGitHubAppSlug + "/installations/new"
+	if got := g.AppInstallURL(); got != want {
+		t.Errorf("AppInstallURL() = %q, want %q", got, want)
+	}
+}
+
 func TestGitHubConfig_ResolvedAppSlug(t *testing.T) {
 	g := GitHubConfig{}
 	if got := g.ResolvedAppSlug(); got != DefaultGitHubAppSlug {
@@ -350,12 +364,22 @@ func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
 			want:    "https://github.com/apps/acme-hive/installations/new",
 		},
 		{
-			// The public default names an App that exists ONLY on github.com. On a
-			// GHE host it produced github.ibm.com/github-apps/kubestellar-hive/...,
+			// A KNOWN forge derives its slug from the forge-identity table, so
+			// a blank raw app_slug (the post-"Reset Forge App" shape) still
+			// builds the real install link instead of suppressing the banner.
+			// The table records the App actually registered on github.ibm.com,
+			// so this can never be the public-slug 404.
+			name:    "known GHE forge with no configured slug derives the slug from the forge table",
+			baseURL: "https://github.ibm.com",
+			want:    "https://github.ibm.com/github-apps/" + EnterpriseGitHubAppSlug + "/installations/new",
+		},
+		{
+			// The public default names an App that exists ONLY on github.com. On
+			// an UNKNOWN GHE host it produced <host>/github-apps/kubestellar-hive/...,
 			// a live 404 a real user hit. Empty is the honest answer and callers
 			// render it as "install link unavailable" plus the missing config.
-			name:    "GHE host with no configured slug yields no link, not a 404",
-			baseURL: "https://github.ibm.com",
+			name:    "unknown GHE host with no configured slug yields no link, not a 404",
+			baseURL: "https://github.mycorp.com",
 			want:    "",
 		},
 		{
@@ -371,8 +395,14 @@ func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
 			want:    "https://github.cisco.com/github-apps/acme-ghe/installations/new",
 		},
 		{
-			name:    "GHE slug that is only whitespace is treated as unset",
+			name:    "GHE slug that is only whitespace is treated as unset (falls back to the forge table)",
 			baseURL: "https://github.ibm.com",
+			appSlug: "   ",
+			want:    "https://github.ibm.com/github-apps/" + EnterpriseGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "unknown GHE host with a whitespace slug still yields no link",
+			baseURL: "https://github.mycorp.com",
 			appSlug: "   ",
 			want:    "",
 		},
