@@ -86,10 +86,22 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 }
 
 func (c *Client) Do(ctx context.Context, method, apiPath string, query url.Values, body any) (any, error) {
-	data, contentType, err := c.do(ctx, method, apiPath, query, body)
+	data, contentType, err := c.do(ctx, method, apiPath, query, body, nil)
 	if err != nil {
 		return nil, err
 	}
+	return decodeResponse(data, contentType)
+}
+
+func (c *Client) DoWithHeaders(ctx context.Context, method, apiPath string, query url.Values, body any, headers http.Header) (any, error) {
+	data, contentType, err := c.do(ctx, method, apiPath, query, body, headers)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResponse(data, contentType)
+}
+
+func decodeResponse(data []byte, contentType string) (any, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return map[string]any{}, nil
 	}
@@ -104,11 +116,11 @@ func (c *Client) Do(ctx context.Context, method, apiPath string, query url.Value
 }
 
 func (c *Client) Raw(ctx context.Context, method, apiPath string, query url.Values, body any) ([]byte, string, error) {
-	return c.do(ctx, method, apiPath, query, body)
+	return c.do(ctx, method, apiPath, query, body, nil)
 }
 
 func (c *Client) StreamSSE(ctx context.Context, apiPath string, query url.Values, output io.Writer) error {
-	req, err := c.request(ctx, http.MethodGet, apiPath, query, nil)
+	req, err := c.request(ctx, http.MethodGet, apiPath, query, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -174,8 +186,8 @@ func (c *Client) StreamSSE(ctx context.Context, apiPath string, query url.Values
 	return ctx.Err()
 }
 
-func (c *Client) do(ctx context.Context, method, apiPath string, query url.Values, body any) ([]byte, string, error) {
-	req, err := c.request(ctx, method, apiPath, query, body)
+func (c *Client) do(ctx context.Context, method, apiPath string, query url.Values, body any, headers http.Header) ([]byte, string, error) {
+	req, err := c.request(ctx, method, apiPath, query, body, headers)
 	if err != nil {
 		return nil, "", err
 	}
@@ -197,7 +209,7 @@ func (c *Client) do(ctx context.Context, method, apiPath string, query url.Value
 	return data, resp.Header.Get("Content-Type"), nil
 }
 
-func (c *Client) request(ctx context.Context, method, apiPath string, query url.Values, body any) (*http.Request, error) {
+func (c *Client) request(ctx context.Context, method, apiPath string, query url.Values, body any, headers http.Header) (*http.Request, error) {
 	target := *c.baseURL
 	target.Path = strings.TrimRight(c.baseURL.Path, "/") + "/" + strings.TrimLeft(apiPath, "/")
 	target.RawQuery = query.Encode()
@@ -225,6 +237,11 @@ func (c *Client) request(ctx context.Context, method, apiPath string, query url.
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("User-Agent", "hivectl/0.1")
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 	return req, nil
 }
 

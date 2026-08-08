@@ -70,6 +70,7 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(newBeadCommand(env))
 	root.AddCommand(newGovernorCommand(env))
 	root.AddCommand(newObserveCommand(env))
+	root.AddCommand(newEnrollCommand(env))
 	return root
 }
 

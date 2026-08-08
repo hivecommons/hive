@@ -65,15 +65,10 @@ func NewAppAuth(appID, installationID int64, keyFile string, logger *slog.Logger
 	return NewAppAuthWithCache(appID, installationID, keyFile, TokenCachePath, logger, apiURL)
 }
 
-func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
-	keyData, err := os.ReadFile(keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("reading app key %s: %w", keyFile, err)
-	}
-
+func NewAppAuthFromPEM(appID, installationID int64, keyData []byte, logger *slog.Logger, apiURL string) (*AppAuth, error) {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", keyFile)
+		return nil, fmt.Errorf("no PEM block found")
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
@@ -94,9 +89,22 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 		installationID: installationID,
 		key:            key,
 		logger:         logger,
-		cachePath:      cachePath,
 		apiURL:         apiURL,
 	}, nil
+}
+
+func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
+	keyData, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading app key %s: %w", keyFile, err)
+	}
+
+	auth, err := NewAppAuthFromPEM(appID, installationID, keyData, logger, apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", keyFile, err)
+	}
+	auth.cachePath = cachePath
+	return auth, nil
 }
 
 func (a *AppAuth) generateJWT() (string, error) {

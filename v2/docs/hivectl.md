@@ -13,6 +13,9 @@ go build -o bin/hivectl ./cmd/hivectl
 # via an environment variable, never as a flag value.
 export HIVE_DASHBOARD_TOKEN="..."
 bin/hivectl system status
+
+# Enroll a repository in clusterless, zero-secret Hive lite mode.
+bin/hivectl enroll kubestellar/hive
 ```
 
 ## Running against a local Hive
@@ -132,6 +135,19 @@ hivectl observe history
 hivectl observe timeline
 hivectl observe trends --range week        # or --hours 12 (1-720); not both
 ```
+
+### enroll — clusterless lite repo enrollment
+
+```bash
+hivectl enroll OWNER/REPO
+hivectl enroll OWNER/REPO --acmm-level 1
+hivectl enroll OWNER/REPO --installation-id 123456
+```
+
+`enroll` verifies local `gh` authentication and repository access, then asks the
+hub to create a lite enrollment record. Lite mode is advisory-only and capped at
+ACMM L2. It writes no repository PAT or long-lived secret; GitHub access is via
+the hub's GitHub App installation and scoped token minting.
 
 ## Input and safety
 

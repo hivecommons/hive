@@ -135,22 +135,24 @@ type RegistryEntry struct {
 	// alert (AlertTypeInferenceAuthFailed) and, on an advisory-participating
 	// hive, also trips advisory staleness immediately with this cause. Self-
 	// clears when inference recovers. Never carries key material.
-	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
-	PrimaryRepo        string `json:"primaryRepo"`
-	DashboardURL       string `json:"dashboardUrl"`
-	SnapshotURL        string `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int    `json:"acmmLevel"`
-	AgentCount         int    `json:"agentCount"`
-	GovernorMode       string `json:"governorMode"`
-	TotalTokens24h     int64  `json:"totalTokens24h"`
-	ActionableIssues   int    `json:"actionableIssues"`
-	ActionablePRs      int    `json:"actionablePRs"`
-	ContributorCount   int    `json:"contributorCount"`
-	ActiveContributors int    `json:"activeContributors"`
-	Owner              string `json:"owner,omitempty"`
-	ClusterID          string `json:"clusterId,omitempty"`
-	ClusterName        string `json:"clusterName,omitempty"`
-	HiveType           string `json:"hiveType,omitempty"`
+	InferenceAuthError string                `json:"inferenceAuthError,omitempty"`
+	PrimaryRepo        string                `json:"primaryRepo"`
+	DashboardURL       string                `json:"dashboardUrl"`
+	SnapshotURL        string                `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int                   `json:"acmmLevel"`
+	AgentCount         int                   `json:"agentCount"`
+	GovernorMode       string                `json:"governorMode"`
+	TotalTokens24h     int64                 `json:"totalTokens24h"`
+	ActionableIssues   int                   `json:"actionableIssues"`
+	ActionablePRs      int                   `json:"actionablePRs"`
+	ContributorCount   int                   `json:"contributorCount"`
+	ActiveContributors int                   `json:"activeContributors"`
+	Owner              string                `json:"owner,omitempty"`
+	ClusterID          string                `json:"clusterId,omitempty"`
+	ClusterName        string                `json:"clusterName,omitempty"`
+	HiveType           string                `json:"hiveType,omitempty"`
+	Lite               bool                  `json:"lite,omitempty"`
+	LiteConfig         *LiteEnrollmentConfig `json:"liteConfig,omitempty"`
 	// ProvStatus is the authoritative provisioning status copied from the hive's
 	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
 	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
