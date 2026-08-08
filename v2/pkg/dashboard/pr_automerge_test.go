@@ -25,7 +25,9 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 		{"merger cannot queue own pr", config.RoleMerger, "alice", "ALICE", http.StatusForbidden},
 		{"read write forbidden", config.RoleReadWrite, "alice", "bob", http.StatusForbidden},
 		{"read forbidden", config.RoleRead, "alice", "bob", http.StatusForbidden},
-		{"owner can queue own pr", config.RoleOwner, "alice", "alice", http.StatusOK},
+		{"owner queues other pr", config.RoleOwner, "alice", "bob", http.StatusOK},
+		{"owner cannot queue own pr", config.RoleOwner, "alice", "ALICE", http.StatusForbidden},
+		{"owner needs authenticated user", config.RoleOwner, "", "bob", http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

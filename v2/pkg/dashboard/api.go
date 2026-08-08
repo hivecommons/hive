@@ -1918,7 +1918,7 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "merger or owner access required", http.StatusForbidden)
 		return
 	}
-	if !config.RoleAtLeast(role, config.RoleOwner) && user == "" {
+	if user == "" {
 		jsonError(w, "authenticated GitHub user required", http.StatusForbidden)
 		return
 	}
@@ -1947,8 +1947,8 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if !config.RoleAtLeast(role, config.RoleOwner) && strings.EqualFold(author, user) {
-		jsonError(w, "mergers cannot queue their own pull requests", http.StatusForbidden)
+	if strings.EqualFold(author, user) {
+		jsonError(w, "users cannot queue their own pull requests", http.StatusForbidden)
 		return
 	}
 	if err := s.deps.GHClient.QueuePRAutoMerge(r.Context(), repo, number, user); err != nil {
