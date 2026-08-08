@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ---------- validation constants ----------
@@ -69,17 +71,17 @@ var (
 
 // knownRoles is the set of valid agent roles.
 var knownRoles = map[string]bool{
-	"guide":        true,
-	"scanner":      true,
-	"supervisor":   true,
-	"quality":      true,
+	"guide":         true,
+	"scanner":       true,
+	"supervisor":    true,
+	"quality":       true,
 	"ci-maintainer": true,
-	"sec-check":    true,
-	"architect":    true,
-	"strategist":   true,
-	"outreach":     true,
-	"brainstorm":   true,
-	"worker":       true,
+	"sec-check":     true,
+	"architect":     true,
+	"strategist":    true,
+	"outreach":      true,
+	"brainstorm":    true,
+	"worker":        true,
 }
 
 // validBeadRoles is the set of valid bead roles.
@@ -176,6 +178,14 @@ func validateAgentGeneralInput(body map[string]interface{}) error {
 			n := int(f)
 			if n < 0 || n > maxSortOrder {
 				return fmt.Errorf("sortOrder must be between 0 and %d", maxSortOrder)
+			}
+		}
+	}
+	if v, ok := body["replicas"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			if n < 1 || n > config.MaxAgentReplicas {
+				return fmt.Errorf("replicas must be between 1 and %d", config.MaxAgentReplicas)
 			}
 		}
 	}

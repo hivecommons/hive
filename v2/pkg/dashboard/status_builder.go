@@ -331,6 +331,9 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			Color:         agentCfg.Color,
 			BeadRole:      agentCfg.GetBeadRole(),
 			Managed:       agentCfg.Managed,
+			ReplicaBase:   agentCfg.ReplicaOf,
+			ReplicaIndex:  agentCfg.ReplicaIndex,
+			ReplicaCount:  agentCfg.ReplicaCount,
 			OnDemand:      agentCfg.OnDemand,
 			Session:       name,
 			State:         string(proc.State),
@@ -742,6 +745,12 @@ func lookupCadenceValueForMode(agentName, modeName string, cfg *config.Config) c
 	if mode, ok := cfg.Governor.Modes[modeName]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c
+		}
+		baseName := cfg.BaseAgentName(agentName)
+		if baseName != agentName {
+			if c, ok := mode.Cadences[baseName]; ok {
+				return c
+			}
 		}
 	}
 	return ""

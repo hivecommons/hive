@@ -312,6 +312,9 @@ type FrontendAgent struct {
 	Color            string `json:"color,omitempty"`
 	BeadRole         string `json:"beadRole,omitempty"`
 	Managed          bool   `json:"managed,omitempty"`
+	ReplicaBase      string `json:"replicaBase,omitempty"`
+	ReplicaIndex     int    `json:"replicaIndex,omitempty"`
+	ReplicaCount     int    `json:"replicaCount,omitempty"`
 	Session          string `json:"session"`
 	State            string `json:"state"`
 	Busy             string `json:"busy"`
