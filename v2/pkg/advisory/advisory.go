@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
 
 const advisoryDir = "/data/advisory"
@@ -426,10 +427,12 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))
 		for _, f := range items {
-			loc := formatFindingRef(f.File, f.Line, org, primaryRepo, f.Title)
-			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, linkifyRefs(f.Title, org), loc, f.Agent))
-			if f.Detail != "" {
-				b.WriteString(fmt.Sprintf("  > %s\n", linkifyRefs(f.Detail, org)))
+			loc := formatFindingRef(logscrub.ScrubString(f.File), f.Line, org, primaryRepo, f.Title)
+			title := logscrub.ScrubString(f.Title)
+			detail := logscrub.ScrubString(f.Detail)
+			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, linkifyRefs(title, org), loc, f.Agent))
+			if detail != "" {
+				b.WriteString(fmt.Sprintf("  > %s\n", linkifyRefs(detail, org)))
 			}
 		}
 		b.WriteString("\n")
@@ -449,7 +452,7 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 	b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
 	for _, r := range d.RecentlyResolved {
 		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
-		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(r.Title, org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
+		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
 	}
 	b.WriteString("\n")
 }
@@ -517,9 +520,9 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 
 		ref := ""
 		if f.File != "" {
-			ref = f.File
+			ref = logscrub.ScrubString(f.File)
 			if f.Line > 0 {
-				ref = fmt.Sprintf("%s:%d", f.File, f.Line)
+				ref = fmt.Sprintf("%s:%d", ref, f.Line)
 			}
 		}
 
@@ -529,10 +532,10 @@ func PersistAsBeads(findings []Finding, stores map[string]*beads.Store) (created
 			"advisory_agent": f.Agent,
 		}
 		if f.Detail != "" {
-			meta["detail"] = f.Detail
+			meta["detail"] = logscrub.ScrubString(f.Detail)
 		}
 
-		b, err := store.Create(f.Title, beads.TypeAdvisory, severityToPriority(f.Severity), f.Agent, ref)
+		b, err := store.Create(logscrub.ScrubString(f.Title), beads.TypeAdvisory, severityToPriority(f.Severity), f.Agent, ref)
 		if err != nil {
 			continue
 		}

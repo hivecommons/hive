@@ -13,6 +13,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/ioscan"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -25,13 +27,17 @@ import (
 var ErrNoGitHubClient = errors.New("no github client configured (hive is running without GitHub credentials)")
 
 type Client struct {
-	client       *gh.Client
-	org          string
-	reposMu      sync.RWMutex
-	repos        []string
-	exemptLabels []string
-	logger       *slog.Logger
-	appAuth      *AppAuth // nil for token-authenticated clients
+	client           *gh.Client
+	org              string
+	reposMu          sync.RWMutex
+	repos            []string
+	exemptLabels     []string
+	logger           *slog.Logger
+	appAuth          *AppAuth // nil for token-authenticated clients
+	canariesEnabled  bool
+	canaryFailClosed bool
+	canaryRegistry   *ioscan.CanaryRegistry
+	canaryLeakFunc   func(ioscan.CanaryLeak)
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
@@ -73,6 +79,16 @@ type Client struct {
 	// advisoryMu.
 	advisoryMu          sync.Mutex
 	advisoryDigestPosts map[string]int
+}
+
+func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
+	if c == nil {
+		return
+	}
+	c.canariesEnabled = enabled
+	c.canaryFailClosed = failClosed
+	c.canaryRegistry = reg
+	c.canaryLeakFunc = onLeak
 }
 
 // GoGitHub returns the underlying go-github client for direct API access.
@@ -710,6 +726,7 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	if c == nil {
 		return ErrNoGitHubClient
 	}
+	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)
 	_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err

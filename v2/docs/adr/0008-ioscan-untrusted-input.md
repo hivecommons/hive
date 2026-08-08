@@ -26,6 +26,20 @@ The v4 base also includes the fail-safe default-on mode: absent `ioscan:`
 configuration scans by default, while an explicit `ioscan.enabled: false`
 opts out ([config](../../pkg/config/config.go)).
 
+Operators may additionally enable `ioscan.canaries: true`. Hive then prepends a
+random `HIVE-CANARY-...` marker to each kick with instructions that the agent
+must never repeat it. Active canaries are kept in memory and persisted at
+`/data/ioscan-canaries.json`; the GitHub MITM proxy scans outgoing issue/PR/
+comment writes, and advisory finding ingestion scans collected agent reports. A
+leak records an `ioscan_canary_leak` audit event plus a critical advisory bead;
+with `ioscan.fail_mode: closed`, the proxy rejects the GitHub write with 403.
+Opaque git pushes cannot be inspected safely, so canary fail-closed mode blocks
+`git-receive-pack` pushes rather than allowing an unscannable exfiltration path.
+
+Agent-derived advisory text is also scrubbed with `pkg/logscrub` before GitHub
+publication so GitHub tokens, AWS access keys, bearer tokens, JWTs, and PEM
+private-key blocks are redacted rather than echoed into comments.
+
 ## Consequences
 
 Agents can still see that an issue or label existed, but they do not receive the

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/ioscan"
 )
 
 // blockingTitle trips injection.ignore_previous at High → blockedInput.
@@ -267,6 +268,18 @@ func TestBuildKickMessages_FailModeClosedBlocksCriticalUnicode(t *testing.T) {
 	}
 	if !sawFailClosed {
 		t.Fatalf("missing fail-closed audit record: %+v", calls)
+	}
+}
+
+func TestBuildKickMessages_CanariesOptIn(t *testing.T) {
+	s := newSchedulerWithIoscanFailMode(true, "open")
+	s.cfg.Ioscan.Canaries = true
+	msgs := s.BuildKickMessages(&github.ActionableResult{}, []string{"scanner"})
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if !strings.Contains(msgs[0].Message, ioscan.CanaryPrefix) {
+		t.Fatalf("canary prefix missing from kick: %q", msgs[0].Message)
 	}
 }
 

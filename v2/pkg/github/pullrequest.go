@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
@@ -54,6 +55,13 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	if strings.TrimSpace(title) == "" {
 		return CreatePRResult{}, fmt.Errorf("CreatePR: title is required")
 	}
+	if leak, ok := c.scanCanaryText(title+"\n"+body, "hive-open-pr:"+repo); ok {
+		if c.canaryFailClosed {
+			return CreatePRResult{}, fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
+		}
+	}
+	title = logscrub.ScrubString(title)
+	body = logscrub.ScrubString(body)
 
 	// Idempotency: don't open a second PR for a branch that already has an open
 	// one. GitHub itself 422s on a duplicate, but checking first lets us return

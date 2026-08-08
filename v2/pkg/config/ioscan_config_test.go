@@ -47,3 +47,10 @@ func TestIoscanConfig_FailClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestIoscanConfig_CanariesDefaultOff(t *testing.T) {
+	var c IoscanConfig
+	if c.Canaries {
+		t.Fatal("canaries must default off")
+	}
+}

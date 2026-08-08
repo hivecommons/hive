@@ -194,6 +194,10 @@ type IoscanConfig struct {
 	// offending text and continue the kick. "closed" blocks the kick and records
 	// an ioscan_fail_closed audit entry. Read via FailClosed().
 	FailMode string `yaml:"fail_mode,omitempty" json:"fail_mode,omitempty"`
+	// Canaries plants per-kick exfiltration markers in agent prompts and scans
+	// agent-visible egress for leaks. Default false: existing hives see no
+	// canary behavior until explicitly enabled.
+	Canaries bool `yaml:"canaries,omitempty" json:"canaries,omitempty"`
 }
 
 // IsEnabled reports whether input/output scanning is active. Absent (nil)

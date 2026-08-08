@@ -7,6 +7,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
 
 // githubReader is the subset of *github.Client the GitHub adapter needs for the
@@ -159,6 +160,7 @@ func (f *gitHubForge) ListOpenChangeRequests(ctx context.Context, repo string) (
 // CreateIssueComment posts a comment on an issue or pull request.
 func (f *gitHubForge) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
 	owner, name := splitRepo(repo, f.org)
+	body = logscrub.ScrubString(body)
 	_, _, err := f.writer.CreateComment(ctx, owner, name, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	if err != nil {
 		return fmt.Errorf("github: comment on %s/%s#%d: %w", owner, name, number, err)

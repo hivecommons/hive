@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
+	"github.com/kubestellar/hive/v2/pkg/ioscan"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 )
 
@@ -34,6 +35,7 @@ const (
 	InferenceTranslatePort = 18444
 	modeFilePrefix         = "/tmp/.hive-mode-"
 	maxViolationLog        = 1000
+	maxGitHubWriteBodyScan = 2 << 20
 
 	// defaultProxyEgressMark is the fwmark (SO_MARK) the proxy stamps onto its
 	// OWN upstream :443 dials so the forced-egress iptables redirect can exempt
@@ -174,6 +176,11 @@ type GitHubProxy struct {
 	// a test seam so the CONNECT handler can be driven against a local fake
 	// upstream; production leaves it nil.
 	copilotDial func(host string) (net.Conn, error)
+
+	canariesEnabled  bool
+	canaryFailClosed bool
+	canaryRegistry   *ioscan.CanaryRegistry
+	canaryLeakFunc   func(ioscan.CanaryLeak)
 }
 
 // dialCopilotUpstream connects to the real Copilot host over TLS (or the test
@@ -192,6 +199,13 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 // per-agent usage from upstream OpenAI responses into the shared token store.
 func (p *GitHubProxy) SetTokenSink(sink *tokens.InferenceSink) {
 	p.tokenSink = sink
+}
+
+func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
+	p.canariesEnabled = enabled
+	p.canaryFailClosed = failClosed
+	p.canaryRegistry = reg
+	p.canaryLeakFunc = onLeak
 }
 
 type cachedCert struct {
@@ -792,6 +806,14 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			blocked = true
 			blockReason = "repo not in hive config"
 		}
+		if reason, deny, ok := p.inspectCanaryEgress(agentName, req); ok {
+			if deny {
+				blocked = true
+				if blockReason == "" {
+					blockReason = reason
+				}
+			}
+		}
 
 		if blocked {
 			detail := req.URL.Path
@@ -852,6 +874,56 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 		}
 		resp.Body.Close()
 	}
+}
+
+func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (reason string, deny bool, detected bool) {
+	if p == nil || !p.canariesEnabled || p.canaryRegistry == nil || req == nil || req.Body == nil {
+		return "", false, false
+	}
+	if isGitReceivePack(req.URL.Path) && p.canaryFailClosed {
+		return "ioscan canary scan unavailable for git push", true, true
+	}
+	if !writeMethods[req.Method] || isGitPath(req.URL.Path) || !githubWriteBodyMayLeak(req.Method, req.URL.Path) {
+		return "", false, false
+	}
+	body, err := io.ReadAll(io.LimitReader(req.Body, maxGitHubWriteBodyScan+1))
+	if req.Body != nil {
+		req.Body.Close()
+	}
+	if err != nil {
+		return "", false, false
+	}
+	if len(body) > maxGitHubWriteBodyScan {
+		return "ioscan canary scan body too large", true, true
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	if leak, ok := p.canaryRegistry.Scan(agentName, string(body), "github:"+req.Method+" "+req.URL.Path); ok {
+		if p.canaryLeakFunc != nil {
+			p.canaryLeakFunc(leak)
+		}
+		p.logger.Warn("ioscan canary leak detected", "agent", leak.Agent, "source", leak.Source)
+		return "ioscan canary leak", p.canaryFailClosed, true
+	}
+	return "", false, false
+}
+
+func githubWriteBodyMayLeak(method, path string) bool {
+	if method != http.MethodPost && method != http.MethodPatch && method != http.MethodPut {
+		return false
+	}
+	if !strings.HasPrefix(path, "/repos/") {
+		return IsGraphQLPath(path)
+	}
+	return strings.Contains(path, "/issues") ||
+		strings.Contains(path, "/pulls") ||
+		strings.Contains(path, "/comments") ||
+		strings.Contains(path, "/reviews") ||
+		strings.Contains(path, "/git/")
+}
+
+func isGitReceivePack(path string) bool {
+	return strings.HasSuffix(path, "/git-receive-pack")
 }
 
 func (p *GitHubProxy) recordViolation(agentName, method, path string) {

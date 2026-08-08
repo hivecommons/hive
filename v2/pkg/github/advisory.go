@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
 
 const (
@@ -109,7 +110,7 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	}
 	owner, repoName := c.splitRepo(repo)
 
-	digest = truncateDigest(digest)
+	digest = truncateDigest(logscrub.ScrubString(digest))
 
 	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)
 	if err != nil {

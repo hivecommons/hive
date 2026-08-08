@@ -374,6 +374,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			if includeRepos {
 				msg += "\n" + reposSection
 			}
+			msg = s.addCanaryPreamble(agentName, msg)
 			messages = append(messages, KickMessage{
 				Agent:     agentName,
 				Message:   msg,

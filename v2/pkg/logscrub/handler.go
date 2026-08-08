@@ -15,8 +15,15 @@ var TokenPattern = regexp.MustCompile(
 		`|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`,
 )
 
-// tokenPattern is the unexported alias retained for the handler's internal use.
-var tokenPattern = TokenPattern
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`HIVE-CANARY-[A-Fa-f0-9]{48}`),
+	TokenPattern,
+	regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b`),
+	regexp.MustCompile(`(?s)-----BEGIN\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:(?:RSA|EC|OPENSSH|DSA)\s+)?PRIVATE\s+KEY-----`),
+	regexp.MustCompile(`(?s)-----BEGIN\s+ENCRYPTED\s+PRIVATE\s+KEY-----.*?-----END\s+ENCRYPTED\s+PRIVATE\s+KEY-----`),
+	regexp.MustCompile(`(?s)-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----.*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----`),
+}
 
 const redacted = "[REDACTED]"
 
@@ -56,7 +63,17 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 }
 
 func scrub(s string) string {
-	return tokenPattern.ReplaceAllString(s, redacted)
+	return ScrubString(s)
+}
+
+// ScrubString redacts credential-shaped substrings from text before it is
+// logged or published. Keep patterns here as the single reusable scrubber for
+// GitHub tokens, AWS access keys, bearer tokens, JWTs, and private-key blocks.
+func ScrubString(s string) string {
+	for _, p := range secretPatterns {
+		s = p.ReplaceAllString(s, redacted)
+	}
+	return s
 }
 
 func scrubAttr(a slog.Attr) slog.Attr {

@@ -41,6 +41,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/intent"
+	"github.com/kubestellar/hive/v2/pkg/ioscan"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/mint"
@@ -2484,10 +2485,25 @@ func main() {
 
 	dashboard.SetBackendAuthProvider(agentMgr.BackendAuthAvailable)
 
+	canaryLeakHandler := func(leak ioscan.CanaryLeak) {
+		detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
+		dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
+		if store, ok := beadStores[leak.Agent]; ok && store != nil {
+			if b, berr := store.Create("Canary token leaked via "+leak.Source, beads.TypeAdvisory, beads.PriorityCritical, leak.Agent, ""); berr == nil {
+				_ = store.SetMetadata(b.ID, "rule", ioscan.CanaryLeakRule)
+				_ = store.SetMetadata(b.ID, "source", leak.Source)
+			}
+		}
+	}
+	if ghClient != nil {
+		ghClient.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries, cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
+	}
+
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
+		githubProxy.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries, cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info
@@ -4568,6 +4584,7 @@ func runEvalCycle(
 		if err != nil {
 			logger.Warn("failed to read advisory findings", "error", err)
 		} else if len(findings) > 0 {
+			safeFindings := make([]advisory.Finding, 0, len(findings))
 			// Log each new finding for the audit trail
 			for _, f := range findings {
 				logger.Info("advisory finding ingested",
@@ -4578,8 +4595,28 @@ func runEvalCycle(
 					"file", f.File,
 					"line", f.Line,
 				)
+				blockFinding := false
+				if cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries {
+					reportText := strings.Join([]string{f.Title, f.Detail, f.File, f.Type, f.Severity}, "\n")
+					if leak, ok := ioscan.DefaultCanaries.Scan(f.Agent, reportText, "advisory-finding"); ok {
+						detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
+						dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
+						if store, ok := beadStores[leak.Agent]; ok && store != nil {
+							if b, berr := store.Create("Canary token leaked via "+leak.Source, beads.TypeAdvisory, beads.PriorityCritical, leak.Agent, ""); berr == nil {
+								_ = store.SetMetadata(b.ID, "rule", ioscan.CanaryLeakRule)
+								_ = store.SetMetadata(b.ID, "source", leak.Source)
+							}
+						}
+						blockFinding = cfg.Ioscan.FailClosed()
+					}
+				}
+				if blockFinding {
+					logger.Warn("ioscan fail-closed blocked advisory finding with canary leak", "agent", f.Agent)
+					continue
+				}
+				safeFindings = append(safeFindings, f)
 			}
-			if persisted := advisory.PersistAsBeads(findings, beadStores); persisted > 0 {
+			if persisted := advisory.PersistAsBeads(safeFindings, beadStores); persisted > 0 {
 				logger.Info("advisory findings persisted as beads", "count", persisted)
 			}
 		}

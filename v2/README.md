@@ -93,6 +93,7 @@ project:
 ioscan:
   enabled: true        # default: true; scans untrusted text before agent kicks
   fail_mode: open      # open (default) redacts; closed blocks Critical injection kicks
+  canaries: false      # default: false; plant per-kick canaries and audit/block leaks
 ```
 
 ## Agents

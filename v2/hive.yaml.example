@@ -14,6 +14,11 @@ project:
   ai_author: your-bot-user               # GitHub username for AI commits
   primary_repo: repo-one                 # Main repo for priority routing
 
+ioscan:
+  enabled: true                           # default: true; scans untrusted text before agent kicks
+  fail_mode: open                         # open (default) redacts; closed blocks Critical injection kicks and canary leaks
+  canaries: false                         # default: false; plant per-kick exfiltration canaries and scan agent egress
+
 # Agent CLAUDE.md policies from a git config repo (optional).
 # Uncomment and set to your own policy repo if you have custom agent prompts.
 # policies:
