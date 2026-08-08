@@ -1982,11 +1982,17 @@ type HubConfig struct {
 	//     operators who want a wait state.
 	// A POINTER so an absent value (older on-disk config) resolves to the
 	// backward-compatible auto-accept default via IsContributeRequireExplicitAccept().
-	ContributeRequireExplicitAccept *bool               `yaml:"contribute_require_explicit_accept,omitempty"`
-	DisabledRepos                   []string            `yaml:"disabled_repos"`
-	DisabledTiers                   []string            `yaml:"disabled_tiers"`
-	TierLimits                      map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin             int                 `yaml:"snapshot_interval_min"`
+	ContributeRequireExplicitAccept *bool `yaml:"contribute_require_explicit_accept,omitempty"`
+	// ContributeDelegatableRoles is the hive-wide allow-list of spoke agent roles
+	// a contributor relay may request via HIVE_AGENT_ROLE / auth_response.role.
+	// Empty means the safe default set: scanner, quality, outreach. Privileged roles
+	// (ci-maintainer, sec-check, architect) must be explicitly listed here AND
+	// granted on the contributor profile; supervisor is never delegatable.
+	ContributeDelegatableRoles []string            `yaml:"contribute_delegatable_roles,omitempty"`
+	DisabledRepos              []string            `yaml:"disabled_repos"`
+	DisabledTiers              []string            `yaml:"disabled_tiers"`
+	TierLimits                 map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin        int                 `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
@@ -2022,6 +2028,33 @@ func (h HubConfig) IsContributeCooldownEnabled() bool {
 // is withheld until the client accepts the assigned task.
 func (h HubConfig) IsContributeRequireExplicitAccept() bool {
 	return h.ContributeRequireExplicitAccept != nil && *h.ContributeRequireExplicitAccept
+}
+
+var defaultContributeDelegatableRoles = []string{"scanner", "quality", "outreach"}
+
+// ContributeDelegatableRoleSet resolves the hive-wide allow-list of spoke roles
+// a clanker may claim. Empty config preserves the safe v1 default; supervisor is
+// deliberately removed even if an operator lists it because it manages the fleet.
+func (h HubConfig) ContributeDelegatableRoleSet() map[string]bool {
+	roles := h.ContributeDelegatableRoles
+	if len(roles) == 0 {
+		roles = defaultContributeDelegatableRoles
+	}
+	out := make(map[string]bool, len(roles))
+	for _, role := range roles {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "" || role == "supervisor" {
+			continue
+		}
+		out[role] = true
+	}
+	return out
+}
+
+// IsContributeRoleDelegatable reports whether role is enabled hive-wide for
+// clanker delegation. It does not make any per-contributor or trust-tier decision.
+func (h HubConfig) IsContributeRoleDelegatable(role string) bool {
+	return h.ContributeDelegatableRoleSet()[strings.ToLower(strings.TrimSpace(role))]
 }
 
 // ContributeCooldownHoursOrDefault resolves the with-PR cooldown PERIOD in
