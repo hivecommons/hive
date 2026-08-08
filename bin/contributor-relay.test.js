@@ -1344,6 +1344,43 @@ test('a currentTask with no recorded hub still reaches the hub (regression: synt
   } finally { teardown(relay); }
 });
 
+// Verbatim capture of a genuinely READY codex pane from a running
+// ghcr.io/kubestellar/hive-contributor container. Note what it does NOT
+// contain: no "codex>", no line ending in ">", and the banner says "OpenAI
+// Codex", not "Codex CLI". The pre-fix patterns matched none of it, so this
+// pane classified as 'starting' forever.
+const CODEX_READY_PANE = [
+  'dev@codex-contributor:~/workspace$ codex --dangerously-bypass-approvals-and-sandbox',
+  '\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e',
+  '\u2502 >_ OpenAI Codex (v0.146.0)                          \u2502',
+  '\u2502 model:       gpt-5.6-luna medium   /model to change \u2502',
+  '\u2502 directory:   ~/workspace                            \u2502',
+  '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f',
+  '  Tip: Use /rename to rename your threads for easier thread resuming.',
+  '\u203a Run /review on my current changes',
+  '  gpt-5.6-luna medium \u00b7 ~/workspace',
+  '', '', '',
+].join('\n');
+
+test('a ready codex pane is classified ready (regression: > vs \u203a, and "OpenAI Codex" not "Codex CLI")', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_READY_PANE });
+  try {
+    assert.strictEqual(relay.getCLIState(), 'ready',
+      'codex readiness was never detected, so every task was queued and handed back at timeout — the backend could not run a single task');
+  } finally { teardown(relay); }
+});
+
+test('the modal panes still win over the ready marker they also draw', () => {
+  // Both modals render '\u203a' too; modal classification runs first, so a
+  // blocked pane must NOT be reported ready by the widened pattern.
+  for (const pane of [CODEX_TRUST_PANE, CODEX_UPDATE_PANE]) {
+    const relay = loadRelay({ backend: 'codex', paneText: pane });
+    try {
+      assert.strictEqual(relay.getCLIState(), 'onboarding');
+    } finally { teardown(relay); }
+  }
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;

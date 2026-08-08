@@ -544,7 +544,16 @@ function getCLIState() {
       // "1. Yes, continue / 2. No, quit" list, where it is swallowed.
       if (/Do you trust the contents of this directory/.test(text)) return 'onboarding';
       if (/Update available!/.test(text) && /Skip until next version/.test(text)) return 'onboarding';
-      if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
+      // codex renders its input marker as '›' (U+203A), not '>', and its
+      // banner reads "OpenAI Codex (vX.Y.Z)" — never the literal "Codex CLI".
+      // The three original patterns therefore matched NOTHING a real codex
+      // pane ever contains, so readiness was never detected: every task was
+      // queued and then handed back at CLI_READY_TIMEOUT_MS, and an
+      // interactive codex contributor could not run a single task. Matching
+      // the marker and the real banner is what makes the backend usable.
+      // Safe against the modals above: those are classified first and return
+      // 'onboarding', so a menu that also draws '›' never reaches here.
+      if (/codex>|›|OpenAI Codex|Codex CLI|>\s*$/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
       if (/pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text)) return 'ready';
     } else if (BACKEND === 'agy') {
@@ -941,7 +950,8 @@ function classifyTmuxPane(text) {
     hasCompletionMarker = true;
     isWorking = bobRunning && BOB_SPINNER.test(text);
   } else if (BACKEND === 'codex') {
-    hasIdlePrompt = /codex>|>\s*$/.test(text);
+    // Same marker mismatch as getCLIState(): '›' (U+203A), not '>'.
+    hasIdlePrompt = /codex>|›|>\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
     isWorking = /running|executing|thinking/i.test(text);
   } else if (BACKEND === 'pi') {
