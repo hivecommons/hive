@@ -1062,6 +1062,13 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:var(--cc-text);background:var(--cc-border-2)}
 .cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
 .cc-q-menu.open{display:block}
+/* Flip-up variant: for rows near the BOTTOM of the scrolling .cc-queue, the
+   default drop-down menu (top:100%%) would extend past the container's overflow
+   boundary and get clipped ("Optional hold reason" cut off). ccBindQueueMenus
+   measures on open and adds .cc-q-menu-up when there is more room above than
+   below, anchoring the menu to the button's TOP so it opens upward and stays
+   inside the visible card. */
+.cc-q-menu.cc-q-menu-up{top:auto;bottom:100%%}
 .cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:var(--cc-text-2);font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
 .cc-q-menu button.cc-q-act:hover{background:var(--cc-border-2);color:var(--cc-text)}
 .cc-q-menu-ic{color:var(--cc-muted-2);flex-shrink:0;width:16px;text-align:center}
@@ -3891,7 +3898,7 @@ function ccUpdateFilterNote(shown,total){
 // in the FULL ccQueue regardless of any active search filter.
 function ccCloseQueueMenus(){
   var open=document.querySelectorAll('.cc-q-menu.open');
-  for(var i=0;i<open.length;i++)open[i].classList.remove('open');
+  for(var i=0;i<open.length;i++){open[i].classList.remove('open');open[i].classList.remove('cc-q-menu-up');}
   var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
   for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
   // No-blink guard companion: a poll re-render that arrived while a menu was open was
@@ -3917,7 +3924,26 @@ function ccBindQueueMenus(root){
       var menu=btn.parentNode.querySelector('.cc-q-menu');
       var isOpen=menu.classList.contains('open');
       ccCloseQueueMenus();
-      if(!isOpen){menu.classList.add('open');btn.setAttribute('aria-expanded','true');}
+      if(!isOpen){
+        // Decide direction BEFORE it paints so it never flashes clipped: if the
+        // menu (once shown) would extend past the bottom of the scrolling
+        // .cc-queue container, flip it to open upward. Compare the button's
+        // position to the container's viewport box, not the window, so it tracks
+        // the actual clip boundary (the queue's overflow-y:auto edge).
+        menu.classList.remove('cc-q-menu-up');
+        menu.classList.add('open');
+        var clip=btn.closest('.cc-queue');
+        if(clip){
+          var bBot=btn.getBoundingClientRect().bottom;
+          var cBox=clip.getBoundingClientRect();
+          var menuH=menu.offsetHeight||220; // measured now that it is display:block
+          // Flip up when there isn't room below within the clip AND there is more room above.
+          if(bBot+menuH>cBox.bottom && (btn.getBoundingClientRect().top-cBox.top)>(cBox.bottom-bBot)){
+            menu.classList.add('cc-q-menu-up');
+          }
+        }
+        btn.setAttribute('aria-expanded','true');
+      }
     });
   })(btns[i]);}
   var acts=root.querySelectorAll('.cc-q-act[data-act=top]');
