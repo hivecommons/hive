@@ -503,6 +503,64 @@ func TestRouteExistenceProbeIngressRouteAndRBAC(t *testing.T) {
 	}
 }
 
+func TestRouteExistenceCheckForCachesAndHandlesLocalDev(t *testing.T) {
+	oldDir, oldHost, oldPort := serviceAccountDir, kubernetesAPIHost, kubernetesAPIPort
+	serviceAccountDir = t.TempDir()
+	kubernetesAPIHost = func() string { return "" }
+	kubernetesAPIPort = func() string { return "" }
+	routeExistenceProbeCache.Lock()
+	routeExistenceProbeCache.host = ""
+	routeExistenceProbeCache.result = nil
+	routeExistenceProbeCache.nextProbe = time.Time{}
+	routeExistenceProbeCache.Unlock()
+	defer func() {
+		serviceAccountDir = oldDir
+		kubernetesAPIHost = oldHost
+		kubernetesAPIPort = oldPort
+		routeExistenceProbeCache.Lock()
+		routeExistenceProbeCache.host = ""
+		routeExistenceProbeCache.result = nil
+		routeExistenceProbeCache.nextProbe = time.Time{}
+		routeExistenceProbeCache.Unlock()
+	}()
+
+	if got := routeExistenceCheckFor(context.Background(), "not a url", nil); got != nil {
+		t.Fatalf("invalid dashboard URL should not report route_exists, got %+v", got)
+	}
+	first := routeExistenceCheckFor(context.Background(), "https://cached.example.com", nil)
+	if first == nil || first.Status != RouteExistenceUnknown {
+		t.Fatalf("local dev/no in-cluster API should be unknown, got %+v", first)
+	}
+	second := routeExistenceCheckFor(context.Background(), "https://cached.example.com", nil)
+	if second == nil || second.Status != RouteExistenceUnknown || second.CheckedAt != first.CheckedAt {
+		t.Fatalf("second check should be cached copy, first=%+v second=%+v", first, second)
+	}
+	if second == first {
+		t.Fatal("cached route check must be cloned, not the same pointer")
+	}
+}
+
+func TestInClusterAPIConfigMissingFiles(t *testing.T) {
+	oldDir, oldHost, oldPort := serviceAccountDir, kubernetesAPIHost, kubernetesAPIPort
+	serviceAccountDir = t.TempDir()
+	kubernetesAPIHost = func() string { return "10.0.0.1" }
+	kubernetesAPIPort = func() string { return "443" }
+	defer func() {
+		serviceAccountDir = oldDir
+		kubernetesAPIHost = oldHost
+		kubernetesAPIPort = oldPort
+	}()
+	if _, err := inClusterAPIConfig(); err == nil {
+		t.Fatal("missing token should make in-cluster config unknown")
+	}
+	if err := os.WriteFile(filepath.Join(serviceAccountDir, "token"), []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inClusterAPIConfig(); err == nil {
+		t.Fatal("missing namespace should make in-cluster config unknown")
+	}
+}
+
 func TestURLUnreachableCriticalFlapSuppression(t *testing.T) {
 	now := time.Now()
 	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
