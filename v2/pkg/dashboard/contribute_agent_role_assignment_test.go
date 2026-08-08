@@ -207,3 +207,43 @@ func TestAgentRoleGrantUpdateSyncsLiveConnection(t *testing.T) {
 		t.Fatal("live connection can still claim removed privileged role")
 	}
 }
+
+// TestAgentRoleEndpointsRequireOwner verifies that the agent-role assignment and
+// grant endpoints reject non-owner callers (security fix: #3011).
+func TestAgentRoleEndpointsRequireOwner(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "trusted"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, deps := apiServer(t)
+	seedAssignableRoleConfig(deps)
+	deps.Config.Hub.ContributeDelegatableRoles = []string{"scanner", "quality", "outreach", "ci-maintainer"}
+
+	for _, role := range []string{"read-write", "read"} {
+		req := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role",
+			strings.NewReader(`{"agent_role":"ci-maintainer"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hive-Role", role)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("role=%q: PUT /api/contributors/{id}/agent-role got %d, want 403", role, rec.Code)
+		}
+
+		req2 := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants",
+			strings.NewReader(`{"agent_role_grants":["ci-maintainer"]}`))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set("X-Hive-Role", role)
+		rec2 := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusForbidden {
+			t.Errorf("role=%q: PUT /api/contributors/{id}/agent-role-grants got %d, want 403", role, rec2.Code)
+		}
+	}
+
+	// Owner must still succeed.
+	rec := putAssignedRole(t, s, "c-alice", "ci-maintainer")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner PUT agent-role got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+}

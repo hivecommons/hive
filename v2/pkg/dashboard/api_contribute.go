@@ -5857,6 +5857,22 @@ func (s *Server) requireContributorWrite(w http.ResponseWriter, r *http.Request)
 	return true
 }
 
+// requireOwnerRole enforces that only the hive owner may call this endpoint.
+// Unlike requireContributorWrite (which allows read-write), these endpoints
+// mutate agent-role assignments and grants and must be owner-only — a
+// read-write contributor must not be able to escalate privileges.
+func (s *Server) requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = "owner"
+	}
+	if role != "owner" {
+		jsonError(w, "owner access required for agent-role management", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	var liveStates map[string]ContributorLiveState
@@ -5921,7 +5937,7 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !s.requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -5976,7 +5992,7 @@ func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !s.requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
