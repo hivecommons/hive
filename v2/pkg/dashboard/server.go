@@ -303,6 +303,8 @@ type FrontendSecurity struct {
 	ReviewRequireApproval bool   `json:"reviewRequireApproval"`
 	ReviewFanOut          bool   `json:"reviewFanOut"`
 	ReviewCapableAgents   int    `json:"reviewCapableAgents"`
+	RetroEnabled          bool   `json:"retroEnabled"`
+	OTelEnabled           bool   `json:"otelEnabled"`
 	SandboxEnabled        bool   `json:"sandboxEnabled"`
 	SandboxedAgents       int    `json:"sandboxedAgents"`
 	TotalAgents           int    `json:"totalAgents"`
