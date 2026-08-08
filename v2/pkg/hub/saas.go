@@ -8058,10 +8058,17 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <!-- Register-your-own-hive: for a user who self-installed a standalone
-             hive and wants to attach it to THIS hub. Points at the existing
-             self-host guide (get-started.html #self-host) whose key step is to
-             set HIVE_HUB_URL — no new backend, no new content. Always available. -->
-        <a class="btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (set HIVE_HUB_URL)">Register your own hive</a>
+             hive and wants to attach it to THIS hub. Points at the self-host
+             guide (get-started.html #self-host).
+
+             NOTE: attaching a self-hosted hive is NOT self-service. Setting
+             HIVE_HUB_URL alone does not register anything — handleHeartbeat
+             rejects every unauthenticated beat with 401 whenever the hub has a
+             HIVE_HUB_SECRET configured (deliberate, #1077: "prevents registry
+             pollution from unauthenticated sources"). The operator must issue
+             the spoke a secret. The guide this links to now says so; keep the
+             two in step if either changes. -->
+        <a class="btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (requires a HIVE_HUB_SECRET issued by the hub operator)">Register your own hive</a>
         <!-- Request-a-hive: routes to the EXISTING Request-a-Hive wizard at
              /get-started (files a provision request via POST
              /api/saas/request-provision). Shown when the user has NO hosted
@@ -12699,7 +12706,9 @@ const dashboardHTML = `<!DOCTYPE html>
              (POST /api/saas/request-provision). We host it for you. */
           '<a class="btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
           /* Register-your-own-hive → the EXISTING self-host guide at
-             /get-started#self-host (set HIVE_HUB_URL, hive auto-appears). */
+             /get-started#self-host. Not self-service: the operator must issue
+             the spoke a HIVE_HUB_SECRET or its heartbeats 401 (see #1077 and
+             the note on the other copy of this CTA above). */
           '<a class="btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
           '</div>' +
           '<p style="color:var(--muted);font-size:0.85rem">…or contribute to a public hive below.</p>' +
