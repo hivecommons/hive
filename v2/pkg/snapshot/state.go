@@ -33,6 +33,17 @@ type PersistedState struct {
 	LastEval             time.Time        `json:"last_eval,omitempty"`
 	ACMMLevel            *int             `json:"acmm_level,omitempty"`
 	ConfigOverrides      *ConfigOverrides `json:"config_overrides,omitempty"`
+	Breaker              *BreakerState    `json:"breaker,omitempty"`
+}
+
+// BreakerState persists the fleet breaker so an engaged kill-switch survives
+// the frequent pod restarts. The agents it holds paused restore paused from
+// their own persisted per-agent pause; this records that the breaker owns them
+// so a later release resumes exactly that set. Absent (nil) means the breaker
+// was never engaged — the common case — and adds nothing to the state file.
+type BreakerState struct {
+	Engaged bool     `json:"engaged"`
+	Paused  []string `json:"paused,omitempty"`
 }
 
 type ConfigOverrides struct {
