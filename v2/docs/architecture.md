@@ -378,5 +378,7 @@ flowchart TB
 
 *See also: [agent-configuration.md](agent-configuration.md) ·
 [acmm-policy-matrix.md](acmm-policy-matrix.md) ·
+[security-threat-model.md](security-threat-model.md) ·
+[ADR index](adr/README.md) ·
 [trajectory-review.md](trajectory-review.md) ·
 [design/knowledge-system.md](design/knowledge-system.md)*
