@@ -23,15 +23,25 @@ const fs = require('fs');
 const path = require('path');
 
 const rawHub = process.env.HIVE_HUB || 'wss://hive.kubestellar.io:3001/contribute';
-const HUB_URL = rawHub.replace(/\/contribute\/?$/, '/api/contribute/ws');
-const REG_TOKEN = process.env.HIVE_REGISTRATION_TOKEN;
+// Multi-hub (kubestellar/hive#multi-hive): HIVE_HUB and HIVE_REGISTRATION_TOKEN
+// may each be a comma-separated list, one token per hub in the same order, so
+// one relay/CLI session can hold work from more than one hive without running
+// duplicate contributor processes. A single value of each (the common case)
+// behaves exactly as before — this only ever adds hubs, never changes
+// single-hub behaviour.
+const rawHubList = rawHub.split(',').map(s => s.trim()).filter(Boolean);
+const rawTokenList = (process.env.HIVE_REGISTRATION_TOKEN || '').split(',').map(s => s.trim()).filter(Boolean);
+if (rawHubList.length > 1 && rawTokenList.length !== rawHubList.length) {
+  console.error(`FATAL: HIVE_HUB lists ${rawHubList.length} hub(s) but HIVE_REGISTRATION_TOKEN lists ${rawTokenList.length} token(s) — need one registration token per hub, in the same order.`);
+  process.exit(1);
+}
 const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
-const GH_TOKEN_CACHE = fs.existsSync('/var/run/hive-metrics')
+const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
   ? '/var/run/hive-metrics/gh-app-token.cache'
-  : '/tmp/hive-gh-token.cache';
-const TASK_FILE = '/tmp/contributor-task.json';
+  : '/tmp/hive-gh-token.cache');
+const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
 // The relay can deliver a task to the backend CLI in one of two ways:
@@ -126,26 +136,68 @@ const TASK_RESTART_MAX_BACKOFF_MS = 60000;
 // enough that a transient environment fault eventually clears.
 const GIVE_UP_MEMORY_MS = 3600000;
 
-if (!REG_TOKEN) {
+if (rawTokenList.length === 0) {
   console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-register` first.');
   process.exit(1);
 }
 
-let ws = null;
+// One entry per hub, each owning its own connection/reconnect/heartbeat state.
+// currentTask, cliReady and everything CLI-facing stay single global values
+// below — there is exactly one CLI/tmux session, shared across whichever hub
+// currently holds the active task or is being polled for work.
+const hubs = rawHubList.map((url, i) => ({
+  url: url.replace(/\/contribute\/?$/, '/api/contribute/ws'),
+  regToken: rawTokenList[i] || rawTokenList[0],
+  ws: null,
+  reconnectDelay: BASE_RECONNECT_DELAY_MS,
+  heartbeatInterval: null,
+  lastPong: Date.now(),
+  connectGeneration: 0,
+  reconnectTimer: null,
+  authenticated: false,
+  authFailed: false,
+}));
+// Index into hubs[] of the hub we are currently soliciting work from (sent it
+// the last 'ready'), or that owns currentTask. Round-robins forward only on an
+// explicit task_unavailable from the active hub; completing/failing a task
+// sticks with the same hub and re-asks it.
+let activeHubIndex = 0;
+
 let seq = 0;
-let reconnectDelay = BASE_RECONNECT_DELAY_MS;
-let heartbeatInterval = null;
-let lastPong = Date.now();
 let currentTask = null;
 let progressInterval = null;
 let tokenExpiresAt = null;
 
 function nextSeq() { return ++seq; }
 
-function send(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
+function sendTo(hub, msg) {
+  if (hub && hub.ws && hub.ws.readyState === WebSocket.OPEN) {
+    hub.ws.send(JSON.stringify(msg));
   }
+}
+
+// send() targets the hub that owns the in-flight task, or (idle) the hub
+// currently being polled for work. Messages that must go to a specific hub
+// regardless of active task use sendTo() directly.
+function send(msg) {
+  sendTo((currentTask && currentTask._hub) || hubs[activeHubIndex], msg);
+}
+
+function currentTaskHub() {
+  return (currentTask && currentTask._hub) || hubs[activeHubIndex];
+}
+
+function advanceActiveHub(fromHub) {
+  const fromIndex = hubs.indexOf(fromHub);
+  const start = fromIndex >= 0 ? fromIndex : activeHubIndex;
+  for (let offset = 1; offset <= hubs.length; offset++) {
+    const idx = (start + offset) % hubs.length;
+    if (!hubs[idx].authFailed) {
+      activeHubIndex = idx;
+      return hubs[idx];
+    }
+  }
+  return null;
 }
 
 function injectGhToken(token) {
@@ -1049,16 +1101,22 @@ function progressTick() {
   }
 }
 
-function handleMessage(data) {
+function handleMessage(data, hub) {
+  // hub defaults to hubs[0] so existing single-hub callers (and the test
+  // harness, which calls handleMessage(json) directly with no hub arg) keep
+  // working unchanged — there is always at least one entry in hubs[].
+  hub = hub || hubs[0];
   let msg;
   try { msg = JSON.parse(data); } catch (_) { return; }
 
   switch (msg.type) {
     case 'auth_challenge':
-      send({
+      // Always reply on the SAME hub that challenged us, regardless of
+      // currentTask/activeHubIndex — send() would route elsewhere.
+      sendTo(hub, {
         type: 'auth_response',
         seq: nextSeq(),
-        registration_token: REG_TOKEN,
+        registration_token: hub.regToken,
         cli_backend: BACKEND,
         model: MODEL,
         // #2547 declare half + #2567: additive, optional self-report of runtime
@@ -1069,7 +1127,7 @@ function handleMessage(data) {
       break;
 
     case 'auth_ok':
-      console.log(`Authenticated as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
+      console.log(`Authenticated with ${hub.url} as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
       // #2567: the hub advertises its protocol version + capability set here. We
       // log them (forward-compatible: unknown/absent fields are simply skipped)
       // so a newer relay can adapt to what the deployed server supports instead
@@ -1077,31 +1135,55 @@ function handleMessage(data) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
-      reconnectDelay = BASE_RECONNECT_DELAY_MS;
-      if (!currentTask) {
-        send({ type: 'ready', seq: nextSeq() });
-      } else {
+      hub.authenticated = true;
+      hub.authFailed = false;
+      hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+      if (currentTask && hub === currentTaskHub()) {
         console.log(`Reconnected while working on ${currentTask.repo}#${currentTask.number} — resuming`);
-        send({ type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
-        send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
+        sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
+        sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
         startProgressReporting();
+      } else if (!currentTask && hub === hubs[activeHubIndex]) {
+        // Only the hub currently in the poll rotation asks for work. A hub
+        // that authenticates while it's not its turn just sits connected
+        // (heartbeating) until task_unavailable rotates the active slot to it.
+        sendTo(hub, { type: 'ready', seq: nextSeq() });
       }
       break;
 
     case 'auth_failed':
-      console.error(`Authentication failed: ${msg.reason}`);
+      console.error(`Authentication with ${hub.url} failed: ${msg.reason}`);
       if (msg.accepted_models && msg.accepted_models.length > 0) {
         console.error('\nThis hive accepts the following models:');
         msg.accepted_models.forEach(m => console.error('  - ' + m));
         console.error('\nSet your model: export AGENT_MODEL=<model>');
       }
-      process.exit(1);
+      // A bad token for ONE hub must not take down a working connection to
+      // another — only abort the whole process when every configured hub has
+      // failed auth (or there is only one, matching the prior behaviour).
+      hub.authFailed = true;
+      if (hubs.every(h => h.authFailed)) {
+        process.exit(1);
+      } else {
+        console.error(`Continuing with the remaining ${hubs.filter(h => !h.authFailed).length} hub(s).`);
+        if (!currentTask && hub === hubs[activeHubIndex]) {
+          const next = advanceActiveHub(hub);
+          if (next && next.authenticated) {
+            sendTo(next, { type: 'ready', seq: nextSeq() });
+          }
+        }
+      }
       break;
 
     case 'task_assign':
+      if (!currentTask && hub !== hubs[activeHubIndex]) {
+        console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — hub is not the active polling slot`);
+        sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
+        break;
+      }
       if (currentTask) {
-        console.log(`Rejecting task ${msg.repo}#${msg.number} — already working on ${currentTask.repo}#${currentTask.number}`);
-        send({ type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Already has active task' });
+        console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — already working on ${currentTask.repo}#${currentTask.number}`);
+        sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Already has active task' });
         break;
       }
       // A task we already gave up on permanently must not restart the loop if
@@ -1109,12 +1191,17 @@ function handleMessage(data) {
       // and stay available for other work.
       if (isGivenUp(taskKey(msg))) {
         console.log(`Rejecting ${taskKey(msg)} — previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`);
-        send({ type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: `previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`, permanent: true });
-        send({ type: 'ready', seq: nextSeq() });
+        sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: `previously given up on after ${MAX_TASK_CLI_RESTARTS} CLI crashes`, permanent: true });
+        sendTo(hub, { type: 'ready', seq: nextSeq() });
         break;
       }
       currentTask = msg;
-      console.log(`Task assigned: ${msg.kind} ${msg.repo}#${msg.number} — ${msg.title}`);
+      // Non-enumerable: currentTask IS msg, and msg gets JSON.stringify'd
+      // wholesale to TASK_FILE a few lines down. hub carries live
+      // setInterval/setTimeout handles, which are circular.
+      Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+      activeHubIndex = hubs.indexOf(hub);
+      console.log(`Task assigned: ${msg.kind} ${msg.repo}#${msg.number} — ${msg.title} (from ${hub.url})`);
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -1136,6 +1223,10 @@ function handleMessage(data) {
       break;
 
     case 'token_refresh':
+      if (!currentTask || currentTaskHub() !== hub) {
+        console.log(`Ignoring token_refresh from ${hub.url} — it does not own the active task`);
+        break;
+      }
       if (msg.github_token) {
         injectGhToken(msg.github_token);
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
@@ -1144,6 +1235,14 @@ function handleMessage(data) {
       break;
 
     case 'task_revoke':
+      if (!currentTask) {
+        console.log(`Ignoring task_revoked from ${hub.url} for ${msg.task_id} — no active task`);
+        break;
+      }
+      if (currentTaskHub() !== hub || currentTask.task_id !== msg.task_id) {
+        console.log(`Ignoring task_revoked from ${hub.url} for ${msg.task_id} — active task belongs to another hub`);
+        break;
+      }
       console.log(`Task revoked: ${msg.task_id} — ${msg.reason}`);
       currentTask = null;
       taskAssignedAt = 0;
@@ -1156,29 +1255,38 @@ function handleMessage(data) {
         headlessChild = null;
         writeHeadlessStatus(HEADLESS_STATE_WAITING);
       }
-      send({ type: 'ready', seq: nextSeq() });
+      // Stay with the hub that just revoked — it's clearly alive and reachable.
+      activeHubIndex = hubs.indexOf(hub);
+      sendTo(hub, { type: 'ready', seq: nextSeq() });
       break;
 
     case 'task_unavailable':
-      // #2436 finding 1/2/3: the hub explicitly declined to assign work and told
-      // us why (reason: no_work / token_mint_failed / tier_disabled /
-      // concurrency_limit). Surface the reason instead of hanging silently, then
-      // re-ask after a delay so a transient condition (a freed slot, a fixed
-      // installation permission) recovers on its own.
-      console.log(`No task assigned — reason: ${msg.reason || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      if (hub !== hubs[activeHubIndex]) {
+        console.log(`Ignoring task_unavailable from inactive hub ${hub.url}`);
+        break;
+      }
+      // #2436 finding 1/2/3: the hub explicitly declined to assign work and
+      // told us why. Multi-hub round-robin rotates only here, on this reliable
+      // negative ack, never on success/failure/completion.
+      console.log(`No task assigned on ${hub.url} — reason: ${msg.reason || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
       setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN && !currentTask) {
-          send({ type: 'ready', seq: nextSeq() });
+        if (currentTask) return; // picked up work elsewhere in the meantime
+        if (hubs.length > 1 && hub === hubs[activeHubIndex]) {
+          advanceActiveHub(hub);
         }
+        const next = hubs[activeHubIndex];
+        // If `next` isn't connected/authenticated yet, its own auth_ok
+        // handler sends 'ready' once it comes up and finds itself active.
+        sendTo(next, { type: 'ready', seq: nextSeq() });
       }, TASK_UNAVAILABLE_RETRY_MS);
       break;
 
     case 'ping':
-      send({ type: 'pong', seq: msg.seq });
+      sendTo(hub, { type: 'pong', seq: msg.seq });
       break;
 
     case 'pong':
-      lastPong = Date.now();
+      hub.lastPong = Date.now();
       break;
 
     default:
@@ -1186,55 +1294,60 @@ function handleMessage(data) {
   }
 }
 
-let connectGeneration = 0;
-let reconnectTimer = null;
+function connectHub(hub) {
+  if (hub.reconnectTimer) { clearTimeout(hub.reconnectTimer); hub.reconnectTimer = null; }
+  if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+  if (hub.ws) { try { hub.ws.removeAllListeners(); hub.ws.terminate(); } catch (_) {} }
+  const gen = ++hub.connectGeneration;
+  console.log(`Connecting to ${hub.url}...`);
+  hub.ws = new WebSocket(hub.url);
 
-function connect() {
-  cleanup();
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws) { try { ws.removeAllListeners(); ws.terminate(); } catch (_) {} }
-  const gen = ++connectGeneration;
-  console.log(`Connecting to ${HUB_URL}...`);
-  ws = new WebSocket(HUB_URL);
+  hub.ws.on('open', () => {
+    if (gen !== hub.connectGeneration) return;
+    console.log(`Connected to ${hub.url}`);
+    hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+    hub.lastPong = Date.now();
 
-  ws.on('open', () => {
-    if (gen !== connectGeneration) return;
-    console.log('Connected to hub');
-    reconnectDelay = BASE_RECONNECT_DELAY_MS;
-    lastPong = Date.now();
-
-    heartbeatInterval = setInterval(() => {
-      if (gen !== connectGeneration) { clearInterval(heartbeatInterval); return; }
-      if (Date.now() - lastPong > HEARTBEAT_TIMEOUT_MS) {
-        console.error('Heartbeat timeout — reconnecting');
-        ws.terminate();
+    hub.heartbeatInterval = setInterval(() => {
+      if (gen !== hub.connectGeneration) { clearInterval(hub.heartbeatInterval); return; }
+      if (Date.now() - hub.lastPong > HEARTBEAT_TIMEOUT_MS) {
+        console.error(`Heartbeat timeout on ${hub.url} — reconnecting`);
+        hub.ws.terminate();
         return;
       }
-      send({ type: 'ping', seq: nextSeq() });
+      sendTo(hub, { type: 'ping', seq: nextSeq() });
     }, HEARTBEAT_INTERVAL_MS);
   });
 
-  ws.on('message', (data) => {
-    if (gen !== connectGeneration) return;
-    handleMessage(data.toString());
+  hub.ws.on('message', (data) => {
+    if (gen !== hub.connectGeneration) return;
+    handleMessage(data.toString(), hub);
   });
 
-  ws.on('close', () => {
-    if (gen !== connectGeneration) return;
-    console.log(`Connection closed. Reconnecting in ${reconnectDelay}ms...`);
-    cleanup();
-    reconnectTimer = setTimeout(connect, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+  hub.ws.on('close', () => {
+    if (gen !== hub.connectGeneration) return;
+    console.log(`Connection to ${hub.url} closed. Reconnecting in ${hub.reconnectDelay}ms...`);
+    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+    hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
+    hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
   });
 
-  ws.on('error', (err) => {
-    if (gen !== connectGeneration) return;
-    console.error('WebSocket error:', err.message);
+  hub.ws.on('error', (err) => {
+    if (gen !== hub.connectGeneration) return;
+    console.error(`WebSocket error on ${hub.url}:`, err.message);
   });
 }
 
+function connect() {
+  // Kept as the entry point (bottom of file, SIGTERM/SIGINT) so those call
+  // sites don't need to know about hubs[] — connects every configured hub.
+  hubs.forEach(connectHub);
+}
+
 function cleanup() {
-  if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
+  hubs.forEach(hub => {
+    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+  });
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
 }
 
@@ -1274,7 +1387,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     setLastResetAtCount: (v) => { lastResetAtCount = v; },
     getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
-    setWs: (w) => { ws = w; },
+    setCurrentTask: (v) => { currentTask = v; },
+    getCLIState,
+    setWs: (w) => { hubs[0].ws = w; },
+    getHubs: () => hubs,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,

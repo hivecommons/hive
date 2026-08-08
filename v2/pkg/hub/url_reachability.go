@@ -52,6 +52,12 @@ const (
 	// — on a 2-hive cluster a single genuinely broken hive already crosses the
 	// ratio, and rolling it up would hide a real defect.
 	urlClusterOutageMinHives = 3
+
+	// urlUnreachableMinAlertEvaluations is hub-side hysteresis for Critical
+	// URL alerts. A candidate must persist across this many dashboard
+	// evaluations before it reaches the Attention panel; the streak clears on
+	// the first healthy/ambiguous evaluation.
+	urlUnreachableMinAlertEvaluations = 3
 )
 
 // urlHealthyStatus reports whether an HTTP status from a spoke's dashboard URL
@@ -106,12 +112,16 @@ type urlHealthState struct {
 	// lastStatus[hiveID] is the most recent observed status, surfaced in the
 	// alert reason so an operator sees "503" rather than just "unreachable".
 	lastStatus map[string]int
+	// criticalEvaluations[hiveID] counts consecutive hub evaluations where the
+	// Critical URL condition was present. Cleared immediately when absent.
+	criticalEvaluations map[string]int
 }
 
 func newURLHealthState() *urlHealthState {
 	return &urlHealthState{
 		consecutiveFailures: map[string]int{},
 		lastStatus:          map[string]int{},
+		criticalEvaluations: map[string]int{},
 	}
 }
 
@@ -160,6 +170,22 @@ func (u *urlHealthState) forget(known map[string]bool) {
 			delete(u.lastStatus, id)
 		}
 	}
+	for id := range u.criticalEvaluations {
+		if !known[id] {
+			delete(u.criticalEvaluations, id)
+		}
+	}
+}
+
+func (u *urlHealthState) criticalEvaluation(hiveID string, active bool) int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !active {
+		delete(u.criticalEvaluations, hiveID)
+		return 0
+	}
+	u.criticalEvaluations[hiveID]++
+	return u.criticalEvaluations[hiveID]
 }
 
 // clusterOutage reports whether a cluster's failures should be rolled up into
@@ -199,7 +225,7 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 	clusterProbed := map[string]int{}
 	clusterFailed := map[string]int{}
 	for _, h := range hives {
-		if h.DashboardURL == "" {
+		if h.DashboardURL == "" || isUnassignedPlaceholder(h.Org, h.ProvStatus) {
 			continue
 		}
 		clusterProbed[h.ClusterID]++
@@ -210,7 +236,16 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 
 	var alerts []Alert
 	for _, h := range hives {
+		if isUnassignedPlaceholder(h.Org, h.ProvStatus) {
+			if s.urlHealth != nil {
+				s.urlHealth.criticalEvaluation(h.ID, false)
+			}
+			continue
+		}
 		if publicURLSelfCheckFailed(h.PublicURLSelfCheck) {
+			if s.urlHealth != nil && s.urlHealth.criticalEvaluation(h.ID, true) < urlUnreachableMinAlertEvaluations {
+				continue
+			}
 			alerts = append(alerts, Alert{
 				HiveID:   h.ID,
 				HiveName: h.Name,
@@ -222,12 +257,21 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 		}
 		n := failures[h.ID]
 		if n < urlUnreachableMinFailures {
+			if s.urlHealth != nil {
+				s.urlHealth.criticalEvaluation(h.ID, false)
+			}
 			continue
 		}
 		if !urlUnreachableEligible(h.RegisteredAt, now) {
+			if s.urlHealth != nil {
+				s.urlHealth.criticalEvaluation(h.ID, false)
+			}
 			continue
 		}
 		if heartbeatFreshForURLCheck(h, now) {
+			if s.urlHealth != nil {
+				s.urlHealth.criticalEvaluation(h.ID, false)
+			}
 			alerts = append(alerts, Alert{
 				HiveID:   h.ID,
 				HiveName: h.Name,
@@ -238,6 +282,9 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 			continue
 		}
 		if !clusterOutage(clusterFailed[h.ClusterID], clusterProbed[h.ClusterID]) {
+			if s.urlHealth != nil && s.urlHealth.criticalEvaluation(h.ID, true) < urlUnreachableMinAlertEvaluations {
+				continue
+			}
 			alerts = append(alerts, Alert{
 				HiveID:   h.ID,
 				HiveName: h.Name,
@@ -247,6 +294,8 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 				Severity: AlertSeverityCritical,
 				Reason:   urlUnreachableReason(h.DashboardURL, statuses[h.ID]),
 			})
+		} else if s.urlHealth != nil {
+			s.urlHealth.criticalEvaluation(h.ID, false)
 		}
 	}
 	return alerts
