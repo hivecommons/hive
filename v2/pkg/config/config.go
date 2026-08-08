@@ -60,6 +60,9 @@ type Config struct {
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
 	Lite       LiteConfig       `yaml:"lite,omitempty" json:"lite,omitempty"`
+	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
+	// disabled by default and agents must opt in individually.
+	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -180,6 +183,21 @@ type MintConfig struct {
 	// MaxTTLSeconds bounds a minted token's lifetime. 0 uses the package default
 	// (15m). The value is clamped to the package hard cap (1h) regardless.
 	MaxTTLSeconds int `yaml:"max_ttl_seconds,omitempty"`
+}
+
+// AgentSandboxConfig controls the podman-rootless sandbox launcher. The top-
+// level block is a global gate; per-agent config can opt specific agents in.
+type AgentSandboxConfig struct {
+	Enabled      bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image        string   `yaml:"image,omitempty" json:"image,omitempty"`
+	EnvAllowlist []string `yaml:"env_allowlist,omitempty" json:"env_allowlist,omitempty"`
+}
+
+// AgentSandboxOverride is the per-agent sandbox opt-in block.
+type AgentSandboxOverride struct {
+	Enabled      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Image        string   `yaml:"image,omitempty" json:"image,omitempty"`
+	EnvAllowlist []string `yaml:"env_allowlist,omitempty" json:"env_allowlist,omitempty"`
 }
 
 // IoscanConfig gates the pkg/ioscan input/output security scanner (prompt-
@@ -695,6 +713,9 @@ type AgentConfig struct {
 	Mode             string                  `yaml:"mode" json:"mode,omitempty"`
 	OnDemand         bool                    `yaml:"on_demand" json:"on_demand,omitempty"`
 	CavemanMode      string                  `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	// Sandbox opts this agent into phase-1 sandbox execution when the global
+	// agent_sandbox.enabled gate is also true.
+	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 
 	// Channels declares how this agent gets triggered (kick, webhook, discord, schedule, bead).
 	// When nil/empty, the agent uses governor timer kicks by default (implicit kick channel).
@@ -761,6 +782,32 @@ func (a *AgentConfig) ShouldIncludeRepos() bool {
 		return *a.IncludeRepos
 	}
 	return true
+}
+
+// SandboxEnabled reports whether an agent's per-agent sandbox block opts it in
+// under the global phase-1 gate.
+func (a *AgentConfig) SandboxEnabled(global AgentSandboxConfig) bool {
+	if !global.Enabled || a == nil || a.Sandbox == nil || a.Sandbox.Enabled == nil {
+		return false
+	}
+	return *a.Sandbox.Enabled
+}
+
+// SandboxImage returns the per-agent image override, then the global default.
+func (a *AgentConfig) SandboxImage(global AgentSandboxConfig) string {
+	if a != nil && a.Sandbox != nil && a.Sandbox.Image != "" {
+		return a.Sandbox.Image
+	}
+	return global.Image
+}
+
+// SandboxEnvAllowlist returns the per-agent env allowlist when set; otherwise
+// the global allowlist. Credentials are still filtered by pkg/sandbox.
+func (a *AgentConfig) SandboxEnvAllowlist(global AgentSandboxConfig) []string {
+	if a != nil && a.Sandbox != nil && len(a.Sandbox.EnvAllowlist) > 0 {
+		return append([]string(nil), a.Sandbox.EnvAllowlist...)
+	}
+	return append([]string(nil), global.EnvAllowlist...)
 }
 
 // GetBeadRole returns the bead role, defaulting to "worker".
