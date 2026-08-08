@@ -62,6 +62,10 @@ const (
 	// arrives in a following token_refresh — but no client change is required, since
 	// the token_refresh delivery is backward-compatible (see deliverTaskCredential).
 	capCredentialAfterAccept = "credential_after_accept"
+	// capAgentRoleClaim: the hub accepts an OPTIONAL auth_response.role request
+	// from contributor relays and, when allowed by hive config/tier/grants, shapes
+	// assignments with the matching spoke agent's prompt.
+	capAgentRoleClaim = "agent_role_claim"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -74,6 +78,7 @@ func serverCapabilities() []string {
 		capPromptPreview,
 		capCapabilityDeclare,
 		capCredentialAfterAccept,
+		capAgentRoleClaim,
 	}
 }
 

@@ -263,6 +263,16 @@ test('task_assign queues rather than typing when the CLI is not ready', () => {
   } finally { teardown(relay); }
 });
 
+test('auth_response includes optional HIVE_AGENT_ROLE', () => {
+  const relay = loadRelay({ env: { HIVE_AGENT_ROLE: 'scanner' } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.role, 'scanner');
+  } finally { teardown(relay); }
+});
+
 test('relaunchCLI() leaves cliReady false until readiness is confirmed', () => {
   const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
   try {
