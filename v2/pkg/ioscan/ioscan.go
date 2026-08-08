@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 )
@@ -116,6 +117,19 @@ type Verdict struct {
 
 // HasFindings reports whether any rule fired.
 func (v Verdict) HasFindings() bool { return len(v.Findings) > 0 }
+
+// HasCriticalInjection reports whether the verdict contains a Critical
+// prompt-injection finding. Callers that opt into fail-closed semantics use
+// this narrower predicate so ordinary High-confidence injection keeps the
+// historical redact-and-continue behavior.
+func (v Verdict) HasCriticalInjection() bool {
+	for _, f := range v.Findings {
+		if f.Kind == KindInjection && f.Severity >= SeverityCritical {
+			return true
+		}
+	}
+	return false
+}
 
 // rule is a single named regex rule with a fixed kind and severity.
 type rule struct {
@@ -261,26 +275,11 @@ var secretRules = []rule{
 	},
 }
 
-// zeroWidthCodePoints are invisible/zero-width/BOM/bidi code points commonly
-// used to hide injected instructions in otherwise plain text. Declared as
-// explicit runes (not literal glyphs in source) so the file stays ASCII-clean.
-var zeroWidthCodePoints = []rune{
-	'\u200b', // zero-width space
-	'\u200c', // zero-width non-joiner
-	'\u200d', // zero-width joiner
-	'\u200e', // left-to-right mark
-	'\u200f', // right-to-left mark
-	'\u202a', // left-to-right embedding
-	'\u202b', // right-to-left embedding
-	'\u202c', // pop directional formatting
-	'\u202d', // left-to-right override
-	'\u202e', // right-to-left override
-	'\u2060', // word joiner
-	'\ufeff', // zero-width no-break space / BOM
-	'\u180e', // mongolian vowel separator
-}
-
-var zeroWidthRe = regexp.MustCompile("[" + string(zeroWidthCodePoints) + "]")
+const (
+	unicodeSteganographyRule    = "injection.unicode_steganography"
+	unicodeSteganographySnippet = "<unicode steganography characters>"
+	unicodeVariationBurstLimit  = 2
+)
 
 // base64BlobRe finds standalone base64-looking runs (long, alphabet-only) that
 // may hide instructions once decoded.
@@ -325,13 +324,15 @@ func ScanOutput(text string) Verdict { return NewScanner().ScanOutput(text) }
 // collect runs every detector and returns findings in a stable order:
 // injection, dangerous, secrets, then structural (unicode/base64/entropy).
 func (s *Scanner) collect(text string) []Finding {
+	normalized := normalizeUnicodeSteganography(text)
+	scanText := normalized.scanText
 	var findings []Finding
-	findings = append(findings, matchRules(text, injectionRules)...)
-	findings = append(findings, matchRules(text, dangerousRules)...)
-	findings = append(findings, scanSecrets(text)...)
-	findings = append(findings, scanZeroWidth(text)...)
-	findings = append(findings, scanBase64Instructions(text)...)
-	findings = append(findings, scanGenericSecrets(text)...)
+	findings = append(findings, matchRules(scanText, injectionRules)...)
+	findings = append(findings, matchRules(scanText, dangerousRules)...)
+	findings = append(findings, scanSecrets(scanText)...)
+	findings = append(findings, normalized.findings...)
+	findings = append(findings, scanBase64Instructions(scanText)...)
+	findings = append(findings, scanGenericSecrets(scanText)...)
 	return findings
 }
 
@@ -378,17 +379,145 @@ func scanSecrets(text string) []Finding {
 	return out
 }
 
-// scanZeroWidth flags hidden/zero-width code points, a common injection carrier.
-func scanZeroWidth(text string) []Finding {
-	if zeroWidthRe.MatchString(text) {
-		return []Finding{{
-			Kind:     KindInjection,
-			Severity: SeverityHigh,
-			Snippet:  "<hidden zero-width characters>",
-			Rule:     "injection.zero_width",
-		}}
+type unicodeNormalization struct {
+	scanText string
+	findings []Finding
+}
+
+// normalizeUnicodeSteganography removes hidden formatting controls from the
+// text used by detectors and folds a small set of high-risk homoglyphs back to
+// ASCII. This lets "igno\u200bre" and "\u0456gnore" trip the same rule as "ignore",
+// while still emitting a stable finding for audit/fail-closed policy.
+func normalizeUnicodeSteganography(text string) unicodeNormalization {
+	if text == "" || utf8.RuneCountInString(text) == len(text) {
+		return unicodeNormalization{scanText: text}
 	}
-	return nil
+
+	runes := []rune(text)
+	hasASCII := false
+	var variationSelectors int
+	for _, r := range runes {
+		if isASCIIAlphaNum(r) {
+			hasASCII = true
+		}
+		if isVariationSelector(r) {
+			variationSelectors++
+		}
+	}
+
+	var b strings.Builder
+	suspicious := false
+	for i, r := range runes {
+		if isInvisibleControl(r) || isTagCharacter(r) {
+			suspicious = true
+			continue
+		}
+		if isVariationSelector(r) && isSuspiciousVariationSelector(runes, i, variationSelectors) {
+			suspicious = true
+			continue
+		}
+		if folded, ok := confusableASCII(r); ok && hasASCII {
+			suspicious = true
+			b.WriteRune(folded)
+			continue
+		}
+		b.WriteRune(r)
+	}
+
+	if !suspicious {
+		return unicodeNormalization{scanText: text}
+	}
+	return unicodeNormalization{
+		scanText: b.String(),
+		findings: []Finding{{
+			Kind:     KindInjection,
+			Severity: SeverityCritical,
+			Snippet:  unicodeSteganographySnippet,
+			Rule:     unicodeSteganographyRule,
+		}},
+	}
+}
+
+func isInvisibleControl(r rune) bool {
+	switch r {
+	case '\u180e', '\u200b', '\u200c', '\u200d', '\u200e', '\u200f', '\ufeff':
+		return true
+	}
+	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2060' && r <= '\u2064') || (r >= '\u2066' && r <= '\u2069')
+}
+
+func isTagCharacter(r rune) bool {
+	return r >= '\U000e0000' && r <= '\U000e007f'
+}
+
+func isVariationSelector(r rune) bool {
+	return (r >= '\ufe00' && r <= '\ufe0f') || (r >= '\U000e0100' && r <= '\U000e01ef')
+}
+
+func isSuspiciousVariationSelector(runes []rune, i, total int) bool {
+	if total > unicodeVariationBurstLimit {
+		return true
+	}
+	if i > 0 && isASCIIAlphaNum(runes[i-1]) {
+		return true
+	}
+	return i+1 < len(runes) && isASCIIAlphaNum(runes[i+1])
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+}
+
+func confusableASCII(r rune) (rune, bool) {
+	switch r {
+	case '\u0391', '\u0410': // Greek/Cyrillic A
+		return 'A', true
+	case '\u0392', '\u0412': // Greek/Cyrillic B
+		return 'B', true
+	case '\u0395', '\u0415': // Greek/Cyrillic E
+		return 'E', true
+	case '\u0397', '\u041d': // Greek Eta / Cyrillic En
+		return 'H', true
+	case '\u0399', '\u0406': // Greek Iota / Cyrillic Byelorussian-Ukrainian I
+		return 'I', true
+	case '\u039a', '\u041a': // Greek/Cyrillic K
+		return 'K', true
+	case '\u039c', '\u041c': // Greek/Cyrillic M
+		return 'M', true
+	case '\u039d': // Greek Nu
+		return 'N', true
+	case '\u039f', '\u041e': // Greek/Cyrillic O
+		return 'O', true
+	case '\u03a1', '\u0420': // Greek Rho / Cyrillic Er
+		return 'P', true
+	case '\u03a4', '\u0422': // Greek/Cyrillic T
+		return 'T', true
+	case '\u03a7', '\u0425': // Greek/Cyrillic Ha
+		return 'X', true
+	case '\u03a5', '\u04ae': // Greek Upsilon / Cyrillic straight U
+		return 'Y', true
+	case '\u0430':
+		return 'a', true
+	case '\u0441':
+		return 'c', true
+	case '\u0435':
+		return 'e', true
+	case '\u0456':
+		return 'i', true
+	case '\u0458':
+		return 'j', true
+	case '\u043e', '\u03bf':
+		return 'o', true
+	case '\u0440':
+		return 'p', true
+	case '\u0455':
+		return 's', true
+	case '\u0445':
+		return 'x', true
+	case '\u0443':
+		return 'y', true
+	}
+	return 0, false
 }
 
 // scanBase64Instructions decodes standalone base64 blobs and, if the decoded

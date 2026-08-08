@@ -17,6 +17,9 @@ const (
 	// auditActionIoscanBlock is the audit-log action recorded when ioscan blocks
 	// untrusted input (the raw text is withheld from the kick).
 	auditActionIoscanBlock = "ioscan_block"
+	// auditActionIoscanFailClosed is recorded when ioscan.fail_mode=closed
+	// suppresses a whole kick after a Critical injection finding.
+	auditActionIoscanFailClosed = "ioscan_fail_closed"
 	// ioscanAuditUser is the audit-log user/agent attribution for kick-path
 	// enforcement events. Untrusted issue text has no single owning agent at
 	// list-assembly time, so events are attributed to the scheduler itself.
@@ -50,6 +53,10 @@ func (s *Scheduler) ioscanEnabled() bool {
 	return s.cfg != nil && s.cfg.Ioscan.IsEnabled()
 }
 
+func (s *Scheduler) ioscanFailClosed() bool {
+	return s.cfg != nil && s.cfg.Ioscan.FailClosed()
+}
+
 // enforceIssueText runs ioscan over one piece of untrusted external text (an
 // issue title about to be injected into a kick) and returns the text that is
 // safe to inject. When ioscan is disabled it is a strict no-op — the input is
@@ -59,14 +66,22 @@ func (s *Scheduler) ioscanEnabled() bool {
 // attached). Enforcement is fail-safe: it never errors and never drops the item,
 // only the untrusted text is withheld.
 func (s *Scheduler) enforceIssueText(text string) string {
+	sanitized, _ := s.enforceIssueTextVerdict(text)
+	return sanitized
+}
+
+func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict) {
 	if !s.ioscanEnabled() {
-		return text
+		return text, ioscan.Verdict{}
 	}
 	sanitized, v := ioscan.EnforceInput(text)
 	if v.Blocked {
 		s.recordIoscanBlock(v)
 	}
-	return sanitized
+	if s.ioscanFailClosed() && v.HasCriticalInjection() {
+		s.recordIoscanFailClosed(v)
+	}
+	return sanitized, v
 }
 
 // enforceLabels runs ioscan over each untrusted label before it is joined into
@@ -77,14 +92,22 @@ func (s *Scheduler) enforceIssueText(text string) string {
 // each label is scanned independently and a blocked label is annotated rather
 // than emitted raw. Fail-safe: never errors, never drops a label.
 func (s *Scheduler) enforceLabels(labels []string) []string {
+	out, _ := s.enforceLabelsWithPolicy(labels)
+	return out
+}
+
+func (s *Scheduler) enforceLabelsWithPolicy(labels []string) ([]string, bool) {
 	if !s.ioscanEnabled() || len(labels) == 0 {
-		return labels
+		return labels, false
 	}
 	out := make([]string, len(labels))
+	failClosed := false
 	for i, l := range labels {
-		out[i] = s.enforceIssueText(l)
+		var v ioscan.Verdict
+		out[i], v = s.enforceIssueTextVerdict(l)
+		failClosed = failClosed || (s.ioscanFailClosed() && v.HasCriticalInjection())
 	}
-	return out
+	return out, failClosed
 }
 
 // recordIoscanBlock writes one audit entry per blocked verdict, one line per
@@ -99,5 +122,20 @@ func (s *Scheduler) recordIoscanBlock(v ioscan.Verdict) {
 		detail := fmt.Sprintf("rule=%s, severity=%s, kind=%s",
 			f.Rule, f.Severity.String(), string(f.Kind))
 		log(auditActionIoscanBlock, detail, ioscanAuditUser)
+	}
+}
+
+func (s *Scheduler) recordIoscanFailClosed(v ioscan.Verdict) {
+	log := s.auditLogger()
+	if log == nil {
+		return
+	}
+	for _, f := range v.Findings {
+		if f.Kind != ioscan.KindInjection || f.Severity < ioscan.SeverityCritical {
+			continue
+		}
+		detail := fmt.Sprintf("rule=%s, severity=%s, kind=%s, fail_mode=closed",
+			f.Rule, f.Severity.String(), string(f.Kind))
+		log(auditActionIoscanFailClosed, detail, ioscanAuditUser)
 	}
 }

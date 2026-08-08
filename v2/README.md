@@ -89,6 +89,10 @@ project:
     - repo-two
   primary_repo: repo-one
   ai_author: your-bot-user
+
+ioscan:
+  enabled: true        # default: true; scans untrusted text before agent kicks
+  fail_mode: open      # open (default) redacts; closed blocks Critical injection kicks
 ```
 
 ## Agents

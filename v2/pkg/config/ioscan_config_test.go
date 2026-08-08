@@ -25,3 +25,25 @@ func TestIoscanConfig_IsEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestIoscanConfig_FailClosed(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		want bool
+	}{
+		{"empty defaults open", "", false},
+		{"open", "open", false},
+		{"closed", "closed", true},
+		{"closed case insensitive", "CLOSED", true},
+		{"unknown stays open", "strict", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := IoscanConfig{FailMode: tc.mode}
+			if got := c.FailClosed(); got != tc.want {
+				t.Fatalf("FailClosed() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

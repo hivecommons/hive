@@ -156,6 +156,11 @@ func (s *Scheduler) loadNamedTemplate(templateName string) string {
 
 // substituteTemplate replaces ${VAR} placeholders in a prompt template.
 func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) string {
+	msg, _ := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+	return msg
+}
+
+func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) (string, bool) {
 	if actionable == nil {
 		actionable = &github.ActionableResult{}
 	}
@@ -167,8 +172,12 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	} else {
 		agentIssuesForList = filterByLane(issues, agentName)
 	}
-	issueList := s.formatIssueList(agentIssuesForList)
-	prList := s.formatPRList(actionable)
+	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
+	prList, prFailClosed := s.formatPRListWithPolicy(actionable)
+	if issueFailClosed || prFailClosed {
+		s.logger.Warn("ioscan fail-closed blocked kick", "agent", agentName)
+		return "", true
+	}
 
 	reposList := strings.Join(s.cfg.Project.Repos, ", ")
 	primaryRepo := s.cfg.Project.PrimaryRepo
@@ -245,15 +254,21 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"MERGE_ELIGIBLE":        lit(mergeEligibleList),
 		"CI_FAILING":            lit(ciFailingList),
 	}}
-	return s.registry().Expand(context.Background(), template, resolve.ScopeTemplate, rt)
+	return s.registry().Expand(context.Background(), template, resolve.ScopeTemplate, rt), false
 }
 
 func (s *Scheduler) formatIssueList(issues []github.Issue) string {
+	out, _ := s.formatIssueListWithPolicy(issues)
+	return out
+}
+
+func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
 	if len(issues) == 0 {
-		return "(none)"
+		return "(none)", false
 	}
 	var b strings.Builder
 	shown := 0
+	failClosed := false
 	for _, issue := range issues {
 		if shown >= maxIssuesPerKick {
 			break
@@ -264,40 +279,50 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 		// title/label is redacted/annotated rather than injected raw, and the block
 		// is recorded to the dashboard audit log. Disabled → strict no-op
 		// passthrough. Default is now ON (fail-safe).
-		title := s.enforceIssueText(issue.Title)
+		title, verdict := s.enforceIssueTextVerdict(issue.Title)
+		failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
 		const maxTitleRunes = 60
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
-		labels := s.enforceLabels(issue.Labels)
+		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels)
+		failClosed = failClosed || labelsFailClosed
 		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s] %s\n",
 			issue.AgeMinutes, issue.Repo, issue.Number,
 			strings.Join(labels, ","), title))
 		shown++
 	}
-	return b.String()
+	return b.String(), failClosed
 }
 
 func (s *Scheduler) formatPRList(actionable *github.ActionableResult) string {
+	out, _ := s.formatPRListWithPolicy(actionable)
+	return out
+}
+
+func (s *Scheduler) formatPRListWithPolicy(actionable *github.ActionableResult) (string, bool) {
 	if len(actionable.PRs.Items) == 0 {
-		return "(none)"
+		return "(none)", false
 	}
 	var b strings.Builder
+	failClosed := false
 	for _, pr := range actionable.PRs.Items {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
 		// classification routing, and an attacker controls both the title and their
 		// own fork/login. Gate both through ioscan: a blocked value is redacted
 		// rather than injected raw. Disabled → strict no-op. Default is now ON.
-		title := s.enforceIssueText(pr.Title)
+		title, titleVerdict := s.enforceIssueTextVerdict(pr.Title)
+		failClosed = failClosed || (s.ioscanFailClosed() && titleVerdict.HasCriticalInjection())
 		const maxPRTitleRunes = 70
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		author := s.enforceIssueText(pr.Author)
+		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
+		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s %s\n", pr.Repo, pr.Number, author, title))
 	}
-	return b.String()
+	return b.String(), failClosed
 }
 
 // buildAgentListAndRoles returns a comma-separated agent list and a formatted
@@ -411,9 +436,11 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 			}
 			if res := resolver.Resolve(context.Background(), src); res.Ok && res.Body != "" {
 				s.logger.Info("using GitHub-sourced kick prompt", "agent", agentName, "source", res.Source)
-				msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
-				msg += s.substituteTemplate(res.Body, actionable, agentName, issues)
-				return msg
+				body, failClosed := s.substituteTemplateWithPolicy(res.Body, actionable, agentName, issues)
+				if failClosed {
+					return ""
+				}
+				return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
 			}
 		}
 	}
@@ -422,9 +449,11 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	if agentCfg, ok := s.cfg.Agents[agentName]; ok && agentCfg.KickTemplate != "" {
 		if template := s.loadNamedTemplate(agentCfg.KickTemplate); template != "" {
 			s.logger.Info("using config kick_template", "agent", agentName, "template", agentCfg.KickTemplate)
-			msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
-			msg += s.substituteTemplate(template, actionable, agentName, issues)
-			return msg
+			body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+			if failClosed {
+				return ""
+			}
+			return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
 		}
 	}
 
@@ -435,9 +464,11 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 				if pa.Name == agentName && pa.KickTemplate != "" {
 					if template := s.loadNamedTemplate(pa.KickTemplate); template != "" {
 						s.logger.Info("using ACMM pack template", "agent", agentName, "level", *s.cfg.ACMMLevel, "template", pa.KickTemplate)
-						msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
-						msg += s.substituteTemplate(template, actionable, agentName, issues)
-						return msg
+						body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+						if failClosed {
+							return ""
+						}
+						return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
 					}
 				}
 			}
@@ -447,9 +478,11 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	// 3. Convention: look for <agent>.md template file
 	if template := s.loadPromptTemplate(agentName); template != "" {
 		s.logger.Info("using prompt template for kick", "agent", agentName)
-		msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
-		msg += s.substituteTemplate(template, actionable, agentName, issues)
-		return msg
+		body, failClosed := s.substituteTemplateWithPolicy(template, actionable, agentName, issues)
+		if failClosed {
+			return ""
+		}
+		return fmt.Sprintf("[agent:%s]\n\n%s", agentName, body)
 	}
 
 	// 3. Legacy hardcoded fallback (removed in Phase 4 when all agents use templates)

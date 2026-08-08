@@ -147,6 +147,11 @@ type IoscanConfig struct {
 	// (fail-safe — scan by default), while an operator can still opt out with an
 	// explicit `enabled: false`. Read via IsEnabled(), never dereferenced raw.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// FailMode controls what the kick path does with Critical injection
+	// findings. Empty/"open" preserves the historical behavior: redact the
+	// offending text and continue the kick. "closed" blocks the kick and records
+	// an ioscan_fail_closed audit entry. Read via FailClosed().
+	FailMode string `yaml:"fail_mode,omitempty" json:"fail_mode,omitempty"`
 }
 
 // IsEnabled reports whether input/output scanning is active. Absent (nil)
@@ -154,6 +159,15 @@ type IoscanConfig struct {
 // sets `enabled: false`.
 func (c IoscanConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+const ioscanFailModeClosed = "closed"
+
+// FailClosed reports whether Critical injection findings should block the
+// whole kick instead of only redacting the offending untrusted text. The default
+// is fail-open for backward compatibility.
+func (c IoscanConfig) FailClosed() bool {
+	return strings.EqualFold(c.FailMode, ioscanFailModeClosed)
 }
 
 // PlanningConfig gates the Phase 4 planning entry points that fire automatically
