@@ -9,8 +9,8 @@ import (
 
 // ptr helpers
 
-func statusPtr(s Status) *Status   { return &s }
-func strPtr(s string) *string      { return &s }
+func statusPtr(s Status) *Status { return &s }
+func strPtr(s string) *string    { return &s }
 
 // TestNewStore_CreatesDirectoryAndEmptyStore verifies that NewStore creates the
 // target directory if it does not exist and starts with an empty ledger.
@@ -70,6 +70,7 @@ func TestCreate_CorrectFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+
 	after := time.Now().UTC().Add(time.Second)
 
 	if b.ID == "" {
@@ -113,6 +114,43 @@ func TestCreate_CorrectFields(t *testing.T) {
 	beadsFile := filepath.Join(dir, "beads.json")
 	if _, err := os.Stat(beadsFile); err != nil {
 		t.Fatalf("beads.json not created: %v", err)
+	}
+}
+
+func TestUpdate_TransitionToDoneStampsClosedAt(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	b, err := s.Create("finish me", TypeTask, PriorityMedium, "scanner", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if b.ClosedAt != nil {
+		t.Fatal("new bead should not have ClosedAt")
+	}
+	if err := s.Update(b.ID, func(b *Bead) {
+		b.Status = StatusDone
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err := s.Get(b.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ClosedAt == nil {
+		t.Fatal("transition to done should stamp ClosedAt")
+	}
+	firstClosed := got.ClosedAt.Time
+	if err := s.SetMetadata(b.ID, "later", "value"); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+	got, err = s.Get(b.ID)
+	if err != nil {
+		t.Fatalf("Get after metadata: %v", err)
+	}
+	if !got.ClosedAt.Equal(firstClosed) {
+		t.Fatalf("ClosedAt changed after metadata update: got %s want %s", got.ClosedAt.Time, firstClosed)
 	}
 }
 

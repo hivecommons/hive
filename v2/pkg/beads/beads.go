@@ -212,8 +212,14 @@ func (s *Store) Update(id string, fn func(b *Bead)) error {
 		return fmt.Errorf("bead %s not found", id)
 	}
 
+	wasTerminal := b.Status == StatusDone || b.Status == StatusClosed
 	fn(b)
-	b.UpdatedAt = flexTime{time.Now().UTC()}
+	now := flexTime{time.Now().UTC()}
+	isTerminal := b.Status == StatusDone || b.Status == StatusClosed
+	if isTerminal && !wasTerminal && b.ClosedAt == nil {
+		b.ClosedAt = &now
+	}
+	b.UpdatedAt = now
 
 	return s.persist(b)
 }

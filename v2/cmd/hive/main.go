@@ -49,6 +49,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/proclock"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
+	"github.com/kubestellar/hive/v2/pkg/retro"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/timeline"
@@ -1561,6 +1562,19 @@ func main() {
 			store.SetHiveID(cfg.HiveID)
 			beadStores[name] = store
 			logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
+		}
+	}
+
+	if cfg.Retro.Enabled {
+		if _, exists := beadStores[retro.Actor]; !exists {
+			retroStore, err := beads.NewStore(filepath.Join(beadsRootDir, retro.Actor))
+			if err != nil {
+				logger.Warn("failed to init retro beads store", "error", err)
+			} else {
+				retroStore.SetHiveID(cfg.HiveID)
+				beadStores[retro.Actor] = retroStore
+				logger.Info("retro beads store initialized", "count", retroStore.Count())
+			}
 		}
 	}
 
@@ -3692,6 +3706,27 @@ func main() {
 			"max_replans", rc.MaxReplans)
 	}
 
+	var retroLane *retro.Lane
+	if cfg.Retro.Enabled {
+		retroStore := beadStores[retro.Actor]
+		escalationStoreOnce.Do(func() {
+			escalationStore = escalation.Load(escalationLedgerPath)
+		})
+		retroLane = retro.NewLane(beadStores, retroStore, dashSrv.LifecycleTimeline(), escalationStore, retro.Config{
+			Enabled:             cfg.Retro.Enabled,
+			ScanIntervalS:       cfg.Retro.ScanIntervalS,
+			MaxFixAttempts:      cfg.Retro.MaxFixAttempts,
+			MaxKicks:            cfg.Retro.MaxKicks,
+			LongStallDays:       cfg.Retro.LongStallDays,
+			RecentClosedWindowS: cfg.Retro.RecentClosedWindowS,
+		}, logger)
+		logger.Info("retro lane enabled",
+			"scan_interval_s", cfg.Retro.ScanIntervalS,
+			"max_fix_attempts", cfg.Retro.MaxFixAttempts,
+			"max_kicks", cfg.Retro.MaxKicks,
+			"long_stall_days", cfg.Retro.LongStallDays)
+	}
+
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
@@ -3772,6 +3807,11 @@ func main() {
 			if replanLane != nil && replanLane.Due(time.Now()) {
 				if n := replanLane.Run(ctx); n > 0 {
 					logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
+				}
+			}
+			if retroLane != nil && retroLane.Due(time.Now()) {
+				if n := retroLane.Run(ctx); n > 0 {
+					logger.Info("retro lane filed advisory beads", "findings", n)
 				}
 			}
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
@@ -4028,14 +4068,29 @@ func recordEnumeratedIssues(rec lifecycleRecorder, actionable *github.Actionable
 	}
 }
 
-// recordKick records a KindKicked event for the given agent. Guarded and
-// nil-safe; no I/O.
-func recordKick(rec lifecycleRecorder, agent string) {
+// recordKick records KindKicked events for the given agent. When issue refs are
+// supplied it records one issue-scoped event per ref so post-completion lanes
+// can reconstruct per-bead kick counts. With no refs, it records one
+// agent-scoped event. Guarded and nil-safe; no I/O.
+func recordKick(rec lifecycleRecorder, agent string, issueRefs ...string) {
 	if rec == nil {
 		return
 	}
 	store := rec.LifecycleTimeline()
 	if store == nil {
+		return
+	}
+	if len(issueRefs) > 0 {
+		for _, ref := range issueRefs {
+			if ref == "" {
+				continue
+			}
+			store.Record(timeline.Event{
+				IssueRef: ref,
+				Kind:     timeline.KindKicked,
+				Agent:    agent,
+			})
+		}
 		return
 	}
 	store.Record(timeline.Event{
@@ -4384,11 +4439,9 @@ func runEvalCycle(
 			gov.RecordKick(msg.Agent)
 			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
-			// Record the kick into the lifecycle timeline. Cheap, guarded, and
-			// nil-safe (Record no-ops on a nil dashboard/store). A kick is not
-			// tied to a single issue at this layer, so IssueRef is left empty;
-			// the event still records which agent was kicked and when.
-			recordKick(dashSrv, msg.Agent)
+			// Record issue-scoped kicks into the lifecycle timeline. Cheap,
+			// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
+			recordKick(dashSrv, msg.Agent, msg.IssueRefs...)
 
 			// Log token state at time of kick for cost attribution
 			if tokenCollector != nil {

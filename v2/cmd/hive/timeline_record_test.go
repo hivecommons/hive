@@ -77,6 +77,25 @@ func TestRecordKick(t *testing.T) {
 	}
 }
 
+func TestRecordKickIssueScoped(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+
+	recordKick(rec, "scanner", "org/repo#1", "org/repo#2")
+
+	events := rec.store.Recent(0)
+	if len(events) != 2 {
+		t.Fatalf("recorded %d events, want 2", len(events))
+	}
+	if events[0].IssueRef != "org/repo#2" || events[1].IssueRef != "org/repo#1" {
+		t.Fatalf("issue refs = %q, %q", events[0].IssueRef, events[1].IssueRef)
+	}
+	for _, e := range events {
+		if e.Kind != timeline.KindKicked || e.Agent != "scanner" {
+			t.Fatalf("bad kick event: %+v", e)
+		}
+	}
+}
+
 // TestRecordHelpers_NilSafe confirms the guards: nil recorder, nil actionable,
 // and a recorder returning a nil store must all be no-ops (never panic).
 func TestRecordHelpers_NilSafe(t *testing.T) {

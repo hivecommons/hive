@@ -190,6 +190,17 @@ governor:
   #   api_key_env: HIVE_BOB_API_KEY       # env var NAME holding the key (default)
   #   api_key_file: /secrets/bob_api_key  # or a mounted key file (default path)
 
+# Retro lane — deterministic post-completion analysis. Disabled by default;
+# when enabled it scans recently completed beads with closed/merged PR metadata
+# and files rule-based findings as local advisory beads (no GitHub posts).
+# retro:
+#   enabled: false
+#   scan_interval_s: 3600
+#   max_fix_attempts: 3
+#   max_kicks: 5
+#   long_stall_days: 7
+#   recent_closed_window_s: 604800
+
 # GitHub authentication — use ONE of these methods
 github:
   # Option 1: Personal access token (simplest)

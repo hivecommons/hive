@@ -52,6 +52,7 @@ type Config struct {
 	Classifier ClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
 	Planning   PlanningConfig   `yaml:"planning,omitempty" json:"planning,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -169,6 +170,20 @@ type PlanningConfig struct {
 	// true is a no-op below L5, because the architect that decomposes the minted
 	// epics is not scheduled there.
 	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
+}
+
+// RetroConfig gates the deterministic post-completion retro lane. It is off by
+// default: an absent `retro:` block or `enabled: false` yields zero behavior
+// change. When enabled, the lane periodically scans done/closed beads that have
+// a closed/merged PR association, reconstructs a compact trajectory from local
+// ledgers, and files rule-based findings as advisory beads.
+type RetroConfig struct {
+	Enabled             bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ScanIntervalS       int  `yaml:"scan_interval_s,omitempty" json:"scan_interval_s,omitempty"`
+	MaxFixAttempts      int  `yaml:"max_fix_attempts,omitempty" json:"max_fix_attempts,omitempty"`
+	MaxKicks            int  `yaml:"max_kicks,omitempty" json:"max_kicks,omitempty"`
+	LongStallDays       int  `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
+	RecentClosedWindowS int  `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
 }
 
 // planFromLabelMinACMM is the lowest ACMM level at which the label trigger fires

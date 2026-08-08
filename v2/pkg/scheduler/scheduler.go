@@ -327,8 +327,9 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 }
 
 type KickMessage struct {
-	Agent   string
-	Message string
+	Agent     string
+	Message   string
+	IssueRefs []string
 }
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
@@ -349,12 +350,37 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 				msg += "\n" + reposSection
 			}
 			messages = append(messages, KickMessage{
-				Agent:   agentName,
-				Message: msg,
+				Agent:     agentName,
+				Message:   msg,
+				IssueRefs: issueRefsForAgent(agentName, classifiedIssues),
 			})
 		}
 	}
 	return messages
+}
+
+func issueRefsForAgent(agentName string, issues []github.Issue) []string {
+	agentIssues := issues
+	if agentName != "scanner" {
+		agentIssues = filterByLane(issues, agentName)
+	}
+	if len(agentIssues) > maxIssuesPerKick {
+		agentIssues = agentIssues[:maxIssuesPerKick]
+	}
+	refs := make([]string, 0, len(agentIssues))
+	seen := make(map[string]bool, len(agentIssues))
+	for _, issue := range agentIssues {
+		if issue.Repo == "" || issue.Number <= 0 {
+			continue
+		}
+		ref := fmt.Sprintf("%s#%d", issue.Repo, issue.Number)
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // BuildAgentMessageFromLastActionable builds a kick message for the named
