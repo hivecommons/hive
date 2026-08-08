@@ -316,6 +316,31 @@
     .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); }
     .oc-topbar .git-version { color: var(--muted); }
 
+    /* Fleet breaker — circular play/pause control + status pill in the topbar.
+       Mirrors the Ready-work queue's #queue-suspend-btn / .pill pattern from the
+       contribute surface (api_contribute.go) so the two read as one system: a
+       ghost circular button whose glyph swaps (pause bars when the fleet is
+       running, play triangle when the breaker holds it), plus a green/red pill.
+       Lives in .oc-topbar-left (the shortest group) so it never wraps the topbar
+       to a third row — see the padding-top:104px note above. */
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+    #fleet-breaker-btn2 {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; padding: 0; border-radius: 999px;
+      border: 1px solid var(--border); background: transparent; color: var(--muted);
+      cursor: pointer; line-height: 0;
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    #fleet-breaker-btn2 svg { display: block; width: 12px; height: 12px; fill: currentColor; }
+    #fleet-breaker-btn2:hover { background: rgba(139,148,158,.12); color: var(--text); }
+    #fleet-breaker-btn2.paused { border-color: rgba(248,81,73,.35); color: #f85149; background: rgba(248,81,73,.08); }
+    #fleet-breaker-btn2.paused:hover { background: rgba(248,81,73,.16); }
+    #fleet-breaker-btn2:disabled { opacity: .5; cursor: not-allowed; }
+    /* Status pill — same shape/weight as the contribute surface's .pill. */
+    #fleet-breaker-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
+    #fleet-breaker-pill.pill-passed { background: rgba(63,185,80,.12); color: #3fb950; border-color: rgba(63,185,80,.3); }
+    #fleet-breaker-pill.pill-blocked { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.3); }
+
     /* Light main content area */
     body.light-mode {
       box-sizing: border-box;
@@ -2806,6 +2831,19 @@
               title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
       <span id="oc-git-version" class="git-version"></span>
+      <!-- Fleet breaker — circular play/pause + status pill (clanker queue-suspend
+           pattern). Kept in .oc-topbar-left, the shortest group, so it cannot
+           wrap the topbar to a third row. State + owner-gating rendered by
+           _renderFleetBreaker; pill visible to everyone, button interactive only
+           for read-write+ viewers (server also 403s the POST for read-only). -->
+      <span id="fleet-breaker-wrap" style="display:none">
+        <span id="fleet-breaker-pill" class="pill-passed">running</span>
+        <button type="button" id="fleet-breaker-btn2" onclick="toggleFleetBreaker()"
+                title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."
+                aria-label="Fleet breaker">
+          <span id="fleet-breaker-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
+        </button>
+      </span>
     </div>
     <div class="oc-topbar-center">
       <span class="oc-tb-link" onclick="openConfigDialog('governor')" title="Config — governor, agents, thresholds, and all hive settings" aria-label="Config">⚙️</span>
@@ -3048,7 +3086,6 @@
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
       <h2 style="margin:0; cursor:pointer" class="section-label section-header-toggle" onclick="toggleSection('agents-section')"><span class="section-chevron">▼</span> Agents</h2>
       <button id="agents-compact-all-btn" onclick="event.stopPropagation();toggleAllAgentsCompact()" style="font-size:0.7rem;padding:2px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer" title="Toggle all agent cards between compact and expanded view"></button>
-      <button id="fleet-breaker-btn" onclick="event.stopPropagation();toggleFleetBreaker()" style="display:none;font-size:0.7rem;font-weight:600;padding:2px 12px;border-radius:4px;cursor:pointer;margin-left:auto" title="Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched."></button>
     </div>
     <div class="section-body">
       <div class="agents" id="agents"></div>
@@ -3490,25 +3527,47 @@
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
+    // Renders the topbar breaker control (clanker queue-suspend pattern):
+    //  - status pill next to it — green "running" when disengaged, red "PAUSED"
+    //    when engaged — so the held-fleet state is unmistakable at a glance;
+    //  - a circular icon button showing pause bars while the fleet runs
+    //    (click = engage/throw the breaker) and a play triangle once engaged
+    //    (click = release/resume). Same SVG glyphs as renderQueueSuspendControl.
+    // The pill is shown to everyone; the button is interactive only for a
+    // read-write+ viewer via dashboardRoleAtLeast(window._hiveRole,'read-write')
+    // (server also 403s the POST for read-only viewers).
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
-      const btn = document.getElementById('fleet-breaker-btn');
-      if (!btn) return;
-      btn.style.display = '';
+      const wrap = document.getElementById('fleet-breaker-wrap');
+      if (!wrap) return;
+      wrap.style.display = '';
       const count = (agents || []).length;
-      if (_fleetBreakerEngaged) {
-        btn.textContent = '▶ Release (breaker)';
-        btn.style.background = 'var(--red, #ef4444)';
-        btn.style.color = '#fff';
-        btn.style.border = '1px solid var(--red, #ef4444)';
-        btn.title = 'Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
-          ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.';
-      } else {
-        btn.textContent = '⏸ Pause All (breaker)';
-        btn.style.background = 'var(--surface)';
-        btn.style.color = 'var(--muted)';
-        btn.style.border = '1px solid var(--border)';
-        btn.title = 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
+      const pill = document.getElementById('fleet-breaker-pill');
+      if (pill) {
+        pill.className = _fleetBreakerEngaged ? 'pill-blocked' : 'pill-passed';
+        pill.textContent = _fleetBreakerEngaged ? 'PAUSED' : 'running';
+      }
+      const btn = document.getElementById('fleet-breaker-btn2');
+      if (btn) {
+        // Owner-gating: hide the control for read-only viewers, leaving only the
+        // status pill. window._hiveRole is set by showGHAuthState from /api/role.
+        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write')) {
+          btn.style.display = 'none';
+        } else {
+          btn.style.display = '';
+          btn.classList.toggle('paused', _fleetBreakerEngaged);
+          btn.title = _fleetBreakerEngaged
+            ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
+               ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
+            : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
+          btn.setAttribute('aria-label', _fleetBreakerEngaged ? 'Release fleet breaker' : 'Engage fleet breaker');
+          const icon = document.getElementById('fleet-breaker-icon');
+          // Same glyphs as renderQueueSuspendControl: play triangle when paused,
+          // pause bars when running.
+          if (icon) icon.innerHTML = _fleetBreakerEngaged
+            ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
+            : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
+        }
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
@@ -3524,7 +3583,7 @@
     async function toggleFleetBreaker() {
       const engaging = !_fleetBreakerEngaged;
       const path = engaging ? '/api/breaker/engage' : '/api/breaker/release';
-      const btn = document.getElementById('fleet-breaker-btn');
+      const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) btn.disabled = true;
       try {
         const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
