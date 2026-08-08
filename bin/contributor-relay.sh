@@ -1120,7 +1120,11 @@ function handleMessage(data) {
       }
       reconnectDelay = BASE_RECONNECT_DELAY_MS;
       if (!currentTask) {
-        send({ type: 'ready', seq: nextSeq() });
+        if (!cliReadyFailed) {
+          send({ type: 'ready', seq: nextSeq() });
+        } else {
+          console.log('Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers');
+        }
       } else {
         console.log(`Reconnected while working on ${currentTask.repo}#${currentTask.number} — resuming`);
         send({ type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
@@ -1303,6 +1307,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     MAX_TASK_CLI_RESTARTS,
     setCliReady: (v) => { cliReady = v; },
     getCliReady: () => cliReady,
+    setCliReadyFailed: (v) => { cliReadyFailed = v; },
+    getCliReadyFailed: () => cliReadyFailed,
     getPendingTask: () => pendingTask,
     setPendingTask: (v) => { pendingTask = v; },
     setTasksCompletedCount: (v) => { tasksCompletedCount = v; },

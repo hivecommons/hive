@@ -757,6 +757,18 @@ test('handing back a task from a wedged CLI does NOT re-advertise ready', () => 
   } finally { teardown(relay); }
 });
 
+test('reconnect while wedged also withholds ready until CLI recovery', () => {
+  const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
+  try {
+    relay.setCliReady(false);
+    relay.setCliReadyFailed(true);
+    relay.__sent.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'trusted' }));
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, 0,
+      'auth_ok must not bypass skipReady after a readiness failure; recovery re-advertises ready');
+  } finally { teardown(relay); }
+});
+
 test('an ordinary task failure still re-advertises ready (skipReady is opt-in)', () => {
   const relay = loadRelay({ backend: 'copilot' });
   try {
