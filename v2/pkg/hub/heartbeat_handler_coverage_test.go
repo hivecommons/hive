@@ -161,7 +161,8 @@ func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *t
 		"primary_repo":"repo",
 		"repos":["repo"],
 		"dashboard_url":"https://selfcheck.hive.kubestellar.io",
-		"public_url_self_check":{"status":"ok","checked_at":"2026-08-08T10:15:00Z","http_status":401}
+		"public_url_self_check":{"status":"ok","checked_at":"2026-08-08T10:15:00Z","http_status":401},
+		"route_exists":{"status":"found","checked_at":"2026-08-08T10:15:00Z","host":"selfcheck.hive.kubestellar.io","kind":"Ingress"}
 	}`
 	rec := postHeartbeat(t, s, body)
 	if rec.Code != http.StatusOK {
@@ -172,6 +173,9 @@ func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *t
 	}
 	if got := s.registry.Hives[0].PublicURLSelfCheck; got.Status != PublicURLSelfCheckOK || got.HTTPStatus != http.StatusUnauthorized {
 		t.Fatalf("self-check = %+v, want ok/401", got)
+	}
+	if got := s.registry.Hives[0].RouteExists; got == nil || got.Status != RouteExistenceFound || got.Kind != "Ingress" {
+		t.Fatalf("route_exists = %+v, want found Ingress", got)
 	}
 
 	// Older spokes omit the new field. The heartbeat must still be accepted and
@@ -198,6 +202,9 @@ func TestHandleHeartbeatPublicURLSelfCheckRoundTripAndOldSpokeCompatibility(t *t
 	}
 	if old.PublicURLSelfCheck != nil {
 		t.Fatalf("old spoke should leave self-check unknown, got %+v", old.PublicURLSelfCheck)
+	}
+	if old.RouteExists != nil {
+		t.Fatalf("old spoke should leave route_exists unknown, got %+v", old.RouteExists)
 	}
 }
 
