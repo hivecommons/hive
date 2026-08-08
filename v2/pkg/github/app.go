@@ -183,6 +183,21 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 // Token(), so isolating it lets Token() distinguish "mint blipped" (fall back
 // to a still-valid cached token) from a genuine expiry.
 func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expiry time.Time, err error) {
+	return a.mintInstallationTokenWithOptions(ctx, nil)
+}
+
+// MintInstallationToken returns a short-lived installation token constrained by
+// opts. It intentionally bypasses the shared full-permission token cache used by
+// Token(), so hub-hosted lite scans can request read-only or issues-only tokens
+// without ever widening an agent-visible credential.
+func (a *AppAuth) MintInstallationToken(ctx context.Context, opts *gh.InstallationTokenOptions) (token string, expiry time.Time, err error) {
+	if a == nil {
+		return "", time.Time{}, ErrNoGitHubClient
+	}
+	return a.mintInstallationTokenWithOptions(ctx, opts)
+}
+
+func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, opts *gh.InstallationTokenOptions) (token string, expiry time.Time, err error) {
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generating JWT: %w", err)
@@ -192,7 +207,7 @@ func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expi
 	// MITM'd by the in-process proxy, whose CA must be trusted for the mint to
 	// succeed. See proxytrust.go for the chicken-and-egg this breaks.
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, opts)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("creating installation token: %w", err)
 	}

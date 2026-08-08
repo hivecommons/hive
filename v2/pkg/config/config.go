@@ -59,6 +59,7 @@ type Config struct {
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
+	Lite       LiteConfig       `yaml:"lite,omitempty" json:"lite,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -85,6 +86,14 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+// LiteConfig controls hub-hosted behavior for clusterless lite enrollments.
+// Defaults are deliberately inert: lite.execution must be explicitly enabled
+// on the hub before any enrolled repository is scanned.
+type LiteConfig struct {
+	Execution         bool          `yaml:"execution,omitempty" json:"execution,omitempty"`
+	ExecutionInterval time.Duration `yaml:"execution_interval,omitempty" json:"execution_interval,omitempty"`
 }
 
 // DefaultOTelServiceName is the OTLP resource service.name used when the

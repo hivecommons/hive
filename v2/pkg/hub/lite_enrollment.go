@@ -27,6 +27,9 @@ type LiteEnrollmentConfig struct {
 	Agents      []string `json:"agents"`
 	Advisory    bool     `json:"advisory"`
 	ZeroSecrets bool     `json:"zeroSecrets"`
+	// PostAdvisoryIssue opts this lite enrollment into the only write path:
+	// updating one idempotent advisory issue with the hub-side report.
+	PostAdvisoryIssue bool `json:"postAdvisoryIssue,omitempty"`
 }
 
 type LiteEnrollmentRequest struct {

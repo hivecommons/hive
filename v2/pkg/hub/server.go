@@ -153,6 +153,7 @@ type RegistryEntry struct {
 	HiveType           string                `json:"hiveType,omitempty"`
 	Lite               bool                  `json:"lite,omitempty"`
 	LiteConfig         *LiteEnrollmentConfig `json:"liteConfig,omitempty"`
+	LiteReport         *LiteAdvisoryReport   `json:"liteReport,omitempty"`
 	// ProvStatus is the authoritative provisioning status copied from the hive's
 	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
 	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
@@ -822,6 +823,8 @@ type HubServer struct {
 	// which already probes those URLs. Carries its own leaf mutex and is never
 	// touched while s.mu is held — see url_reachability.go.
 	urlHealth *urlHealthState
+
+	liteExecution *liteExecutionState
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
