@@ -459,13 +459,29 @@ function recoverWedgedShell() {
   } catch (_) {}
 }
 
-function getCLIState() {
+function capturePaneText() {
   try {
-    const output = execSync(
+    return execSync(
       `tmux capture-pane -t ${TMUX_SESSION} -p 2>/dev/null`,
       { encoding: 'utf8', timeout: 15000 }
-    );
-    const text = output.toString();
+    ).toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+function blockingPromptKey(text) {
+  // codex: "Do you trust the contents of this directory?" → 1. Yes, continue
+  if (/Do you trust the contents of this directory/.test(text)) return '1';
+  // codex: "✨ Update available! x -> y" → 3. Skip until next version.
+  // Deliberately not "1. Update now", which shells out to npm install -g.
+  if (/Update available!/.test(text) && /Skip until next version/.test(text)) return '3';
+  return null;
+}
+
+function getCLIState() {
+  try {
+    const text = capturePaneText();
     if (BACKEND === 'claude') {
       if (/Not logged in|Please run \/login/.test(text)) return 'needs-login';
       if (/bypass permissions|Welcome back|Try "how does|medium.*effort|@gmail\.com|@.*\.com.*Organization/.test(text)) return 'ready';
@@ -493,7 +509,13 @@ function getCLIState() {
       // that happened to end in a '>' — including partially drawn frames.
       if (/Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/.test(text)) return 'ready';
     } else if (BACKEND === 'codex') {
-      if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
+      // Order matters: codex can leave ready-looking banner chrome behind
+      // modal prompts, so classify those prompts before matching readiness.
+      if (/Do you trust the contents of this directory/.test(text)) return 'onboarding';
+      if (/Update available!/.test(text) && /Skip until next version/.test(text)) return 'onboarding';
+      // codex renders its input marker as '›' (U+203A), not '>', and its
+      // banner reads "OpenAI Codex (vX.Y.Z)" — not the literal "Codex CLI".
+      if (/codex>|›|OpenAI Codex|Codex CLI|>\s*$/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
       if (/pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text)) return 'ready';
     } else if (BACKEND === 'agy') {
@@ -519,8 +541,12 @@ function waitForCLI() {
         console.log('CLI ready — accepting tasks');
         resolve();
       } else if (state === 'onboarding') {
-        console.log('Auto-dismissing trust/onboarding dialog...');
-        try { execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 }); } catch (_) {}
+        const key = blockingPromptKey(capturePaneText());
+        console.log(key ? `Auto-dismissing trust/onboarding dialog (selecting "${key}")...` : 'Auto-dismissing trust/onboarding dialog...');
+        try {
+          if (key) execSync(`tmux send-keys -t ${TMUX_SESSION} ${key} Enter`, { timeout: 15000 });
+          else execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+        } catch (_) {}
         setTimeout(check, CLI_READY_POLL_MS);
       } else if (state === 'needs-login' && !loginMessageShown) {
         loginMessageShown = true;
@@ -838,7 +864,8 @@ function classifyTmuxPane(text) {
     hasCompletionMarker = true;
     isWorking = bobRunning && BOB_SPINNER.test(text);
   } else if (BACKEND === 'codex') {
-    hasIdlePrompt = /codex>|>\s*$/.test(text);
+    // Same marker mismatch as getCLIState(): '›' (U+203A), not '>'.
+    hasIdlePrompt = /codex>|›|>\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
     isWorking = /running|executing|thinking/i.test(text);
   } else if (BACKEND === 'pi') {
@@ -1373,6 +1400,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     progressTick,
     classifyTmuxPane,
     paneLooksBlockedOnHuman,
+    blockingPromptKey,
     PANE_STATE_WORKING,
     PANE_STATE_BLOCKED_ON_HUMAN,
     PANE_STATE_IDLE_COMPLETE,
