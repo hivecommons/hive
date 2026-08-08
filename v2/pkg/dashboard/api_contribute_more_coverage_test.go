@@ -90,14 +90,14 @@ func TestCovK2_ContributeLandingAndGet(t *testing.T) {
 }
 
 func TestCovK2_TrustTierBadgeCSS(t *testing.T) {
-	for _, tier := range []string{"newcomer", "contributor", "trusted", "advisor", "revoked", agentTierLabel, "unknown"} {
+	for _, tier := range []string{"newcomer", "contributor", "trusted", "merger", "advisor", "revoked", agentTierLabel, "unknown"} {
 		bg, text, border := trustTierBadgeCSS(tier)
 		if bg == "" || text == "" || border == "" {
 			t.Fatalf("trustTierBadgeCSS(%q) returned empty component", tier)
 		}
 	}
 	// trustTierColor also has a per-tier switch.
-	for _, tier := range []string{"newcomer", "contributor", "trusted", "advisor", "revoked", "other"} {
+	for _, tier := range []string{"newcomer", "contributor", "trusted", "merger", "advisor", "revoked", "other"} {
 		if trustTierColor(tier) == "" {
 			t.Fatalf("trustTierColor(%q) empty", tier)
 		}

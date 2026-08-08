@@ -9,7 +9,9 @@ package dashboard
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -70,8 +72,10 @@ func TestHealthSummary_NeedLoginBucket(t *testing.T) {
 
 	s := NewServer(0, deps.Logger)
 	s.RegisterAPI(deps)
-	// No MarkReady: readyAt stays zero so the health grace window is not
-	// active and non-running agents are classified instead of skipped.
+	// Push startedAt past the boot-grace window so non-running / need-login
+	// agents are classified and degrade instead of being suppressed as
+	// still-coming-up transients. (Grace is exercised separately below.)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace)
 
 	status, detail := agentsCheckOf(t, s)
 
@@ -103,6 +107,7 @@ func TestHealthSummary_NeedLoginOnly(t *testing.T) {
 
 	s := NewServer(0, deps.Logger)
 	s.RegisterAPI(deps)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace) // past boot grace
 
 	status, detail := agentsCheckOf(t, s)
 	if want := "0 running, 1 needs login: supervisor"; detail != want {
@@ -174,6 +179,7 @@ func TestHealthSummary_RunningAtLoginPromptNeedsLogin(t *testing.T) {
 
 	s := NewServer(0, deps.Logger)
 	s.RegisterAPI(deps)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace) // past boot grace
 
 	status, detail := agentsCheckOf(t, s)
 	if want := "1 running, 1 needs login: wedged"; detail != want {
@@ -181,5 +187,135 @@ func TestHealthSummary_RunningAtLoginPromptNeedsLogin(t *testing.T) {
 	}
 	if status != "fail" {
 		t.Fatalf("agents status = %q, want fail — a wedged agent must surface", status)
+	}
+}
+
+// summaryOf runs HealthSummary and returns the top-level "status" verdict and
+// the "fails" count. testDeps wires no GitHub auth, so overall alone is polluted
+// by an unrelated github_auth failure — the fails DELTA between in-grace and
+// past-grace is the clean signal for the agents contribution these tests probe.
+func summaryOf(t *testing.T, s *Server) (status string, fails int) {
+	t.Helper()
+	raw, err := json.Marshal(s.HealthSummary())
+	if err != nil {
+		t.Fatalf("marshal HealthSummary: %v", err)
+	}
+	var parsed struct {
+		Status string `json:"status"`
+		Fails  int    `json:"fails"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal HealthSummary: %v", err)
+	}
+	return parsed.Status, parsed.Fails
+}
+
+// needLoginServer wires a single non-running, unauthenticated ("need login")
+// agent — the exact boot-transient condition Mike Spreitzer saw flip a freshly
+// rolled hive to "Degraded — agents need login". Returns the server so the
+// caller can position startedAt inside or outside the boot-grace window.
+func needLoginServer(t *testing.T) *Server {
+	t.Helper()
+	deps := testDeps(t)
+	deps.AgentMgr = agent.NewManager(map[string]config.AgentConfig{
+		"supervisor": {Backend: "bob", Enabled: true},
+	}, deps.Logger, agent.ProjectContext{})
+	SetBackendAuthProvider(func(backend string) (available, known bool) {
+		return false, backend == "bob" // known-unauthenticated → need login
+	})
+	t.Cleanup(func() { SetBackendAuthProvider(nil) })
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.MarkReady()
+	return s
+}
+
+// TestHealthBootGrace_NeedLoginWithinGraceNotDegraded proves the fix: a
+// need-login agent seen WITHIN the boot-grace window (fresh start / pod roll,
+// agent CLI still re-authenticating) does NOT degrade the hive — the agents
+// check passes and overall stays "ok" — and the suppression is observable via
+// an "within boot grace" detail carrying the process age.
+func TestHealthBootGrace_NeedLoginWithinGraceNotDegraded(t *testing.T) {
+	// Two identical fleets differing only in process age. testDeps wires other
+	// failing checks (no GitHub auth, etc.), so the fails DELTA — not the
+	// absolute count — is the clean signal that the agents path is what grace
+	// suppresses.
+	within := needLoginServer(t)
+	within.startedAt = time.Now() // squarely inside the boot-grace window
+	past := needLoginServer(t)
+	past.startedAt = time.Now().Add(-2 * healthBootGrace) // window elapsed
+
+	status, detail := agentsCheckOf(t, within)
+	if status != "pass" {
+		t.Fatalf("agents status = %q within boot grace, want pass (transient)", status)
+	}
+	if !strings.Contains(detail, "within boot grace") {
+		t.Fatalf("agents detail = %q, want it to explain the boot-grace suppression", detail)
+	}
+	if !strings.Contains(detail, "age=") {
+		t.Fatalf("agents detail = %q, want an age= so operators can see the window", detail)
+	}
+	// The graced agents check contributes NO fail: past-grace has exactly one
+	// more fail (the now-degrading agents check) than the in-grace fleet.
+	_, withinFails := summaryOf(t, within)
+	_, pastFails := summaryOf(t, past)
+	if pastFails != withinFails+1 {
+		t.Fatalf("fails within grace = %d, past grace = %d — grace must suppress exactly the one agents fail", withinFails, pastFails)
+	}
+}
+
+// TestHealthBootGrace_NeedLoginPastGraceDegraded proves grace is bounded: once
+// the boot-grace window elapses, the SAME need-login condition flips to a real
+// "fail" verdict so a stuck-at-login agent is not masked forever.
+func TestHealthBootGrace_NeedLoginPastGraceDegraded(t *testing.T) {
+	s := needLoginServer(t)
+	s.startedAt = time.Now().Add(-2 * healthBootGrace) // window has elapsed
+
+	status, detail := agentsCheckOf(t, s)
+	if status != "fail" {
+		t.Fatalf("agents status = %q past boot grace, want fail (persisting need-login)", status)
+	}
+	if strings.Contains(detail, "within boot grace") {
+		t.Fatalf("agents detail = %q must NOT claim boot grace past the window", detail)
+	}
+	// A persisting need-login past the window degrades the hive.
+	if overall, _ := summaryOf(t, s); overall == "ok" {
+		t.Fatalf("overall = %q past boot grace, want a degraded/critical verdict", overall)
+	}
+}
+
+// TestHealthBootGrace_StaleHeartbeatDegradesEvenWithinGrace proves the grace is
+// scoped tightly to the agents-coming-up transient and does NOT blanket-suppress
+// genuinely-persistent failures. A GitHub-auth failure (a real, non-transient
+// problem) must degrade the hive EVEN inside the boot-grace window — boot grace
+// only silences the need-login/not-yet-running agents path, never a real
+// dependency failure.
+func TestHealthBootGrace_PersistentFailureDegradesEvenWithinGrace(t *testing.T) {
+	deps := testDeps(t)
+	deps.AgentMgr = agent.NewManager(map[string]config.AgentConfig{
+		"supervisor": {Backend: "bob", Enabled: true},
+	}, deps.Logger, agent.ProjectContext{})
+	SetBackendAuthProvider(func(backend string) (available, known bool) {
+		return false, backend == "bob"
+	})
+	t.Cleanup(func() { SetBackendAuthProvider(nil) })
+	// Force a genuine, non-transient dependency failure: no GitHub auth wired
+	// at all → the github_auth check fails regardless of boot age.
+	deps.GHAppAuth = nil
+	deps.GHClient = nil
+
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+	s.MarkReady()
+	s.startedAt = time.Now() // inside the boot-grace window
+
+	// The agents check itself is graced (passes)...
+	if status, _ := agentsCheckOf(t, s); status != "pass" {
+		t.Fatalf("agents status = %q within grace, want pass (agents path is graced)", status)
+	}
+	// ...but the persistent github_auth failure still degrades overall: grace
+	// must not mask a real dependency failure just because the pod is young.
+	if overall, fails := summaryOf(t, s); overall == "ok" || fails == 0 {
+		t.Fatalf("overall = %q, fails = %d — a persistent github_auth failure must degrade EVEN within boot grace", overall, fails)
 	}
 }

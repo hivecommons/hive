@@ -38,7 +38,7 @@ func TestRequeueHub_ReleasesAndBooksCooldown(t *testing.T) {
 		t.Fatalf("issue unexpectedly in failure cooldown before requeue")
 	}
 
-	released := hub.RequeueContributorTask("c-wedged", "wedged: no progress")
+	released, _ := hub.RequeueContributorTask("c-wedged", "wedged: no progress")
 	if released != 1 {
 		t.Fatalf("expected 1 session released, got %d", released)
 	}
@@ -73,10 +73,10 @@ func TestRequeueHub_NoInFlightTask_NoOp(t *testing.T) {
 	hub.connections["conn-idle"] = idle
 	hub.mu.Unlock()
 
-	if got := hub.RequeueContributorTask("c-idle", ""); got != 0 {
+	if got, _ := hub.RequeueContributorTask("c-idle", ""); got != 0 {
 		t.Fatalf("expected 0 released for an idle clanker, got %d", got)
 	}
-	if got := hub.RequeueContributorTask("c-nobody", ""); got != 0 {
+	if got, _ := hub.RequeueContributorTask("c-nobody", ""); got != 0 {
 		t.Fatalf("expected 0 released for an unknown id, got %d", got)
 	}
 }
@@ -97,7 +97,7 @@ func TestRequeueHub_ReleasedTaskReturnsToQueue(t *testing.T) {
 	hub.connections["conn-w2"] = held
 	hub.mu.Unlock()
 
-	if hub.RequeueContributorTask("c-w2", "") != 1 {
+	if released, _ := hub.RequeueContributorTask("c-w2", ""); released != 1 {
 		t.Fatalf("expected release")
 	}
 	key := "myorg/repo1#7"

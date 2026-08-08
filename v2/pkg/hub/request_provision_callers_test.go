@@ -158,8 +158,14 @@ func TestRequestProvisionInTreeCallersSendRequiredFields(t *testing.T) {
 // be a second request path, and — being inline JS — invisible to everything
 // except the audit above.
 func TestRequestProvisionDashboardModalRemoved(t *testing.T) {
+	// btn-request-hive is deliberately absent from this list. The retired modal
+	// used that id on a <button onclick="openRequestHiveModal()"> that opened the
+	// inline modal. #2693 reused the id for a plain <a href="/get-started"> link
+	// that routes to the wizard — it opens no modal and posts nothing. The modal's
+	// own symbols below (openRequestHiveModal, submitProvisionRequest, etc.) remain
+	// the real guard; pinning a bare element id would fail on a benign navigation
+	// link that is the opposite of a second request path.
 	removed := []string{
-		"btn-request-hive",
 		"request-modal",
 		"btn-request-go",
 		"openRequestHiveModal",

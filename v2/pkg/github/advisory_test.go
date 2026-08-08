@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -632,6 +633,57 @@ func TestPostAdvisoryDigest_FindCommentError_StillCreates(t *testing.T) {
 	}
 	if !created {
 		t.Error("expected comment to be created after find error")
+	}
+}
+
+// TestPostAdvisoryDigest_NeutralizesMentions asserts the invariant that no
+// body posted through the advisory digest path ever carries a raw @mention —
+// even when a caller bypasses FormatDigestMarkdown and hands over unsanitized
+// text. The digest comment is rewritten every cycle, so a single raw mention
+// would re-notify that human on every refresh.
+func TestPostAdvisoryDigest_NeutralizesMentions(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	var postedBody string
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			json.NewEncoder(w).Encode([]map[string]any{})
+			return
+		}
+		if r.Method == "POST" {
+			var payload struct {
+				Body string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decoding comment payload: %v", err)
+			}
+			postedBody = payload.Body
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	raw := "## 🐝 Advisory Digest\n- PR #665 (open, by @omerap12) adds a helper\n- ping user@example.com about @some-user"
+	if err := c.PostAdvisoryDigest(context.Background(), repo, 10, raw); err != nil {
+		t.Fatalf("PostAdvisoryDigest: %v", err)
+	}
+	// A mention-position "@username" (@ at start of text or after a
+	// non-alphanumeric character other than ` or /) must never survive.
+	rawMention := regexp.MustCompile("(^|[^A-Za-z0-9`/])@[A-Za-z0-9]")
+	if rawMention.MatchString(postedBody) {
+		t.Errorf("posted digest body contains a raw @mention:\n%s", postedBody)
+	}
+	if !strings.Contains(postedBody, "`omerap12`") {
+		t.Errorf("expected neutralized `omerap12` in posted body:\n%s", postedBody)
+	}
+	if !strings.Contains(postedBody, "`some-user`") {
+		t.Errorf("expected neutralized `some-user` in posted body:\n%s", postedBody)
+	}
+	if !strings.Contains(postedBody, "user@example.com") {
+		t.Errorf("email address must survive sanitization:\n%s", postedBody)
 	}
 }
 

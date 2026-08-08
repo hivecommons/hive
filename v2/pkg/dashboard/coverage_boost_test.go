@@ -214,7 +214,7 @@ func TestBuildAgentOnlyStatus(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -269,17 +269,22 @@ func TestHandleRole_WithHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleRole_WithCookie(t *testing.T) {
+func TestHandleRole_WithSessionCookie(t *testing.T) {
 	srv := newFullServer(t)
+	sid := srv.createUserSession("session-user", "read")
 	req := httptest.NewRequest("GET", "/api/role", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "cookie-user"})
 	w := httptest.NewRecorder()
 	srv.handleRole(w, req)
 
 	var result map[string]string
 	json.NewDecoder(w.Body).Decode(&result)
-	if result["user"] != "cookie-user" {
-		t.Errorf("user = %q, want cookie-user", result["user"])
+	if result["user"] != "session-user" {
+		t.Errorf("user = %q, want session-user", result["user"])
+	}
+	if result["role"] != "read" {
+		t.Errorf("role = %q, want read", result["role"])
 	}
 }
 
@@ -671,13 +676,15 @@ func TestHandleHealthDeep_NotReady(t *testing.T) {
 
 func TestInHealthGrace(t *testing.T) {
 	srv := newFullServer(t)
-	// Not ready yet
-	if srv.inHealthGrace() {
-		t.Error("should not be in grace before MarkReady")
+	// Freshly constructed: startedAt is ~now, so the boot-grace window is open.
+	if inGrace, age := srv.inHealthGrace(); !inGrace {
+		t.Errorf("should be in grace immediately after construction, age=%s", age)
 	}
-	srv.MarkReady()
-	if !srv.inHealthGrace() {
-		t.Error("should be in grace immediately after MarkReady")
+	// Push startedAt past the boot-grace window: a long-lived process must no
+	// longer be graced, so a persisting need-login/down condition can degrade.
+	srv.startedAt = time.Now().Add(-2 * healthBootGrace)
+	if inGrace, age := srv.inHealthGrace(); inGrace {
+		t.Errorf("should not be in grace long after startup, age=%s", age)
 	}
 }
 

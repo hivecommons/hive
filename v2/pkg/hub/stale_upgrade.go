@@ -70,7 +70,17 @@ type upgradeAttemptEvidence struct {
 // Elapsed time alone is NOT sufficient and is not used alone here: a slow image
 // pull looks identical to an orphan if you only look at the clock. Both
 // conditions must hold.
-func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttemptEvidence {
+// latestSHA is the image-verified latest short SHA for entry's branch (empty
+// when unknown). It exists solely to recognise a FLOATING-TAG hive that has
+// already converged: such a hive tracks a mutable …-latest tag, so a restart
+// re-pulls the tag and it can only ever land on the newest build — never on the
+// SPECIFIC historical commit the hub armed as UpgradeTarget. Judged by the
+// exact-target test below, it would look orphaned on every sweep, get re-armed
+// and re-rolled (restarting its pod) up to maxOrphanedUpgradeSweeps, then be
+// wrongly reported as a permanent UpgradeFailed — while it was up to date the
+// whole time. Passing latestSHA lets the evaluation see "floating tag already
+// at latest" and treat it as converged, not orphaned.
+func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA string) upgradeAttemptEvidence {
 	var ev upgradeAttemptEvidence
 
 	if !entry.Upgrading {
@@ -80,6 +90,15 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttempt
 	// heartbeat path, which clears Upgrading and records the cause. Leave that
 	// terminal state alone — it carries a known reason this sweep would erase.
 	if entry.UpgradeFailed {
+		return ev
+	}
+	// Floating-tag hive already on the latest build for its branch: converged,
+	// not orphaned. A mutable tag has no stable target commit, so the exact
+	// UpgradeTarget test further down can never confirm it and would keep
+	// sweeping/re-rolling it forever. The heartbeat completion path clears the
+	// latch, so leave it alone here.
+	if imageTagIsMutable(entry.ImageRef) && latestSHA != "" &&
+		sameCommit(entry.GitHash, latestSHA) {
 		return ev
 	}
 	// A zero UpgradeStartedAt with Upgrading still latched is not a fresh
@@ -118,9 +137,14 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttempt
 	}
 
 	// The spoke is alive and post-dates the instruction. If it is already on the
-	// target, the flag is merely lagging and the heartbeat path clears it; only
-	// a spoke still on a DIFFERENT SHA is genuinely un-upgraded.
-	if entry.UpgradeTarget != "" && sameCommit(entry.GitHash, entry.UpgradeTarget) {
+	// target — or AHEAD of it (a floating-tag re-pull lands on whatever CI last
+	// published, which can surpass a stale target; only ancestry can prove
+	// that) — the flag is merely lagging and the heartbeat path clears it; only
+	// a spoke still on a SHA behind the target is genuinely un-upgraded.
+	// commitAtOrAheadOfTarget is cache-only (the sweep holds s.mu), so an
+	// unresolved pair is treated as "behind" this cycle and re-evaluated next.
+	if entry.UpgradeTarget != "" && (sameCommit(entry.GitHash, entry.UpgradeTarget) ||
+		commitAtOrAheadOfTarget(entry.GitHash, entry.UpgradeTarget, nil)) {
 		return ev
 	}
 
@@ -169,7 +193,14 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
-		ev := evaluateOrphanedUpgrade(h, now)
+		// Resolve the image-verified latest for this hive's branch so the
+		// evaluation can recognise a floating-tag hive that is already at latest
+		// (and must not be swept/re-rolled toward a specific historical target).
+		branch := h.GitBranch
+		if branch == "" {
+			branch = "v2"
+		}
+		ev := evaluateOrphanedUpgrade(h, now, getLatestSHAForBranch(branch))
 		if !ev.orphaned {
 			continue
 		}
@@ -185,6 +216,11 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			sweeps:    h.OrphanedUpgradeSweeps,
 		})
 		h.Upgrading = false
+		// The orphaned attempt is being abandoned — drop its start clock so the
+		// re-armed (or next) upgrade times from zero rather than inheriting this
+		// dead attempt's elapsed. beginUpgrade will stamp a fresh start when the
+		// recovery/heartbeat path re-enters.
+		h.UpgradeStartedAt = time.Time{}
 
 		if exhausted {
 			// Stop retrying. Re-arming again would just reproduce the same

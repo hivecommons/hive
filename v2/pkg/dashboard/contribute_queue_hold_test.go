@@ -226,18 +226,18 @@ func TestQueueMoveToBottomAndHoldControlsPresent(t *testing.T) {
 	body := renderContributePage(t)
 
 	for _, want := range []string{
-		`data-act="bottom"`,                    // Move-to-bottom menu item
-		`Move to bottom`,                       // its label
-		`function ccMoveToBottom(key){`,        // wired mover
-		`ccMoveToPosition(key,ccQueue.length)`, // sends the item to the last slot
-		`data-act="hold"`,                      // Hold/Resume menu item
-		`function ccToggleHold(key,held){`,     // wired toggle
-		`/api/contribute/queue/hold`,           // calls the hold endpoint
-		`cc-q-held`,                            // dimmed held-row class
-		`cc-q-held-tag`,                        // on-hold badge class
-		`on hold`,                              // badge text
-		`color-scheme:light dark`,              // theme-aware spinner-arrow fix (visible in both light + dark; #2612)
-		`.cc-q-moverow input[type=number]`,     // spinner fix targets the number input
+		`data-act="bottom"`,                       // Move-to-bottom menu item
+		`Move to bottom`,                          // its label
+		`function ccMoveToBottom(key){`,           // wired mover
+		`ccMoveToPosition(key,ccQueue.length)`,    // sends the item to the last slot
+		`data-act="hold"`,                         // Hold/Resume menu item
+		`function ccToggleHold(key,held,reason){`, // wired toggle (reason is optional, #queue-hold-reason)
+		`/api/contribute/queue/hold`,              // calls the hold endpoint
+		`cc-q-held`,                               // dimmed held-row class
+		`cc-q-held-tag`,                           // on-hold badge class
+		`on hold`,                                 // badge text
+		`color-scheme:light dark`,                 // theme-aware spinner-arrow fix (visible in both light + dark; #2612)
+		`.cc-q-moverow input[type=number]`,        // spinner fix targets the number input
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("queue hold/bottom controls missing marker %q", want)

@@ -91,6 +91,25 @@ project:
   ai_author: your-bot-user
 ```
 
+### Custom stylesheets
+
+The ClankeR leaderboard, the spoke dashboard, and the read-only `/snapshot`
+preview accept a shareable custom stylesheet parameter:
+
+`/contribute/leaderboard?style=owner/repo/path/to/theme.css@ref`
+`/?style=owner/repo/path/to/theme.css@ref`
+`/snapshot?style=owner/repo/path/to/theme.css@ref`
+
+The `@ref` suffix is optional and defaults to the repo's `HEAD`. Hive only
+accepts the `owner/repo/path.css` triplet form, fetches public GitHub raw content
+server-side without credentials, sanitizes CSS, strips external imports/URLs, and
+serves it from same-origin endpoints with a 128 KiB size cap. The sanitizer
+removes legacy executable CSS vectors and CSS escape sequences. Leaderboard CSS
+is scoped to `#tab-leaderboard`; dashboard and snapshot CSS is scoped to
+`#hive-dashboard-root`, which deliberately leaves login/setup overlays outside
+the custom-theme surface. `/api/style` is public so unauthenticated snapshots can
+load sanitized CSS, and the existing `style-src 'self'` CSP remains sufficient.
+
 ## Agents
 
 Seven agents ship as defaults (scanner, ci-maintainer, quality, architect, supervisor, outreach, sec-check). Enable or disable each in config:
@@ -241,6 +260,11 @@ github:
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
 ```
+
+For GitHub App setup, configure the app's **Setup URL** to
+`https://<hive-host>/gh-setup` and enable **Redirect on update**. After an
+operator installs the app from the dashboard banner, GitHub redirects back and
+the hive verifies and saves the installation ID automatically.
 
 ## Build from Source
 

@@ -71,6 +71,7 @@ func TestHandleCreateHiveValidation_Cov2(t *testing.T) {
 	}{
 		{"bad json", `{`, http.StatusBadRequest},
 		{"missing org", `{"repos":"r","github_token":"ghp_x"}`, http.StatusBadRequest},
+		{"repo target host as org", `{"org":"github.ibm.com","repos":"github.ibm.com/repo","github_token":"ghp_x"}`, http.StatusBadRequest},
 		{"invalid org", `{"org":"bad org!","repos":"r","github_token":"ghp_x"}`, http.StatusBadRequest},
 		{"no creds", `{"org":"acme","repos":"repo"}`, http.StatusBadRequest},
 		{"bad token prefix", `{"org":"acme","repos":"repo","github_token":"xxx"}`, http.StatusBadRequest},
@@ -85,6 +86,24 @@ func TestHandleCreateHiveValidation_Cov2(t *testing.T) {
 				t.Errorf("status = %d, want %d (body=%s)", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandleCreateHiveRejectsRepoTargetShapeWithMessage(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{}, SaaSQuota: 5})
+	s := newHandlerHub2()
+
+	rec := httptest.NewRecorder()
+	req := reqWithUser(http.MethodPost, "/api/saas/hives", `{"org":"github.ibm.com","repos":"github.ibm.com/repo","github_token":"ghp_x"}`, "alice")
+	s.handleCreateHive(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("body = %q, want to contain %q", rec.Body.String(), want)
 	}
 }
 

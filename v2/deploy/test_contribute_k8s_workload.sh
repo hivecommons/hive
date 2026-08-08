@@ -97,9 +97,11 @@ else
   echo "  SKIP: PyYAML unavailable; skipping structural parse"
 fi
 
-# ── Unsupported headless backend (goose): warn on STDERR, keep stdout clean. ──
+# ── Unsupported headless backend (bob): warn on STDERR, keep stdout clean. ──
+# bob drives an interactive TUI with no known one-shot entry point. goose used
+# to be the example here, but it is headless-capable via `goose run` (#2828).
 cat > "$FAKE_HOME/.config/hive/contributor.env" <<'EOF'
-AGENT_BACKEND=goose
+AGENT_BACKEND=bob
 HIVE_REGISTRATION_TOKEN=placeholder-reg-token
 EOF
 ERR="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" just contribute-k8s hive-contributor 2>&1 >/dev/null)"

@@ -195,76 +195,51 @@ func TestApprovePrefersRequestGitHubHost(t *testing.T) {
 	}
 }
 
-// TestRepairGitHubHostsFromClusters covers the retroactive repair: it fixes an
-// already-assigned hive with a blank host on a GHE cluster, refuses to touch an
-// explicit host, an explicit public override, a public cluster, or an unclaimed
-// placeholder — and is idempotent on a second run.
-func TestRepairGitHubHostsFromClusters(t *testing.T) {
+// TestNoPerBeatClusterHostFill pins the removal of the per-beat
+// blank-host-from-cluster fill. FORGE IS PER-HIVE: a claimed hive's empty
+// github_host means public github.com (the field's documented meaning), and a
+// GHE cluster hosts github.com projects beside its GHE ones — so nothing on the
+// heartbeat path may materialise the CLUSTER's forge into a hive's record. The
+// only remaining github_host writers are claim-time recording (assign/approve,
+// covered above), a HEALTHY spoke's own positive report
+// (reconcileGitHubHostFromSpoke), and the mis-flip restore
+// (repairMisflippedForgeFromRequest).
+func TestNoPerBeatClusterHostFill(t *testing.T) {
 	useTempHiveDir(t)
 	s := newGHETestHub()
 
-	seed := []*SaaSHive{
-		// The vllm-d case: assigned, blank host, GHE cluster.
-		{ID: "hosted-blank-ghe", Owner: "taylormgeorge91", Org: "katamari",
-			Repos: []string{"ibm-aiops-orchestrator"}, PrimaryRepo: "ibm-aiops-orchestrator",
-			ACMMLevel: 2, ClusterID: defaultClusterID},
-		// Explicitly set to a DIFFERENT host — must never be clobbered.
-		{ID: "hosted-explicit", Owner: "a", Org: "o", GitHubHost: "github.explicit.com",
-			Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 1, ClusterID: defaultClusterID},
-		// Explicit public override on a GHE cluster — must stay public.
-		{ID: "hosted-public-override", Owner: "a", Org: "o", GitHubBaseURL: githubHostPublic,
-			Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 1, ClusterID: defaultClusterID},
-		// Public cluster — nothing to record.
-		{ID: "hosted-public-cluster", Owner: "a", Org: "o",
-			Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 1, ClusterID: "public-cluster"},
-		// Unclaimed placeholder — assign owns it, repair must skip it.
-		{ID: "hosted-available-x", Owner: hubAdminUsername, Status: statusAvailable,
-			ClusterID: defaultClusterID},
-	}
-	for _, h := range seed {
-		if err := saveSaaSHive(h); err != nil {
-			t.Fatal(err)
-		}
+	// A claimed hive with a blank host on the GHE cluster — the shape the old
+	// per-beat fill rewrote to the cluster forge, flipping github.com projects.
+	h := &SaaSHive{ID: "hosted-blank", Owner: "a", Org: "ibm", Status: statusAssigned,
+		Repos: []string{"alchemy-logging"}, PrimaryRepo: "alchemy-logging",
+		ACMMLevel: 2, ClusterID: defaultClusterID}
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
 	}
 
-	const wantRepaired = 1 // only hosted-blank-ghe qualifies
-	if got := s.repairGitHubHostsFromClusters(); got != wantRepaired {
-		t.Errorf("repairGitHubHostsFromClusters() = %d, want %d", got, wantRepaired)
+	// A beat from a healthy public spoke must leave the record blank (=public).
+	payload := &HeartbeatPayload{HiveID: h.ID, ClusterID: defaultClusterID}
+	s.reconcileGitHubHostFromSpoke(payload)
+	s.repairMisflippedForgeFromRequest(payload)
+	if got := loadSaaSHive(h.ID); got == nil || got.GitHubHost != "" {
+		t.Errorf("GitHubHost = %q, want blank — the cluster's forge must never be written into a claimed hive's record on a heartbeat", got.GitHubHost)
 	}
 
-	want := map[string]string{
-		"hosted-blank-ghe":       gheTestHost,
-		"hosted-explicit":        "github.explicit.com",
-		"hosted-public-override": "",
-		"hosted-public-cluster":  "",
-		"hosted-available-x":     "",
-	}
-	for id, wantHost := range want {
-		h := loadSaaSHive(id)
-		if h == nil {
-			t.Fatalf("hive %s disappeared", id)
-		}
-		if h.GitHubHost != wantHost {
-			t.Errorf("%s: GitHubHost = %q, want %q", id, h.GitHubHost, wantHost)
-		}
-	}
-
-	// Idempotent: a second sweep over an already-repaired fleet changes nothing.
-	if got := s.repairGitHubHostsFromClusters(); got != 0 {
-		t.Errorf("second repair sweep changed %d hives, want 0", got)
-	}
-	if h := loadSaaSHive("hosted-blank-ghe"); h == nil || h.GitHubHost != gheTestHost {
-		t.Errorf("repaired host did not survive a second sweep: %+v", h)
+	// And the per-hive resolver reads that blank as PUBLIC, not as the cluster.
+	cluster := s.clusters[defaultClusterID]
+	if id := ResolveHiveIdentity(loadSaaSHive(h.ID), &cluster); !sameGitHubHost(id.Forge, publicForgeHost) {
+		t.Errorf("resolved forge = %q, want public — empty github_host on a claimed hive means github.com", id.Forge)
 	}
 }
 
-// TestRepairedHostReachesSpokeViaHeartbeat is the end-to-end trace that makes
-// the repair worth anything: filling GitHubHost on an ALREADY-DELIVERED claim
-// must actually cause projectConfigForHiveID to push the GHE API URL.
+// TestRepairedHostReachesSpokeViaHeartbeat is the end-to-end trace for a
+// recorded GHE host: once a hive's OWN github_host names the GHE forge (set at
+// claim time, by a healthy spoke's report, or by an operator), the heartbeat
+// must push the GHE API URL to a spoke still reporting the public one.
 //
 // Before the needGHEAPIPush gate this failed: ClaimDelivered == true and a
 // matching vanity URL made every push condition false, so the reconcile
-// returned nil forever and the repaired host never left the hub.
+// returned nil forever and the recorded host never left the hub.
 func TestRepairedHostReachesSpokeViaHeartbeat(t *testing.T) {
 	useTempHiveDir(t)
 	s := newGHETestHub()
@@ -284,18 +259,21 @@ func TestRepairedHostReachesSpokeViaHeartbeat(t *testing.T) {
 	// publicAPIURL is what a misconfigured GHE spoke reports today.
 	const publicAPIURL = "https://api.github.com"
 
-	// Before the repair the hub has nothing to say.
+	// With no recorded host the hub has nothing to say — and, per-hive doctrine,
+	// nothing on the beat path fills one in from the cluster.
 	if pc := projectConfigForHiveID(h.ID, h.Org, h.Repos, h.PrimaryRepo, h.ACMMLevel, "", publicAPIURL); pc != nil {
-		t.Fatalf("expected no push before repair, got %+v", pc)
+		t.Fatalf("expected no push before the host is recorded, got %+v", pc)
 	}
 
-	// This is the entry point the heartbeat handler calls, per hive, per beat.
-	if !s.repairGitHubHostForHive(h.ID) {
-		t.Fatal("per-hive repair reported no change for a blank host on a GHE cluster")
-	}
-	// Idempotent on the next beat — the heartbeat calls this every time.
-	if s.repairGitHubHostForHive(h.ID) {
-		t.Error("per-hive repair changed an already-repaired hive on a second beat")
+	// A WORKING spoke coherently reporting the GHE forge — GHE urls, the GHE
+	// App, a live installation — backfills the still-empty host: the per-hive
+	// evidence path that replaced the cluster-default fill. (Urls alone no
+	// longer qualify: they are exactly what a mis-delivery leaves behind.)
+	if !s.reconcileGitHubHostFromSpoke(&HeartbeatPayload{
+		HiveID: h.ID, ClusterID: defaultClusterID, GitHubHost: gheTestHost, GitHubAPIURL: gheTestAPIURL,
+		GitHubAppID: testGHEAppID, GitHubInstallationID: 42,
+	}) {
+		t.Fatal("a working spoke's coherent GHE report did not backfill the empty host")
 	}
 
 	// After the repair the very next heartbeat must carry the GHE API URL.

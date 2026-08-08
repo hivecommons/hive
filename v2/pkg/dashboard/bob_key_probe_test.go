@@ -59,10 +59,11 @@ func postBobKeyTest(t *testing.T, s *Server, body string) (*httptest.ResponseRec
 // status ok, and the key is not persisted anywhere.
 func TestBobKeyTest_PastedKeyOK_NotPersisted(t *testing.T) {
 	path := isolateBobKeySources(t)
-	var gotAuth, gotPath string
+	var gotAuth, gotPath, gotUA string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
+		gotUA = r.Header.Get("User-Agent")
 		if gotAuth != "Apikey "+bobTestKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -88,6 +89,11 @@ func TestBobKeyTest_PastedKeyOK_NotPersisted(t *testing.T) {
 	}
 	if gotPath != bobProbePath {
 		t.Errorf("probe hit %q, want %q", gotPath, bobProbePath)
+	}
+	// The Cloudflare WAF in front of the bob backend blocks Go's default
+	// User-Agent with an HTML 403 — the probe must identify as bobshell.
+	if gotUA != bobProbeUserAgent {
+		t.Errorf("backend saw User-Agent %q, want %q", gotUA, bobProbeUserAgent)
 	}
 	// Pre-save validation must not persist the key or touch config.
 	if _, err := os.Stat(path); err == nil {

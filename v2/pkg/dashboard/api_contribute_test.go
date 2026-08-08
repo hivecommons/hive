@@ -163,6 +163,21 @@ func TestContributeLanding(t *testing.T) {
 	if !bytes.Contains(body, []byte("Default shown: macOS + Claude Code + containerized mode")) {
 		t.Error("server-rendered fallback command block missing default marker comment")
 	}
+
+	// #2846: multi-hub contributor sessions must stay discoverable from the
+	// onboarding page, including the ordering rule for paired tokens.
+	for _, want := range [][]byte{
+		[]byte(`id="multi-hub-note"`),
+		[]byte("Contribute to multiple hives"),
+		[]byte("HIVE_HUB</code> to comma-separated WebSocket URLs"),
+		[]byte("HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order"),
+		[]byte("one CLI/tmux session"),
+		[]byte("github.com/kubestellar/hive/pull/2846"),
+	} {
+		if !bytes.Contains(body, want) {
+			t.Errorf("landing page missing multi-hub help text %q", want)
+		}
+	}
 }
 
 // TestContributeLandingHasOpsTab pins the additive tab chrome: the landing page
@@ -321,6 +336,90 @@ func TestContributeLandingHasKubernetesMode(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("existing run mode removed: missing %q", want)
+		}
+	}
+}
+
+// TestContributeLandingHasWatsonxOption pins the clanker-side watsonx.ai
+// onboarding option: a contributor bringing their own watsonx OpenAI-compatible
+// endpoint + key gets a labeled, guided CLI choice (instead of "Other"), and
+// the backend is headless-capable so it does not trip the Kubernetes-mode
+// no-headless-mode warning. This is onboarding UX only — the hub never sees
+// the contributor's watsonx endpoint or key.
+func TestContributeLandingHasWatsonxOption(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		// The CLI select option: labeled, guided, own-endpoint-and-key.
+		`value="watsonx"`,
+		`watsonx.ai (IBM Granite + your key)`,
+		// The env block routes through the OpenAI-compatible gateway, same
+		// pattern as vllm/llm-d, and stays local (never sent to the hive).
+		`ml.cloud.ibm.com/ml/gateway/v1`,
+		`WATSONX_PROJECT_ID`,
+		`never sent to the hive`,
+		// CLIENTS metadata tile.
+		`watsonx:{name:'watsonx.ai',tag:'IBM'}`,
+		// Headless-capable: must be registered so Kubernetes mode does not warn.
+		`K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/contribute watsonx onboarding surface missing %q", want)
+		}
+	}
+}
+
+// TestContributeK8sHeadlessCapability enumerates every backend the Kubernetes
+// run-mode reasons about and pins whether it is headless-capable, so adding a
+// backend forces an explicit decision here rather than silently defaulting to
+// "no headless mode". goose is capable via its `goose run --no-session -t`
+// one-shot sub-command (#2828); bob/agy/pi drive an interactive TUI with no
+// known non-interactive entry point, so they must keep warning.
+func TestContributeK8sHeadlessCapability(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /contribute = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, tc := range []struct {
+		backend  string
+		headless bool
+		why      string
+	}{
+		{"claude", true, "claude -p print mode"},
+		{"litellm", true, "claude binary against a LiteLLM proxy"},
+		{"copilot", true, "copilot -p programmatic mode"},
+		{"codex", true, "codex exec sub-command"},
+		{"watsonx", true, "OpenAI-compatible endpoint via the claude binary"},
+		{"goose", true, "goose run --no-session -t one-shot sub-command (#2828)"},
+		{"bob", false, "interactive TUI, no known one-shot entry point"},
+		{"agy", false, "interactive TUI, no known one-shot entry point"},
+		{"pi", false, "interactive TUI, no known one-shot entry point"},
+	} {
+		// The capability map is emitted as a JS object literal keyed by backend.
+		present := strings.Contains(body, tc.backend+":1")
+		if present != tc.headless {
+			t.Errorf("K8S_HEADLESS_BACKENDS headless=%v for %q, want %v (%s)",
+				present, tc.backend, tc.headless, tc.why)
 		}
 	}
 }
@@ -625,6 +724,7 @@ func TestTrustTierColor(t *testing.T) {
 		{"newcomer", "#8b949e"},
 		{"contributor", "#3fb950"},
 		{"trusted", "#d29922"},
+		{"merger", "#f778ba"},
 		{"advisor", "#a371f7"},
 		{"revoked", "#f85149"},
 		{"unknown", "#8b949e"},
@@ -645,6 +745,7 @@ func TestTrustTierBadgeCSS(t *testing.T) {
 		{"newcomer", "rgba(107,114,128,0.2)"},
 		{"contributor", "rgba(59,130,246,0.2)"},
 		{"trusted", "rgba(34,197,94,0.2)"},
+		{"merger", "rgba(247,120,186,0.2)"},
 		{"advisor", "rgba(168,85,247,0.2)"},
 		{"revoked", "rgba(239,68,68,0.2)"},
 		{"unknown", "rgba(107,114,128,0.2)"},
@@ -1115,12 +1216,12 @@ func TestContributeTabURLWiring(t *testing.T) {
 	body := w.Body.String()
 
 	for _, needle := range []string{
-		"function tabFromLocation",   // reads location.pathname + ?tab= on load
-		"history.pushState",          // address-bar reflection on tab switch
-		"popstate",                   // Back/Forward navigation
-		"'operations'",               // clean name accepted for Operations
-		"'management'",               // clean name accepted for Management
-		"/contribute/'+slug",         // path-style URL construction
+		"function tabFromLocation", // reads location.pathname + ?tab= on load
+		"history.pushState",        // address-bar reflection on tab switch
+		"popstate",                 // Back/Forward navigation
+		"'operations'",             // clean name accepted for Operations
+		"'management'",             // clean name accepted for Management
+		"/contribute/'+slug",       // path-style URL construction
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("served page missing tab-URL wiring: %q", needle)

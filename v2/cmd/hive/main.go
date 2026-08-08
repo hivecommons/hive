@@ -50,6 +50,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 	"github.com/kubestellar/hive/v2/pkg/trajectory"
+	"github.com/kubestellar/hive/v2/pkg/watsonx"
 )
 
 var (
@@ -187,6 +188,17 @@ func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitH
 //	                     hub does not track; reading that as a clear would blank
 //	                     a working installation fleet-wide and turn a key-only
 //	                     fault into a total auth outage.
+//
+// docs_installation_id is DELIBERATELY untouched by all three cases. It is the
+// optional docs-org add-on installation, has no rediscovery flow (zero simply
+// disables the docs token refresh, permanently), and a stale value is
+// non-fatal: the periodic docs mint warns and retries. After an app-changing
+// delivery it can therefore briefly equal the PREVIOUS app's installation id —
+// which looks like the old installation_id was "parked" there, but is just the
+// provisioned docs value (public hives commonly provision both fields with the
+// same installation) surviving a reset that correctly cleared only
+// installation_id. On a flip-back to the original App it becomes valid again
+// on its own.
 func nextInstallationID(current int64, ghCfg *hub.HeartbeatGitHubAppConfig) (next int64, reset bool) {
 	if ghCfg == nil {
 		return current, false
@@ -540,12 +552,10 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 	var out githubAuth
 	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
 
-	// HasUsableApp() rejects config.PlaceholderAppID. A placeholder paired with
-	// a real installation_id — exactly what happens the instant an owner
-	// installs the App on a pre-provisioned hive — used to satisfy a bare
-	// `AppID != 0` test and commit this process to App auth it could never
-	// perform.
-	if cfg.GitHub.HasUsableApp() {
+	// HasApp() rejects config.PlaceholderAppID. Build AppAuth as soon as a real
+	// app_id and key are present, even when installation_id is still empty: the
+	// App JWT is exactly what automatic installation-ID discovery needs.
+	if cfg.GitHub.HasApp() {
 		appAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, appKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 		if err != nil {
 			// A genuinely-configured App whose key is missing or malformed is a
@@ -573,6 +583,12 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 
 	if out.AppAuth != nil {
 		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
+		if cfg.GitHub.InstallationID == 0 {
+			out.Failure = "The GitHub App is configured but has no installation. Install the app on your org; this hive will discover the installation automatically."
+			out.State = github.AppStateNotInstalled
+			logger.Warn("GitHub App configured without installation_id — starting in dashboard-only mode while auto-discovery polls")
+			return out
+		}
 		// Correct a stale/wrong installation_id BEFORE building the client, so
 		// the very first token this process mints is scoped to the right org
 		// rather than 403ing on every write until the self-heal tick runs.
@@ -638,12 +654,17 @@ func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile s
 		logger.Warn("failed to init docs org token", "error", err)
 		return
 	}
-	if _, err := docsAuth.Token(ctx); err != nil {
-		logger.Warn("failed to generate initial docs org token", "error", err)
-	} else {
-		logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
-	}
 	go func() {
+		// Mint the initial docs token in the BACKGROUND, not on the startup
+		// path. The docs org is an add-on; blocking here on a docs-installation
+		// mint that hangs (unreachable/uninstalled GHE) would delay the whole
+		// process reaching MarkReady — the #2439 readiness-stall pattern. The
+		// mint is bounded (tokenMintTimeout) and non-fatal regardless.
+		if _, err := docsAuth.Token(ctx); err != nil {
+			logger.Warn("failed to generate initial docs org token", "error", err)
+		} else {
+			logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
+		}
 		const docsTokenRefreshInterval = 45 * time.Minute
 		ticker := time.NewTicker(docsTokenRefreshInterval)
 		defer ticker.Stop()
@@ -873,6 +894,25 @@ func main() {
 		"agents", len(cfg.Agents),
 		"hive_id", cfg.HiveID,
 	)
+	startupRepoTargetIssue := config.ValidateRepoTargets(cfg)
+	if startupRepoTargetIssue != nil {
+		logger.Warn("repo target misconfigured — owner action required",
+			"issue", startupRepoTargetIssue.Message,
+			"hive_id", cfg.HiveID,
+			"org", cfg.Project.Org,
+			"repos", cfg.Project.Repos,
+			"primary_repo", cfg.Project.PrimaryRepo,
+		)
+	}
+	repoTargetMisconfigured := func() bool {
+		return config.ValidateRepoTargets(cfg) != nil
+	}
+	repoTargetIssueMessage := func() string {
+		if issue := config.ValidateRepoTargets(cfg); issue != nil {
+			return issue.Message
+		}
+		return ""
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -897,6 +937,7 @@ func main() {
 	appAuthState := ghAuth.State
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+		ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
 	}
 	// Load user token for advisory posting (comments on issues as the logged-in user)
 	var userGHClient atomic.Pointer[github.Client]
@@ -1306,7 +1347,7 @@ func main() {
 					continue
 				}
 				if mode.Cadences == nil {
-					mode.Cadences = make(map[string]string)
+					mode.Cadences = make(map[string]config.Cadence)
 				}
 				for agentName, cadence := range agentCadences {
 					mode.Cadences[agentName] = cadence
@@ -1348,6 +1389,7 @@ func main() {
 			ghClient.SetRepos(cfg.Project.Repos)
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+				ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
 			}
 			if uc := userGHClient.Load(); uc != nil {
 				uc.SetRepos(cfg.Project.Repos)
@@ -1937,6 +1979,7 @@ func main() {
 			newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+				newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
 			}
 
 			ghClient = newClient
@@ -2081,6 +2124,33 @@ func main() {
 		}
 	}
 
+	// If the App credentials are present but github.installation_id is still
+	// empty, discover it automatically. This covers the delayed approval path:
+	// a non-admin requests installation, an org admin approves later, and the
+	// spoke adopts the installation ID without requiring anyone to paste it.
+	{
+		const githubAppDiscoveryInterval = 5 * time.Minute
+		tryDiscover := func() {
+			if cfg.GitHub.InstallationID != 0 {
+				return
+			}
+			_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
+		}
+		go func() {
+			tryDiscover()
+			ticker := time.NewTicker(githubAppDiscoveryInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					tryDiscover()
+				}
+			}
+		}()
+	}
+
 	// Self-heal the "GitHub App not installed" banner. This handles:
 	// 1. GitHub App credentials arrived after startup (via heartbeat/webhook)
 	// 2. ReinitGitHubFunc succeeded but cleared githubAppRequired before
@@ -2121,6 +2191,7 @@ func main() {
 						if !dashSrv.IsGitHubAppRequired() {
 							continue
 						}
+						_, _ = dashSrv.AutoDiscoverGitHubInstallationID(ctx, false)
 						// Re-run the same read+write verification the manual
 						// Re-check button uses. It clears the flag on success
 						// (installed AND write-verified) and leaves it set on a
@@ -2296,6 +2367,7 @@ func main() {
 					newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+						newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
 					}
 					ghClient = newClient
 					appAuth = newAppAuth
@@ -2339,6 +2411,15 @@ func main() {
 	// store, before anything is written to the PVC.
 	agentMgr.SetRecordPromptCallback(dashSrv.RecordPrompt)
 
+	// Feed agent lifecycle events (start, stop, launch FAILURE, backend/model
+	// change) into the durable audit store behind the dashboard's Audit Log.
+	// Injected as an interface because pkg/dashboard already imports pkg/agent,
+	// so the manager cannot reach the audit store directly without an import
+	// cycle. Motivating case: an agent configured with a backend its hive image
+	// did not support failed at every launch for a day, visible only as a WARN
+	// line inside the pod.
+	agentMgr.SetAuditSink(dashSrv.AgentAuditSink())
+
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
 	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {
@@ -2348,6 +2429,10 @@ func main() {
 	}
 
 	dashboard.SetBackendAuthProvider(agentMgr.BackendAuthAvailable)
+	// Per-agent probe supersedes the backend-level one: under the per-agent-UID
+	// layout each agent has its own HOME, so the shared credential path is empty
+	// even for authenticated agents (see pkg/agent/authprobe.go).
+	dashboard.SetAgentAuthProvider(agentMgr.AgentAuthAvailable)
 
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
@@ -2434,12 +2519,19 @@ func main() {
 					if model == "" {
 						model = gw.DefaultModel
 					}
+					// watsonx authenticates the OpenAI-compatible model gateway
+					// with a short-lived IAM bearer minted from the IBM Cloud API
+					// key (NOT the raw key), and scopes billing/limits by a
+					// project id sent as X-IBM-Project-ID. Mint (cached) and set
+					// both here; every other kind sends the resolved key verbatim.
+					apiKey, extraHeaders := resolveGatewayAuth(gw, agentName, backend, logger)
 					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
-						Backend:  backend,
-						Endpoint: endpoint,
-						Model:    model,
-						APIKey:   gw.ResolveAPIKey(),
-						CABundle: gw.CABundle,
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						APIKey:       apiKey,
+						CABundle:     gw.CABundle,
+						ExtraHeaders: extraHeaders,
 					})
 					return
 				}
@@ -2495,6 +2587,41 @@ func main() {
 						Model:    model,
 						APIKey:   apiKey,
 						CABundle: caBundle,
+					})
+					return
+				}
+				if backend == config.GatewayKindWatsonx {
+					// Built-in "watsonx" backend: the operator set
+					// `backend: watsonx` without a gateway literally NAMED
+					// watsonx (a named one is handled by the gateway branch
+					// above). Resolve the watsonx gateway by KIND so the
+					// endpoint, IBM Cloud key, project id and region all come
+					// from the existing `gateways:` plumbing rather than being
+					// re-derived here.
+					gw := resolveWatsonxGateway(cfg)
+					if gw == nil {
+						logger.Warn("watsonx backend selected but no watsonx gateway is configured; add one under the Model Gateways tab",
+							"agent", agentName, "model", model)
+						return
+					}
+					// Region-only gateways are legal (the guided form can save a
+					// region without an endpoint), so fall back to the shared
+					// region template — the same helper the dashboard preset uses.
+					endpoint := strings.TrimSpace(gw.Endpoint)
+					if endpoint == "" {
+						endpoint = watsonx.EndpointForRegion(gw.Region)
+					}
+					if model == "" {
+						model = gw.DefaultModel
+					}
+					apiKey, extraHeaders := resolveGatewayAuth(gw, agentName, backend, logger)
+					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						APIKey:       apiKey,
+						CABundle:     gw.CABundle,
+						ExtraHeaders: extraHeaders,
 					})
 					return
 				}
@@ -2743,11 +2870,13 @@ func main() {
 					errMsg, _ := dashSrv.InferenceAuthState()
 					return errMsg
 				}(),
-				Repos:       cfg.Project.Repos,
-				PrimaryRepo: cfg.Project.PrimaryRepo,
-				ACMMLevel:   acmmLvl,
-				Agents:      agents,
-				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				RepoTargetMisconfigured: repoTargetMisconfigured(),
+				RepoTargetIssue:         repoTargetIssueMessage(),
+				Repos:                   cfg.Project.Repos,
+				PrimaryRepo:             cfg.Project.PrimaryRepo,
+				ACMMLevel:               acmmLvl,
+				Agents:                  agents,
+				Governor:                hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -3029,15 +3158,17 @@ func main() {
 					acmmLvl = *cfg.ACMMLevel
 				}
 				return &hub.HeartbeatPayload{
-					HiveID:    cfg.HiveID,
-					Org:       cfg.Project.Org,
-					ACMMLevel: acmmLvl,
-					Agents:    agents,
-					GitHash:   gitShort,
-					ClusterID: cfg.Hub.ClusterID,
-					HiveType:  cfg.Hub.HiveType,
-					IsPublic:  cfg.Hub.IsPublic,
-					Version:   "3.0.0",
+					HiveID:                  cfg.HiveID,
+					Org:                     cfg.Project.Org,
+					ACMMLevel:               acmmLvl,
+					Agents:                  agents,
+					GitHash:                 gitShort,
+					ClusterID:               cfg.Hub.ClusterID,
+					HiveType:                cfg.Hub.HiveType,
+					IsPublic:                cfg.Hub.IsPublic,
+					Version:                 "3.0.0",
+					RepoTargetMisconfigured: repoTargetMisconfigured(),
+					RepoTargetIssue:         repoTargetIssueMessage(),
 				}
 			}, targetSHA, logger)
 
@@ -3325,6 +3456,7 @@ func main() {
 				newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+					newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
@@ -3398,6 +3530,15 @@ func main() {
 						logger.Error("failed to save adopted vanity dashboard URL", "error", err)
 					}
 				}
+				return
+			}
+			if issue := config.ValidateProjectRepoTargets(pc.Org, pc.Repos, pc.PrimaryRepo, cfg.GitHub.HostLabel()); issue != nil {
+				logger.Error("REFUSING hub project config: repo target is misconfigured — project left unchanged",
+					"error", issue.Message,
+					"pushed_org", pc.Org,
+					"pushed_repos", pc.Repos,
+					"pushed_primary_repo", pc.PrimaryRepo,
+				)
 				return
 			}
 			curACMM := 0
@@ -3951,7 +4092,7 @@ func runEvalCycle(
 		atomicWrite("/data/last-actionable.json", data)
 	}
 
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, logger)
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, cfg.Governor.Labels.AutoMerge, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -4608,10 +4749,10 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		agents[name] = as
 	}
 
-	cadenceOverrides := make(map[string]map[string]string)
+	cadenceOverrides := make(map[string]map[string]config.Cadence)
 	for modeName, mode := range cfg.Governor.Modes {
 		if len(mode.Cadences) > 0 {
-			cadenceOverrides[modeName] = make(map[string]string, len(mode.Cadences))
+			cadenceOverrides[modeName] = make(map[string]config.Cadence, len(mode.Cadences))
 			for agentName, cadence := range mode.Cadences {
 				cadenceOverrides[modeName][agentName] = cadence
 			}
@@ -4793,12 +4934,13 @@ func applyDuplicatePRGuard(
 	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org, autoMergeLabel string, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
 		holdSet[key] = true
 	}
+	autoMergeLabel = normalizedAutoMergeLabel(autoMergeLabel)
 
 	type eligiblePR struct {
 		Number int      `json:"number"`
@@ -4806,6 +4948,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		Title  string   `json:"title"`
 		Author string   `json:"author"`
 		Labels []string `json:"labels,omitempty"`
+		Queued bool     `json:"queued,omitempty"`
 		// Mergeable is a tri-state string ("yes"/"no"/"unknown"), not a bool.
 		// A bool here defaulted to false for every PR, because the value was
 		// read from a list endpoint that never returns it.
@@ -4866,11 +5009,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		}
 
 		dco := "unknown"
+		queued := false
 		for _, l := range pr.Labels {
 			if l == "dco-signoff: yes" {
 				dco = "yes"
 			} else if l == "dco-signoff: no" {
 				dco = "no"
+			}
+			if l == autoMergeLabel {
+				queued = true
 			}
 		}
 		eligible = append(eligible, eligiblePR{
@@ -4879,6 +5026,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Title:     pr.Title,
 			Author:    pr.Author,
 			Labels:    pr.Labels,
+			Queued:    queued,
 			Mergeable: mergeableJSON(pr.Mergeable),
 			DCO:       dco,
 		})
@@ -4908,6 +5056,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		return
 	}
 	atomicWrite(ciFailingPath, failData)
+}
+
+func normalizedAutoMergeLabel(label string) string {
+	if label = strings.TrimSpace(label); label != "" {
+		return label
+	}
+	return github.AutoMergeQueuedLabel
 }
 
 func atomicWrite(path string, data []byte) {
@@ -5225,6 +5380,62 @@ func runHub(logger *slog.Logger) {
 		os.Exit(1)
 	}
 	logger.Info("hub server stopped")
+}
+
+// resolveWatsonxGateway finds the gateway backing the built-in "watsonx" agent
+// backend. It prefers a gateway explicitly NAMED watsonx, then falls back to
+// the first gateway of KIND watsonx — so `backend: watsonx` works whether the
+// operator named their gateway "watsonx" or something descriptive like
+// "ibm-granite-prod". Returns nil when no watsonx gateway is configured.
+func resolveWatsonxGateway(cfg *config.Config) *config.GatewayConfig {
+	gws := cfg.Governor.ResolvedGateways()
+	for i := range gws {
+		if strings.EqualFold(gws[i].Name, config.GatewayKindWatsonx) &&
+			strings.EqualFold(gws[i].Kind, config.GatewayKindWatsonx) {
+			gw := gws[i]
+			return &gw
+		}
+	}
+	for i := range gws {
+		if strings.EqualFold(gws[i].Kind, config.GatewayKindWatsonx) {
+			gw := gws[i]
+			return &gw
+		}
+	}
+	return nil
+}
+
+// resolveGatewayAuth resolves the bearer token and non-secret extra headers an
+// agent's inference route should present for a gateway.
+//
+// For every kind except watsonx this is the resolved API key verbatim and no
+// extra headers. watsonx authenticates its OpenAI-compatible model gateway with
+// a SHORT-LIVED IAM bearer minted from the IBM Cloud API key (not the raw key)
+// and scopes billing/limits by a project id sent as X-IBM-Project-ID, so both
+// are set here via the shared process-wide minter (pkg/watsonx.DefaultMinter),
+// whose cache means one token is reused across inference, probes and discovery.
+//
+// Shared by the named-gateway branch and the built-in "watsonx" backend branch
+// so the two cannot authenticate differently. Never logs the key or the token.
+func resolveGatewayAuth(gw *config.GatewayConfig, agentName, backend string, logger *slog.Logger) (string, map[string]string) {
+	apiKey := gw.ResolveAPIKey()
+	if !strings.EqualFold(gw.Kind, config.GatewayKindWatsonx) {
+		return apiKey, nil
+	}
+	if token, err := watsonx.DefaultMinter.Token(context.Background(), apiKey); err != nil {
+		logger.Warn("watsonx IAM token mint failed; agent inference will fail until the key/project are valid",
+			"agent", agentName, "gateway", backend, "error", err.Error())
+		// Leave apiKey as-is (the raw key). watsonx will reject it, surfacing a
+		// clear upstream 401 rather than a silent success — better than dropping
+		// the route entirely.
+	} else {
+		apiKey = token
+	}
+	var extraHeaders map[string]string
+	if gw.ProjectID != "" {
+		extraHeaders = map[string]string{watsonx.ProjectIDHeader: gw.ProjectID}
+	}
+	return apiKey, extraHeaders
 }
 
 func envOrDefault(key, fallback string) string {

@@ -138,19 +138,36 @@ type RegistryEntry struct {
 	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
 	PrimaryRepo        string `json:"primaryRepo"`
 	DashboardURL       string `json:"dashboardUrl"`
-	SnapshotURL        string `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int    `json:"acmmLevel"`
-	AgentCount         int    `json:"agentCount"`
-	GovernorMode       string `json:"governorMode"`
-	TotalTokens24h     int64  `json:"totalTokens24h"`
-	ActionableIssues   int    `json:"actionableIssues"`
-	ActionablePRs      int    `json:"actionablePRs"`
-	ContributorCount   int    `json:"contributorCount"`
-	ActiveContributors int    `json:"activeContributors"`
-	Owner              string `json:"owner,omitempty"`
-	ClusterID          string `json:"clusterId,omitempty"`
-	ClusterName        string `json:"clusterName,omitempty"`
-	HiveType           string `json:"hiveType,omitempty"`
+	// PublicURLSelfCheck is the spoke's own reachability verdict for
+	// DashboardURL. It is intentionally separate from the hub-side probe:
+	// private-network hives may be unreachable from the public hub while alive
+	// from their own cluster. Nil means an old spoke did not report it.
+	PublicURLSelfCheck *PublicURLSelfCheck `json:"publicUrlSelfCheck,omitempty"`
+	SnapshotURL        string              `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int                 `json:"acmmLevel"`
+	AgentCount         int                 `json:"agentCount"`
+	GovernorMode       string              `json:"governorMode"`
+	TotalTokens24h     int64               `json:"totalTokens24h"`
+	ActionableIssues   int                 `json:"actionableIssues"`
+	ActionablePRs      int                 `json:"actionablePRs"`
+	ContributorCount   int                 `json:"contributorCount"`
+	ActiveContributors int                 `json:"activeContributors"`
+	Owner              string              `json:"owner,omitempty"`
+	ClusterID          string              `json:"clusterId,omitempty"`
+	ClusterName        string              `json:"clusterName,omitempty"`
+	// Namespace is the Kubernetes namespace this hive's spoke runs in. For a
+	// hub-provisioned (hosted) hive it is hostedNamespaceForHive(sh) —
+	// "hive-hosted-<id>" — overlaid from the authoritative SaaSHive record on
+	// the heartbeat path (NOT reported by the spoke), so operators can
+	// `kubectl -n <ns> exec …` straight from My Hives without re-grepping
+	// `kubectl get ns` on a live cluster. It is derived, not renamed: a claimed
+	// placeholder keeps its "hive-hosted-<placeholder-id>" namespace forever
+	// (the ID never changes on claim — see hosted_namespace_identity.go), so
+	// this stays correct across reassignment. Empty for a self-hosted/BYO hive
+	// that does not run in a hub-provisioned namespace, or for a hive with no
+	// SaaSHive record (old spoke) — never guessed for those.
+	Namespace string `json:"namespace,omitempty"`
+	HiveType  string `json:"hiveType,omitempty"`
 	// ProvStatus is the authoritative provisioning status copied from the hive's
 	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
 	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
@@ -210,12 +227,14 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory          []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory             []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired     bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue    string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState        string       `json:"githubAppState,omitempty"`
+	OrphanedUpgradeSweeps   int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory            []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory               []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired       bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue      string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState          string       `json:"githubAppState,omitempty"`
+	RepoTargetMisconfigured bool         `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue         string       `json:"repoTargetIssue,omitempty"`
 	// ConflictingReporters names two spoke instances that are BOTH reporting
 	// as this hive (e.g. "hive-abc… ↔ hive-def…"), set when their beats
 	// alternate. Non-empty is a critical drift signal: every field in this
@@ -457,6 +476,69 @@ func normalizeOrgRef(s string) (host, org string) {
 	return "", parts[0]
 }
 
+// normalizeProjectRef splits a GitHub project reference into forge host, org,
+// and repo path segments. Public GitHub's ordinary "org/repo" shape is left as
+// (host="", org="org", repos=["repo"]); a leading GitHub forge host is stripped,
+// so "github.ibm.com/org/repo" becomes (host="github.ibm.com", org="org",
+// repos=["repo"]). Dotted orgs such as "my.org/repo" remain public org/repo
+// refs, matching normalizeOrgRef's host-vs-org rule.
+func normalizeProjectRef(s string) (host, org string, repos []string) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return "", "", nil
+	}
+	rawParts := strings.Split(s, "/")
+	parts := make([]string, 0, len(rawParts))
+	for _, p := range rawParts {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 {
+		return "", "", nil
+	}
+	if looksLikeGitHubForgeHost(parts[0]) {
+		host = parts[0]
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return host, "", nil
+	}
+	org = parts[0]
+	if len(parts) > 1 {
+		repos = append(repos, parts[1:]...)
+	}
+	return host, org, repos
+}
+
+func firstCSV(s string) string {
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func replaceFirstCSV(s, first string) string {
+	parts := strings.Split(s, ",")
+	for i := range parts {
+		if strings.TrimSpace(parts[i]) != "" {
+			if strings.TrimSpace(first) == "" {
+				parts = append(parts[:i], parts[i+1:]...)
+			} else {
+				parts[i] = first
+			}
+			return strings.Join(parts, ",")
+		}
+	}
+	return strings.TrimSpace(first)
+}
+
 // looksLikeGitHubForgeHost reports whether a bare label is a GitHub forge
 // hostname (github.com or a GitHub Enterprise host like github.ibm.com) rather
 // than an org name. GitHub Enterprise hosts are conventionally "github.<org
@@ -638,6 +720,32 @@ func secureCompareHub(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// heartbeatBearerOK reports whether the Authorization header carries a valid
+// heartbeat bearer, accepting EITHER scheme so this v2 hub authenticates old and
+// new spokes at once (dual-path, additive — never one instead of the other):
+//
+//   - the legacy RAW master s.hubSecret, presented by the 33 existing spokes; and
+//   - the DERIVED heartbeatKey() (HMAC-SHA256(master, "hive-heartbeat-v1")),
+//     presented by a v4 spoke that self-derived it from the same HIVE_HUB_SECRET.
+//
+// Both comparisons are constant-time via secureCompareHub. The caller keeps its
+// outer `if s.hubSecret != ""` guard, so an unconfigured hub still authenticates
+// nothing here — this only widens WHICH bearer a configured hub accepts, and only
+// ever adds the new scheme alongside the old one.
+func (s *HubServer) heartbeatBearerOK(auth string) bool {
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	tok := strings.TrimPrefix(auth, "Bearer ")
+	if secureCompareHub(tok, s.hubSecret) {
+		return true
+	}
+	if hk := s.heartbeatKey(); hk != "" && secureCompareHub(tok, hk) {
+		return true
+	}
+	return false
+}
+
 // heartbeatHealthStaleness is the maximum age of heartbeat-reported health
 // data before it is considered stale and displayed with a warning.
 const heartbeatHealthStaleness = 5 * time.Minute
@@ -690,8 +798,22 @@ type HubServer struct {
 	// the real addVanityHostToIngress runs; set by tests, which have no cluster to
 	// kubectl to.
 	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
-	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu  sync.RWMutex
+	// vanityRepairInFlight tracks hive IDs whose retroactive vanity-URL repair
+	// is currently running in the background (kickVanityURLRepairAsync), so the
+	// heartbeat path starts at most one per hive. On an unreachable cluster a
+	// single repair attempt spends minutes in kubectl dial timeouts while beats
+	// keep arriving every ~2 min; without this guard the attempts pile up
+	// goroutines all hanging against the same dead cluster.
+	vanityRepairInFlight sync.Map // hive ID → struct{}
+	// claimWorkInFlight tracks hive IDs whose claim-time cluster work
+	// (namespace identity stamp + vanity mint) is currently running in the
+	// background (kickClaimClusterWorkAsync), so assign/approve start at most
+	// one work-set per hive. Same rationale as vanityRepairInFlight above: a
+	// single attempt against an unreachable cluster spends minutes in kubectl
+	// dial timeouts, and stacking attempts piles up goroutines for no benefit.
+	claimWorkInFlight sync.Map                         // hive ID → struct{}
+	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu sync.RWMutex
 
 	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
 	// having a live dashboard session. It powers the "logged into their hive right
@@ -733,6 +855,12 @@ type HubServer struct {
 	// the time after which kubectl may be retried.
 	clusterUnreachableUntil map[string]time.Time
 	clusterUnreachableMu    sync.Mutex
+	// lastNetAdminReconcile throttles the NET_ADMIN securityContext-drift
+	// reconcile (netadmin_reconcile.go). The SHA poller ticks every 2 min, but
+	// the drift is static remediation, not a hot path, so we run the sweep at
+	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
+	// (both are poller-loop-only state; no need for a separate mutex).
+	lastNetAdminReconcile time.Time
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
@@ -814,6 +942,11 @@ type HubServer struct {
 	// which already probes those URLs. Carries its own leaf mutex and is never
 	// touched while s.mu is held — see url_reachability.go.
 	urlHealth *urlHealthState
+
+	// githubInstallationAccount resolves a GitHub App installation ID to its
+	// owning account login. Nil means use the fleet App key. Tests replace it
+	// with a fake API.
+	githubInstallationAccount func(context.Context, int64) (string, error)
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -972,6 +1105,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
 	s.mux.HandleFunc("POST /api/github/webhook", s.handleGitHubWebhook)
+	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupRouter)
 	s.mux.HandleFunc("GET /learn", s.serveStatic("static/learn.html"))
 	s.mux.HandleFunc("GET /get-started", s.serveStatic("static/get-started.html"))
 	s.mux.HandleFunc("GET /api/docs", s.serveStatic("static/api-docs.html"))
@@ -1035,7 +1169,9 @@ func (s *HubServer) Shutdown(timeout time.Duration) error {
 func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		// Dual-path: accept the legacy raw-secret bearer (old spokes) OR the
+		// derived heartbeat key (v4 spokes). See heartbeatBearerOK.
+		if !s.heartbeatBearerOK(auth) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -1142,6 +1278,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
 		DashboardURL:       payload.DashboardURL,
+		PublicURLSelfCheck: sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
 		SnapshotURL:        payload.SnapshotURL,
 		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
@@ -1223,6 +1360,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// identifier sanitizer stripped every space out of it.
 		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		RepoTargetMisconfigured: payload.RepoTargetMisconfigured,
+		RepoTargetIssue:         sanitizeProseField(payload.RepoTargetIssue),
 		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
 		GitHubAppSlug:           payload.GitHubAppSlug,
@@ -1268,6 +1407,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// entry the dashboard renders. The spoke never reports this, so a blank
 		// ProjectName simply leaves the client on its org/repo fallback label.
 		entry.ProjectName = sh.ProjectName
+		// Persist the hosted namespace ("hive-hosted-<id>") the same way — the
+		// hub already derives it deterministically from the (stable) hive ID, so
+		// storing it here makes it authoritative, self-healing across a claim/
+		// reassign, and available to My Hives + kubectl-exec without a live
+		// `kubectl get ns` hunt. Only set when a SaaSHive record exists, so a
+		// self-hosted/BYO hive keeps Namespace empty rather than being wrongly
+		// labelled with a namespace it does not run in.
+		entry.Namespace = hostedNamespaceForHive(sh)
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1372,15 +1519,46 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					entry.UpgradeFailedAt = h.UpgradeFailedAt
 				}
 			}
-			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
-				// Non-upgrading heartbeat at the target SHA or at latest —
-				// upgrade completed (image may have advanced past the
-				// original target before the spoke pulled it). sameCommit
-				// tolerates short/full SHA length mismatch — a raw == left the
-				// Upgrading badge spinning forever when the spoke reported a
-				// full SHA and the target/latest was the 7-char short form.
+			// A floating-tag deployment (…-latest) pulls the tag on every
+			// rollout and therefore CANNOT land on a specific historical
+			// commit — it lands on whatever CI last published. So its reported
+			// GitHash chases an ever-advancing branch HEAD and may equal
+			// neither the armed target NOR the poller's registryLatestSHA at the
+			// instant this beat arrives (the two caches can be a commit apart
+			// while CI is active). Comparing SHAs at all is the wrong test for
+			// these hives: a non-upgrading heartbeat is itself proof the rollout
+			// finished onto the latest tag. Treat that as complete, or the hive
+			// stays latched "Upgrading" and the stale-upgrade sweep re-arms and
+			// re-rolls its pod every staleUpgradeTimeout forever. Commit-pinned
+			// hives keep the exact-SHA test below — their tag resolves to one
+			// build, so "did it reach the target" is a meaningful question.
+			floatingAtLatest := h.Upgrading && !payload.Upgrading && imageTagIsMutable(payload.ImageRef)
+			if floatingAtLatest {
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				// The upgrade is done — drop the start clock so the next one
+				// times from zero, not from this completed rollout.
+				entry.UpgradeStartedAt = time.Time{}
+				entry.OrphanedUpgradeSweeps = 0
+			} else if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA)) || commitAtOrAheadOfTarget(payload.GitHash, h.UpgradeTarget, s.logger)) {
+				// Non-upgrading heartbeat at the target SHA, at latest, or at
+				// a commit AHEAD of the target — upgrade completed (image may
+				// have advanced past the original target before the spoke
+				// pulled it). sameCommit tolerates short/full SHA length
+				// mismatch — a raw == left the Upgrading badge spinning
+				// forever when the spoke reported a full SHA and the
+				// target/latest was the 7-char short form. The at-or-ahead
+				// check closes the remaining gap (the vllmd-13 wedge): a
+				// floating-tag spoke that pulled a build NEWER than the armed
+				// target while the branch advanced yet again reports a hash
+				// that equals neither the target nor the current latest, and
+				// only commit ANCESTRY can prove it surpassed the target.
+				// Cache-only under s.mu — see commit_order.go.
+				entry.Upgrading = false
+				entry.UpgradeTarget = ""
+				// Upgrade landed — clear the start clock so the next upgrade
+				// times from zero.
+				entry.UpgradeStartedAt = time.Time{}
 				// The upgrade landed, so any orphan-sweep retry budget spent
 				// getting here is no longer relevant. Reset it, or a hive that
 				// needed one sweep on each of three separate upgrades would be
@@ -1390,6 +1568,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// Upgrading with no target (stale flag from config-only restart).
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				entry.UpgradeStartedAt = time.Time{}
 			} else if payload.UpgradeFailed {
 				// The spoke just told us the upgrade FAILED. That is direct
 				// evidence and must beat the inference below, which would
@@ -1398,10 +1577,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// permanent spinner straight back.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				entry.UpgradeStartedAt = time.Time{}
 			} else if h.Upgrading && h.UpgradeTarget != "" {
 				if entry.GitHash != h.GitHash && entry.GitHash != "" {
 					entry.Upgrading = false
 					entry.UpgradeTarget = ""
+					entry.UpgradeStartedAt = time.Time{}
 				} else {
 					entry.Upgrading = true
 					entry.UpgradeTarget = h.UpgradeTarget
@@ -1411,6 +1592,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					entry.UpgradeStartedAt = h.UpgradeStartedAt
 				}
 			}
+			// A true Upgrading flag must ALWAYS carry a start time. The chain
+			// above only carries the clock forward for HUB-armed upgrades
+			// (h.UpgradeTarget != ""); a spoke-REPORTED upgrade left the
+			// rebuilt entry with a zero clock every beat, so the "Upgrading"
+			// badge rendered without its elapsed counter and the stuck-upgrade
+			// alert (which gates on a non-zero clock) was blind. Carry the
+			// previous beat's clock forward when there is one — re-stamping a
+			// live clock would repeat the #2725 reset-every-retry bug — and
+			// stamp now only when no clock has ever existed.
+			stampObservedUpgrade(&entry, h.UpgradeStartedAt)
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)
 			const sparkSampleInterval = 15 * 60 // seconds
 			const sparkMaxPoints = 672
@@ -1459,6 +1650,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		now := time.Now().Unix()
 		entry.IssueHistory = []SparkPoint{{T: now, V: entry.ActionableIssues}}
 		entry.PRHistory = []SparkPoint{{T: now, V: entry.ActionablePRs}}
+		// A brand-new hive whose FIRST heartbeat already reports Upgrading has
+		// no previous beat to carry a clock from — stamp it now so the badge
+		// never renders without its elapsed counter.
+		stampObservedUpgrade(&entry, time.Time{})
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -1561,17 +1756,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// bug. (No-op for unclaimed placeholders and for empty/zero reported values.)
 	s.adoptSpokeProjectConfig(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, clampInt(payload.ACMMLevel, 0, 6))
 
-	// Retroactively fill a blank github_host from this hive's cluster BEFORE
-	// building the project config, so a hive assigned before assign-time
-	// backfill existed starts receiving its GitHub Enterprise API URL on this
-	// very beat. No-op (and silent) for every hive that already has a host, is
-	// an unclaimed placeholder, or sits on a non-GHE cluster.
-	s.repairGitHubHostForHive(payload.HiveID)
-	// Beyond filling a BLANK host, repair a persisted host that is set but WRONG
-	// from the forge the spoke actually reports it runs against (public→GHE only,
-	// never demoting a legit public pin). Closes the vllmd-06 class: meta said
-	// github.com while the spoke ran api_url github.ibm.com.
+	// FORGE IS PER-HIVE: a hive's forge comes from its own recorded github_host
+	// (empty = public github.com), never from its cluster's default — a cluster
+	// hosts hives of both forges. The per-beat blank-fill-from-cluster and the
+	// cluster-keyed "GHE guard" that used to run here are gone: on 2026-08-05
+	// the guard rewrote github_host on every vllm-d hive whose spoke reported
+	// the public App — github.com projects included — and 9 spokes were flipped
+	// onto an App that 404'd every token mint.
+	//
+	// Repair a persisted host that is set but WRONG from the forge the spoke
+	// actually reports it runs against (public→GHE only, never demoting a legit
+	// public pin, and never trusting a spoke whose App auth is failing). Closes
+	// the vllmd-06 class: meta said github.com while the spoke ran api_url
+	// github.ibm.com.
 	s.reconcileGitHubHostFromSpoke(&payload)
+	// Restore a github_host the cluster-keyed guard STOMPED: a claimed hive
+	// whose provision request explicitly records public github.com, whose meta
+	// now says GHE, and whose spoke is failing App auth on that GHE forge, gets
+	// its recorded host set back to github.com — after which the per-hive
+	// identity reconcile below re-delivers its public App on this same beat.
+	// No-op (and silent) for every hive not in that exact state.
+	s.repairMisflippedForgeFromRequest(&payload)
 
 	// Close the FORGE handshake before building the project config, so the beat
 	// on which the spoke first reports the requested host is also the beat the
@@ -1582,13 +1787,26 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.adoptSpokeForge(payload.HiveID, payload.GitHubHost)
 
 	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
-	// feature existed, also BEFORE building the project config, so the URL-only
-	// push below delivers it on this very beat. VanityURL is otherwise written
-	// only at assign time, so those hives would display and open their raw
-	// placeholder host forever. No-op (and silent) for unclaimed placeholders,
-	// hives that already have a vanity URL, and hives whose vanity host the hub
-	// cannot make servable (heartbeat-only clusters keep their placeholder).
-	s.repairVanityURLForHive(payload.HiveID)
+	// feature existed. VanityURL is otherwise written only at assign time, so
+	// those hives would display and open their raw placeholder host forever.
+	// No-op for unclaimed placeholders and hives that already have a vanity URL.
+	//
+	// ASYNC, deliberately. The repair shells out to kubectl against the hive's
+	// cluster (existingVanityHost, then addVanityHostToIngress), and on a
+	// cluster the hub cannot reach (vllm-d is heartbeat-only/firewalled) each
+	// call blocks until its TCP dial times out — ~90s per beat observed live.
+	// The spoke's heartbeat client gives up after heartbeatTimeout (10s), so
+	// running the repair synchronously here meant EVERY response built below —
+	// including the claimed-project config that is the ONLY channel by which an
+	// assignment can reach a heartbeat-only spoke — was written to a connection
+	// the spoke had already abandoned. The claim never landed, the spoke kept
+	// reporting its placeholder org, and the assignStuckResetTimeout sweep
+	// auto-reset the assignment at 15m, every time (the vllmd-14 wedge; EPM and
+	// vllmd-13 before it). Backgrounding the repair trades the same-beat URL
+	// push (the URL now lands on a later beat, once minted) for a response the
+	// spoke actually receives — and on unreachable clusters the repair never
+	// succeeded anyway.
+	s.kickVanityURLRepairAsync(payload.HiveID)
 
 	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
@@ -1641,8 +1859,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			delete(s.heartbeatSwitchTag, payload.HiveID)
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == payload.HiveID {
-					s.registry.Hives[i].Upgrading = false
-					s.registry.Hives[i].UpgradeTarget = ""
+					s.clearUpgradeLatch(i)
 					break
 				}
 			}
@@ -1656,11 +1873,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"hive_id", payload.HiveID, "tag", switchTag)
 		}
 	}
-	if hbTarget != "" && (sameCommit(payload.GitHash, hbTarget) || (latestSHA != "" && sameCommit(payload.GitHash, latestSHA))) {
-		// Spoke already at the target or at latest — clear the fallback entry.
-		// sameCommit tolerates short/full SHA length mismatch (hub stores a
-		// 7-char short SHA; a spoke may report a longer one) so a hive already
-		// at HEAD is not told to upgrade forever.
+	if hbTarget != "" && (sameCommit(payload.GitHash, hbTarget) || (latestSHA != "" && sameCommit(payload.GitHash, latestSHA)) || commitAtOrAheadOfTarget(payload.GitHash, hbTarget, s.logger)) {
+		// Spoke already at the target, at latest, or at a commit AHEAD of the
+		// target — clear the fallback entry. sameCommit tolerates short/full
+		// SHA length mismatch (hub stores a 7-char short SHA; a spoke may
+		// report a longer one) so a hive already at HEAD is not told to
+		// upgrade forever. The at-or-ahead ancestry check is what actually
+		// drains a STALE pin for a floating-tag hive: its re-pull landed past
+		// the target while the branch advanced again, so its hash matches
+		// neither target nor latest, and without this the hub re-sends the
+		// same unreachable UpgradeTo on every beat — the spoke re-rolls its
+		// pod and re-latches "Upgrading" forever (the vllmd-13 wedge).
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
 		s.mu.Unlock()
@@ -2032,7 +2255,9 @@ func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.hubSecret) {
+		// Dual-path: accept the legacy raw-secret bearer (old spokes) OR the
+		// derived heartbeat key (v4 spokes). See heartbeatBearerOK.
+		if !s.heartbeatBearerOK(auth) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -2150,8 +2375,8 @@ type FleetStats struct {
 	// public). Computing them here counts every hive while disclosing none: like
 	// every other field on this struct they are scalars, and no name, org, repo,
 	// owner or URL is derivable from them.
-	AgentsRunning int    `json:"agents_running"`
-	Contributors  int    `json:"contributors"`
+	AgentsRunning int `json:"agents_running"`
+	Contributors  int `json:"contributors"`
 	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
 	// contributors, summed from each hive's ContributorCount rather than
 	// ActiveContributors. Contributors above tracks who is CURRENTLY active,
@@ -2719,13 +2944,31 @@ func (s *HubServer) loadRegistry() {
 func (s *HubServer) recoverArmedUpgrades() {
 	type armed struct{ id, target string }
 	var recovered []armed
+	stamped := 0
 	s.mu.Lock()
 	if s.heartbeatUpgrade == nil {
 		s.heartbeatUpgrade = make(map[string]string)
 	}
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
-		if !h.Upgrading || h.UpgradeTarget == "" {
+		if !h.Upgrading {
+			continue
+		}
+		// A true Upgrading flag must always carry a start time — the dashboard
+		// badge and the stuck-upgrade alert both gate their elapsed clock on a
+		// non-zero UpgradeStartedAt. The registry persists the field (json
+		// "upgradeStartedAt"), so a normal restart rehydrates the REAL clock
+		// and this guard does not fire — re-stamping a live clock here would
+		// reset every in-flight upgrade's elapsed time on each hub roll, the
+		// exact #2725 reset bug. Only a latch that never had a clock (armed
+		// before the field existed, or spoke-reported upgrading persisted
+		// before the observed-upgrade stamp) gets one now, instead of the
+		// badge rendering without its counter until the next re-arm.
+		if h.UpgradeStartedAt.IsZero() {
+			h.UpgradeStartedAt = time.Now()
+			stamped++
+		}
+		if h.UpgradeTarget == "" {
 			continue
 		}
 		// A recorded terminal failure must stay terminal — re-arming it would
@@ -2737,6 +2980,12 @@ func (s *HubServer) recoverArmedUpgrades() {
 		recovered = append(recovered, armed{id: h.ID, target: h.UpgradeTarget})
 	}
 	s.mu.Unlock()
+	if stamped > 0 {
+		// Persist the repaired clocks (saveCh is buffered, so a request made
+		// before saveLoop starts is not lost) — otherwise a crash-looping hub
+		// would re-stamp them to now on every restart.
+		s.requestSave()
+	}
 	for _, a := range recovered {
 		s.logger.Info("recovered armed upgrade from registry after restart",
 			"hive_id", a.id, "target", a.target)
@@ -2982,6 +3231,23 @@ func sanitizeProseField(s string) string {
 	out := strings.Join(strings.Fields(b.String()), " ")
 	if runes := []rune(out); len(runes) > maxProseFieldRunes {
 		out = string(runes[:maxProseFieldRunes])
+	}
+	return out
+}
+
+func sanitizePublicURLSelfCheck(in *PublicURLSelfCheck) *PublicURLSelfCheck {
+	if in == nil {
+		return nil
+	}
+	status := sanitizeHeartbeatField(in.Status)
+	if status != PublicURLSelfCheckOK && status != PublicURLSelfCheckFail {
+		return nil
+	}
+	out := &PublicURLSelfCheck{
+		Status:     status,
+		CheckedAt:  sanitizeHeartbeatField(in.CheckedAt),
+		Error:      sanitizeProseField(in.Error),
+		HTTPStatus: clampInt(in.HTTPStatus, 0, 599),
 	}
 	return out
 }

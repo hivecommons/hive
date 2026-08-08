@@ -1398,6 +1398,7 @@ func TestIsKnownAlertType(t *testing.T) {
 		{AlertTypeHealthCheckFailing, true},
 		{AlertTypeTokenBurn, true},
 		{AlertTypeProvisionError, true},
+		{AlertTypeURLPrivateNetwork, true},
 		{"", false},
 		{"made-up", false},
 	} {
@@ -1604,5 +1605,314 @@ func TestAlertHiveFromEntry_CarriesAdvisoryStaleness(t *testing.T) {
 	})
 	if !got.AdvisoryStale || got.AdvisoryStaleReason != "why" {
 		t.Fatalf("advisory staleness not projected: %+v", got)
+	}
+}
+
+// --- Regression: Acknowledge vs scoped polls (the "never worked" bug) ---
+//
+// evaluateAlerts runs against the CALLER's visible hives (handleMyHives scopes
+// the list per user) but mutates SHARED hub state. Retention used to evict the
+// firstSeen entry — and any stored ack — for every (hive, type) key not firing
+// in the caller's snapshot, so any non-admin poll wiped the conditions for all
+// hives outside its scope. By the time the admin's ack POST arrived, setAck
+// found no live condition and the handler answered "no active alert of that
+// type for this hive" — on every click, for every alert row.
+
+// ackViaHandler POSTs to handleAlertAck exactly the identifiers the dashboard
+// sends: renderAlertRows wires ackAlert(a.hiveId, a.type, false) from the
+// summary JSON, so the body here is built from the summary's own wire form.
+func ackViaHandler(t *testing.T, s *HubServer, summary AlertSummary, alertType string) *httptest.ResponseRecorder {
+	t.Helper()
+	wire, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Alerts []struct {
+			HiveID string `json:"hiveId"`
+			Type   string `json:"type"`
+		} `json:"alerts"`
+	}
+	if err := json.Unmarshal(wire, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range doc.Alerts {
+		if a.Type != alertType {
+			continue
+		}
+		body, err := json.Marshal(map[string]any{"hiveId": a.HiveID, "type": a.Type, "clear": false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/alert-ack", strings.NewReader(string(body)))
+		s.handleAlertAck(rec, req)
+		return rec
+	}
+	t.Fatalf("no %q alert in the summary to acknowledge: %+v", alertType, summary.Alerts)
+	return nil
+}
+
+func TestAlertAckSucceedsAfterAnotherCallersScopedPoll(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	now := time.Now()
+	h1 := baseHive("h1")
+	h1.ProvStatus = alertProvStatusError
+	h2 := baseHive("h2")
+
+	// Admin poll: full visible set. The panel renders h1's alert row.
+	adminView := evaluateAlerts(s.alerts, []alertHive{h1, h2}, nil, now)
+	before, ok := findAlert(adminView.Alerts, "h1", AlertTypeProvisionError)
+	if !ok {
+		t.Fatalf("expected a provision-error alert, got %+v", adminView.Alerts)
+	}
+
+	// Another user's poll lands in between: they can only see h2, so h1 is
+	// simply absent from their snapshot. This must NOT evict h1's condition.
+	evaluateAlerts(s.alerts, []alertHive{h2}, nil, now.Add(time.Second))
+
+	// The admin clicks Acknowledge on the row already on screen.
+	rec := ackViaHandler(t, s, adminView, AlertTypeProvisionError)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200 (body: %s) — the scoped poll evicted the condition", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "no active alert") {
+		t.Fatalf("hit the no-active-alert path: %s", rec.Body.String())
+	}
+
+	// The next admin poll shows the row acknowledged, against the SAME
+	// occurrence (FirstSeen unchanged — a scoped poll must not re-mint it).
+	after := evaluateAlerts(s.alerts, []alertHive{h1, h2}, nil, now.Add(2*time.Second))
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeProvisionError)
+	if !ok {
+		t.Fatal("condition should still fire")
+	}
+	if !a.Acknowledged {
+		t.Fatal("the alert must be acknowledged")
+	}
+	if !a.FirstSeen.Equal(before.FirstSeen) {
+		t.Fatalf("FirstSeen churned across a scoped poll: %v -> %v", before.FirstSeen, a.FirstSeen)
+	}
+}
+
+func TestExistingAckSurvivesAnotherCallersScopedPoll(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	now := time.Now()
+	h1 := baseHive("h1")
+	h1.ProvStatus = alertProvStatusError
+	h2 := baseHive("h2")
+
+	adminView := evaluateAlerts(s.alerts, []alertHive{h1, h2}, nil, now)
+	if rec := ackViaHandler(t, s, adminView, AlertTypeProvisionError); rec.Code != http.StatusOK {
+		t.Fatalf("ack failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A scoped poll from a user who cannot see h1 must not clear the ack.
+	evaluateAlerts(s.alerts, []alertHive{h2}, nil, now.Add(time.Second))
+
+	after := evaluateAlerts(s.alerts, []alertHive{h1, h2}, nil, now.Add(2*time.Second))
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeProvisionError)
+	if !ok {
+		t.Fatal("condition should still fire")
+	}
+	if !a.Acknowledged {
+		t.Fatal("a stored ack must survive another caller's scoped poll")
+	}
+	if after.Total != 0 {
+		t.Fatalf("Total = %d, want 0 — the ack must keep suppressing the count", after.Total)
+	}
+}
+
+func TestAckStillClearsWhenConditionResolvesInScope(t *testing.T) {
+	// The flip side of the scoping fix: a hive that IS in the snapshot and no
+	// longer fires must still have its condition (and ack) forgotten, so a
+	// recurrence re-alerts instead of being permanently silenced.
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	now := time.Now()
+	h1 := baseHive("h1")
+	h1.ProvStatus = alertProvStatusError
+
+	view := evaluateAlerts(s.alerts, []alertHive{h1}, nil, now)
+	if rec := ackViaHandler(t, s, view, AlertTypeProvisionError); rec.Code != http.StatusOK {
+		t.Fatalf("ack failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The provisioning error clears — h1 is present and healthy.
+	healed := baseHive("h1")
+	evaluateAlerts(s.alerts, []alertHive{healed}, nil, now.Add(time.Second))
+
+	// It errors again: a NEW occurrence must alert, unsilenced.
+	again := evaluateAlerts(s.alerts, []alertHive{h1}, nil, now.Add(2*time.Second))
+	a, ok := findAlert(again.Alerts, "h1", AlertTypeProvisionError)
+	if !ok {
+		t.Fatal("the recurrence must alert")
+	}
+	if a.Acknowledged {
+		t.Fatal("an ack for a resolved occurrence must not silence a recurrence")
+	}
+}
+
+// --- Round-trip acks for every alert category the panel renders ---
+
+func TestAlertAckRoundTripPerCategory(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name      string
+		alertType string
+		// establish drives the evaluator until the condition is live, and
+		// returns the summary whose wire JSON the "UI" acks from.
+		establish func(s *HubServer) AlertSummary
+	}{
+		{
+			name:      "crash-looping",
+			alertType: AlertTypeCrashLoop,
+			establish: func(s *HubServer) AlertSummary {
+				h := baseHive("h1")
+				// Three distinct start times inside the window, current uptime
+				// under the ceiling — the rule's own firing conditions.
+				h.StartedAt = rfc3339(now.Add(-30 * time.Minute))
+				evaluateAlerts(s.alerts, []alertHive{h}, nil, now.Add(-20*time.Minute))
+				h.StartedAt = rfc3339(now.Add(-10 * time.Minute))
+				evaluateAlerts(s.alerts, []alertHive{h}, nil, now.Add(-9*time.Minute))
+				h.StartedAt = rfc3339(now.Add(-2 * time.Minute))
+				return evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+			},
+		},
+		{
+			name:      "health check failing",
+			alertType: AlertTypeHealthCheckFailing,
+			establish: func(s *HubServer) AlertSummary {
+				h := baseHive("h1")
+				h.Health = map[string]any{"checks": []any{
+					map[string]any{"name": "governor", "status": "fail"},
+				}}
+				return evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+			},
+		},
+		{
+			name:      "token burn",
+			alertType: AlertTypeTokenBurn,
+			establish: func(s *HubServer) AlertSummary {
+				h := baseHive("h1")
+				// The zero-spend variant: online, registered long ago, no burn.
+				h.TotalTokens24h = 0
+				return evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+			},
+		},
+		{
+			name:      "stuck upgrade",
+			alertType: AlertTypeStuckUpgrade,
+			establish: func(s *HubServer) AlertSummary {
+				h := baseHive("h1")
+				h.Upgrading = true
+				h.UpgradeStartedAt = now.Add(-staleUpgradeTimeout - time.Minute)
+				return evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			orig := alertAcksPath
+			alertAcksPath = filepath.Join(dir, "acks.json")
+			defer func() { alertAcksPath = orig }()
+
+			s := newTestAlertServer()
+			summary := tc.establish(s)
+			if !hasAlert(summary.Alerts, "h1", tc.alertType) {
+				t.Fatalf("test setup did not raise %q: %+v", tc.alertType, summary.Alerts)
+			}
+
+			rec := ackViaHandler(t, s, summary, tc.alertType)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ack status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "no active alert") {
+				t.Fatalf("hit the no-active-alert path: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// --- Regression: a corrupt acks file must not disable acking ---
+
+func TestCorruptAcksFileIsQuarantinedAndAckingContinues(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "hub-alert-acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	// The exact live failure mode: bytes at the acks path that are not JSON
+	// ("invalid character ... looking for beginning of object key string").
+	garbage := []byte("{not json\nnope")
+	if err := os.WriteFile(alertAcksPath, garbage, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestAlertServer()
+	s.loadAlertAcks()
+
+	// The corrupt file is quarantined, not left in place to fail every boot.
+	quarantine := alertAcksPath + alertAcksQuarantineSuffix
+	kept, err := os.ReadFile(quarantine)
+	if err != nil {
+		t.Fatalf("corrupt acks file was not quarantined: %v", err)
+	}
+	if string(kept) != string(garbage) {
+		t.Fatal("quarantine must preserve the corrupt bytes for inspection")
+	}
+	if _, err := os.Stat(alertAcksPath); !os.IsNotExist(err) {
+		t.Fatalf("corrupt file must be moved out of the acks path, stat err = %v", err)
+	}
+
+	// Acking still works end-to-end on the fresh store.
+	now := time.Now()
+	h := baseHive("h1")
+	h.ProvStatus = alertProvStatusError
+	summary := evaluateAlerts(s.alerts, []alertHive{h}, nil, now)
+	if rec := ackViaHandler(t, s, summary, AlertTypeProvisionError); rec.Code != http.StatusOK {
+		t.Fatalf("ack after quarantine failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A fresh, VALID file was written in place of the corrupt one...
+	raw, err := os.ReadFile(alertAcksPath)
+	if err != nil {
+		t.Fatalf("no fresh acks file was written: %v", err)
+	}
+	var rewritten map[string]alertAck
+	if err := json.Unmarshal(raw, &rewritten); err != nil {
+		t.Fatalf("rewritten acks file is not valid JSON: %v", err)
+	}
+	if len(rewritten) != 1 {
+		t.Fatalf("rewritten file has %d entries, want 1", len(rewritten))
+	}
+
+	// ...and a restart honors the ack made after recovery.
+	s2 := newTestAlertServer()
+	s2.loadAlertAcks()
+	got := evaluateAlerts(s2.alerts, []alertHive{h}, nil, now.Add(time.Minute))
+	a, ok := findAlert(got.Alerts, "h1", AlertTypeProvisionError)
+	if !ok {
+		t.Fatal("condition should still fire after restart")
+	}
+	if !a.Acknowledged {
+		t.Fatal("the post-recovery ack must survive a restart")
 	}
 }

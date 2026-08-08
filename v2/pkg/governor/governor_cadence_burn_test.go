@@ -29,11 +29,11 @@ const (
 func TestUpdateCadences_NoStaleCarryOverAcrossModes(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "6h"}},
-			"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "6h"}},
+			"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "6h"}},
+			"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "6h"}},
 			// busy defines a short scanner cadence; quiet/idle are 6h.
-			"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-			"surge": {Threshold: 20, Cadences: map[string]string{}},
+			"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+			"surge": {Threshold: 20, Cadences: map[string]config.Cadence{}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -67,8 +67,8 @@ func TestUpdateCadences_NoStaleCarryOverAcrossModes(t *testing.T) {
 func TestUpdateCadences_MissingModeBlockFallsBackToIdle(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "4h"}},
-			"busy": {Threshold: 10, Cadences: map[string]string{"scanner": "2m"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "4h"}},
+			"busy": {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			// no "quiet" or "surge" blocks at all
 		},
 	}
@@ -90,8 +90,8 @@ func TestUpdateCadences_MissingModeBlockFallsBackToIdle(t *testing.T) {
 func TestUpdateCadences_IdleFallbackRespectsPause(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"supervisor": "pause"}},
-			"busy": {Threshold: 10, Cadences: map[string]string{}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"supervisor": "pause"}},
+			"busy": {Threshold: 10, Cadences: map[string]config.Cadence{}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -114,7 +114,7 @@ func TestUpdateCadences_IdleFallbackRespectsPause(t *testing.T) {
 func TestUpdateCadences_OffMeansNoKicks(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "off"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "off"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -135,7 +135,7 @@ func resumeTestGovernor(t *testing.T, cadence string) *Governor {
 	t.Helper()
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": cadence}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": config.Cadence(cadence)}},
 		},
 	}
 	agents := map[string]config.AgentConfig{
@@ -190,7 +190,7 @@ func TestAllowResumeKick_DeniedWithoutCadence(t *testing.T) {
 func TestAllowResumeKick_DeniedForOnDemand(t *testing.T) {
 	cfg := config.GovernorConfig{
 		Modes: map[string]config.ModeConfig{
-			"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "1h"}},
+			"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "1h"}},
 		},
 	}
 	agents := map[string]config.AgentConfig{

@@ -196,6 +196,43 @@ func TestBuildUsageBucketsNilKeyFunc(t *testing.T) {
 	}
 }
 
+// TestBuildUsageBucketsCarryHiveIDs pins the bucket→hive back-links the
+// dashboard uses to jump from a usage row to the hive rows in the fleet
+// table: every contributing hive's id appears (sorted, deterministic), a
+// blank id is dropped rather than emitted as "", and the JSON key is the
+// hiveIds the UI reads.
+func TestBuildUsageBucketsCarryHiveIDs(t *testing.T) {
+	hives := []RegistryEntry{
+		{ID: "h-2", Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 60},
+		{ID: "h-1", Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 40},
+		{ID: "", Org: "acme", PrimaryRepo: "widgets"}, // blank id: counted, not linked
+		{ID: "h-3", Org: "other", PrimaryRepo: "app", TotalTokens24h: 100},
+	}
+	got := buildUsageBuckets(hives, usageOrgRepoKey, 200)
+	if len(got) != 2 {
+		t.Fatalf("buckets = %d, want 2 (%+v)", len(got), got)
+	}
+	// acme/widgets sorts first on tokens tie-break? 100 in each bucket — tie
+	// breaks on key ascending, so acme/widgets first.
+	acme := got[0]
+	if acme.Key != "acme/widgets" {
+		t.Fatalf("bucket[0].Key = %q, want acme/widgets", acme.Key)
+	}
+	if len(acme.HiveIDs) != 2 || acme.HiveIDs[0] != "h-1" || acme.HiveIDs[1] != "h-2" {
+		t.Fatalf("acme/widgets HiveIDs = %v, want [h-1 h-2] sorted, blank dropped", acme.HiveIDs)
+	}
+	if acme.Hives != 3 {
+		t.Fatalf("acme/widgets Hives = %d, want 3 (blank-id hive still counts)", acme.Hives)
+	}
+	b, err := json.Marshal(acme)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"hiveIds":["h-1","h-2"]`) {
+		t.Fatalf("bucket JSON missing hiveIds: %s", b)
+	}
+}
+
 // TestUsageInt64NoOverflow proves the fleet sum stays correct at magnitudes
 // that would overflow a 32-bit int.
 func TestUsageInt64NoOverflow(t *testing.T) {

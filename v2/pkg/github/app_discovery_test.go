@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,7 @@ type discoveryServerOpts struct {
 	orgInstall     map[string]int64
 	orgInstallCode int // status for a miss; 0 => 404
 	listInstalls   []map[string]any
+	listPages      [][]map[string]any
 	listStatus     int // non-zero => fail the listing with this status
 	// getInstallation answers GET /app/installations/{id} (VerifyInstallation).
 	getInstallation map[string]any
@@ -74,6 +76,24 @@ func newDiscoveryServer(t *testing.T, opts discoveryServerOpts, hits *int64) *ht
 			}
 			w.Header().Set("Content-Type", "application/json")
 			list := opts.listInstalls
+			if len(opts.listPages) > 0 {
+				page := 1
+				if got := r.URL.Query().Get("page"); got != "" {
+					fmt.Sscanf(got, "%d", &page)
+				}
+				if page < 1 || page > len(opts.listPages) {
+					list = []map[string]any{}
+				} else {
+					list = opts.listPages[page-1]
+					if page < len(opts.listPages) {
+						next := *r.URL
+						q := next.Query()
+						q.Set("page", fmt.Sprintf("%d", page+1))
+						next.RawQuery = q.Encode()
+						w.Header().Set("Link", `<http://`+r.Host+next.String()+`>; rel="next"`)
+					}
+				}
+			}
 			if list == nil {
 				list = []map[string]any{}
 			}
@@ -138,6 +158,17 @@ func TestDiscoverInstallationID(t *testing.T) {
 			wantID: 77777,
 		},
 		{
+			name: "listing match can be on a later page",
+			opts: discoveryServerOpts{
+				listPages: [][]map[string]any{
+					{installEntry(11111, "someone-else")},
+					{installEntry(22222, "open-source")},
+				},
+			},
+			org:    "open-source",
+			wantID: 22222,
+		},
+		{
 			name: "falls back to listing when direct lookup 405s (old GHE)",
 			opts: discoveryServerOpts{
 				orgInstallCode: http.StatusMethodNotAllowed,
@@ -168,6 +199,18 @@ func TestDiscoverInstallationID(t *testing.T) {
 			wantNoInstall: true,
 		},
 		{
+			name: "multiple matching installations are ambiguous",
+			opts: discoveryServerOpts{
+				listInstalls: []map[string]any{
+					installEntry(10, "open-source"),
+					installEntry(11, "Open-Source"),
+				},
+			},
+			org:           "open-source",
+			wantErr:       true,
+			wantNoInstall: true,
+		},
+		{
 			name: "nil entries in the listing are skipped, not dereferenced",
 			opts: discoveryServerOpts{
 				listInstalls: []map[string]any{
@@ -187,6 +230,16 @@ func TestDiscoverInstallationID(t *testing.T) {
 			wantErr: true,
 			// A 500 is transient — it must NOT be reported as
 			// authoritative "not installed".
+			wantNoInstall: false,
+		},
+		{
+			name: "unauthorized listing is a soft discovery error",
+			opts: discoveryServerOpts{
+				orgInstallCode: http.StatusUnauthorized,
+				listStatus:     http.StatusUnauthorized,
+			},
+			org:           "open-source",
+			wantErr:       true,
 			wantNoInstall: false,
 		},
 	}

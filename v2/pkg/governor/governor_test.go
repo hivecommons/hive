@@ -23,7 +23,7 @@ func testLogger() *slog.Logger {
 //	QUIET  > 2
 //	IDLE   otherwise
 func standardConfig(agents ...string) (config.GovernorConfig, map[string]config.AgentConfig) {
-	cadences := make(map[string]string, len(agents))
+	cadences := make(map[string]config.Cadence, len(agents))
 	for _, a := range agents {
 		cadences[a] = "15m"
 	}
@@ -244,7 +244,7 @@ func TestEvaluate_ExpiredCadenceIsDue(t *testing.T) {
 		Modes: map[string]config.ModeConfig{
 			"busy": {
 				Threshold: 10,
-				Cadences:  map[string]string{"worker": "1ms"}, // extremely short cadence
+				Cadences:  map[string]config.Cadence{"worker": "1ms"}, // extremely short cadence
 			},
 		},
 	}
@@ -274,7 +274,7 @@ func TestEvaluate_PausedAgentNeverDue(t *testing.T) {
 		Modes: map[string]config.ModeConfig{
 			"busy": {
 				Threshold: 10,
-				Cadences: map[string]string{
+				Cadences: map[string]config.Cadence{
 					"active": "1ms",
 					"paused": "pause",
 				},
@@ -314,7 +314,7 @@ func TestEvaluate_PausedVariantSpelling(t *testing.T) {
 		Modes: map[string]config.ModeConfig{
 			"quiet": {
 				Threshold: 2,
-				Cadences:  map[string]string{"robot": "paused"},
+				Cadences:  map[string]config.Cadence{"robot": "paused"},
 			},
 		},
 	}
@@ -344,7 +344,7 @@ func TestEvaluate_AgentWithNoCadenceInModeNotDue(t *testing.T) {
 		Modes: map[string]config.ModeConfig{
 			"busy": {
 				Threshold: 10,
-				Cadences:  map[string]string{}, // no cadences at all
+				Cadences:  map[string]config.Cadence{}, // no cadences at all
 			},
 		},
 	}

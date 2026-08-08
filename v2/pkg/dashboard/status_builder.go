@@ -64,9 +64,32 @@ func getBackendAuthFn() func(backend string) (bool, bool) {
 	return backendAuthFn
 }
 
+// SetAgentAuthProvider registers a PER-AGENT auth probe (agent.Manager's
+// AgentAuthAvailable). It supersedes the backend-level SetBackendAuthProvider
+// wherever it is registered, because the backend-level probe stats ONE shared
+// credential path (/data/home/.claude/.credentials.json) that is empty under
+// the per-agent-UID layout — every agent then reported (known, !available) and
+// the dashboard painted a 🔑 "needs login" badge on agents that were running,
+// being kicked, and passing deep health. The per-agent probe resolves the
+// agent's OWN home and gates on whether the backend has an interactive login
+// at all. The backend-level provider is retained as a fallback for callers
+// that only know a backend name.
+func SetAgentAuthProvider(fn func(agentName string) (bool, bool)) {
+	backendAuthMu.Lock()
+	defer backendAuthMu.Unlock()
+	agentAuthFn = fn
+}
+
+func getAgentAuthFn() func(agentName string) (bool, bool) {
+	backendAuthMu.RLock()
+	defer backendAuthMu.RUnlock()
+	return agentAuthFn
+}
+
 var (
 	backendAuthMu sync.RWMutex
 	backendAuthFn func(backend string) (bool, bool)
+	agentAuthFn   func(agentName string) (bool, bool)
 
 	cachedHealth   map[string]any
 	cachedHealthMu sync.RWMutex
@@ -243,11 +266,12 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			lastKick = formatHumanTime(*proc.LastKick)
 		}
 
-		cadence := lookupCadenceForMode(name, currentMode, cfg)
-		if cadence == "" {
-			cadence = lookupCadence(name, cfg)
+		cadenceValue := lookupCadenceValueForMode(name, currentMode, cfg)
+		if cadenceValue == "" {
+			cadenceValue = lookupCadenceValue(name, cfg)
 		}
-		nextKick := computeNextKick(proc.LastKick, cadence)
+		cadence := cadenceDisplay(cadenceValue)
+		nextKick := computeNextKickFromCadence(proc.LastKick, cadenceValue)
 
 		// offByCadence: the agent's cadence for the CURRENT governor mode is a
 		// non-kicking value ("pause"/"off"), so the governor will never kick it
@@ -346,7 +370,16 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 		a.DefaultMode = defaultMode.String()
 		a.IsCustomMode = mode != defaultMode
 		a.NeedsLogin = proc.NeedsLogin
-		if authFn := getBackendAuthFn(); authFn != nil {
+		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
+		// answers "does this backend even have an interactive login?" before
+		// looking at any file. The backend-level probe (shared legacy path
+		// only) is the fallback for deployments where the per-agent provider
+		// was not registered.
+		if agentFn := getAgentAuthFn(); agentFn != nil {
+			avail, known := agentFn(name)
+			a.AuthAvailable = avail
+			a.AuthKnown = known
+		} else if authFn := getBackendAuthFn(); authFn != nil {
 			avail, known := authFn(cli)
 			a.AuthAvailable = avail
 			a.AuthKnown = known
@@ -640,6 +673,21 @@ func computeNextKick(lastKick *time.Time, cadence string) string {
 	return formatHumanTime(next)
 }
 
+func computeNextKickFromCadence(lastKick *time.Time, cadence config.Cadence) string {
+	if cadence == "" || cadence.IsPaused() {
+		return ""
+	}
+	base := time.Now()
+	if lastKick != nil && cadence.Mode() == config.CadenceModeInterval {
+		base = *lastKick
+	}
+	next, ok := cadence.NextAfter(base)
+	if !ok {
+		return ""
+	}
+	return formatHumanTime(next)
+}
+
 func parseCadenceDuration(cadence string) time.Duration {
 	cadence = strings.TrimSpace(cadence)
 	if cadence == "" || cadence == "off" || cadence == "pause" || cadence == "on demand" {
@@ -676,12 +724,30 @@ func lookupCadence(agentName string, cfg *config.Config) string {
 }
 
 func lookupCadenceForMode(agentName, modeName string, cfg *config.Config) string {
+	return cadenceDisplay(lookupCadenceValueForMode(agentName, modeName, cfg))
+}
+
+func lookupCadenceValue(agentName string, cfg *config.Config) config.Cadence {
+	return lookupCadenceValueForMode(agentName, "idle", cfg)
+}
+
+func lookupCadenceValueForMode(agentName, modeName string, cfg *config.Config) config.Cadence {
 	if mode, ok := cfg.Governor.Modes[modeName]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c
 		}
 	}
 	return ""
+}
+
+func cadenceDisplay(c config.Cadence) string {
+	if c == "" {
+		return ""
+	}
+	if c.Mode() == config.CadenceModeInterval {
+		return c.Interval()
+	}
+	return c.ShortLabel(time.Now())
 }
 
 func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
@@ -1037,7 +1103,9 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 		}
 
 		for modeName, mode := range cfg.Governor.Modes {
-			cadence := mode.Cadences[name]
+			rawCadence := mode.Cadences[name]
+			cadence := cadenceDisplay(rawCadence)
+			title := cadenceTooltip(rawCadence)
 			if cadence == "" || cadence == "pause" {
 				cadence = "off"
 			}
@@ -1049,17 +1117,33 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.Agen
 			switch modeName {
 			case "idle":
 				entry.Idle = cadence
+				entry.IdleTitle = title
 			case "quiet":
 				entry.Quiet = cadence
+				entry.QuietTitle = title
 			case "busy":
 				entry.Busy = cadence
+				entry.BusyTitle = title
 			case "surge":
 				entry.Surge = cadence
+				entry.SurgeTitle = title
 			}
 		}
 		matrix = append(matrix, entry)
 	}
+
 	return matrix
+}
+
+func cadenceTooltip(c config.Cadence) string {
+	if c == "" || c.IsPaused() {
+		return ""
+	}
+	next, ok := c.NextAfter(time.Now())
+	if !ok {
+		return c.HumanSummary()
+	}
+	return c.HumanSummary() + " — next: " + formatHumanTime(next)
 }
 
 func buildHold(actionable *github.ActionableResult) FrontendHold {

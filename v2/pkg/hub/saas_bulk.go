@@ -325,9 +325,7 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 		// Only an upgrade advances the target; a plain restart re-pulls the
 		// same tag and must not make the dashboard claim a version change.
 		if action == bulkActionUpgrade && latestSHA != "" {
-			s.registry.Hives[i].Upgrading = true
-			s.registry.Hives[i].UpgradeTarget = latestSHA
-			s.registry.Hives[i].UpgradeStartedAt = time.Now()
+			s.beginUpgrade(i, latestSHA)
 		}
 		break
 	}
@@ -406,9 +404,7 @@ func (s *HubServer) bulkSwitchBranch(h *SaaSHive, id, username, branch string) B
 	}
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
-			s.registry.Hives[i].Upgrading = true
-			s.registry.Hives[i].UpgradeTarget = imageTag
-			s.registry.Hives[i].UpgradeStartedAt = time.Now()
+			s.beginUpgrade(i, imageTag)
 			break
 		}
 	}

@@ -257,6 +257,19 @@ func TestInstallIdInputIsCrossBrowserHardened(t *testing.T) {
 	if !strings.Contains(btnTag, `type="button"`) {
 		t.Errorf("Set-ID button must be type=\"button\" (a default <button> is type=submit and an implicit form submit resets the field in Firefox before submitGitHubInstallationID runs):\n%s", btnTag)
 	}
+	// The save button must LOOK like a button: it inherits the banner's solid
+	// primary .gh-app-btn recipe. An inline transparent override once made it
+	// read as static text — operators typed the ID and never clicked (user
+	// report: "set id does not look like a button").
+	if strings.Contains(btnTag, "background:transparent") {
+		t.Errorf("the save-installation-ID button must not be a transparent ghost — it is the submit affordance:\n%s", btnTag)
+	}
+	// And its label must say what it does with what: "Set ID" told users
+	// neither the verb's object nor that pressing it was required.
+	btnClose := strings.Index(html[btnOpen:], "</button>")
+	if btnLabel := html[btnOpen+btnEnd+1 : btnOpen+btnClose]; !strings.Contains(btnLabel, "Save Installation ID") {
+		t.Errorf("save button label = %q, want %q", btnLabel, "Save Installation ID")
+	}
 
 	// Isolate the install-ID input's start tag: it must disable autocomplete
 	// and wire an Enter-key submit.
@@ -284,5 +297,75 @@ func TestInstallIdInputIsCrossBrowserHardened(t *testing.T) {
 	body := html[ri : ri+end]
 	if !strings.Contains(body, "priorIdValue") {
 		t.Error("renderGitHubAppBanner must snapshot/restore the install-ID input value so a background poll re-render can't wipe what the user typed (the Firefox \"doesn't stick\" symptom)")
+	}
+}
+
+// cssRule extracts the body of the first CSS rule whose selector line starts
+// with the given prefix, so tests can assert on one rule without matching
+// stray occurrences of a declaration elsewhere in the stylesheet.
+func cssRule(t *testing.T, html, selector string) string {
+	t.Helper()
+	i := strings.Index(html, selector+" {")
+	if i < 0 {
+		t.Fatalf("static/index.html has no %q CSS rule", selector)
+	}
+	end := strings.Index(html[i:], "}")
+	if end < 0 {
+		t.Fatalf("could not find the end of the %q CSS rule", selector)
+	}
+	return html[i : i+end]
+}
+
+// TestInstallIdHintURLTailVisibleAtRest is the regression guard for the
+// follow-up report on the install-ID hint's example URL (post-#2710): the URL
+// row was preserved in a horizontally-scrollable column, but the column
+// rested scrolled to the START of the URL, so the /settings/installations/<id>
+// tail — the entire point of the hint — was scrolled out of view at rest and
+// the right-aligned "↑↑↑ this number" arrow row pointed at the truncation
+// ("…organizations/open-") instead of at the id. Because the org name is
+// dynamic, a separate character-aligned arrow row can never reliably line up
+// under the digits, so the fix is twofold:
+//
+//  1. END-anchor the scroll column (direction: rtl on .gh-idhint-urlcol, with
+//     the URL text restored to direction: ltr as an atomic inline-block) so
+//     the resting view shows "…/settings/installations/<id>".
+//  2. Delete the arrow row entirely and attach the "this number" callout to
+//     the seg-id span itself via CSS ::after — intrinsic to the span, so it
+//     tracks the digits at every scroll position and org-name length.
+func TestInstallIdHintURLTailVisibleAtRest(t *testing.T) {
+	html := spokeIndexHTML(t)
+
+	// 1. End-anchored scroll column.
+	col := cssRule(t, html, ".gh-idhint-urlcol")
+	if !strings.Contains(col, "direction: rtl") {
+		t.Error(".gh-idhint-urlcol is not end-anchored (direction: rtl) — at rest the column shows the URL's start and hides the /installations/<id> tail")
+	}
+	text := cssRule(t, html, ".gh-idhint-urltext")
+	if !strings.Contains(text, "direction: ltr") {
+		t.Error(".gh-idhint-urltext must restore direction: ltr inside the rtl scroll column or the URL renders right-to-left")
+	}
+	if !strings.Contains(text, "inline-block") {
+		t.Error(".gh-idhint-urltext must be an atomic inline-block: a block child of the rtl column overflows to the unreachable side and breaks the end-anchor")
+	}
+
+	// 2. The callout is attached to the id segment itself, not a separate
+	// aligned row.
+	seg := cssRule(t, html, ".gh-idhint-url .seg-id")
+	if !strings.Contains(seg, "position: relative") {
+		t.Error(".seg-id must be position: relative so its ::after callout anchors to the digits")
+	}
+	after := cssRule(t, html, ".gh-idhint-url .seg-id::after")
+	if !strings.Contains(after, "this number") {
+		t.Error(".seg-id::after must carry the \"this number\" label so the callout moves with the digits")
+	}
+	if !strings.Contains(after, "position: absolute") {
+		t.Error(".seg-id::after must be absolutely positioned off the span — any column- or character-based alignment cannot track a dynamic-width URL")
+	}
+
+	// The old arrow row must be gone: it could never align under a dynamic
+	// URL and its right-aligned arrows pointed at whatever happened to be at
+	// the visible column's right edge.
+	if strings.Contains(html, "gh-idhint-caret") {
+		t.Error("the gh-idhint-caret arrow row is back — the callout must be the seg-id ::after label, arrows in a separate row cannot line up under a dynamic-width URL")
 	}
 }

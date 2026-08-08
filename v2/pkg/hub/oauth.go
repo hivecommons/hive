@@ -269,7 +269,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// Set the session cookie to a signed, tamper-evident value so it cannot be
 	// forged. If the hub has no secret to sign with, fail the login rather than
 	// emit an unsigned (trusted-by-default) cookie.
-	cookieValue := mintHubUserCookieValue(s.hubSecret, user.Login)
+	cookieValue := mintHubUserCookieValue(s.sessionCookieKey(), user.Login)
 	if cookieValue == "" {
 		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", user.Login)
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
@@ -320,7 +320,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Trust the carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
-	username, ok := verifyHubUserCookieValue(s.hubSecret, cookie.Value)
+	username, ok := s.verifyHubUserDual(cookie.Value)
 	if !ok || loadSaaSUser(username) == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))
