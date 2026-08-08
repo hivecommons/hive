@@ -51,6 +51,7 @@ type Config struct {
 	Ioscan     IoscanConfig     `yaml:"ioscan,omitempty" json:"ioscan,omitempty"`
 	Classifier ClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
 	Planning   PlanningConfig   `yaml:"planning,omitempty" json:"planning,omitempty"`
+	Intent     IntentConfig     `yaml:"intent,omitempty" json:"intent,omitempty"`
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
@@ -222,6 +223,17 @@ type ClassifierConfig struct {
 	// ComplexSignals are title substrings that classify an issue as Tier
 	// "Complex" (→ opus). Empty keeps the built-in default set.
 	ComplexSignals []string `yaml:"complex_signals,omitempty" json:"complex_signals,omitempty"`
+}
+
+// IntentConfig controls intent-verification reporting and merge-gate
+// enforcement. The zero value is report-only with built-in path patterns, so an
+// absent intent: block preserves existing merge eligibility behavior.
+type IntentConfig struct {
+	Enforce               bool     `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	TestPathPatterns      []string `yaml:"test_path_patterns,omitempty" json:"test_path_patterns,omitempty"`
+	DocsPathPatterns      []string `yaml:"docs_path_patterns,omitempty" json:"docs_path_patterns,omitempty"`
+	GuardrailPathPatterns []string `yaml:"guardrail_path_patterns,omitempty" json:"guardrail_path_patterns,omitempty"`
+	FeatureSignals        []string `yaml:"feature_signals,omitempty" json:"feature_signals,omitempty"`
 }
 
 // VariablesConfig declares operator-defined ${VAR} substitutions and the trust

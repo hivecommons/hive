@@ -40,6 +40,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/hub"
+	"github.com/kubestellar/hive/v2/pkg/intent"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/mint"
@@ -4275,7 +4276,8 @@ func runEvalCycle(
 
 	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
 
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, logger)
+	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, logger)
 
 	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
 	// that is red on a required check AND stale (its red head SHA unchanged past
@@ -5323,7 +5325,10 @@ func runEscalationSweep(
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 
-const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
+const (
+	ciFailingPath      = "/var/run/hive-metrics/ci-failing.json"
+	intentVerdictsPath = "/var/run/hive-metrics/intent-verdicts.json"
+)
 
 // acmmHoldGatedMinLevel / acmmHoldGatedMaxLevel bracket the ACMM levels whose
 // merge policy is "hold-gated" — every agent-opened PR gets a "hold" label and
@@ -5532,7 +5537,202 @@ func claimingPRRedStale(cfg *config.Config, actionable *github.ActionableResult)
 	}
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, logger *slog.Logger) {
+func writeIntentVerdicts(
+	ctx context.Context,
+	cfg *config.Config,
+	ghClient *github.Client,
+	actionable *github.ActionableResult,
+	beadStores map[string]*beads.Store,
+	logger *slog.Logger,
+) map[string]intent.Verdict {
+	verdicts := make(map[string]intent.Verdict)
+	if cfg == nil || actionable == nil {
+		return verdicts
+	}
+	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
+	aiAuthor := strings.TrimSpace(cfg.EffectiveAIAuthor())
+	intentCfg := intent.Config{
+		TestPathPatterns:      cfg.Intent.TestPathPatterns,
+		DocsPathPatterns:      cfg.Intent.DocsPathPatterns,
+		GuardrailPathPatterns: cfg.Intent.GuardrailPathPatterns,
+		FeatureSignals:        cfg.Intent.FeatureSignals,
+	}
+	type verdictRecord struct {
+		Repo       string         `json:"repo"`
+		Number     int            `json:"number"`
+		Title      string         `json:"title"`
+		Author     string         `json:"author"`
+		Enforced   bool           `json:"enforced"`
+		Verdict    intent.Verdict `json:"verdict"`
+		Classify   string         `json:"classification_reason"`
+		FetchError string         `json:"fetch_error,omitempty"`
+	}
+	records := make([]verdictRecord, 0, len(actionable.PRs.Items))
+	for _, pr := range actionable.PRs.Items {
+		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
+		key := fmt.Sprintf("%s/%d", fullRepo, pr.Number)
+		agentPR := aiAuthor != "" && strings.EqualFold(pr.Author, aiAuthor)
+		record := verdictRecord{
+			Repo:     fullRepo,
+			Number:   pr.Number,
+			Title:    pr.Title,
+			Author:   pr.Author,
+			Enforced: cfg.Intent.Enforce,
+		}
+		if !agentPR {
+			class := intent.Classify(intent.PR{Title: pr.Title, Labels: pr.Labels, Author: pr.Author, AgentAuthor: false}, intentCfg)
+			verdict := intent.Evaluate(class, intent.Evidence{})
+			verdicts[key] = verdict
+			record.Verdict = verdict
+			record.Classify = class.Reason
+			records = append(records, record)
+			continue
+		}
+		body, files, approved, err := fetchIntentPREvidence(ctx, ghClient, fullRepo, pr.Number)
+		if err != nil {
+			verdict := intent.Verdict{
+				Tier:       intent.Tier1,
+				Authorized: false,
+				Reason:     "intent evidence unavailable: " + err.Error(),
+				AgentPR:    true,
+			}
+			verdicts[key] = verdict
+			record.Verdict = verdict
+			record.FetchError = err.Error()
+			records = append(records, record)
+			logger.Warn("intent verification evidence fetch failed", "repo", fullRepo, "number", pr.Number, "error", err)
+			continue
+		}
+		class := intent.Classify(intent.PR{
+			Title:       pr.Title,
+			Body:        body,
+			Labels:      pr.Labels,
+			Files:       files,
+			Author:      pr.Author,
+			AgentAuthor: true,
+		}, intentCfg)
+		evidence := intent.BuildEvidenceForRepo(body, fullRepo, beadStores, approved)
+		verdict := intent.Evaluate(class, evidence)
+		verdicts[key] = verdict
+		record.Verdict = verdict
+		record.Classify = class.Reason
+		records = append(records, record)
+		if !verdict.Authorized {
+			logger.Info("intent authorization denied", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", verdict.Reason, "enforce", cfg.Intent.Enforce)
+		}
+	}
+	payload := map[string]any{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"enforced":     cfg.Intent.Enforce,
+		"verdicts":     records,
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		atomicWrite(intentVerdictsPath, data)
+	} else {
+		logger.Warn("failed to marshal intent verdicts", "error", err)
+	}
+	return verdicts
+}
+
+func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo string, number int) (string, []intent.ChangedFile, bool, error) {
+	if ghClient == nil || ghClient.GoGitHub() == nil {
+		return "", nil, false, github.ErrNoGitHubClient
+	}
+	owner, repoName, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || repoName == "" {
+		return "", nil, false, fmt.Errorf("invalid repo %q", repo)
+	}
+	client := ghClient.GoGitHub()
+	pr, _, err := client.PullRequests.Get(ctx, owner, repoName, number)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("getting PR: %w", err)
+	}
+	var files []intent.ChangedFile
+	fileOpts := &gh.ListOptions{PerPage: 100}
+	for {
+		page, resp, err := client.PullRequests.ListFiles(ctx, owner, repoName, number, fileOpts)
+		if err != nil {
+			return "", nil, false, fmt.Errorf("listing PR files: %w", err)
+		}
+		for _, f := range page {
+			files = append(files, intent.ChangedFile{
+				Filename:  f.GetFilename(),
+				Status:    f.GetStatus(),
+				Additions: f.GetAdditions(),
+				Deletions: f.GetDeletions(),
+			})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		fileOpts.Page = resp.NextPage
+	}
+	approved, err := hasMaintainerApproval(ctx, client, owner, repoName, number)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return pr.GetBody(), files, approved, nil
+}
+
+func hasMaintainerApproval(ctx context.Context, client *gh.Client, owner, repo string, number int) (bool, error) {
+	opts := &gh.ListOptions{PerPage: 100}
+	latest := make(map[string]string)
+	maintainer := make(map[string]bool)
+	for {
+		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+		if err != nil {
+			return false, fmt.Errorf("listing PR reviews: %w", err)
+		}
+		for _, review := range reviews {
+			login := review.GetUser().GetLogin()
+			if login == "" {
+				continue
+			}
+			if maintainerAssociation(review.GetAuthorAssociation()) {
+				switch review.GetState() {
+				case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
+					latest[login] = review.GetState()
+				}
+				maintainer[login] = true
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	approved := false
+	for login, state := range latest {
+		if !maintainer[login] {
+			continue
+		}
+		switch state {
+		case "CHANGES_REQUESTED":
+			return false, nil
+		case "APPROVED":
+			approved = true
+		}
+	}
+	return approved, nil
+}
+
+func maintainerAssociation(association string) bool {
+	switch strings.ToUpper(strings.TrimSpace(association)) {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		return true
+	default:
+		return false
+	}
+}
+
+func fullRepoName(repo, org string) string {
+	if strings.Contains(repo, "/") || org == "" {
+		return repo
+	}
+	return org + "/" + repo
+}
+
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, enforceIntent bool, intentVerdicts map[string]intent.Verdict, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
@@ -5583,9 +5783,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if holdSet[key] {
 			continue
 		}
-		fullRepo := pr.Repo
-		if !strings.Contains(fullRepo, "/") && org != "" {
-			fullRepo = org + "/" + fullRepo
+		fullRepo := fullRepoName(pr.Repo, org)
+		if enforceIntent {
+			if verdict, ok := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && verdict.AgentPR && !verdict.Authorized {
+				logger.Info("excluding PR from merge-eligible due to intent authorization", "repo", fullRepo, "number", pr.Number, "tier", verdict.Tier, "reason", verdict.Reason)
+				continue
+			}
 		}
 
 		if pr.CIStatus == "failure" {
