@@ -1667,7 +1667,7 @@
     .config-info:hover .config-tooltip { display: block; }
 
     .config-list { margin-bottom: 14px; }
-    /* Role pills for the Access tab (read-only authorized-users view). */
+    /* Role pills for the Security tab Access subsection (read-only authorized-users view). */
     .role-badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-weight: 600; white-space: nowrap; }
     .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
     .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
@@ -11106,7 +11106,7 @@ function burnAreaChart() {
 
     /* Rendered avatar sizes, in CSS pixels. The contributor cards and the
        leaderboard rows share a size because they are the same kind of roster;
-       the Access tab's allowlist is a denser config list. */
+       the Security tab's Access subsection allowlist is a denser config list. */
     const CONTRIBUTOR_AVATAR_PX = 28;
     const ACCESS_LIST_AVATAR_PX = 20;
 
@@ -14190,11 +14190,11 @@ function burnAreaChart() {
     // It is deliberately NOT part of 'Model Gateways': a gateway is an
     // OpenAI-compatible inference ENDPOINT (endpoint + default_model, routed
     // to by name), whereas the bob key authenticates a binary running in this
-    // pod and has neither. It is also not 'Access', which is read-only
-    // hub-synced user/role data. It sits next to Model Gateways because both
-    // are backend configuration.
+    // pod and has neither. It is also not the Security tab's Access subsection,
+    // which is read-only hub-synced user/role data. It sits next to Model
+    // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Security', 'Features', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -14233,8 +14233,10 @@ function burnAreaChart() {
       } else {
         const configKey = type === 'governor' ? '__governor__' : agentName;
         const savedTab = _configTabMemory[configKey];
-        const overrideTab = _configState.initialTabOverride;
-        const initialTab = (overrideTab && tabs.includes(overrideTab)) ? overrideTab : (savedTab && tabs.includes(savedTab) ? savedTab : tabs[0]);
+        let overrideTab = _configState.initialTabOverride;
+        if (type === 'governor' && overrideTab === 'Access') overrideTab = 'Security';
+        const rememberedTab = type === 'governor' && savedTab === 'Access' ? 'Security' : savedTab;
+        const initialTab = (overrideTab && tabs.includes(overrideTab)) ? overrideTab : (rememberedTab && tabs.includes(rememberedTab) ? rememberedTab : tabs[0]);
         document.getElementById('config-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading…</div>';
         loadConfigData(type, agentName).finally(() => {
           if (!_configModalOpen) return;
@@ -14796,13 +14798,13 @@ function burnAreaChart() {
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Security': return renderGovSecurity(d.security || {});
+        case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
         case 'Model Gateways': return renderGovGateways();
         case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
-        case 'Access': return renderGovAccess();
         default: return '';
       }
     }
@@ -14943,7 +14945,7 @@ function burnAreaChart() {
     // variables can be added/edited/deleted here; script and http variables are
     // shown read-only because they can execute code or reach the network and are
     // therefore seed-only (GitOps), enforced server-side.
-    // ── Access tab: read-only view of who can log in to this hive ──
+    // ── Security tab / Access subsection: read-only view of who can log in to this hive ──
     // Reads GET /api/config/authorized-users. Access is granted on the HUB
     // (Manage Access) and propagated to the spoke via heartbeat, so this view is
     // intentionally read-only — it shows the current allowlist, not an editor.
@@ -18335,6 +18337,10 @@ function burnAreaChart() {
       return '<input type="text" list="security-model-options" value="' + esc(value || '') + '" placeholder="' + esc(placeholder || 'model id') + '" onchange="markDirty(\'security\',\'' + key + '\',this.value.trim())">';
     }
 
+    function featureModelInput(key, value, placeholder) {
+      return '<input type="text" list="security-model-options" value="' + esc(value || '') + '" placeholder="' + esc(placeholder || 'model id') + '" onchange="markDirty(\'features\',\'' + key + '\',this.value.trim())">';
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -18348,7 +18354,13 @@ function burnAreaChart() {
         if (idx <= 0) return;
         headers[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
       });
-      markDirty('security', 'otelHeaders', headers);
+      markDirty('features', 'otelHeaders', headers);
+    }
+
+    function renderSecuritySection(title, html) {
+      return '<section style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">' +
+        '<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">' + esc(title) + '</div>' +
+        html + '</section>';
     }
 
     function renderGovSecurity(sec) {
@@ -18363,12 +18375,8 @@ function burnAreaChart() {
             <div class="config-field"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" onchange="markDirty('security','ioscanClassifierBlockThreshold',Number(this.value))"></div>
           </div>`
         : '<p style="font-size:0.72rem;color:var(--muted);margin:8px 0 0">ioscan classifier fields are not present in this v4 backend yet; this disclosure will render them automatically when the API reports support.</p>';
-      return `
-        ${securityModelDatalistHtml()}${agentList}
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:10px">Operator security controls saved through the dashboard overlay.</p>
-        <div style="margin-bottom:14px">${securityPostureStripHtml()}</div>
-        ${securityWarningsHtml(sec)}
 
+      const inputDefense = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
           <span class="config-toggle-label">Input/Output scanning (ioscan) <span class="config-info">i<span class="config-tooltip">Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.</span></span></span>
@@ -18384,9 +18392,9 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${sec.ioscanCanaries ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanCanaries"></div>
           <span class="config-toggle-label">ioscan canaries <span class="config-info">i<span class="config-tooltip">Plant per-kick exfiltration markers and scan egress for leaks.</span></span></span>
         </div>
-        <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced ioscan classifier</summary>${classifierAdvanced}</details>
+        <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced ioscan classifier</summary>${classifierAdvanced}</details>`;
 
-        <hr style="border-color:var(--border);margin:16px 0">
+      const mergeGates = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
           <span class="config-toggle-label">Enforce intent authorization on merges</span>
@@ -18403,78 +18411,73 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${sec.reviewFanOut ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="reviewFanOut"></div>
           <span class="config-toggle-label">Fan out review work to review-capable agents</span>
         </div>
-        <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced review gate</summary>
+        <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced review gate</summary>
           <div class="config-field-row">
             <div class="config-field"><label>Max parallel reviews</label><input type="number" min="0" max="64" value="${sec.reviewMaxParallelReviews || 0}" onchange="markDirty('security','reviewMaxParallelReviews',Number(this.value))"><span style="font-size:0.65rem;color:var(--muted)">0 uses the default (${sec.reviewMaxParallelReviews || 5}).</span></div>
             <div class="config-field"><label>Fixer agent</label><input type="text" list="security-agent-options" value="${esc(sec.reviewFixerAgent || '')}" placeholder="scanner" onchange="markDirty('security','reviewFixerAgent',this.value.trim())"></div>
           </div>
           <div class="config-field"><label>Reviewer agents <span style="font-weight:400;color:var(--muted)">(comma-separated allowlist)</span></label><input type="text" value="${esc((sec.reviewReviewerAgents || []).join(', '))}" placeholder="leave blank to auto-detect review-capable agents" onchange="markDirty('security','reviewReviewerAgents',parseSecurityList(this.value))"></div>
           <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Review severity threshold is not present in this v4 backend config yet, so there is no safe field to persist.</p>
-        </details>
+        </details>`;
 
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Quality loops</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${sec.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="retroEnabled"></div>
-            <span class="config-toggle-label">Retro loop enabled</span>
-          </div>
-          <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced retro</summary>
-            <div class="config-field"><label>Analysis model</label>${securityModelInput('retroAnalysisModel', sec.retroAnalysisModel || '', 'leave empty for deterministic only')}</div>
-          </details>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${sec.otelEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="otelEnabled"></div>
-            <span class="config-toggle-label">OpenTelemetry export enabled</span>
-          </div>
-          <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
-            <div class="config-field"><label>Endpoint</label><input type="text" value="${esc(sec.otelEndpoint || '')}" placeholder="https://otel-collector:4318" onchange="markDirty('security','otelEndpoint',this.value.trim())"></div>
-            <div class="config-field-row">
-              <div class="config-field"><label>Service name</label><input type="text" value="${esc(sec.otelServiceName || '')}" placeholder="hive" onchange="markDirty('security','otelServiceName',this.value.trim())"></div>
-              <div class="config-field"><label>Sample ratio</label><input type="number" min="0" max="1" step="0.01" value="${sec.otelSampleRatio || 0}" onchange="markDirty('security','otelSampleRatio',Number(this.value))"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
-            </div>
-            <div class="config-toggle"><div class="config-toggle-switch ${sec.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport</span></div>
-            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span></label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" onchange="parseOtelHeaders(this.value)"></textarea><div style="font-size:0.68rem;color:var(--muted);margin-top:4px">${sec.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button type="button" onclick="markDirty('security','otelHeaders',{});showToast('OTel headers will be cleared on Save','info')" style="margin-left:8px;font-size:0.68rem;padding:2px 8px;border:1px solid var(--border);background:var(--bg);color:var(--muted);border-radius:4px;cursor:pointer">Clear saved headers</button></div></div>
-          </details>
-        </div>
-
+      const isolation = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.agentSandboxEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="agentSandboxEnabled"></div>
           <span class="config-toggle-label">Enable agent sandbox runner <span class="config-info">i<span class="config-tooltip">Global gate for per-agent sandbox opt-ins. Agents still opt in from their own General tab.</span></span></span>
-        </div>`;
+        </div>
+        <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Per-agent opt-in lives on each agent's General tab. Current effective posture: ${Number(sec.sandboxedAgents || 0)}/${Number(sec.totalAgents || 0)} agents sandboxed.</p>`;
+
+      return `
+        ${securityModelDatalistHtml()}${agentList}
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
+        <div style="margin-bottom:14px">${securityPostureStripHtml()}</div>
+        ${securityWarningsHtml(sec)}
+        ${renderSecuritySection('Access', renderGovAccess())}
+        ${renderSecuritySection('Input Defense', inputDefense)}
+        ${renderSecuritySection('Merge Gates', mergeGates)}
+        ${renderSecuritySection('Isolation', isolation)}`;
     }
 
-    // renderGovFeatures renders the "Features" tab: four already-functional
-    // opt-in capabilities exposed as toggles so operators need not hand-edit
-    // hive.yaml. Each control marks the shared 'features' dirty section, which
-    // saveConfig() PUTs to /api/config/governor/features as a single body whose
-    // keys match the handler's JSON fields (ioscanEnabled, tracingEnabled,
-    // tracingEndpoint, mintEnabled, mintIssuer, planFromLabel). The mint signing
-    // key is intentionally NOT surfaced — the overlay is secret-free.
+    // renderGovFeatures renders operational features that are not security posture
+    // controls. ioscan moved to Security/Input Defense; OpenTelemetry and retro
+    // stay here as observability/quality-loop settings.
     function renderGovFeatures(f) {
       f = f || {};
-      // planFromLabel is a tri-state on the wire: null = "default (ACMM gate)",
-      // true/false = explicit. The toggle shows on only for an explicit true.
       const planOn = f.planFromLabel === true;
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Opt-in capabilities. Each is off by default and safe to leave off; toggling here writes the same setting you could set by hand in <code>hive.yaml</code>. Changes take effect on the next hive restart.</p>
+        ${securityModelDatalistHtml()}
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Opt-in capabilities. Security-posture controls live in the Security tab; observability and quality-loop controls stay here.</p>
 
-        <div class="config-toggle">
-          <div class="config-toggle-switch ${f.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="ioscanEnabled"></div>
-          <span class="config-toggle-label">Input/Output Scanning (ioscan) <span class="config-info">i<span class="config-tooltip">Scans untrusted external text (issue titles/bodies) for prompt-injection and secret/dangerous directives before it is injected into an agent kick. Advisory and fail-safe — it never crashes a kick.</span></span></span>
+        <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">
+          Input/Output Scanning (ioscan) moved to <b>Security → Input Defense</b> so its enablement, fail mode, canaries, and classifier settings have one canonical control surface.
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Observability</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.tracingEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="tracingEnabled"></div>
-            <span class="config-toggle-label">Distributed Tracing (OpenTelemetry) <span class="config-info">i<span class="config-tooltip">Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.</span></span></span>
+            <span class="config-toggle-label">OpenTelemetry export enabled <span class="config-info">i<span class="config-tooltip">Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.</span></span></span>
           </div>
-          <div class="config-field" style="margin-top:10px">
-            <label>OTLP/HTTP Endpoint <span class="config-info">i<span class="config-tooltip">Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.</span></span></label>
-            <input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" onchange="markDirty('features','tracingEndpoint',this.value.trim())">
-            <p style="font-size:0.72rem;color:var(--muted);margin:4px 0 0">Traces export to your OTLP collector — view them in Grafana/Jaeger.</p>
+          <details style="margin:10px 0 0" open><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
+            <div class="config-field"><label>Endpoint <span class="config-info">i<span class="config-tooltip">Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.</span></span></label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" onchange="markDirty('features','tracingEndpoint',this.value.trim())"></div>
+            <div class="config-field-row">
+              <div class="config-field"><label>Service name</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" onchange="markDirty('features','otelServiceName',this.value.trim())"></div>
+              <div class="config-field"><label>Sample ratio</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" onchange="markDirty('features','tracingSampleRatio',Number(this.value))"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
+            </div>
+            <div class="config-toggle"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport</span></div>
+            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span></label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" onchange="parseOtelHeaders(this.value)"></textarea><div style="font-size:0.68rem;color:var(--muted);margin-top:4px">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button type="button" onclick="markDirty('features','otelHeaders',{});showToast('OTel headers will be cleared on Save','info')" style="margin-left:8px;font-size:0.68rem;padding:2px 8px;border:1px solid var(--border);background:var(--bg);color:var(--muted);border-radius:4px;cursor:pointer">Clear saved headers</button></div></div>
+          </details>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Quality loops</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="retroEnabled"></div>
+            <span class="config-toggle-label">Retro loop enabled</span>
           </div>
+          <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced retro</summary>
+            <div class="config-field"><label>Analysis model</label>${featureModelInput('retroAnalysisModel', f.retroAnalysisModel || '', 'leave empty for deterministic only')}</div>
+          </details>
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">

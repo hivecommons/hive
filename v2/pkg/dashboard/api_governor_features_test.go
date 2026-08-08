@@ -30,6 +30,11 @@ func TestCovGov_Features(t *testing.T) {
 	}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad sample ratio: expected 400, got %d", rec.Code)
 	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{
+		"otelEndpoint": "ftp://collector:4318",
+	}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad otel endpoint: expected 400, got %d", rec.Code)
+	}
 
 	// Set every field in one valid PUT.
 	planTrue := true
@@ -38,6 +43,11 @@ func TestCovGov_Features(t *testing.T) {
 		"tracingEnabled":     true,
 		"tracingEndpoint":    "https://otel-collector:4318",
 		"tracingSampleRatio": 0.5,
+		"otelServiceName":    "hive-ui",
+		"otelInsecure":       true,
+		"otelHeaders":        map[string]string{"authorization": "${OTEL_TOKEN}"},
+		"retroEnabled":       true,
+		"retroAnalysisModel": "claude-sonnet",
 		"mintEnabled":        true,
 		"mintIssuer":         "https://mint.example.com",
 		"planFromLabel":      planTrue,
@@ -57,6 +67,12 @@ func TestCovGov_Features(t *testing.T) {
 	}
 	if cfg.Tracing.SampleRatio != 0.5 || cfg.OTel.SampleRatio != 0.5 {
 		t.Errorf("tracing sample ratio = %v otel sample ratio = %v", cfg.Tracing.SampleRatio, cfg.OTel.SampleRatio)
+	}
+	if cfg.OTel.ServiceName != "hive-ui" || !cfg.OTel.Insecure || cfg.OTel.Headers["authorization"] != "${OTEL_TOKEN}" {
+		t.Errorf("advanced otel fields not set: %+v", cfg.OTel)
+	}
+	if !cfg.Retro.Enabled || cfg.Retro.AnalysisModel != "claude-sonnet" {
+		t.Errorf("retro fields not set: %+v", cfg.Retro)
 	}
 	if !cfg.Mint.Enabled {
 		t.Errorf("mint not enabled")

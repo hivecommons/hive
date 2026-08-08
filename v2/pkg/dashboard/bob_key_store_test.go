@@ -392,7 +392,7 @@ func TestBobKeyUILivesOnGovernorTab(t *testing.T) {
 		snippet string
 	}{
 		{"tab name constant", "const GOVERNOR_BOB_TAB = 'Bob';"},
-		{"tab is in the governor strip", "'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'"},
+		{"tab is in the governor strip", "'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'"},
 		{"tab is wired into render dispatch", "case GOVERNOR_BOB_TAB: return renderGovBob();"},
 		{"tab renderer exists", "function renderGovBob() {"},
 		{"status loader exists", "async function loadBobKeyStatus() {"},

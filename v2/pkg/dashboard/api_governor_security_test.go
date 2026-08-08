@@ -22,14 +22,6 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 		"reviewMaxParallelReviews": 3,
 		"reviewReviewerAgents":     []string{"reviewer"},
 		"reviewFixerAgent":         "scanner",
-		"retroEnabled":             true,
-		"retroAnalysisModel":       "claude-sonnet",
-		"otelEnabled":              true,
-		"otelEndpoint":             "https://otel.example.com:4318",
-		"otelServiceName":          "hive-sec",
-		"otelInsecure":             true,
-		"otelSampleRatio":          0.5,
-		"otelHeaders":              map[string]string{"authorization": "${OTEL_TOKEN}"},
 		"agentSandboxEnabled":      true,
 	})
 	if rec.Code != http.StatusOK {
@@ -41,17 +33,14 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 	if !deps.Config.Ioscan.FailClosed() || !deps.Config.Ioscan.Canaries {
 		t.Fatalf("ioscan settings not updated: %+v", deps.Config.Ioscan)
 	}
-	if !deps.Config.Intent.Enforce || !deps.Config.Review.RequireApproval || !deps.Config.Review.FanOut || !deps.Config.Retro.Enabled || !deps.Config.AgentSandbox.Enabled {
-		t.Fatalf("security settings not updated: intent=%+v review=%+v retro=%+v sandbox=%+v",
-			deps.Config.Intent, deps.Config.Review, deps.Config.Retro, deps.Config.AgentSandbox)
+	if !deps.Config.Intent.Enforce || !deps.Config.Review.RequireApproval || !deps.Config.Review.FanOut || !deps.Config.AgentSandbox.Enabled {
+		t.Fatalf("security settings not updated: intent=%+v review=%+v sandbox=%+v",
+			deps.Config.Intent, deps.Config.Review, deps.Config.AgentSandbox)
 	}
 	if deps.Config.Intent.AlignmentModel != "gpt-4o" || deps.Config.Review.MaxParallelReviews != 3 ||
-		deps.Config.Review.FixerAgent != "scanner" || deps.Config.Retro.AnalysisModel != "claude-sonnet" ||
-		!deps.Config.OTel.Enabled || deps.Config.OTel.Endpoint != "https://otel.example.com:4318" ||
-		deps.Config.OTel.ServiceName != "hive-sec" || !deps.Config.OTel.Insecure ||
-		deps.Config.OTel.SampleRatio != 0.5 || deps.Config.OTel.Headers["authorization"] != "${OTEL_TOKEN}" {
-		t.Fatalf("advanced security settings not updated: intent=%+v review=%+v retro=%+v otel=%+v",
-			deps.Config.Intent, deps.Config.Review, deps.Config.Retro, deps.Config.OTel)
+		deps.Config.Review.FixerAgent != "scanner" {
+		t.Fatalf("advanced security settings not updated: intent=%+v review=%+v",
+			deps.Config.Intent, deps.Config.Review)
 	}
 
 	body := decodeJSON(t, doGet(s, "/api/config/governor"))
@@ -60,7 +49,7 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 		t.Fatalf("security section missing: %#v", body["security"])
 	}
 	if sec["ioscanFailMode"] != "closed" || sec["reviewCapableAgents"].(float64) != 1 ||
-		sec["intentAlignmentModel"] != "gpt-4o" || sec["otelHasHeaders"] != true {
+		sec["intentAlignmentModel"] != "gpt-4o" {
 		t.Fatalf("security section wrong: %#v", sec)
 	}
 }
@@ -81,8 +70,6 @@ func TestGovernorSecurityRejectsInvalidAdvancedValues(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{name: "bad otel endpoint", body: map[string]any{"otelEndpoint": "ftp://otel.example.com"}},
-		{name: "bad otel sample", body: map[string]any{"otelSampleRatio": 1.5}},
 		{name: "bad review max", body: map[string]any{"reviewMaxParallelReviews": 65}},
 	}
 	for _, tt := range tests {

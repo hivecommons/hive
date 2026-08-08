@@ -16,11 +16,13 @@ const (
 	maxTracingSampleRatio = 1.0
 )
 
-// handleGovernorFeatures toggles four already-functional opt-in features from
-// the Governor config dialog so operators do not have to hand-edit hive.yaml:
+// handleGovernorFeatures updates non-security-posture feature/observability
+// settings from the Governor config dialog so operators do not have to hand-edit
+// hive.yaml:
 //
-//   - ioscan            (Config.Ioscan.Enabled — *bool, nil defaults ON)
-//   - tracing           (Config.Tracing.Enabled + Endpoint + SampleRatio)
+//   - ioscan            (legacy API compatibility; UI moved to Security)
+//   - otel/tracing      (Config.OTel/Tracing Enabled + advanced exporter fields)
+//   - retro             (Config.Retro enabled + analysis model)
 //   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
 //     key is a secret/PEM path and the dashboard overlay is deliberately
 //     secret-free)
@@ -37,9 +39,18 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	var body struct {
 		IoscanEnabled *bool `json:"ioscanEnabled"`
 
-		TracingEnabled     *bool    `json:"tracingEnabled"`
-		TracingEndpoint    *string  `json:"tracingEndpoint"`
-		TracingSampleRatio *float64 `json:"tracingSampleRatio"`
+		TracingEnabled     *bool              `json:"tracingEnabled"`
+		TracingEndpoint    *string            `json:"tracingEndpoint"`
+		TracingSampleRatio *float64           `json:"tracingSampleRatio"`
+		OTelEnabled        *bool              `json:"otelEnabled"`
+		OTelEndpoint       *string            `json:"otelEndpoint"`
+		OTelServiceName    *string            `json:"otelServiceName"`
+		OTelInsecure       *bool              `json:"otelInsecure"`
+		OTelSampleRatio    *float64           `json:"otelSampleRatio"`
+		OTelHeaders        *map[string]string `json:"otelHeaders"`
+
+		RetroEnabled       *bool   `json:"retroEnabled"`
+		RetroAnalysisModel *string `json:"retroAnalysisModel"`
 
 		MintEnabled *bool   `json:"mintEnabled"`
 		MintIssuer  *string `json:"mintIssuer"`
@@ -52,19 +63,21 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// --- validate before mutating anything ---
-	if body.TracingEndpoint != nil {
-		ep := strings.TrimSpace(*body.TracingEndpoint)
+	endpoint := firstStringPtr(body.OTelEndpoint, body.TracingEndpoint)
+	if endpoint != nil {
+		ep := strings.TrimSpace(*endpoint)
 		if ep != "" {
 			u, err := url.Parse(ep)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				jsonError(w, "tracing endpoint must be empty or an http(s) URL", http.StatusBadRequest)
+				jsonError(w, "otel endpoint must be empty or an http(s) URL", http.StatusBadRequest)
 				return
 			}
 		}
 	}
-	if body.TracingSampleRatio != nil {
-		if *body.TracingSampleRatio < minTracingSampleRatio || *body.TracingSampleRatio > maxTracingSampleRatio {
-			jsonError(w, "tracing sample_ratio must be between 0.0 and 1.0", http.StatusBadRequest)
+	sampleRatio := firstFloatPtr(body.OTelSampleRatio, body.TracingSampleRatio)
+	if sampleRatio != nil {
+		if *sampleRatio < minTracingSampleRatio || *sampleRatio > maxTracingSampleRatio {
+			jsonError(w, "otel sample_ratio must be between 0.0 and 1.0", http.StatusBadRequest)
 			return
 		}
 	}
@@ -75,19 +88,35 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
 	}
-	if body.TracingEnabled != nil || body.TracingEndpoint != nil || body.TracingSampleRatio != nil {
+	otelEnabled := firstBoolPtr(body.OTelEnabled, body.TracingEnabled)
+	if otelEnabled != nil || endpoint != nil || body.OTelServiceName != nil || body.OTelInsecure != nil || sampleRatio != nil || body.OTelHeaders != nil {
 		merged := cfg.EffectiveOTel()
-		if body.TracingEnabled != nil {
-			merged.Enabled = *body.TracingEnabled
+		if otelEnabled != nil {
+			merged.Enabled = *otelEnabled
 		}
-		if body.TracingEndpoint != nil {
-			merged.Endpoint = strings.TrimSpace(*body.TracingEndpoint)
+		if endpoint != nil {
+			merged.Endpoint = strings.TrimSpace(*endpoint)
 		}
-		if body.TracingSampleRatio != nil {
-			merged.SampleRatio = *body.TracingSampleRatio
+		if body.OTelServiceName != nil {
+			merged.ServiceName = strings.TrimSpace(*body.OTelServiceName)
+		}
+		if body.OTelInsecure != nil {
+			merged.Insecure = *body.OTelInsecure
+		}
+		if sampleRatio != nil {
+			merged.SampleRatio = *sampleRatio
+		}
+		if body.OTelHeaders != nil {
+			merged.Headers = sanitizedHeaderMap(*body.OTelHeaders)
 		}
 		cfg.OTel = merged
 		cfg.Tracing = merged
+	}
+	if body.RetroEnabled != nil {
+		cfg.Retro.Enabled = *body.RetroEnabled
+	}
+	if body.RetroAnalysisModel != nil {
+		cfg.Retro.AnalysisModel = strings.TrimSpace(*body.RetroAnalysisModel)
 	}
 	if body.MintEnabled != nil {
 		cfg.Mint.Enabled = *body.MintEnabled
@@ -127,8 +156,37 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"tracingEnabled":     otelCfg.Enabled,
 		"tracingEndpoint":    otelCfg.Endpoint,
 		"tracingSampleRatio": otelCfg.SampleRatio,
+		"otelEnabled":        otelCfg.Enabled,
+		"otelEndpoint":       otelCfg.Endpoint,
+		"otelServiceName":    otelCfg.ServiceName,
+		"otelInsecure":       otelCfg.Insecure,
+		"otelSampleRatio":    otelCfg.SampleRatio,
+		"otelHasHeaders":     len(otelCfg.Headers) > 0,
+		"retroEnabled":       cfg.Retro.Enabled,
+		"retroAnalysisModel": cfg.Retro.AnalysisModel,
 		"mintEnabled":        cfg.Mint.Enabled,
 		"mintIssuer":         cfg.Mint.Issuer,
 		"planFromLabel":      planFromLabel,
 	}
+}
+
+func firstBoolPtr(primary, fallback *bool) *bool {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func firstFloatPtr(primary, fallback *float64) *float64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func firstStringPtr(primary, fallback *string) *string {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }
