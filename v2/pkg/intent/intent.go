@@ -73,6 +73,8 @@ var defaultGuardrailPathPatterns = []string{
 	"**/policies/**",
 	"hive.yaml",
 	"**/hive.yaml",
+	"hive.yaml.dashboard",
+	"**/hive.yaml.dashboard",
 	"OWNERS",
 	"**/OWNERS",
 	"CODEOWNERS",

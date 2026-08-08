@@ -27,6 +27,7 @@ var DefaultProtectedPaths = []string{
 	"bin/gh-wrapper.sh",
 	"deploy/bin/gh-wrapper.sh",
 	"policies/",
+	"hive.yaml.dashboard",
 	"OWNERS",
 	".github/OWNERS",
 }

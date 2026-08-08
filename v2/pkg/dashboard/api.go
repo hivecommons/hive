@@ -126,6 +126,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
+	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
 	// bob API key: PUT sets/replaces, DELETE revokes. Both are non-GET, so the
 	// roleEnforcement middleware already 403s a read-only role — no separate
 	// authorization rule is needed or wanted here.
@@ -2103,6 +2104,8 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
 			"cavemanMode":      agentCfg.CavemanMode,
+			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
+			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 		},
 		"cadences":       cadences,
 		"models":         models,
@@ -2699,6 +2702,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				}
 			}
 			agentCfg.Aliases = a
+		}
+	}
+	if v, ok := body["sandboxEnabled"]; ok {
+		if b, ok := v.(bool); ok {
+			if agentCfg.Sandbox == nil {
+				agentCfg.Sandbox = &config.AgentSandboxOverride{}
+			}
+			bb := b
+			agentCfg.Sandbox.Enabled = &bb
 		}
 	}
 	if v, ok := body["cavemanMode"]; ok {
@@ -3618,6 +3630,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
 		"classifier": classifierSectionResponse(),
 		"features":   featuresSectionResponse(cfg),
+		"security":   securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the
 			// switch from this, so an untouched hive shows it on.
