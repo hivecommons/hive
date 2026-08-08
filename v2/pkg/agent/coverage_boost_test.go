@@ -1529,8 +1529,13 @@ func TestPaneHasCLIMarker(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLoginPromptPatterns_HasExpectedEntries(t *testing.T) {
+	// A bare "/login" is deliberately absent from this list: it is a substring
+	// of ordinary agent output ("POST /login", a CLI's slash-command list) and
+	// matching it painted the needs-login badge on authenticated, working
+	// agents. "/login" is now recognised only with an imperative verb, via
+	// lineHasLoginDirective — see TestLoginPromptPatterns_NoBareSlashLogin.
 	expected := []string{
-		"/login", "sign in to use", "Sign in to use",
+		"sign in to use", "Sign in to use",
 		"authenticate to use", "Authenticate to use",
 		"log in to use", "Log in to use",
 	}

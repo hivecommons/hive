@@ -3,6 +3,7 @@ package governor
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,9 +20,11 @@ const (
 )
 
 type AgentCadence struct {
-	Agent    string
-	Interval time.Duration
-	Paused   bool
+	Agent          string
+	Interval       time.Duration
+	Schedule       config.Cadence
+	Paused         bool
+	LastOccurrence time.Time
 }
 
 type ModeChange struct {
@@ -189,6 +192,7 @@ type Governor struct {
 	kickHistory      []KickRecord
 	admissionHistory []WorkAdmissionDecision
 	budget           BudgetInfo
+	now              func() time.Time
 
 	// resumeKicks records the last crash-recovery resume kick granted per
 	// agent (see AllowResumeKick). In-memory only: after a process restart
@@ -224,6 +228,7 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 		evalHistory: make([]EvalSnapshot, 0, evalHistoryCapacity),
 		kickHistory: make([]KickRecord, 0, kickHistoryCapacity),
 		resumeKicks: make(map[string]time.Time),
+		now:         time.Now,
 		budget: BudgetInfo{
 			ByAgent: make(map[string]int64),
 			ByModel: make(map[string]int64),
@@ -304,6 +309,12 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 				g.logger.Info("agent cadence: paused by mode",
 					"agent", agentName,
 					"mode", g.state.Mode,
+				)
+			} else if cadence.Schedule.Mode() != config.CadenceModeInterval {
+				g.logger.Info("agent cadence: active time-of-day schedule",
+					"agent", agentName,
+					"mode", g.state.Mode,
+					"schedule", cadence.Schedule.HumanSummary(),
 				)
 			} else if cadence.Interval > 0 {
 				g.logger.Info("agent cadence: active",
@@ -393,15 +404,15 @@ func (g *Governor) updateCadences() {
 	cadences := make(map[string]AgentCadence, len(g.agents))
 
 	for agentName := range g.agents {
-		cadenceStr, ok := g.resolveCadence(modeName, agentName)
-		if !ok || cadenceStr == cadenceValueOff {
+		cadence, ok := g.resolveCadence(modeName, agentName)
+		if !ok || strings.EqualFold(strings.TrimSpace(cadence.Interval()), cadenceValueOff) {
 			// No cadence configured for this agent in this mode (or an
 			// explicit "off"): no timer kicks. Leaving the agent out of the
 			// map — rather than keeping a stale entry — is the fix.
 			continue
 		}
 
-		if cadenceStr == cadenceValuePause || cadenceStr == cadenceValuePaused {
+		if cadence.IsPaused() {
 			cadences[agentName] = AgentCadence{
 				Agent:  agentName,
 				Paused: true,
@@ -409,21 +420,31 @@ func (g *Governor) updateCadences() {
 			continue
 		}
 
-		dur, err := time.ParseDuration(cadenceStr)
-		if err != nil {
-			g.logger.Warn("invalid cadence duration — agent will receive no timer kicks until fixed",
+		if err := cadence.Validate(); err != nil {
+			g.logger.Warn("invalid cadence — agent will receive no timer kicks until fixed",
 				"agent", agentName,
 				"mode", g.state.Mode,
-				"value", cadenceStr,
+				"value", cadence.String(),
 				"error", err,
 			)
 			continue
 		}
 
-		cadences[agentName] = AgentCadence{
-			Agent:    agentName,
-			Interval: dur,
+		entry := AgentCadence{Agent: agentName, Schedule: cadence}
+		if cadence.Mode() == config.CadenceModeInterval {
+			dur, err := time.ParseDuration(cadence.Interval())
+			if err != nil {
+				g.logger.Warn("invalid cadence duration — agent will receive no timer kicks until fixed",
+					"agent", agentName,
+					"mode", g.state.Mode,
+					"value", cadence.Interval(),
+					"error", err,
+				)
+				continue
+			}
+			entry.Interval = dur
 		}
+		cadences[agentName] = entry
 	}
 
 	g.state.Cadences = cadences
@@ -431,7 +452,7 @@ func (g *Governor) updateCadences() {
 
 // resolveCadence returns the configured cadence string for one agent in one
 // mode, falling back to the idle mode's entry when the mode defines none.
-func (g *Governor) resolveCadence(modeName, agentName string) (string, bool) {
+func (g *Governor) resolveCadence(modeName, agentName string) (config.Cadence, bool) {
 	if mode, ok := g.cfg.Modes[modeName]; ok {
 		if c, ok := mode.Cadences[agentName]; ok {
 			return c, true
@@ -456,7 +477,7 @@ func (g *Governor) budgetExhausted() bool {
 }
 
 func (g *Governor) agentsDueForKick() []string {
-	now := time.Now()
+	now := g.now()
 	var due []string
 
 	exhausted := g.budgetExhausted()
@@ -475,7 +496,7 @@ func (g *Governor) agentsDueForKick() []string {
 		if cadence.Paused {
 			continue
 		}
-		if cadence.Interval == 0 {
+		if cadence.Interval == 0 && cadence.Schedule.Mode() == config.CadenceModeInterval {
 			continue
 		}
 		if ac, ok := g.agents[agentName]; ok && ac.OnDemand {
@@ -489,8 +510,21 @@ func (g *Governor) agentsDueForKick() []string {
 			continue
 		}
 
-		lastKick, kicked := g.state.LastKick[agentName]
-		if !kicked || now.Sub(lastKick) >= cadence.Interval {
+		lastKick := g.state.LastKick[agentName]
+		if cadence.Schedule.Mode() != config.CadenceModeInterval {
+			// Time-of-day cadences are exact wall-clock schedules. Governor modes
+			// only decide whether this schedule is active; they never scale the
+			// schedule's times. A short catch-up window grants at most one kick
+			// after downtime, and comparing the scheduled occurrence to LastKick
+			// dedupes repeated governor ticks inside the same minute.
+			if occurrence, ok := cadence.Schedule.DueOccurrence(lastKick, now, config.CadenceCatchUpWindow); ok {
+				cadence.LastOccurrence = occurrence
+				g.state.Cadences[agentName] = cadence
+				due = append(due, agentName)
+			}
+			continue
+		}
+		if lastKick.IsZero() || now.Sub(lastKick) >= cadence.Interval {
 			due = append(due, agentName)
 		}
 	}
@@ -544,7 +578,7 @@ func (g *Governor) AllowResumeKick(agentName string) bool {
 	defer g.mu.Unlock()
 
 	cadence, ok := g.state.Cadences[agentName]
-	if !ok || cadence.Paused || cadence.Interval <= 0 {
+	if !ok || cadence.Paused || (cadence.Interval <= 0 && cadence.Schedule.Mode() == config.CadenceModeInterval) {
 		return false
 	}
 	if ac, ok := g.agents[agentName]; ok && (ac.OnDemand || !ac.UsesGovernorKick()) {
@@ -553,17 +587,20 @@ func (g *Governor) AllowResumeKick(agentName string) bool {
 	if g.budgetExhausted() && !g.budgetExempt(agentName) {
 		return false
 	}
-	if last, ok := g.resumeKicks[agentName]; ok && time.Since(last) < cadence.Interval {
+	if cadence.Schedule.Mode() != config.CadenceModeInterval {
 		return false
 	}
-	g.resumeKicks[agentName] = time.Now()
+	if last, ok := g.resumeKicks[agentName]; ok && g.now().Sub(last) < cadence.Interval {
+		return false
+	}
+	g.resumeKicks[agentName] = g.now()
 	return true
 }
 
 func (g *Governor) RecordKick(agentName string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	now := time.Now()
+	now := g.now()
 	g.state.LastKick[agentName] = now
 	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName})
 }

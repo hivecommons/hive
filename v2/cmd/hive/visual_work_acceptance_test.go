@@ -86,7 +86,7 @@ func TestNormalVisualWorkVerticalAcceptance(t *testing.T) {
 	normalConfig := &config.Config{
 		HiveID: "acceptance-hive", Project: config.ProjectConfig{Org: "owner", Name: "acceptance", PrimaryRepo: "repo", Repos: []string{"repo"}},
 		Agents: map[string]config.AgentConfig{"quality": agentConfig}, Policies: config.PoliciesConfig{LocalDir: policyRoot},
-		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}},
+		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}},
 	}
 
 	primer := newAcceptanceKnowledgePrimer(t, logger)

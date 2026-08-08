@@ -88,7 +88,7 @@ func TestHandleGovernorRepos_SimpleRepos(t *testing.T) {
 	}
 }
 
-func TestHandleGovernorRepos_URLParsing(t *testing.T) {
+func TestHandleGovernorRepos_URLParsingRejected(t *testing.T) {
 	srv := newFullServer(t)
 	body := `{"repos":["https://github.com/myorg/myrepo"],"primaryRepo":"myrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
@@ -96,11 +96,45 @@ func TestHandleGovernorRepos_URLParsing(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("code = %d, want 200", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w.Code)
 	}
-	if srv.deps.Config.Project.Org != "myorg" {
-		t.Errorf("org = %q, want myorg", srv.deps.Config.Project.Org)
+	want := "Repo target misconfigured: repo 'https://github.com/myorg/myrepo' is a URL — expected repo name only so the target resolves to org/repo. Fix in Governor Config → Repos."
+	if !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("body = %q, want %q", w.Body.String(), want)
+	}
+}
+
+func TestHandleStatusCarriesRepoTargetMisconfig(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "github.ibm.com"
+	srv.deps.Config.Project.Repos = []string{"hive"}
+	srv.UpdateStatus(minimalPayload())
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+	srv.handleStatus(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var got struct {
+		RepoTargetMisconfigured bool   `json:"repoTargetMisconfigured"`
+		RepoTargetIssue         string `json:"repoTargetIssue"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !got.RepoTargetMisconfigured {
+		t.Fatal("repoTargetMisconfigured = false, want true")
+	}
+	want := "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."
+	if got.RepoTargetIssue != want {
+		t.Fatalf("repoTargetIssue = %q, want %q", got.RepoTargetIssue, want)
+	}
+	srv.deps.Config.Project.Org = "kubestellar"
+	payload := &StatusPayload{RepoTargetMisconfigured: true, RepoTargetIssue: "stale"}
+	srv.UpdateStatus(payload)
+	if payload.RepoTargetMisconfigured || payload.RepoTargetIssue != "" {
+		t.Fatalf("UpdateStatus did not clear stale repo target issue after fix: %#v", payload)
 	}
 }
 
@@ -314,8 +348,8 @@ func TestHandleGovernorRepos_StripOrgPrefix(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("code = %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", w.Code)
 	}
 	repos := srv.deps.Config.Project.Repos
 	for _, r := range repos {

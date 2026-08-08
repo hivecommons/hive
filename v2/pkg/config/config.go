@@ -624,19 +624,39 @@ type GatewayConfig struct {
 	// "openrouter", "corp-litellm"). Must be non-empty and unique per hive.
 	Name string `yaml:"name" json:"name"`
 	// Kind drives preset defaults + labeling: openrouter | litellm | vllm |
-	// llm-d | custom. Purely descriptive at runtime (all are OpenAI-compatible);
-	// the endpoint is what actually routes.
+	// llm-d | watsonx | custom. Purely descriptive at runtime (all are
+	// OpenAI-compatible); the endpoint is what actually routes. The one
+	// exception is "watsonx", which additionally needs an IAM-minted bearer
+	// (not the raw key) and a project_id header — see ProjectID below and the
+	// watsonx token minter (pkg/watsonx).
 	Kind string `yaml:"kind" json:"kind,omitempty"`
 	// Endpoint is the OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1.
+	// For a watsonx gateway this is the model-gateway base
+	// https://<region>.ml.cloud.ibm.com/ml/gateway — hive appends /v1/models and
+	// /v1/chat/completions to reach watsonx's OpenAI-compatible surface
+	// (.../ml/gateway/v1/models, .../ml/gateway/v1/chat/completions).
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 	// APIKeyEnv / APIKeyFile resolve this gateway's key (env var NAME and/or file
 	// PATH — never the value). Empty is allowed for keyless endpoints (some vLLM).
+	// For watsonx this resolves the IBM Cloud API key that is exchanged for a
+	// short-lived IAM token; the raw key is never sent as the bearer.
 	APIKeyEnv  string `yaml:"api_key_env" json:"api_key_env,omitempty"`
 	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"`
 	// DefaultModel is used when an agent routed through this gateway selects none.
 	DefaultModel string `yaml:"default_model" json:"default_model,omitempty"`
 	// CABundle is an optional PEM path for a private CA (never disables verify).
 	CABundle string `yaml:"ca_bundle" json:"ca_bundle,omitempty"`
+	// ProjectID is the watsonx project (or space) id an OpenAI client does not
+	// send but watsonx requires for billing/limits. It is sent as the
+	// X-IBM-Project-ID header on outbound requests to a watsonx gateway. Only
+	// meaningful for Kind == watsonx; omitempty keeps existing gateways
+	// byte-identical in hive.yaml. Not a secret (an identifier, not a
+	// credential), so unlike the key it is stored inline.
+	ProjectID string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	// Region is the watsonx region slug (e.g. us-south, eu-de, jp-tok) the UI
+	// preset uses to build the endpoint template. Purely a convenience for the
+	// preset; Endpoint is authoritative. Only meaningful for Kind == watsonx.
+	Region string `yaml:"region,omitempty" json:"region,omitempty"`
 }
 
 // gatewayKind values.
@@ -645,6 +665,7 @@ const (
 	GatewayKindLiteLLM    = "litellm"
 	GatewayKindVLLM       = "vllm"
 	GatewayKindLLMD       = "llm-d"
+	GatewayKindWatsonx    = "watsonx"
 	GatewayKindCustom     = "custom"
 
 	// legacyLiteLLMGatewayName is the name of the implicit gateway synthesized
@@ -1232,6 +1253,14 @@ func (c *LiteLLMConfig) Validate() error {
 
 type LabelsConfig struct {
 	Exempt []string `yaml:"exempt"`
+	// AutoMerge is the label a merger/owner queue action applies to a PR.
+	// Configurable because the label has to live in someone else's
+	// repository, where the local convention already exists: Prow-style
+	// projects have used `lgtm` for exactly this decision for years, and a
+	// hive that hard-codes its own name either collides with that or forces
+	// every managed repo to grow a second label meaning the same thing.
+	// Defaults to DefaultAutoMergeLabel.
+	AutoMerge string `yaml:"automerge"`
 }
 
 type SensingConfig struct {
@@ -1255,8 +1284,8 @@ type BudgetConfig struct {
 }
 
 type ModeConfig struct {
-	Threshold int               `yaml:"threshold"`
-	Cadences  map[string]string `yaml:"cadences"`
+	Threshold int                `yaml:"threshold"`
+	Cadences  map[string]Cadence `yaml:"cadences"`
 }
 
 // UnmarshalYAML implements custom unmarshaling for ModeConfig.
@@ -1270,18 +1299,18 @@ type ModeConfig struct {
 // This method separates "threshold" into the Threshold field and collects
 // all other keys into the Cadences map.
 func (m *ModeConfig) UnmarshalYAML(value *yaml.Node) error {
-	var raw map[string]string
+	var raw map[string]Cadence
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 
-	m.Cadences = make(map[string]string)
+	m.Cadences = make(map[string]Cadence)
 
 	const thresholdKey = "threshold"
 	if v, ok := raw[thresholdKey]; ok {
 		var t int
-		if _, err := fmt.Sscanf(v, "%d", &t); err != nil {
-			return fmt.Errorf("invalid threshold value %q: %w", v, err)
+		if _, err := fmt.Sscanf(v.Interval(), "%d", &t); err != nil {
+			return fmt.Errorf("invalid threshold value %q: %w", v.Interval(), err)
 		}
 		m.Threshold = t
 	}
@@ -1785,7 +1814,8 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new
 //
-// It returns "" for a GitHub Enterprise host whose App slug is not configured.
+// It returns "" for a GitHub Enterprise host whose App slug is neither
+// configured nor derivable from the forge-identity table.
 //
 // # WHY EMPTY RATHER THAN A BEST-EFFORT URL
 //
@@ -1797,16 +1827,28 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // reads as "this product is broken", and it sent a real user to
 // github.ibm.com/github-apps/kubestellar-hive/installations/new.
 //
-// The empty string is the honest answer — "this host's App slug was never
-// recorded" — and callers render it as a legible message naming the missing
-// config instead of a button that 404s. Public github.com keeps the default,
-// where it is correct by construction.
+// A KNOWN forge is different: forgeIdentities records the slug of the App
+// actually registered on that host, so deriving from the table can never build
+// the public-slug 404 above. This matters after a "Reset Forge App": the raw
+// app_slug/base_url go blank while the resolved identity (what the Forge App
+// tab displays) still names github.ibm.com — and returning "" here suppressed
+// the install banner on exactly the hive that needed it (vllmd-13).
+//
+// For a GHE host OUTSIDE the table the empty string remains the honest answer
+// — "this host's App slug was never recorded" — and callers render it as a
+// legible message naming the missing config instead of a button that 404s.
+// Public github.com keeps the default, where it is correct by construction.
 func (g GitHubConfig) AppInstallURL() string {
 	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
 	if g.IsGHE() {
-		// No default is admissible here: only an explicitly configured slug can
-		// name an App on this enterprise host.
+		// An explicit slug wins; otherwise only the forge-identity table may
+		// supply one — never DefaultGitHubAppSlug, which names no App here.
 		slug := strings.TrimSpace(g.AppSlug)
+		if slug == "" {
+			if id, ok := forgeIdentities[g.Forge()]; ok {
+				slug = id.AppSlug
+			}
+		}
 		if slug == "" {
 			return ""
 		}
@@ -1918,6 +1960,19 @@ type HubConfig struct {
 	// as ContributeQueueOrder so it survives restart, and edited only through the
 	// authenticated POST /api/contribute/queue/hold endpoint (owner/read-write only).
 	ContributeQueueHold []string `yaml:"contribute_queue_hold,omitempty"`
+	// ContributeQueueHoldReasons is an OPTIONAL parallel map (canonical
+	// "owner/repo#number" key -> short operator note) annotating why an issue in
+	// ContributeQueueHold was parked. It is a companion to — not a replacement for —
+	// ContributeQueueHold: the []string set above remains the authoritative source of
+	// truth for WHICH issues are held (every admission check reads it); this map only
+	// carries the human-facing REASON, surfaced in the on-hold badge tooltip. A hold
+	// with no reason simply has no entry here (the badge falls back to its generic
+	// text), so holding without a note works exactly as before. Kept as a parallel
+	// map, rather than folding the reason into ContributeQueueHold, so the many
+	// read sites of the []string set stay untouched. Written only by the same
+	// authenticated POST /api/contribute/queue/hold endpoint that maintains the set,
+	// and pruned to the held keys on every write so it never leaks stale reasons.
+	ContributeQueueHoldReasons map[string]string `yaml:"contribute_queue_hold_reasons,omitempty"`
 	// ContributeRequireExplicitAccept gates HOW a contributor's scoped GitHub
 	// credential is delivered relative to task acceptance (kubestellar/hive#2537).
 	// The credential is ALWAYS delivered only AFTER an acceptance decision — it no
@@ -2047,7 +2102,38 @@ const (
 	// "cbrooker27:read-write", no lookup could ever match, and every login was
 	// rejected as unauthorized despite the grant being present and correct.
 	RoleReadWrite = "read-write"
+	// RoleMerger can do everything read-write can, plus approve/queue other
+	// people's PRs for the existing auto-merge-on-green sweep. The spoke
+	// enforces the "never your own PR" rule server-side.
+	RoleMerger = "merger"
 )
+
+// DefaultAutoMergeLabel is the label applied when a hive does not configure
+// `governor.labels.automerge`. `lgtm` is the long-standing Prow/Kubernetes
+// convention for "a second person signed off on this", which is exactly the
+// decision the merger tier records, so a managed repository usually already
+// has it and already understands it.
+const DefaultAutoMergeLabel = "lgtm"
+
+var roleRanks = map[string]int{
+	RoleRead:      1,
+	RoleReadWrite: 2,
+	RoleMerger:    3,
+	RoleOwner:     4,
+}
+
+// ValidRole reports whether role is one of the hive access tiers.
+func ValidRole(role string) bool {
+	_, ok := roleRanks[strings.ToLower(strings.TrimSpace(role))]
+	return ok
+}
+
+// RoleAtLeast reports whether role includes all capabilities of tier.
+func RoleAtLeast(role, tier string) bool {
+	roleRank, okRole := roleRanks[strings.ToLower(strings.TrimSpace(role))]
+	tierRank, okTier := roleRanks[strings.ToLower(strings.TrimSpace(tier))]
+	return okRole && okTier && roleRank >= tierRank
+}
 
 // AuthorizedRole resolves a GitHub username against the spoke's authorized-users
 // allowlist and returns the user's role and whether they are authorized.
@@ -2105,7 +2191,7 @@ func splitAuthorizedEntry(entry string) (name, role string) {
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
 		name = strings.TrimSpace(entry[:idx])
 		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
-		if role != RoleOwner && role != RoleRead && role != RoleReadWrite {
+		if !ValidRole(role) {
 			// Unknown role suffix — treat the whole thing as a bare username so
 			// a stray colon can never silently downgrade or escalate access.
 			return strings.TrimSpace(entry), ""
@@ -2900,12 +2986,19 @@ func (c *Config) applyDefaults() {
 		c.Hub.ContributeAllowLabels = nil
 	}
 
-	if len(c.Hub.TierLimits) == 0 {
-		c.Hub.TierLimits = map[string]TierRate{
-			"newcomer":    {MaxPerHour: 3, MaxPerDay: 10, MaxConcurrent: 1},
-			"contributor": {MaxPerHour: 10, MaxPerDay: 50, MaxConcurrent: 2},
-			"trusted":     {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
-			"advisor":     {MaxPerHour: 0, MaxPerDay: 0, MaxConcurrent: 0},
+	defaultTierLimits := map[string]TierRate{
+		"newcomer":    {MaxPerHour: 3, MaxPerDay: 10, MaxConcurrent: 1},
+		"contributor": {MaxPerHour: 10, MaxPerDay: 50, MaxConcurrent: 2},
+		"trusted":     {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
+		"merger":      {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
+		"advisor":     {MaxPerHour: 0, MaxPerDay: 0, MaxConcurrent: 0},
+	}
+	if c.Hub.TierLimits == nil {
+		c.Hub.TierLimits = map[string]TierRate{}
+	}
+	for tier, limits := range defaultTierLimits {
+		if _, ok := c.Hub.TierLimits[tier]; !ok {
+			c.Hub.TierLimits[tier] = limits
 		}
 	}
 
@@ -2915,6 +3008,9 @@ func (c *Config) applyDefaults() {
 			"auto-qa-tuning-report", "adopters",
 			"changes-requested", "waiting-on-author",
 		}
+	}
+	if strings.TrimSpace(c.Governor.Labels.AutoMerge) == "" {
+		c.Governor.Labels.AutoMerge = DefaultAutoMergeLabel
 	}
 	if len(c.Governor.Sensing.GHRatePatterns) == 0 {
 		c.Governor.Sensing.GHRatePatterns = []string{
@@ -3123,11 +3219,23 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 	}
 }
 
-// InferenceBackends is the canonical list of self-hosted inference backend
+// InferenceBackends is the canonical list of model-gateway / inference backend
 // IDs. It lives in the config package (a leaf in the import graph) so the
 // agent and proxy packages can share it without an import cycle
 // (proxy → agent → config).
-var InferenceBackends = []string{"vllm", "llm-d", "litellm"}
+//
+// These are NOT agentic CLIs. Every one of them names a model endpoint that
+// hive fronts with its own OpenAI-compatible translator and drives with the
+// claude CLI; auth is an API key (or, for watsonx, an IAM bearer minted from
+// one) supplied by config, never an interactive login.
+//
+// "watsonx" is here because IBM watsonx.ai is a model gateway in exactly that
+// sense. It was previously supported ONLY as a `gateways:` kind and as an
+// onboarding UI option, while the agent launcher had no case for it — so
+// `backend: watsonx` was accepted by config and then rejected hours later at
+// kick time with "unknown backend: watsonx". Anything that enumerates gateway
+// backends must read THIS list rather than repeating the members inline.
+var InferenceBackends = []string{"vllm", "llm-d", "litellm", "watsonx"}
 
 // IsInferenceBackend returns true if the backend name is a self-hosted
 // inference backend rather than a CLI tool.
@@ -3138,6 +3246,72 @@ func IsInferenceBackend(backend string) bool {
 		}
 	}
 	return false
+}
+
+// CLIBackends is the canonical list of agentic-CLI agent backends — backends
+// that launch a real coding CLI binary rather than routing to a model gateway.
+//
+// This exists so the CONFIG VALIDATOR and the LAUNCHER dispatch on one list.
+// They used to keep separate inline sets, which is the drift that let
+// `backend: watsonx` be accepted at config-set time and then fail at kick time
+// with "unknown backend: watsonx". Adding a backend in one place only is now a
+// visible omission rather than a silent accept-then-fail.
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini"}
+
+// IsCLIBackend returns true if the backend launches an agentic CLI binary.
+func IsCLIBackend(backend string) bool {
+	for _, b := range CLIBackends {
+		if b == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportedBackends returns every backend name valid independent of this
+// hive's configuration: the agentic CLIs plus the model-gateway backends. A
+// configured gateway NAME is additionally valid as a backend, but that is
+// config-dependent and so is checked separately by the validator.
+func SupportedBackends() []string {
+	out := make([]string, 0, len(CLIBackends)+len(InferenceBackends))
+	out = append(out, CLIBackends...)
+	out = append(out, InferenceBackends...)
+	return out
+}
+
+// ValidateBackend reports whether backend is a usable agent backend for this
+// config, returning a descriptive error naming the supported values when it is
+// not. An empty backend is valid (it means "the hive default").
+//
+// This is the single gate the config write path uses so an unsupported backend
+// is refused AT SET TIME with a clear message, instead of being persisted and
+// surfacing later as an agent that silently never launches.
+func (g GovernorConfig) ValidateBackend(backend string) error {
+	if backend == "" {
+		return nil
+	}
+	if IsCLIBackend(backend) || IsInferenceBackend(backend) {
+		return nil
+	}
+	for _, gw := range g.ResolvedGateways() {
+		if gw.Name != "" && strings.EqualFold(gw.Name, backend) {
+			return nil
+		}
+	}
+	var gatewayNames []string
+	for _, gw := range g.ResolvedGateways() {
+		if gw.Name != "" {
+			gatewayNames = append(gatewayNames, gw.Name)
+		}
+	}
+	msg := fmt.Sprintf("unsupported backend %q (supported: %s",
+		backend, strings.Join(SupportedBackends(), ", "))
+	if len(gatewayNames) > 0 {
+		msg += fmt.Sprintf("; or a configured gateway name: %s", strings.Join(gatewayNames, ", "))
+	} else {
+		msg += "; or the name of a gateway configured under the Model Gateways tab"
+	}
+	return fmt.Errorf("%s)", msg)
 }
 
 func (c *Config) validate() error {
@@ -3169,25 +3343,21 @@ func (c *Config) validate() error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
-	// A configured gateway name is a valid agent backend: naming a gateway as
-	// the backend routes that agent through it. Names are matched
-	// case-insensitively to mirror ResolveGateway.
-	gatewayNames := map[string]bool{}
-	for _, gw := range c.Governor.ResolvedGateways() {
-		if gw.Name != "" {
-			gatewayNames[strings.ToLower(gw.Name)] = true
+	for modeName, mode := range c.Governor.Modes {
+		for agentName, cadence := range mode.Cadences {
+			if err := cadence.Validate(); err != nil {
+				return fmt.Errorf("governor mode %s cadence for %s: %w", modeName, agentName, err)
+			}
 		}
 	}
 	for name, agent := range c.Agents {
-		validBackends := map[string]bool{"claude": true, "copilot": true, "goose": true, "codex": true, "pi": true, "bob": true, "aider": true}
-		// Inference backends (vllm, llm-d, litellm) are valid persisted
-		// agent backends too — they launch the claude CLI routed through
-		// the inference translator.
-		for _, b := range InferenceBackends {
-			validBackends[b] = true
-		}
-		if agent.Backend != "" && !validBackends[agent.Backend] && !gatewayNames[strings.ToLower(agent.Backend)] {
-			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, aider, an inference backend: %s, or a configured gateway name)", name, agent.Backend, strings.Join(InferenceBackends, ", "))
+		// One gate, shared with the config write path (dashboard agent-config
+		// save) and agreeing with what the launcher can actually dispatch. A
+		// configured gateway name is valid too: naming a gateway as the backend
+		// routes that agent through it, matched case-insensitively to mirror
+		// ResolveGateway.
+		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
+			return fmt.Errorf("agent %s: %w", name, err)
 		}
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {

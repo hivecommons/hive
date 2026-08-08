@@ -195,6 +195,7 @@ type Server struct {
 	readyAt time.Time
 
 	githubAppMu         sync.RWMutex
+	githubConfigMu      sync.Mutex
 	githubAppRequired   bool
 	githubAppInstallURL string
 	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
@@ -263,10 +264,19 @@ type StatusPayload struct {
 	GitHubAppInstallURL string                 `json:"githubAppInstallURL,omitempty"`
 	GitHubAppPermIssue  string                 `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState      string                 `json:"githubAppState,omitempty"`
-	GitHubBaseURL       string                 `json:"githubBaseURL,omitempty"`
-	InferenceBackends   []InferenceBackend     `json:"inferenceBackends,omitempty"`
-	SystemAlerts        []SystemAlert          `json:"systemAlerts,omitempty"`
-	HubBanner           *HubBannerState        `json:"hubBanner,omitempty"`
+	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
+	// or classification: a real App is named (app_id set, not the placeholder)
+	// but installation_id is 0. That state alone means every token is a
+	// countdown, so the install banner keys off this field FIRST — no recheck,
+	// classification, or raw-URL sniffing may gate it (the vllmd-13 reset left
+	// blank raw fields suppressing the banner while auth was not-installed).
+	GitHubAppInstallMissing bool               `json:"githubAppInstallMissing,omitempty"`
+	GitHubBaseURL           string             `json:"githubBaseURL,omitempty"`
+	RepoTargetMisconfigured bool               `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue         string             `json:"repoTargetIssue,omitempty"`
+	InferenceBackends       []InferenceBackend `json:"inferenceBackends,omitempty"`
+	SystemAlerts            []SystemAlert      `json:"systemAlerts,omitempty"`
+	HubBanner               *HubBannerState    `json:"hubBanner,omitempty"`
 }
 
 // HubBannerState is a banner message from the hub admin displayed on spoke dashboards.
@@ -442,11 +452,15 @@ type FrontendBudget struct {
 }
 
 type FrontendCadence struct {
-	Agent string `json:"agent"`
-	Idle  string `json:"idle"`
-	Quiet string `json:"quiet"`
-	Busy  string `json:"busy"`
-	Surge string `json:"surge"`
+	Agent      string `json:"agent"`
+	Idle       string `json:"idle"`
+	Quiet      string `json:"quiet"`
+	Busy       string `json:"busy"`
+	Surge      string `json:"surge"`
+	IdleTitle  string `json:"idleTitle,omitempty"`
+	QuietTitle string `json:"quietTitle,omitempty"`
+	BusyTitle  string `json:"busyTitle,omitempty"`
+	SurgeTitle string `json:"surgeTitle,omitempty"`
 }
 
 type FrontendHold struct {
@@ -685,6 +699,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
+	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupCallback)
 	// SSO handoff: exchange a hub-minted, HMAC-signed token for a local session
 	// so a hub-authenticated user opens this (direct-route) spoke without a
 	// second GitHub device-flow login. Public path (see isPublicPath) because
@@ -1070,6 +1085,9 @@ func isPublicPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/snapshot"):
 		return true
+	case path == "/api/style":
+		// Sanitized, same-origin CSS for public snapshot/read-only preview links.
+		return true
 	case path == "/contribute" || strings.HasPrefix(path, "/contribute/"):
 		return true
 	case strings.HasPrefix(path, "/api/contribute"):
@@ -1091,6 +1109,11 @@ func isPublicPath(path string) bool {
 		// token IS the credential. The handler itself verifies the token and
 		// the authorized_users allowlist before minting a session, so exposing
 		// the path unauthenticated does not weaken the allowlist gate.
+		return true
+	case path == "/gh-setup":
+		// GitHub App Setup URL return: GitHub redirects a fresh browser here
+		// after install, often without a hive session. The handler accepts only
+		// IDs verified by an App-JWT lookup against this app and this hive's org.
 		return true
 	default:
 		return false
@@ -1223,7 +1246,7 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Hive-Role", role)
 		w.Header().Set("X-Hive-User", r.Header.Get("X-Hive-User"))
-		if role == "read" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		if config.ValidRole(role) && !config.RoleAtLeast(role, config.RoleReadWrite) && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !strings.HasPrefix(r.URL.Path, "/api/contribute") && r.URL.Path != "/api/gh-user-auth/status" {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return
@@ -1238,6 +1261,13 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
 		status.GitHubBaseURL = s.deps.Config.GitHub.ResolvedBaseURL()
+		if issue := config.ValidateRepoTargets(s.deps.Config); issue != nil {
+			status.RepoTargetMisconfigured = true
+			status.RepoTargetIssue = issue.Message
+		} else {
+			status.RepoTargetMisconfigured = false
+			status.RepoTargetIssue = ""
+		}
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
 
@@ -1247,6 +1277,30 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
+
+	// CONFIG-TRUTH OVERRIDE, applied last so no probe-derived field can veto
+	// it: a real App with installation_id 0 must light the install banner the
+	// moment the page loads. The recheck loop's SetGitHubAppRequired state is
+	// probe-derived and can lag (or, after a "Reset Forge App", hold an empty
+	// install URL because the raw app_slug/base_url went blank); the RESOLVED
+	// config — the same values the Forge App tab displays — is what the banner
+	// must render. Operator-side classifications (key-missing/key-invalid/
+	// no-app-assigned) are preserved: only an empty state is filled in, and
+	// the placeholder app_id never reaches here (ConfiguredButUninstalled
+	// requires a real App).
+	if s.deps != nil && s.deps.Config != nil {
+		g := s.deps.Config.GitHub
+		if g.ConfiguredButUninstalled() {
+			status.GitHubAppInstallMissing = true
+			status.GitHubAppRequired = true
+			if status.GitHubAppState == "" {
+				status.GitHubAppState = githubAppStateNotInstalledToken
+			}
+		}
+		if status.GitHubAppRequired && status.GitHubAppInstallURL == "" {
+			status.GitHubAppInstallURL = g.AppInstallURL()
+		}
+	}
 
 	status.InferenceBackends = s.buildInferenceBackends()
 
@@ -1524,6 +1578,11 @@ func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "recheck not configured", http.StatusNotImplemented)
 		return
 	}
+	ctx := r.Context()
+	if s.deps != nil && s.deps.Ctx != nil {
+		ctx = s.deps.Ctx
+	}
+	_, _ = s.AutoDiscoverGitHubInstallationID(ctx, true)
 	ok := s.RecheckGitHubApp()
 	w.Header().Set("Content-Type", "application/json")
 	if ok {
@@ -1947,12 +2006,35 @@ func (s *Server) MarkReadyIfListening() bool {
 	return true
 }
 
-const healthGracePeriod = 90 * time.Second
+// healthBootGrace bounds how long after process start the agents health check
+// suppresses the *boot-transient* degraded conditions — agents still launching
+// (0 running), a running agent sitting at a login prompt, or a non-running
+// agent whose CLI has not re-authenticated yet. On a fresh start or a pod roll
+// these are all expected: the supervisor relaunches each agent's tmux pane, the
+// Copilot/Claude CLIs re-run their device-login handshake, and the MITM
+// proxy/CA settles — none of which has completed in the first few minutes.
+//
+// Measured from s.startedAt (process construction), mirroring livezStartupGrace
+// so both startup windows share one clock. Set to 5 minutes: an operator (Mike
+// Spreitzer) saw the console hive flip to "Degraded — 4 agents need login"
+// seconds after a legitimate pod roll and self-recover within ~5 minutes, so
+// the window must cover the observed agent-relaunch + CLI-reauth settling time.
+// It is deliberately longer than the original readyAt-based 90s grace, which
+// was too short to outlast Copilot re-auth. Genuinely-persistent failures (a stale
+// hub heartbeat, a 30-min output stall, a real repo/workflow failure) are NOT
+// gated by this — they live outside the agents-coming-up path and keep
+// degrading throughout, so a real problem is never masked by boot grace.
+const healthBootGrace = 5 * time.Minute
 
-func (s *Server) inHealthGrace() bool {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-	return !s.readyAt.IsZero() && time.Since(s.readyAt) < healthGracePeriod
+// inHealthGrace reports whether the process is still inside the post-boot
+// settling window, and how long it has been up. The age is surfaced in the
+// agents check detail so an operator inspecting the health JSON sees WHY a
+// not-yet-degraded hive is being graced, and can tell it apart from a healthy
+// one. Once healthBootGrace elapses, a persisting need-login/down condition
+// flips to the real "degraded" verdict.
+func (s *Server) inHealthGrace() (bool, time.Duration) {
+	age := time.Since(s.startedAt)
+	return !s.startedAt.IsZero() && age < healthBootGrace, age
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -2333,12 +2415,30 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	if proc.NeedsLogin {
 		return true
 	}
-	if authFn == nil {
-		return false
-	}
 	backend := proc.Config.Backend
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
+	}
+	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
+	// an API key supplied by config — there is no interactive login and so no
+	// "needs login" state an operator could act on. Checking this BEFORE the
+	// probe stops a shared-credential miss from flagging an inference-backed
+	// agent that is running fine. See pkg/agent/authprobe.go for the full
+	// precedence rule.
+	if agent.IsInferenceBackend(backend) {
+		return false
+	}
+	// POSITIVE EVIDENCE beats absence-of-file: a running agent that the pane
+	// poller has NOT seen at a login prompt is working (the same signal deep
+	// health folds into `pass`), so a missing credentials file must not
+	// reclassify it. Only a non-running agent falls through to the probe. This
+	// is what stopped the empty shared credential path (per-agent-UID layout)
+	// from reporting healthy agents as needing login.
+	if proc.State == agent.StateRunning {
+		return false
+	}
+	if authFn == nil {
+		return false
 	}
 	available, known := authFn(backend)
 	return known && !available
@@ -2400,9 +2500,14 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		fails++
 	}
 
+	if status != nil && status.RepoTargetMisconfigured {
+		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue})
+		warns++
+	}
+
 	// 3. Agents
 	if s.deps != nil && s.deps.AgentMgr != nil {
-		grace := s.inHealthGrace()
+		grace, bootAge := s.inHealthGrace()
 		const staleOutputThreshold = 30 * time.Minute
 		running := 0
 		paused := 0
@@ -2495,6 +2600,17 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		if down > 0 || needLogin > 0 {
 			st = "fail"
 			fails++
+		}
+		// During the boot-grace window the transient conditions above (agents
+		// still launching, running-at-login-prompt, CLI not re-authenticated)
+		// have been suppressed from the down/need-login counts, so the check
+		// reads "pass" instead of the false "degraded" that scared operators
+		// after a legitimate pod roll. Make the suppression observable rather
+		// than silent: an operator reading the health JSON must see that grace
+		// is the reason it is not degraded, and that it will flip to a real
+		// verdict once the window elapses if the condition persists.
+		if grace {
+			detail += fmt.Sprintf(" — within boot grace (agents re-authenticating), age=%s", bootAge.Round(time.Second))
 		}
 		checks = append(checks, check{Name: "agents", Status: st, Detail: detail})
 

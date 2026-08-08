@@ -415,7 +415,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		b.WriteString("This comment is updated periodically.\n\n")
 		b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
 		writeRecentlyResolved(&b, d, org, primaryRepo)
-		return b.String()
+		return NeutralizeMentions(b.String())
 	}
 
 	var all []Finding
@@ -472,7 +472,11 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 
 	writeRecentlyResolved(&b, d, org, primaryRepo)
 
-	return b.String()
+	// Findings quote agent output verbatim and routinely name humans
+	// ("PR #665, by @omerap12"). The digest comment is rewritten every cycle,
+	// so any raw mention would re-notify that person on every refresh —
+	// neutralize the whole body before it goes anywhere near GitHub.
+	return NeutralizeMentions(b.String())
 }
 
 // findingSortKey orders every rendered field so an unchanged advisory set

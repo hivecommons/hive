@@ -15,9 +15,8 @@ import (
 //   - the App-access probe endpoint's single-host + org-resolution behaviour
 //     (requirement #3)
 
-// Requirement #2: a hive on github.com must reject a repo pasted on a different
-// forge — the single-host-per-spoke invariant. newFullServer's testrepo is on
-// public github.com, so a github.ibm.com repo is a mixing attempt.
+// Requirement #2: a hive on github.com must reject a repo pasted as
+// host/org/repo. The canonical target must be configured as org + bare repo.
 func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	srv := newFullServer(t)
 	body := `{"repos":["github.ibm.com/acme/widget"],"primaryRepo":"widget"}`
@@ -29,8 +28,8 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 for a cross-forge repo", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "one GitHub host") {
-		t.Errorf("expected single-host message, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "expected repo name only so the target resolves to org/repo") {
+		t.Errorf("expected canonical-shape message, got: %s", w.Body.String())
 	}
 	// The hive's forge must be left untouched.
 	if srv.deps.Config.GitHub.BaseURL != "" {
@@ -38,22 +37,25 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	}
 }
 
-// A GHE hive must accept a repo pasted with its OWN GHE host (same forge), and
-// reject a github.com repo (the mirror-image mixing case).
+// A GHE hive still rejects full URLs in repo fields: the forge belongs in the
+// hive GitHub identity, and the repo target must remain org + bare repo.
 func TestGovernorRepos_GHEHiveHostRules(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.GitHub.BaseURL = "https://github.ibm.com"
 	srv.deps.Config.GitHub.APIURL = "https://github.ibm.com/api/v3"
 
-	// Same-forge paste (full URL on the hive's own GHE host): accepted. The
-	// handler strips the scheme+host and org prefix down to the bare repo name.
+	// Same-forge full URL paste is still ambiguous in a repo field: rejected
+	// rather than silently rewritten.
 	ok := `{"repos":["https://github.ibm.com/acme/widget"],"primaryRepo":"widget"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(ok))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("same-forge add: code = %d, want 200 (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("same-forge URL add: code = %d, want 400 (body: %s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "is a URL") {
+		t.Fatalf("same-forge URL add body = %s, want URL rejection", w.Body.String())
 	}
 
 	// public github.com paste on a GHE hive: rejected as mixing.

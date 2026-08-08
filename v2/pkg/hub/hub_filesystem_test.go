@@ -1212,6 +1212,9 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
+	// The vanity mint runs in the background now (kickClaimClusterWorkAsync) —
+	// the response no longer waits for it. Drain before asserting VanityURL.
+	provisionWG.Wait()
 
 	h := loadSaaSHive("hosted-assign-fs")
 	if h == nil {

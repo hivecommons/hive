@@ -20,7 +20,7 @@ import (
 func TestConfigCoordinatorPreparesManagerBeforeGovernorPublication(t *testing.T) {
 	logger := coordinatorTestLogger()
 	cfg := &config.Config{Agents: map[string]config.AgentConfig{}, Governor: config.GovernorConfig{
-		Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{}}},
+		Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{}}},
 	}}
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
 	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
@@ -48,7 +48,7 @@ func TestConfigCoordinatorPreparesManagerBeforeGovernorPublication(t *testing.T)
 func TestConfigCoordinatorFailedSavePublishesNothing(t *testing.T) {
 	logger := coordinatorTestLogger()
 	cfg := &config.Config{Agents: map[string]config.AgentConfig{}, Governor: config.GovernorConfig{
-		Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{}}},
+		Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{}}},
 	}}
 	before := cfg.Clone()
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
@@ -83,13 +83,13 @@ func TestConfigCoordinatorNeverPublishesMixedGovernorAndAgentSnapshot(t *testing
 	stateA := &config.Config{
 		Agents: map[string]config.AgentConfig{"worker": {Enabled: true, OnDemand: true}},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"worker": "1ns"}},
+			"idle": {Cadences: map[string]config.Cadence{"worker": "1ns"}},
 		}},
 	}
 	stateB := &config.Config{
 		Agents: map[string]config.AgentConfig{"worker": {Enabled: true, OnDemand: false}},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"worker": "paused"}},
+			"idle": {Cadences: map[string]config.Cadence{"worker": "paused"}},
 		}},
 	}
 	cfg := stateA.Clone()
@@ -206,7 +206,7 @@ func TestApplyPackFailedSaveDoesNotPartiallyPublishRuntime(t *testing.T) {
 		Data:   config.DataConfig{AgentsDir: t.TempDir()},
 		Agents: map[string]config.AgentConfig{},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{}},
+			"idle": {Cadences: map[string]config.Cadence{}},
 		}},
 	}
 	before := cfg.Clone()
@@ -291,7 +291,7 @@ func TestAgentImportPublishesManagerBeforeGovernor(t *testing.T) {
 		Data:   config.DataConfig{AgentsDir: t.TempDir()},
 		Agents: map[string]config.AgentConfig{},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"imported": "1ns"}},
+			"idle": {Cadences: map[string]config.Cadence{"imported": "1ns"}},
 		}},
 	}
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
@@ -351,7 +351,7 @@ func TestAgentDeleteRemovesGovernorBeforeManagerEntry(t *testing.T) {
 		Data:   config.DataConfig{AgentsDir: agentsDir},
 		Agents: map[string]config.AgentConfig{"worker": worker},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
-			"idle": {Cadences: map[string]string{"worker": "1ns"}},
+			"idle": {Cadences: map[string]config.Cadence{"worker": "1ns"}},
 		}},
 	}
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)

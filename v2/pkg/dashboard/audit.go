@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -267,7 +268,7 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "owner"
 	}
-	if role != "owner" && role != "read-write" {
+	if !config.RoleAtLeast(role, config.RoleReadWrite) {
 		http.Error(w, "insufficient access", http.StatusForbidden)
 		return
 	}

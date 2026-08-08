@@ -6,12 +6,11 @@ import (
 	"time"
 )
 
-// URL reachability: the hub already probes every spoke's dashboard URL over
-// HTTPS during the auth audit, but until now it threw the transport result
-// away — a hive whose vanity host served a 503 still showed a green dot, all
-// health checks passing, and a dead link in the hub table. The pod being
-// healthy says nothing about whether the Route/Ingress, DNS and cert that put
-// that pod on its PUBLIC hostname actually work.
+// URL reachability: the hub probes every spoke's dashboard URL over HTTPS
+// during the auth audit, and the spoke now reports its own self-probe verdict
+// over heartbeat. The two vantage points are intentionally distinct: a public
+// hub may not be allowed to resolve or route to a private-network hive, while
+// the hive's own cluster can still reach the dashboard URL its users need.
 //
 // This file records the reachability of the URL the hub LINKS USERS TO
 // (RegistryEntry.DashboardURL, which carries the vanity host once minted) and
@@ -178,20 +177,21 @@ func clusterOutage(failed, probed int) bool {
 // pre-existing seam for signals computed outside the evaluator, so this shares
 // all of the ack/dedup/first-seen machinery rather than adding a parallel one.
 //
-// A hive is alerted on only when ALL of these hold, so that "still converging"
-// never reads as "broken":
-//   - it has failed urlUnreachableMinFailures probes in a row;
-//   - it registered at least urlUnreachableMinAge ago;
-//   - its cluster is not in a whole-cluster outage.
+// A hive is critical when its spoke self-check fails, or when the hub-side
+// probe has failed repeatedly while the spoke heartbeat is stale/offline. If
+// the hub-side probe fails while heartbeats are fresh and the spoke self-check
+// is OK or unknown, the result is only informational: the URL is private from
+// the hub's vantage point, not proved dead.
 func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) []Alert {
 	// A HubServer built directly by a test has no urlHealth; no probe has run,
-	// so there is nothing to report.
-	if s == nil || s.urlHealth == nil {
+	// so only spoke self-check failures can be reported.
+	if s == nil {
 		return nil
 	}
-	failures, statuses := s.urlHealth.snapshot()
-	if len(failures) == 0 {
-		return nil
+	failures := map[string]int{}
+	statuses := map[string]int{}
+	if s.urlHealth != nil {
+		failures, statuses = s.urlHealth.snapshot()
 	}
 
 	// Recompute the per-cluster tallies from the failure map so the outage
@@ -210,6 +210,16 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 
 	var alerts []Alert
 	for _, h := range hives {
+		if publicURLSelfCheckFailed(h.PublicURLSelfCheck) {
+			alerts = append(alerts, Alert{
+				HiveID:   h.ID,
+				HiveName: h.Name,
+				Type:     AlertTypeURLUnreachable,
+				Severity: AlertSeverityCritical,
+				Reason:   publicURLSelfCheckFailureReason(h),
+			})
+			continue
+		}
 		n := failures[h.ID]
 		if n < urlUnreachableMinFailures {
 			continue
@@ -217,18 +227,27 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 		if !urlUnreachableEligible(h.RegisteredAt, now) {
 			continue
 		}
-		if clusterOutage(clusterFailed[h.ClusterID], clusterProbed[h.ClusterID]) {
+		if heartbeatFreshForURLCheck(h, now) {
+			alerts = append(alerts, Alert{
+				HiveID:   h.ID,
+				HiveName: h.Name,
+				Type:     AlertTypeURLPrivateNetwork,
+				Severity: AlertSeverityInfo,
+				Reason:   urlPrivateNetworkReason(h, statuses[h.ID]),
+			})
 			continue
 		}
-		alerts = append(alerts, Alert{
-			HiveID:   h.ID,
-			HiveName: h.Name,
-			Type:     AlertTypeURLUnreachable,
-			// Critical: the user-facing link is dead. Every other signal on this
-			// hive can look green, so nothing else will surface it.
-			Severity: AlertSeverityCritical,
-			Reason:   urlUnreachableReason(h.DashboardURL, statuses[h.ID]),
-		})
+		if !clusterOutage(clusterFailed[h.ClusterID], clusterProbed[h.ClusterID]) {
+			alerts = append(alerts, Alert{
+				HiveID:   h.ID,
+				HiveName: h.Name,
+				Type:     AlertTypeURLUnreachable,
+				// Critical: the user-facing link is dead and the spoke is not
+				// freshly heartbeating to contradict the hub-side probe.
+				Severity: AlertSeverityCritical,
+				Reason:   urlUnreachableReason(h.DashboardURL, statuses[h.ID]),
+			})
+		}
 	}
 	return alerts
 }
@@ -247,6 +266,15 @@ func urlUnreachableFacet(alerts []Alert, hiveID string) (bool, string) {
 	return false, ""
 }
 
+func privateURLFacet(alerts []Alert, hiveID string) (bool, string) {
+	for _, a := range alerts {
+		if a.HiveID == hiveID && a.Type == AlertTypeURLPrivateNetwork {
+			return true, a.Reason
+		}
+	}
+	return false, ""
+}
+
 // urlUnreachableReason renders an operator-facing explanation that names the
 // URL and what it actually returned, so the fix is obvious from the alert.
 func urlUnreachableReason(url string, status int) string {
@@ -254,6 +282,59 @@ func urlUnreachableReason(url string, status int) string {
 		return "public URL " + url + " did not respond (DNS, TLS or timeout)"
 	}
 	return "public URL " + url + " returned HTTP " + itoa(status)
+}
+
+func urlPrivateNetworkReason(h RegistryEntry, status int) string {
+	base := "private network — not reachable from the public internet"
+	if h.DashboardURL != "" {
+		base = "private network — hub could not reach " + h.DashboardURL + " from the public internet"
+	}
+	if publicURLSelfCheckOK(h.PublicURLSelfCheck) {
+		return base + ", but the spoke self-check reports the dashboard URL healthy"
+	}
+	if status == 0 {
+		return base + "; the hive is still heartbeating, so this is likely a hub vantage-point limit"
+	}
+	return base + " (hub saw HTTP " + itoa(status) + "); the hive is still heartbeating"
+}
+
+func publicURLSelfCheckOK(check *PublicURLSelfCheck) bool {
+	return check != nil && check.Status == PublicURLSelfCheckOK
+}
+
+func publicURLSelfCheckFailed(check *PublicURLSelfCheck) bool {
+	return check != nil && check.Status == PublicURLSelfCheckFail
+}
+
+func publicURLSelfCheckFailureReason(h RegistryEntry) string {
+	reason := urlUnreachableReason(h.DashboardURL, 0)
+	check := h.PublicURLSelfCheck
+	if check == nil {
+		return reason
+	}
+	if check.HTTPStatus > 0 {
+		reason = urlUnreachableReason(h.DashboardURL, check.HTTPStatus)
+	}
+	if errText := check.Error; errText != "" {
+		reason += " (spoke self-check: " + errText + ")"
+	} else {
+		reason += " (spoke self-check failed)"
+	}
+	return reason
+}
+
+func heartbeatFreshForURLCheck(h RegistryEntry, now time.Time) bool {
+	if h.Online {
+		return true
+	}
+	if h.LastHeartbeat == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, h.LastHeartbeat)
+	if err != nil {
+		return false
+	}
+	return now.Sub(t) <= maxHeartbeatAge
 }
 
 // urlUnreachableEligible reports whether a hive is old enough to be alerted on

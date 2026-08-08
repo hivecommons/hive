@@ -141,7 +141,7 @@ func (g *Governor) bindAdmissionRequestLocked(request WorkAdmissionRequest) Work
 	}
 	request.ConfiguredCadence = ""
 	if mode, ok := g.cfg.Modes[modeToConfigKey(g.state.Mode)]; ok {
-		request.ConfiguredCadence = mode.Cadences[request.Role]
+		request.ConfiguredCadence = string(mode.Cadences[request.Role])
 	}
 	request.BudgetUsed = g.budget.CurrentSpend
 	request.BudgetLimit = g.budget.WeeklyLimit

@@ -226,15 +226,15 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		for modeName, agentCadences := range pack.Governor.Cadences {
 			mode := candidate.Governor.Modes[modeName]
 			if forceLevel {
-				mode.Cadences = make(map[string]string, len(agentCadences))
+				mode.Cadences = make(map[string]config.Cadence, len(agentCadences))
 			} else if mode.Cadences == nil {
-				mode.Cadences = make(map[string]string)
+				mode.Cadences = make(map[string]config.Cadence)
 			}
 			for agentName, interval := range agentCadences {
 				if forceLevel || isFirstApplyOrExpansion {
-					mode.Cadences[agentName] = interval
+					mode.Cadences[agentName] = config.Cadence(interval)
 				} else if _, exists := mode.Cadences[agentName]; !exists {
-					mode.Cadences[agentName] = interval
+					mode.Cadences[agentName] = config.Cadence(interval)
 				}
 			}
 			candidate.Governor.Modes[modeName] = mode

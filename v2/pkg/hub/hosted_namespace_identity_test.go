@@ -280,6 +280,9 @@ func TestHandleApproveProvisionStampsNamespaceIdentity(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("approve status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	// The stamp runs in the background now (kickClaimClusterWorkAsync) so the
+	// approve dialog is never held behind kubectl — drain it before asserting.
+	provisionWG.Wait()
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {
@@ -439,6 +442,9 @@ func TestHandleAssignHivePrefersNameBearingVanityHost(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("assign status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	// The mint runs in the background now (kickClaimClusterWorkAsync) so the
+	// assign dialog is never held behind kubectl — drain it before asserting.
+	provisionWG.Wait()
 
 	if !strings.HasPrefix(gotHost, "tradingasbuddies-") {
 		t.Errorf("vanity host = %q, want a name-bearing host prefixed %q", gotHost, "tradingasbuddies-")
@@ -483,6 +489,7 @@ func TestHandleAssignHiveFallsBackToOrgRepoHostWithoutDisplayName(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("assign status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	provisionWG.Wait() // background mint — drain before asserting the host
 
 	if !strings.HasPrefix(gotHost, "hosted-acme-widgets-") {
 		t.Errorf("vanity host = %q, want the unchanged org/repo-derived host prefixed %q", gotHost, "hosted-acme-widgets-")
@@ -514,7 +521,7 @@ func TestStatusHoverRendersNamespace(t *testing.T) {
 		name    string
 		snippet string
 	}{
-		{"namespace line is composed into the hover", "lines.push('Namespace: ' + hns);"},
+		{"namespace line is composed into the hover", "lines.push('ns: ' + hns);"},
 		{"hiveNamespace helper exists", "function hiveNamespace(h)"},
 		{"hiveNamespace derives from hive-hosted- + id", "return 'hive-hosted-' + h.id;"},
 	}
@@ -545,6 +552,7 @@ func TestHandleAssignHiveStampsNamespaceIdentity(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("assign status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	provisionWG.Wait() // background stamp — drain before reading the log
 
 	data, err := os.ReadFile(logPath)
 	if err != nil {

@@ -86,7 +86,7 @@ func TestMeProfile_AggregatesSeededContributor(t *testing.T) {
 	if bp.Rank <= p.Rank {
 		t.Fatalf("alice (%d shipped) should rank above bob: alice=#%d bob=#%d", p.TasksCompleted, p.Rank, bp.Rank)
 	}
-	// Milestones: Contributor + Trusted tiers attained (22 >= 20 PR-tasks), Advisor not.
+	// Milestones: Contributor + Trusted tiers attained (22 >= 20 PR-tasks), Merger/Advisor not.
 	got := map[string]bool{}
 	for _, m := range p.Milestones {
 		got[m.ID] = m.Attained
@@ -94,8 +94,8 @@ func TestMeProfile_AggregatesSeededContributor(t *testing.T) {
 	if !got["tier-contributor"] || !got["tier-trusted"] {
 		t.Fatalf("expected Contributor+Trusted milestones attained: %+v", p.Milestones)
 	}
-	if got["tier-advisor"] {
-		t.Fatal("Advisor should NOT be attained for a trusted contributor")
+	if got["tier-merger"] || got["tier-advisor"] {
+		t.Fatal("Merger/Advisor should NOT be attained for a trusted contributor")
 	}
 	// Tasks-shipped milestone: 25 attained (27 >= 25), 50 not.
 	if !got["tasks-25"] || got["tasks-50"] {

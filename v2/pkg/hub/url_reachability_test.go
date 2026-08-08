@@ -1,6 +1,9 @@
 package hub
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -20,6 +23,38 @@ func TestURLHealthyStatus(t *testing.T) {
 		if urlHealthyStatus(code) {
 			t.Errorf("status %d should be unhealthy", code)
 		}
+	}
+}
+
+func TestPublicURLSelfProbeStatusSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code int
+		want string
+	}{
+		{"redirect is reachable", http.StatusFound, PublicURLSelfCheckOK},
+		{"unauthorized is reachable", http.StatusUnauthorized, PublicURLSelfCheckOK},
+		{"not found still proves a server answered", http.StatusNotFound, PublicURLSelfCheckOK},
+		{"server error fails", http.StatusBadGateway, PublicURLSelfCheckFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			got := publicURLSelfProbe(context.Background(), srv.URL, srv.Client())
+			if got.Status != tc.want {
+				t.Fatalf("status = %q, want %q (check=%+v)", got.Status, tc.want, got)
+			}
+			if got.HTTPStatus != tc.code {
+				t.Fatalf("http status = %d, want %d", got.HTTPStatus, tc.code)
+			}
+		})
+	}
+
+	got := publicURLSelfProbe(context.Background(), "https://", nil)
+	if got.Status != PublicURLSelfCheckFail || got.Error == "" {
+		t.Fatalf("invalid URL should fail with a terse error, got %+v", got)
 	}
 }
 
@@ -154,6 +189,67 @@ func TestURLUnreachableAlerts(t *testing.T) {
 	}
 }
 
+func TestURLReachabilityDecisionMatrix(t *testing.T) {
+	now := time.Now()
+	oldEnough := now.Add(-urlUnreachableMinAge - time.Hour).Format(time.RFC3339)
+	fresh := now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	stale := now.Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
+
+	for _, tc := range []struct {
+		name      string
+		hubFails  bool
+		freshHB   bool
+		self      *PublicURLSelfCheck
+		wantType  string
+		wantLevel string
+	}{
+		{"hub ok self unknown", false, true, nil, "", ""},
+		{"hub ok self ok", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK}, "", ""},
+		{"hub ok self fail", false, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail fresh self ok", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
+		{"hub fail fresh self unknown", true, true, nil, AlertTypeURLPrivateNetwork, AlertSeverityInfo},
+		{"hub fail fresh self fail", true, true, &PublicURLSelfCheck{Status: PublicURLSelfCheckFail, Error: "HTTP 503", HTTPStatus: 503}, AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail stale self unknown", true, false, nil, AlertTypeURLUnreachable, AlertSeverityCritical},
+		{"hub fail stale self ok", true, false, &PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 401}, AlertTypeURLUnreachable, AlertSeverityCritical},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &HubServer{urlHealth: newURLHealthState()}
+			if tc.hubFails {
+				for i := 0; i < urlUnreachableMinFailures; i++ {
+					s.urlHealth.observe("h1", urlProbeResult{Status: 0})
+				}
+			}
+			h := RegistryEntry{
+				ID:                 "h1",
+				Name:               "org/repo",
+				ClusterID:          "c1",
+				RegisteredAt:       oldEnough,
+				DashboardURL:       "https://private.example.com",
+				LastHeartbeat:      stale,
+				Online:             false,
+				PublicURLSelfCheck: tc.self,
+			}
+			if tc.freshHB {
+				h.LastHeartbeat = fresh
+				h.Online = true
+			}
+			got := s.urlUnreachableAlerts([]RegistryEntry{h}, now)
+			if tc.wantType == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no alerts, got %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("want one alert, got %+v", got)
+			}
+			if got[0].Type != tc.wantType || got[0].Severity != tc.wantLevel {
+				t.Fatalf("alert = (%s,%s), want (%s,%s): %+v", got[0].Type, got[0].Severity, tc.wantType, tc.wantLevel, got[0])
+			}
+		})
+	}
+}
+
 func TestURLUnreachableAlertsNilStateIsSafe(t *testing.T) {
 	s := &HubServer{}
 	if got := s.urlUnreachableAlerts([]RegistryEntry{{ID: "x"}}, time.Now()); got != nil {
@@ -165,6 +261,7 @@ func TestURLUnreachableAlertsNilStateIsSafe(t *testing.T) {
 func TestURLUnreachableFacetMatchesAlerts(t *testing.T) {
 	alerts := []Alert{
 		{HiveID: "a", Type: AlertTypeURLUnreachable, Reason: "public URL https://a returned HTTP 503"},
+		{HiveID: "p", Type: AlertTypeURLPrivateNetwork, Reason: "private network"},
 		{HiveID: "b", Type: AlertTypeOffline, Reason: "offline"},
 	}
 	if bad, reason := urlUnreachableFacet(alerts, "a"); !bad || reason == "" {
@@ -176,6 +273,12 @@ func TestURLUnreachableFacetMatchesAlerts(t *testing.T) {
 	if bad, _ := urlUnreachableFacet(alerts, "c"); bad {
 		t.Error("a hive with no alert must not show the pill")
 	}
+	if private, reason := privateURLFacet(alerts, "p"); !private || reason == "" {
+		t.Error("private-network URL alert must show the informational private URL pill")
+	}
+	if private, _ := privateURLFacet(alerts, "a"); private {
+		t.Error("a critical dead link must not show the private URL pill")
+	}
 }
 
 // A new alert type is unusable until knownAlertTypes accepts it: the ack
@@ -183,6 +286,9 @@ func TestURLUnreachableFacetMatchesAlerts(t *testing.T) {
 func TestURLUnreachableIsAckable(t *testing.T) {
 	if !isKnownAlertType(AlertTypeURLUnreachable) {
 		t.Error("AlertTypeURLUnreachable must be in knownAlertTypes or its ack endpoint returns 400")
+	}
+	if !isKnownAlertType(AlertTypeURLPrivateNetwork) {
+		t.Error("AlertTypeURLPrivateNetwork must be in knownAlertTypes or its ack endpoint returns 400")
 	}
 }
 

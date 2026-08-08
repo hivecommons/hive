@@ -98,7 +98,7 @@ func (c *Client) UpsertReviewPullRequest(ctx context.Context, repository, branch
 		return RepairPullRequest{}, fmt.Errorf("refusing to label inexact review pull request #%d: %w", pull.Number, err)
 	}
 	for name, color := range map[string]string{"hold": "B60205", "hive/baseline-review": "D4C5F9"} {
-		if err := c.ensureLabel(ctx, owner, repo, name, color); err != nil {
+		if err := c.ensureLabelWithColor(ctx, owner, repo, name, color); err != nil {
 			return RepairPullRequest{}, err
 		}
 	}
@@ -135,7 +135,7 @@ func (c *Client) UpsertHeldPullRequest(ctx context.Context, repository, branch, 
 		return RepairPullRequest{}, fmt.Errorf("refusing to label inexact held pull request #%d: %w", pull.Number, err)
 	}
 	for name, color := range map[string]string{"hold": "B60205", "hive/setup-baseline-review": "D4C5F9"} {
-		if err := c.ensureLabel(ctx, owner, repo, name, color); err != nil {
+		if err := c.ensureLabelWithColor(ctx, owner, repo, name, color); err != nil {
 			return RepairPullRequest{}, err
 		}
 	}
@@ -706,7 +706,10 @@ func baselineReviewFingerprint(body string) (string, bool) {
 	return parts[0], true
 }
 
-func (c *Client) ensureLabel(ctx context.Context, owner, repo, name, color string) error {
+// ensureLabelWithColor creates a label with the caller-specified color,
+// tolerating already-exists responses. Distinct from client.go ensureLabel,
+// which owns the auto-merge label with its fixed color/description.
+func (c *Client) ensureLabelWithColor(ctx context.Context, owner, repo, name, color string) error {
 	_, _, err := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{Name: gh.Ptr(name), Color: gh.Ptr(color)})
 	if err == nil {
 		return nil

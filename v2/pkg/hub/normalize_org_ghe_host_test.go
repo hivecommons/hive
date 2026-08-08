@@ -48,6 +48,40 @@ func TestNormalizeOrgRef_GHEHostOnly(t *testing.T) {
 	}
 }
 
+func TestNormalizeProjectRef_GHEHostDoesNotBecomeOrg(t *testing.T) {
+	tests := []struct {
+		name      string
+		in        string
+		wantHost  string
+		wantOrg   string
+		wantRepos []string
+	}{
+		{"public org repo", "kubestellar/hive", "", "kubestellar", []string{"hive"}},
+		{"ghe host org repo", "github.ibm.com/lee-cooper/toolkit", "github.ibm.com", "lee-cooper", []string{"toolkit"}},
+		{"ghe host org", "github.ibm.com/lee-cooper", "github.ibm.com", "lee-cooper", nil},
+		{"ghe trailing slash", "https://github.ibm.com/lee-cooper/toolkit/", "github.ibm.com", "lee-cooper", []string{"toolkit"}},
+		{"public trailing slash", "kubestellar/hive/", "", "kubestellar", []string{"hive"}},
+		{"dotted org is not host", "my.org/repo", "", "my.org", []string{"repo"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			host, org, repos := normalizeProjectRef(tc.in)
+			if host != tc.wantHost || org != tc.wantOrg {
+				t.Fatalf("normalizeProjectRef(%q) = (%q, %q, %v); want host/org (%q, %q)",
+					tc.in, host, org, repos, tc.wantHost, tc.wantOrg)
+			}
+			if len(repos) != len(tc.wantRepos) {
+				t.Fatalf("normalizeProjectRef(%q) repos = %v; want %v", tc.in, repos, tc.wantRepos)
+			}
+			for i := range repos {
+				if repos[i] != tc.wantRepos[i] {
+					t.Fatalf("normalizeProjectRef(%q) repos = %v; want %v", tc.in, repos, tc.wantRepos)
+				}
+			}
+		})
+	}
+}
+
 // TestAssignHive_RejectsBareGHEHostAsOrg is the end-to-end regression for the
 // exact path that produced hosted-available-vllmd-02 / -09: an admin (or the
 // claim UI) submits a bare GHE forge host in the org field. The assign handler

@@ -6,31 +6,33 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 const maxStateAge = 7 * 24 * time.Hour
 
 type PersistedState struct {
-	SavedAt          time.Time                        `json:"saved_at"`
-	Agents           map[string]AgentState            `json:"agents"`
-	GovernorMode     string                           `json:"governor_mode"`
-	BudgetLimit      int64                            `json:"budget_limit"`
-	BudgetIgnored    []string                         `json:"budget_ignored"`
-	BudgetIgnoreAll  bool                             `json:"budget_ignore_all,omitempty"`
-	CadenceOverrides map[string]map[string]string     `json:"cadence_overrides,omitempty"`
-	LastKicks        map[string]time.Time             `json:"last_kicks,omitempty"`
-	BudgetSpend      int64                            `json:"budget_spend,omitempty"`
-	BudgetResetAt    time.Time                        `json:"budget_reset_at,omitempty"`
-	BudgetByAgent    map[string]int64                 `json:"budget_by_agent,omitempty"`
-	BudgetByModel    map[string]int64                 `json:"budget_by_model,omitempty"`
+	SavedAt          time.Time                            `json:"saved_at"`
+	Agents           map[string]AgentState                `json:"agents"`
+	GovernorMode     string                               `json:"governor_mode"`
+	BudgetLimit      int64                                `json:"budget_limit"`
+	BudgetIgnored    []string                             `json:"budget_ignored"`
+	BudgetIgnoreAll  bool                                 `json:"budget_ignore_all,omitempty"`
+	CadenceOverrides map[string]map[string]config.Cadence `json:"cadence_overrides,omitempty"`
+	LastKicks        map[string]time.Time                 `json:"last_kicks,omitempty"`
+	BudgetSpend      int64                                `json:"budget_spend,omitempty"`
+	BudgetResetAt    time.Time                            `json:"budget_reset_at,omitempty"`
+	BudgetByAgent    map[string]int64                     `json:"budget_by_agent,omitempty"`
+	BudgetByModel    map[string]int64                     `json:"budget_by_model,omitempty"`
 	// BudgetWindowBaseline is the lifetime token total at the start of the
 	// current budget window (see governor.BudgetInfo.WindowBaseline).
-	BudgetWindowBaseline int64                        `json:"budget_window_baseline,omitempty"`
-	KickHistory      []GovKickEntry                   `json:"kick_history,omitempty"`
-	IssueCosts       map[string]int64                 `json:"issue_costs,omitempty"`
-	LastEval         time.Time                        `json:"last_eval,omitempty"`
-	ACMMLevel        *int                             `json:"acmm_level,omitempty"`
-	ConfigOverrides  *ConfigOverrides                 `json:"config_overrides,omitempty"`
+	BudgetWindowBaseline int64            `json:"budget_window_baseline,omitempty"`
+	KickHistory          []GovKickEntry   `json:"kick_history,omitempty"`
+	IssueCosts           map[string]int64 `json:"issue_costs,omitempty"`
+	LastEval             time.Time        `json:"last_eval,omitempty"`
+	ACMMLevel            *int             `json:"acmm_level,omitempty"`
+	ConfigOverrides      *ConfigOverrides `json:"config_overrides,omitempty"`
 }
 
 type ConfigOverrides struct {

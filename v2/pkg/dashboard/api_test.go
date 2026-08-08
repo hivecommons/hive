@@ -32,10 +32,10 @@ func testDeps(t *testing.T) *Dependencies {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
-				"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-				"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 			Labels: config.LabelsConfig{Exempt: []string{"hold"}},
 		},
@@ -499,7 +499,7 @@ func TestHandleGovernorRemoveAgent_NotFound(t *testing.T) {
 func TestHandleGovernorRepos(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doPut(s, "/api/config/governor/repos",
-		map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}, "primaryRepo": "repo1"})
+		map[string]interface{}{"repos": []string{"repo1", "repo2"}, "primaryRepo": "repo1"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -557,7 +557,7 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"busy": {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
+				"busy": {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
 			},
 		},
 	}
@@ -1101,6 +1101,42 @@ func TestHandleAgentConfigCadences_Pause(t *testing.T) {
 	}
 }
 
+func TestHandleAgentConfigCadences_StructuredTimesRoundTrip(t *testing.T) {
+	s, _ := apiServer(t)
+	body := map[string]any{"idle": map[string]any{
+		"times": []string{"09:00", "17:00"},
+		"days":  []string{"mon", "tue", "wed", "thu", "fri"},
+		"tz":    "America/New_York",
+	}}
+	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rec = doGet(s, "/api/config/agent/scanner")
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	cadences := got["cadences"].(map[string]any)
+	idle := cadences["idle"].(map[string]any)
+	if idle["tz"] != "America/New_York" || len(idle["times"].([]any)) != 2 {
+		t.Fatalf("idle cadence = %#v", idle)
+	}
+}
+
+func TestHandleAgentConfigCadences_RejectsMutualExclusion(t *testing.T) {
+	s, _ := apiServer(t)
+	body := map[string]any{"idle": map[string]any{
+		"interval": "5m",
+		"times":    []string{"09:00"},
+		"tz":       "UTC",
+	}}
+	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 func TestHandleAgentConfigPipeline(t *testing.T) {
 	s, _ := apiServer(t)
 	body := map[string]bool{"classify": true, "prime": false}
@@ -1435,13 +1471,13 @@ func TestDashboardMutationBoundariesPublishAtomicGovernorSnapshot(t *testing.T) 
 	for name, publish := range boundaries {
 		t.Run(name, func(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-			initialGovernor := config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}
+			initialGovernor := config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}
 			initialAgents := map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "allow"}}}}}
 			gov := governor.New(initialGovernor, initialAgents, logger)
 			cfg := &config.Config{Governor: initialGovernor, Agents: initialAgents}
 			server := &Server{deps: &Dependencies{Config: cfg, Governor: gov}}
 
-			cfg.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "2m"}}}}
+			cfg.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "2m"}}}}
 			cfg.Agents = map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "deny"}}}}}
 			if err := publish(server); err != nil {
 				t.Fatal(err)

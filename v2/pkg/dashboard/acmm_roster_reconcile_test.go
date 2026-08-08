@@ -65,7 +65,7 @@ func TestApplyPackReconcilesFullRoster(t *testing.T) {
 				t.Errorf("mode %q: cadence for %q missing after L5 apply", modeName, agent)
 				continue
 			}
-			if got != want {
+			if string(got) != want {
 				t.Errorf("mode %q: cadence for %q = %q, want %q", modeName, agent, got, want)
 			}
 		}

@@ -37,7 +37,7 @@ func TestConfigCloneDetachesAllMutableConfigState(t *testing.T) {
 			}},
 		}},
 		Governor: GovernorConfig{
-			Modes:  map[string]ModeConfig{"idle": {Cadences: map[string]string{"worker": "1m"}}},
+			Modes:  map[string]ModeConfig{"idle": {Cadences: map[string]Cadence{"worker": "1m"}}},
 			Labels: LabelsConfig{Exempt: []string{"hold"}},
 			Sensing: SensingConfig{
 				GHRatePatterns:     []string{"rate"},

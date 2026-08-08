@@ -12,7 +12,7 @@ import (
 
 func TestUpdateConfigAndAgentsRefreshesNormalCadenceSnapshotAtomically(t *testing.T) {
 	initialConfig := config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"worker": "1ns", "quality": "1ns"}},
+		"idle": {Cadences: map[string]config.Cadence{"worker": "1ns", "quality": "1ns"}},
 	}}
 	g := New(initialConfig, map[string]config.AgentConfig{
 		"worker":  {Enabled: true, Role: "developer"},
@@ -24,7 +24,7 @@ func TestUpdateConfigAndAgentsRefreshesNormalCadenceSnapshotAtomically(t *testin
 	}
 
 	reloadedConfig := config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"worker": "1ns", "quality": "1ns"}},
+		"idle": {Cadences: map[string]config.Cadence{"worker": "1ns", "quality": "1ns"}},
 	}}
 	reloadedAgents := map[string]config.AgentConfig{
 		"worker": {Enabled: true, Role: "reviewer", OnDemand: true},
@@ -94,7 +94,7 @@ func richGovernorConfig(marker string) config.GovernorConfig {
 		Modes: map[string]config.ModeConfig{
 			"idle": {
 				Threshold: 1,
-				Cadences:  map[string]string{"quality": marker + "-cadence"},
+				Cadences:  map[string]config.Cadence{"quality": config.Cadence(marker + "-cadence")},
 			},
 		},
 		Labels: config.LabelsConfig{Exempt: []string{marker + "-label"}},
@@ -109,9 +109,9 @@ func richGovernorConfig(marker string) config.GovernorConfig {
 func mutateRichGovernorConfig(governorConfig *config.GovernorConfig, marker string) {
 	mode := governorConfig.Modes["idle"]
 	mode.Threshold = 99
-	mode.Cadences["quality"] = marker
+	mode.Cadences["quality"] = config.Cadence(marker)
 	governorConfig.Modes["idle"] = mode
-	governorConfig.Modes[marker] = config.ModeConfig{Cadences: map[string]string{marker: marker}}
+	governorConfig.Modes[marker] = config.ModeConfig{Cadences: map[string]config.Cadence{marker: config.Cadence(marker)}}
 	governorConfig.Labels.Exempt[0] = marker
 	governorConfig.Sensing.GHRatePatterns[0] = marker
 	governorConfig.Sensing.CLIExcludePatterns[0] = marker

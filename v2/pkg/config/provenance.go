@@ -290,6 +290,12 @@ func forgeOfAppID(appID int64) string {
 	return ""
 }
 
+// ForgeOfAppID is the exported form of forgeOfAppID, for callers outside this
+// package (the hub's wrong-forge repair) that need the one reliably populated
+// identity marker — the app_id — mapped to the forge that registered it. Same
+// contract: "" for an unrecognised App ID, and unknown is never a mismatch.
+func ForgeOfAppID(appID int64) string { return forgeOfAppID(appID) }
+
 // slugOfAppID returns the ONE slug a known App ID may carry.
 //
 // A GitHub App's slug is its URL name, fixed at registration — an App has
