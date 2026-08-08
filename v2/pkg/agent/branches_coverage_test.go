@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,15 +152,52 @@ func TestTmuxCmd_SocketBranch(t *testing.T) {
 }
 
 func TestTmuxCmd_SuExecBranch(t *testing.T) {
-	m := NewManager(map[string]config.AgentConfig{"a": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	agentName := "definitely-missing-agent-user"
+	m := NewManager(map[string]config.AgentConfig{agentName: {Backend: "claude"}}, discardLogger(), ProjectContext{})
 	m.mu.RLock()
-	agent := m.agents["a"]
+	agent := m.agents[agentName]
 	m.mu.RUnlock()
 	agent.UID = 2001
-	agent.tmuxSocket = "hive-a"
+	agent.tmuxSocket = "hive-" + agentName
 	cmd := m.tmuxCmd(agent, "has-session")
 	if cmd.Args[0] != "su-exec" {
 		t.Errorf("UID>0 tmux cmd should run via su-exec, got %q", cmd.Args[0])
+	}
+	wantUserSpec := "2001:" + strconv.Itoa(os.Getgid())
+	if cmd.Args[1] != wantUserSpec {
+		t.Errorf("UID>0 tmux cmd should fall back to numeric uid:gid %q, got %q", wantUserSpec, cmd.Args[1])
+	}
+}
+
+func TestEnsureTmuxSession_IncludesStderr(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "su-exec")
+	script := `#!/bin/sh
+case "$*" in
+  *has-session*) exit 1 ;;
+  *new-session*) echo "su-exec: getpwnam(hive-architect): Success" >&2; exit 1 ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HIVE_WORK_DIR", filepath.Join(dir, "agents"))
+
+	m := NewManager(map[string]config.AgentConfig{"architect": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["architect"]
+	agent.UID = 2006
+	agent.tmuxSocket = "hive-architect"
+	agent.tmuxSession = "hive-architect"
+	err := m.ensureTmuxSession(agent)
+	m.mu.Unlock()
+	if err == nil {
+		t.Fatal("ensureTmuxSession returned nil, want tmux creation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "getpwnam") {
+		t.Fatalf("ensureTmuxSession error %q does not include tmux stderr", got)
 	}
 }
 

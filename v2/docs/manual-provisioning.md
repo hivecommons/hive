@@ -257,9 +257,10 @@ metadata: { name: hive-config, namespace: ${NS}, labels: { app: hive } }
 data:
   hive.yaml: |
     project:
-      org: myorg
-      repos: [myrepo]
-      primary_repo: myrepo
+      org: myorg                      # a POOL PLACEHOLDER can seed any bootstrap org here; the
+      repos: [myrepo]                 # AUTHORITATIVE identity is the meta.json org
+      primary_repo: myrepo            # (available-vllmd-<date>-<suffix>), which is what the hub
+                                      # renders — see Placeholder pools below
     agents:
       guide:   { backend: copilot, model: claude-sonnet-4-6, enabled: true }
       scanner: { backend: copilot, model: claude-sonnet-4-6, enabled: true }
@@ -276,7 +277,7 @@ data:
     dashboard:
       port: 3002
       authorized_users:
-        - owner-github-login:owner
+        - owner-github-login:owner    # a POOL PLACEHOLDER lists the pool owner: clubanderson:owner
       hub_proxied: false              # vllm-d has no hub auth proxy → direct device-flow
     hub:
       enabled: true
@@ -567,6 +568,28 @@ hive has no fleet-registry entry (never heartbeated). So a hive with
 `owner: <someone>` in its `meta.json` appears in that person's My Hives (and the
 admin's) as soon as the file exists.
 
+**Hub access roles.** Manage Access grants four ordered roles (separate from the ClankeR trust tiers shown on `/contribute`):
+`read` < `read-write` < `merger` < `owner`. `merger` inherits read-write
+dashboard access and can approve/queue **other people's** PRs for the hive
+auto-merge-on-green flow. The spoke enforces the self-merge ban against the
+GitHub login bound to the session; owners are exempt because they already have
+repository-level merge authority.
+
+Queueing a PR approves it as the hive App and applies a label. That label is
+configurable, because it is applied in a repository the hive does not own and
+whose review conventions already exist:
+
+```yaml
+governor:
+  labels:
+    automerge: lgtm
+```
+
+It defaults to `lgtm`, the long-standing Prow/Kubernetes label for "a second
+person signed off", which is the decision the merger tier records. Set it to
+whatever the managed repositories already use — the label is created on demand
+if it does not exist.
+
 > **`meta.json` requirement is why heartbeats can be accepted but upgrades fail.**
 > The heartbeat path is separate from `loadSaaSHive`. A hive can heartbeat and
 > appear "online" while a missing `meta.json` makes the **Upgrade** button (and
@@ -630,40 +653,117 @@ so a request for access is satisfied in seconds instead of the full 5–10 minut
 provision. Two pools, one per method type:
 
 - **vllm-d** placeholders serve **private** methods — provisioned manually
-  (Path B), then **scaled to 0**.
+  (Path B) and left running at **`replicas: 1`**.
 - **hive-oke** placeholders serve **public** methods — provisioned via the API
-  (Path A), then **scaled to 0**.
+  (Path A) and left running at **`replicas: 1`**.
 
-Provision each placeholder as above, then:
+> **Gotcha — placeholder IDs are date + random suffix, NOT sequential integers.**
+> The live pool uses `hosted-available-vllmd-<YYMMDD>-<suffix>`, where `<suffix>`
+> is a short unique token (4 lowercase base36 chars) — e.g.
+> `hosted-available-vllmd-260731-fikn`, `hosted-available-vllmd-260806-1bo3`.
+> **Do not** use sequential numbers like `hosted-available-vllmd-01`: they
+> collide with existing pool slots and don't match the ID convention the fleet
+> uses, so renumbering is needed every time the pool grows. Unique suffixes let
+> you add a batch on any date without touching existing slots. Generate a batch
+> of `N` suffixes:
+>
+> ```bash
+> tr -dc 'a-z0-9' < /dev/urandom | fold -w4 | head -N | sort -u
+> ```
+>
+> Then **collision-check** each suffix before creating — skip any that already
+> exist — against both the hub meta dirs and the target cluster's namespaces:
+>
+> ```bash
+> kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- ls /data/saas/hives/   # existing hive IDs
+> kubectl --context vllm-d get ns | grep hive-hosted-hosted-available-vllmd        # existing namespaces
+> ```
+
+Provision each placeholder as above at **`replicas: 1`**. The pod boots
+immediately, lands on the `anyuid` SCC, and heartbeats to the hub as an
+available slot ready to be claimed. Both pools stay at `replicas: 1`:
 
 ```bash
-# manual (vllm-d): set replicas: 0 in the Deployment (or scale after apply)
-kubectl --context vllm-d -n "$NS" scale deploy/hive --replicas=0
+# manual (vllm-d): apply the Deployment at replicas: 1 (it boots and heartbeats).
+# If you applied it at 0, scale it up:
+kubectl --context vllm-d -n "$NS" scale deploy/hive --replicas=1
 
-# automated (hive-oke): the API provisions at replicas=1 — scale it down
-kubectl --context hive-oke -n "hive-hosted-$ID" scale deploy/hive --replicas=0
+# automated (hive-oke): the API already provisions at replicas=1 — leave it there.
 ```
+
+> **Gotcha — do NOT scale placeholders to 0.** A `replicas: 0` slot is **not
+> assignable**: the claim/assign path delivers the claimant's config to a
+> **running, heartbeating** spoke, so a slot that isn't booted can never be
+> claimed. Every assignable slot in the live pool runs at `replicas: 1`,
+> `ready 1/1`. (Earlier guidance to "scale to 0" was incorrect.)
 
 Give every placeholder a `meta.json` with **`owner: clubanderson`** (admin-only
-visibility), **`status: "available"`**, and **`acmm_level: 2`**:
+visibility), **`status: "available"`**, and **`acmm_level: 2`**. Set `org` to a
+**unique** value per slot — `available-vllmd-<YYMMDD>-<suffix>` mirroring the
+`id`'s date-suffix — with **empty** `repos: []` and `primary_repo: ""` (they get
+their real values when the slot is claimed). The `meta.json` also carries
+`github_host` because vllm-d placeholders target GitHub Enterprise
+(`github.ibm.com`), not `github.com`:
 
 ```json
-{ "id": "hosted-available-vllmd-01", "owner": "clubanderson",
-  "org": "available-vllmd-01", "repos": [], "primary_repo": "",
-  "acmm_level": 2, "status": "available", "auto_upgrade": false,
-  "is_public": false, "cluster_id": "vllm-d" }
+{
+  "id": "hosted-available-vllmd-260806-1bo3",
+  "owner": "clubanderson",
+  "project_name": "Available slot (private) 260806-1bo3",
+  "org": "available-vllmd-260806-1bo3",
+  "repos": [],
+  "primary_repo": "",
+  "acmm_level": 2,
+  "status": "available",
+  "created_at": "",
+  "subdomain": "hosted-available-vllmd-260806-1bo3.apps.fmaas-vllm-d.fmaas.res.ibm.com",
+  "claim_delivered": false,
+  "auto_upgrade": true,
+  "is_public": false,
+  "cluster_id": "vllm-d",
+  "github_host": "github.ibm.com"
+}
 ```
 
-> **Gotcha — automated placeholders leave a fleet-registry entry.** Because the
-> API provisions at `replicas=1`, an hive-oke placeholder heartbeats once before
-> you scale it down, leaving a registry entry that pins its version and
-> last-known ACMM and shows it "online" for `staleThreshold` (15 min). A
-> manually-provisioned placeholder created at `replicas=0` never heartbeats and
-> has no registry entry. To make the two pools render identically (no version,
-> no online dot, ACMM from `meta.json`), remove the placeholder's registry entry:
-> scale the hub to 0, edit `/data/hub-registry.json` on the hub PVC to drop the
-> entry, then scale the hub back up. (The hub holds the registry in memory and
-> rewrites the file, so a live edit is clobbered — you must stop it first.)
+> **The `org` must be unique per slot** (mirror the `id`'s date-suffix) so each
+> renders as a distinct **"Available slot (private) `<date>-<suffix>`"** row in
+> the hub. A literal shared `org: "placeholder"` (with `repos: ["placeholder"]`)
+> makes every slot render identically as "placeholder / placeholder" —
+> indistinguishable — and is wrong.
+
+### Verify a provisioned placeholder
+
+A correct vllm-d placeholder runs at `replicas: 1` with its pod up (`Running`,
+`ready`, `restartCount: 0`) on the `anyuid` SCC, its `hive-anyuid` binding points
+at its **own** namespace, its PVC is `Bound`, its `livez` returns 200, and its hub
+`meta.json` exists. This set verified all ten placeholders in the 2026-08-06 batch:
+
+```bash
+ID=hosted-available-vllmd-<date>-<suffix>; NS=hive-hosted-$ID
+kubectl --context vllm-d -n $NS get deploy hive -o jsonpath='{.spec.replicas}'          # must be 1
+POD=$(kubectl --context vllm-d -n $NS get pod -l app=hive -o jsonpath='{.items[0].metadata.name}')
+kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.phase}'              # must be Running
+kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.metadata.annotations.openshift\.io/scc}'  # must be anyuid
+kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}'       # must be true
+kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].restartCount}' # must be 0
+kubectl --context vllm-d -n $NS exec $POD -c hive -- curl -s -o /dev/null -w '%{http_code}' localhost:3002/api/livez  # must be 200
+kubectl --context vllm-d -n $NS get rolebinding hive-anyuid -o jsonpath='{.subjects[0].namespace}'  # must equal $NS
+kubectl --context vllm-d -n $NS get pvc hive-data -o jsonpath='{.status.phase}'         # must be Bound
+kubectl --context hive-oke -n hive-hub exec $HUB_POD -- test -f /data/saas/hives/$ID/meta.json  # must exist
+```
+
+> **The `hive-anyuid` subject-namespace check is still load-bearing at apply
+> time** (it is the same `restricted-v2` crash-loop gotcha from B.2): a wrong
+> subject namespace means the pod can't get the `anyuid` SCC. But because a
+> placeholder now **boots at `replicas: 1`**, you confirm the SCC directly —
+> verify the pod reaches `phase=Running`, `scc=anyuid`, `ready=true`,
+> `restartCount=0`, and `livez` == 200.
+
+> **Note — placeholders carry a fleet-registry entry.** Because both pools run
+> at `replicas: 1`, every placeholder heartbeats and holds a registry entry that
+> pins its version and last-known ACMM and shows it "online". This is expected
+> and required: the claim/assign path delivers config to the running, heartbeating
+> spoke, so the entry is what makes the slot assignable — do **not** strip it.
 
 ### Claiming a placeholder
 
@@ -675,8 +775,9 @@ Until the dashboard "assign" flow lands, claiming is manual:
    real `project.org` / `repos`, and the claimant's GitHub App `app_id` /
    `installation_id`.
 3. Install the GitHub App key (owner does this from the dashboard's *Install
-   GitHub App* flow once the hive is awake).
-4. Scale the deployment to 1.
+   GitHub App* flow — the hive is already awake at `replicas: 1`).
+4. Roll the pod so it picks up the new config (`kubectl rollout restart
+   deploy/hive`) — it is already running, so there is nothing to scale up.
 
 ---
 
@@ -824,4 +925,4 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | ConfigMap edits have no effect | PVC overlay is authoritative | Edit `/data/hive.yaml.dashboard`, not the ConfigMap |
 | User has `read-write` in Manage Access but login fails with `device-flow login rejected: user not authorized` | Grant written to `/data/hive.yaml.dashboard` after the pod booted; the running authorizer only rebuilds `authorized_users` at startup (common right after provisioning / cross-cluster migration onto a fresh PVC) | Confirm the user is in the pod's `/etc/hive/hive.yaml`, then `rollout restart deploy/hive` so the authorizer rebuilds |
 | Admission warnings on apply | Cluster requires an `owner` label | Add `owner: <login>` to every `metadata.labels` |
-| Placeholder shows a version / "online" dot | It heartbeated once (automated path) | Remove its `/data/hub-registry.json` entry (hub scaled to 0) |
+| Placeholder rows all render as "placeholder / placeholder" | `meta.json` used the literal `org: "placeholder"` | Give each slot a unique `org: available-vllmd-<date>-<suffix>` with `repos: []` |

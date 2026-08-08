@@ -185,11 +185,23 @@ governor:
       threshold: 16        # queue depth that activates this mode
       supervisor: 5m       # per-agent kick interval in this mode
       scanner: 15m
+      reviewer:
+        times: ["09:00", "17:00"]
+        days: ["mon", "tue", "wed", "thu", "fri"]
+        tz: America/New_York
+      release:
+        cron: "30 9 * * 1-5"
+        tz: America/New_York
       ci-maintainer: 1h
       architect: pause     # "pause" stops kicks for this agent in this mode
 ```
 
-- **Per-agent, per-mode intervals.** A cadence entry is just `agent-name: duration` under the mode. Anything Go's duration parser accepts works (`5m`, `2h`).
+- **Mutually exclusive modes.** Each per-agent, per-mode cadence is either an interval (`5m`, `2h`, `pause`) or a time-of-day schedule — never both. Config load and API writes reject mixed forms with a 400/error.
+- **Time-of-day schedules.** Use `times: ["HH:MM"]` with optional `days` (`mon` … `sun`) and a required IANA `tz`. The timezone is stored explicitly and displayed with the schedule; it does not float with the viewer.
+- **Advanced cron.** Power users can provide a constrained five-field cron expression plus `tz`. Hive evaluates these with robfig/cron and schedule-local timezone handling.
+- **Governor-mode semantics.** Time-of-day schedules fire at their exact wall-clock times. Governor mode only selects whether that mode's schedule is active; quiet/busy/surge multipliers do not scale exact times. `pause`/`off`, paused agents, on-demand agents, non-kick channels, and budget gates still suppress kicks.
+- **Downtime catch-up.** If Hive was down at a scheduled time, restart/eval grants at most one catch-up kick when the missed occurrence is within the last 10 minutes. Older missed occurrences are skipped and the next future occurrence is used.
+- **Per-agent, per-mode intervals.** Anything Go's duration parser accepts works (`5m`, `2h`) for interval mode.
 - **Pausing.** The value `pause` (or `paused`) suspends an agent for that mode without disabling it.
 - **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (the inception workflow drives `brainstorm` this way).
 - **Budget.** When the weekly token budget is exhausted, kicks are suppressed hive-wide (exempt agents excepted) until the period rolls over.

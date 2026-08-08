@@ -12,6 +12,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,10 +47,10 @@ const (
 )
 
 // inviteTrustTiers are the trust tiers permitted to mint an invite link. Only a
-// trusted or advisor contributor may invite; a newcomer/contributor/anonymous
+// trusted, merger, or advisor contributor may invite; a newcomer/contributor/anonymous
 // viewer may not. Enforced server-side (handleContributeInvite) — UI hiding is
 // UX only.
-var inviteTrustTiers = map[string]bool{"trusted": true, "advisor": true}
+var inviteTrustTiers = map[string]bool{"trusted": true, "merger": true, "advisor": true}
 
 var (
 	inviteSecretOnce  sync.Once
@@ -223,7 +224,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /contribute/{tab}", s.handleContributeLanding)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.contributeHub.HandleWS)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeRegister)
-	// Trusted invite link (issue #2598). A trusted/advisor contributor mints an
+	// Trusted invite link (issue #2598). A trusted/merger/advisor contributor mints an
 	// attributed invite link here; the caller's identity is resolved server-side
 	// and their trust tier is verified IN-HANDLER (403 otherwise) — the /api/
 	// contribute prefix is exempt from roleEnforcement's read-only block, so the
@@ -271,6 +272,10 @@ func (s *Server) registerContributeRoutes() {
 	// issue so it is never offered until Resumed — a persistent hold DISTINCT from
 	// the time-based cooldown. Body: {"key":"owner/repo#number","held":true|false}.
 	s.mux.HandleFunc("POST /api/contribute/queue/hold", s.handleContributeQueueHold)
+	// Resume-all (bulk clear): drops the ENTIRE operator hold set in one call so an
+	// operator does not have to Resume parked issues one at a time. Same owner/read-
+	// write gate and refreshAndPersist path as the single-issue hold endpoint above.
+	s.mux.HandleFunc("POST /api/contribute/queue/hold/clear", s.handleContributeQueueHoldClear)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
@@ -291,6 +296,7 @@ func (s *Server) registerContributeRoutes() {
 
 	s.mux.HandleFunc("GET /leaderboard", s.handleLeaderboardPage)
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboardAPI)
+	s.mux.HandleFunc("GET /api/leaderboard/style", s.handleLeaderboardStyle)
 	// Central per-user "Me" profile — a HUB endpoint returning one contributor's
 	// cross-hive profile (identity/tier/stats/milestones/hives/rank), aggregated
 	// from central hub data (contributor store + LeaderboardForHub + federation
@@ -403,10 +409,21 @@ func findContributor(id string) *ContributorProfile {
 	if p, err := loadContributorProfile(id); err == nil {
 		return p
 	}
-	// Slow path: scan all profiles to match by contributor_id
+	// Slow path: scan all profiles to match by contributor_id OR by GitHub
+	// username case-insensitively. The fast path above is an exact-case file
+	// lookup, but a GitHub login's case is not stable across the surfaces that
+	// call us: the profile file is written under whatever case first registered
+	// it, while a viewer resolved from the OAuth session (resolveViewerUsername)
+	// can arrive in a different case. The Leaderboard's "YOU" badge already
+	// matches the viewer to their row case-insensitively (uname.toLowerCase()
+	// === ccMeUsername.toLowerCase()), so the interests attach on the queue
+	// endpoint must resolve the SAME contributor the SAME way — otherwise a
+	// signed-in, leaderboard-present contributor whose stored filename differs
+	// only in case gets a nil profile and the "My label interests" editor never
+	// un-hides (issue #2637 follow-up). EqualFold mirrors the leaderboard match.
 	profiles := listContributorProfiles()
 	for i := range profiles {
-		if profiles[i].ContributorID == id {
+		if profiles[i].ContributorID == id || strings.EqualFold(profiles[i].GitHubUsername, id) {
 			return &profiles[i]
 		}
 	}
@@ -456,6 +473,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		{"Newcomer", "#d29922", tierCounts["newcomer"]},
 		{"Contributor", "#58a6ff", tierCounts["contributor"]},
 		{"Trusted", "#3fb950", tierCounts["trusted"]},
+		{"Merger", "#f778ba", tierCounts["merger"]},
 		{"Advisor", "#bc8cff", tierCounts["advisor"]},
 		{"Revoked", "#f85149", tierCounts["revoked"]},
 	}
@@ -496,13 +514,34 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	//     contributorTrustedAt is the documented guideline threshold, so we phrase
 	//     it as "~20 PR tasks, then granted by a maintainer" rather than implying an
 	//     automatic unlock. Trusted's scoped token adds checks:read on top of the
-	//     contributor scopes; the merge decision itself is still gated by the
-	//     project's /approve + lgtm automation, so we do not claim "Merge PRs".
+	//     contributor scopes.
+	//   - Merger is the explicit maintainer/owner-granted trust tier for queueing
+	//     others' PRs for auto-merge. The server-side queue endpoint still forbids
+	//     queueing your own PR.
 	tierTableRows := fmt.Sprintf(
 		`<tr><td>Contributor</td><td>%d tasks that produced a PR</td><td>Create PRs, push code</td></tr>`+
-			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`,
+			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`+
+			`<tr><td>Merger</td><td>Granted by a maintainer/owner</td><td>Queue others' PRs for auto-merge — never your own</td></tr>`,
 		contributorAutoPromoteAt, contributorTrustedAt,
 	)
+
+	customStyleHeadHTML := ""
+	customStyleNoticeHTML := ""
+	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
+		if _, src, err := getLeaderboardCustomStyle(r.Context(), rawStyle); err == nil {
+			styleKey := leaderboardCustomStyleCacheKey(src)
+			escapedSrc := html.EscapeString(styleKey)
+			styleKeyJSON, _ := json.Marshal(styleKey)
+			customStyleHeadHTML = fmt.Sprintf(
+				`<link id="leaderboard-custom-style-link" rel="stylesheet" href="/api/leaderboard/style?src=%s"><script>window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC=%s;</script>`,
+				url.QueryEscape(styleKey),
+				string(styleKeyJSON),
+			)
+			customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+		} else {
+			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -715,6 +754,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid var(--cc-border);background:var(--cc-bg);color:var(--cc-muted);text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
+.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:#f778ba}
 .tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
 .tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
 .tier-badge.tier-newcomer{border-color:var(--cc-border);background:var(--cc-bg);color:var(--cc-muted)}
@@ -952,7 +992,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    max-height keeps a long backlog (up to ~150 items) scrolling inside the card
    instead of stretching the page; the panel scrolls, the page does not. */
 .cc-queue{max-height:560px;overflow-y:auto}
-.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);animation:cc-popin .35s ease;position:relative}
+/* The enter animation is OPT-IN via .cc-q-enter (added only to genuinely-new rows),
+   NOT baked into .cc-q-item — otherwise every poll re-render replayed cc-popin on
+   every row and the whole queue "blinked". Mirrors .clanker-row.cc-enter above. */
+.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid var(--cc-border-2);position:relative}
+.cc-q-item.cc-q-enter{animation:cc-popin .35s ease}
 .cc-q-item:first-child{background:rgba(88,166,255,.05)}
 /* Drag handle (grab bar) — owner/read-write only. Hidden unless the queue root
    carries .cc-q-draggable (set by initAdmin after /api/role). Reduced-motion and
@@ -1013,6 +1057,18 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
 .clanker-interests-label{color:#6e7681}
 .clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+/* #2637 owner roster: an OWNER-facing aggregate of which labels connected
+   contributors subscribe to, and who — so the owner can label matching issues to
+   route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
+.label-affinity{margin-top:14px;padding-top:12px;border-top:1px solid var(--cc-border-2)}
+.label-affinity-head{display:flex;align-items:center;gap:2px;margin-bottom:8px}
+.label-affinity-title{font-size:.82rem;font-weight:600;color:var(--cc-text-2)}
+.label-affinity-body{display:flex;flex-direction:column;gap:7px}
+.affinity-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:.78rem}
+.affinity-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:.74rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3);flex-shrink:0}
+.affinity-count{font-weight:700;color:#3fb950;font-size:.7rem}
+.affinity-who{color:var(--cc-muted);word-break:break-word}
+.affinity-empty{font-size:.74rem;color:var(--cc-muted-2);line-height:1.5}
 .cc-interests-add{display:flex;gap:6px}
 .cc-interests-add input{flex:1;min-width:0;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:7px;color:var(--cc-text);font:inherit;font-size:.8rem;padding:5px 9px;outline:none;transition:border-color .15s,box-shadow .15s}
 .cc-interests-add input::placeholder{color:var(--cc-muted-2)}
@@ -1031,6 +1087,13 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:var(--cc-text);background:var(--cc-border-2)}
 .cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
 .cc-q-menu.open{display:block}
+/* Flip-up variant: for rows near the BOTTOM of the scrolling .cc-queue, the
+   default drop-down menu (top:100%%) would extend past the container's overflow
+   boundary and get clipped ("Optional hold reason" cut off). ccBindQueueMenus
+   measures on open and adds .cc-q-menu-up when there is more room above than
+   below, anchoring the menu to the button's TOP so it opens upward and stays
+   inside the visible card. */
+.cc-q-menu.cc-q-menu-up{top:auto;bottom:100%%}
 .cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:var(--cc-text-2);font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
 .cc-q-menu button.cc-q-act:hover{background:var(--cc-border-2);color:var(--cc-text)}
 .cc-q-menu-ic{color:var(--cc-muted-2);flex-shrink:0;width:16px;text-align:center}
@@ -1046,12 +1109,21 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-moverow input:focus{border-color:#1f6feb}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
+/* Optional hold-reason field (#queue-hold-reason) in the ⋯ menu — a compact inline
+   note the operator can fill before Hold. Empty is fine (holding without a note). */
+.cc-q-holdreason{padding:2px 9px 7px}
+.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.76rem;padding:4px 7px;outline:none;color-scheme:dark}
+.cc-q-holdreason-input:focus{border-color:#1f6feb}
 /* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
    not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
 .cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+/* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
+   least one held issue and the viewer is owner/read-write (JS-toggled display). */
+.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:#d29922;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
+.queue-resume-all-btn:hover{background:rgba(210,153,34,.2)}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
    heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
@@ -1182,7 +1254,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
   .ops-rail.collapsed{flex-basis:auto}
 }
 @media(prefers-reduced-motion:reduce){
-  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
+  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-q-enter,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
   .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
 }
 /* #2548 Branded client entry points — a find-by-SIGHT tile grid above the CLI
@@ -1314,7 +1386,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .stat{padding:16px 10px}
 .ops-grid{gap:24px}
 .ops-card-head{padding:18px 20px}
-</style></head><body>
+.lb-custom-style-note{margin:0 0 16px;padding:10px 12px;border:1px solid rgba(88,166,255,.35);border-radius:8px;background:rgba(88,166,255,.10);color:var(--cc-text);font-size:.86rem}
+.lb-custom-style-note code{color:var(--cc-accent)}
+.lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
+.lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
+</style>%s</head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
@@ -1369,6 +1445,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 <option value="vllm" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# vLLM — self-hosted OpenAI-compatible server\nexport HIVE_LITELLM_ENDPOINT=http://your-vllm-host:8000/v1\nexport HIVE_LITELLM_API_KEY=sk-your-vllm-key  # only if your server needs one">vLLM (self-hosted)</option>
 <option value="llm-d" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# llm-d — self-hosted OpenAI-compatible endpoint\nexport HIVE_LITELLM_ENDPOINT=http://your-llm-d-host:8000/v1\nexport HIVE_LITELLM_API_KEY=sk-your-llm-d-key  # only if your endpoint needs one">llm-d (self-hosted)</option>
 <option value="bob" data-install="" data-host-install="curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash" data-model-flag="" data-default-model="" data-env="# Bob (IBM bobshell) — get a key at https://bob.ibm.com (Scope: Inference).\n# Exported locally, never sent to the hive.\nexport BOBSHELL_API_KEY=your-bob-api-key">Bob</option>
+<option value="watsonx" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# IBM watsonx.ai — OpenAI-compatible gateway, bring your own project + key.\n# watsonx auth is an IAM-minted JWT, not a raw bearer key — your local\n# Claude-Code setup or a small local proxy handles the token exchange.\n# Exported locally, never sent to the hive.\nexport HIVE_LITELLM_ENDPOINT=https://us-south.ml.cloud.ibm.com/ml/gateway/v1\nexport HIVE_LITELLM_API_KEY=your-ibm-cloud-api-key\nexport WATSONX_PROJECT_ID=your-watsonx-project-id">watsonx.ai (IBM Granite + your key)</option>
 <option value="other" data-install="" data-host-install="# Install your CLI tool" data-model-flag="" data-default-model="">Other (host only)</option>
 </select>
 </span>
@@ -1401,6 +1478,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 <div id="k8s-note" style="display:none;margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
 <strong style="color:#e6edf3">Kubernetes is the advanced path.</strong> It needs a cluster, a kubeconfig and RBAC &mdash; not a first-timer&rsquo;s happy path. The workload runs the relay <strong>headless</strong> (no TTY), so only headless-capable backends work in a cluster: <strong>Claude Code, LiteLLM, Copilot, Codex</strong>. Other backends will refuse work at pod startup.<br>
 <span style="color:#8b949e">Credential note (interim): the generated Secret stores a long-lived personal <code>GH_TOKEN</code> &mdash; base64, not encrypted, and readable by anyone with <code>get secrets</code> in that namespace or by cluster-scoped operators/backups. That is materially more exposed than a <code>0600</code> file on your laptop. Revoke any time with <code>gh auth logout</code>. Gating the credential on explicit task acceptance is tracked in <a href="https://github.com/kubestellar/hive/issues/2537" target="_blank" rel="noopener" style="color:#58a6ff">#2537</a> and is not solved by this path.</span>
+</div>
+<div id="multi-hub-note" style="margin-bottom:12px;background:#161b22;border:1px solid #30363d;border-left:3px solid #58a6ff;border-radius:6px;padding:12px 14px;font-size:.85rem;color:#c9d1d9;line-height:1.5">
+<strong style="color:#e6edf3">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:#58a6ff">@hanthor</a> in <a href="https://github.com/kubestellar/hive/pull/2846" target="_blank" rel="noopener" style="color:#58a6ff">#2846</a>.
 </div>
 <p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
@@ -1450,7 +1530,7 @@ var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hi
 // Backends with a verified headless (non-interactive) entry point — must match
 // HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
 // TTY, so only these run in a cluster; anything else refuses work at startup.
-var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1};
+var K8S_HEADLESS_BACKENDS={claude:1,litellm:1,copilot:1,codex:1,watsonx:1,goose:1};
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
@@ -1489,7 +1569,7 @@ if(mode==='kubernetes'){
 // line — but model/env exports still belong before contribute-setup so the
 // generated ConfigMap picks them up. If the chosen backend has no headless
 // mode, prepend a visible warning comment (the Justfile also warns on stderr).
-var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot or Codex for Kubernetes.\n';
+var warn=K8S_HEADLESS_BACKENDS[cli]?'':'# WARNING: '+cli+' has no headless mode; it will refuse work in a cluster.\n# Pick Claude Code, LiteLLM, Copilot, Codex or Goose for Kubernetes.\n';
 var k8sPre=envLines+modelLine;
 cmds.textContent=warn+k8sTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',k8sPre+'just contribute-setup');
 }else if(mode==='host'){
@@ -1544,6 +1624,7 @@ openrouter:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-4 3 8
 vllm:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l4 14 3-9 3 9 4-14" fill="none" stroke="#f0b429" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 'llm-d':'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="#4d9375" stroke-width="1.5"/><path d="M8 9h4a3 3 0 0 1 0 6H8V9Z" fill="none" stroke="#4d9375" stroke-width="1.5" stroke-linejoin="round"/></svg>',
 bob:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M9 8h3.5a2 2 0 0 1 0 4H9V8ZM9 12h4a2 2 0 0 1 0 4H9v-4Z" fill="none" stroke="#1f70c1" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+watsonx:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M12 7v10M8.5 9.5l7 5M15.5 9.5l-7 5" stroke="#1f70c1" stroke-width="1.4" stroke-linecap="round"/></svg>',
 other:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#8b949e" stroke-width="1.5"/><path d="M8 12h.01M12 12h.01M16 12h.01" stroke="#8b949e" stroke-width="2.2" stroke-linecap="round"/></svg>'
 };
 var CLIENTS={
@@ -1561,6 +1642,7 @@ openrouter:{name:'OpenRouter',tag:'your key',peer:true},
 vllm:{name:'vLLM',tag:'self-hosted'},
 'llm-d':{name:'llm-d',tag:'self-hosted'},
 bob:{name:'Bob',tag:'IBM'},
+watsonx:{name:'watsonx.ai',tag:'IBM'},
 other:{name:'Other',tag:'host only'}
 };
 var tilesEl=document.getElementById('client-tiles');
@@ -1603,6 +1685,7 @@ function defaultPromptFor(v){
     '  1. Install the prerequisites (just, gh) for my OS.\n'+
     '  2. git clone -b v2 https://github.com/kubestellar/hive && cd hive\n'+
     '  3. export HIVE_HUB='+hubURL+'\n'+
+    '     For multiple hives, HIVE_HUB can be comma-separated when HIVE_REGISTRATION_TOKEN has matching tokens in the same order.\n'+
     '  4. just contribute-setup '+v+'\n'+
     '  5. just contribute-hive\n\n'+
     'Explain what each step does before I run it, and stop if anything looks wrong.';
@@ -1819,6 +1902,27 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <span class="pipe-node">merged</span>
 </div>
 <div id="policy-body"><div class="ops-empty">Loading policy&hellip;</div></div>
+<!-- Owner-facing Label interests roster (#2637). The contributor editor (#cc-interests)
+     and the per-clanker "prefers:" mirror only surface interests to the contributor
+     themselves / on a connected row; this gives the OWNER an actionable aggregate:
+     which labels the connected contributors subscribe to, and who — so the owner can
+     label matching issues to route work ("I have nvidia contributors, so I'll label
+     nvidia issues"). Always shows the explainer (even with an empty roster) so the
+     owner knows the feature exists; the aggregate is hydrated each poll by
+     ccRenderInterestRoster() from the fleet payload's per-clanker label_interests. -->
+<div class="label-affinity" id="label-affinity">
+<div class="label-affinity-head">
+<span class="label-affinity-title">Contributor label interests</span>
+<span class="info-affordance">
+<button type="button" class="info-btn" id="affinity-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="affinity-info-pop" aria-label="What are label interests?" title="What are label interests?">&#9432;</button>
+<div class="info-pop" id="affinity-info-pop" role="tooltip" hidden>
+<h4>What are label interests?</h4>
+Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues are highlighted and routed to them &mdash; a soft hint, nothing is hidden. Label an issue to steer it toward the contributors who asked for that kind of work.
+</div>
+</span>
+</div>
+<div class="label-affinity-body" id="label-affinity-body"><div class="ops-empty">Loading interests&hellip;</div></div>
+</div>
 <p class="ops-note">Merge automation advances a PR when CI is green and a maintainer signals <code>/approve</code> or <code>lgtm</code>; a <code>do-not-merge</code> label blocks it. This panel displays the configured admission posture &mdash; it does not change it.</p>
 </div>
 </div>
@@ -1842,7 +1946,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
+     ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
+     one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
      explains what "in cooldown" in the count means and how an issue lands there.
      Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
      quarantine after 3 consecutive failures) — keep them in sync with
@@ -1969,6 +2075,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="ops">
 <h1>Leaderboard</h1>
 <p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
+%s
 <!-- Personal "Me" card. Pinned ABOVE the full standings. Hydrated from the HUB
      profile endpoint (/api/leaderboard/contributor/{username}) once we know the
      logged-in username (from /api/gh-user-auth/status). For an anonymous / unknown
@@ -2001,7 +2108,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 // value, so ADMIN_TIER_ORDER.map / ccActivitySeen[k] / ccActivity.length ran against
 // undefined and threw. Declaring+initializing them here — before any function that
 // uses them can run — makes the ordering explicit and regression-proof.
-var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','merger','advisor'];
 // ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
 // 168h = one week) so the period input shows the effective default when unset.
 // ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
@@ -2179,12 +2286,12 @@ function loadLeaderboard(){
   });
 }
 // tierBadge renders a small tier medallion / rank badge from a REAL trust tier.
-// The four known tiers each get a muted metal-ish accent class; an unknown/blank
+// The five known tiers each get a muted metal-ish accent class; an unknown/blank
 // tier is treated as newcomer (neutral). extraCls lets callers request the compact
 // leaderboard/inline variants. Nothing here is fabricated — it is a pure visual
 // wrap around the tier string the leaderboard/fleet snapshot already carries.
 function tierBadge(tier,extraCls){
-  var known={newcomer:1,contributor:1,trusted:1,advisor:1};
+  var known={newcomer:1,contributor:1,trusted:1,merger:1,advisor:1};
   var t=String(tier||'').toLowerCase();
   if(!known[t])t='newcomer';
   return '<span class="tier-badge tier-'+t+(extraCls?(' '+extraCls):'')+'">'+esc(t)+'</span>';
@@ -2265,6 +2372,7 @@ var ME_STYLE_NAMES=['Signal blue','Verdant','Amber rank','Violet advisor','Minim
 var ME_CREDLY_MAP={
   'tier-contributor':'Contributor badge',
   'tier-trusted':'Trusted badge',
+  'tier-merger':'Merger badge',
   'tier-advisor':'Advisor badge',
   'tasks-25':'25-task milestone badge',
   'tasks-100':'100-task milestone badge'
@@ -2274,6 +2382,23 @@ function meStyleClass(){
   var n=parseInt(localStorage.getItem(ME_STYLE_KEY)||'1',10);
   if(!(n>=1&&n<=ME_STYLE_COUNT))n=1;
   return n;
+}
+function leaderboardCustomStyleLabel(src){
+  var base=String(src||'').split('@')[0].split('/');
+  return base.length>=2?(base[0]+'/'+base[1]):'custom';
+}
+function clearLeaderboardCustomStyleParam(){
+  try{
+    var u=new URL(window.location.href);
+    if(!u.searchParams.has('style'))return;
+    u.searchParams.delete('style');
+    history.replaceState(null,'',u.pathname+(u.searchParams.toString()?('?'+u.searchParams.toString()):'')+u.hash);
+  }catch(e){}
+  window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC='';
+  var link=document.getElementById('leaderboard-custom-style-link');
+  if(link)link.remove();
+  var note=document.getElementById('leaderboard-custom-style-note');
+  if(note)note.remove();
 }
 
 function loadMeCard(){
@@ -2330,6 +2455,7 @@ function meMilestoneChips(p){
     if(nm.id&&nm.id.indexOf('tasks-')===0){var gap=nm.value-(p.tasks_completed||0);if(gap>0)toGo=' — '+gap+' to go';}
     else if(nm.id==='tier-contributor'){var g2=nm.value-(p.tasks_with_pr||0);if(g2>0)toGo=' — '+g2+' PR-tasks to go';}
     else if(nm.id==='tier-trusted'){var g3=nm.value-(p.tasks_with_pr||0);if(g3>0)toGo=' — '+g3+' PR-tasks to go';}
+    else if(nm.id==='tier-merger'){toGo=' — maintainer grant required';}
     next='<span class="me-chip me-chip--next" title="'+esc(nm.detail||'')+'">○ '+esc(nm.label)+esc(toGo)+'</span>';
   }
   if(!got.length&&!next)return '<span class="me-chip">No milestones yet — ship your first task</span>';
@@ -2370,10 +2496,10 @@ function meHivesRows(p){
 // Trust tiers permitted to invite. Kept in sync with the server's
 // inviteTrustTiers gate; the UI hiding here is UX only — the /api/contribute/
 // invite endpoint independently verifies the caller's tier and 403s otherwise.
-var INVITE_TIERS={trusted:true,advisor:true};
+var INVITE_TIERS={trusted:true,merger:true,advisor:true};
 
 // meInviteSection renders the "Invite someone to contribute" affordance ONLY for
-// a viewer whose real trust tier is trusted/advisor. Any other tier (newcomer /
+// a viewer whose real trust tier is trusted/merger/advisor. Any other tier (newcomer /
 // contributor) — and anonymous viewers never reach renderMeCard — get nothing.
 function meInviteSection(p){
   if(!p||!INVITE_TIERS[p.trust_tier])return '';
@@ -2445,9 +2571,11 @@ function renderMeCard(mount,p){
     +((p.rank&&p.total)?(' — ranked #'+p.rank+' of '+p.total+' on this hive'):'')+'.';
 
   var styleOpts='';
+  var customStyleSrc=window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC||'';
   for(var i=1;i<=ME_STYLE_COUNT;i++){
-    styleOpts+='<option value="'+i+'"'+(i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
+    styleOpts+='<option value="'+i+'"'+(!customStyleSrc&&i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
   }
+  if(customStyleSrc)styleOpts+='<option value="custom" selected>Custom ('+esc(leaderboardCustomStyleLabel(customStyleSrc))+')</option>';
 
   var html=''
   +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
@@ -2485,8 +2613,12 @@ function renderMeCard(mount,p){
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
+    if(sel.value==='custom')return;
     var v=parseInt(sel.value,10);if(!(v>=1&&v<=ME_STYLE_COUNT))v=1;
     localStorage.setItem(ME_STYLE_KEY,String(v));
+    clearLeaderboardCustomStyleParam();
+    var customOpt=sel.querySelector('option[value="custom"]');
+    if(customOpt)customOpt.remove();
     var card=document.getElementById('me-card');
     if(card){for(var k=1;k<=ME_STYLE_COUNT;k++)card.classList.remove('me-card--style'+k);card.classList.add('me-card--style'+v);}
   });
@@ -2691,6 +2823,25 @@ function _wireCooldownInfo(){
   document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireCooldownInfo);else _wireCooldownInfo();
+
+// _wireAffinityInfo toggles the label-interests explainer popover (#2637), mirroring
+// _wireCooldownInfo exactly: the ⓘ button flips [hidden] + aria-expanded; a click
+// elsewhere or Escape closes it. Null-guarded so a missing element never throws.
+function _wireAffinityInfo(){
+  var btn=document.getElementById('affinity-info-btn');
+  var pop=document.getElementById('affinity-info-pop');
+  if(!btn||!pop)return;
+  function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    var open=pop.hidden;
+    pop.hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');
+  });
+  document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireAffinityInfo);else _wireAffinityInfo();
 
 // ccRenderCooldownCount surfaces the current cooldown tally next to the Management
 // tab's Task cooldown control (#2649): "M issues currently cooling down". It reads
@@ -3026,19 +3177,27 @@ onEl('clanker-list','click',function(e){
   if(role!=='revoke'&&role!=='remove'&&role!=='requeue')return;
   var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
   if(role==='requeue'){
-    // #2568: manual requeue — release the in-flight task back to the ready queue.
-    // Explicitly NOT destructive to the contributor (no revoke/remove); the task is
-    // returned to the queue and booked for the same short cooldown as an auto-release,
-    // so it is not instantly re-handed to a stale worker. Uses the existing
-    // POST /api/contributors/{id}/requeue endpoint (owner/read-write only).
-    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, and the assignment generation is bumped so a stale worker cannot later overwrite the new owner. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
-      // #2568: let the operator attach an optional reason. It is recorded in the
-      // audit + activity log and pushed to the still-connected worker on task_revoke.
-      var reason=(window.prompt('Reason for releasing this task (optional):','wedged: no progress')||'').trim();
+    // Reassign (kubestellar/hive#2568 + follow-up): take the clanker off its in-flight
+    // task and immediately hand it its next-priority item, so it keeps working instead of
+    // idling. The released task goes back to the ready queue for someone else. Not
+    // destructive to the contributor (no revoke/remove). The released task is booked for
+    // the same short cooldown as an auto-release and briefly not re-offered to THIS same
+    // clanker, so it moves to different work. Uses the existing
+    // POST /api/contributors/{id}/requeue endpoint (owner/read-write only), whose handler
+    // now performs the release + reassignment.
+    adminConfirm('Reassign '+user,'Take '+user+' off their current task and hand them their next-priority item; that task goes back to the ready queue for someone else. The released task won&rsquo;t be re-offered to '+user+' for a short window. If nothing else is available the clanker is simply released and idle. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Reassign',function(){
+      // Let the operator attach an optional reason. It is recorded in the audit +
+      // activity log and pushed to the still-connected worker on task_revoke.
+      var reason=(window.prompt('Reason for reassigning this clanker (optional):','wedged: moving to different work')||'').trim();
       fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
         .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
-        .then(function(x){if(x.ok){toast('Task requeued for '+user,true);opsPoll();}else{toast((x.d&&x.d.error)||'Requeue failed',false);}})
-        .catch(function(){toast('Requeue failed',false);});
+        .then(function(x){
+          if(x.ok){
+            var msg=(x.d&&x.d.reassigned)?('Reassigned '+user+' &rarr; '+x.d.assigned_repo+'#'+x.d.assigned_number):('Reassigned '+user+' (released; no other work available, now idle)');
+            toast(msg,true);opsPoll();
+          }else{toast((x.d&&x.d.error)||'Reassign failed',false);}
+        })
+        .catch(function(){toast('Reassign failed',false);});
     });
     return;
   }
@@ -3081,6 +3240,10 @@ async function initAdmin(){
     adminHub=(cd&&cd.hub)?cd.hub:{};
   }catch(e){adminHub={};}
   renderAdminControls();
+  // Resume-all (#queue-hold): wire the header button once, now that we know the viewer
+  // is owner/read-write. Visibility is still driven by ccRenderResumeAll (count-gated).
+  var resumeAllBtn=document.getElementById('queue-resume-all-btn');
+  if(resumeAllBtn&&!resumeAllBtn._wired){resumeAllBtn._wired=true;resumeAllBtn.addEventListener('click',function(e){e.stopPropagation();ccResumeAll();});}
   // The ready-work queue may have rendered before this role check resolved (SSE
   // hello / poll fires immediately on tab open). Re-render now that adminEnabled is
   // true so the grab bars appear for this owner/read-write viewer.
@@ -3139,6 +3302,10 @@ function renderClankers(list){
   // malformed row leaves BOTH the list on "Loading…" AND the roster at 0/0/0
   // (regression #2574: the exact live symptom). ccUpdateArmy is itself nil-safe.
   ccUpdateArmy(list);
+  // #2637 owner roster: aggregate the fleet's label interests into the owner-facing
+  // "which labels to target, and who" summary. Independent of the row render below so
+  // a malformed row can't leave the roster stuck on "Loading…".
+  try{ccRenderInterestRoster(list);}catch(e){console.error('interest roster render failed',e);}
   if(!el)return;
   if(!list.length){el.innerHTML='<div class="ops-empty">No clankers connected right now.</div>';return;}
   el.innerHTML=list.map(function(c){
@@ -3170,13 +3337,19 @@ function renderClankers(list){
     if(adminEnabled&&c.contributor_id){
       var cid=esc(c.contributor_id);
       var tier=c.trust_tier||'newcomer';
-      var opts=['newcomer','contributor','trusted','advisor'].map(function(t){
+      var opts=['newcomer','contributor','trusted','merger','advisor'].map(function(t){
         return '<option value="'+t+'"'+(t===tier?' selected':'')+'>'+t+'</option>';
       }).join('');
-      // #2568: manual requeue is only meaningful while the clanker is HOLDING a
-      // task — an operator releases work they can see is wedged. Hidden when idle.
+      // Reassign (kubestellar/hive#2568 + follow-up) is only meaningful while the clanker
+      // is HOLDING a task — an operator moves work they can see is wedged. Hidden when
+      // idle. It reuses the existing requeue endpoint/role; its handler now releases the
+      // task AND immediately reassigns this clanker its next-priority item. An ⓘ marker
+      // (same info-btn affordance as the cooldown explainer) states the outcome on hover,
+      // so the operator understands it WITHOUT opening the confirm dialog.
+      var reassignInfo='Reassign takes this clanker off its current task and immediately hands it the next-priority item, so it keeps working. The released task goes back to the ready queue for another contributor, and isn&rsquo;t re-offered to this clanker for a short window.';
       var requeueBtn=c.current_task
-        ?('<button type="button" class="admin-act" title="Release this clanker&rsquo;s in-flight task back to the ready queue (books the same short cooldown as an auto-release, so it is not instantly re-handed out)" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Requeue task</button>')
+        ?('<span class="info-affordance"><button type="button" class="admin-act" title="'+reassignInfo+'" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Reassign</button>'+
+          '<button type="button" class="info-btn" tabindex="-1" aria-label="What does Reassign do?" title="'+reassignInfo+'">&#9432;</button></span>')
         :'';
       actions='<div class="admin-actions">'+
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
@@ -3216,6 +3389,50 @@ function ccUpdateArmy(list){
   // arrivals (enter animation). ccKnownClankers is also read by the SSE join event.
   var next={};(list||[]).forEach(function(c){var k=(c.github_username||c.contributor_id||'').toLowerCase();if(k)next[k]=true;});
   ccKnownClankers=next;
+}
+// ccRenderInterestRoster (#2637) builds the OWNER-facing aggregate: for each label
+// any connected contributor subscribes to, show the label + how many contributors
+// want it + who — so the owner can label matching issues to route work. Aggregated
+// from the SAME fleet snapshot renderClankers gets (each clanker carries its own
+// label_interests), so it updates every poll. Labels sort by descending count, ties
+// alphabetical. A graceful empty state shows when NO connected clanker set interests
+// (the explainer above still renders, so the owner learns the feature exists).
+function ccRenderInterestRoster(list){
+  var body=document.getElementById('label-affinity-body');
+  if(!body)return;
+  list=list||[];
+  // label(lower) -> {label: display, who: [usernames]}. First-seen casing wins for
+  // the display label; matching is case-insensitive so 'nvidia'/'NVIDIA' aggregate.
+  var agg={};
+  list.forEach(function(c){
+    var who=c.github_username||c.contributor_id||'clanker';
+    var interests=c.label_interests||[];
+    for(var i=0;i<interests.length;i++){
+      var raw=(interests[i]||'').trim();if(!raw)continue;
+      var lk=raw.toLowerCase();
+      if(!agg[lk])agg[lk]={label:raw,who:[]};
+      if(agg[lk].who.indexOf(who)<0)agg[lk].who.push(who);
+    }
+  });
+  var labels=Object.keys(agg);
+  if(!labels.length){
+    body.innerHTML='<div class="affinity-empty">No contributors have set label interests yet &mdash; when they do, you&rsquo;ll see which labels to target here.</div>';
+    return;
+  }
+  // Sort by descending contributor count, then alphabetically for a stable order.
+  labels.sort(function(a,b){
+    var d=agg[b].who.length-agg[a].who.length;
+    if(d!==0)return d;
+    return agg[a].label<agg[b].label?-1:(agg[a].label>agg[b].label?1:0);
+  });
+  body.innerHTML=labels.map(function(lk){
+    var e=agg[lk];
+    var whoStr=e.who.map(esc).join(', ');
+    return '<div class="affinity-row">'+
+      '<span class="affinity-chip">'+esc(e.label)+'<span class="affinity-count">'+e.who.length+'</span></span>'+
+      '<span class="affinity-who">'+whoStr+'</span>'+
+    '</div>';
+  }).join('');
 }
 
 function workMatchesFilter(w){
@@ -3329,6 +3546,7 @@ async function opsPoll(){
     // field stays 0. A re-render picks up the fresh values.
     ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
     ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
+    ccHeldCount=(data&&typeof data.held_count==='number')?data.held_count:0;
     safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
     safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
@@ -3356,10 +3574,22 @@ var ccLogCap=60;           // capped scrollback length
 var ccEs=null;             // EventSource handle
 var ccQueuePollTimer=null; // fallback poll timer
 var ccKnownClankers={};    // username -> true, for enter/leave detection
+// ccKnownQueueKeys tracks the queue-item keys (repo#number) present in the PREVIOUS
+// row render so the cc-popin enter animation only plays for GENUINELY-new arrivals —
+// mirroring ccKnownClankers for the fleet list. Without it, every poll re-render
+// replayed the enter animation on EVERY row and the whole queue "blinked". Rebuilt
+// at the end of each row render from the items actually painted.
+var ccKnownQueueKeys={};
+// ccQueueRenderDeferred is set when a poll re-render was SKIPPED because a ⋯ menu /
+// "Move to #" dialog was open (a rebuild would wipe the open menu mid-interaction).
+// ccCloseQueueMenus replays one render when it flips true, so the queue catches up to
+// the latest data the moment the operator closes the menu.
+var ccQueueRenderDeferred=false;
 var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
 var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
 var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
+var ccHeldCount=0;         // issues manually PARKED by the operator (fleet payload, on-hold tally)
 
 // ── Label-affinity (#2637): the viewer's own label interests ───────────────────
 // ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
@@ -3497,8 +3727,20 @@ function ccRenderQueue(flip){
     var segs=[ccQueue.length+' ready'];
     if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
     if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
+    if(ccHeldCount>0)segs.push(ccHeldCount+' on hold');
     qc.textContent=segs.join(' · ');
   }
+  // No-blink guard: if a per-row ⋯ menu / "Move to #" dialog is OPEN and this is a
+  // POLL re-render (flip is falsy — NOT a drag/move, which the operator initiated),
+  // SKIP the row-list rebuild. A full innerHTML rebuild would destroy the open menu
+  // mid-interaction; the queue data has not meaningfully changed under the operator's
+  // hands. We already updated the header tally above so counts stay live; we mark the
+  // render DEFERRED so ccCloseQueueMenus replays it the moment the menu closes.
+  if(!flip&&document.querySelector('.cc-q-menu.open')){ccQueueRenderDeferred=true;return;}
+  // Resume-all affordance (#queue-hold): a single "Resume all (H)" button next to the
+  // header, shown ONLY to an owner/read-write viewer (adminEnabled) and ONLY when at
+  // least one issue is on hold. Kept in sync with the tally above on every render.
+  ccRenderResumeAll();
   // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
   // when no interests are set (order preserved); skipped mid-drag so an operator
   // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
@@ -3516,7 +3758,7 @@ function ccRenderQueue(flip){
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
   // The server enforces the same boundary independently (403 on the order endpoint).
   el.classList.toggle('cc-q-draggable',!!adminEnabled);
-  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);return;}
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);ccKnownQueueKeys={};return;}
   var shown=0,total=ccQueue.length;
   // Render over the FULL model, tagging each row with its TRUE position (i) so the
   // shown index and the move-to menu reflect the real queue position even while a
@@ -3525,9 +3767,20 @@ function ccRenderQueue(flip){
   // qkey in the full order. Drag-reorder is DISABLED while a filter is active (a
   // drag over a partial list would be ambiguous); the ⋯ menu is the filtered path.
   var filtering=!!ccQueueSearch;
+  // nextQueueKeys collects the keys present in the FULL model this render (not just
+  // the painted subset) so the NEXT render pops-in only genuinely-new arrivals and a
+  // filter toggle never re-animates existing rows. Mirrors ccKnownClankers.
+  var nextQueueKeys={};
+  for(var qk=0;qk<ccQueue.length;qk++){nextQueueKeys[ccQueueKey(ccQueue[qk])]=true;}
   el.innerHTML=ccQueue.map(function(q,i){
     if(!ccQueueMatches(q))return '';
     shown++;
+    // Enter pop-in ONLY for an item absent from the previous render — so existing
+    // rows never re-animate on a poll (the "blink"). A drag/move FLIP re-render
+    // (flip truthy) must not pop-in either: the glide is the animation there, so we
+    // suppress the enter class whenever flip is set.
+    var qkey=ccQueueKey(q);
+    var isNewQ=!flip&&qkey&&!ccKnownQueueKeys[qkey];
     // Show ALL of the issue's gh labels as pills (the backend already carries the
     // full label set). "My work" items render every label the same way, so the
     // queue is consistent with them. esc() guards each label.
@@ -3554,15 +3807,23 @@ function ccRenderQueue(flip){
     var mineCls=mine?' cc-q-mine':'';
     var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
     var heldCls=isHeld?' cc-q-held':'';
-    var heldTag=isHeld?'<span class="cc-q-held-tag" title="On hold — parked by the operator; not offered until resumed">&#x23F8; on hold</span>':'';
+    // On-hold badge tooltip (#queue-hold-reason): when the operator attached a note,
+    // show "On hold — <reason>"; otherwise fall back to the generic text. esc() guards
+    // the operator-supplied reason so it can never inject markup into the title attr.
+    var heldReason=(q.held_reason||'').toString();
+    var heldTitle=heldReason?('On hold — '+heldReason):'On hold — parked by the operator; not offered until resumed';
+    var heldTag=isHeld?'<span class="cc-q-held-tag" title="'+esc(heldTitle)+'">&#x23F8; on hold</span>':'';
     // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
     var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
-    return '<div class="cc-q-item'+mineCls+heldCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+    var enterCls=isNewQ?' cc-q-enter':'';
+    return '<div class="cc-q-item'+mineCls+heldCls+enterCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
       '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
+  // Adopt the freshly-painted key set so the NEXT render only pops-in new arrivals.
+  ccKnownQueueKeys=nextQueueKeys;
   if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
   ccUpdateFilterNote(shown,total);
   // Drag binding only when NOT filtering (a partial list would drop ambiguously).
@@ -3657,6 +3918,14 @@ function ccQueueMenuHTML(key,pos,total,isHeld){
   // carries the CURRENT held state so the click handler knows which way to flip.
   var holdLabel=isHeld?'Resume':'Hold';
   var holdIcon=isHeld?'&#x25B6;':'&#x23F8;'; // ▶ resume / ⏸ hold
+  // Optional hold reason (#queue-hold-reason): an inline note field shown ONLY when the
+  // item is NOT yet held (a reason is attached when parking). The Hold click reads this
+  // input's value and passes it to ccToggleHold. Absent for a held item (Resume needs
+  // no note). Uses a distinct id ('hr-'+key) so it never collides with the mover input.
+  var reasonRow=isHeld?'':(
+    '<div class="cc-q-holdreason">'+
+      '<input type="text" id="hr-'+esc(key)+'" class="cc-q-holdreason-input" maxlength="200" placeholder="Optional hold reason&hellip;" data-qkey="'+esc(key)+'" aria-label="Optional hold reason" autocomplete="off">'+
+    '</div>');
   return '<span class="cc-q-menu-wrap">'+
     '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
     '<div class="cc-q-menu" role="menu">'+
@@ -3664,6 +3933,7 @@ function ccQueueMenuHTML(key,pos,total,isHeld){
       '<button type="button" class="cc-q-act" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
       '<div class="cc-q-menu-sep"></div>'+
       '<button type="button" class="cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
+      reasonRow+
       '<div class="cc-q-menu-sep"></div>'+
       '<div class="cc-q-moverow">'+
         '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
@@ -3687,9 +3957,13 @@ function ccUpdateFilterNote(shown,total){
 // in the FULL ccQueue regardless of any active search filter.
 function ccCloseQueueMenus(){
   var open=document.querySelectorAll('.cc-q-menu.open');
-  for(var i=0;i<open.length;i++)open[i].classList.remove('open');
+  for(var i=0;i<open.length;i++){open[i].classList.remove('open');open[i].classList.remove('cc-q-menu-up');}
   var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
   for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
+  // No-blink guard companion: a poll re-render that arrived while a menu was open was
+  // SKIPPED (ccQueueRenderDeferred). Now that no menu is open, catch the queue up to
+  // the latest data with a single plain (non-flip) re-render.
+  if(ccQueueRenderDeferred){ccQueueRenderDeferred=false;try{ccRenderQueue();}catch(e){}}
 }
 function ccBindQueueMenus(root){
   // Clicks INSIDE an open menu (the number input, its label, whitespace) must not
@@ -3709,7 +3983,26 @@ function ccBindQueueMenus(root){
       var menu=btn.parentNode.querySelector('.cc-q-menu');
       var isOpen=menu.classList.contains('open');
       ccCloseQueueMenus();
-      if(!isOpen){menu.classList.add('open');btn.setAttribute('aria-expanded','true');}
+      if(!isOpen){
+        // Decide direction BEFORE it paints so it never flashes clipped: if the
+        // menu (once shown) would extend past the bottom of the scrolling
+        // .cc-queue container, flip it to open upward. Compare the button's
+        // position to the container's viewport box, not the window, so it tracks
+        // the actual clip boundary (the queue's overflow-y:auto edge).
+        menu.classList.remove('cc-q-menu-up');
+        menu.classList.add('open');
+        var clip=btn.closest('.cc-queue');
+        if(clip){
+          var bBot=btn.getBoundingClientRect().bottom;
+          var cBox=clip.getBoundingClientRect();
+          var menuH=menu.offsetHeight||220; // measured now that it is display:block
+          // Flip up when there isn't room below within the clip AND there is more room above.
+          if(bBot+menuH>cBox.bottom && (btn.getBoundingClientRect().top-cBox.top)>(cBox.bottom-bBot)){
+            menu.classList.add('cc-q-menu-up');
+          }
+        }
+        btn.setAttribute('aria-expanded','true');
+      }
     });
   })(btns[i]);}
   var acts=root.querySelectorAll('.cc-q-act[data-act=top]');
@@ -3722,7 +4015,17 @@ function ccBindQueueMenus(root){
   })(bots[b2]);}
   var holds=root.querySelectorAll('.cc-q-act[data-act=hold]');
   for(var h2=0;h2<holds.length;h2++){(function(act){
-    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccToggleHold(act.getAttribute('data-qkey'),act.getAttribute('data-held')!=='1');});
+    act.addEventListener('click',function(e){
+      e.stopPropagation();if(act.disabled)return;
+      var key=act.getAttribute('data-qkey');
+      var willHold=act.getAttribute('data-held')!=='1';
+      // Read the optional inline reason (present only on the not-yet-held menu) BEFORE
+      // closing the menu tears the input out of the DOM. Ignored on resume (willHold=false).
+      var reason='';
+      if(willHold){var ri=root.querySelector('#'+cssEscRaw('hr-'+key));if(ri)reason=ri.value||'';}
+      ccCloseQueueMenus();
+      ccToggleHold(key,willHold,reason);
+    });
   })(holds[h2]);}
   var gos=root.querySelectorAll('.cc-q-act-go');
   for(var g=0;g<gos.length;g++){(function(go){
@@ -3739,7 +4042,13 @@ function ccBindQueueMenus(root){
 // cssEscId escapes a qkey for use in a querySelector id lookup (the key contains
 // '/' and '#'). Prefer CSS.escape when present; fall back to a manual escape.
 function cssEscId(id){
-  var raw='mv-'+id;
+  return cssEscRaw('mv-'+id);
+}
+// cssEscRaw escapes an ALREADY-PREFIXED id (e.g. 'hr-owner/repo#1') for a
+// querySelector '#'+... lookup. Same escape as cssEscId but without the baked-in
+// 'mv-' prefix, so callers that use a different prefix (the hold-reason input's
+// 'hr-') get a correct selector instead of a doubled 'mv-' that never matches.
+function cssEscRaw(raw){
   if(window.CSS&&CSS.escape)return CSS.escape(raw);
   return raw.replace(/([^a-zA-Z0-9_-])/g,'\\$1');
 }
@@ -3866,9 +4175,13 @@ function ccPersistQueueOrder(){
 // computes) is reflected: a newly-held row re-appears greyed at the bottom, a
 // resumed row rejoins the offerable list. Owner/read-write only; a read viewer 403s
 // here, but the Hold/Resume action is never rendered for them (adminEnabled gate).
-function ccToggleHold(key,held){
+function ccToggleHold(key,held,reason){
   if(!key)return;
-  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,held:!!held})})
+  // reason is OPTIONAL and only meaningful on hold=true; the server ignores it on
+  // resume. Trimmed here so a whitespace-only note is treated as "no reason".
+  var body={key:key,held:!!held};
+  if(held&&reason&&reason.trim())body.reason=reason.trim();
+  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
     .then(function(){
       // Re-hydrate from the server so held tagging + offer-eligibility are authoritative.
@@ -3876,6 +4189,36 @@ function ccToggleHold(key,held){
     })
     .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}})
     .catch(function(){/* a read viewer would 403; the UI never shows the action to them */});
+}
+// ccRenderResumeAll shows/hides the header "Resume all" button. It is visible ONLY
+// when the viewer is owner/read-write (adminEnabled) AND at least one issue is on
+// hold (ccHeldCount>0); otherwise it is hidden. The label carries the live count so
+// the operator sees how many resuming will clear. Called on every ccRenderQueue.
+function ccRenderResumeAll(){
+  var btn=document.getElementById('queue-resume-all-btn');if(!btn)return;
+  if(adminEnabled&&ccHeldCount>0){
+    btn.style.display='';
+    btn.textContent='▶ Resume all ('+ccHeldCount+')'; // ▶ Resume all (N)
+  }else{
+    btn.style.display='none';
+  }
+}
+// ccResumeAll bulk-clears the ENTIRE operator hold set via POST
+// /api/contribute/queue/hold/clear, after a themed confirm (never native confirm).
+// On success it re-fetches the queue so every previously-held row rejoins the
+// offerable list. Owner/read-write only; a read viewer 403s, but the button is never
+// shown to them (adminEnabled gate in ccRenderResumeAll).
+function ccResumeAll(){
+  if(ccHeldCount<=0)return;
+  adminConfirm('Resume all held issues','Resume every issue currently on hold ('+ccHeldCount+') so they can be offered again. This clears the entire operator hold set at once. Individual holds can be re-applied afterwards from each row&rsquo;s ⋯ menu.','Resume all',function(){
+    fetch('/api/contribute/queue/hold/clear',{method:'POST',headers:{'Content-Type':'application/json'}})
+      .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+      .then(function(){
+        return fetch('/api/contribute/queue').then(function(r){return r.json();});
+      })
+      .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}toast('Resumed all held issues',true);})
+      .catch(function(){toast('Could not resume all held issues',false);});
+  });
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
   // Drive BOTH the queue-head pill (#cc-live, unchanged) and the mirror pill that
@@ -4476,7 +4819,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows)
+</body></html>`, projectName, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
@@ -4636,7 +4979,7 @@ func (s *Server) resolveContributeCaller(r *http.Request) string {
 
 // handleContributeInvite mints a trusted, attributed invite link (issue #2598).
 // It resolves the caller's identity server-side, loads their contributor
-// profile, and requires their trust tier to be trusted or advisor — a newcomer,
+// profile, and requires their trust tier to be trusted, merger, or advisor — a newcomer,
 // contributor, or anonymous caller gets 403. The returned token encodes the
 // inviter so that whoever registers via the link is attributed to them while
 // still joining as a plain newcomer (the register path never elevates tier).
@@ -4652,7 +4995,7 @@ func (s *Server) handleContributeInvite(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !inviteTrustTiers[profile.TrustTier] {
-		jsonError(w, "Only trusted or advisor contributors can invite others. Keep shipping to earn trust.", http.StatusForbidden)
+		jsonError(w, "Only trusted, merger, or advisor contributors can invite others. Keep shipping to earn trust.", http.StatusForbidden)
 		return
 	}
 
@@ -4843,10 +5186,13 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	// of the queue); inFlightCount = issues currently held by a live connection.
 	// Both are read-only tallies the queue header / Management tab surface (#2649
 	// configurable cooldown).
-	cooldownCount, inFlightCount := 0, 0
+	// heldCount = operator-held issues still in the actionable universe (would be
+	// offerable but for the manual hold); the queue header surfaces it as "H on hold".
+	cooldownCount, inFlightCount, heldCount := 0, 0, 0
 	if s.contributeHub != nil {
 		snap = s.contributeHub.FleetSnapshot()
 		cooldownCount, inFlightCount = s.contributeHub.CooldownCounts()
+		heldCount = s.contributeHub.HeldCount()
 	}
 	jsonResponse(w, map[string]any{
 		"clankers":        snap.Clankers,
@@ -4854,6 +5200,7 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 		"policy":          s.buildContributeAdmissionPolicy(),
 		"cooldown_count":  cooldownCount,
 		"in_flight_count": inFlightCount,
+		"held_count":      heldCount,
 	})
 }
 
@@ -4993,7 +5340,7 @@ type tierLimitView struct {
 
 // limitsTierOrder is the trust progression, so the UI lists tiers newcomer→advisor
 // rather than in Go map iteration order (non-deterministic).
-var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "advisor"}
+var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "merger", "advisor"}
 
 // handleContributeLimits serves the hive's per-tier rate limits (#2595) plus the
 // VIEWER's own daily/hourly usage when we can identify them. This makes the managed
@@ -5128,6 +5475,12 @@ func (s *Server) handleContributeQueueOrder(w http.ResponseWriter, r *http.Reque
 // nor slow the per-selectTask membership lookup.
 const maxQueueHoldKeys = 512
 
+// maxQueueHoldReasonLen bounds the OPTIONAL operator note stored with a hold so a
+// stored reason can never balloon hive.yaml. A hold reason is a short annotation
+// (why this issue is parked), not free-form prose, so a compact cap is plenty; an
+// over-long note is truncated rather than rejected (the hold itself must still succeed).
+const maxQueueHoldReasonLen = 200
+
 // handleContributeQueueHold toggles the OPERATOR HOLD on one ready-work issue.
 // A held issue is parked INDEFINITELY — never offered — until the operator Resumes
 // it; this is DISTINCT from the time-based cooldown, which self-clears. It is a
@@ -5147,6 +5500,11 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Key  string `json:"key"`
 		Held bool   `json:"held"`
+		// Reason is an OPTIONAL short operator note explaining WHY the issue is being
+		// parked, surfaced in the on-hold badge tooltip. Ignored when held=false (the
+		// reason is dropped alongside the key on resume). Empty means "no note" — the
+		// badge falls back to its generic text, so holding without a reason is unchanged.
+		Reason string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid request", http.StatusBadRequest)
@@ -5156,6 +5514,11 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 	if key == "" || !queueOrderKeyPattern.MatchString(key) {
 		jsonError(w, "invalid issue key", http.StatusBadRequest)
 		return
+	}
+	// Bound the note so a stored reason can never balloon the persisted config.
+	reason := strings.TrimSpace(body.Reason)
+	if len(reason) > maxQueueHoldReasonLen {
+		reason = reason[:maxQueueHoldReasonLen]
 	}
 	// Rebuild the hold set: drop the target key (and any malformed/duplicate
 	// stragglers) first, then re-add it when held=true. This keeps the stored list
@@ -5183,10 +5546,61 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 		cleaned = append(cleaned, key)
 	}
 	s.deps.Config.Hub.ContributeQueueHold = cleaned
+	// Maintain the OPTIONAL parallel reason map (#queue-hold-reason). On hold=true with
+	// a non-empty note, store it under the canonical key; on hold=false (resume) or an
+	// empty note, drop any prior entry. Prune to the current held set so a reason can
+	// never outlive its hold. Built fresh each write (nil-safe) so it stays well-formed.
+	reasons := pruneQueueHoldReasons(s.deps.Config.Hub.ContributeQueueHoldReasons, cleaned)
+	if body.Held && reason != "" {
+		reasons[key] = reason
+	} else {
+		delete(reasons, key)
+	}
+	if len(reasons) == 0 {
+		reasons = nil // omitempty: no reasons => field absent, snapshot unchanged
+	}
+	s.deps.Config.Hub.ContributeQueueHoldReasons = reasons
 	s.auditFromRequest(r, "contribute_queue_hold", auditDetail("key", key, "held", strconv.FormatBool(body.Held)), "")
 	s.refreshAndPersist()
-	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned))
-	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned})
+	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned), "has_reason", body.Held && reason != "")
+	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned, "reason": reason})
+}
+
+// handleContributeQueueHoldClear RESUMES ALL held issues in one call: it drops the
+// entire operator hold set (ContributeQueueHold) and its parallel reason map, then
+// persists through the SAME refreshAndPersist path as the single-issue hold endpoint.
+// This is the bulk companion to handleContributeQueueHold — same owner/read-write
+// gate (requireContributorWrite; a read/anon caller gets 403), same persistence.
+// Idempotent: clearing an already-empty set is a clean no-op that still persists.
+func (s *Server) handleContributeQueueHoldClear(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	cleared := len(s.deps.Config.Hub.ContributeQueueHold)
+	s.deps.Config.Hub.ContributeQueueHold = nil
+	s.deps.Config.Hub.ContributeQueueHoldReasons = nil
+	s.auditFromRequest(r, "contribute_queue_hold_clear", auditDetail("cleared", strconv.Itoa(cleared)), "")
+	s.refreshAndPersist()
+	s.logger.Info("contribute queue hold cleared (resume all)", "cleared", cleared)
+	jsonResponse(w, map[string]any{"ok": true, "cleared": cleared, "hold": []string{}})
+}
+
+// pruneQueueHoldReasons returns a fresh copy of src keeping ONLY entries whose key is
+// present in keep (the current held set). It is the invariant that keeps the parallel
+// reason map from leaking a note for an issue that is no longer held. nil-safe: a nil
+// src yields an empty (non-nil) map ready to write into.
+func pruneQueueHoldReasons(src map[string]string, keep []string) map[string]string {
+	held := make(map[string]struct{}, len(keep))
+	for _, k := range keep {
+		held[k] = struct{}{}
+	}
+	out := make(map[string]string, len(keep))
+	for k, v := range src {
+		if _, ok := held[k]; ok && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // ── Contributor management ─────────────────────────────────────────────────
@@ -5265,7 +5679,7 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	validTiers := map[string]bool{"newcomer": true, "contributor": true, "trusted": true, "advisor": true, "revoked": true}
+	validTiers := map[string]bool{"newcomer": true, "contributor": true, "trusted": true, "merger": true, "advisor": true, "revoked": true}
 	if !validTiers[req.Tier] {
 		jsonError(w, "Invalid tier", http.StatusBadRequest)
 		return
@@ -5295,25 +5709,31 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, map[string]any{"ok": true})
 }
 
-// handleContributorRequeue is the operator MANUAL requeue / release action
-// (kubestellar/hive#2568, the tractable slice). It lets an owner/read-write operator
-// who can SEE a connected clanker is wedged — holding a task but not making progress —
-// release that task back to the ready queue. It is a CONTROL, so it is owner/read-
-// write ONLY, enforced server-side by requireContributorWrite (a read/anon caller
-// gets 403), exactly like trust/revoke/remove.
+// handleContributorRequeue is the operator YANK action — the manual release of a
+// wedged clanker's in-flight task, repurposed (kubestellar/hive#2568 + the yank
+// follow-up) to ALSO immediately reassign that clanker its next-priority item so it
+// keeps working instead of idling. It is a CONTROL, so it is owner/read-write ONLY,
+// enforced server-side by requireContributorWrite (a read/anon caller gets 403),
+// exactly like trust/revoke/remove.
 //
-// It intentionally reuses the SAME release+cooldown machinery the automatic
-// disconnect-release (#2356/#2435) and ready-abandon (#2545) paths use — see
-// ContributeWSHub.RequeueContributorTask — so a manual requeue can NOT recreate the
-// duplicate-assignment race #2492/#2557 closed: the released issue books the same
-// short failure cooldown and is therefore not instantly re-handed to a stale worker.
+// It still reuses the SAME release+cooldown machinery the automatic disconnect-release
+// (#2356/#2435) and ready-abandon (#2545) paths use — see
+// ContributeWSHub.RequeueContributorTask — so the release can NOT recreate the
+// duplicate-assignment race #2492/#2557 closed: the released issue books the same short
+// failure cooldown and is therefore not instantly re-handed to a stale worker, and the
+// connection's assignment generation is BUMPED so a stale worker's later completion is
+// fenced out (the Gate).
 //
-// #2568 completion: the release now BUMPS the connection's assignment generation, so a
-// stale worker that later reports completion is fenced out (the Gate — the automatic
-// lease-TTL backstop lives in the hub's cleanupLoop/reclaimExpiredLeases). The operator
-// may pass a REASON (JSON body {"reason":...} or ?reason=), which is recorded in the
-// audit + activity log and pushed to the still-connected worker on task_revoke.
-// Requeuing a contributor with no in-flight task is a 404 (nothing to release).
+// The YANK addition: after that release, the hub immediately calls selectTask for the
+// SAME clanker and hands it its next-priority item (honouring the operator-pinned → own
+// work → label-affinity → fewer-failures → rest order), and the just-released issue is
+// briefly self-excluded from THIS clanker (yankSelfExcludeSeconds) so it moves to
+// genuinely DIFFERENT work — while the released issue is immediately offerable to every
+// OTHER contributor. When nothing else is admissible the clanker is simply released +
+// idle (the old requeue-only outcome, now the fallback). The operator may pass a REASON
+// (JSON body {"reason":...} or ?reason=), recorded in the audit + activity log and
+// pushed to the still-connected worker on task_revoke. A contributor with no in-flight
+// task is a 404 (nothing to release/reassign).
 func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request) {
 	if !s.requireContributorWrite(w, r) {
 		return
@@ -5340,16 +5760,26 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 			reason = strings.TrimSpace(body.Reason)
 		}
 	}
-	// Key the live release by the registered ContributorID (what the ops tab passes),
-	// matching how the hub tracks connections. GitHubUsername is only used for logs.
-	released := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
+	// Key the live release+reassign by the registered ContributorID (what the ops tab
+	// passes), matching how the hub tracks connections. GitHubUsername is only for logs.
+	released, assigned := s.contributeHub.RequeueContributorTask(p.ContributorID, reason)
 	if released == 0 {
-		jsonError(w, "That contributor has no in-flight task to requeue.", http.StatusNotFound)
+		jsonError(w, "That contributor has no in-flight task to yank.", http.StatusNotFound)
 		return
 	}
 	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername, "reason", reason), "")
-	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released, "reason", reason)
-	jsonResponse(w, map[string]any{"ok": true, "released": released})
+	// Report whether the clanker was reassigned (and to what) so the ops tab can show
+	// the clanker was moved to different work. reassigned==false means it was released
+	// but nothing else was admissible right now — a legitimate "released, now idle" state.
+	resp := map[string]any{"ok": true, "released": released, "reassigned": false}
+	if assigned != nil && assigned.Type == "task_assign" {
+		resp["reassigned"] = true
+		resp["assigned_repo"] = assigned.Repo
+		resp["assigned_number"] = assigned.Number
+		resp["assigned_title"] = assigned.Title
+	}
+	s.logger.Info("contributor task yanked by operator", "username", p.GitHubUsername, "sessions_released", released, "reassigned", resp["reassigned"], "reason", reason)
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {
@@ -5670,6 +6100,8 @@ func trustTierColor(tier string) string {
 		return "#3fb950"
 	case "trusted":
 		return "#d29922"
+	case "merger":
+		return "#f778ba"
 	case "advisor":
 		return "#a371f7"
 	case "revoked":
@@ -5688,6 +6120,8 @@ func trustTierBadgeCSS(tier string) (bg, text, border string) {
 		return "rgba(59,130,246,0.2)", "#60a5fa", "rgba(59,130,246,0.3)"
 	case "trusted":
 		return "rgba(34,197,94,0.2)", "#4ade80", "rgba(34,197,94,0.3)"
+	case "merger":
+		return "rgba(247,120,186,0.2)", "#f778ba", "rgba(247,120,186,0.3)"
 	case "advisor":
 		return "rgba(168,85,247,0.2)", "#c084fc", "rgba(168,85,247,0.3)"
 	case agentTierLabel:
@@ -5803,7 +6237,11 @@ func (s *Server) countAgentActivity(agentName string) (prs, issues, findings int
 // query form still works on load for back-compat, but the canonical shareable
 // URL is now the path form.)
 func (s *Server) handleLeaderboardPage(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/contribute/leaderboard", http.StatusFound)
+	target := "/contribute/leaderboard"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

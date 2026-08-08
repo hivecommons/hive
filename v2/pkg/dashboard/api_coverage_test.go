@@ -84,10 +84,10 @@ func apiServerWithKnowledge(t *testing.T) (*Server, *Dependencies, *httptest.Ser
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
-				"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m"}},
-				"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m"}},
-				"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m"}},
+				"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
+				"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m"}},
+				"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m"}},
+				"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m"}},
 			},
 			Labels: config.LabelsConfig{Exempt: []string{"hold"}},
 		},
@@ -1479,7 +1479,7 @@ func TestHandleGovernorRepos_Success(t *testing.T) {
 	s, _ := apiServer(t)
 	// Replacing the repo set must name a default among the new repos (the
 	// always-exactly-one-default invariant), so send primaryRepo too.
-	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}, "primaryRepo": "repo1"})
+	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"repo1", "repo2"}, "primaryRepo": "repo1"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1488,11 +1488,11 @@ func TestHandleGovernorRepos_Success(t *testing.T) {
 func TestHandleGovernorRepos_StripOrg(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/new-repo"}, "primaryRepo": "myorg/new-repo"})
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
-	if len(deps.Config.Project.Repos) != 1 || deps.Config.Project.Repos[0] != "new-repo" {
-		t.Errorf("repos = %v, want [new-repo]", deps.Config.Project.Repos)
+	if len(deps.Config.Project.Repos) == 1 && deps.Config.Project.Repos[0] == "new-repo" {
+		t.Errorf("repos mutated to stripped value %v despite rejection", deps.Config.Project.Repos)
 	}
 }
 
@@ -1717,7 +1717,7 @@ func TestLookupCadence_Found(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -1731,7 +1731,7 @@ func TestLookupCadence_NotFound(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -1745,7 +1745,7 @@ func TestLookupCadenceForMode_Busy(t *testing.T) {
 	cfg := &config.Config{
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"busy": {Cadences: map[string]string{"scanner": "5m"}},
+				"busy": {Cadences: map[string]config.Cadence{"scanner": "5m"}},
 			},
 		},
 	}
@@ -3018,7 +3018,7 @@ func TestHandleAgentConfigGet_CopilotBackend(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -3059,7 +3059,7 @@ func TestHandleAgentConfigGet_CustomLaunchCmd(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "15m"}},
+				"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			},
 		},
 	}
@@ -3100,7 +3100,7 @@ func TestHandleAgentConfigGet_DisplayNameAndPauseCadence(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "pause"}},
+				"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "pause"}},
 			},
 		},
 	}
@@ -3256,7 +3256,7 @@ func TestHandleAgentConfigGet_OffCadence(t *testing.T) {
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
-				"idle": {Threshold: 0, Cadences: map[string]string{"scanner": "off"}},
+				"idle": {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "off"}},
 			},
 		},
 	}

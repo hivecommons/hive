@@ -19,10 +19,63 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 	started := fixedSweepNow.Add(-68 * time.Minute)
 
 	cases := []struct {
-		name     string
-		entry    RegistryEntry
-		orphaned bool
+		name      string
+		entry     RegistryEntry
+		latestSHA string
+		orphaned  bool
 	}{
+		{
+			// The floating-tag loop this fix closes: a hive tracking a mutable
+			// …-latest tag reports the CURRENT latest build, which is a different
+			// commit than the specific UpgradeTarget the hub armed. The old
+			// exact-target test called this orphaned and swept/re-rolled it every
+			// cycle; with the image ref known to be mutable and the reported SHA
+			// equal to the branch-latest, it is converged, not orphaned.
+			name: "not orphaned: floating-tag hive already on branch-latest (different from armed target)",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: started,
+				GitHash:          "9999abc",
+				UpgradeTarget:    "fc32ae4",
+				ImageRef:         "ghcr.io/kubestellar/hive:v4-latest",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+			},
+			latestSHA: "9999abc",
+			orphaned:  false,
+		},
+		{
+			// A floating-tag hive that is NOT yet at latest is still a real
+			// orphan — mutability alone is not a free pass, only mutability PLUS
+			// being on the current build.
+			name: "orphaned: floating-tag hive behind branch-latest",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: started,
+				GitHash:          "c11643a",
+				UpgradeTarget:    "fc32ae4",
+				ImageRef:         "ghcr.io/kubestellar/hive:v4-latest",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+			},
+			latestSHA: "9999abc",
+			orphaned:  true,
+		},
+		{
+			// A COMMIT-PINNED hive on branch-latest is unaffected by the floating
+			// short-circuit: its tag resolves to one build, so "did it reach the
+			// target" stays the governing question. Here it is still on the old
+			// SHA, so it remains a genuine orphan.
+			name: "orphaned: commit-pinned hive on old SHA even though branch-latest advanced",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: started,
+				GitHash:          "c11643a",
+				UpgradeTarget:    "fc32ae4",
+				ImageRef:         "ghcr.io/kubestellar/hive:c11643a",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+			},
+			latestSHA: "9999abc",
+			orphaned:  true,
+		},
 		{
 			name: "orphaned: alive and heartbeating past the threshold on the old SHA",
 			entry: RegistryEntry{
@@ -137,7 +190,7 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := evaluateOrphanedUpgrade(&tc.entry, fixedSweepNow)
+			got := evaluateOrphanedUpgrade(&tc.entry, fixedSweepNow, tc.latestSHA)
 			if got.orphaned != tc.orphaned {
 				t.Fatalf("orphaned = %v, want %v (reason %q)", got.orphaned, tc.orphaned, got.reason)
 			}
@@ -280,6 +333,57 @@ func TestSweepBelowBudgetStillReArms(t *testing.T) {
 	}
 	if got := s.heartbeatUpgrade["first-orphan"]; got != "fc32ae4" {
 		t.Errorf("below the budget the upgrade must still be re-armed, got %q", got)
+	}
+}
+
+// TestSweepDoesNotReRollFloatingTagAtLatest is the acceptance test for the
+// perpetual floating-tag upgrade loop. A hive tracking a mutable …-latest tag,
+// already running the branch-latest build, must NOT be swept: not re-armed for
+// delivery, not counted toward the fault budget, and — after repeated cycles —
+// never marked UpgradeFailed. Left unfixed this hive was re-armed and
+// rolloutRestart-ed every staleUpgradeTimeout, restarting its spoke pod forever,
+// then falsely reported as a permanent upgrade failure.
+func TestSweepDoesNotReRollFloatingTagAtLatest(t *testing.T) {
+	latestSHAMu.Lock()
+	prev := latestSHAByBranch["v4"]
+	latestSHAByBranch["v4"] = branchSHAInfo{SHA: "9999abc"}
+	latestSHAMu.Unlock()
+	t.Cleanup(func() {
+		latestSHAMu.Lock()
+		latestSHAByBranch["v4"] = prev
+		latestSHAMu.Unlock()
+	})
+
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "floating-at-latest",
+		GitBranch:     "v4",
+		GitHash:       "9999abc", // == branch-latest
+		UpgradeTarget: "fc32ae4", // an older armed commit the tag never lands on
+		ImageRef:      "ghcr.io/kubestellar/hive:v4-latest",
+	}}
+
+	// Run more cycles than the fault budget: a broken hive would be marked
+	// UpgradeFailed by now. A converged floating-tag hive must survive all of them.
+	for i := 0; i < maxOrphanedUpgradeSweeps+2; i++ {
+		s.registry.Hives[0].Upgrading = true
+		s.registry.Hives[0].UpgradeStartedAt = time.Now().Add(-68 * time.Minute)
+		s.registry.Hives[0].LastHeartbeat = rfc3339(time.Now().Add(-30 * time.Second))
+		s.sweepOrphanedUpgrades()
+
+		if _, armed := s.heartbeatUpgrade["floating-at-latest"]; armed {
+			t.Fatalf("cycle %d: floating-tag hive at latest must NOT be re-armed for a rollout", i)
+		}
+		if s.registry.Hives[0].OrphanedUpgradeSweeps != 0 {
+			t.Fatalf("cycle %d: converged floating-tag hive must not accrue orphan sweeps, got %d",
+				i, s.registry.Hives[0].OrphanedUpgradeSweeps)
+		}
+	}
+	if s.registry.Hives[0].UpgradeFailed {
+		t.Error("a floating-tag hive at latest must never be reported as a permanent upgrade failure")
 	}
 }
 

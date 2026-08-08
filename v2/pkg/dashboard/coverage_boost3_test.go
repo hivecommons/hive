@@ -836,10 +836,10 @@ func newFullServerWithAgents(t *testing.T) *Server {
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
 			Modes: map[string]config.ModeConfig{
-				"idle":  {Threshold: 0, Cadences: map[string]string{"scanner": "15m", "reviewer": "15m"}},
-				"quiet": {Threshold: 2, Cadences: map[string]string{"scanner": "10m", "reviewer": "10m"}},
-				"busy":  {Threshold: 10, Cadences: map[string]string{"scanner": "5m", "reviewer": "5m"}},
-				"surge": {Threshold: 20, Cadences: map[string]string{"scanner": "2m", "reviewer": "2m"}},
+				"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m", "reviewer": "15m"}},
+				"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "10m", "reviewer": "10m"}},
+				"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "5m", "reviewer": "5m"}},
+				"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "2m", "reviewer": "2m"}},
 			},
 		},
 	}
@@ -909,19 +909,18 @@ func TestHealthSummary_WithAgents(t *testing.T) {
 
 func TestHandleGovernorRepos_PrimaryRepoURL(t *testing.T) {
 	srv := newFullServer(t)
-	// The default must be one of the monitored repos, so send the repo alongside
-	// the pasted primary-repo URL (which the handler strips to a bare name).
+	// Full URLs in primary_repo are now rejected instead of silently stripped.
 	body := `{"repos":["otherrepo"],"primaryRepo":"https://github.com/otherorg/otherrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("code = %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", w.Code)
 	}
-	if srv.deps.Config.Project.PrimaryRepo != "otherrepo" {
-		t.Errorf("primaryRepo = %q, want 'otherrepo'", srv.deps.Config.Project.PrimaryRepo)
+	if srv.deps.Config.Project.PrimaryRepo == "otherrepo" {
+		t.Errorf("primaryRepo changed to %q despite rejection", srv.deps.Config.Project.PrimaryRepo)
 	}
 }
 

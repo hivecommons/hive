@@ -5,11 +5,22 @@ package dashboard
 // hub-delivered to the per-app-id path with key_file deliberately left empty.
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
 )
 
 // Live values from the spoke the bug was observed on (hosted-available-
@@ -146,4 +157,306 @@ func TestConfigGitHub_UnpersistableSaveIsAnError(t *testing.T) {
 	if reinitCalls != 0 {
 		t.Fatalf("reinit attempted despite refused save: %d calls", reinitCalls)
 	}
+}
+
+func TestAutoDiscoverGitHubInstallationIDPersistsLikeManualSetID(t *testing.T) {
+	ghpkg.ResetInstallationDiscoveryCache()
+	s, deps := apiServer(t)
+	deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	deps.Config.Project.Org = "open-source"
+	deps.Config.GitHub.AppID = testHubDeliveredAppID
+	deps.Config.GitHub.InstallationID = 0
+	deps.Config.GitHub.KeyFile = ""
+
+	keyFile := filepath.Join(t.TempDir(), "gh-app-key.pem")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("writing key: %v", err)
+	}
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/installations" && r.URL.Path != "/orgs/open-source/installation" {
+			t.Fatalf("unexpected discovery path %s", r.URL.Path)
+		}
+		if r.URL.Path == "/orgs/open-source/installation" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"id": testHubDeliveredInstallationID, "account": map[string]any{"login": "open-source"}},
+		})
+	}))
+	defer api.Close()
+
+	auth, err := ghpkg.NewAppAuth(testHubDeliveredAppID, 0, keyFile, deps.Logger, api.URL)
+	if err != nil {
+		t.Fatalf("NewAppAuth: %v", err)
+	}
+	deps.GHAppAuth = auth
+	deps.ResolveAppKeyFileFunc = func(configured string, appID int64) string {
+		return keyFile
+	}
+	var gotAppID, gotInstallationID int64
+	var gotKeyFile string
+	reinitCalls := 0
+	deps.ReinitGitHubFunc = func(appID, installationID int64, keyFile string) error {
+		reinitCalls++
+		gotAppID, gotInstallationID, gotKeyFile = appID, installationID, keyFile
+		return nil
+	}
+
+	id, err := s.AutoDiscoverGitHubInstallationID(context.Background(), false)
+	if err != nil {
+		t.Fatalf("AutoDiscoverGitHubInstallationID: %v", err)
+	}
+	if id != testHubDeliveredInstallationID {
+		t.Fatalf("id = %d, want %d", id, testHubDeliveredInstallationID)
+	}
+	if deps.Config.GitHub.InstallationID != testHubDeliveredInstallationID {
+		t.Fatalf("config installation_id = %d, want %d", deps.Config.GitHub.InstallationID, testHubDeliveredInstallationID)
+	}
+	if reinitCalls != 1 {
+		t.Fatalf("ReinitGitHubFunc calls = %d, want 1", reinitCalls)
+	}
+	if gotAppID != testHubDeliveredAppID || gotInstallationID != testHubDeliveredInstallationID || gotKeyFile != keyFile {
+		t.Fatalf("reinit args = (%d, %d, %q), want (%d, %d, %q)",
+			gotAppID, gotInstallationID, gotKeyFile, testHubDeliveredAppID, testHubDeliveredInstallationID, keyFile)
+	}
+}
+
+func TestAutoDiscoverGitHubInstallationIDDerivesOrgWhenConfigOrgIsForgeHost(t *testing.T) {
+	ghpkg.ResetInstallationDiscoveryCache()
+	s, deps := apiServer(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	s.logger = logger
+	deps.Logger = logger
+
+	deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	deps.Config.Project.Org = "github.ibm.com"
+	deps.Config.Project.PrimaryRepo = "lee-cooper/toolkit"
+	deps.Config.GitHub.AppID = testHubDeliveredAppID
+	deps.Config.GitHub.InstallationID = 0
+	deps.Config.GitHub.KeyFile = ""
+	deps.Config.GitHub.BaseURL = "https://github.ibm.com"
+
+	var queriedOrg string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/orgs/lee-cooper/installation" {
+			t.Fatalf("unexpected discovery path %s", r.URL.Path)
+		}
+		queriedOrg = "lee-cooper"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": testHubDeliveredInstallationID,
+			"account": map[string]any{
+				"login": "lee-cooper",
+				"type":  "Organization",
+			},
+		})
+	}))
+	defer api.Close()
+	deps.Config.GitHub.APIURL = api.URL
+
+	keyFile := writeTestAppKey(t)
+	auth, err := ghpkg.NewAppAuth(testHubDeliveredAppID, 0, keyFile, deps.Logger, api.URL)
+	if err != nil {
+		t.Fatalf("NewAppAuth: %v", err)
+	}
+	deps.GHAppAuth = auth
+	deps.ResolveAppKeyFileFunc = func(configured string, appID int64) string { return keyFile }
+	deps.ReinitGitHubFunc = func(appID, installationID int64, keyFile string) error { return nil }
+
+	id, err := s.AutoDiscoverGitHubInstallationID(context.Background(), false)
+	if err != nil {
+		t.Fatalf("AutoDiscoverGitHubInstallationID: %v", err)
+	}
+	if id != testHubDeliveredInstallationID || queriedOrg != "lee-cooper" {
+		t.Fatalf("discovery id/org = (%d, %q), want (%d, lee-cooper)", id, queriedOrg, testHubDeliveredInstallationID)
+	}
+	if got := logs.String(); !strings.Contains(got, "configured_org=github.ibm.com") || !strings.Contains(got, "derived_org=lee-cooper") {
+		t.Fatalf("warning log = %q, want configured and derived orgs", got)
+	}
+}
+func TestGitHubSetupCallback_ValidInstallConfigures(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	var gotInstallationID int64
+	deps.ReinitGitHubFunc = func(appID, installationID int64, keyFile string) error {
+		gotInstallationID = installationID
+		return nil
+	}
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=ok" {
+		t.Fatalf("redirect = %q, want /?ghSetup=ok", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 4242 {
+		t.Fatalf("installation_id = %d, want 4242", deps.Config.GitHub.InstallationID)
+	}
+	if gotInstallationID != 4242 {
+		t.Fatalf("reinit installation_id = %d, want 4242", gotInstallationID)
+	}
+	if entries := s.GetAudit().Recent(1); len(entries) != 1 || entries[0].Action != "config_github" {
+		t.Fatalf("audit entry = %#v, want config_github", entries)
+	}
+}
+
+func TestGitHubSetupCallbackDerivesOrgWhenConfigOrgIsForgeHost(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "lee-cooper")
+	defer api.Close()
+	deps.Config.Project.Org = "github.ibm.com"
+	deps.Config.Project.PrimaryRepo = "lee-cooper/toolkit"
+	deps.Config.GitHub.BaseURL = "https://github.ibm.com"
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=ok" {
+		t.Fatalf("redirect = %q, want /?ghSetup=ok", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 4242 {
+		t.Fatalf("installation_id = %d, want 4242", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_RequestDoesNotConfigure(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=request")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup request: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=requested" {
+		t.Fatalf("redirect = %q, want /?ghSetup=requested", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_MismatchedOrgRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "other-org")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_NonNumericIDRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=abc")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 0 {
+		t.Fatalf("installation_id = %d, want unchanged 0", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_AlreadyConfiguredUnauthenticatedRejected(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+	deps.Config.GitHub.InstallationID = 1111
+
+	rec := doGet(s, "/gh-setup?setup_action=install&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=error" {
+		t.Fatalf("redirect = %q, want /?ghSetup=error", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 1111 {
+		t.Fatalf("installation_id = %d, want unchanged 1111", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func TestGitHubSetupCallback_UpdateForSameInstallationAllowed(t *testing.T) {
+	s, deps, api := setupCallbackServer(t, "myorg")
+	defer api.Close()
+	deps.Config.GitHub.InstallationID = 4242
+
+	rec := doGet(s, "/gh-setup?setup_action=update&installation_id=4242")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup callback: want 303, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?ghSetup=ok" {
+		t.Fatalf("redirect = %q, want /?ghSetup=ok", loc)
+	}
+	if deps.Config.GitHub.InstallationID != 4242 {
+		t.Fatalf("installation_id = %d, want unchanged 4242", deps.Config.GitHub.InstallationID)
+	}
+}
+
+func setupCallbackServer(t *testing.T, accountLogin string) (*Server, *Dependencies, *httptest.Server) {
+	t.Helper()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/app/installations/4242" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": 4242,
+			"account": map[string]any{
+				"login": accountLogin,
+				"type":  "Organization",
+			},
+		})
+	}))
+
+	s, deps := apiServer(t)
+	deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	deps.Config.Project.Org = "myorg"
+	deps.Config.GitHub.AppID = testHubDeliveredAppID
+	deps.Config.GitHub.InstallationID = 0
+	deps.Config.GitHub.APIURL = api.URL
+	deps.Config.GitHub.KeyFile = writeTestAppKey(t)
+	return s, deps, api
+}
+
+func writeTestAppKey(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating RSA key: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "gh-app-key.pem")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("creating key file: %v", err)
+	}
+	if err := pem.Encode(f, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		_ = f.Close()
+		t.Fatalf("writing key PEM: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing key file: %v", err)
+	}
+	return path
 }

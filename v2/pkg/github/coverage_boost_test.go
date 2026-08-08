@@ -281,7 +281,7 @@ func generateTestKey(t *testing.T) (*rsa.PrivateKey, string) {
 }
 
 func TestScopedToken_AllTiers(t *testing.T) {
-	tiers := []string{"newcomer", "contributor", "trusted", "advisor", "unknown-tier", ""}
+	tiers := []string{"newcomer", "contributor", "trusted", "merger", "advisor", "unknown-tier", ""}
 
 	for _, tier := range tiers {
 		t.Run("tier_"+tier, func(t *testing.T) {

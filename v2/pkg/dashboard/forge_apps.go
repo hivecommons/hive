@@ -55,8 +55,15 @@ type forgeActiveApp struct {
 	// no classification has run). This is a debugging surface — do not
 	// prettify it here.
 	AuthState string `json:"auth_state"`
-	Forge     string `json:"forge"`
-	Editable  bool   `json:"editable"`
+	// InstallURL is the server-built App install link
+	// (config.AppInstallURL(): <resolved base>/github-apps/<slug>/installations/new
+	// on GHE, /apps/<slug>/installations/new on github.com — "" only when a
+	// GHE host outside the forge table has no configured slug). The tab must
+	// use THIS rather than composing its own URL, so the banner and the tab
+	// can never drift onto two URL schemes.
+	InstallURL string `json:"install_url"`
+	Forge      string `json:"forge"`
+	Editable   bool   `json:"editable"`
 }
 
 type forgeAppsResponse struct {
@@ -132,6 +139,7 @@ func (s *Server) handleConfigGitHubForgeApps(w http.ResponseWriter, r *http.Requ
 			KeyFile:        keyFile,
 			KeyFingerprint: fingerprint,
 			AuthState:      s.GetGitHubAppState(),
+			InstallURL:     g.AppInstallURL(),
 			Forge:          appForge,
 			Editable:       forgeAppEditable(appForge, reposForge),
 		},

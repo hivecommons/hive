@@ -1,9 +1,11 @@
 package hub
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -131,4 +133,52 @@ func ssoSign(secret, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(body))
 	return ssoB64.EncodeToString(mac.Sum(nil))
+}
+
+// ssoTokenVersionEd25519 namespaces the ASYMMETRIC (Ed25519) handoff payload.
+// It is "-v2" (the legacy symmetric token above is "-v1"), so a v4 spoke's
+// Ed25519 verifier accepts ONLY this shape and never a legacy symmetric token,
+// and an old symmetric verifier never accepts this one. The two schemes cannot
+// be confused for each other.
+const ssoTokenVersionEd25519 = "hive-sso-v2"
+
+// MintSSOTokenEd25519 mints an ASYMMETRICALLY-signed SSO handoff token that a v4
+// spoke (which verifies with an Ed25519 PUBLIC key) can accept. This is the v2
+// hub-side backport of the v4 asymmetric-SSO cutover (#2771); it exists ALONGSIDE
+// the legacy symmetric MintSSOToken (untouched above) so the hub can hand each
+// consuming spoke the scheme it can verify — Ed25519 for a v4 spoke, symmetric
+// HMAC for the 33 old spokes.
+//
+// `seedHex` is the hex-encoded 32-byte Ed25519 SEED (hub-only private material
+// from ssoSigningSeed()); the token is signed with the private key it expands to.
+// `now` is passed in for a consistent clock / deterministic tests. Returns "" if
+// seedHex is empty/not a valid 32-byte seed, or if username/hiveID are empty — so
+// a caller holding only a public key (or no key) can never produce a token.
+func MintSSOTokenEd25519(seedHex, username, role, hiveID string, now time.Time) string {
+	if seedHex == "" || username == "" || hiveID == "" {
+		return ""
+	}
+	seed, err := hex.DecodeString(strings.TrimSpace(seedHex))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		// Not private-key material (e.g. a public key or garbage was passed):
+		// fail closed rather than sign with junk.
+		return ""
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+
+	claims := ssoClaims{
+		Version:  ssoTokenVersionEd25519,
+		Username: username,
+		Role:     role,
+		HiveID:   hiveID,
+		IssuedAt: now.Unix(),
+		Expiry:   now.Add(ssoTokenTTL).Unix(),
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return ""
+	}
+	body := ssoB64.EncodeToString(payload)
+	sig := ssoB64.EncodeToString(ed25519.Sign(priv, []byte(body)))
+	return body + "." + sig
 }

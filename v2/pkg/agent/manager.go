@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -181,6 +182,14 @@ type Manager struct {
 	// positive (see verifyBobKeyReadable). Same atomic.Pointer discipline and
 	// same deadlock reasoning as bobAPIKeyResolver above.
 	bobKeySourceResolver atomic.Pointer[func() string]
+
+	// auditSink, when set, receives agent lifecycle events (start, stop,
+	// launch failure, backend/model change) for durable, queryable recording
+	// in the dashboard's audit store. Nil in tests / non-dashboard setups, in
+	// which case every audit call is a no-op. See pkg/agent/audit.go for why
+	// this is an injected interface rather than a direct pkg/dashboard import,
+	// and why it is an atomic.Pointer rather than m.mu-guarded state.
+	auditSink atomic.Pointer[AuditSink]
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
@@ -389,6 +398,22 @@ func (m *Manager) routableBackend(backend string) bool {
 	return fnp != nil && *fnp != nil && (*fnp)(backend)
 }
 
+// validateBackendName reports whether backend is one the launcher can actually
+// dispatch: an agentic CLI, a model-gateway backend, or a configured gateway
+// name. An empty backend is valid (it means "the hive default").
+//
+// This is the manager-side half of the accept-then-fail fix. It dispatches on
+// the SAME canonical lists as config.ValidateBackend and backendBinary, so a
+// backend accepted by any write path is one the launch path can start.
+// Safe to call while holding m.mu (routableBackend reads atomically).
+func (m *Manager) validateBackendName(backend string) error {
+	if backend == "" || config.IsCLIBackend(backend) || m.routableBackend(backend) {
+		return nil
+	}
+	return fmt.Errorf("unsupported backend %q (supported: %s; or the name of a configured model gateway)",
+		backend, strings.Join(config.SupportedBackends(), ", "))
+}
+
 // SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
 func (m *Manager) SetAppAuth(auth AppTokenMinter) {
 	m.mu.Lock()
@@ -578,6 +603,16 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	m.sanitizeGitRemotes(agent)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
+		// No tmux session means no pane to announce into, so this failure
+		// cannot ride announceLaunchFailureInPane like the park-and-return
+		// branches do — record it here or it stays invisible.
+		m.audit(AuditAgentStartFailed, name, auditFields(
+			"outcome", "failure",
+			"backend", agent.effectiveBackend(),
+			"model", agent.effectiveModel(),
+			"error", err.Error(),
+			"stage", "tmux_session",
+		))
 		return err
 	}
 
@@ -640,12 +675,30 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	return []string{"tmux"}
 }
 
+func (m *Manager) agentExecUserSpec(agent *AgentProcess) string {
+	if agent.UID <= 0 {
+		return ""
+	}
+	agentUser := fmt.Sprintf("hive-%s", agent.Name)
+	if _, err := user.Lookup(agentUser); err == nil {
+		return agentUser
+	}
+	return fmt.Sprintf("%d:%d", agent.UID, os.Getgid())
+}
+
+func outputErr(prefix string, err error, output []byte) error {
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return fmt.Errorf("%s: %w: %s", prefix, err, msg)
+}
+
 func (m *Manager) tmuxCmd(agent *AgentProcess, args ...string) *exec.Cmd {
 	base := m.tmuxBaseArgs(agent)
 	tmuxArgs := append(base[1:], args...)
 	if agent.UID > 0 {
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		suExecArgs := append([]string{agentUser, base[0]}, tmuxArgs...)
+		suExecArgs := append([]string{m.agentExecUserSpec(agent), base[0]}, tmuxArgs...)
 		return exec.Command("su-exec", suExecArgs...)
 	}
 	return exec.Command(base[0], tmuxArgs...)
@@ -663,15 +716,14 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 
 	var cmd *exec.Cmd
 	if agent.UID > 0 {
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		suExecArgs := []string{"su-exec", agentUser}
+		suExecArgs := []string{"su-exec", m.agentExecUserSpec(agent)}
 		tmuxArgs := append(m.tmuxBaseArgs(agent), "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 		cmd = exec.Command(suExecArgs[0], append(suExecArgs[1:], tmuxArgs...)...)
 	} else {
 		cmd = exec.Command("tmux", "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 	}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("creating tmux session for %s: %w", agent.Name, err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return outputErr(fmt.Sprintf("creating tmux session for %s", agent.Name), err, output)
 	}
 
 	// tmux creates /tmp/tmux-{uid}/ with mode 700; ttyd runs as dev (uid 1001,
@@ -680,8 +732,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	// agent user who owns the directory. Use su-exec to chmod as the agent.
 	if agent.UID > 0 {
 		tmuxDir := fmt.Sprintf("/tmp/tmux-%d", agent.UID)
-		agentUser := fmt.Sprintf("hive-%s", agent.Name)
-		_ = exec.Command("su-exec", agentUser, "chmod", "710", tmuxDir).Run()
+		_ = exec.Command("su-exec", m.agentExecUserSpec(agent), "chmod", "710", tmuxDir).Run()
 	}
 
 	// Pre-create the agent-owned CODEX_HOME before launch (codex won't create
@@ -962,6 +1013,9 @@ func backendDefersStartupKick(backend string) bool {
 }
 
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	backend := agent.Config.Backend
 	if agent.BackendOverride != "" {
 		backend = agent.BackendOverride
@@ -1289,6 +1343,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		"mode", mode.String(),
 		"session", agent.tmuxSession,
 	)
+	m.audit(AuditAgentStarted, agent.Name, auditFields(
+		"outcome", "success",
+		"backend", backend,
+		"model", model,
+		"mode", mode.String(),
+	))
 
 	agentCtx, cancel := context.WithCancel(ctx)
 	agent.cancel = cancel
@@ -2263,6 +2323,11 @@ func (m *Manager) Stop(name string) error {
 
 	agent.State = StateStopped
 	m.logger.Info("audit: agent stopped", "name", name)
+	m.audit(AuditAgentStopped, name, auditFields(
+		"outcome", "success",
+		"backend", agent.effectiveBackend(),
+		"model", agent.effectiveModel(),
+	))
 
 	return nil
 }
@@ -2300,6 +2365,12 @@ func (m *Manager) AddAgent(name string, cfg config.AgentConfig) {
 	}
 	m.idToName[agentID] = name
 	m.logger.Info("audit: agent added", "name", name, "id", agentID, "uid", agentUID)
+	m.audit(AuditAgentAdded, name, auditFields(
+		"outcome", "success",
+		"backend", cfg.Backend,
+		"model", cfg.Model,
+		"id", agentID,
+	))
 }
 
 // UpdateConfig updates the stored config for a running agent process so that
@@ -2334,6 +2405,12 @@ func (m *Manager) RemoveAgent(name string) {
 	delete(m.idToName, agent.ID)
 	delete(m.agents, name)
 	m.logger.Info("audit: agent removed", "name", name, "id", agent.ID)
+	m.audit(AuditAgentRemoved, name, auditFields(
+		"outcome", "success",
+		"backend", agent.effectiveBackend(),
+		"model", agent.effectiveModel(),
+		"id", agent.ID,
+	))
 }
 
 // inferencePaneCheck pairs an inference agent name with its captured visible
@@ -2866,10 +2943,44 @@ func launchFailureBanner(msg string) string {
 // pane write on the launch path — a missing session must not turn a parked
 // agent into a crashed manager. Caller holds m.mu (same discipline as
 // launchInTmux, which is its only caller).
+// It is also the single chokepoint every park-and-return branch already
+// passes through, so recording the durable audit event here — rather than
+// once per branch — means no launch failure can be added later that silently
+// skips the audit log. This is the watsonx case: an agent configured with a
+// backend the image does not support failed at every launch for a day, WARN-
+// logged inside the pod and invisible in the Audit Log UI.
 func (m *Manager) announceLaunchFailureInPane(agent *AgentProcess, msg string) {
 	agent.lastLaunchFailureBanner = launchFailureBanner(msg)
 	m.tmuxSendLiteralForAgent(agent, agent.lastLaunchFailureBanner)
 	m.tmuxSendKeysForAgent(agent, "Enter")
+
+	m.audit(AuditAgentStartFailed, agent.Name, auditFields(
+		"outcome", "failure",
+		"backend", agent.effectiveBackend(),
+		"model", agent.effectiveModel(),
+		"error", agent.LastError,
+	))
+}
+
+// effectiveBackend is the backend this agent will actually launch with: the
+// per-agent override when set, otherwise its configured backend.
+func (a *AgentProcess) effectiveBackend() string {
+	if a.BackendOverride != "" {
+		return a.BackendOverride
+	}
+	return a.Config.Backend
+}
+
+// effectiveModel is the model this agent will actually launch with: the
+// per-agent override when set, otherwise its configured model. Returns the
+// raw (un-normalized) name — the audit log should show what was ASKED for,
+// since a bad model name is exactly the kind of misconfiguration being
+// audited.
+func (a *AgentProcess) effectiveModel() string {
+	if a.ModelOverride != "" {
+		return a.ModelOverride
+	}
+	return a.Config.Model
 }
 
 // dismissInferencePrompts polls the tmux pane for Claude Code interactive
@@ -3631,6 +3742,14 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 	return filterPaneOutput(a.lastPaneCapture, n)
 }
 
+// backendBinary maps an agent backend to the CLI binary that is actually
+// exec'd for it. Every model-gateway backend (config.InferenceBackends: vllm,
+// llm-d, litellm, watsonx) launches the SAME claude CLI, pointed at hive's
+// local OpenAI-compatible translator via ANTHROPIC_BASE_URL — the backend name
+// selects the upstream route, not the binary. Those entries are therefore
+// derived from the canonical list rather than written out here, so a backend
+// added to config.InferenceBackends can never again be accepted by config and
+// then rejected at kick time with "unknown backend".
 func backendBinary(backend string) (string, error) {
 	binaries := map[string]string{
 		"claude":  "claude",
@@ -3639,9 +3758,9 @@ func backendBinary(backend string) (string, error) {
 		"goose":   "goose",
 		"pi":      "goose",
 		"bob":     "bob",
-		"vllm":    "claude",
-		"llm-d":   "claude",
-		"litellm": "claude",
+	}
+	for _, b := range config.InferenceBackends {
+		binaries[b] = "claude"
 	}
 
 	binary, ok := binaries[backend]
@@ -3683,7 +3802,12 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 // GitHub device flow). Each must be distinctive enough to never appear in
 // ordinary agent output.
 var loginPromptPatterns = []string{
-	"/login",
+	// A BARE "/login" is deliberately NOT here — it is handled separately by
+	// lineHasLoginDirective below. "/login" alone is a substring of ordinary
+	// agent output (an agent reviewing an auth route writes "POST /login"; a
+	// CLI printing its slash-command list renders "/login" beside "/help"), and
+	// matching it painted the 🔑 badge on agents that were authenticated and
+	// mid-work.
 	"sign in to use",
 	"Sign in to use",
 	"authenticate to use",
@@ -3737,7 +3861,19 @@ func configHasTokens() bool {
 // // comments (which Copilot CLI sometimes writes), parses the JSON, and returns
 // true if the "copilotTokens" field has at least one entry.
 func copilotConfigHasTokens() bool {
-	data, err := os.ReadFile(sharedCopilotConfigPath)
+	return copilotCredentialFileHasTokens(sharedCopilotConfigPath)
+}
+
+// copilotCredentialFileHasTokens is copilotConfigHasTokens for an ARBITRARY
+// path, so the per-agent auth probe can read the same file shapes under an
+// agent's own per-UID home instead of only the shared legacy location.
+//
+// Two shapes are accepted because the Copilot CLI uses both:
+//   - .copilot/config.json — token map under the "copilotTokens" key.
+//   - .config/github-copilot/{apps,hosts}.json — a flat map keyed by host,
+//     each entry carrying an oauth_token. Any non-empty top-level map counts.
+func copilotCredentialFileHasTokens(path string) bool {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
@@ -3756,15 +3892,26 @@ func copilotConfigHasTokens() bool {
 	if err := json.Unmarshal(cleaned, &cfg); err != nil {
 		return false
 	}
-	tokens, ok := cfg["copilotTokens"]
-	if !ok {
-		return false
+	if tokens, ok := cfg["copilotTokens"]; ok {
+		tokensMap, ok := tokens.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		return len(tokensMap) > 0
 	}
-	tokensMap, ok := tokens.(map[string]interface{})
-	if !ok {
-		return false
+	// apps.json / hosts.json shape: host -> {oauth_token: ...}
+	if strings.HasSuffix(path, "apps.json") || strings.HasSuffix(path, "hosts.json") {
+		for _, v := range cfg {
+			entry, ok := v.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if tok, ok := entry["oauth_token"].(string); ok && tok != "" {
+				return true
+			}
+		}
 	}
-	return len(tokensMap) > 0
+	return false
 }
 
 // clearExpiredTokens removes stored copilot tokens from config.json.
@@ -3827,8 +3974,36 @@ func paneShowsCLIReady(lines []string) bool {
 
 // paneShowsLoginPrompt returns true if any line in the pane output matches a
 // known login/authentication prompt pattern.
+// loginDirectiveVerbs are the imperative words a CLI uses when it is TELLING
+// the operator to authenticate ("Please /login to continue", "Run /login",
+// "Type /login to sign in"). A line containing "/login" counts as a login
+// prompt only when one of these also appears, which is what separates a real
+// login screen from an agent discussing an auth route ("POST /login returns
+// 302") or a CLI listing its slash commands ("/help  /login  /model").
+var loginDirectiveVerbs = []string{
+	"please", "run", "type", "use", "enter", "try", "must", "need",
+}
+
+// lineHasLoginDirective reports whether a line both mentions "/login" AND
+// carries an imperative that makes it a directive to the operator.
+func lineHasLoginDirective(line string) bool {
+	if !strings.Contains(line, "/login") {
+		return false
+	}
+	lower := strings.ToLower(line)
+	for _, verb := range loginDirectiveVerbs {
+		if strings.Contains(lower, verb) {
+			return true
+		}
+	}
+	return false
+}
+
 func paneShowsLoginPrompt(lines []string) bool {
 	for _, line := range lines {
+		if lineHasLoginDirective(line) {
+			return true
+		}
 		for _, pat := range loginPromptPatterns {
 			if strings.Contains(line, pat) {
 				return true
@@ -3905,6 +4080,12 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			m.logger.Warn("diagnostic: timed out waiting for copilot error output", "agent", agent.Name)
 			agent.LastError = "copilot hung with no output (diagnostic timed out)"
 			agent.State = StateFailed
+			m.audit(AuditAgentStartFailed, agent.Name, auditFields(
+				"outcome", "failure",
+				"backend", agent.effectiveBackend(),
+				"model", agent.effectiveModel(),
+				"error", agent.LastError,
+			))
 			return
 		case <-ticker.C:
 			output := m.captureTmuxPaneForAgent(agent)
@@ -3961,8 +4142,17 @@ const (
 	claudeInferenceHomePrefix   = "/tmp/.claude-inference-home-"
 )
 
+// inferenceHomePrefixOverride redirects the per-agent inference HOME prefix.
+// TEST SEAM ONLY — empty in production, where inferenceHomePath always returns
+// claudeInferenceHomePrefix+name. It exists so the auth probe's per-UID home
+// resolution can be exercised against a temp dir instead of /tmp.
+var inferenceHomePrefixOverride string
+
 // inferenceHomePath returns the per-agent inference HOME directory.
 func inferenceHomePath(agentName string) string {
+	if inferenceHomePrefixOverride != "" {
+		return inferenceHomePrefixOverride + agentName
+	}
 	return claudeInferenceHomePrefix + agentName
 }
 
@@ -4128,7 +4318,7 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 		return
 	}
 	dir := codexHomePath(agent.Name)
-	agentUser := fmt.Sprintf("hive-%s", agent.Name)
+	agentUser := m.agentExecUserSpec(agent)
 	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
 		m.logger.Warn("failed to pre-create codex home", "agent", agent.Name, "dir", dir, "error", err)
 	}
@@ -4758,6 +4948,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			home = inferenceHomePath(agent.Name)
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
+
+		// Under the per-agent-UID layout the global npm prefix is owned by the
+		// image's build user, so the Claude Code CLI's self-updater fails on
+		// every launch with "✘ Auto-update failed: no write permission to npm
+		// prefix" — a red line in every agent pane for an update the agent must
+		// not perform anyway (the CLI version is managed by the image, not by
+		// an in-pod npm write). Disabling the updater removes the failure at its
+		// source; a per-agent npm prefix would instead let an agent drift off
+		// the pinned image version.
+		vars = append(vars, agentEnvPair{"DISABLE_AUTOUPDATER", "1", false})
 	}
 
 	// Codex CLI 0.144.1's in-process app-server performs OWNER-gated operations
@@ -4835,6 +5035,13 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 		"backend", agent.Config.Backend,
 		"restart_count", agent.RestartCount,
 	)
+	m.audit(AuditAgentPaused, name, auditFields(
+		"outcome", "success",
+		"backend", agent.effectiveBackend(),
+		"model", agent.effectiveModel(),
+		"trigger", trigger,
+		"reason", reason,
+	))
 	return nil
 }
 
@@ -4858,6 +5065,11 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 
 	prevTrigger := agent.PausedTrigger
 	prevReason := agent.PausedReason
+	// Snapshot backend/model while m.mu is still held — the audit call below
+	// runs after the deliberate early Unlock, where touching agent fields
+	// would be an unsynchronized read.
+	resumeBackend := agent.effectiveBackend()
+	resumeModel := agent.effectiveModel()
 	agent.Paused = false
 	agent.Config.Paused = false
 	if m.persistPauseCallback != nil {
@@ -4883,6 +5095,13 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		"prev_trigger", prevTrigger,
 		"prev_reason", prevReason,
 	)
+	m.audit(AuditAgentResumed, name, auditFields(
+		"outcome", "success",
+		"backend", resumeBackend,
+		"model", resumeModel,
+		"trigger", trigger,
+		"reason", reason,
+	))
 	if needsRelaunch {
 		if err := m.ensureTmuxSession(agent); err != nil {
 			return err
@@ -5265,9 +5484,19 @@ func (m *Manager) PinModel(name, model string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	prevModel := agent.effectiveModel()
 	agent.PinnedModel = model
 	agent.ModelOverride = model
 	m.logger.Info("agent model pinned", "name", name, "model", model)
+	if prevModel != model {
+		m.audit(AuditAgentModelSet, name, auditFields(
+			"outcome", "success",
+			"backend", agent.effectiveBackend(),
+			"model", model,
+			"previous_model", prevModel,
+			"trigger", "pin",
+		))
+	}
 	return nil
 }
 
@@ -5302,8 +5531,19 @@ func (m *Manager) SetModelOverride(name, model string) error {
 		m.logger.Info("agent model pin retargeted by user switch", "name", name, "model", model)
 	}
 
+	prevModel := agent.effectiveModel()
 	agent.ModelOverride = model
 	m.logger.Info("agent model override set", "name", name, "model", model)
+	// State CHANGES only — the governor re-asserts the current model on every
+	// evaluation cycle, so auditing unchanged writes would flood the ring.
+	if prevModel != model {
+		m.audit(AuditAgentModelSet, name, auditFields(
+			"outcome", "success",
+			"backend", agent.effectiveBackend(),
+			"model", model,
+			"previous_model", prevModel,
+		))
+	}
 
 	effectiveBackend := agent.Config.Backend
 	if agent.BackendOverride != "" {
@@ -5324,8 +5564,32 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	// Refuse a backend the launcher cannot dispatch, at SET time. Previously
+	// any string was accepted here and the agent was then restarted into it,
+	// failing only at launch with "unknown backend: <x>" — the agent stops
+	// working and the operator gets no signal at the moment of the change.
+	// routableBackend covers configured gateway names (resolved live), so a
+	// gateway-named backend still passes.
+	if err := m.validateBackendName(backend); err != nil {
+		return err
+	}
+
+	// Captured after validation so a rejected switch records no audit event:
+	// the override is only mutated below, once the backend is known routable.
+	prevBackend := agent.effectiveBackend()
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
+	// Record only a real transition: /switch/{backend} is also re-applied on
+	// config reload with the value already in effect, and auditing those
+	// no-ops would bury the actual operator changes.
+	if prevBackend != backend {
+		m.audit(AuditAgentBackendSet, name, auditFields(
+			"outcome", "success",
+			"backend", backend,
+			"model", agent.effectiveModel(),
+			"previous_backend", prevBackend,
+		))
+	}
 
 	if m.routableBackend(backend) && m.inferenceRouteCallback != nil {
 		model := agent.ModelOverride

@@ -25,6 +25,11 @@ type InferenceRoute struct {
 	Preamble      string // prepended to the system prompt for inference backends; empty = use DefaultInferencePreamble
 	APIKey        string // optional bearer token for the upstream (litellm requires auth); never logged
 	CABundle      string // optional PEM path for a private CA; verification is never disabled
+	// ExtraHeaders are additional headers set on every upstream request for
+	// this route. Used for watsonx, which needs X-IBM-Project-ID (an OpenAI
+	// client would not send it). Empty for all other backends. Header VALUES
+	// here are identifiers, not secrets (the bearer stays in APIKey).
+	ExtraHeaders map[string]string
 }
 
 // DefaultInferencePreamble is injected at the top of the system prompt when
@@ -196,6 +201,14 @@ func IsInferenceBackend(backend string) bool {
 func applyInferenceAuth(req *http.Request, route *InferenceRoute) {
 	if route.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+route.APIKey)
+	}
+	// Non-secret per-route headers (watsonx X-IBM-Project-ID). Set after auth so
+	// a route never overrides the Authorization header via ExtraHeaders.
+	for k, v := range route.ExtraHeaders {
+		if k == "" || strings.EqualFold(k, "Authorization") || v == "" {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 }
 

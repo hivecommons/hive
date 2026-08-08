@@ -244,13 +244,13 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 		for modeName, agentCadences := range pack.Governor.Cadences {
 			mode := s.deps.Config.Governor.Modes[modeName]
 			if mode.Cadences == nil {
-				mode.Cadences = make(map[string]string)
+				mode.Cadences = make(map[string]config.Cadence)
 			}
 			for agent, interval := range agentCadences {
 				if isFirstApplyOrExpansion {
-					mode.Cadences[agent] = interval
+					mode.Cadences[agent] = config.Cadence(interval)
 				} else if _, exists := mode.Cadences[agent]; !exists {
-					mode.Cadences[agent] = interval
+					mode.Cadences[agent] = config.Cadence(interval)
 				}
 			}
 			s.deps.Config.Governor.Modes[modeName] = mode
@@ -428,9 +428,9 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 			}
 			for modeName, agentCadences := range pack.Governor.Cadences {
 				mode := s.deps.Config.Governor.Modes[modeName]
-				mode.Cadences = make(map[string]string)
+				mode.Cadences = make(map[string]config.Cadence)
 				for agent, interval := range agentCadences {
-					mode.Cadences[agent] = interval
+					mode.Cadences[agent] = config.Cadence(interval)
 				}
 				s.deps.Config.Governor.Modes[modeName] = mode
 			}

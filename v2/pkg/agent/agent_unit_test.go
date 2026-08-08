@@ -689,7 +689,7 @@ func TestNormalizeModelNameUnit(t *testing.T) {
 	// outbound gateway "model" field and must match an entitled model exactly.
 	// Rewriting it (e.g. "Azure/gpt-4" -> "Azure/gpt.4") makes the gateway 403
 	// with "team not allowed to access model" even on entitled models.
-	for _, backend := range []string{"litellm", "vllm", "llm-d"} {
+	for _, backend := range config.InferenceBackends {
 		for _, model := range []string{
 			"Azure/gpt-4o",
 			"Azure/gpt-4.1",

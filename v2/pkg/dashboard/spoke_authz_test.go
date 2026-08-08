@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,6 +156,28 @@ func TestMiddleware_DirectRouteSessionResolvesUser(t *testing.T) {
 	}
 	if sawUser != "clubanderson" || sawRole != config.RoleOwner {
 		t.Fatalf("session must inject its own identity, got user=%q role=%q", sawUser, sawRole)
+	}
+}
+
+func TestHandleRoleIgnoresLeakedHubCookie(t *testing.T) {
+	s := newDirectRouteServer(t, "realuser:read")
+	sid := s.createUserSession("realuser", config.RoleRead)
+	req := httptest.NewRequest("GET", "/api/role", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
+	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "castrojo"})
+	w := httptest.NewRecorder()
+
+	s.handleRole(w, req)
+
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode /api/role: %v; body=%q", err, w.Body.String())
+	}
+	if got["user"] != "realuser" {
+		t.Fatalf("/api/role user = %q, want realuser (must not use hive_hub_user)", got["user"])
+	}
+	if got["role"] != config.RoleRead {
+		t.Fatalf("/api/role role = %q, want read", got["role"])
 	}
 }
 

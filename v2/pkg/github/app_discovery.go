@@ -19,9 +19,9 @@ const (
 	// heartbeat cadence while the App banner is showing), but the self-heal
 	// tick would otherwise re-discover on EVERY beat for a hive whose App is
 	// genuinely not installed on the org — burning App-JWT rate limit forever.
-	// One hour is far shorter than any realistic "admin installs the App"
-	// turnaround and far longer than the heartbeat.
-	InstallationDiscoveryTTL = 1 * time.Hour
+	// Five minutes matches the spoke's slow auto-discovery poll, so delayed org
+	// admin approval is picked up promptly without hammering the App API.
+	InstallationDiscoveryTTL = 5 * time.Minute
 
 	// discoveryListPerPage is the page size used when falling back to
 	// GET /app/installations. GitHub caps per_page at 100.
@@ -63,6 +63,19 @@ func ResetInstallationDiscoveryCache() {
 	discoveryCacheMu.Lock()
 	defer discoveryCacheMu.Unlock()
 	discoveryCache = map[string]discoveryCacheEntry{}
+}
+
+// ForgetInstallationDiscovery removes this App/org discovery result from the
+// cache. Use it for explicit operator-driven checks so a recent negative poll
+// cannot mask an installation an org admin just approved.
+func (a *AppAuth) ForgetInstallationDiscovery(org string) {
+	if a == nil {
+		return
+	}
+	key := discoveryCacheKey(a.apiURL, a.appID, org)
+	discoveryCacheMu.Lock()
+	defer discoveryCacheMu.Unlock()
+	delete(discoveryCache, key)
 }
 
 // ErrNoInstallationForOrg means the App JWT authenticated fine but no
@@ -128,8 +141,11 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 	if err != nil {
 		return 0, fmt.Errorf("generating JWT: %w", err)
 	}
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
+	// Per-request Timeout (belt-and-suspenders with the discoveryTimeout ctx
+	// above): keeps a single hung request against an unreachable GHE endpoint
+	// from consuming the whole discovery budget. Its transport also trusts the
+	// proxy CA (see proxytrust.go) so this call succeeds on a fresh-PVC boot.
+	jwtClient := a.newJWTClient(jwtToken)
 
 	// Preferred: direct per-org lookup.
 	inst, resp, err := jwtClient.Apps.FindOrganizationInstallation(ctx, org)
@@ -152,6 +168,8 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 		directErr = fmt.Errorf("direct org lookup: not found")
 	}
 
+	var matchedID int64
+	matches := 0
 	opts := &gh.ListOptions{PerPage: discoveryListPerPage}
 	for page := 0; page < discoveryMaxPages; page++ {
 		installs, listResp, listErr := jwtClient.Apps.ListInstallations(ctx, opts)
@@ -164,7 +182,8 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 			}
 			if strings.EqualFold(in.GetAccount().GetLogin(), org) {
 				if id := in.GetID(); id != 0 {
-					return id, nil
+					matchedID = id
+					matches++
 				}
 			}
 		}
@@ -173,8 +192,88 @@ func (a *AppAuth) discoverInstallationUncached(ctx context.Context, org string) 
 		}
 		opts.Page = listResp.NextPage
 	}
+	if matches == 1 {
+		return matchedID, nil
+	}
+	if matches > 1 {
+		return 0, fmt.Errorf("%w: app %d has %d installations for %q", ErrNoInstallationForOrg, a.appID, matches, org)
+	}
 
 	return 0, fmt.Errorf("%w: app %d has no installation for %q (direct lookup: %v)", ErrNoInstallationForOrg, a.appID, org, directErr)
+}
+
+// VerifyInstallationForOrg verifies that installationID is an installation of
+// this GitHub App whose account login matches org. It uses an App JWT, not an
+// installation token, so it is safe to call before the hive has accepted or
+// configured the installation ID.
+func (a *AppAuth) VerifyInstallationForOrg(ctx context.Context, installationID int64, org string) error {
+	if a == nil {
+		return fmt.Errorf("no app auth configured")
+	}
+	if a.key == nil {
+		return fmt.Errorf("app private key not loaded")
+	}
+	org = strings.TrimSpace(org)
+	if org == "" {
+		return fmt.Errorf("target org is empty")
+	}
+	if installationID <= 0 {
+		return fmt.Errorf("installation ID must be positive")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, tokenMintTimeout)
+	defer cancel()
+
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return fmt.Errorf("generating JWT: %w", err)
+	}
+	inst, _, err := a.newJWTClient(jwtToken).Apps.GetInstallation(ctx, installationID)
+	if err != nil {
+		return fmt.Errorf("getting app installation %d: %w", installationID, err)
+	}
+	if inst == nil || inst.GetID() != installationID {
+		return fmt.Errorf("%w: installation %d was not returned by GitHub", ErrNoInstallationForOrg, installationID)
+	}
+	if acct := inst.GetAccount().GetLogin(); acct == "" || !strings.EqualFold(acct, org) {
+		return fmt.Errorf("%w: installation %d belongs to %q, not %q", ErrNoInstallationForOrg, installationID, inst.GetAccount().GetLogin(), org)
+	}
+	return nil
+}
+
+// InstallationAccountLogin returns the account login that owns installationID.
+// It authenticates as the App with a JWT and does not mint or persist an
+// installation token.
+func (a *AppAuth) InstallationAccountLogin(ctx context.Context, installationID int64) (string, error) {
+	if a == nil {
+		return "", fmt.Errorf("no app auth configured")
+	}
+	if a.key == nil {
+		return "", fmt.Errorf("app private key not loaded")
+	}
+	if installationID <= 0 {
+		return "", fmt.Errorf("installation ID must be positive")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, tokenMintTimeout)
+	defer cancel()
+
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return "", fmt.Errorf("generating JWT: %w", err)
+	}
+	inst, _, err := a.newJWTClient(jwtToken).Apps.GetInstallation(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("getting app installation %d: %w", installationID, err)
+	}
+	if inst == nil || inst.GetID() != installationID {
+		return "", fmt.Errorf("%w: installation %d was not returned by GitHub", ErrNoInstallationForOrg, installationID)
+	}
+	login := strings.TrimSpace(inst.GetAccount().GetLogin())
+	if login == "" {
+		return "", fmt.Errorf("%w: installation %d has no account login", ErrNoInstallationForOrg, installationID)
+	}
+	return login, nil
 }
 
 // AppID returns the configured GitHub App ID.

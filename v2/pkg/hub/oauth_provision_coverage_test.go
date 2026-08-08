@@ -106,7 +106,14 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	if sessionCookie.Value == "octocat" {
 		t.Error("session cookie must be signed, not the raw username")
 	}
-	if user, ok := verifyHubUserCookieValue(testHubSecret, sessionCookie.Value); !ok || user != "octocat" {
+	// Verify through the SAME production verifier the hub uses on every cookie
+	// read path (handleAuthUser / getRealAuthUser), not the raw master directly:
+	// since #2775 the login path mints with the derived session key
+	// (s.sessionCookieKey) so a v4 spoke's proxy can verify the cookie too, and
+	// verifyHubUserDual is what accepts that derived-key signature (plus legacy
+	// raw-master cookies). Asserting against the raw secret here would re-pin the
+	// test to a key the hub no longer mints with.
+	if user, ok := s.verifyHubUserDual(sessionCookie.Value); !ok || user != "octocat" {
 		t.Errorf("minted cookie did not verify: (%q, %v)", user, ok)
 	}
 }

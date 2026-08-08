@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/advisory"
 )
 
 const (
@@ -102,6 +103,13 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	}
 	owner, repoName := c.splitRepo(repo)
 
+	// Belt-and-suspenders enforcement: no advisory body may ever carry a raw
+	// @mention. The digest comment is rewritten every update cycle, so a
+	// single "@username" in any of its findings would re-notify that human on
+	// every refresh. FormatDigestMarkdown already neutralizes mentions at
+	// render time; NeutralizeMentions is idempotent, so applying it again here
+	// guarantees the invariant for every caller of this post path.
+	digest = advisory.NeutralizeMentions(digest)
 	digest = truncateDigest(digest)
 
 	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)

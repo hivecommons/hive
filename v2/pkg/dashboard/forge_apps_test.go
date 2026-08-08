@@ -223,3 +223,32 @@ func TestForgeApps_NoProvider(t *testing.T) {
 		t.Errorf("held_keys = %v, want empty without a provider", held)
 	}
 }
+
+// TestForgeApps_InstallURLIsServerBuilt locks the tab's install affordance to
+// the server-side builder (config.AppInstallURL — the same one the install
+// banner uses). The post-reset shape matters most: raw base_url/app_slug
+// blank, forge known only via api_url, installation_id 0 — the exact vllmd-13
+// state in which the tab used to be a dead end.
+func TestForgeApps_InstallURLIsServerBuilt(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.GitHub = config.GitHubConfig{
+		AppID:          config.EnterpriseGitHubAppID,
+		InstallationID: 0,
+		APIURL:         "https://github.ibm.com/api/v3",
+	}
+	rec, body := getForgeApps(t, srv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	active, ok := body["active"].(map[string]any)
+	if !ok {
+		t.Fatalf("no active object in response: %v", body)
+	}
+	want := "https://github.ibm.com/github-apps/" + config.EnterpriseGitHubAppSlug + "/installations/new"
+	if got, _ := active["install_url"].(string); got != want {
+		t.Errorf("active.install_url = %q, want %q (resolved forge, despite blank raw base_url/app_slug)", got, want)
+	}
+	if got, _ := active["installation_id"].(float64); got != 0 {
+		t.Errorf("active.installation_id = %v, want 0 (the trigger for the tab's install link)", got)
+	}
+}

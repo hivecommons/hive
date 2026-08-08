@@ -142,6 +142,30 @@ type ContributorConnection struct {
 	// and idempotent.
 	credentialDelivered bool
 	mu                  sync.Mutex
+	// writeMu serializes ALL writes to this connection's ws. gorilla/websocket
+	// forbids concurrent writes to one connection ("Applications are responsible
+	// for ensuring that no more than one goroutine calls the write methods
+	// concurrently"), yet a live connection is written from many goroutines: the
+	// per-connection heartbeat ping ticker, the message-handling read loop, and
+	// the operator revoke/yank/reassign + lease-reclaim paths. Without this the
+	// races surface as a "concurrent write to websocket connection" panic (seen in
+	// TestStaleGeneration_RevokedWorkerCannotOverwriteNewOwner). It is a SEPARATE
+	// lock from mu (which guards the state fields above): no write path holds mu
+	// while calling send, so the two never nest. See kubestellar/hive
+	// contribute-ws concurrent-write fix.
+	writeMu sync.Mutex
+}
+
+// send serializes writes to this connection's websocket with writeMu, satisfying
+// gorilla/websocket's one-concurrent-writer contract. Every goroutine that writes
+// a frame to a LIVE ContributorConnection (heartbeat ping/token_refresh, the read
+// loop's replies, operator revoke/yank/reassign, lease-reclaim) MUST go through
+// this method rather than the free sendJSON, which stays only for the pre-handshake
+// path where no ContributorConnection (and thus no shared connection) exists yet.
+func (c *ContributorConnection) send(msg WSMessage) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.WriteJSON(msg)
 }
 
 type WSMessage struct {
@@ -323,6 +347,15 @@ type ContributeWSHub struct {
 	// the Operations "command center" renders live. It is purely additive: the fan-out
 	// is a NON-BLOCKING send, so it can never back-pressure this WS event path.
 	sse *sseRegistry
+	// yankExclusions records, per "contributorID\x00repo#number", when a just-yanked
+	// issue stops being self-excluded from THE SAME clanker. Yank releases a held task
+	// AND immediately reassigns the clanker; this brief per-(clanker, issue) exclusion
+	// keeps that reassignment from re-handing the clanker the very issue it was yanked
+	// off, so it moves to genuinely different work. It is SCOPED to the one yanked
+	// clanker — the issue is offerable to every OTHER contributor immediately. Entries
+	// expire yankSelfExcludeSeconds after the yank and are pruned lazily on read.
+	// Guarded by h.mu, like the other per-issue live state.
+	yankExclusions map[string]time.Time
 }
 
 // rateLimitHourWindow and rateLimitDayWindow are the trailing (rolling) windows
@@ -388,16 +421,29 @@ const quarantineCooldownHours = 6
 // quarantines the issue immediately.
 const permanentFailureWeight = 3
 
-// defaultRequeueReason is the fallback reason recorded and pushed to the client when
-// an operator requeues a held task without supplying one (kubestellar/hive#2568). A
-// non-empty reason is always recorded so the release stays auditable.
-const defaultRequeueReason = "requeued by operator"
-
 // leaseExpiredReason is the reason pushed to a relay whose task lease expired without
 // progress (kubestellar/hive#2568). It is distinct from the operator-requeue reason so
 // an operator reading the activity log can tell a manual release from the automatic
 // backstop.
 const leaseExpiredReason = "task lease expired (no progress within lease TTL)"
+
+// defaultYankReason is the fallback reason recorded and pushed to the client when an
+// operator YANKS a held task without supplying one. Yank is Requeue + an immediate
+// reassignment of the SAME clanker to its next-priority item, so the default reason is
+// distinct from the plain requeue label to keep the activity log legible.
+const defaultYankReason = "yanked by operator (released + reassigned)"
+
+// yankSelfExcludeSeconds is how long a just-yanked issue is excluded from being
+// re-offered to THE SAME clanker that was yanked off it (per (contributor, issue-key)).
+// Yank's whole point is to move a clanker to genuinely DIFFERENT work, so without this
+// brief self-exclusion the immediate reassignment selectTask below could simply re-hand
+// the clanker the very issue it was just yanked off (it is only in the short failure
+// cooldown, which selectTask honours globally, but the reassignment runs right after the
+// release and — for a small backlog — that cooldown might already have been aged past in
+// tests, or a future cooldown tweak could shorten it). The exclusion is SCOPED to this
+// one clanker: the item is offerable to any OTHER contributor immediately. Kept short so
+// the clanker can return to the issue once the TTL elapses if nothing else is available.
+const yankSelfExcludeSeconds = 60
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub := &ContributeWSHub{
@@ -408,6 +454,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		failedTasks:           make(map[string]time.Time),
 		consecutiveFailures:   make(map[string]int),
 		assignmentTimes:       make(map[string][]time.Time),
+		yankExclusions:        make(map[string]time.Time),
 		logger:                logger,
 		server:                server,
 		sse:                   newSSERegistry(),
@@ -908,60 +955,45 @@ func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
 	return h.consecutiveFailures[key]
 }
 
-// RequeueContributorTask is the server side of the operator MANUAL requeue action
-// (kubestellar/hive#2568, the safe slice). An operator who can SEE that a connected
-// clanker is wedged — holding a task but not progressing — releases that task back
-// to the ready queue. It is deliberately the SAME release+cooldown path the
-// automatic disconnect (#2356/#2435) and ready-abandon (#2545) handlers already
-// use, so a manual requeue can NOT reintroduce the duplicate-assignment race #2492/
-// #2557 closed: for every session of contributorID that is currently holding a real
-// issue task we
+// The operator YANK (the repurposed manual requeue, kubestellar/hive#2568 + follow-up)
+// is built from the SAME release+cooldown machinery below, split into composable pieces
+// so the release can NOT reintroduce the duplicate-assignment race #2492/#2557 closed:
 //
-//  1. clear currentTask (dropping the issue out of selectTask's activeIssues guard),
-//     and
-//  2. book the SAME short non-permanent failure cooldown via recordTaskFailure, so
-//     the just-released issue is NOT instantly re-admissible (and thus can't be
-//     handed straight back to a stale worker of the same identity), then
-//  3. push the EXISTING task_revoke message (already handled by contributor-relay.sh:
-//     it clears its local currentTask, stops progress reporting, and sends "ready")
-//     so the wedged relay stops cleanly and re-asks for work.
+//  1. releaseHeldTasks — clear currentTask (dropping the issue from selectTask's
+//     activeIssues guard), drop any pending credential, and bump the assignment
+//     generation (#2568, the Gate) so a stale worker's later completion is fenced out.
+//  2. bookAndRevokeReleased — book the SAME short non-permanent failure cooldown via
+//     recordTaskFailure (so the released issue is not instantly re-admissible to a
+//     stale worker) and push the EXISTING task_revoke message so the relay stops
+//     cleanly and re-asks for work.
+//  3. RequeueContributorTask — the public entry point. It runs (1)+(2) and then
+//     IMMEDIATELY reassigns each released clanker its next-priority item via selectTask
+//     (the yank behaviour), self-excluding the just-released issue from that clanker so
+//     it moves to different work. When nothing else is admissible the clanker is simply
+//     released + idle (the old requeue-only outcome, now the fallback).
 //
-// It does NOT mint or rotate any token and does NOT change trust. It DOES now bump
-// the connection's assignment generation on release (the deferred lease/generation
-// guarantee, delivered here — see step 4 below), so a truly stale worker that later
-// reports completion on the same socket is fenced out. Synthetic pr-review tasks
+// None of this mints or rotates a token or changes trust. Synthetic pr-review tasks
 // carry Number == 0 and are released without booking an issue-key cooldown, exactly
-// like the disconnect path.
-//
-//  4. bump the connection's currentTaskGen (kubestellar/hive#2568, the Gate) so a
-//     late completion/progress from the revoked worker echoing the OLD generation is
-//     rejected by the task_complete/task_progress/task_failed guards and cannot
-//     overwrite the new owner's state.
-//
-// It returns the number of held sessions that were released so the caller can 404 a
-// contributor that has no in-flight task (nothing to requeue) versus report success.
-//
-// #2568 completion: each release now BUMPS the connection's assignment generation
-// (the Gate), so a revoked worker that later wakes and reports completion/progress
-// carrying the OLD generation is fenced out and cannot overwrite the new owner's
-// state. The operator-supplied reason is recorded in the activity log and pushed to
-// the (still-connected) client on the task_revoke message so the worker learns WHY
-// its task was released. A blank reason falls back to the default recovery label.
-func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) int {
-	if contributorID == "" {
-		return 0
-	}
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = defaultRequeueReason
-	}
-	// Collect the connections + their held tasks under the connection lock, but do
-	// the network send (task_revoke) OUTSIDE h.mu to avoid holding the hub lock
-	// across a socket write, mirroring how the other broadcast-ish paths behave.
-	type releaseTarget struct {
-		conn *ContributorConnection
-		task WSTaskAssign
-	}
+// like the disconnect path. A blank operator reason falls back to a default label.
+
+// releaseTarget pairs a connection with the task it was just released from. It is the
+// shared unit releaseHeldTasks produces and bookAndRevokeReleased / the reassignment
+// loop consume.
+type releaseTarget struct {
+	conn *ContributorConnection
+	task WSTaskAssign
+}
+
+// releaseHeldTasks clears the in-flight task from every live connection registered to
+// contributorID, applying the SAME fencing the operator-requeue/disconnect paths use:
+// it nils currentTask (dropping the issue from selectTask's activeIssues guard), drops
+// any pending credential, and BUMPS the assignment generation so a stale worker that
+// later reports completion is rejected (#2568, the Gate). It only touches the
+// connection state under the connection lock and returns the released targets; booking
+// the cooldown and the network task_revoke are done by the CALLER, outside h.mu, so the
+// hub lock is never held across a socket write. This is the exact machinery Requeue
+// used inline before Yank needed to share it — behaviour is unchanged for Requeue.
+func (h *ContributeWSHub) releaseHeldTasks(contributorID string) []releaseTarget {
 	var targets []releaseTarget
 	h.mu.RLock()
 	for _, c := range h.connections {
@@ -986,7 +1018,17 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) i
 		c.mu.Unlock()
 	}
 	h.mu.RUnlock()
+	return targets
+}
 
+// bookAndRevokeReleased books the SAME short failure cooldown the disconnect/ready-
+// abandon paths book for each released issue and pushes the task_revoke frame to each
+// still-connected relay, recording the operator's reason in the activity + hub logs.
+// activityVerb is the leading label for the activity entry ("requeued by operator" or
+// "yanked by operator") so the log distinguishes a plain requeue from a yank. Run
+// OUTSIDE h.mu (targets already have their connection state cleared). Returns the count
+// acted on. Shared by Requeue and Yank so both release identically.
+func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason, activityVerb string) int {
 	for _, tgt := range targets {
 		// Book the SAME short cooldown the disconnect/ready-abandon paths book, so
 		// the released issue is not instantly re-offered. Only real issue tasks are
@@ -998,23 +1040,24 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) i
 		if tgt.conn.profile != nil {
 			username = tgt.conn.profile.GitHubUsername
 		}
-		h.logger.Info("[contribute-ws] task requeued by operator",
+		h.logger.Info("[contribute-ws] task released by operator",
 			"username", username,
 			"task", tgt.task.TaskID,
 			"repo", tgt.task.Repo,
 			"number", tgt.task.Number,
+			"action", activityVerb,
 			"reason", reason,
 		)
 		// #2568: record the operator's reason in the activity log so the release is
 		// auditable (the reason rides in the Task field alongside the task id).
-		h.addActivity(username, "requeued by operator: "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
 		// has (or will) release it anyway; the cooldown above is already booked. The
 		// operator's reason travels on Reason so a still-connected worker learns WHY
 		// its task was released (kubestellar/hive#2568).
 		if tgt.conn.ws != nil {
-			_ = sendJSON(tgt.conn.ws, WSMessage{
+			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
@@ -1023,6 +1066,121 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) i
 		}
 	}
 	return len(targets)
+}
+
+// yankExcludeKey is the composite key for the per-(clanker, issue) yank self-exclusion.
+// The NUL separator cannot appear in a contributor id or a "repo#number" key, so the two
+// fields can never collide across a boundary.
+func yankExcludeKey(contributorID, repo string, number int) string {
+	return contributorID + "\x00" + fmt.Sprintf("%s#%d", repo, number)
+}
+
+// isYankSelfExcluded reports whether repo#number is still within its brief yank
+// self-exclusion window for contributorID (set the item was just yanked off this
+// clanker). Expired entries are pruned lazily here. Caller must hold h.mu.
+func (h *ContributeWSHub) isYankSelfExcludedLocked(contributorID, repo string, number int) bool {
+	if number <= 0 || len(h.yankExclusions) == 0 {
+		return false
+	}
+	key := yankExcludeKey(contributorID, repo, number)
+	exp, ok := h.yankExclusions[key]
+	if !ok {
+		return false
+	}
+	if time.Now().After(exp) {
+		delete(h.yankExclusions, key)
+		return false
+	}
+	return true
+}
+
+// RequeueContributorTask is the operator YANK control (kubestellar/hive#2568 +
+// follow-up). It RELEASES every in-flight task held by contributorID back to the ready
+// queue — booking the SAME short failure cooldown and BUMPING the assignment generation
+// the automatic disconnect/ready-abandon paths use, so a released issue is not instantly
+// re-handed to a stale worker (#2492/#2557) and a stale worker's later completion is
+// fenced out (#2568, the Gate) — AND then IMMEDIATELY hands each released clanker its
+// next-priority item via selectTask, so it keeps working instead of idling. The just-
+// released issue is briefly self-excluded from THAT SAME clanker (yankSelfExcludeSeconds)
+// so the reassignment moves it to genuinely DIFFERENT work; the issue stays offerable to
+// every OTHER contributor immediately.
+//
+// It returns the number of sessions released and, for the LAST released connection, the
+// task_assign message it was reassigned (nil when nothing admissible remained — the
+// legitimate "released, now idle" fallback, i.e. the old requeue-only outcome). The name
+// and the POST /api/contributors/{id}/requeue route are kept for wire/back-compat; the
+// behaviour is the yank. The caller (HTTP handler) sends nothing further: this method
+// already ships task_assign + delivers the credential to the relay, mirroring the ready-
+// handler flow.
+func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (released int, assigned *WSMessage) {
+	if contributorID == "" {
+		return 0, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = defaultYankReason
+	}
+	targets := h.releaseHeldTasks(contributorID)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+
+	// Book the short cooldown + push task_revoke for every released session (the original
+	// requeue behaviour). The self-exclusion + reassignment below is the yank addition:
+	// the clanker is immediately handed different work rather than left idle.
+	released = h.bookAndRevokeReleased(targets, reason, "yanked by operator")
+
+	for _, tgt := range targets {
+		// Briefly self-exclude the just-yanked issue from THIS clanker so its immediate
+		// reassignment picks genuinely different work. Scoped to (contributor, issue) —
+		// other contributors are unaffected. Synthetic pr-review tasks (Number == 0) do
+		// not key an issue and are not excluded.
+		if tgt.task.Number > 0 {
+			h.mu.Lock()
+			h.yankExclusions[yankExcludeKey(contributorID, tgt.task.Repo, tgt.task.Number)] =
+				time.Now().Add(yankSelfExcludeSeconds * time.Second)
+			h.mu.Unlock()
+		}
+
+		// Immediately offer the clanker its next-priority item. selectTask honours the
+		// full priority order (operator-pinned → own work → label-affinity → fewer
+		// failures → rest) and skips the self-excluded issue for this clanker.
+		msg := h.selectTask(tgt.conn)
+		assigned = msg
+		if msg == nil || msg.Type == "task_unavailable" {
+			// Released, but nothing else is admissible right now — the clanker is idle
+			// only because the queue has no other work for it (everything held/filtered/
+			// in cooldown). Record the idle reason so the ops tab can show it, exactly as
+			// the ready handler does.
+			if msg != nil {
+				tgt.conn.mu.Lock()
+				tgt.conn.lastIdleReason = msg.Reason
+				tgt.conn.mu.Unlock()
+			}
+			continue
+		}
+		// A real task was assigned: ship it and (in auto-accept mode) deliver the
+		// credential, mirroring the ready handler so the reassigned clanker starts
+		// working without waiting for its next selectTask cycle.
+		if tgt.conn.ws != nil {
+			if err := tgt.conn.send(*msg); err != nil {
+				h.logger.Warn("[contribute-ws] failed to send yank reassignment task_assign", "error", err)
+				continue
+			}
+		}
+		username := ""
+		if tgt.conn.profile != nil {
+			username = tgt.conn.profile.GitHubUsername
+		}
+		taskDesc := fmt.Sprintf("%s %s#%d: %s", msg.Kind, msg.Repo, msg.Number, msg.Title)
+		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, taskDesc)
+		h.logger.Info("[contribute-ws] clanker reassigned after yank",
+			"username", username, "task", msg.TaskID, "repo", msg.Repo, "number", msg.Number)
+		if !h.requireExplicitAccept() {
+			h.deliverTaskCredential(tgt.conn, "yank_reassign")
+		}
+	}
+	return released, assigned
 }
 
 func (h *ContributeWSHub) nextSeq() int {
@@ -1351,6 +1509,60 @@ func (h *ContributeWSHub) CooldownCounts() (cooldown, inFlight int) {
 	return cooldown, inFlight
 }
 
+// HeldCount returns how many OPERATOR-HELD issues are also present in the current
+// actionable universe — i.e. held issues that WOULD be offerable if not parked. It
+// mirrors what the ready queue actually surfaces as Held (ReadyQueue appends exactly
+// these), so the header "N on hold" tally matches the greyed rows the operator sees,
+// rather than counting stale hold keys for issues no longer actionable. Read-only:
+// it mutates nothing and adds no enforcement. Uses the SAME canonical "%s#%d" key
+// form (repo.Full # number) every admission check builds, so it cannot silently miss
+// on a repo-name spelling mismatch (the #2648 class of bug).
+func (h *ContributeWSHub) HeldCount() int {
+	if h == nil || h.server == nil {
+		return 0
+	}
+	var hold map[string]struct{}
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		hold = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
+	}
+	if len(hold) == 0 {
+		return 0
+	}
+	h.server.statusMu.RLock()
+	status := h.server.status
+	h.server.statusMu.RUnlock()
+	if status == nil {
+		return 0
+	}
+	count := 0
+	for _, repo := range status.Repos {
+		for _, raw := range repo.ActionableIssues {
+			b, err := json.Marshal(raw)
+			if err != nil {
+				continue
+			}
+			var issue map[string]any
+			if err := json.Unmarshal(b, &issue); err != nil {
+				continue
+			}
+			number := 0
+			switch n := issue["number"].(type) {
+			case float64:
+				number = int(n)
+			case int:
+				number = n
+			}
+			if number == 0 {
+				continue
+			}
+			if _, isHeld := hold[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -1567,13 +1779,15 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				perms = []string{"issues:write", "contents:write", "pulls:write"}
 			case "trusted":
 				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
+			case "merger":
+				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
 			case "advisor":
 				perms = []string{"metadata:read", "pulls:read"}
 			default:
 				perms = []string{"metadata:read"}
 			}
 
-			if err := sendJSON(conn, WSMessage{
+			if err := contributor.send(WSMessage{
 				Type:          "auth_ok",
 				Seq:           h.nextSeq(),
 				ContributorID: profile.ContributorID,
@@ -1669,7 +1883,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.mu.Lock()
 				contributor.lastIdleReason = task.Reason
 				contributor.mu.Unlock()
-				if err := sendJSON(conn, *task); err != nil {
+				if err := contributor.send(*task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
 					return
 				}
@@ -1678,7 +1892,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"reason", task.Reason,
 				)
 			default:
-				if err := sendJSON(conn, *task); err != nil {
+				if err := contributor.send(*task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
 					return
 				}
@@ -1965,7 +2179,15 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "ping":
-			_ = sendJSON(conn, WSMessage{Type: "pong", Seq: msg.Seq})
+			// Once registered, this reply shares the connection with the heartbeat
+			// loop and the operator paths, so it MUST take the write lock; a ping that
+			// somehow arrives pre-registration has no ContributorConnection and is
+			// still single-writer on the bare conn.
+			if contributor != nil {
+				_ = contributor.send(WSMessage{Type: "pong", Seq: msg.Seq})
+			} else {
+				_ = sendJSON(conn, WSMessage{Type: "pong", Seq: msg.Seq})
+			}
 		}
 	}
 }
@@ -1987,7 +2209,7 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 
 		h.maybeRefreshToken(c)
 
-		if err := sendJSON(c.ws, WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
+		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
 			h.logger.Info("[contribute-ws] heartbeat ping failed, closing", "username", c.profile.GitHubUsername)
 			c.ws.Close()
 			return
@@ -2091,7 +2313,7 @@ func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string)
 		GitHubToken:    tok,
 		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
 	}
-	if err := sendJSON(c.ws, msg); err != nil {
+	if err := c.send(msg); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -2277,6 +2499,10 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			c.currentPrompt = ""
 			c.currentLabels = nil
 			c.tokenMintedAt = time.Time{}
+			// #2675: clear credential state so a stale pendingToken cannot leak to the
+			// now-idle connection (mirrors RequeueContributorTask cleanup).
+			c.pendingToken = ""
+			c.credentialDelivered = false
 			c.currentTaskGen = h.nextTaskGen()
 			c.lastLeaseRenew = time.Time{}
 			targets = append(targets, expiredTarget{conn: c, task: released})
@@ -2302,7 +2528,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		)
 		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
 		if tgt.conn.ws != nil {
-			_ = sendJSON(tgt.conn.ws, WSMessage{
+			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
 				Seq:    h.nextSeq(),
 				TaskID: tgt.task.TaskID,
@@ -2729,8 +2955,29 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	//   reviewed/blocking own-PR ahead of a merely-own issue. Guard gracefully when
 	//   that data is absent, exactly as the ownWork fallback does now.
 	ownUsername := ""
+	var ownInterests []string
 	if c.profile != nil {
 		ownUsername = c.profile.GitHubUsername
+		ownInterests = c.profile.LabelInterests
+	}
+	// interestMatchesLabels reports whether any of the issue's labels matches one of
+	// the contributor's opt-in label interests (#2637), case-insensitively. Empty
+	// interests → never a match (the affinity tier is then a no-op). This is the
+	// SOFT routing signal: a contributor with interests set is offered matching work
+	// first (see the sort below), but still receives non-matching work when none
+	// matches, so a willing contributor never sits idle.
+	interestMatchesLabels := func(labels []string) bool {
+		if len(ownInterests) == 0 || len(labels) == 0 {
+			return false
+		}
+		for _, want := range ownInterests {
+			for _, have := range labels {
+				if strings.EqualFold(strings.TrimSpace(want), strings.TrimSpace(have)) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 
 	type candidate struct {
@@ -2740,6 +2987,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		url      string
 		labels   []string
 		isOwn    bool
+		// interestMatch is true when the issue carries a label the contributor has
+		// opted into (#2637). It is a SOFT priority tier below own-work: matching
+		// work is offered first, but a contributor with no match still gets other
+		// work. Off entirely when the contributor set no interests.
+		interestMatch bool
 		// recentFailures is the issue's current consecutive-failure count (#2435).
 		// It is a stable tie-break in the ordering below: among equally-admissible
 		// candidates, fewer-recent-failures first. Issues in an active failure
@@ -2801,6 +3053,19 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			if activeIssues[fmt.Sprintf("%s#%d", repo.Full, number)] {
 				continue
 			}
+			// Yank self-exclusion: an issue this SAME clanker was just yanked off is
+			// briefly skipped for it (yankSelfExcludeSeconds), so the immediate post-yank
+			// reassignment moves the clanker to genuinely different work instead of re-
+			// grabbing the same item. Scoped to (this clanker, this issue): every OTHER
+			// contributor may still be offered the issue immediately. Guarded by h.mu.
+			if c.profile != nil {
+				h.mu.Lock()
+				selfExcluded := h.isYankSelfExcludedLocked(c.profile.ContributorID, repo.Full, number)
+				h.mu.Unlock()
+				if selfExcluded {
+					continue
+				}
+			}
 
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
@@ -2846,7 +3111,8 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// candidate was authored by the connected contributor. When the
 				// username is unknown (empty), nothing is own → we keep today's
 				// ordering untouched.
-				isOwn: ownUsername != "" && strings.EqualFold(author, ownUsername),
+				isOwn:         ownUsername != "" && strings.EqualFold(author, ownUsername),
+				interestMatch: interestMatchesLabels(labels),
 				// #2435: carry any lingering failure history so the ordering below
 				// can deprioritise a recently-failed issue within its bucket.
 				recentFailures: h.recentFailureCount(repo.Full, number),
@@ -2906,6 +3172,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		}
 		if ownFirst[i].isOwn != ownFirst[j].isOwn {
 			return ownFirst[i].isOwn // own work sorts ahead of non-own
+		}
+		if ownFirst[i].interestMatch != ownFirst[j].interestMatch {
+			return ownFirst[i].interestMatch // label-affinity matches ahead of non-matches (#2637)
 		}
 		if ownFirst[i].recentFailures != ownFirst[j].recentFailures {
 			return ownFirst[i].recentFailures < ownFirst[j].recentFailures // fewer failures first
@@ -3050,6 +3319,12 @@ func stringSliceFromAny(v any) []string {
 	return out
 }
 
+// sendJSON writes a frame to a bare websocket connection. It is UNSERIALIZED and
+// may only be used on the PRE-HANDSHAKE path (auth_challenge / auth_failed), where
+// no ContributorConnection has been registered yet and the conn is not shared with
+// the heartbeat, operator, or lease-reclaim goroutines. Every write to a LIVE
+// connection MUST go through ContributorConnection.send, which serializes on
+// writeMu to satisfy gorilla/websocket's one-concurrent-writer contract.
 func sendJSON(conn *websocket.Conn, msg WSMessage) error {
 	return conn.WriteJSON(msg)
 }

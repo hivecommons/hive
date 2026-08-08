@@ -297,6 +297,7 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
   dashboard_url: http://YOUR_IP:3001
   snapshot_url: https://your-snapshot-url</code></pre>
           <p>Or set the environment variable: <code>HIVE_HUB_URL=https://hive.kubestellar.io</code></p>
+          <p style="margin-bottom:0"><strong>Authentication is required.</strong> <code>POST /api/heartbeat</code> rejects any beat without a valid <code>Authorization: Bearer &lt;HIVE_HUB_SECRET&gt;</code> header when the hub has a secret configured, so the settings above only take effect once the hub operator has issued your spoke a <code>HIVE_HUB_SECRET</code>. A spoke configured without one logs <code>hub heartbeat rejected status=401</code> every beat and never appears in the registry.</p>
         </div>
 
         <h2>Rate Limits</h2>

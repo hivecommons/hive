@@ -35,6 +35,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerContributeRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+	s.mux.HandleFunc("GET /api/style", s.handleStyle)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
 	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
@@ -93,6 +94,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
+	s.mux.HandleFunc("POST /api/prs/{owner}/{repo}/{number}/queue-automerge", s.handleQueuePRAutoMerge)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)
 	s.mux.HandleFunc("PUT /api/config/agent/{name}/general", s.handleAgentConfigGeneral)
@@ -433,15 +435,30 @@ func sanitizeFilenameComponent(s string) string {
 func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	user := r.Header.Get("X-Hive-User")
-	if user == "" {
-		if cookie, err := r.Cookie("hive_hub_user"); err == nil && cookie.Value != "" {
-			user = cookie.Value
-		}
+	if sess := s.sessionFromRequest(r); sess != nil {
+		user = sess.Username
+		role = sess.Role
 	}
 	if role == "" {
 		role = "owner"
 	}
-	jsonResponse(w, map[string]string{"role": role, "user": user})
+	jsonResponse(w, map[string]string{
+		"role": role,
+		"user": user,
+		// The queue label is server-configured, so the dashboard must be told
+		// it rather than hard-coding a name that a hive may have changed.
+		"automerge_label": s.autoMergeLabel(),
+	})
+}
+
+// autoMergeLabel reports the configured queue label. /api/role is served
+// before GitHub credentials are required, so deps and the client may both be
+// nil here even though handleQueuePRAutoMerge rejects that state outright.
+func (s *Server) autoMergeLabel() string {
+	if s == nil || s.deps == nil {
+		return github.AutoMergeQueuedLabel
+	}
+	return s.deps.GHClient.AutoMergeLabel()
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -1589,14 +1606,12 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// Issue a per-user session (opaque random id → username+role) instead of a
 	// single shared cookie. Each authenticated user gets their own session so
 	// requests resolve to the user that owns their cookie — never a shared one.
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
-			return
-		}
-		setSessionCookie(w, r, sid)
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
+		return
 	}
+	setSessionCookie(w, r, sid)
 
 	// Audit the successful login with the authenticated GitHub username as the
 	// actor (not the request's X-Hive-User, which has no session yet at this
@@ -1894,6 +1909,79 @@ func (s *Server) handleSummaries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = config.RoleOwner
+	}
+	user := strings.TrimSpace(r.Header.Get("X-Hive-User"))
+	if !config.RoleAtLeast(role, config.RoleMerger) {
+		jsonError(w, "merger or owner access required", http.StatusForbidden)
+		return
+	}
+	if !config.RoleAtLeast(role, config.RoleOwner) && user == "" {
+		jsonError(w, "authenticated GitHub user required", http.StatusForbidden)
+		return
+	}
+	if s.deps == nil || s.deps.GHClient == nil {
+		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
+		return
+	}
+	number, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil || number <= 0 {
+		jsonError(w, "invalid pull request number", http.StatusBadRequest)
+		return
+	}
+	owner := strings.TrimSpace(r.PathValue("owner"))
+	repoName := strings.TrimSpace(r.PathValue("repo"))
+	if owner == "" || repoName == "" || strings.Contains(owner, "/") || strings.Contains(repoName, "/") {
+		jsonError(w, "invalid repository", http.StatusBadRequest)
+		return
+	}
+	repo := owner + "/" + repoName
+	if !s.prQueueRepoAllowed(repo) {
+		jsonError(w, "repository is not managed by this hive", http.StatusForbidden)
+		return
+	}
+	author, err := s.deps.GHClient.GetPRAuthor(r.Context(), repo, number)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !config.RoleAtLeast(role, config.RoleOwner) && strings.EqualFold(author, user) {
+		jsonError(w, "mergers cannot queue their own pull requests", http.StatusForbidden)
+		return
+	}
+	if err := s.deps.GHClient.QueuePRAutoMerge(r.Context(), repo, number, user); err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	detail := auditDetail("repo", repo, "pr", strconv.Itoa(number), "author", author)
+	s.auditFromRequest(r, "queue-pr-automerge", detail, "")
+	jsonResponse(w, map[string]any{
+		"status": "queued",
+		"repo":   repo,
+		"number": number,
+		"label":  s.deps.GHClient.AutoMergeLabel(),
+	})
+}
+
+func (s *Server) prQueueRepoAllowed(repo string) bool {
+	if s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	for _, configured := range s.deps.Config.Project.Repos {
+		full := configured
+		if !strings.Contains(full, "/") {
+			full = s.deps.Config.Project.Org + "/" + full
+		}
+		if strings.EqualFold(full, repo) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Agent config endpoints ---
 
 func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -1951,13 +2039,15 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cadences as seconds (int) — frontend expects numbers, not duration strings
-	cadences := map[string]int64{}
+	cadences := map[string]any{}
 	for modeName, modeCfg := range s.deps.Config.Governor.Modes {
 		if c, ok := modeCfg.Cadences[name]; ok {
-			if c == "pause" || c == "off" || c == "0" {
+			if c.Mode() != config.CadenceModeInterval {
+				cadences[modeName] = c
+			} else if c.Interval() == "pause" || c.Interval() == "off" || c.Interval() == "0" {
 				cadences[modeName] = 0
 			} else {
-				d := parseCadenceDuration(c)
+				d := parseCadenceDuration(c.Interval())
 				cadences[modeName] = int64(d.Seconds())
 			}
 		}
@@ -2525,7 +2615,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 	if v, ok := body["cliPinValue"]; ok {
 		if str, ok := v.(string); ok && str != "" {
-			agentCfg.Backend = sanitizeString(str)
+			backend := sanitizeString(str)
+			// Validate at set time against the same list the launcher
+			// dispatches on — persisting an unsupported backend produces an
+			// agent that is accepted now and fails to launch later.
+			if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			agentCfg.Backend = backend
 			agentCfg.BackendOwner = config.FieldOwnerOperator
 			backendChanged = true
 		}
@@ -2728,24 +2826,40 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var body map[string]int64
+	var body map[string]json.RawMessage
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	for modeName, seconds := range body {
+	for modeName, raw := range body {
 		mode, ok := s.deps.Config.Governor.Modes[modeName]
 		if !ok {
 			continue
 		}
 		if mode.Cadences == nil {
-			mode.Cadences = make(map[string]string)
+			mode.Cadences = make(map[string]config.Cadence)
 		}
-		if seconds <= 0 {
+		var seconds int64
+		var cadence config.Cadence
+		if err := json.Unmarshal(raw, &seconds); err == nil {
+			if seconds <= 0 {
+				cadence = "pause"
+			} else {
+				cadence = config.Cadence(formatCadenceDuration(seconds))
+			}
+		} else if err := json.Unmarshal(raw, &cadence); err != nil {
+			jsonError(w, "invalid cadence for "+modeName+": must be seconds, interval string, or schedule object", http.StatusBadRequest)
+			return
+		}
+		if err := cadence.Validate(); err != nil {
+			jsonError(w, "invalid cadence for "+modeName+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
 			mode.Cadences[name] = "pause"
 		} else {
-			mode.Cadences[name] = formatCadenceDuration(seconds)
+			mode.Cadences[name] = cadence
 		}
 		s.deps.Config.Governor.Modes[modeName] = mode
 	}
@@ -2778,7 +2892,16 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	// Operator edits claim ownership so the pack apply that runs on every
 	// restart cannot reconcile the choice back to the pack default.
 	if body.Backend != "" {
-		agentCfg.Backend = sanitizeString(body.Backend)
+		backend := sanitizeString(body.Backend)
+		// Refuse an unsupported backend HERE, at set time, with a message that
+		// names what is valid. Without this the value is persisted happily and
+		// the failure surfaces hours later as "unknown backend: <x>" on the
+		// kick path, with the agent silently never launching.
+		if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
 	}
 	if body.Model != "" {
@@ -3216,7 +3339,7 @@ func (s *Server) handleAgentExport(w http.ResponseWriter, r *http.Request) {
 	cadences := map[string]string{}
 	for modeName, modeCfg := range s.deps.Config.Governor.Modes {
 		if c, ok := modeCfg.Cadences[name]; ok {
-			cadences[modeName] = c
+			cadences[modeName] = c.String()
 		}
 	}
 
@@ -3385,7 +3508,17 @@ func (s *Server) buildExportYAML(name string, cfg config.AgentConfig, cadences m
 		modeOrder := []string{"idle", "quiet", "busy", "surge"}
 		for _, mode := range modeOrder {
 			if c, ok := cadences[mode]; ok {
-				b.WriteString(fmt.Sprintf("    %s: %s\n", mode, c))
+				if strings.Contains(c, "\n") {
+					b.WriteString(fmt.Sprintf("    %s:\n", mode))
+					for _, line := range strings.Split(c, "\n") {
+						if strings.TrimSpace(line) == "" {
+							continue
+						}
+						b.WriteString("      " + line + "\n")
+					}
+				} else {
+					b.WriteString(fmt.Sprintf("    %s: %s\n", mode, c))
+				}
 			}
 		}
 	}
@@ -3566,9 +3699,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// actually in force.
 			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
 			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"disabled_repos":                     cfg.Hub.DisabledRepos,
-			"disabled_tiers":                     cfg.Hub.DisabledTiers,
-			"tier_limits":                        cfg.Hub.TierLimits,
+			"disabled_repos":              cfg.Hub.DisabledRepos,
+			"disabled_tiers":              cfg.Hub.DisabledTiers,
+			"tier_limits":                 cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
@@ -4146,6 +4279,14 @@ func redactLiteLLMKeyMaterial(s string) string {
 // so the UI can show e.g. LiteLLM's "token not found" instead of a bare
 // status code.
 func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
+	return probeModelsWithHeaders(endpoint, apiKey, nil)
+}
+
+// probeModelsWithHeaders is probeLiteLLMModels with an optional set of extra
+// request headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is
+// still sent as the Bearer — for watsonx the caller passes the minted IAM token
+// as apiKey, not the raw key.
+func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]string) (int, error) {
 	modelsURL := strings.TrimRight(endpoint, "/") + "/v1/models"
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
@@ -4153,6 +4294,11 @@ func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
 	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range extraHeaders {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	client := &http.Client{Timeout: litellmProbeTimeout}
 	resp, err := client.Do(req)
@@ -4638,6 +4784,12 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 	if body.Backend == "" {
 		body.Backend = "claude"
 	}
+	// Reject an unsupported backend before the agent is created, rather than
+	// creating an agent that can never launch.
+	if err := s.deps.Config.Governor.ValidateBackend(body.Backend); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	agentCfg := config.AgentConfig{
 		Backend: body.Backend,
@@ -4812,6 +4964,18 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	prevPrimary := s.deps.Config.Project.PrimaryRepo
 
 	spokeHost := s.hiveForgeHost()
+	validateRepos := prevRepos
+	if len(body.Repos) > 0 {
+		validateRepos = body.Repos
+	}
+	validatePrimary := prevPrimary
+	if body.PrimaryRepo != nil {
+		validatePrimary = *body.PrimaryRepo
+	}
+	if issue := config.ValidateProjectRepoTargets(org, validateRepos, validatePrimary, spokeHost); issue != nil {
+		jsonError(w, issue.Message, http.StatusBadRequest)
+		return
+	}
 	for _, ref := range body.Repos {
 		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
 			jsonError(w, fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host. Remove the mismatched repo or use a repo on %s.", strings.TrimSpace(ref), h, spokeHost, spokeHost), http.StatusBadRequest)
@@ -4964,6 +5128,55 @@ func sameForgeHost(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
+func configuredProjectOrgForGitHubApp(cfg *config.Config, logger *slog.Logger) string {
+	if cfg == nil {
+		return ""
+	}
+	org := strings.TrimSpace(cfg.Project.Org)
+	if org == "" {
+		return ""
+	}
+	forgeHost := strings.TrimSpace(cfg.GitHub.HostLabel())
+	if forgeHost == "" {
+		forgeHost = "github.com"
+	}
+	if !strings.Contains(org, ".") || !sameForgeHost(org, forgeHost) {
+		return org
+	}
+
+	primary := strings.TrimSpace(cfg.Project.PrimaryRepo)
+	if primary == "" && len(cfg.Project.Repos) > 0 {
+		primary = strings.TrimSpace(cfg.Project.Repos[0])
+	}
+	derived := firstRepoPathSegment(primary)
+	if derived == "" || strings.EqualFold(derived, org) {
+		return org
+	}
+	if logger != nil {
+		logger.Warn("project org is configured as the GitHub forge host; deriving GitHub App organization from primary repo",
+			"configured_org", org, "derived_org", derived, "primary_repo", primary, "forge_host", forgeHost)
+	}
+	return derived
+}
+
+func firstRepoPathSegment(ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "https://")
+	ref = strings.TrimPrefix(ref, "http://")
+	ref = strings.Trim(ref, "/")
+	if ref == "" {
+		return ""
+	}
+	parts := strings.Split(ref, "/")
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		parts = parts[1:]
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
 // handleGovernorRepoCheckAccess verifies that this hive's GitHub App can access
 // a repo the operator is about to add, and — when it cannot — returns the
 // per-forge App install/authorize URL so the Repos tab can guide the user to
@@ -5070,6 +5283,24 @@ func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Re
 
 // --- GitHub config endpoint ---
 
+type githubConfigUpdate struct {
+	AppID          *int64
+	InstallationID *int64
+	KeyFile        string
+	PrivateKey     string
+}
+
+type githubConfigUpdateError struct {
+	message string
+	code    int
+}
+
+func (e *githubConfigUpdateError) Error() string { return e.message }
+
+func newGitHubConfigUpdateError(message string, code int) *githubConfigUpdateError {
+	return &githubConfigUpdateError{message: message, code: code}
+}
+
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AppID          *int64 `json:"app_id"`
@@ -5087,6 +5318,31 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result, err := s.applyGitHubConfigUpdate(r, githubConfigUpdate{
+		AppID:          body.AppID,
+		InstallationID: body.InstallationID,
+		KeyFile:        body.KeyFile,
+		PrivateKey:     body.PrivateKey,
+	})
+	if err != nil {
+		code := http.StatusInternalServerError
+		if updateErr, ok := err.(*githubConfigUpdateError); ok {
+			code = updateErr.code
+		}
+		jsonError(w, err.Error(), code)
+		return
+	}
+	jsonResponse(w, result)
+}
+
+func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdate) (map[string]interface{}, error) {
+	if s.deps == nil || s.deps.Config == nil {
+		return nil, newGitHubConfigUpdateError("config not available", http.StatusInternalServerError)
+	}
+
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+
 	cfg := s.deps.Config
 
 	// saveConfig() silently no-ops when the config has no source path, so
@@ -5095,8 +5351,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	// Refuse up front, before mutating anything, and name the cause.
 	if cfg.SourcePath == "" {
 		s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
-		jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
-		return
+		return nil, newGitHubConfigUpdateError("config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
 	}
 
 	if body.PrivateKey != "" {
@@ -5106,13 +5361,11 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
 			s.logger.Warn("could not create key directory", "path", keyPath, "error", err)
-			jsonError(w, fmt.Sprintf("failed to create key directory: %v", err), http.StatusInternalServerError)
-			return
+			return nil, newGitHubConfigUpdateError(fmt.Sprintf("failed to create key directory: %v", err), http.StatusInternalServerError)
 		}
 		const keyFileMode = 0o600
 		if err := os.WriteFile(keyPath, []byte(body.PrivateKey), keyFileMode); err != nil {
-			jsonError(w, fmt.Sprintf("failed to write key file: %v", err), http.StatusInternalServerError)
-			return
+			return nil, newGitHubConfigUpdateError(fmt.Sprintf("failed to write key file: %v", err), http.StatusInternalServerError)
 		}
 		cfg.GitHub.KeyFile = keyPath
 		s.logger.Info("github app private key written", "path", keyPath)
@@ -5127,10 +5380,36 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		cfg.GitHub.InstallationID = *body.InstallationID
 	}
 
-	if err := s.saveConfig(); err != nil {
+	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
+	if err != nil {
+		if strings.Contains(err.Error(), "source path") {
+			s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
+			return nil, newGitHubConfigUpdateError("config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
+		}
 		s.logger.Error("failed to persist github config", "error", err)
-		jsonError(w, "failed to save config", http.StatusInternalServerError)
-		return
+		return nil, newGitHubConfigUpdateError("failed to save config", http.StatusInternalServerError)
+	}
+	return result, nil
+}
+
+func requestAuditUser(r *http.Request) string {
+	user := r.Header.Get("X-Hive-User")
+	if user == "" {
+		return "local"
+	}
+	return user
+}
+
+// finishGitHubConfigUpdateLocked is the shared tail of the manual
+// PUT /api/config/github flow and automatic installation-ID discovery. The
+// caller must hold githubConfigMu and must have already mutated s.deps.Config.
+func (s *Server) finishGitHubConfigUpdateLocked(auditUser, detail string) (map[string]interface{}, error) {
+	cfg := s.deps.Config
+	if cfg.SourcePath == "" {
+		return nil, fmt.Errorf("config has no source path")
+	}
+	if err := s.saveConfig(); err != nil {
+		return nil, err
 	}
 
 	result := map[string]interface{}{
@@ -5168,9 +5447,177 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.auditFromRequest(r, "config_github", "", "")
+	s.AuditLog(auditUser, "config_github", detail, "")
 	s.refreshAndPersist()
-	jsonResponse(w, result)
+	return result, nil
+}
+
+// AutoDiscoverGitHubInstallationID tries to fill an empty github.installation_id
+// from the App-level GitHub API, then persists and reinitializes through the
+// same path used by PUT /api/config/github. All failures are soft; callers keep
+// showing the manual installation-ID flow.
+func (s *Server) AutoDiscoverGitHubInstallationID(ctx context.Context, force bool) (int64, error) {
+	if s == nil || s.deps == nil || s.deps.Config == nil || s.deps.GHAppAuth == nil || !s.deps.GHAppAuth.HasKey() {
+		return 0, nil
+	}
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 {
+		return 0, nil
+	}
+	org := configuredProjectOrgForGitHubApp(cfg, s.logger)
+	if org == "" {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if force {
+		s.deps.GHAppAuth.ForgetInstallationDiscovery(org)
+	}
+
+	id, err := s.deps.GHAppAuth.DiscoverInstallationID(ctx, org)
+	if err != nil {
+		s.logger.Warn("github app installation auto-discovery failed; manual installation ID entry remains available",
+			"org", org, "error", err)
+		return 0, err
+	}
+	if id == 0 {
+		return 0, nil
+	}
+
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+	if cfg.GitHub.InstallationID != 0 {
+		return 0, nil
+	}
+	cfg.GitHub.InstallationID = id
+	result, err := s.finishGitHubConfigUpdateLocked("system",
+		auditDetail("source", "auto_discovery", "org", org, "installation_id", strconv.FormatInt(id, 10)))
+	if err != nil {
+		cfg.GitHub.InstallationID = 0
+		s.logger.Warn("github app installation auto-discovered but could not be persisted; manual installation ID entry remains available",
+			"org", org, "installation_id", id, "error", err)
+		return 0, err
+	}
+	if result["reinit"] == "failed" {
+		cfg.GitHub.InstallationID = 0
+		if saveErr := s.saveConfig(); saveErr != nil {
+			s.logger.Warn("github app installation auto-discovery reinit failed and rollback could not be persisted",
+				"org", org, "installation_id", id, "reinit_error", result["reinit_error"], "rollback_error", saveErr)
+		}
+		return 0, fmt.Errorf("reinitializing github client after auto-discovery: %v", result["reinit_error"])
+	}
+	s.logger.Info("github app installation auto-discovered", "org", org, "installation_id", id)
+	return id, nil
+}
+
+func (s *Server) handleGitHubAppSetupCallback(w http.ResponseWriter, r *http.Request) {
+	redirect := func(flag string) {
+		http.Redirect(w, r, "/?ghSetup="+flag, http.StatusSeeOther)
+	}
+
+	action := strings.TrimSpace(r.URL.Query().Get("setup_action"))
+	switch action {
+	case "request":
+		s.logger.Info("github app setup callback recorded pending approval request")
+		redirect("requested")
+		return
+	case "install", "update":
+	default:
+		s.logger.Warn("github app setup callback rejected: unsupported setup_action", "setup_action", action)
+		redirect("error")
+		return
+	}
+
+	rawID := strings.TrimSpace(r.URL.Query().Get("installation_id"))
+	installationID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || installationID <= 0 {
+		s.logger.Warn("github app setup callback rejected: invalid installation_id", "installation_id", rawID)
+		redirect("error")
+		return
+	}
+
+	if err := s.verifyGitHubSetupInstallation(r, installationID); err != nil {
+		s.logger.Warn("github app setup callback rejected", "installation_id", installationID, "error", err)
+		redirect("error")
+		return
+	}
+
+	if err := s.persistGitHubSetupInstallation(r, installationID); err != nil {
+		s.logger.Warn("github app setup callback failed to persist installation", "installation_id", installationID, "error", err)
+		redirect("error")
+		return
+	}
+
+	redirect("ok")
+}
+
+func (s *Server) verifyGitHubSetupInstallation(r *http.Request, installationID int64) error {
+	if s.deps == nil || s.deps.Config == nil {
+		return fmt.Errorf("config not available")
+	}
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 && cfg.GitHub.InstallationID != installationID && !s.requestHasGitHubSetupAdmin(r) {
+		return fmt.Errorf("installation_id is already configured; authenticated admin required to replace it")
+	}
+	if !cfg.GitHub.HasApp() {
+		return fmt.Errorf("github app_id is not configured")
+	}
+	keyFile := cfg.GitHub.KeyFile
+	if s.deps.ResolveAppKeyFileFunc != nil {
+		keyFile = s.deps.ResolveAppKeyFileFunc(cfg.GitHub.KeyFile, cfg.GitHub.AppID)
+	}
+	if strings.TrimSpace(keyFile) == "" {
+		return fmt.Errorf("github app key file is not configured")
+	}
+	auth, err := github.NewAppAuth(cfg.GitHub.AppID, installationID, keyFile, s.logger, cfg.GitHub.ResolvedAPIURL())
+	if err != nil {
+		return err
+	}
+	ctx := r.Context()
+	if s.deps.Ctx != nil {
+		ctx = s.deps.Ctx
+	}
+	// /gh-setup is public because GitHub redirects a fresh browser here without
+	// a hive session. We still do not trust the query string: the App JWT call
+	// below proves the ID exists for this App and that its account is exactly
+	// this hive's configured org, preventing installation hijacking.
+	return auth.VerifyInstallationForOrg(ctx, installationID, configuredProjectOrgForGitHubApp(cfg, s.logger))
+}
+
+func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID int64) error {
+	s.githubConfigMu.Lock()
+	defer s.githubConfigMu.Unlock()
+
+	cfg := s.deps.Config
+	if cfg.GitHub.InstallationID != 0 && cfg.GitHub.InstallationID != installationID && !s.requestHasGitHubSetupAdmin(r) {
+		return fmt.Errorf("installation_id is already configured; authenticated admin required to replace it")
+	}
+	cfg.GitHub.InstallationID = installationID
+	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r),
+		auditDetail("source", "setup_url", "installation_id", strconv.FormatInt(installationID, 10)))
+	if err != nil {
+		return err
+	}
+	if result["reinit"] == "failed" {
+		return fmt.Errorf("reinitializing github client after setup callback: %v", result["reinit_error"])
+	}
+	return nil
+}
+
+func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
+	if sess := s.sessionFromRequest(r); sess != nil {
+		return config.RoleAtLeast(sess.Role, config.RoleReadWrite)
+	}
+	role := r.Header.Get("X-Hive-Role")
+	if !config.RoleAtLeast(role, config.RoleReadWrite) {
+		return false
+	}
+	if s.directRouteAuthzEnabled() {
+		return false
+	}
+	proof := r.Header.Get(proxyAuthHeader)
+	return s.authToken != "" && proof != "" && secureCompare(proof, s.authToken)
 }
 
 // --- Sidebar endpoints ---
@@ -5271,7 +5718,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	models := s.fetchInferenceModelsForBackend(backend, endpoints)
 	fallback := false
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
@@ -5343,6 +5790,72 @@ func intersectEntitled(discovered, entitled []string) []string {
 		}
 	}
 	return out
+}
+
+// fetchInferenceModelsForBackend discovers a backend's models, honouring the
+// AUTH SCHEME of the gateway that backend resolves to. The plain path sends the
+// resolved key as a raw bearer, which is correct for litellm/vllm/llm-d — but a
+// watsonx gateway needs an IAM-minted bearer plus the X-IBM-Project-ID header,
+// so sending the raw IBM Cloud key returns 401 and the dropdown silently fell
+// back to unrelated static aliases. Reuses the same gatewayProbeAuth +
+// fetchModelsWithHeaders pair the Model Gateways tab's discover/test paths use,
+// so the agent's model dropdown and the gateway form agree on what is available.
+// Falls back to the legacy raw-key path whenever no gateway resolves for this
+// name (env-configured vllm/llm-d endpoints), keeping existing behaviour.
+func (s *Server) fetchInferenceModelsForBackend(backend string, endpoints []string) []string {
+	gw := s.resolveGatewayForBackend(backend)
+	if gw == nil || !gatewayKindNeedsProbeAuth(gw.Kind) {
+		return fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
+	}
+	bearer, headers, err := gatewayProbeAuth(gw.Kind, gw.ResolveAPIKey(), gw.ProjectID)
+	if err != nil {
+		s.logger.Warn("gateway auth for model discovery failed",
+			"backend", backend, "kind", gw.Kind, "error", err)
+		return nil
+	}
+	seen := make(map[string]bool)
+	var all []string
+	for _, ep := range endpoints {
+		models, err := fetchModelsWithHeaders(ep, bearer, headers)
+		if err != nil {
+			s.logger.Warn("model discovery failed",
+				"backend", backend, "kind", gw.Kind, "endpoint", ep, "error", err)
+			continue
+		}
+		for _, m := range models {
+			if !seen[m] {
+				seen[m] = true
+				all = append(all, m)
+			}
+		}
+	}
+	return all
+}
+
+// gatewayKindNeedsProbeAuth reports whether a gateway kind requires the
+// gatewayProbeAuth path (a minted bearer and/or extra headers) rather than the
+// raw key. Only watsonx does today; keeping it a predicate means a future kind
+// with its own auth scheme is a one-line change here rather than a new branch in
+// every discovery caller.
+func gatewayKindNeedsProbeAuth(kind string) bool {
+	return kind == config.GatewayKindWatsonx
+}
+
+// resolveGatewayForBackend finds the configured gateway an agent backend routes
+// through. Agent backends name a gateway directly (registerGatewayEndpoints
+// keys the endpoint registry by gateway NAME), and the built-in gateway methods
+// share their name with their kind, so match on either.
+func (s *Server) resolveGatewayForBackend(backend string) *config.GatewayConfig {
+	if s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	for _, gw := range s.deps.Config.Governor.ResolvedGateways() {
+		if strings.EqualFold(gw.Name, backend) || strings.EqualFold(gw.Kind, backend) {
+			out := gw
+			return &out
+		}
+	}
+	return nil
 }
 
 // inferenceAPIKey returns the bearer key used for a backend's model
@@ -5443,6 +5956,13 @@ func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
 }
 
 func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
+	return fetchModelsWithHeaders(baseURL, apiKey, nil)
+}
+
+// fetchModelsWithHeaders is fetchModelsFromEndpoint with optional extra request
+// headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is sent as
+// the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
+func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
 	client := &http.Client{Timeout: inferenceModelQueryTimeout}
 	req, err := http.NewRequest("GET", modelsURL, nil)
@@ -5451,6 +5971,11 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range extraHeaders {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

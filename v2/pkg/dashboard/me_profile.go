@@ -105,8 +105,10 @@ func tierRankValue(tier string) int {
 		return 1
 	case "trusted":
 		return 2
-	case "advisor":
+	case "merger":
 		return 3
+	case "advisor":
+		return 4
 	default:
 		return 0
 	}
@@ -137,6 +139,14 @@ func buildMilestones(p *ContributorProfile) ([]ContributorMilestone, *Contributo
 		Attained: tierRank >= tierRankValue("trusted"),
 		Value:    contributorTrustedAt,
 		Icon:     "🛡️",
+	})
+	out = append(out, ContributorMilestone{
+		ID:       "tier-merger",
+		Label:    "Reached Merger",
+		Detail:   "Granted by a maintainer/owner",
+		Attained: tierRank >= tierRankValue("merger"),
+		Value:    0,
+		Icon:     "🔀",
 	})
 	out = append(out, ContributorMilestone{
 		ID:       "tier-advisor",
