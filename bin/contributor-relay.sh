@@ -238,14 +238,16 @@ function buildLaunchCommand() {
 // status — the property the headless mode needs. Each entry says how to turn
 // (binary, perm-flags, prompt) into an argv:
 //
-//   flag — the sub-command/flag that selects one-shot mode; the prompt is
-//          passed as the single positional argument that follows it
-//          (`claude -p "<prompt>"`, `codex exec "<prompt>"`).
+//   flag — the sub-command/flag(s) that select one-shot mode, as a single
+//          token (`claude -p "<prompt>"`, `codex exec "<prompt>"`) or an
+//          array of tokens when a subcommand and a flag both precede the
+//          prompt (`goose run --no-session -t "<prompt>"`). The prompt is
+//          always appended as the final, distinct argv element.
 //
-// Backends NOT listed here have no known non-interactive entry point (goose /
-// bob / agy / pi drive an interactive TUI), so headless mode refuses them
-// LOUDLY at task time rather than silently stalling. Extending this table is
-// how a future PR adds a backend once its headless invocation is verified.
+// Backends NOT listed here have no known non-interactive entry point (bob /
+// agy / pi drive an interactive TUI), so headless mode refuses them LOUDLY at
+// task time rather than silently stalling. Extending this table is how a
+// future PR adds a backend once its headless invocation is verified.
 const HEADLESS_BACKENDS = {
   // claude -p "<prompt>" — print mode: runs the prompt non-interactively and
   // exits. Same perm flags as the interactive launch (bypass permissions).
@@ -257,6 +259,16 @@ const HEADLESS_BACKENDS = {
   copilot: { flag: '-p' },
   // codex exec "<prompt>" — Codex's non-interactive execution sub-command.
   codex: { flag: 'exec' },
+  // goose run --no-session -t "<prompt>" — `run` is goose's one-shot
+  // sub-command (the bare `goose` binary alone drives the interactive TUI);
+  // --no-session skips creating/resuming a session file, which headless
+  // dispatch never needs; -t takes the prompt as its value rather than as a
+  // trailing positional. Exits 0 on success, non-zero on error. Verified
+  // directly against `goose 1.45.0-canary+eea5609`: `goose run --no-session
+  // -t "<prompt>"` printed the response and exited 0; `goose run --no-session
+  // -i <missing-file>` exited 1. Not yet exercised through a live headless
+  // Hive task cycle — see kubestellar/hive#2828.
+  goose: { flag: ['run', '--no-session', '-t'] },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
@@ -267,17 +279,18 @@ function headlessSupportsBackend() {
 
 // buildHeadlessArgv turns a task prompt into the argv for a one-shot,
 // non-interactive backend invocation: [binary, ...permFlags, ...modelFlag,
-// oneShotFlag, prompt] (order adjusted per promptAsArg). Returns null for an
-// unsupported backend. Never shell-interpolates the prompt — it is passed as a
-// distinct argv element to execFile, so apostrophes/quotes in the prompt (the
-// exact #2203 wedge on the interactive path) cannot break anything here.
+// ...oneShotFlags, prompt]. Returns null for an unsupported backend. Never
+// shell-interpolates the prompt — it is passed as a distinct argv element to
+// execFile, so apostrophes/quotes in the prompt (the exact #2203 wedge on the
+// interactive path) cannot break anything here.
 function buildHeadlessArgv(prompt) {
   const spec = HEADLESS_BACKENDS[BACKEND];
   if (!spec) return null;
   const { cmd, perm } = resolveBackend();
   const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
   const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
-  const args = [...permArgs, ...modelArgs, spec.flag, prompt];
+  const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
+  const args = [...permArgs, ...modelArgs, ...oneShotArgs, prompt];
   return { bin: cmd, args };
 }
 

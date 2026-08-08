@@ -544,6 +544,26 @@ test('interactive is the default mode; headless is opt-in via CONTRIBUTOR_MODE',
   } finally { teardown(head); }
 });
 
+test('goose runs headless via its one-shot `run` sub-command and reports completion', () => {
+  const relay = loadRelay({ backend: 'goose', mode: 'headless' });
+  try {
+    assignHeadlessTask(relay);
+
+    assert.strictEqual(relay.__execFileCalls.length, 1, 'expected exactly one one-shot invocation');
+    const call = relay.__execFileCalls[0];
+    assert.strictEqual(call.bin, 'goose', 'goose backend should run the goose binary');
+    assert.ok(call.args.includes('run'), `goose headless must use its 'run' sub-command: ${JSON.stringify(call.args)}`);
+    assert.ok(call.args.includes('-t'), `goose headless must pass the prompt via -t: ${JSON.stringify(call.args)}`);
+    assert.ok(call.args[call.args.length - 1].includes('foo/bar#7'),
+      'the prompt must be the trailing argv element (passed to execFile, never shell-quoted)');
+
+    // A default (exit-0, empty stdout) execFile result reports completion —
+    // exercising the exit-code contract runHeadlessTask() relies on.
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'a successful goose one-shot invocation must report task_complete');
+  } finally { teardown(relay); }
+});
+
 test('headless dispatch runs a one-shot execFile and never types into tmux', () => {
   const relay = loadRelay({ backend: 'claude', mode: 'headless' });
   try {
@@ -611,9 +631,11 @@ test('a headless timeout kill is reported as a failure, not a completion', () =>
 });
 
 test('headless refuses an unsupported backend loudly instead of stalling', () => {
-  const relay = loadRelay({ backend: 'goose', mode: 'headless' });
+  // bob drives an interactive TUI with no known one-shot entry point (unlike
+  // goose, which gained one — see the buildHeadlessArgv test below).
+  const relay = loadRelay({ backend: 'bob', mode: 'headless' });
   try {
-    assert.strictEqual(relay.headlessSupportsBackend(), false, 'goose has no one-shot mode');
+    assert.strictEqual(relay.headlessSupportsBackend(), false, 'bob has no one-shot mode');
     assignHeadlessTask(relay);
     // No CLI was ever spawned...
     assert.strictEqual(relay.__execFileCalls.length, 0, 'an unsupported backend must not spawn a CLI');
@@ -641,10 +663,20 @@ test('buildHeadlessArgv maps each supported backend to its one-shot invocation',
       `codex must use 'exec' one-shot: ${JSON.stringify(a.args)}`);
   } finally { teardown(codex); }
 
-  const goose = loadRelay({ backend: 'goose', mode: 'headless' });
+  const goose = loadRelay({ backend: 'goose', mode: 'headless', model: 'some-model' });
   try {
-    assert.strictEqual(goose.buildHeadlessArgv('x'), null, 'unsupported backend has no argv');
+    const a = goose.buildHeadlessArgv('do the thing');
+    assert.strictEqual(a.bin, 'goose');
+    const tail = a.args.slice(-4);
+    assert.deepStrictEqual(tail, ['run', '--no-session', '-t', 'do the thing'],
+      `goose must run its one-shot sub-command with the prompt as -t's value: ${JSON.stringify(a.args)}`);
+    assert.ok(!a.args.includes('--model'), 'goose is in NO_MODEL_FLAG_BACKENDS and must not get --model');
   } finally { teardown(goose); }
+
+  const bob = loadRelay({ backend: 'bob', mode: 'headless' });
+  try {
+    assert.strictEqual(bob.buildHeadlessArgv('x'), null, 'unsupported backend has no argv');
+  } finally { teardown(bob); }
 });
 
 test('interactive mode still delivers via tmux send-keys (unchanged default path)', () => {
