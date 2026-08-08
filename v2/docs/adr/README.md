@@ -46,3 +46,7 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0008: Redact untrusted kick input with visible markers](0008-ioscan-untrusted-input.md)
 - [ADR-0009: Trajectory review lane](0009-trajectory-review.md)
 - [ADR-0010: Escalation circuit breaker for CI fix loops](0010-escalation-circuit-breaker.md)
+- [ADR-0011: Durable knowledge graph for agent context](0011-knowledge-graph.md)
+- [ADR-0012: Skill registry and BYO-agent contract](0012-skill-registry.md)
+- [ADR-0013: CEL triggers over normalized forge events](0013-cel-triggers.md)
+- [ADR-0014: Hub/spoke fleet over heartbeat callbacks](0014-hub-spoke.md)
