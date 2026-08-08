@@ -143,18 +143,22 @@ type RegistryEntry struct {
 	// private-network hives may be unreachable from the public hub while alive
 	// from their own cluster. Nil means an old spoke did not report it.
 	PublicURLSelfCheck *PublicURLSelfCheck `json:"publicUrlSelfCheck,omitempty"`
-	SnapshotURL        string              `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int                 `json:"acmmLevel"`
-	AgentCount         int                 `json:"agentCount"`
-	GovernorMode       string              `json:"governorMode"`
-	TotalTokens24h     int64               `json:"totalTokens24h"`
-	ActionableIssues   int                 `json:"actionableIssues"`
-	ActionablePRs      int                 `json:"actionablePRs"`
-	ContributorCount   int                 `json:"contributorCount"`
-	ActiveContributors int                 `json:"activeContributors"`
-	Owner              string              `json:"owner,omitempty"`
-	ClusterID          string              `json:"clusterId,omitempty"`
-	ClusterName        string              `json:"clusterName,omitempty"`
+	// RouteExists is the spoke's in-cluster confirmation that an Ingress or
+	// OpenShift Route exists for DashboardURL's host. Nil means an old spoke
+	// did not report it; unknown means it could not verify (for example RBAC).
+	RouteExists        *RouteExistenceCheck `json:"routeExists,omitempty"`
+	SnapshotURL        string               `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int                  `json:"acmmLevel"`
+	AgentCount         int                  `json:"agentCount"`
+	GovernorMode       string               `json:"governorMode"`
+	TotalTokens24h     int64                `json:"totalTokens24h"`
+	ActionableIssues   int                  `json:"actionableIssues"`
+	ActionablePRs      int                  `json:"actionablePRs"`
+	ContributorCount   int                  `json:"contributorCount"`
+	ActiveContributors int                  `json:"activeContributors"`
+	Owner              string               `json:"owner,omitempty"`
+	ClusterID          string               `json:"clusterId,omitempty"`
+	ClusterName        string               `json:"clusterName,omitempty"`
 	// Namespace is the Kubernetes namespace this hive's spoke runs in. For a
 	// hub-provisioned (hosted) hive it is hostedNamespaceForHive(sh) —
 	// "hive-hosted-<id>" — overlaid from the authoritative SaaSHive record on
@@ -1279,6 +1283,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
 		DashboardURL:       payload.DashboardURL,
 		PublicURLSelfCheck: sanitizePublicURLSelfCheck(payload.PublicURLSelfCheck),
+		RouteExists:        sanitizeRouteExistenceCheck(payload.RouteExists),
 		SnapshotURL:        payload.SnapshotURL,
 		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
@@ -3250,6 +3255,23 @@ func sanitizePublicURLSelfCheck(in *PublicURLSelfCheck) *PublicURLSelfCheck {
 		HTTPStatus: clampInt(in.HTTPStatus, 0, 599),
 	}
 	return out
+}
+
+func sanitizeRouteExistenceCheck(in *RouteExistenceCheck) *RouteExistenceCheck {
+	if in == nil {
+		return nil
+	}
+	status := sanitizeHeartbeatField(in.Status)
+	if status != RouteExistenceFound && status != RouteExistenceMissing && status != RouteExistenceUnknown {
+		return nil
+	}
+	return &RouteExistenceCheck{
+		Status:    status,
+		CheckedAt: sanitizeHeartbeatField(in.CheckedAt),
+		Host:      sanitizeHeartbeatField(in.Host),
+		Kind:      sanitizeHeartbeatField(in.Kind),
+		Error:     sanitizeProseField(in.Error),
+	}
 }
 
 // sanitizeImageRef sanitizes a container image reference reported by a spoke.

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Auth audit: the hub periodically probes every registered spoke's
+// Auth audit: the hub periodically probes hub-fronted spokes'
 // UNAUTHENTICATED /api/status and flags any hive that answers 200 as WIDE OPEN.
 // A protected spoke redirects to login (30x) or returns 401 for an
 // unauthenticated request; a 200 means the dashboard is served to anyone with
@@ -93,6 +93,9 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 		// Only probe hives that report a real dashboard URL (heartbeating spokes).
 		base := strings.TrimRight(h.DashboardURL, "/")
 		if base == "" || strings.Contains(base, "localhost") {
+			continue
+		}
+		if !s.hubFrontedDashboardURL(base) {
 			continue
 		}
 		probed++
