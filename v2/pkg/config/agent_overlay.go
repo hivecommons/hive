@@ -179,6 +179,9 @@ func (c *Config) ApplyAgentDefaults(name string) {
 	if agent.ID == "" {
 		agent.ID = name
 	}
+	if agent.Replicas == 0 {
+		agent.Replicas = 1
+	}
 	if agent.BeadsDir == "" {
 		agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
 	}

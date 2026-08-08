@@ -2411,6 +2411,70 @@ func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
 	return nil
 }
 
+// ReconcileAgents makes the manager's name-keyed process table match the
+// enabled config set. New agents are added, existing agents get fresh config,
+// and removed agents have only their own hive-<name> tmux session retired.
+func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var added []string
+
+	for name, cfg := range configs {
+		if existing, ok := m.agents[name]; ok {
+			delete(m.idToName, existing.ID)
+			existing.Config = cfg
+			if cfg.ID != "" {
+				existing.ID = cfg.ID
+			} else {
+				existing.ID = name
+			}
+			m.idToName[existing.ID] = name
+			continue
+		}
+		agentID := cfg.ID
+		if agentID == "" {
+			agentID = name
+		}
+		agentUID := 0
+		tmuxSocket := ""
+		if m.uidMap != nil {
+			agentUID = m.uidMap.AllocateUID(name)
+			if agentUID > 0 {
+				tmuxSocket = "hive-" + name
+			}
+			_ = m.uidMap.Save(UIDMapPath)
+		}
+		m.agents[name] = &AgentProcess{
+			Name:         name,
+			ID:           agentID,
+			Config:       cfg,
+			State:        StateStopped,
+			UID:          agentUID,
+			Paused:       cfg.Paused,
+			OutputBuffer: NewRingBuffer(outputBufferCapacity),
+			tmuxSession:  "hive-" + name,
+			tmuxSocket:   tmuxSocket,
+		}
+		m.idToName[agentID] = name
+		added = append(added, name)
+		m.logger.Info("audit: agent added by reconcile", "name", name, "id", agentID, "uid", agentUID)
+	}
+
+	for name, existing := range m.agents {
+		if _, ok := configs[name]; ok {
+			continue
+		}
+		if existing.cancel != nil {
+			existing.cancel()
+		}
+		_ = m.tmuxCmd(existing, "kill-session", "-t", existing.tmuxSession).Run()
+		delete(m.idToName, existing.ID)
+		delete(m.agents, name)
+		m.logger.Info("audit: agent removed by reconcile", "name", name, "id", existing.ID, "session", existing.tmuxSession)
+	}
+	return added
+}
+
 func (m *Manager) RemoveAgent(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

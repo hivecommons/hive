@@ -2237,6 +2237,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
 			"cavemanMode":      agentCfg.CavemanMode,
+			"replicas":         agentCfg.Replicas,
 		},
 		"cadences":       cadences,
 		"models":         models,
@@ -2721,6 +2722,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.StaleTimeout = int(f)
 		}
 	}
+	if v, ok := body["replicas"]; ok {
+		if f, ok := v.(float64); ok {
+			agentCfg.Replicas = int(f)
+		}
+	}
 	if v, ok := body["restartStrategy"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.RestartStrategy = sanitizeString(s)
@@ -2909,7 +2915,28 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	prevAgents := make(map[string]config.AgentConfig, len(s.deps.Config.Agents))
+	for k, v := range s.deps.Config.Agents {
+		prevAgents[k] = v
+	}
 	s.deps.Config.Agents[name] = agentCfg
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		s.deps.Config.Agents = prevAgents
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	agentCfg = s.deps.Config.Agents[name]
+	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	for _, added := range addedAgents {
+		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
+				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
+			}
+		}
+	}
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
+	}
 
 	// Sync the updated config into the agent process so that status builders
 	// (which read from AgentProcess.Config, not the global config map) reflect

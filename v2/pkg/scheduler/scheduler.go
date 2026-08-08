@@ -154,16 +154,17 @@ func (s *Scheduler) loadNamedTemplate(templateName string) string {
 
 // substituteTemplate replaces ${VAR} placeholders in a prompt template.
 func (s *Scheduler) substituteTemplate(template string, actionable *github.ActionableResult, agentName string, issues []github.Issue) string {
+	baseName := s.cfg.BaseAgentName(agentName)
 	if actionable == nil {
 		actionable = &github.ActionableResult{}
 	}
 	now := time.Now().Local()
 
 	var agentIssuesForList []github.Issue
-	if agentName == "scanner" {
+	if baseName == "scanner" {
 		agentIssuesForList = issues
 	} else {
-		agentIssuesForList = filterByLane(issues, agentName)
+		agentIssuesForList = filterByLane(issues, baseName)
 	}
 	issueList := s.formatIssueList(agentIssuesForList)
 	prList := s.formatPRList(actionable)
@@ -179,7 +180,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		displayName = ac.DisplayName
 	}
 
-	agentIssues := filterByLane(issues, agentName)
+	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) == 0 && actionable != nil && len(actionable.Issues.Items) > 0 {
 		agentIssues = actionable.Issues.Items
 	}
@@ -316,7 +317,9 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			includeRepos := true
 			if agentCfg, ok := s.cfg.Agents[agentName]; ok {
 				includeRepos = agentCfg.ShouldIncludeRepos()
-			} else if agentName == "outreach" {
+			} else if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
+				includeRepos = agentCfg.ShouldIncludeRepos()
+			} else if s.cfg.BaseAgentName(agentName) == "outreach" {
 				includeRepos = false
 			}
 			if includeRepos {
@@ -371,11 +374,12 @@ const maxIssuesPerKick = 100
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
 func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	baseName := s.cfg.BaseAgentName(agentName)
 	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
 	//    live at kick time (with allowlist gating + graceful fallback). A miss
 	//    (unset, denied, unreachable with no cache) falls through to the inline
 	//    template chain below, so a bad source never blanks or crashes a kick.
-	if agentCfg, ok := s.cfg.Agents[agentName]; ok && agentCfg.PromptSource.IsSet() {
+	if agentCfg, ok := s.cfg.Agents[baseName]; ok && agentCfg.PromptSource.IsSet() {
 		if resolver := s.gitHubPromptResolver(); resolver != nil {
 			src := promptsrc.Source{
 				Owner: agentCfg.PromptSource.Owner,
@@ -393,7 +397,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	}
 
 	// 1. Config-driven: use kick_template field if set
-	if agentCfg, ok := s.cfg.Agents[agentName]; ok && agentCfg.KickTemplate != "" {
+	if agentCfg, ok := s.cfg.Agents[baseName]; ok && agentCfg.KickTemplate != "" {
 		if template := s.loadNamedTemplate(agentCfg.KickTemplate); template != "" {
 			s.logger.Info("using config kick_template", "agent", agentName, "template", agentCfg.KickTemplate)
 			msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
@@ -406,7 +410,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	if s.cfg.ACMMLevel != nil && *s.cfg.ACMMLevel > 0 {
 		if pack, err := config.ACMMPackByLevel(*s.cfg.ACMMLevel); err == nil {
 			for _, pa := range pack.Agents {
-				if pa.Name == agentName && pa.KickTemplate != "" {
+				if pa.Name == baseName && pa.KickTemplate != "" {
 					if template := s.loadNamedTemplate(pa.KickTemplate); template != "" {
 						s.logger.Info("using ACMM pack template", "agent", agentName, "level", *s.cfg.ACMMLevel, "template", pa.KickTemplate)
 						msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
@@ -419,7 +423,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 	}
 
 	// 3. Convention: look for <agent>.md template file
-	if template := s.loadPromptTemplate(agentName); template != "" {
+	if template := s.loadPromptTemplate(baseName); template != "" {
 		s.logger.Info("using prompt template for kick", "agent", agentName)
 		msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
 		msg += s.substituteTemplate(template, actionable, agentName, issues)
@@ -428,7 +432,7 @@ func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, a
 
 	// 3. Legacy hardcoded fallback (removed in Phase 4 when all agents use templates)
 	s.logger.Info("no prompt template found, using hardcoded kick", "agent", agentName)
-	switch agentName {
+	switch baseName {
 	case "scanner":
 		return s.buildScannerMessage(issues, actionable)
 	case "ci-maintainer":
@@ -663,10 +667,11 @@ func (s *Scheduler) reposSection() string {
 }
 
 func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	baseName := s.cfg.BaseAgentName(agentName)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[agent:%s]\n", agentName))
 
-	agentIssues := filterByLane(issues, agentName)
+	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) > 0 {
 		b.WriteString(fmt.Sprintf("Work items (%d):\n", len(agentIssues)))
 		for _, issue := range agentIssues {
