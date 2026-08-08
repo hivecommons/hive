@@ -2,6 +2,9 @@ package hub
 
 import (
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -198,16 +201,57 @@ func clusterOutage(failed, probed int) bool {
 	return float64(failed)/float64(probed) >= urlClusterOutageRatio
 }
 
+func (s *HubServer) hubFrontedDashboardURL(rawURL string) bool {
+	host := dashboardHost(rawURL)
+	if host == "" {
+		return false
+	}
+	suffix := s.hubDomainSuffix()
+	if suffix == "" {
+		return false
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	suffix = strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(suffix), "."), ".")
+	return host == suffix || strings.HasSuffix(host, "."+suffix)
+}
+
+func (s *HubServer) hubDomainSuffix() string {
+	for _, key := range []string{"HIVE_HUB_PUBLIC_URL", "HIVE_PUBLIC_URL", "HIVE_HUB_BASE_URL", "HIVE_DASHBOARD_URL", "HIVE_HUB_URL"} {
+		if suffix := domainSuffixFromBaseURL(os.Getenv(key)); suffix != "" {
+			return suffix
+		}
+	}
+	if s != nil {
+		if c, ok := s.clusters[defaultClusterID]; ok && c.Domain != "" {
+			return c.Domain
+		}
+	}
+	return ""
+}
+
+func domainSuffixFromBaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
 // urlUnreachableAlerts builds the per-hive unreachable-URL alerts for the
 // current fleet. It is fed into evaluateAlerts' driftAlerts parameter, the
 // pre-existing seam for signals computed outside the evaluator, so this shares
 // all of the ack/dedup/first-seen machinery rather than adding a parallel one.
 //
-// A hive is critical when its spoke self-check fails, or when the hub-side
-// probe has failed repeatedly while the spoke heartbeat is stale/offline. If
-// the hub-side probe fails while heartbeats are fresh and the spoke self-check
-// is OK or unknown, the result is only informational: the URL is private from
-// the hub's vantage point, not proved dead.
+// A hive is critical when its local listener self-check fails, when the spoke
+// confirms no route/ingress exists, or when a hub-fronted URL fails from the
+// hub while the spoke heartbeat is stale/offline. If a hub-fronted probe fails
+// while heartbeats are fresh and the spoke self-check is OK or unknown, the
+// result is only informational: the URL is private from the hub's vantage
+// point, not proved dead.
 func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) []Alert {
 	// A HubServer built directly by a test has no urlHealth; no probe has run,
 	// so only spoke self-check failures can be reported.
@@ -225,7 +269,7 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 	clusterProbed := map[string]int{}
 	clusterFailed := map[string]int{}
 	for _, h := range hives {
-		if h.DashboardURL == "" || isUnassignedPlaceholder(h.Org, h.ProvStatus) {
+		if h.DashboardURL == "" || isUnassignedPlaceholder(h.Org, h.ProvStatus) || (s != nil && !s.hubFrontedDashboardURL(h.DashboardURL)) {
 			continue
 		}
 		clusterProbed[h.ClusterID]++
@@ -253,6 +297,25 @@ func (s *HubServer) urlUnreachableAlerts(hives []RegistryEntry, now time.Time) [
 				Severity: AlertSeverityCritical,
 				Reason:   publicURLSelfCheckFailureReason(h),
 			})
+			continue
+		}
+		if routeExistenceMissing(h.RouteExists) {
+			if s.urlHealth != nil && s.urlHealth.criticalEvaluation(h.ID, true) < urlUnreachableMinAlertEvaluations {
+				continue
+			}
+			alerts = append(alerts, Alert{
+				HiveID:   h.ID,
+				HiveName: h.Name,
+				Type:     AlertTypeURLUnreachable,
+				Severity: AlertSeverityCritical,
+				Reason:   routeExistenceFailureReason(h),
+			})
+			continue
+		}
+		if !s.hubFrontedDashboardURL(h.DashboardURL) {
+			if s.urlHealth != nil {
+				s.urlHealth.criticalEvaluation(h.ID, false)
+			}
 			continue
 		}
 		n := failures[h.ID]
@@ -355,14 +418,18 @@ func publicURLSelfCheckFailed(check *PublicURLSelfCheck) bool {
 	return check != nil && check.Status == PublicURLSelfCheckFail
 }
 
+func routeExistenceMissing(check *RouteExistenceCheck) bool {
+	return check != nil && check.Status == RouteExistenceMissing
+}
+
 func publicURLSelfCheckFailureReason(h RegistryEntry) string {
-	reason := urlUnreachableReason(h.DashboardURL, 0)
+	reason := "dashboard listener failed local self-check for " + h.DashboardURL
 	check := h.PublicURLSelfCheck
 	if check == nil {
 		return reason
 	}
 	if check.HTTPStatus > 0 {
-		reason = urlUnreachableReason(h.DashboardURL, check.HTTPStatus)
+		reason = "dashboard listener returned HTTP " + itoa(check.HTTPStatus) + " for " + h.DashboardURL
 	}
 	if errText := check.Error; errText != "" {
 		reason += " (spoke self-check: " + errText + ")"
@@ -370,6 +437,17 @@ func publicURLSelfCheckFailureReason(h RegistryEntry) string {
 		reason += " (spoke self-check failed)"
 	}
 	return reason
+}
+
+func routeExistenceFailureReason(h RegistryEntry) string {
+	host := dashboardHost(h.DashboardURL)
+	if h.RouteExists != nil && h.RouteExists.Host != "" {
+		host = h.RouteExists.Host
+	}
+	if host == "" {
+		return "dashboard route/ingress does not exist"
+	}
+	return "dashboard route/ingress for " + host + " does not exist"
 }
 
 func heartbeatFreshForURLCheck(h RegistryEntry, now time.Time) bool {
