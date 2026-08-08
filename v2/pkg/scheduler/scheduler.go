@@ -14,6 +14,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/ioscan"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/policies"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
@@ -21,14 +22,18 @@ import (
 )
 
 type Scheduler struct {
-	cfg            *config.Config
-	primer         *knowledge.Primer
-	inception      *knowledge.InceptionEngine
-	lastActionable *github.ActionableResult
-	logger         *slog.Logger
-	promptResolver *promptsrc.Resolver
-	auditFunc      AuditFunc
-	mu             sync.RWMutex
+	cfg                  *config.Config
+	primer               *knowledge.Primer
+	inception            *knowledge.InceptionEngine
+	lastActionable       *github.ActionableResult
+	logger               *slog.Logger
+	promptResolver       *promptsrc.Resolver
+	auditFunc            AuditFunc
+	advisoryFunc         AdvisoryFunc
+	classifier           ioscan.Classifier
+	classifierThresholds ioscan.Thresholds
+	classifierBudget     int
+	mu                   sync.RWMutex
 }
 
 // registry builds the variable-resolution registry from the current config's
@@ -358,6 +363,7 @@ type KickMessage struct {
 }
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
+	s.resetClassifierBudget()
 	classifiedIssues := classify.ClassifyAll(actionable.Issues.Items)
 	reposSection := s.buildReposSection()
 
@@ -417,6 +423,7 @@ func issueRefsForAgent(agentName string, issues []github.Issue) []string {
 // gh issue list themselves) then correctly reported "nothing to do" no matter
 // how deep the queue was.
 func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string {
+	s.resetClassifierBudget()
 	actionable := s.GetLastActionable()
 	var classified []github.Issue
 	if actionable != nil {

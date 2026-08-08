@@ -54,3 +54,10 @@ func TestIoscanConfig_CanariesDefaultOff(t *testing.T) {
 		t.Fatal("canaries must default off")
 	}
 }
+
+func TestIoscanClassifierConfig_DefaultOff(t *testing.T) {
+	var c IoscanConfig
+	if c.Classifier.Enabled {
+		t.Fatal("ioscan classifier must default off")
+	}
+}

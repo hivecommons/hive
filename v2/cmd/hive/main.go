@@ -1510,6 +1510,49 @@ func main() {
 	sched.SetAuditFunc(func(action, detail, agent string) {
 		dashSrv.AuditLog(agent, action, detail, agent)
 	})
+	sched.SetAdvisoryFunc(func(title, detail, agentName string) {
+		store := beadStores[agentName]
+		if store == nil {
+			store = beadStores["scanner"]
+		}
+		if store == nil {
+			store = beadStores["supervisor"]
+		}
+		if store == nil {
+			for _, candidate := range beadStores {
+				store = candidate
+				break
+			}
+		}
+		if store != nil {
+			if b, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, agentName, ""); err == nil {
+				_ = store.SetMetadata(b.ID, "ioscan_classifier", detail)
+			}
+		}
+	})
+	if cfg.Ioscan.IsEnabled() && cfg.Ioscan.Classifier.Enabled {
+		endpoint, apiKey, model := cfg.Governor.ResolveReviewer()
+		if cfg.Ioscan.Classifier.Model != "" {
+			model = cfg.Ioscan.Classifier.Model
+		}
+		if model == "" {
+			model = ioscan.DefaultClassifierModel
+		}
+		classifier, cerr := ioscan.NewLLMClassifier(ioscan.LLMClassifierConfig{
+			Endpoint: endpoint,
+			APIKey:   apiKey,
+			Model:    model,
+		})
+		if cerr != nil {
+			logger.Warn("ioscan classifier enabled but not running", "reason", cerr.Error())
+		} else {
+			sched.SetClassifier(ioscan.NewCachedClassifier(classifier, ioscan.DefaultClassifierCacheEntries), ioscan.Thresholds{
+				Warn:  cfg.Ioscan.Classifier.WarnThreshold,
+				Block: cfg.Ioscan.Classifier.BlockThreshold,
+			})
+			logger.Info("ioscan semantic classifier enabled", "model", model)
+		}
+	}
 	agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {

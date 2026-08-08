@@ -70,7 +70,7 @@ the threats they reduce.
 | MITM proxy mode rules | `api.github.com` traffic is intercepted; first-match REST rules and GraphQL mutation classification require minimum modes. Blocks return `403` with `X-Hive-Proxy-Blocked`. `github.com` is tunneled opaquely for OAuth/git smart HTTP. | Blocks direct PR writes, issue writes, GraphQL mutation bypasses, and mode escalation over the network. | [Architecture §5](architecture.md#5-layered-guardrails-defense-in-depth), `pkg/proxy/rules.go`, `pkg/proxy/github_proxy.go` |
 | Hard-deny relays for REST PR create/merge | REST `POST /pulls` and `PUT /pulls/{n}/merge` are hard-denied for every agent mode; agents must use `hive-open-pr`/`hive-merge` so Hive performs App-bot authorship and SHA/eligibility binding. Merge authorization was hardened to target and SHA (#2670, #2680). GraphQL mutations are still mode-classified by capability tier. | Prevents an otherwise merge-capable agent from bypassing the REST merge relay or authoring REST-created PRs as the login user. | `pkg/proxy/rules.go`, [Architecture §4](architecture.md#4-the-deterministic-pipeline), #2670/#2680 |
 | Repo allowlist | The proxy permits writes only to configured repos; seed prompt/repo allowlists come from trusted config. | Prevents compromised agents from writing to arbitrary repositories reachable by a credential. | [Architecture §5](architecture.md#5-layered-guardrails-defense-in-depth), `pkg/proxy/rules.go` |
-| ioscan redaction | `pkg/ioscan` is stdlib-only and scans input/output text for prompt injection, dangerous directives, secrets, zero-width characters, base64-hidden instructions, and high-entropy tokens. Scheduler input enforcement defaults on and replaces blocked untrusted text with an explicit marker while audit logging the rule. v4 made ioscan default-on/broader (#2666). | Reduces prompt injection and accidental secret emission before text reaches agents or external outputs. | `pkg/ioscan`, `pkg/scheduler/ioscan_enforce.go`, #2666 |
+| ioscan redaction and semantic classification | `pkg/ioscan` is stdlib-first and scans input/output text for prompt injection, dangerous directives, secrets, zero-width characters, base64-hidden instructions, and high-entropy tokens. Scheduler input enforcement defaults on and replaces blocked untrusted text with an explicit marker while audit logging the rule. An optional LLM-judge classifier scores already-redacted untrusted segments for plain-English semantic injections; classifier outages fail open, while successful high-risk scores redact in open mode or block in fail-closed mode. v4 made ioscan default-on/broader (#2666) and closed the #2805 semantic-injection gap. | Reduces prompt injection and accidental secret emission before text reaches agents or external outputs. | `pkg/ioscan`, `pkg/scheduler/ioscan_enforce.go`, #2666/#2805 |
 | Trajectory review | A second model periodically compares each running agent's intent to a bounded tmux transcript tail and pauses or alerts on divergent trajectories. It fails open on reviewer outage. | Catches multi-step goal drift that individual API/tool checks may not detect. | [trajectory-review.md](trajectory-review.md) |
 | Token budget | The seven-day rolling token budget warns at 90% and suppresses kicks on exhaustion except for exempt agents. | Limits runaway cost or denial-of-wallet from compromised loops. | [Architecture §3](architecture.md#3-the-governor-loop-from-queue-depth-to-a-kick) |
 | Per-UID isolation and attribution | Agents may run as per-agent OS users; the proxy maps connection owner UID to agent name/mode. v4 fixed token/cache permissions and pinned/restricted the SUID `su-exec` helper (#2754). | Limits cross-agent file access and makes network decisions attributable to an agent identity. | [Architecture §2](architecture.md#2-container-process-model), [§5](architecture.md#5-layered-guardrails-defense-in-depth), #2754 |
@@ -93,12 +93,12 @@ the threats they reduce.
   by the proxy, but agents still have network paths for allowed GitHub reads,
   model backends, and opaque `github.com` tunneling. #2804 proposes a stricter
   no-network sandbox with the MITM proxy retained as an outer layer.
-- **ioscan is deterministic and incomplete.** It catches known patterns,
-  zero-width characters, base64-hidden instructions, and secret shapes, but it is
-  not a complete prompt-injection classifier. Open issue
-  [#2805](https://github.com/kubestellar/hive/issues/2805) tracks unicode
-  normalization, canaries, output redaction, optional model classifiers, dual
-  scans, and fail-closed semantics.
+- **ioscan semantic classification is optional and fail-open.** Deterministic
+  rules, Unicode normalization, base64 rescans, canaries, output redaction, and
+  fail-closed semantics are the dependable floor. The model-based classifier
+  closes the #2805 plain-English semantic-injection gap when enabled, but it
+  intentionally fails open on model errors/timeouts to avoid turning reviewer
+  outages into scheduler outages.
 - **Trajectory review is semantic oversight, not proof.** It reads rendered tmux
   transcripts, not hidden model reasoning, and intentionally fails open on
   reviewer outage. It complements but does not replace structural controls.

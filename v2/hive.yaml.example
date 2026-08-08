@@ -18,6 +18,11 @@ ioscan:
   enabled: true                           # default: true; scans untrusted text before agent kicks
   fail_mode: open                         # open (default) redacts; closed blocks Critical injection kicks and canary leaks
   canaries: false                         # default: false; plant per-kick exfiltration canaries and scan agent egress
+  classifier:
+    enabled: false                        # default: false; optional LLM judge for semantic plain-English injections
+    model: ""                             # empty uses governor.litellm default_model, then gpt-4o-mini
+    warn_threshold: 0.55                  # advisory bead/audit threshold
+    block_threshold: 0.85                 # open=redact, closed=block kick
 
 # Agent CLAUDE.md policies from a git config repo (optional).
 # Uncomment and set to your own policy repo if you have custom agent prompts.

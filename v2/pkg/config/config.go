@@ -230,6 +230,19 @@ type IoscanConfig struct {
 	// agent-visible egress for leaks. Default false: existing hives see no
 	// canary behavior until explicitly enabled.
 	Canaries bool `yaml:"canaries,omitempty" json:"canaries,omitempty"`
+	// Classifier enables the optional LLM-judge semantic prompt-injection
+	// classifier. It defaults off so hives that only use deterministic rules
+	// make no model calls and see zero behavior change.
+	Classifier IoscanClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
+}
+
+// IoscanClassifierConfig controls the optional model-based semantic injection
+// classifier that runs after deterministic ioscan redaction.
+type IoscanClassifierConfig struct {
+	Enabled        bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Model          string  `yaml:"model,omitempty" json:"model,omitempty"`
+	WarnThreshold  float64 `yaml:"warn_threshold,omitempty" json:"warn_threshold,omitempty"`
+	BlockThreshold float64 `yaml:"block_threshold,omitempty" json:"block_threshold,omitempty"`
 }
 
 // IsEnabled reports whether input/output scanning is active. Absent (nil)

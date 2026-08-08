@@ -40,6 +40,15 @@ Agent-derived advisory text is also scrubbed with `pkg/logscrub` before GitHub
 publication so GitHub tokens, AWS access keys, bearer tokens, JWTs, and PEM
 private-key blocks are redacted rather than echoed into comments.
 
+Hive also supports an optional semantic prompt-injection classifier under
+`ioscan.classifier`. It runs after deterministic redaction, scrubs canaries
+before any model call, caps segment size, caches verdicts by content hash, and
+uses a per-eval budget. The first implementation is an LLM judge over the same
+OpenAI-compatible model plumbing used by trajectory review; the interface is
+small enough for a future local ONNX/DeBERTa backend. Classifier failures and
+budget exhaustion fail open. Successful high-risk scores redact in open mode and
+reuse the existing fail-closed kick-block/audit path in closed mode.
+
 ## Consequences
 
 Agents can still see that an issue or label existed, but they do not receive the
