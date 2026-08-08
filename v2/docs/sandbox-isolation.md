@@ -1,26 +1,41 @@
-# Credential-free sandbox isolation (phase 1)
+# Credential-free sandbox isolation
 
 ## Threat model
 
-Hive agents are untrusted code executors: prompts, tool output, and cloned repositories can all contain hostile instructions. The safe target is therefore **no credentials and no network inside the agent sandbox**. If an agent is compromised, it can only modify its mounted workspace; it cannot call GitHub directly, exfiltrate tokens, or bypass the outer MITM policy.
+Hive agents are untrusted code executors: prompts, tool output, and cloned repositories can all contain hostile instructions. The safe target is therefore **no credentials in the agent sandbox** and a network policy that is as close to default-deny as the configured inference runtime allows. If an agent is compromised, it can only modify its mounted workspace; it cannot receive GitHub tokens or push directly.
 
-## Phase-1 scope
+## Current wiring
 
-This phase adds the reusable plumbing, while tmux remains the default runner:
+Sandbox execution is opt-in and the tmux path remains unchanged for all agents unless both gates are set:
 
-- `pkg/sandbox` builds and runs rootless Podman specs with `--network=none`, `--userns=keep-id`, a workspace mount, and an explicit environment allowlist. GitHub/token-like environment variables are filtered even if requested.
-- `agent_sandbox:` is a disabled-by-default global config gate. Individual agents opt in with `agents.<name>.sandbox.enabled: true` plus optional image/env allowlist overrides.
-- `pkg/pushbroker` is the trusted post-step. It inspects committed workspace changes, rejects token-like secrets using the shared `logscrub` token detector, rejects guardrail-critical paths (`.github/workflows/`, gh wrapper paths, `policies/`, `OWNERS`), mints a short-lived scoped GitHub App token outside the workspace, and pushes with a sanitized environment.
-- Push broker results are structured for audit logs: repo, branch, commit, changed files, rejection reason, and push status. Tokens are never recorded.
+```yaml
+agent_sandbox:
+  enabled: true
+  image: ghcr.io/example/hive-agent:latest
+  # Default is "restricted" so local/proxy inference can still work.
+  # Use "none" for non-inference/test runs that require full network isolation.
+  network_mode: restricted
+  timeout_s: 2700
+agents:
+  scanner:
+    sandbox:
+      enabled: true
+```
 
-## Deferred wiring
+For sandboxed agents, a kick now follows this path:
 
-Full migration off tmux is intentionally deferred. The next phases should:
+1. Hive prepares a per-kick host workspace under the sandbox workspace root by cloning/fetching the primary repo with hive-owned credentials before the sandbox starts. The clone URL and sandbox environment are sanitized so GitHub/token variables are not carried into the workspace or container.
+2. Hive writes the kick prompt to `.hive/kick-prompt.txt` in the workspace and launches `pkg/sandbox.Launcher` with a rootless Podman `LaunchSpec`, workspace mount, explicit env allowlist, and configured network mode.
+3. The manager marks the agent busy while the sandbox runs and returns it to idle or failed when the timeout/completion path finishes. Dashboard status uses the existing agent status structures.
+4. Hive collects the transcript at `.hive/sandbox-transcript.log` and any `agent-report*.json` artifact following `pkg/outputschema` conventions.
+5. If the sandbox produced commits, `pkg/pushbroker.Broker` scans the committed diff for token-like secrets and protected-path edits, mints a short-lived scoped GitHub App token outside the sandbox, pushes the branch, and opens a PR through the existing App-authored GitHub client. Broker rejection records audit detail and nothing is pushed.
 
-1. Prepare per-kick workspaces for sandboxed agents instead of reusing long-lived tmux panes.
-2. Execute the agent kick through `pkg/sandbox.Launcher` and collect stdout/stderr/artifacts.
-3. Run `pkg/pushbroker.Broker` automatically after sandbox completion when commits exist on the work branch.
-4. Extend PR creation/commenting into the same trusted post-step so no GitHub credential is ever present in the sandbox.
-5. Add live Podman CI on a runner with rootless Podman available; current package tests skip live execution when Podman is absent.
+## Network trade-off
 
-This keeps phase 1 safe and reviewable: the security-critical broker and sandbox contract are complete and tested, while production agents continue to use the existing tmux path unless explicitly wired in a later phase.
+`network_mode: none` remains available and maps to Podman's `--network=none`, but it only works for non-inference jobs or runtimes that already expose a local/socket model proxy inside the container. The default sandbox network mode is `restricted`: operators must provide a Podman network/proxy policy that allows only the inference endpoint and MITM proxy required by the selected backend. This is a compromise until every supported backend can run through a credential-free local socket without general egress.
+
+## Remaining gaps
+
+- The default target is the hive primary repo and default base ref; richer per-kick repo/ref selection is still future work.
+- Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
+- Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.

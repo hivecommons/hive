@@ -21,6 +21,8 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/claude"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/pushbroker"
+	"github.com/kubestellar/hive/v2/pkg/sandbox"
 	"github.com/kubestellar/hive/v2/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -106,6 +108,11 @@ type AgentProcess struct {
 	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
 	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
 	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	// sandboxResumeAfterCancel is set when an operator resumes a paused
+	// sandbox agent while the canceled sandbox goroutine is still draining.
+	// The completion handler then turns the expected cancellation into Idle
+	// instead of Failed.
+	sandboxResumeAfterCancel bool
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -138,16 +145,27 @@ func effectiveBackend(agent *AgentProcess) string {
 
 // ProjectContext holds project-level config injected into agent boot prompts.
 type ProjectContext struct {
-	Org        string
-	Repos      []string
-	ACMMLevel  int
-	PRsAllowed bool
-	PolicyDir  string
+	Org             string
+	Repos           []string
+	PrimaryRepoName string
+	ACMMLevel       int
+	PRsAllowed      bool
+	PolicyDir       string
 	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
 	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+}
+
+func (p ProjectContext) PrimaryRepo() string {
+	if strings.TrimSpace(p.PrimaryRepoName) != "" {
+		return strings.TrimPrefix(p.PrimaryRepoName, p.Org+"/")
+	}
+	if len(p.Repos) > 0 {
+		return strings.TrimPrefix(p.Repos[0], p.Org+"/")
+	}
+	return ""
 }
 
 type Manager struct {
@@ -217,6 +235,12 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
+	sandboxConfig        config.AgentSandboxConfig
+	sandboxLauncher      sandbox.Launcher
+	sandboxRunner        sandboxCommandRunner
+	sandboxPushMinter    pushbroker.TokenMinter
+	sandboxPRClient      PRCreator
+	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
 }
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
@@ -237,6 +261,45 @@ func (m *Manager) SetRecordPromptCallback(fn func(agent, trigger, prompt string)
 		return
 	}
 	m.recordPromptCallback.Store(&fn)
+}
+
+// SetSandboxConfig wires the disabled-by-default sandbox kick executor gate.
+func (m *Manager) SetSandboxConfig(cfg config.AgentSandboxConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxConfig = cfg
+}
+
+func (m *Manager) SetSandboxLauncher(l sandbox.Launcher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxLauncher = l
+}
+
+func (m *Manager) setSandboxRunnerForTest(r sandboxCommandRunner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxRunner = r
+}
+
+func (m *Manager) SetSandboxPushMinter(minter pushbroker.TokenMinter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxPushMinter = minter
+}
+
+func (m *Manager) SetSandboxPRClient(client PRCreator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxPRClient = client
+}
+
+func (m *Manager) SetSandboxAuditCallback(fn func(agent, action, detail string)) {
+	if fn == nil {
+		m.sandboxAuditCallback.Store(nil)
+		return
+	}
+	m.sandboxAuditCallback.Store(&fn)
 }
 
 // recordPrompt fires the record-prompt callback if one is wired. Safe to call
@@ -688,6 +751,21 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 
 	if agent.State == StateRunning {
 		return fmt.Errorf("agent %s already running", name)
+	}
+
+	if m.agentSandboxEnabledLocked(agent) {
+		if agent.Paused {
+			agent.State = StatePaused
+			m.logger.Info("sandbox agent starting paused", "name", agent.Name, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
+			return nil
+		}
+		now := time.Now()
+		agent.State = StateIdle
+		agent.StartedAt = &now
+		agent.HasLaunched = true
+		agent.LaunchedMode = m.agentMode(agent)
+		m.logger.Info("audit: sandbox agent ready", "name", name)
+		return nil
 	}
 
 	m.sanitizeGitRemotes(agent)
@@ -2545,6 +2623,9 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		if agent.Config.OnDemand {
 			continue
 		}
+		if m.agentSandboxEnabledLocked(agent) {
+			continue
+		}
 		if !m.tmuxSessionExistsForAgent(agent) {
 			var uptimeSeconds float64
 			if agent.StartedAt != nil {
@@ -2823,6 +2904,10 @@ func (m *Manager) SendKick(name string, message string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	if m.agentSandboxEnabledLocked(agent) {
+		return m.startSandboxKickLocked(agent, message)
+	}
+
 	if agent.State != StateRunning {
 		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
@@ -2965,6 +3050,175 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// only carry a truncated preview, which is not enough to answer "what was
 	// my agent asked to do?".
 	m.recordPrompt(agent.Name, trigger, message)
+}
+
+func (m *Manager) agentSandboxEnabledLocked(agent *AgentProcess) bool {
+	return agent != nil && agent.Config.SandboxEnabled(m.sandboxConfig)
+}
+
+func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) error {
+	if agent.Paused || agent.State == StatePaused {
+		return fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
+	}
+	if agent.State == StateStopped {
+		return fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
+	}
+	if agent.State == StateRunning {
+		return fmt.Errorf("agent %s cannot be kicked: sandbox execution already running", agent.Name)
+	}
+	if strings.TrimSpace(m.sandboxConfig.Image) == "" && strings.TrimSpace(agent.Config.SandboxImage(m.sandboxConfig)) == "" {
+		return fmt.Errorf("agent %s sandbox image is not configured", agent.Name)
+	}
+	repo := m.project.PrimaryRepo()
+	if repo == "" {
+		return fmt.Errorf("agent %s sandbox execution requires a primary repo", agent.Name)
+	}
+	now := time.Now()
+	agent.State = StateRunning
+	agent.StartedAt = &now
+	agent.LastKick = &now
+	agent.LastKickMessage = message
+	agent.KickRefused = false
+	agent.KickRefusalReason = ""
+	agent.LastError = ""
+	agent.LaunchedMode = m.agentMode(agent)
+	agent.HasLaunched = true
+	snippet := truncateStr(message, 120)
+	if len(agent.KickHistory) >= kickHistoryCapacity {
+		agent.KickHistory = agent.KickHistory[1:]
+	}
+	agent.KickHistory = append(agent.KickHistory, KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet})
+	if agent.OutputBuffer != nil {
+		agent.OutputBuffer.Write("sandbox kick started")
+	}
+	m.recordPrompt(agent.Name, "sandbox-kick", message)
+	m.logger.Info("audit: sandbox agent kicked", "name", agent.Name, "repo", repo)
+
+	spec := SandboxKickSpec{
+		Agent: agent.Name,
+		AgentConfig: configSnapshot{
+			Backend:   effectiveBackend(agent),
+			Model:     agent.Config.Model,
+			LaunchCmd: agent.Config.LaunchCmd,
+		},
+		Message:      message,
+		Org:          m.project.Org,
+		Repo:         repo,
+		WorkspaceDir: m.sandboxWorkspaceDirLocked(),
+		Image:        agent.Config.SandboxImage(m.sandboxConfig),
+		EnvAllowlist: agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
+		NetworkMode:  agent.Config.SandboxNetworkMode(m.sandboxConfig),
+		Timeout:      time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	agent.cancel = cancel
+	launcher, runner := m.sandboxLauncher, m.sandboxRunner
+	cloneMinter := m.tieredSandboxMinterLocked(m.agentMode(agent).TokenTier())
+	var pushMinter pushbroker.TokenMinter
+	var prClient PRCreator
+	pushEnabled := false
+	if m.agentMode(agent).CanPush() && m.project.PRsAllowed {
+		pushMinter = cloneMinter
+		prClient = m.sandboxPRClient
+		pushEnabled = true
+	}
+	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient)
+	return nil
+}
+
+func (m *Manager) sandboxWorkspaceDirLocked() string {
+	if strings.TrimSpace(m.sandboxConfig.WorkspaceDir) != "" {
+		return m.sandboxConfig.WorkspaceDir
+	}
+	return filepath.Join(m.workDir, "sandbox")
+}
+
+func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {
+	switch minter := m.sandboxPushMinter.(type) {
+	case pushbroker.GitHubAppMinter:
+		minter.Tier = tier
+		return minter
+	case *pushbroker.GitHubAppMinter:
+		if minter == nil {
+			return nil
+		}
+		cp := *minter
+		cp.Tier = tier
+		return cp
+	default:
+		return m.sandboxPushMinter
+	}
+}
+
+func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator) {
+	exec := &SandboxExecutor{
+		Launcher:    launcher,
+		Runner:      runner,
+		CloneMinter: cloneMinter,
+		Minter:      minter,
+		PushEnabled: pushEnabled,
+		PRClient:    prClient,
+		Logger:      m.logger,
+	}
+	res, err := exec.Run(ctx, spec)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	agent, ok := m.agents[name]
+	if !ok {
+		return
+	}
+	agent.cancel = nil
+	if err != nil {
+		if agent.sandboxResumeAfterCancel {
+			agent.sandboxResumeAfterCancel = false
+			agent.State = StateIdle
+			agent.LastError = ""
+			if agent.OutputBuffer != nil {
+				agent.OutputBuffer.Write("sandbox kick cancelled during resume")
+			}
+			m.auditSandbox(name, "sandbox_cancelled", "sandbox kick cancelled while resuming")
+			return
+		}
+		if agent.Paused || agent.State == StatePaused {
+			agent.State = StatePaused
+		} else if agent.State != StateStopped {
+			agent.State = StateFailed
+		}
+		agent.LastError = err.Error()
+		if agent.OutputBuffer != nil {
+			agent.OutputBuffer.Write("sandbox kick failed: " + err.Error())
+		}
+		m.auditSandbox(name, "sandbox_failed", err.Error())
+		if res.Broker != nil && res.Broker.Error != "" {
+			m.auditSandbox(name, "sandbox_broker_rejected", res.Broker.Error)
+		}
+		return
+	}
+	agent.sandboxResumeAfterCancel = false
+	if agent.Paused || agent.State == StatePaused {
+		agent.State = StatePaused
+	} else if agent.State != StateStopped {
+		agent.State = StateIdle
+	}
+	agent.LastError = ""
+	if agent.OutputBuffer != nil {
+		msg := fmt.Sprintf("sandbox kick complete: commits=%d", res.CommitCount)
+		if res.PR != nil && res.PR.URL != "" {
+			msg += " pr=" + res.PR.URL
+		}
+		agent.OutputBuffer.Write(msg)
+	}
+	detail := fmt.Sprintf("workspace=%s commits=%d branch=%s", res.Workspace, res.CommitCount, res.Branch)
+	if res.PR != nil && res.PR.URL != "" {
+		detail += " pr=" + res.PR.URL
+	}
+	m.auditSandbox(name, "sandbox_complete", detail)
+}
+
+func (m *Manager) auditSandbox(agent, action, detail string) {
+	if fn := m.sandboxAuditCallback.Load(); fn != nil && *fn != nil {
+		(*fn)(agent, action, detail)
+	}
 }
 
 // deliverStartupKick delivers a bootstrap prompt to a freshly launched agent
@@ -5056,7 +5310,13 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	agent.PausedReason = reason
 	agent.PausedTrigger = trigger
 	if agent.State == StateRunning {
-		m.tmuxSendKeysForAgent(agent, "C-c", "")
+		if agent.cancel != nil {
+			agent.cancel()
+		}
+		agent.sandboxResumeAfterCancel = false
+		if !m.agentSandboxEnabledLocked(agent) {
+			m.tmuxSendKeysForAgent(agent, "C-c", "")
+		}
 	}
 	agent.State = StatePaused
 	agent.Config.Paused = true
@@ -5102,6 +5362,28 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
 	needsRelaunch := agent.State == StatePaused
+	if m.agentSandboxEnabledLocked(agent) {
+		if needsRelaunch {
+			if agent.cancel != nil {
+				agent.sandboxResumeAfterCancel = true
+			} else {
+				agent.State = StateIdle
+				if agent.StartedAt == nil {
+					now := time.Now()
+					agent.StartedAt = &now
+				}
+			}
+		}
+		m.mu.Unlock()
+		m.logger.Info("audit: sandbox agent resumed",
+			"name", name,
+			"trigger", trigger,
+			"reason", reason,
+			"prev_trigger", prevTrigger,
+			"prev_reason", prevReason,
+		)
+		return nil
+	}
 	if needsRelaunch {
 		agent.forceRelaunch = true
 	}

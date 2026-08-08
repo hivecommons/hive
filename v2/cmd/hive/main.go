@@ -51,6 +51,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/proclock"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
+	"github.com/kubestellar/hive/v2/pkg/pushbroker"
 	"github.com/kubestellar/hive/v2/pkg/retro"
 	"github.com/kubestellar/hive/v2/pkg/review"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
@@ -1217,14 +1218,16 @@ func main() {
 	}
 
 	projectCtx := agent.ProjectContext{
-		Org:            cfg.Project.Org,
-		Repos:          cfg.Project.Repos,
-		ACMMLevel:      acmmLevel,
-		PRsAllowed:     cfg.Project.PRsAllowed(),
-		PolicyDir:      policyDir,
-		AppAuthoredPRs: cfg.GitHub.AppAuthoredPRsEnabled(),
+		Org:             cfg.Project.Org,
+		Repos:           cfg.Project.Repos,
+		PrimaryRepoName: cfg.Project.PrimaryRepo,
+		ACMMLevel:       acmmLevel,
+		PRsAllowed:      cfg.Project.PRsAllowed(),
+		PolicyDir:       policyDir,
+		AppAuthoredPRs:  cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
+	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
 	// pointer (the config watcher swaps its contents in place on reload), so a
 	// key added via the Secret mount, the PVC file, or a config edit takes
@@ -1250,7 +1253,11 @@ func main() {
 	}
 	if appAuth != nil {
 		agentMgr.SetAppAuth(appAuth)
+		agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: appAuth})
 		go agentMgr.StartAgentTokenRefresh(ctx)
+	}
+	if ghClient != nil {
+		agentMgr.SetSandboxPRClient(ghClient)
 	}
 
 	// PR-open-as-the-App-bot: agents push their branch (App-token credential
@@ -1494,6 +1501,7 @@ func main() {
 	}
 
 	dashSrv := dashboard.NewServerWithAuth(cfg.Dashboard.Port, cfg.Dashboard.AuthToken, logger)
+	var beadStores map[string]*beads.Store
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -1501,6 +1509,16 @@ func main() {
 	// from pkg/dashboard — the scheduler only knows a func(action, detail, agent).
 	sched.SetAuditFunc(func(action, detail, agent string) {
 		dashSrv.AuditLog(agent, action, detail, agent)
+	})
+	agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
+		dashSrv.AuditLog(agentName, action, detail, agentName)
+		if action == "sandbox_broker_rejected" {
+			if store, ok := beadStores[agentName]; ok && store != nil {
+				if b, err := store.Create("Sandbox push broker rejected changes", beads.TypeAdvisory, beads.PriorityHigh, agentName, ""); err == nil {
+					_ = store.SetMetadata(b.ID, "sandbox_broker_rejection", detail)
+				}
+			}
+		}
 	})
 
 	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
@@ -1544,7 +1562,7 @@ func main() {
 		logger.Info("trend history restored", "entries", len(pendingTrendSeed))
 	}
 
-	beadStores := make(map[string]*beads.Store)
+	beadStores = make(map[string]*beads.Store)
 	for name, agentCfg := range cfg.EnabledAgents() {
 		store, err := beads.NewStore(agentCfg.BeadsDir)
 		if err != nil {
@@ -2413,6 +2431,7 @@ func main() {
 			uc.SetRepos(cfg.Project.Repos)
 		}
 		gov.UpdateConfig(cfg.Governor)
+		agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 
 		// Re-apply live agent definitions (definition_source) on reload so an
 		// operator's edit to a linked repo propagates. Merges only operator-safe
@@ -2442,6 +2461,8 @@ func main() {
 					ghClient = newClient
 					appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
+					agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
+					agentMgr.SetSandboxPRClient(newClient)
 					dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 					logger.Info("github app auth rebuilt after config reload",
 						"app_id", cfg.GitHub.AppID,

@@ -191,6 +191,9 @@ type AgentSandboxConfig struct {
 	Enabled      bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Image        string   `yaml:"image,omitempty" json:"image,omitempty"`
 	EnvAllowlist []string `yaml:"env_allowlist,omitempty" json:"env_allowlist,omitempty"`
+	NetworkMode  string   `yaml:"network_mode,omitempty" json:"network_mode,omitempty"`
+	TimeoutS     int      `yaml:"timeout_s,omitempty" json:"timeout_s,omitempty"`
+	WorkspaceDir string   `yaml:"workspace_dir,omitempty" json:"workspace_dir,omitempty"`
 }
 
 // AgentSandboxOverride is the per-agent sandbox opt-in block.
@@ -198,6 +201,8 @@ type AgentSandboxOverride struct {
 	Enabled      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Image        string   `yaml:"image,omitempty" json:"image,omitempty"`
 	EnvAllowlist []string `yaml:"env_allowlist,omitempty" json:"env_allowlist,omitempty"`
+	NetworkMode  string   `yaml:"network_mode,omitempty" json:"network_mode,omitempty"`
+	TimeoutS     int      `yaml:"timeout_s,omitempty" json:"timeout_s,omitempty"`
 }
 
 // IoscanConfig gates the pkg/ioscan input/output security scanner (prompt-
@@ -808,6 +813,24 @@ func (a *AgentConfig) SandboxEnvAllowlist(global AgentSandboxConfig) []string {
 		return append([]string(nil), a.Sandbox.EnvAllowlist...)
 	}
 	return append([]string(nil), global.EnvAllowlist...)
+}
+
+// SandboxNetworkMode returns the per-agent network override, then the global
+// sandbox network mode. Empty lets the executor choose its safe default.
+func (a *AgentConfig) SandboxNetworkMode(global AgentSandboxConfig) string {
+	if a != nil && a.Sandbox != nil && a.Sandbox.NetworkMode != "" {
+		return a.Sandbox.NetworkMode
+	}
+	return global.NetworkMode
+}
+
+// SandboxTimeoutS returns the per-agent timeout override, then the global
+// timeout. Non-positive values let the executor use its default.
+func (a *AgentConfig) SandboxTimeoutS(global AgentSandboxConfig) int {
+	if a != nil && a.Sandbox != nil && a.Sandbox.TimeoutS > 0 {
+		return a.Sandbox.TimeoutS
+	}
+	return global.TimeoutS
 }
 
 // GetBeadRole returns the bead role, defaulting to "worker".

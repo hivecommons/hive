@@ -15,6 +15,8 @@ import (
 const (
 	DefaultWorkspaceMount = "/workspace"
 	PodmanBinary          = "podman"
+	NetworkModeNone       = "none"
+	NetworkModeRestricted = "restricted"
 )
 
 var credentialEnvNames = map[string]struct{}{
@@ -31,6 +33,7 @@ type LaunchSpec struct {
 	Command        []string
 	Env            map[string]string
 	EnvAllowlist   []string
+	NetworkMode    string
 	NetworkNone    bool
 	ReadOnly       bool
 }
@@ -94,8 +97,12 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 	if spec.Name != "" {
 		args = append(args, "--name", spec.Name)
 	}
-	if spec.NetworkNone {
-		args = append(args, "--network=none")
+	networkMode := strings.TrimSpace(spec.NetworkMode)
+	if networkMode == "" && spec.NetworkNone {
+		networkMode = NetworkModeNone
+	}
+	if networkMode != "" {
+		args = append(args, "--network="+networkMode)
 	}
 	if spec.ReadOnly {
 		args = append(args, "--read-only")

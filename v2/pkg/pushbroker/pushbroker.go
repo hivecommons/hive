@@ -76,6 +76,7 @@ func (m GitHubAppMinter) MintPushToken(ctx context.Context, repo string) (string
 type Broker struct {
 	Workspace      string
 	Branch         string
+	BaseRef        string
 	Repo           string
 	Remote         string
 	ProtectedPaths []string
@@ -140,7 +141,11 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 	if strings.TrimSpace(token) == "" {
 		return b.fail(res, errors.New("pushbroker: minter returned empty token"))
 	}
-	args := []string{"-c", "http.extraHeader=Authorization: Bearer " + token, "push", b.remote(), "HEAD:refs/heads/" + b.Branch}
+	args := []string{
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "http.extraHeader=Authorization: Bearer " + token,
+		"push", "--no-verify", b.remote(), "HEAD:refs/heads/" + b.Branch,
+	}
 	if _, err := b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", args...); err != nil {
 		return b.fail(res, fmt.Errorf("git push failed: %w", err))
 	}
@@ -167,6 +172,12 @@ func (b *Broker) validate() error {
 }
 
 func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
+	if base := strings.TrimSpace(b.BaseRef); base != "" {
+		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+			out, err := b.git(ctx, "diff", "--name-only", base+"...HEAD")
+			return splitLines(out), err
+		}
+	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
 		out, err := b.git(ctx, "diff", "--name-only", base+"...HEAD")
@@ -177,6 +188,12 @@ func (b *Broker) changedFiles(ctx context.Context) ([]string, error) {
 }
 
 func (b *Broker) outgoingDiff(ctx context.Context) (string, error) {
+	if base := strings.TrimSpace(b.BaseRef); base != "" {
+		if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
+			out, err := b.git(ctx, "diff", "--no-ext-diff", base+"...HEAD")
+			return string(out), err
+		}
+	}
 	base := b.remoteRef()
 	if _, err := b.git(ctx, "rev-parse", "--verify", base); err == nil {
 		out, err := b.git(ctx, "diff", "--no-ext-diff", base+"...HEAD")

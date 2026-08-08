@@ -35,6 +35,20 @@ func TestSanitizedEnvAllowlistDropsCredentials(t *testing.T) {
 	}
 }
 
+func TestPodmanArgsHonorsRestrictedNetworkMode(t *testing.T) {
+	args, err := PodmanArgs(LaunchSpec{Image: "agent:latest", Workspace: "/workspace-src", Command: []string{"true"}, NetworkMode: NetworkModeRestricted, NetworkNone: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--network=restricted") {
+		t.Fatalf("args %q missing restricted network", joined)
+	}
+	if strings.Contains(joined, "--network=none") {
+		t.Fatalf("NetworkMode should override legacy NetworkNone: %q", joined)
+	}
+}
+
 func TestPodmanRunSkippedWhenUnavailable(t *testing.T) {
 	if !Available() {
 		t.Skip("podman not available")

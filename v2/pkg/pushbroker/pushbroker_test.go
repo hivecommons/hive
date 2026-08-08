@@ -65,6 +65,9 @@ func TestBrokerPushSanitizesCredentialEnvironmentAndWorkspace(t *testing.T) {
 	if !res.Pushed {
 		t.Fatal("Pushed=false")
 	}
+	if !slices.Contains(r.argsOnPush, "core.hooksPath=/dev/null") || !slices.Contains(r.argsOnPush, "--no-verify") {
+		t.Fatalf("push did not disable hooks: %v", r.argsOnPush)
+	}
 	for _, env := range r.envOnPush {
 		if strings.Contains(env, "should_not_leave_hive") || strings.Contains(env, "full_token") || strings.HasPrefix(env, "GITHUB_TOKEN=") || strings.HasPrefix(env, "HIVE_GITHUB_TOKEN=") {
 			t.Fatalf("credential leaked into push env: %q", env)
