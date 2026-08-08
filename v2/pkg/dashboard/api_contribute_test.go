@@ -309,6 +309,8 @@ func TestContributeLandingHasCustomCSSHelp(t *testing.T) {
 
 	for _, want := range []string{
 		`id="custom-css-info-btn"`,
+		`class="info-pop custom-css-pop"`,
+		`pop.style.position='fixed'`,
 		`Custom CSS`,
 		`?style=owner/repo/path/theme.css@ref`,
 		`?style=castrojo/themes/lb/bluefin.css@main`,

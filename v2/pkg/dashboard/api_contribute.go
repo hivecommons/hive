@@ -787,6 +787,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .info-pop li{margin:2px 0}
 .info-pop code{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:0 3px;font-size:.7rem}
 .custom-css-help .info-btn{font-size:.72rem;font-weight:600;color:#58a6ff}
+.custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
 .custom-css-example{box-sizing:border-box;width:100%%;margin:6px 0 4px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:6px}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
@@ -2603,7 +2604,7 @@ function renderMeCard(mount,p){
     +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
     +'<span class="me-stylepick" title="Personalize your card — more customization coming">Profile style <select id="me-style-select" aria-label="Profile style (more customization coming)">'+styleOpts+'</select></span>'
     +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
-    +'<div class="info-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
+    +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
     +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
     +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
     +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
@@ -2859,14 +2860,38 @@ function _wireCustomCSSInfo(){
   var pop=document.getElementById('custom-css-info-pop');
   if(!btn||!pop||btn.getAttribute('data-wired')==='1')return;
   btn.setAttribute('data-wired','1');
+  function place(){
+    if(pop.hidden)return;
+    pop.style.position='fixed';
+    pop.style.left='0px';
+    pop.style.top='0px';
+    pop.style.right='auto';
+    pop.style.bottom='auto';
+    var edge=8,gap=8;
+    var b=btn.getBoundingClientRect();
+    var vw=document.documentElement.clientWidth||window.innerWidth||0;
+    var vh=document.documentElement.clientHeight||window.innerHeight||0;
+    var r=pop.getBoundingClientRect();
+    var w=r.width||pop.offsetWidth||320;
+    var h=r.height||pop.offsetHeight||0;
+    var maxLeft=Math.max(edge,vw-w-edge);
+    var left=Math.min(Math.max(b.left,edge),maxLeft);
+    var below=vh-b.bottom-gap;
+    var above=b.top-gap;
+    var top=(below>=h||below>=above)?Math.min(b.bottom+gap,vh-h-edge):Math.max(edge,b.top-gap-h);
+    pop.style.left=left+'px';
+    pop.style.top=top+'px';
+  }
   function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
   btn.addEventListener('click',function(e){
     e.stopPropagation();
     var open=pop.hidden;
-    pop.hidden=!open;
-    btn.setAttribute('aria-expanded',open?'true':'false');
+    if(open){pop.hidden=false;btn.setAttribute('aria-expanded','true');place();}
+    else close();
   });
   pop.addEventListener('click',function(e){e.stopPropagation();});
+  window.addEventListener('resize',place);
+  window.addEventListener('scroll',place,true);
   document.addEventListener('click',function(){if(!pop.hidden)close();});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
 }
