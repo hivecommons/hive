@@ -177,9 +177,6 @@ func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntr
 	var orgMatch *RegistryEntry
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
-		if h.Lite || h.HiveType == "lite" {
-			continue
-		}
 		if !strings.EqualFold(h.Org, org) {
 			continue
 		}

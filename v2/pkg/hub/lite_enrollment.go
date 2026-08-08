@@ -2,16 +2,16 @@ package hub
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/config"
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 )
 
@@ -27,9 +27,6 @@ type LiteEnrollmentConfig struct {
 	Agents      []string `json:"agents"`
 	Advisory    bool     `json:"advisory"`
 	ZeroSecrets bool     `json:"zeroSecrets"`
-	// PostAdvisoryIssue opts this lite enrollment into the only write path:
-	// updating one idempotent advisory issue with the hub-side report.
-	PostAdvisoryIssue bool `json:"postAdvisoryIssue,omitempty"`
 }
 
 type LiteEnrollmentRequest struct {
@@ -50,8 +47,10 @@ type LiteEnrollmentResponse struct {
 	DashboardURL   string               `json:"dashboard_url"`
 	Config         LiteEnrollmentConfig `json:"config"`
 	Existing       bool                 `json:"existing"`
+	Action         string               `json:"action"`
+	SpokeID        string               `json:"spoke_id"`
+	SpokeStatus    string               `json:"spoke_status,omitempty"`
 	NextSteps      []string             `json:"next_steps"`
-	Deferred       []string             `json:"deferred"`
 }
 
 var verifyLiteRepoAccess = verifyGitHubRepoAccess
@@ -114,6 +113,50 @@ func (s *HubServer) handleLiteEnroll(w http.ResponseWriter, r *http.Request) {
 		acmm = liteMaxACMMLevel
 	}
 
+	cfg := defaultLiteEnrollmentConfig(acmm)
+
+	spoke, existing := s.findOwnedLiteTargetSpoke(username, req.Owner, host)
+	if existing {
+		if err := s.addLiteRepoToSpoke(spoke, req.Owner, req.Repo, acmm, host); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp := LiteEnrollmentResponse{
+			ID:           spoke.ID,
+			Mode:         "lite",
+			Owner:        req.Owner,
+			Repo:         req.Repo,
+			ACMMLevel:    acmm,
+			DashboardURL: s.dashboardURLForRequest(r),
+			Config:       cfg,
+			Existing:     true,
+			Action:       "spoke_config_update",
+			SpokeID:      spoke.ID,
+			SpokeStatus:  spoke.Status,
+			NextSteps: []string{
+				"Wait for the spoke heartbeat to apply the updated repo list.",
+				"Open the spoke dashboard and review advisory findings.",
+				"Raise ACMM from L1 to L2 only after advisory noise is acceptable.",
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	if user.SaaSQuota == 0 {
+		writeJSONError(w, http.StatusForbidden, "no hosted hive quota — contact the hub admin to request access")
+		return
+	}
+	if user.SaaSQuota > 0 && countUserHives(username) >= user.SaaSQuota {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("quota reached — max %d SaaS hives", user.SaaSQuota))
+		return
+	}
+	if maxSaaSHivesTotal > 0 && len(listSaaSHives()) >= maxSaaSHivesTotal {
+		writeJSONError(w, http.StatusServiceUnavailable, "hosted capacity reached — try again later")
+		return
+	}
+
 	installationID := req.InstallationID
 	if installationID == 0 {
 		discovered, err := s.discoverLiteInstallation(r.Context(), req.Owner)
@@ -124,65 +167,17 @@ func (s *HubServer) handleLiteEnroll(w http.ResponseWriter, r *http.Request) {
 		installationID = discovered
 	}
 
-	id := liteHiveID(host, req.Owner, req.Repo)
-	now := time.Now().UTC().Format(time.RFC3339)
-	cfg := defaultLiteEnrollmentConfig(acmm)
-	entry := RegistryEntry{
-		ID:                   id,
-		Name:                 req.Owner + "/" + req.Repo,
-		Org:                  req.Owner,
-		Repos:                []string{req.Repo},
-		PrimaryRepo:          req.Repo,
-		ACMMLevel:            acmm,
-		GovernorMode:         "ADVISORY",
-		Owner:                username,
-		HiveType:             "lite",
-		Lite:                 true,
-		LiteConfig:           &cfg,
-		IsPublic:             false,
-		RegisteredAt:         now,
-		GitHubHost:           host,
-		GitHubInstallationID: installationID,
-		Online:               false,
+	spoke, err = s.requestHostedLiteSpoke(username, req.Owner, req.Repo, host, installationID, acmm)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	existing := false
-	s.mu.Lock()
-	for i := range s.registry.Hives {
-		h := &s.registry.Hives[i]
-		if h.ID != id {
-			continue
-		}
-		if !h.Lite && h.HiveType != "lite" {
-			s.mu.Unlock()
-			writeJSONError(w, http.StatusConflict, "a non-lite hive already uses this enrollment id")
-			return
-		}
-		if h.Owner != "" && h.Owner != username && username != hubAdminUsername {
-			s.mu.Unlock()
-			writeJSONError(w, http.StatusForbidden, "lite enrollment already belongs to another user")
-			return
-		}
-		entry.RegisteredAt = h.RegisteredAt
-		if entry.RegisteredAt == "" {
-			entry.RegisteredAt = now
-		}
-		s.registry.Hives[i] = entry
-		existing = true
-		break
-	}
-	if !existing {
-		s.registry.Hives = append(s.registry.Hives, entry)
-	}
-	s.registry.UpdatedAt = now
-	s.mu.Unlock()
-
-	user.Hives[id] = "owner"
+	user.Hives[spoke.ID] = "owner"
 	_ = saveSaaSUser(user)
-	s.requestSave()
 
 	resp := LiteEnrollmentResponse{
-		ID:             id,
+		ID:             spoke.ID,
 		Mode:           "lite",
 		Owner:          req.Owner,
 		Repo:           req.Repo,
@@ -190,16 +185,239 @@ func (s *HubServer) handleLiteEnroll(w http.ResponseWriter, r *http.Request) {
 		ACMMLevel:      acmm,
 		DashboardURL:   s.dashboardURLForRequest(r),
 		Config:         cfg,
-		Existing:       existing,
+		Existing:       false,
+		Action:         "hosted_lite_spoke_requested",
+		SpokeID:        spoke.ID,
+		SpokeStatus:    spoke.Status,
 		NextSteps: []string{
-			"Open the dashboard and watch advisory findings for this repo.",
+			"Wait for the hosted lite spoke to come online.",
+			"Open the spoke dashboard and watch advisory findings for this repo.",
 			"Raise ACMM from L1 to L2 only after advisory noise is acceptable.",
 			"Graduate to a full spoke when you need execution, private runtime, or higher ACMM levels.",
 		},
-		Deferred: []string{"hub-hosted execution", "optional workflow shim"},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *HubServer) findOwnedLiteTargetSpoke(username, owner, host string) (*SaaSHive, bool) {
+	wantHost := githubHostLabel(host)
+	if wantHost == "" {
+		wantHost = publicGitHubHost
+	}
+	hives := listSaaSHives()
+	for i := range hives {
+		h := &hives[i]
+		if h.Owner != username || h.Status == statusAvailable {
+			continue
+		}
+		if !strings.EqualFold(h.Org, owner) {
+			continue
+		}
+		if !s.liteSpokeProfileCompatible(h) {
+			continue
+		}
+		if gotHost := s.spokeGitHubHostForLiteMatch(h); gotHost != wantHost {
+			continue
+		}
+		return h, true
+	}
+	return nil, false
+}
+
+func (s *HubServer) liteSpokeProfileCompatible(h *SaaSHive) bool {
+	if h == nil {
+		return false
+	}
+	if s.registrySpokeIsLite(h.ID) {
+		return true
+	}
+	return h.ACMMLevel == 0 || h.ACMMLevel <= liteMaxACMMLevel
+}
+
+func (s *HubServer) spokeGitHubHostForLiteMatch(h *SaaSHive) string {
+	if h == nil {
+		return publicGitHubHost
+	}
+	host := githubHostLabel(h.GitHubHost)
+	if host == "" {
+		if c := s.clusterForHive(h); c != nil {
+			host = githubHostLabel(effectiveGitHubBaseURL(h, c))
+		}
+	}
+	if host == "" {
+		return publicGitHubHost
+	}
+	return host
+}
+
+func (s *HubServer) addLiteRepoToSpoke(h *SaaSHive, owner, repo string, acmm int, host string) error {
+	if h == nil {
+		return fmt.Errorf("spoke not found")
+	}
+	isLite := s.registrySpokeIsLite(h.ID)
+	if h.Org == "" {
+		h.Org = owner
+	}
+	if h.PrimaryRepo == "" {
+		h.PrimaryRepo = repo
+	}
+	found := false
+	for _, existing := range h.Repos {
+		if strings.EqualFold(existing, repo) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		h.Repos = append(h.Repos, repo)
+	}
+	if h.ACMMLevel == 0 || (isLite && h.ACMMLevel > liteMaxACMMLevel) {
+		h.ACMMLevel = acmm
+	}
+	if h.RequestedACMMLevel == 0 || (isLite && h.RequestedACMMLevel > liteMaxACMMLevel) {
+		h.RequestedACMMLevel = h.ACMMLevel
+	}
+	h.ClaimDelivered = false
+	h.ACMMDelivered = false
+	if host != "" && host != publicGitHubHost && h.GitHubHost == "" {
+		h.GitHubHost = host
+	}
+	if err := saveSaaSHive(h); err != nil {
+		return fmt.Errorf("save spoke config request: %w", err)
+	}
+	return nil
+}
+
+func (s *HubServer) registrySpokeIsLite(hiveID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == hiveID {
+			return s.registry.Hives[i].Lite || s.registry.Hives[i].HiveType == "lite"
+		}
+	}
+	return false
+}
+
+func (s *HubServer) requestHostedLiteSpoke(username, owner, repo, host string, installationID int64, acmm int) (*SaaSHive, error) {
+	clusterID := defaultClusterID
+	cluster, ok := s.clusters[clusterID]
+	if !ok {
+		return nil, fmt.Errorf("default hosted-spoke cluster %q is not configured", clusterID)
+	}
+	hiveID := generateHiveID(owner, repo)
+	now := time.Now().UTC().Format(time.RFC3339)
+	h := &SaaSHive{
+		ID:                 hiveID,
+		Owner:              username,
+		ProjectName:        "Hive lite: " + owner + "/" + repo,
+		Org:                owner,
+		Repos:              []string{repo},
+		PrimaryRepo:        repo,
+		ACMMLevel:          acmm,
+		RequestedACMMLevel: acmm,
+		ClaimDelivered:     false,
+		ACMMDelivered:      false,
+		Status:             "provisioning",
+		CreatedAt:          now,
+		Subdomain:          hiveID + "." + cluster.Domain,
+		ClusterID:          clusterID,
+		IsPublic:           false,
+		AutoUpgrade:        true,
+	}
+	if host != "" && host != publicGitHubHost {
+		h.GitHubHost = host
+		h.GitHubBaseURL = "https://" + host
+		h.GitHubAPIURL = gheAPIURLForHost(host)
+	}
+	if err := saveSaaSHive(h); err != nil {
+		return nil, fmt.Errorf("save hosted lite spoke metadata: %w", err)
+	}
+	user := ensureSaaSUser(username)
+	user.Hives[hiveID] = saasRoleOwner
+	_ = saveSaaSUser(user)
+
+	identity := ResolveHiveIdentity(h, &cluster)
+	appID := identity.AppID
+	if appID == 0 {
+		appID = config.PlaceholderAppID
+	}
+	req := &CreateHiveRequest{
+		Org:            owner,
+		Repos:          repo,
+		PrimaryRepo:    repo,
+		ProjectName:    h.ProjectName,
+		ACMMLevel:      acmm,
+		ClusterID:      clusterID,
+		AuthMethod:     "app",
+		AppID:          strconv.FormatInt(appID, 10),
+		InstallationID: strconv.FormatInt(installationID, 10),
+		AppPrivateKey:  loadClusterAppKey(clusterID),
+		GitHubBaseURL:  h.GitHubBaseURL,
+		GitHubAPIURL:   h.GitHubAPIURL,
+	}
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		if err := provisionHive(h, req, &cluster, s.appKeysByAppID(), s.logger); err != nil {
+			h.Status = "error"
+			h.Error = err.Error()
+			_ = saveSaaSHive(h)
+			s.logger.Warn("hosted lite spoke provision failed", "hive_id", hiveID, "error", err)
+			return
+		}
+		h.Status = "provisioning"
+		_ = saveSaaSHive(h)
+	}()
+	s.updateRegistryForLiteSpoke(h)
+	return h, nil
+}
+
+func (s *HubServer) updateRegistryForLiteSpoke(h *SaaSHive) {
+	if h == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	cfg := defaultLiteEnrollmentConfig(cappedLiteACMM(h.ACMMLevel))
+	entry := RegistryEntry{
+		ID:           h.ID,
+		Name:         h.ProjectName,
+		Org:          h.Org,
+		Repos:        append([]string(nil), h.Repos...),
+		PrimaryRepo:  h.PrimaryRepo,
+		ACMMLevel:    cappedLiteACMM(h.ACMMLevel),
+		GovernorMode: "ADVISORY",
+		Owner:        h.Owner,
+		HiveType:     "lite",
+		Lite:         true,
+		LiteConfig:   &cfg,
+		IsPublic:     false,
+		RegisteredAt: func() string {
+			if h.CreatedAt != "" {
+				return h.CreatedAt
+			}
+			return now
+		}(),
+		GitHubHost: h.GitHubHost,
+		Online:     false,
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == h.ID {
+			entry.LastHeartbeat = s.registry.Hives[i].LastHeartbeat
+			entry.DashboardURL = s.registry.Hives[i].DashboardURL
+			entry.Online = s.registry.Hives[i].Online
+			s.registry.Hives[i] = entry
+			s.registry.UpdatedAt = now
+			s.requestSave()
+			return
+		}
+	}
+	s.registry.Hives = append(s.registry.Hives, entry)
+	s.registry.UpdatedAt = now
+	s.requestSave()
 }
 
 func defaultLiteEnrollmentConfig(acmm int) LiteEnrollmentConfig {
@@ -211,24 +429,6 @@ func defaultLiteEnrollmentConfig(acmm int) LiteEnrollmentConfig {
 		Advisory:    true,
 		ZeroSecrets: true,
 	}
-}
-
-func liteHiveID(host, owner, repo string) string {
-	host = strings.ToLower(host)
-	owner = strings.ToLower(owner)
-	repo = strings.ToLower(repo)
-	prefix := "lite-"
-	if host != "" && !strings.EqualFold(host, publicGitHubHost) {
-		prefix += host + "-"
-	}
-	base := prefix + owner + "-" + repo
-	base = strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(base)
-	sum := sha256.Sum256([]byte(host + "/" + owner + "/" + repo))
-	suffix := hex.EncodeToString(sum[:])[:8]
-	if len(base) > 81 {
-		base = base[:81]
-	}
-	return base + "-" + suffix
 }
 
 func (s *HubServer) discoverLiteInstallation(ctx context.Context, owner string) (int64, error) {
@@ -246,6 +446,16 @@ func (s *HubServer) discoverLiteInstallation(ctx context.Context, owner string) 
 		return 0, fmt.Errorf("GitHub App installation not found for %s: %w", owner, err)
 	}
 	return id, nil
+}
+
+func cappedLiteACMM(level int) int {
+	if level <= 0 {
+		return liteDefaultACMMLevel
+	}
+	if level > liteMaxACMMLevel {
+		return liteMaxACMMLevel
+	}
+	return level
 }
 
 func (s *HubServer) dashboardURLForRequest(r *http.Request) string {

@@ -34,7 +34,7 @@ func newEnrollCommand(env *commandEnv) *cobra.Command {
 	opts := &enrollOptions{acmmLevel: 2, githubHost: "github.com"}
 	cmd := &cobra.Command{
 		Use:   "enroll <owner/repo>",
-		Short: "Enroll a repo in clusterless Hive lite mode",
+		Short: "Enroll a repo into a Hive lite spoke",
 		Example: `  hivectl enroll kubestellar/hive
   hivectl enroll kubestellar/hive --acmm-level 1
   hivectl enroll kubestellar/hive --installation-id 123456`,
@@ -126,9 +126,19 @@ func runEnroll(ctx context.Context, client enrollHubClient, req liteEnrollReques
 
 func printEnrollSummary(cmd *cobra.Command, repo string, acmm, requested int, resp map[string]any) {
 	out := cmd.OutOrStdout()
-	id, _ := resp["id"].(string)
+	id, _ := resp["spoke_id"].(string)
+	if id == "" {
+		id, _ = resp["id"].(string)
+	}
+	action, _ := resp["action"].(string)
 	dashboard, _ := resp["dashboard_url"].(string)
-	fmt.Fprintf(out, "✓ Enrolled %s in Hive lite (%s)\n", repo, id)
+	fmt.Fprintf(out, "✓ Enrolled %s in Hive lite spoke %s\n", repo, id)
+	switch action {
+	case "spoke_config_update":
+		fmt.Fprintln(out, "  repo will be added to the spoke config on its next heartbeat")
+	case "hosted_lite_spoke_requested":
+		fmt.Fprintln(out, "  hosted lite spoke provisioning requested")
+	}
 	if requested > acmm {
 		fmt.Fprintf(out, "  requested ACMM L%d capped to L%d for lite mode\n", requested, acmm)
 	}
@@ -138,12 +148,11 @@ func printEnrollSummary(cmd *cobra.Command, repo string, acmm, requested int, re
 	if dashboard != "" {
 		fmt.Fprintf(out, "  Dashboard: %s\n", dashboard)
 	}
-	fmt.Fprintln(out, "\nStarter config: advisory-only lanes at ACMM L1-L2; no repository PAT or long-lived secret is written.")
+	fmt.Fprintln(out, "\nStarter config: advisory-only lanes at ACMM L1-L2; repo lives in the spoke hive.yaml; no repository PAT or long-lived secret is written.")
 	fmt.Fprintln(out, "\nNext steps:")
-	fmt.Fprintln(out, "  1. Open the dashboard and review advisory findings.")
+	fmt.Fprintln(out, "  1. Wait for the spoke heartbeat/provisioning to apply the repo config.")
 	fmt.Fprintln(out, "  2. Raise ACMM from L1 to L2 only after advisory noise is acceptable.")
 	fmt.Fprintln(out, "  3. Graduate to a full spoke for execution, private runtime, or ACMM L3+.")
-	fmt.Fprintln(out, "\nDeferred: hub-hosted execution and optional workflow shim.")
 }
 
 func numberString(v any) string {

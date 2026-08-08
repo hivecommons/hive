@@ -877,13 +877,7 @@ func main() {
 	}
 
 	if os.Getenv("HIVE_MODE") == "hub" {
-		var liteCfg config.LiteConfig
-		if cfg, err := config.LoadWithDashboardOverlay(*configPath); err == nil {
-			liteCfg = cfg.Lite
-		} else {
-			logger.Warn("hub mode: failed to load config; lite execution remains disabled", "error", err)
-		}
-		runHub(logger, liteCfg)
+		runHub(logger)
 		return
 	}
 
@@ -6705,7 +6699,7 @@ func parseColorInt(color string) int {
 	return result
 }
 
-func runHub(logger *slog.Logger, liteCfg config.LiteConfig) {
+func runHub(logger *slog.Logger) {
 	port := 3001
 	if p := os.Getenv("HIVE_HUB_PORT"); p != "" {
 		if parsed, err := strconv.Atoi(p); err == nil {
@@ -6715,15 +6709,11 @@ func runHub(logger *slog.Logger, liteCfg config.LiteConfig) {
 	logger.Info("starting in HUB mode", "port", port)
 
 	hubSrv := hub.NewHubServer(port, logger, gitShort, gitBranch)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	hubSrv.StartLiteExecution(ctx, liteCfg.Execution, liteCfg.ExecutionInterval)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		cancel()
 		logger.Info("hub received signal, shutting down gracefully", "signal", sig)
 		const shutdownTimeout = 10 * time.Second
 		if err := hubSrv.Shutdown(shutdownTimeout); err != nil {

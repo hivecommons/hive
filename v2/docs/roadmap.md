@@ -18,7 +18,7 @@ order, not priority rank.
 | Intent verification | Tier-based change authorization is in the merge-gate path; trajectory-integrated intent-alignment review remains the next slice. | [#2803](https://github.com/kubestellar/hive/issues/2803), [intent verification](intent-verification.md) |
 | Review fan-out | Structured review reports and deterministic aggregation are in place; scheduler fan-out to parallel review perspectives is the deferred wiring. | [#2807](https://github.com/kubestellar/hive/issues/2807), [review swarm](review-swarm.md) |
 | Credential-free sandbox kick path | Move agent execution toward no live token and no direct network in the sandbox, with trusted host-side post-steps retaining the MITM proxy as an outer layer. | [#2804](https://github.com/kubestellar/hive/issues/2804), [security threat model](security-threat-model.md#known-gaps-and-roadmap) |
-| Hub-hosted lite execution | Extend the current zero-secret `hivectl enroll OWNER/REPO` advisory enrollment into hub-hosted execution for low-friction adoption. | [#2808](https://github.com/kubestellar/hive/issues/2808), [lite enrollment](lite-enrollment.md) |
+| Spoke-based lite enrollment | Keep `hivectl enroll OWNER/REPO` as a zero-secret on-ramp by adding repos to an existing spoke or provisioning a hosted lite spoke; the hub tracks only spokes. | [#2808](https://github.com/kubestellar/hive/issues/2808), [lite enrollment](lite-enrollment.md) |
 | Retrospective learning lane | Build from deterministic post-completion advisory beads toward LLM-assisted retro summaries and knowledge extraction. | [#2809](https://github.com/kubestellar/hive/issues/2809), [retro lane](retro-lane.md) |
 
 ## Next

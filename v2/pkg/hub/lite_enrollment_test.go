@@ -41,23 +41,34 @@ func TestHandleLiteEnrollTable(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       string
+		seed       func(t *testing.T)
 		wantStatus int
 		check      func(t *testing.T, s *HubServer, rec *httptest.ResponseRecorder)
 	}{
 		{
-			name:       "happy path caps to L2 and persists lite marker",
-			body:       `{"owner":"kubestellar","repo":"hive","installation_id":123,"acmm_level":5}`,
+			name: "existing spoke gets repo through config callback",
+			body: `{"owner":"kubestellar","repo":"hive","installation_id":123,"acmm_level":5}`,
+			seed: func(t *testing.T) {
+				t.Helper()
+				if err := saveSaaSHive(&SaaSHive{
+					ID: "spoke-1", Owner: "lite-user", Org: "kubestellar", Repos: []string{"old"}, PrimaryRepo: "old",
+					ACMMLevel: 2, RequestedACMMLevel: 2, Status: statusAssigned, ClaimDelivered: true, ACMMDelivered: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
 			wantStatus: http.StatusOK,
 			check: func(t *testing.T, s *HubServer, rec *httptest.ResponseRecorder) {
 				var resp LiteEnrollmentResponse
 				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 					t.Fatal(err)
 				}
-				if resp.ACMMLevel != 2 || resp.InstallationID != 123 || resp.Mode != "lite" {
+				if resp.ACMMLevel != 2 || resp.Action != "spoke_config_update" || resp.SpokeID != "spoke-1" || !resp.Existing {
 					t.Fatalf("response = %#v", resp)
 				}
-				if len(s.registry.Hives) != 1 || !s.registry.Hives[0].Lite || s.registry.Hives[0].HiveType != "lite" || s.registry.Hives[0].IsPublic {
-					t.Fatalf("registry = %#v", s.registry.Hives)
+				h := loadSaaSHive("spoke-1")
+				if h == nil || !containsFold(h.Repos, "hive") || h.ClaimDelivered || h.ACMMDelivered {
+					t.Fatalf("spoke meta = %#v", h)
 				}
 			},
 		},
@@ -67,15 +78,31 @@ func TestHandleLiteEnrollTable(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "installation required without hub app key",
-			body:       `{"owner":"kubestellar","repo":"hive"}`,
+			name: "installation required without hub app key",
+			body: `{"owner":"kubestellar","repo":"hive"}`,
+			seed: func(t *testing.T) {
+				t.Helper()
+				u := ensureSaaSUser("lite-user")
+				u.SaaSQuota = 1
+				if err := saveSaaSUser(u); err != nil {
+					t.Fatal(err)
+				}
+			},
 			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "hosted spoke requires quota",
+			body:       `{"owner":"kubestellar","repo":"hive","installation_id":123}`,
+			wantStatus: http.StatusForbidden,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, cleanup := newLiteTestHub(t)
 			defer cleanup()
+			if tt.seed != nil {
+				tt.seed(t)
+			}
 			rec := httptest.NewRecorder()
 			req := liteReqWithUser(http.MethodPost, "/api/saas/lite/enroll", tt.body, "lite-user")
 			s.handleLiteEnroll(rec, req)
@@ -92,6 +119,12 @@ func TestHandleLiteEnrollTable(t *testing.T) {
 func TestHandleLiteEnrollDuplicateIdempotent(t *testing.T) {
 	s, cleanup := newLiteTestHub(t)
 	defer cleanup()
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "spoke-1", Owner: "lite-user", Org: "kubestellar", Repos: []string{"hive"}, PrimaryRepo: "hive",
+		ACMMLevel: 2, RequestedACMMLevel: 2, Status: statusAssigned,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	body := `{"owner":"kubestellar","repo":"hive","installation_id":123,"acmm_level":2}`
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
@@ -101,62 +134,66 @@ func TestHandleLiteEnrollDuplicateIdempotent(t *testing.T) {
 			t.Fatalf("attempt %d status = %d body=%s", i, rec.Code, rec.Body.String())
 		}
 	}
-	if len(s.registry.Hives) != 1 {
-		t.Fatalf("duplicate enrollment created %d entries", len(s.registry.Hives))
+	h := loadSaaSHive("spoke-1")
+	if h == nil || len(h.Repos) != 1 || h.Repos[0] != "hive" {
+		t.Fatalf("duplicate enrollment changed repos: %#v", h)
 	}
 }
 
-func TestHandleLiteEnrollDuplicateRejectsDifferentOwner(t *testing.T) {
+func TestHandleLiteEnrollDoesNotAttachToWrongForgeSpoke(t *testing.T) {
 	s, cleanup := newLiteTestHub(t)
 	defer cleanup()
-	mkUser(t, "other-user")
-	s.registry.Hives = []RegistryEntry{{
-		ID:          liteHiveID(publicGitHubHost, "kubestellar", "hive"),
-		Org:         "kubestellar",
-		PrimaryRepo: "hive",
-		Repos:       []string{"hive"},
-		Owner:       "other-user",
-		HiveType:    "lite",
-		Lite:        true,
-	}}
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "spoke-1", Owner: "lite-user", Org: "kubestellar", Repos: []string{"old"}, PrimaryRepo: "old",
+		GitHubHost: "github.ibm.com", ACMMLevel: 2, Status: statusAssigned,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
 	req := liteReqWithUser(http.MethodPost, "/api/saas/lite/enroll", `{"owner":"kubestellar","repo":"hive","installation_id":123}`, "lite-user")
 	s.handleLiteEnroll(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d body=%s, want 403", rec.Code, rec.Body.String())
+		t.Fatalf("status = %d body=%s, want quota failure instead of mutating wrong-forge spoke", rec.Code, rec.Body.String())
 	}
-	if s.registry.Hives[0].Owner != "other-user" {
-		t.Fatalf("owner changed to %q", s.registry.Hives[0].Owner)
-	}
-}
-
-func TestLiteHiveIDIncludesNonPublicHost(t *testing.T) {
-	publicID := liteHiveID(publicGitHubHost, "org", "repo")
-	gheID := liteHiveID("github.example.com", "org", "repo")
-	if publicID == gheID {
-		t.Fatalf("public and GHE IDs collided: %q", publicID)
-	}
-	if !strings.HasPrefix(publicID, "lite-org-repo-") {
-		t.Fatalf("public ID = %q", publicID)
-	}
-	if !strings.HasPrefix(gheID, "lite-github-example-com-org-repo") {
-		t.Fatalf("GHE ID = %q", gheID)
-	}
-	if mixed := liteHiveID("GitHub.Example.Com", "Org", "Repo"); mixed != gheID {
-		t.Fatalf("case variant ID = %q, want %q", mixed, gheID)
+	h := loadSaaSHive("spoke-1")
+	if h == nil || containsFold(h.Repos, "hive") {
+		t.Fatalf("wrong-forge spoke was mutated: %#v", h)
 	}
 }
 
-func TestWebhookMatcherSkipsLiteEntries(t *testing.T) {
+func TestHandleLiteEnrollHostedSpokeRequestedWhenNoExistingSpoke(t *testing.T) {
+	s, cleanup := newLiteTestHub(t)
+	defer cleanup()
+	u := ensureSaaSUser("lite-user")
+	u.SaaSQuota = 1
+	if err := saveSaaSUser(u); err != nil {
+		t.Fatal(err)
+	}
+	s.clusters[defaultClusterID] = ClusterConfig{ID: defaultClusterID, Domain: "example.test", InCluster: true, StorageType: storageTypeDynamic, IngressType: "nginx", GitHubAppID: 123}
+	rec := httptest.NewRecorder()
+	req := liteReqWithUser(http.MethodPost, "/api/saas/lite/enroll", `{"owner":"kubestellar","repo":"hive","installation_id":123}`, "lite-user")
+	s.handleLiteEnroll(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var resp LiteEnrollmentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Action != "hosted_lite_spoke_requested" || resp.SpokeID == "" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestWebhookMatcherIncludesLiteSpokes(t *testing.T) {
 	s, cleanup := newLiteTestHub(t)
 	defer cleanup()
 	s.registry.Hives = []RegistryEntry{
 		{ID: "lite", Org: "org", Repos: []string{"repo"}, PrimaryRepo: "repo", Lite: true, HiveType: "lite"},
-		{ID: "spoke", Org: "org", Repos: []string{"repo"}, PrimaryRepo: "repo", HiveType: "hosted"},
 	}
 	got := s.findHiveByOrgRepos("org", []string{"repo"})
-	if got == nil || got.ID != "spoke" {
-		t.Fatalf("matched %#v, want spoke", got)
+	if got == nil || got.ID != "lite" {
+		t.Fatalf("matched %#v, want lite spoke", got)
 	}
 }
 
@@ -172,4 +209,26 @@ func TestLiteEnrollRouteRequiresAuth(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s, want 401", rec.Code, rec.Body.String())
 	}
+}
+
+func TestLiteReportRouteGone(t *testing.T) {
+	s, cleanup := newLiteTestHub(t)
+	defer cleanup()
+	s.mux = http.NewServeMux()
+	s.registerSaaSRoutes()
+	rec := httptest.NewRecorder()
+	req := reqWithUser(http.MethodGet, "/api/saas/lite/spoke-1/report", "", "lite-user")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func containsFold(values []string, want string) bool {
+	for _, v := range values {
+		if strings.EqualFold(v, want) {
+			return true
+		}
+	}
+	return false
 }

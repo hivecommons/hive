@@ -136,7 +136,7 @@ hivectl observe timeline
 hivectl observe trends --range week        # or --hours 12 (1-720); not both
 ```
 
-### enroll — clusterless lite repo enrollment
+### enroll — spoke-based lite repo enrollment
 
 ```bash
 hivectl enroll OWNER/REPO
@@ -145,9 +145,10 @@ hivectl enroll OWNER/REPO --installation-id 123456
 ```
 
 `enroll` verifies local `gh` authentication and repository access, then asks the
-hub to create a lite enrollment record. Lite mode is advisory-only and capped at
-ACMM L2. It writes no repository PAT or long-lived secret; GitHub access is via
-the hub's GitHub App installation and scoped token minting.
+hub to place the repo on a spoke. Existing owned spokes receive the repo through
+the heartbeat project-config callback; otherwise the hub provisions a hosted
+lite spoke. Lite mode is advisory-only and capped at ACMM L2. It writes no
+repository PAT or long-lived secret.
 
 ## Input and safety
 

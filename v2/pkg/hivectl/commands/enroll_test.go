@@ -24,6 +24,8 @@ func (f *fakeEnrollClient) DoWithHeaders(_ context.Context, method, path string,
 	f.repoToken = headers.Get("X-Hive-GitHub-Token")
 	return map[string]any{
 		"id":              "lite-o-r",
+		"spoke_id":        "spoke-o-r",
+		"action":          "spoke_config_update",
 		"installation_id": float64(123),
 		"dashboard_url":   "https://hub.example/dashboard",
 	}, nil
@@ -114,6 +116,8 @@ func TestEnrollCommandHappyPathCapsACMM(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":              "lite-kubestellar-hive",
+			"spoke_id":        "spoke-kubestellar-hive",
+			"action":          "hosted_lite_spoke_requested",
 			"installation_id": 123,
 			"dashboard_url":   "https://hub.example/dashboard",
 		})

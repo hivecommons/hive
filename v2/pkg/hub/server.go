@@ -158,7 +158,6 @@ type RegistryEntry struct {
 	HiveType           string                `json:"hiveType,omitempty"`
 	Lite               bool                  `json:"lite,omitempty"`
 	LiteConfig         *LiteEnrollmentConfig `json:"liteConfig,omitempty"`
-	LiteReport         *LiteAdvisoryReport   `json:"liteReport,omitempty"`
 	// Namespace is the Kubernetes namespace this hive's spoke runs in. For a
 	// hub-provisioned (hosted) hive it is hostedNamespaceForHive(sh) —
 	// "hive-hosted-<id>" — overlaid from the authoritative SaaSHive record on
@@ -946,7 +945,6 @@ type HubServer struct {
 	// touched while s.mu is held — see url_reachability.go.
 	urlHealth *urlHealthState
 
-	liteExecution *liteExecutionState
 	// githubInstallationAccount resolves a GitHub App installation ID to its
 	// owning account login. Nil means use the fleet App key. Tests replace it
 	// with a fake API.

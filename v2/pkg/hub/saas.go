@@ -332,7 +332,6 @@ func (s *HubServer) registerSaaSRoutes() {
 	// fleet-wide data to admins itself.
 	s.mux.HandleFunc("GET /api/saas/usage", s.requireAuth(s.handleUsage))
 	s.mux.HandleFunc("POST /api/saas/lite/enroll", s.requireAuth(s.handleLiteEnroll))
-	s.mux.HandleFunc("GET /api/saas/lite/{id}/report", s.requireAuth(s.handleLiteReport))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
 	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
