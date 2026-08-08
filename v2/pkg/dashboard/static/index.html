@@ -5655,9 +5655,11 @@
         }
         const indEl = agentIndicators(a.name);
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
+        const replicaBadge = (a.replicaBase && a.replicaIndex > 1) ? ` <span class="status-badge" title="Replica ${a.replicaIndex} of ${a.replicaCount} for ${esc(a.replicaBase)}">${esc(a.replicaBase)} · replica ${a.replicaIndex} of ${a.replicaCount}</span>` : '';
+        const configTarget = a.replicaBase || a.name;
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${replicaBadge} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
@@ -13830,6 +13832,7 @@ function burnAreaChart() {
     };
     const RESTART_STRATEGIES = ['immediate', 'backoff', 'none'];
     const CAVEMAN_MODES = ['', 'lite', 'full', 'ultra', 'wenyan'];
+    const MAX_AGENT_REPLICAS = 5;
 
     function openConfigDialog(type, agentName, initialTabOverride) {
       const isCreate = type === 'agent' && !agentName;
@@ -16115,6 +16118,10 @@ function burnAreaChart() {
             <input type="number" id="cfg-agent-sort" value="${g.sortOrder || 50}" onchange="markDirty('general','sortOrder',parseInt(this.value,10))">
           </div>
           <div class="config-field">
+            <label>Replicas <span class="config-info">i<span class="config-tooltip">Run multiple isolated copies of this agent. Replica 1 keeps this name; extra replicas appear as name-2, name-3, etc. Cap ${MAX_AGENT_REPLICAS}.</span></span></label>
+            <input type="number" id="cfg-agent-replicas" min="1" max="${MAX_AGENT_REPLICAS}" value="${g.replicas || 1}" onchange="markDirty('general','replicas',Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1)));this.value=Math.max(1,Math.min(MAX_AGENT_REPLICAS,parseInt(this.value,10)||1))">
+          </div>
+          <div class="config-field">
             <label>Bead Role <span class="config-info">i<span class="config-tooltip">Worker agents do tasks. Supervisor monitors other agents.</span></span></label>
             <select id="cfg-agent-bead-role" onchange="markDirty('general','beadRole',this.value)">
               <option value="worker" ${(g.beadRole || 'worker') === 'worker' ? 'selected' : ''}>worker</option>
@@ -18322,6 +18329,7 @@ function burnAreaChart() {
           emoji: generalData.emoji || '',
           color: generalData.color || '#3498db',
           sort_order: generalData.sortOrder || 50,
+          replicas: generalData.replicas || 1,
           bead_role: generalData.beadRole || 'worker',
           role: generalData.role || '',
           kick_template: generalData.kickTemplate || '',
@@ -18437,6 +18445,7 @@ function burnAreaChart() {
             if (savedGeneral.emoji !== undefined) liveAgent.emoji = savedGeneral.emoji;
             if (savedGeneral.color !== undefined) liveAgent.color = savedGeneral.color;
             if (savedGeneral.sortOrder !== undefined) liveAgent.sortOrder = savedGeneral.sortOrder;
+            if (savedGeneral.replicas !== undefined) liveAgent.replicaCount = savedGeneral.replicas;
           }
         }
         _configState.dirty = {};

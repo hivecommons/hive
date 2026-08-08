@@ -13,6 +13,8 @@
 //                           the same order as HIVE_HUB
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
 //   AGENT_MODEL            — model override (optional)
+//   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
+//                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
 
 'use strict';
@@ -37,6 +39,7 @@ if (rawHubList.length > 1 && rawTokenList.length !== rawHubList.length) {
 }
 const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
+const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
   ? '/var/run/hive-metrics/gh-app-token.cache'
@@ -1119,6 +1122,7 @@ function handleMessage(data, hub) {
         registration_token: hub.regToken,
         cli_backend: BACKEND,
         model: MODEL,
+        role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.
         protocol_version: RELAY_PROTOCOL_VERSION,

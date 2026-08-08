@@ -171,11 +171,15 @@ type ContributorProfile struct {
 	// never starved of work. Matching is exact on the label NAME, case-insensitive.
 	// Stored here (the existing per-contributor profile store) rather than in a new
 	// subsystem; empty/omitted for contributors who set none.
-	LabelInterests []string       `json:"label_interests,omitempty"`
-	Active         bool           `json:"active,omitempty"`
-	CurrentTask    *WSTaskAssign  `json:"current_task,omitempty"`
-	ActiveTasks    []WSTaskAssign `json:"active_tasks,omitempty"`
-	Sessions       int            `json:"sessions,omitempty"`
+	LabelInterests []string `json:"label_interests,omitempty"`
+	// AgentRoleGrants is the operator-managed per-contributor allow-list for
+	// claiming spoke agent roles that require explicit grant (for example
+	// ci-maintainer). It never changes the contributor's trust tier or credentials.
+	AgentRoleGrants []string       `json:"agent_role_grants,omitempty"`
+	Active          bool           `json:"active,omitempty"`
+	CurrentTask     *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks     []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions        int            `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {

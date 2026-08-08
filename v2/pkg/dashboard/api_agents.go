@@ -106,8 +106,22 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	s.deps.Config.Agents[body.Name] = body.Agent
 	s.deps.Config.ApplyAgentDefaults(body.Name)
 
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	finalCfg := s.deps.Config.Agents[body.Name]
-	s.deps.AgentMgr.AddAgent(body.Name, finalCfg)
+	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	for _, added := range addedAgents {
+		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
+				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
+			}
+		}
+	}
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
+	}
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()
@@ -122,6 +136,10 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
+	}
+	if agentCfg.ReplicaOf != "" {
+		name = agentCfg.ReplicaOf
+		agentCfg = s.deps.Config.Agents[name]
 	}
 
 	if !agentCfg.Managed {
@@ -138,8 +156,15 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.deps.AgentMgr.RemoveAgent(name)
 	delete(s.deps.Config.Agents, name)
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
+	}
 
 	// Record the deletion durably. Removing the overlay file above is not
 	// enough on its own: ApplyPack runs on every restart and re-creates any
@@ -358,8 +383,21 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 	s.deps.Config.Agents[name] = agentCfg
 	s.deps.Config.ApplyAgentDefaults(name)
 
-	finalCfg := s.deps.Config.Agents[name]
-	s.deps.AgentMgr.AddAgent(name, finalCfg)
+	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
+	for _, added := range addedAgents {
+		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
+				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
+			}
+		}
+	}
+	if s.deps.Governor != nil {
+		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
+	}
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()

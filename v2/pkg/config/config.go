@@ -364,11 +364,15 @@ type ConnectionConfig struct {
 }
 
 type AgentConfig struct {
-	ID       string `yaml:"id" json:"id,omitempty"`
-	Backend  string `yaml:"backend" json:"backend,omitempty"`
-	Model    string `yaml:"model" json:"model,omitempty"`
-	BeadsDir string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled  bool   `yaml:"enabled" json:"enabled,omitempty"`
+	ID           string `yaml:"id" json:"id,omitempty"`
+	Backend      string `yaml:"backend" json:"backend,omitempty"`
+	Model        string `yaml:"model" json:"model,omitempty"`
+	BeadsDir     string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled      bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Replicas     int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	ReplicaOf    string `yaml:"-" json:"replicaOf,omitempty"`
+	ReplicaIndex int    `yaml:"-" json:"replicaIndex,omitempty"`
+	ReplicaCount int    `yaml:"-" json:"replicaCount,omitempty"`
 	// Paused persists an operator pause across restarts/upgrades. Without
 	// this, every pod restart rebuilt agents un-paused (Go zero value), so
 	// an operator pause was silently undone on the next upgrade.
@@ -459,6 +463,21 @@ type AgentConfig struct {
 // Name returns the human-readable YAML key for this agent.
 func (a *AgentConfig) Name() string {
 	return a.name
+}
+
+// IsReplica reports whether this agent was materialized from another agent's
+// replicas setting rather than declared directly in YAML.
+func (a AgentConfig) IsReplica() bool { return a.ReplicaOf != "" }
+
+// BaseName returns the declared agent name whose config/prompt this agent uses.
+func (a AgentConfig) BaseName() string {
+	if a.ReplicaOf != "" {
+		return a.ReplicaOf
+	}
+	if a.name != "" {
+		return a.name
+	}
+	return a.ID
 }
 
 // HasChannel returns true if the agent has a channel of the given type.
@@ -1982,11 +2001,17 @@ type HubConfig struct {
 	//     operators who want a wait state.
 	// A POINTER so an absent value (older on-disk config) resolves to the
 	// backward-compatible auto-accept default via IsContributeRequireExplicitAccept().
-	ContributeRequireExplicitAccept *bool               `yaml:"contribute_require_explicit_accept,omitempty"`
-	DisabledRepos                   []string            `yaml:"disabled_repos"`
-	DisabledTiers                   []string            `yaml:"disabled_tiers"`
-	TierLimits                      map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin             int                 `yaml:"snapshot_interval_min"`
+	ContributeRequireExplicitAccept *bool `yaml:"contribute_require_explicit_accept,omitempty"`
+	// ContributeDelegatableRoles is the hive-wide allow-list of spoke agent roles
+	// a contributor relay may request via HIVE_AGENT_ROLE / auth_response.role.
+	// Empty means the safe default set: scanner, quality, outreach. Privileged roles
+	// (ci-maintainer, sec-check, architect) must be explicitly listed here AND
+	// granted on the contributor profile; supervisor is never delegatable.
+	ContributeDelegatableRoles []string            `yaml:"contribute_delegatable_roles,omitempty"`
+	DisabledRepos              []string            `yaml:"disabled_repos"`
+	DisabledTiers              []string            `yaml:"disabled_tiers"`
+	TierLimits                 map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin        int                 `yaml:"snapshot_interval_min"`
 }
 
 // Contribute completion-cooldown defaults and clamp bounds. These live in the
@@ -2022,6 +2047,33 @@ func (h HubConfig) IsContributeCooldownEnabled() bool {
 // is withheld until the client accepts the assigned task.
 func (h HubConfig) IsContributeRequireExplicitAccept() bool {
 	return h.ContributeRequireExplicitAccept != nil && *h.ContributeRequireExplicitAccept
+}
+
+var defaultContributeDelegatableRoles = []string{"scanner", "quality", "outreach"}
+
+// ContributeDelegatableRoleSet resolves the hive-wide allow-list of spoke roles
+// a clanker may claim. Empty config preserves the safe v1 default; supervisor is
+// deliberately removed even if an operator lists it because it manages the fleet.
+func (h HubConfig) ContributeDelegatableRoleSet() map[string]bool {
+	roles := h.ContributeDelegatableRoles
+	if len(roles) == 0 {
+		roles = defaultContributeDelegatableRoles
+	}
+	out := make(map[string]bool, len(roles))
+	for _, role := range roles {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "" || role == "supervisor" {
+			continue
+		}
+		out[role] = true
+	}
+	return out
+}
+
+// IsContributeRoleDelegatable reports whether role is enabled hive-wide for
+// clanker delegation. It does not make any per-contributor or trust-tier decision.
+func (h HubConfig) IsContributeRoleDelegatable(role string) bool {
+	return h.ContributeDelegatableRoleSet()[strings.ToLower(strings.TrimSpace(role))]
 }
 
 // ContributeCooldownHoursOrDefault resolves the with-PR cooldown PERIOD in
@@ -2249,6 +2301,10 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 		}
 	}
 
+	if err := cfg.ExpandAgentReplicas(); err != nil {
+		return nil, fmt.Errorf("expanding agent replicas: %w", err)
+	}
+
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
@@ -2316,6 +2372,9 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {
 		cfg.ApplyAgentDefaults(name)
+	}
+	if err := cfg.ExpandAgentReplicas(); err != nil {
+		return cfg, err
 	}
 	// Security invariant: cfg.Variables (resolver defs + the exec/http trust
 	// policy) comes ONLY from the seed loaded above — the overlay's Variables
@@ -2579,6 +2638,8 @@ func (c *Config) GitHubDefinitionAllowed(slug string) bool {
 }
 
 const (
+	MaxAgentReplicas = 5
+
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
@@ -2646,6 +2707,9 @@ func (c *Config) applyDefaults() {
 		agent.name = name
 		if agent.ID == "" {
 			agent.ID = name
+		}
+		if agent.Replicas == 0 {
+			agent.Replicas = 1
 		}
 		if agent.BeadsDir == "" {
 			agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
@@ -3177,6 +3241,116 @@ func validateConnections(agentName string, conns []ConnectionConfig) error {
 		}
 	}
 	return nil
+}
+
+// BaseAgentName returns the declared/base agent name for name. For ordinary
+// agents it returns name; for materialized replicas (scanner-2) it returns the
+// source agent (scanner).
+func (c *Config) BaseAgentName(name string) string {
+	if c == nil || c.Agents == nil {
+		return name
+	}
+	if ac, ok := c.Agents[name]; ok && ac.ReplicaOf != "" {
+		return ac.ReplicaOf
+	}
+	return name
+}
+
+func replicaAgentName(base string, index int) string {
+	if index <= 1 {
+		return base
+	}
+	return fmt.Sprintf("%s-%d", base, index)
+}
+
+func normalizeReplicaCount(n int) int {
+	if n == 0 {
+		return 1
+	}
+	return n
+}
+
+// ExpandAgentReplicas materializes each declared agent's replicas setting into
+// the existing name-keyed machinery: base, base-2, ..., base-N. Derived agents
+// are marked with ReplicaOf and are stripped again when the config is saved.
+func (c *Config) ExpandAgentReplicas() error {
+	if c == nil || c.Agents == nil {
+		return nil
+	}
+	baseAgents := make(map[string]AgentConfig, len(c.Agents))
+	for name, agent := range c.Agents {
+		if agent.ReplicaOf != "" {
+			continue
+		}
+		baseAgents[name] = agent
+	}
+	for name, agent := range c.Agents {
+		if agent.ReplicaOf != "" {
+			delete(c.Agents, name)
+		}
+	}
+	for name, agent := range baseAgents {
+		replicas := normalizeReplicaCount(agent.Replicas)
+		if replicas < 1 || replicas > MaxAgentReplicas {
+			return fmt.Errorf("agent %s: replicas must be between 1 and %d", name, MaxAgentReplicas)
+		}
+		for i := 2; i <= replicas; i++ {
+			derived := replicaAgentName(name, i)
+			if existing, ok := baseAgents[derived]; ok && existing.ReplicaOf == "" {
+				return fmt.Errorf("agent %s: replicas:%d would create %s, but an agent with that name already exists", name, replicas, derived)
+			}
+		}
+	}
+	for name, agent := range baseAgents {
+		replicas := normalizeReplicaCount(agent.Replicas)
+		agent.Replicas = replicas
+		agent.ReplicaOf = ""
+		agent.ReplicaIndex = 1
+		agent.ReplicaCount = replicas
+		agent.name = name
+		c.Agents[name] = agent
+		for i := 2; i <= replicas; i++ {
+			derivedName := replicaAgentName(name, i)
+			derived := agent
+			derived.name = derivedName
+			derived.ID = derivedName
+			derived.BeadsDir = fmt.Sprintf("/data/beads/%s", derivedName)
+			derived.Role = agent.Role
+			derived.ReplicaOf = name
+			derived.ReplicaIndex = i
+			derived.ReplicaCount = replicas
+			c.Agents[derivedName] = derived
+		}
+	}
+	for name, agent := range c.Agents {
+		if agent.ReplicaOf == "" {
+			continue
+		}
+		if _, ok := baseAgents[agent.ReplicaOf]; !ok {
+			delete(c.Agents, name)
+		}
+	}
+	return nil
+}
+
+// MarshalYAML persists only declared agents. Runtime-derived replicas are
+// re-created by ExpandAgentReplicas on the next load so they never collide with
+// their base agent's replicas setting after a save.
+func (c Config) MarshalYAML() (interface{}, error) {
+	type plain Config
+	out := plain(c)
+	if c.Agents != nil {
+		out.Agents = make(map[string]AgentConfig, len(c.Agents))
+		for name, agent := range c.Agents {
+			if agent.ReplicaOf != "" {
+				continue
+			}
+			agent.ReplicaIndex = 0
+			agent.ReplicaCount = 0
+			out.Agents[name] = agent
+		}
+	}
+	return out, nil
 }
 
 func (c *Config) EnabledAgents() map[string]AgentConfig {
