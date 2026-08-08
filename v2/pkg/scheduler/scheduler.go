@@ -471,6 +471,9 @@ func (s *Scheduler) buildReposSection() string {
 		}
 		// Print the fully-qualified URL so the host is unambiguous in the prompt —
 		// a github.ibm.com repo must never be mistaken for a github.com one.
+		// Keep an exact non-URL identity in the delivered safety boundary. Some
+		// interactive terminal renderers partially link long hyphenated URLs.
+		b.WriteString(fmt.Sprintf("  repository_full_name: %s\n", full))
 		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")

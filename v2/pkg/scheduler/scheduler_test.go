@@ -933,6 +933,10 @@ func TestBuildReposSection_BareRepoGetsPrefixed(t *testing.T) {
 	if !strings.Contains(section, "my-org/full-repo") {
 		t.Errorf("full repo should appear as-is: %q", section)
 	}
+	if !strings.Contains(section, "repository_full_name: my-org/bare-repo") ||
+		!strings.Contains(section, "repository_full_name: my-org/full-repo") {
+		t.Errorf("plain repository identities must precede URL presentation: %q", section)
+	}
 }
 
 // ---------------------------------------------------------------------------

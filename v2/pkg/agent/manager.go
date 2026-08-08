@@ -2685,6 +2685,12 @@ var kickRefusalPatterns = []string{
 
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
 	lower := strings.ToLower(line)
+	// Codex prints this exact warning while asking whether a Hive-owned agent
+	// workspace is trusted. It describes a risk; it is not the model refusing a
+	// delivered Hive task.
+	if strings.Contains(lower, "comes with higher risk of prompt injection. trusting the directory allows") {
+		return
+	}
 	for _, pattern := range kickRefusalPatterns {
 		if strings.Contains(lower, strings.ToLower(pattern)) {
 			agent.KickRefused = true
