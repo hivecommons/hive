@@ -83,6 +83,7 @@ jobs:
       - name: Contributor Relay Syntax + Tests
         working-directory: .
         run: |
+          bash bin/contributor-agent.test.sh
           cp bin/contributor-relay.sh "${RUNNER_TEMP}/contributor-relay.js"
           node --check "${RUNNER_TEMP}/contributor-relay.js"
           node bin/contributor-relay.test.js
