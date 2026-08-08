@@ -134,3 +134,24 @@ func TestCovK2_OpenRouterStartAndQR(t *testing.T) {
 		t.Fatalf("qr bad data: expected 400, got %d", rec.Code)
 	}
 }
+
+func TestCovK2_ConfiguredGatewayNames(t *testing.T) {
+	if got := (*Server)(nil).ConfiguredGatewayNames(); got != nil {
+		t.Fatalf("nil server names = %v, want nil", got)
+	}
+	if got := (&Server{}).ConfiguredGatewayNames(); got != nil {
+		t.Fatalf("server without deps names = %v, want nil", got)
+	}
+	covK2RedirectSecrets(t)
+	s := covK2ORServer(t)
+	if got := s.ConfiguredGatewayNames(); got != nil {
+		t.Fatalf("empty gateway names = %v, want nil", got)
+	}
+	if err := s.upsertOpenRouterGateway("sk-names", "openrouter/auto"); err != nil {
+		t.Fatalf("upsertOpenRouterGateway: %v", err)
+	}
+	got := s.ConfiguredGatewayNames()
+	if len(got) != 1 || got[0] != openRouterGatewayName {
+		t.Fatalf("ConfiguredGatewayNames = %v, want [%s]", got, openRouterGatewayName)
+	}
+}

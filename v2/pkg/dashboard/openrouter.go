@@ -337,7 +337,7 @@ func (s *Server) redirectOpenRouter(w http.ResponseWriter, r *http.Request, flag
 // Names only. A gateway carries a secret key and an endpoint; neither belongs
 // in a heartbeat payload, and the name alone is sufficient to confirm arrival.
 func (s *Server) ConfiguredGatewayNames() []string {
-	if s == nil || s.deps.Config == nil {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return nil
 	}
 	gws := s.deps.Config.Governor.ResolvedGateways()
