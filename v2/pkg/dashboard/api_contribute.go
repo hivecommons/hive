@@ -47,10 +47,10 @@ const (
 )
 
 // inviteTrustTiers are the trust tiers permitted to mint an invite link. Only a
-// trusted or advisor contributor may invite; a newcomer/contributor/anonymous
+// trusted, merger, or advisor contributor may invite; a newcomer/contributor/anonymous
 // viewer may not. Enforced server-side (handleContributeInvite) — UI hiding is
 // UX only.
-var inviteTrustTiers = map[string]bool{"trusted": true, "advisor": true}
+var inviteTrustTiers = map[string]bool{"trusted": true, "merger": true, "advisor": true}
 
 var (
 	inviteSecretOnce  sync.Once
@@ -224,7 +224,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /contribute/{tab}", s.handleContributeLanding)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.contributeHub.HandleWS)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeRegister)
-	// Trusted invite link (issue #2598). A trusted/advisor contributor mints an
+	// Trusted invite link (issue #2598). A trusted/merger/advisor contributor mints an
 	// attributed invite link here; the caller's identity is resolved server-side
 	// and their trust tier is verified IN-HANDLER (403 otherwise) — the /api/
 	// contribute prefix is exempt from roleEnforcement's read-only block, so the
@@ -473,6 +473,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 		{"Newcomer", "#d29922", tierCounts["newcomer"]},
 		{"Contributor", "#58a6ff", tierCounts["contributor"]},
 		{"Trusted", "#3fb950", tierCounts["trusted"]},
+		{"Merger", "#f778ba", tierCounts["merger"]},
 		{"Advisor", "#bc8cff", tierCounts["advisor"]},
 		{"Revoked", "#f85149", tierCounts["revoked"]},
 	}
@@ -513,11 +514,14 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	//     contributorTrustedAt is the documented guideline threshold, so we phrase
 	//     it as "~20 PR tasks, then granted by a maintainer" rather than implying an
 	//     automatic unlock. Trusted's scoped token adds checks:read on top of the
-	//     contributor scopes; the merge decision itself is still gated by the
-	//     project's /approve + lgtm automation, so we do not claim "Merge PRs".
+	//     contributor scopes.
+	//   - Merger is the explicit maintainer/owner-granted trust tier for queueing
+	//     others' PRs for auto-merge. The server-side queue endpoint still forbids
+	//     queueing your own PR.
 	tierTableRows := fmt.Sprintf(
 		`<tr><td>Contributor</td><td>%d tasks that produced a PR</td><td>Create PRs, push code</td></tr>`+
-			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`,
+			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`+
+			`<tr><td>Merger</td><td>Granted by a maintainer/owner</td><td>Queue others' PRs for auto-merge — never your own</td></tr>`,
 		contributorAutoPromoteAt, contributorTrustedAt,
 	)
 
@@ -750,6 +754,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid var(--cc-border);background:var(--cc-bg);color:var(--cc-muted);text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
+.tier-badge.tier-merger{border-color:rgba(247,120,186,.42);background:rgba(247,120,186,.10);color:#f778ba}
 .tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
 .tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
 .tier-badge.tier-newcomer{border-color:var(--cc-border);background:var(--cc-bg);color:var(--cc-muted)}
@@ -2099,7 +2104,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 // value, so ADMIN_TIER_ORDER.map / ccActivitySeen[k] / ccActivity.length ran against
 // undefined and threw. Declaring+initializing them here — before any function that
 // uses them can run — makes the ordering explicit and regression-proof.
-var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','merger','advisor'];
 // ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
 // 168h = one week) so the period input shows the effective default when unset.
 // ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
@@ -2277,12 +2282,12 @@ function loadLeaderboard(){
   });
 }
 // tierBadge renders a small tier medallion / rank badge from a REAL trust tier.
-// The four known tiers each get a muted metal-ish accent class; an unknown/blank
+// The five known tiers each get a muted metal-ish accent class; an unknown/blank
 // tier is treated as newcomer (neutral). extraCls lets callers request the compact
 // leaderboard/inline variants. Nothing here is fabricated — it is a pure visual
 // wrap around the tier string the leaderboard/fleet snapshot already carries.
 function tierBadge(tier,extraCls){
-  var known={newcomer:1,contributor:1,trusted:1,advisor:1};
+  var known={newcomer:1,contributor:1,trusted:1,merger:1,advisor:1};
   var t=String(tier||'').toLowerCase();
   if(!known[t])t='newcomer';
   return '<span class="tier-badge tier-'+t+(extraCls?(' '+extraCls):'')+'">'+esc(t)+'</span>';
@@ -2363,6 +2368,7 @@ var ME_STYLE_NAMES=['Signal blue','Verdant','Amber rank','Violet advisor','Minim
 var ME_CREDLY_MAP={
   'tier-contributor':'Contributor badge',
   'tier-trusted':'Trusted badge',
+  'tier-merger':'Merger badge',
   'tier-advisor':'Advisor badge',
   'tasks-25':'25-task milestone badge',
   'tasks-100':'100-task milestone badge'
@@ -2445,6 +2451,7 @@ function meMilestoneChips(p){
     if(nm.id&&nm.id.indexOf('tasks-')===0){var gap=nm.value-(p.tasks_completed||0);if(gap>0)toGo=' — '+gap+' to go';}
     else if(nm.id==='tier-contributor'){var g2=nm.value-(p.tasks_with_pr||0);if(g2>0)toGo=' — '+g2+' PR-tasks to go';}
     else if(nm.id==='tier-trusted'){var g3=nm.value-(p.tasks_with_pr||0);if(g3>0)toGo=' — '+g3+' PR-tasks to go';}
+    else if(nm.id==='tier-merger'){toGo=' — maintainer grant required';}
     next='<span class="me-chip me-chip--next" title="'+esc(nm.detail||'')+'">○ '+esc(nm.label)+esc(toGo)+'</span>';
   }
   if(!got.length&&!next)return '<span class="me-chip">No milestones yet — ship your first task</span>';
@@ -2485,10 +2492,10 @@ function meHivesRows(p){
 // Trust tiers permitted to invite. Kept in sync with the server's
 // inviteTrustTiers gate; the UI hiding here is UX only — the /api/contribute/
 // invite endpoint independently verifies the caller's tier and 403s otherwise.
-var INVITE_TIERS={trusted:true,advisor:true};
+var INVITE_TIERS={trusted:true,merger:true,advisor:true};
 
 // meInviteSection renders the "Invite someone to contribute" affordance ONLY for
-// a viewer whose real trust tier is trusted/advisor. Any other tier (newcomer /
+// a viewer whose real trust tier is trusted/merger/advisor. Any other tier (newcomer /
 // contributor) — and anonymous viewers never reach renderMeCard — get nothing.
 function meInviteSection(p){
   if(!p||!INVITE_TIERS[p.trust_tier])return '';
@@ -3326,7 +3333,7 @@ function renderClankers(list){
     if(adminEnabled&&c.contributor_id){
       var cid=esc(c.contributor_id);
       var tier=c.trust_tier||'newcomer';
-      var opts=['newcomer','contributor','trusted','advisor'].map(function(t){
+      var opts=['newcomer','contributor','trusted','merger','advisor'].map(function(t){
         return '<option value="'+t+'"'+(t===tier?' selected':'')+'>'+t+'</option>';
       }).join('');
       // Reassign (kubestellar/hive#2568 + follow-up) is only meaningful while the clanker
@@ -4968,7 +4975,7 @@ func (s *Server) resolveContributeCaller(r *http.Request) string {
 
 // handleContributeInvite mints a trusted, attributed invite link (issue #2598).
 // It resolves the caller's identity server-side, loads their contributor
-// profile, and requires their trust tier to be trusted or advisor — a newcomer,
+// profile, and requires their trust tier to be trusted, merger, or advisor — a newcomer,
 // contributor, or anonymous caller gets 403. The returned token encodes the
 // inviter so that whoever registers via the link is attributed to them while
 // still joining as a plain newcomer (the register path never elevates tier).
@@ -4984,7 +4991,7 @@ func (s *Server) handleContributeInvite(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !inviteTrustTiers[profile.TrustTier] {
-		jsonError(w, "Only trusted or advisor contributors can invite others. Keep shipping to earn trust.", http.StatusForbidden)
+		jsonError(w, "Only trusted, merger, or advisor contributors can invite others. Keep shipping to earn trust.", http.StatusForbidden)
 		return
 	}
 
@@ -5329,7 +5336,7 @@ type tierLimitView struct {
 
 // limitsTierOrder is the trust progression, so the UI lists tiers newcomer→advisor
 // rather than in Go map iteration order (non-deterministic).
-var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "advisor"}
+var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "merger", "advisor"}
 
 // handleContributeLimits serves the hive's per-tier rate limits (#2595) plus the
 // VIEWER's own daily/hourly usage when we can identify them. This makes the managed
@@ -5668,7 +5675,7 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	validTiers := map[string]bool{"newcomer": true, "contributor": true, "trusted": true, "advisor": true, "revoked": true}
+	validTiers := map[string]bool{"newcomer": true, "contributor": true, "trusted": true, "merger": true, "advisor": true, "revoked": true}
 	if !validTiers[req.Tier] {
 		jsonError(w, "Invalid tier", http.StatusBadRequest)
 		return
@@ -6089,6 +6096,8 @@ func trustTierColor(tier string) string {
 		return "#3fb950"
 	case "trusted":
 		return "#d29922"
+	case "merger":
+		return "#f778ba"
 	case "advisor":
 		return "#a371f7"
 	case "revoked":
@@ -6107,6 +6116,8 @@ func trustTierBadgeCSS(tier string) (bg, text, border string) {
 		return "rgba(59,130,246,0.2)", "#60a5fa", "rgba(59,130,246,0.3)"
 	case "trusted":
 		return "rgba(34,197,94,0.2)", "#4ade80", "rgba(34,197,94,0.3)"
+	case "merger":
+		return "rgba(247,120,186,0.2)", "#f778ba", "rgba(247,120,186,0.3)"
 	case "advisor":
 		return "rgba(168,85,247,0.2)", "#c084fc", "rgba(168,85,247,0.3)"
 	case agentTierLabel:

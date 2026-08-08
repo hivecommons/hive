@@ -2692,12 +2692,19 @@ func (c *Config) applyDefaults() {
 		c.Hub.ContributeAllowLabels = nil
 	}
 
-	if len(c.Hub.TierLimits) == 0 {
-		c.Hub.TierLimits = map[string]TierRate{
-			"newcomer":    {MaxPerHour: 3, MaxPerDay: 10, MaxConcurrent: 1},
-			"contributor": {MaxPerHour: 10, MaxPerDay: 50, MaxConcurrent: 2},
-			"trusted":     {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
-			"advisor":     {MaxPerHour: 0, MaxPerDay: 0, MaxConcurrent: 0},
+	defaultTierLimits := map[string]TierRate{
+		"newcomer":    {MaxPerHour: 3, MaxPerDay: 10, MaxConcurrent: 1},
+		"contributor": {MaxPerHour: 10, MaxPerDay: 50, MaxConcurrent: 2},
+		"trusted":     {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
+		"merger":      {MaxPerHour: 30, MaxPerDay: 200, MaxConcurrent: 5},
+		"advisor":     {MaxPerHour: 0, MaxPerDay: 0, MaxConcurrent: 0},
+	}
+	if c.Hub.TierLimits == nil {
+		c.Hub.TierLimits = map[string]TierRate{}
+	}
+	for tier, limits := range defaultTierLimits {
+		if _, ok := c.Hub.TierLimits[tier]; !ok {
+			c.Hub.TierLimits[tier] = limits
 		}
 	}
 

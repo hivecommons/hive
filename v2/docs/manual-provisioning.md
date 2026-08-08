@@ -568,7 +568,7 @@ hive has no fleet-registry entry (never heartbeated). So a hive with
 `owner: <someone>` in its `meta.json` appears in that person's My Hives (and the
 admin's) as soon as the file exists.
 
-**Contributor tiers.** Manage Access grants four ordered roles:
+**Hub access roles.** Manage Access grants four ordered roles (separate from the ClankeR trust tiers shown on `/contribute`):
 `read` < `read-write` < `merger` < `owner`. `merger` inherits read-write
 dashboard access and can approve/queue **other people's** PRs for the hive
 auto-merge-on-green flow. The spoke enforces the self-merge ban against the

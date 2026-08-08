@@ -1603,6 +1603,7 @@
     .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
     .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
     .role-read-write { background: rgba(116,223,154,0.15); color: var(--green); border: 1px solid rgba(116,223,154,0.3); }
+    .role-merger { background: rgba(247,120,186,0.15); color: #f778ba; border: 1px solid rgba(247,120,186,0.3); }
     .config-list-item {
       display: flex; align-items: center; gap: 8px;
       padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
@@ -10513,6 +10514,7 @@ function burnAreaChart() {
       newcomer:    'var(--yellow)',
       contributor: 'var(--blue)',
       trusted:     'var(--green)',
+      merger:      'var(--pink, #f778ba)',
       advisor:     'var(--purple)',
       revoked:     'var(--red)',
     };
@@ -10586,7 +10588,7 @@ function burnAreaChart() {
 
     const CONTRIBUTOR_FILTER_ALL = 'all';
     const CONTRIBUTOR_FILTER_ACTIVE = 'active';
-    const CONTRIBUTOR_FILTER_TIERS = ['newcomer', 'contributor', 'trusted', 'advisor', 'revoked'];
+    const CONTRIBUTOR_FILTER_TIERS = ['newcomer', 'contributor', 'trusted', 'merger', 'advisor', 'revoked'];
 
     function renderContributorFilters(contributors) {
       const bar = document.getElementById('contributors-filters');
@@ -10666,7 +10668,7 @@ function burnAreaChart() {
               'ClankeR \u2014 the contributor relay \u2014 lets anyone lend their own machine and AI subscription to this hive. ' +
               'Contributors register with their GitHub account, run a lightweight worker locally, and the hive ' +
               'relays tasks (issue fixes, reviews, docs) to their agents over a secure WebSocket \u2014 their compute, your backlog. ' +
-              'Completed tasks build trust: contributors are promoted automatically from <strong>Newcomer</strong> to <strong>Contributor</strong>, <strong>Trusted</strong>, and <strong>Advisor</strong> tiers.' +
+              'Completed tasks build trust: contributors are promoted automatically from <strong>Newcomer</strong> to <strong>Contributor</strong>, then maintainers can grant <strong>Trusted</strong>, <strong>Merger</strong>, and <strong>Advisor</strong> tiers.' +
             '</div>' +
             '<div style="color:var(--muted);font-size:var(--fs-base);line-height:1.6;margin-bottom:12px">' +
               '<strong style="color:var(--text)">Invite people in three steps:</strong><br>' +
@@ -14505,7 +14507,7 @@ function burnAreaChart() {
           return;
         }
         listEl.innerHTML = users.map(function(u) {
-          var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
+          var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'merger' ? 'role-merger' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
           return '<div class="config-list-item" style="align-items:center;gap:8px">' +
             linkedAvatar(u.username, ACCESS_LIST_AVATAR_PX,
               String(u.username || '') + (u.role ? ' — ' + u.role : ''), '', '') +
@@ -15571,7 +15573,7 @@ function burnAreaChart() {
         const enabled = !(hub.disabled_repos || []).includes(name);
         return {name: name, full: r, enabled: enabled};
       });
-      const tiers = ['newcomer', 'contributor', 'trusted', 'advisor'];
+      const tiers = ['newcomer', 'contributor', 'trusted', 'merger', 'advisor'];
       const denyLabels = (hub.contribute_deny_labels || []);
       const denyTitles = (hub.contribute_deny_titles || []);
       const denyAuthors = (hub.contribute_deny_authors || []);
@@ -15704,7 +15706,7 @@ function burnAreaChart() {
           <label>Tier Access &amp; Rate Limits <span class="config-info">i<span class="config-tooltip">Toggle tiers on/off and set tasks/hour, tasks/day, max concurrent per tier. 0 = unlimited.</span></span></label>
           <div style="display:flex;flex-direction:column;gap:6px">${tiers.map(function(t) {
             const enabled = !(hub.disabled_tiers || []).includes(t);
-            const defaults = {newcomer:{mph:3,mpd:10,mc:1},contributor:{mph:5,mpd:20,mc:2},trusted:{mph:10,mpd:50,mc:3},advisor:{mph:0,mpd:0,mc:0}};
+            const defaults = {newcomer:{mph:3,mpd:10,mc:1},contributor:{mph:10,mpd:50,mc:2},trusted:{mph:30,mpd:200,mc:5},merger:{mph:30,mpd:200,mc:5},advisor:{mph:0,mpd:0,mc:0}};
             const def = defaults[t] || {mph:3,mpd:10,mc:1};
             const limits = (hub.tier_limits || {})[t] || {};
             const mph = limits.max_per_hour != null ? limits.max_per_hour : def.mph;

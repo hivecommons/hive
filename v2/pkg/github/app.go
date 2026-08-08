@@ -275,7 +275,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 			PullRequests: gh.Ptr("write"),
 			Metadata:     gh.Ptr("read"),
 		}
-	case "trusted":
+	case "trusted", "merger":
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),

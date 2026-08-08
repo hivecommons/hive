@@ -45,6 +45,7 @@ attained milestone maps to one Credly badge template:
 | ----------------------------------- | ------------------------------- | ----------------- |
 | `tier-contributor`                  | Reached Contributor (5 PR-tasks)| Contributor badge |
 | `tier-trusted`                      | Reached Trusted (20 PR-tasks)   | Trusted badge     |
+| `tier-merger`                       | Reached Merger (maintainer/owner-granted) | Merger badge |
 | `tier-advisor`                      | Reached Advisor (maintainer-granted) | Advisor badge |
 | `tasks-25`                          | 25 tasks shipped                | 25-task milestone |
 | `tasks-100`                         | 100 tasks shipped               | 100-task milestone|
@@ -58,7 +59,7 @@ Issue a badge **once**, at the moment the milestone is first attained — i.e. o
 
 - **Tier promotion** — when a contributor crosses `newcomer → contributor`
   (auto, `TasksWithPR >= contributorAutoPromoteAt`) or is granted
-  `trusted` / `advisor` by a maintainer.
+  `trusted` / `merger` / `advisor` by a maintainer/owner.
 - **Task-shipped landmark** — when `TasksCompleted` first reaches a landmark in
   `taskShippedMilestones`.
 

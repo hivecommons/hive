@@ -1779,6 +1779,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				perms = []string{"issues:write", "contents:write", "pulls:write"}
 			case "trusted":
 				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
+			case "merger":
+				perms = []string{"issues:write", "contents:write", "pulls:write", "checks:read"}
 			case "advisor":
 				perms = []string{"metadata:read", "pulls:read"}
 			default:

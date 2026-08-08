@@ -665,6 +665,7 @@ func TestTrustTierColor(t *testing.T) {
 		{"newcomer", "#8b949e"},
 		{"contributor", "#3fb950"},
 		{"trusted", "#d29922"},
+		{"merger", "#f778ba"},
 		{"advisor", "#a371f7"},
 		{"revoked", "#f85149"},
 		{"unknown", "#8b949e"},
@@ -685,6 +686,7 @@ func TestTrustTierBadgeCSS(t *testing.T) {
 		{"newcomer", "rgba(107,114,128,0.2)"},
 		{"contributor", "rgba(59,130,246,0.2)"},
 		{"trusted", "rgba(34,197,94,0.2)"},
+		{"merger", "rgba(247,120,186,0.2)"},
 		{"advisor", "rgba(168,85,247,0.2)"},
 		{"revoked", "rgba(239,68,68,0.2)"},
 		{"unknown", "rgba(107,114,128,0.2)"},
@@ -1155,12 +1157,12 @@ func TestContributeTabURLWiring(t *testing.T) {
 	body := w.Body.String()
 
 	for _, needle := range []string{
-		"function tabFromLocation",   // reads location.pathname + ?tab= on load
-		"history.pushState",          // address-bar reflection on tab switch
-		"popstate",                   // Back/Forward navigation
-		"'operations'",               // clean name accepted for Operations
-		"'management'",               // clean name accepted for Management
-		"/contribute/'+slug",         // path-style URL construction
+		"function tabFromLocation", // reads location.pathname + ?tab= on load
+		"history.pushState",        // address-bar reflection on tab switch
+		"popstate",                 // Back/Forward navigation
+		"'operations'",             // clean name accepted for Operations
+		"'management'",             // clean name accepted for Management
+		"/contribute/'+slug",       // path-style URL construction
 	} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("served page missing tab-URL wiring: %q", needle)
