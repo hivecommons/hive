@@ -175,11 +175,15 @@ type ContributorProfile struct {
 	// AgentRoleGrants is the operator-managed per-contributor allow-list for
 	// claiming spoke agent roles that require explicit grant (for example
 	// ci-maintainer). It never changes the contributor's trust tier or credentials.
-	AgentRoleGrants []string       `json:"agent_role_grants,omitempty"`
-	Active          bool           `json:"active,omitempty"`
-	CurrentTask     *WSTaskAssign  `json:"current_task,omitempty"`
-	ActiveTasks     []WSTaskAssign `json:"active_tasks,omitempty"`
-	Sessions        int            `json:"sessions,omitempty"`
+	AgentRoleGrants []string `json:"agent_role_grants,omitempty"`
+	// AssignedAgentRole is the owner-selected effective clanker role. Empty means
+	// no owner override (the relay's optional HIVE_AGENT_ROLE claim may apply);
+	// "none" is an explicit owner override to general contribute work.
+	AssignedAgentRole string         `json:"assigned_agent_role,omitempty"`
+	Active            bool           `json:"active,omitempty"`
+	CurrentTask       *WSTaskAssign  `json:"current_task,omitempty"`
+	ActiveTasks       []WSTaskAssign `json:"active_tasks,omitempty"`
+	Sessions          int            `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
@@ -290,6 +294,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
+	s.mux.HandleFunc("PUT /api/contributors/{id}/agent-role", s.handleContributorAgentRole)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/agent-role-grants", s.handleContributorAgentRoleGrants)
 	s.mux.HandleFunc("POST /api/contributors/{id}/revoke", s.handleContributorRevoke)
 	s.mux.HandleFunc("POST /api/contributors/{id}/requeue", s.handleContributorRequeue)
@@ -941,6 +946,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-act select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
 .agent-role-grants{display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%%;font-size:.7rem;color:var(--cc-muted)}
 .agent-role-grants__label{font-weight:600;color:var(--cc-text-2)}
+.clanker-act-as{display:inline-flex;align-items:center;gap:4px;color:var(--cc-muted);font-size:.72rem}
 .agent-role-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid rgba(88,166,255,.28);background:rgba(88,166,255,.08);color:#79c0ff}
 .agent-role-chip button{border:none;background:transparent;color:inherit;cursor:pointer;padding:0;line-height:1;opacity:.75;font:inherit}
 .agent-role-chip button:hover{opacity:1;color:#f85149}
@@ -2791,6 +2797,7 @@ var adminEnabled=false;
 var adminHub=null;      // last-loaded Config.Hub.* snapshot (contribute_* fields)
 var adminDirty=false;   // filter edits pending Save
 var adminGrantableAgentRoles=[];
+var adminAssignableAgentRoles=['outreach','quality','scanner'];
 var privilegedAgentRoles={};
 ['ci-maintainer','sec-check','architect'].forEach(function(r){privilegedAgentRoles[r]=true;});
 
@@ -3240,6 +3247,14 @@ onEl('clanker-list','change',function(e){
     if(addRole)updateContributorAgentRoleGrants(sel.getAttribute('data-cid'),null,addRole);
     return;
   }
+  if(controlRole==='agent-role'){
+    var cidRole=sel.getAttribute('data-cid'),acting=sel.value||'none';
+    fetch('/api/contributors/'+encodeURIComponent(cidRole)+'/agent-role',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_role:acting})})
+      .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+      .then(function(x){if(x.ok){toast(acting==='none'?'Acting as general work':'Acting as '+acting,true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to set acting role',false);opsPoll();}})
+      .catch(function(){toast('Failed to set acting role',false);opsPoll();});
+    return;
+  }
   if(controlRole!=='tier')return;
   var cid=sel.getAttribute('data-cid'),tier=sel.value;
   fetch('/api/contributors/'+encodeURIComponent(cid)+'/trust',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:tier})})
@@ -3385,6 +3400,29 @@ function syncGrantableAgentRoles(policy){
   });
   adminGrantableAgentRoles=out.sort();
 }
+function syncAssignableAgentRoles(policy){
+  var roles=(policy&&policy.agent_role_assignable_roles)||[];
+  if((!roles||!roles.length)&&adminHub&&adminHub.contribute_delegatable_roles){
+    roles=['scanner','quality','outreach'].concat(adminHub.contribute_delegatable_roles||[]);
+  }
+  if(!roles||!roles.length)roles=['scanner','quality','outreach'];
+  var seen={},out=[];
+  (roles||[]).forEach(function(r){
+    r=String(r||'').trim().toLowerCase();
+    if(r&&r!=='supervisor'&&!seen[r]){seen[r]=true;out.push(r);}
+  });
+  adminAssignableAgentRoles=out.sort();
+}
+function clankerActingAsControl(c,cid){
+  var current=String(c.role||'').trim().toLowerCase();
+  var roles=adminAssignableAgentRoles.slice();
+  if(current&&roles.indexOf(current)<0)roles.push(current);
+  roles.sort();
+  var opts='<option value="none"'+(!current?' selected':'')+'>none (general work)</option>'+
+    roles.map(function(r){return '<option value="'+esc(r)+'"'+(r===current?' selected':'')+'>'+esc(r)+'</option>';}).join('');
+  var tip=c.role_mismatch||'Owner assignment takes effect on the next task request and never rewrites the current in-flight task.';
+  return '<select class="admin-act" title="'+esc(tip)+'" data-cid="'+cid+'" data-role="agent-role">'+opts+'</select>';
+}
 function clankerAgentRoleGrantControl(c,cid){
   var grants=(c.agent_role_grants||[]).map(function(r){return String(r||'').trim().toLowerCase();}).filter(Boolean);
   var seen={};grants=grants.filter(function(r){if(seen[r])return false;seen[r]=true;return true;}).sort();
@@ -3474,6 +3512,7 @@ function renderClankers(list){
         :'';
       actions='<div class="admin-actions" data-role-grants-cid="'+cid+'">'+
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
+        '<label class="clanker-act-as">Acting as '+clankerActingAsControl(c,cid)+'</label>'+
         requeueBtn+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
@@ -3493,7 +3532,8 @@ function renderClankers(list){
     // Enter pop-in for a clanker we haven't seen in the previous render (army framing).
     var isNew=key&&!ccKnownClankers[key];
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
-    return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
+    var rowTitle=c.role_mismatch?(' title="'+esc(c.role_mismatch)+'"'):'';
+    return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"'+rowTitle+'><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+interestsLine+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
@@ -3645,6 +3685,7 @@ function renderPolicy(p){
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
     ['Disabled tiers',list(p.disabled_tiers)],
     ['Disabled repos',list(p.disabled_repos)],
+    ['Assignable agent roles',list(p.agent_role_assignable_roles)],
     ['Privileged agent-role grants',list(p.agent_role_grantable_roles)],
     ['Auto-promote at',esc(p.auto_promote_at)+' tasks that produced a PR &rarr; contributor'],
     ['Trusted at','~'+esc(p.trusted_at)+' PR tasks, then granted by a maintainer']
@@ -3661,6 +3702,7 @@ async function opsPoll(){
     var res=await fetch('/api/contribute/fleet');
     var data=await res.json();
     syncGrantableAgentRoles(data&&data.policy);
+    syncAssignableAgentRoles(data&&data.policy);
     // Each panel renders independently — one failing does not block the others.
     safeRender('clankers',function(){renderClankers((data&&data.clankers)||[]);});
     safeRender('work',function(){renderWork((data&&data.work)||[]);});
@@ -5272,6 +5314,7 @@ type ContributeAdmissionPolicy struct {
 	DisabledTiers        []string `json:"disabled_tiers,omitempty"`
 	DisabledRepos        []string `json:"disabled_repos,omitempty"`
 	AgentRoleGrantable   []string `json:"agent_role_grantable_roles,omitempty"`
+	AgentRoleAssignable  []string `json:"agent_role_assignable_roles,omitempty"`
 	AutoPromoteAt        int      `json:"auto_promote_at"`
 	TrustedAt            int      `json:"trusted_at"`
 }
@@ -5302,7 +5345,33 @@ func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
 	p.DisabledTiers = h.DisabledTiers
 	p.DisabledRepos = h.DisabledRepos
 	p.AgentRoleGrantable = contributorAgentRoleGrantableRoles(s.deps.Config)
+	p.AgentRoleAssignable = contributorAgentRoleAssignableRoles(s.deps.Config)
 	return p
+}
+
+func contributorAgentRoleAssignableRoles(cfg *config.Config) []string {
+	roles := []string{"scanner", "quality", "outreach"}
+	if cfg != nil {
+		set := cfg.Hub.ContributeDelegatableRoleSet()
+		for role := range roleClaimNeedsGrant {
+			role = normalizeAgentRole(role)
+			if set[role] {
+				roles = append(roles, role)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(roles))
+	for _, role := range roles {
+		role = normalizeAgentRole(role)
+		if role == "" || role == "supervisor" || seen[role] {
+			continue
+		}
+		seen[role] = true
+		out = append(out, role)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func contributorAgentRoleGrantableRoles(cfg *config.Config) []string {
@@ -5864,7 +5933,6 @@ func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http
 	for _, role := range grantable {
 		allowed[role] = true
 	}
-	seen := map[string]bool{}
 	grants := make([]string, 0, len(req.AgentRoleGrants))
 	for _, role := range req.AgentRoleGrants {
 		role = normalizeAgentRole(role)
@@ -5875,19 +5943,103 @@ func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http
 			jsonError(w, fmt.Sprintf("agent role %q is not a grantable delegated privileged role", role), http.StatusBadRequest)
 			return
 		}
-		if !seen[role] {
-			seen[role] = true
-			grants = append(grants, role)
-		}
+		grants = append(grants, role)
 	}
-	sort.Strings(grants)
+	grants = normalizeUniqueAgentRoles(grants)
+	assigned := effectiveAssignedAgentRole(p.AssignedAgentRole)
+	if roleClaimNeedsGrant[assigned] && !hasAgentRoleGrant(&ContributorProfile{AgentRoleGrants: grants}, assigned) {
+		grants = normalizeUniqueAgentRoles(append(grants, assigned))
+	}
 	p.AgentRoleGrants = grants
 	if err := saveContributorProfile(p); err != nil {
 		jsonError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
+	if s.contributeHub != nil {
+		s.contributeHub.SetContributorAgentRoleGrants(p.ContributorID, grants)
+	}
 	s.logger.Info("contributor agent-role grants changed", "username", p.GitHubUsername, "grants", strings.Join(grants, ","))
 	jsonResponse(w, map[string]any{"ok": true, "agent_role_grants": grants, "grantable_roles": grantable})
+}
+
+func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	id := r.PathValue("id")
+	p := findContributor(id)
+	if p == nil {
+		jsonError(w, "Contributor not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		AgentRole string `json:"agent_role"`
+		Role      string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	role := normalizeAgentRole(req.AgentRole)
+	if role == "" {
+		role = normalizeAgentRole(req.Role)
+	}
+	if role == "" || role == "none" {
+		p.AssignedAgentRole = "none"
+	} else {
+		probeProfile := *p
+		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(&probeProfile, role) {
+			probeProfile.AgentRoleGrants = append(probeProfile.AgentRoleGrants, role)
+		}
+		probe := &ContributorConnection{profile: &probeProfile}
+		if s.contributeHub == nil {
+			s.contributeHub = NewContributeWSHub(s.logger, s)
+		}
+		if ok, reason := s.contributeHub.roleClaimAllowed(probe, role); !ok {
+			jsonError(w, reason, http.StatusBadRequest)
+			return
+		}
+		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(p, role) {
+			p.AgentRoleGrants = append(p.AgentRoleGrants, role)
+			p.AgentRoleGrants = normalizeUniqueAgentRoles(p.AgentRoleGrants)
+		}
+		p.AssignedAgentRole = role
+	}
+	if err := saveContributorProfile(p); err != nil {
+		jsonError(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	if s.contributeHub != nil {
+		s.contributeHub.SetAssignedAgentRole(p.ContributorID, p.AssignedAgentRole, p.AgentRoleGrants)
+	}
+	s.logger.Info("contributor assigned agent role changed", "username", p.GitHubUsername, "assigned_role", p.AssignedAgentRole)
+	var cfg *config.Config
+	if s.deps != nil {
+		cfg = s.deps.Config
+	}
+	jsonResponse(w, map[string]any{
+		"ok":                  true,
+		"assigned_agent_role": p.AssignedAgentRole,
+		"effective_role":      effectiveAssignedAgentRole(p.AssignedAgentRole),
+		"agent_role_grants":   p.AgentRoleGrants,
+		"assignable_roles":    contributorAgentRoleAssignableRoles(cfg),
+	})
+}
+
+func normalizeUniqueAgentRoles(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, role := range in {
+		role = normalizeAgentRole(role)
+		if role == "" || seen[role] {
+			continue
+		}
+		seen[role] = true
+		out = append(out, role)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request) {

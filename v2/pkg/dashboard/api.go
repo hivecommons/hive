@@ -3858,11 +3858,12 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
 			// 168h default surfaces when unset) so the number input shows the value
 			// actually in force.
-			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
-			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"disabled_repos":              cfg.Hub.DisabledRepos,
-			"disabled_tiers":              cfg.Hub.DisabledTiers,
-			"tier_limits":                 cfg.Hub.TierLimits,
+			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
+			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"disabled_repos":               cfg.Hub.DisabledRepos,
+			"disabled_tiers":               cfg.Hub.DisabledTiers,
+			"tier_limits":                  cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
@@ -4263,6 +4264,26 @@ func (s *Server) handleGovernorAttribution(w http.ResponseWriter, r *http.Reques
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+func normalizeContributeDelegatableRoles(roles []string) []string {
+	seen := map[string]bool{}
+	for _, role := range []string{"scanner", "quality", "outreach"} {
+		seen[role] = true
+	}
+	for _, role := range roles {
+		role = normalizeAgentRole(role)
+		if role == "" || role == "supervisor" {
+			continue
+		}
+		seen[role] = true
+	}
+	out := make([]string, 0, len(seen))
+	for role := range seen {
+		out = append(out, role)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Enabled                        *bool                      `json:"enabled"`
@@ -4285,6 +4306,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                      `json:"contribute_cooldown_enabled"`
 		ContributeCooldownHours        *int                       `json:"contribute_cooldown_hours"`
+		ContributeDelegatableRoles     []string                   `json:"contribute_delegatable_roles"`
 		DisabledRepos                  []string                   `json:"disabled_repos"`
 		DisabledTiers                  []string                   `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
@@ -4359,6 +4381,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	// issue forever. A client sending 0 means "use the default".
 	if body.ContributeCooldownHours != nil {
 		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
+	}
+	if body.ContributeDelegatableRoles != nil {
+		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = body.DisabledRepos

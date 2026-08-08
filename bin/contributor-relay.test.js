@@ -722,6 +722,20 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
   } finally { teardown(relay); }
 });
 
+test('hub notice messages are logged for operators', () => {
+  const relay = loadRelay();
+  const lines = [];
+  const oldLog = console.log;
+  console.log = (msg) => { lines.push(String(msg)); };
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'notice', message: 'role assigned: scanner — your next task will be scanner work' }));
+    assert.ok(lines.some(l => l.includes('role assigned: scanner')), 'notice message was not logged');
+  } finally {
+    console.log = oldLog;
+    teardown(relay);
+  }
+});
+
 test('token_refresh, task_revoke, and blocked progress only affect the hub that owns the active task', () => {
   const blockedPane = 'Should I open a pull request for this change?\n> \n';
   const relay = loadRelay({ backend: 'goose', cliStates: [blockedPane, blockedPane], env: MULTI_HUB_ENV });

@@ -1312,6 +1312,10 @@ function handleMessage(data, hub) {
       }, TASK_UNAVAILABLE_RETRY_MS);
       break;
 
+    case 'notice':
+      console.log(msg.message || msg.reason || 'Notice from hub');
+      break;
+
     case 'ping':
       sendTo(hub, { type: 'pong', seq: msg.seq });
       break;

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -43,6 +44,7 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
+
 	body := w.Body.String()
 
 	// Admin controls area + the role gate that only shows it for owner/read-write.
@@ -75,6 +77,10 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 		`/trust`,
 		`/revoke`,
 		`data-role="tier"`,
+		`data-role="agent-role"`,
+		`Acting as`,
+		`none (general work)`,
+		`/agent-role`,
 		`data-role="revoke"`,
 		`data-role="remove"`,
 		`data-role="agent-role-add"`,
@@ -140,6 +146,49 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 	}
 }
 
+func TestGovernorHubDelegatableRolesUIAndRoundTrip(t *testing.T) {
+	static, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	body := string(static)
+	for _, want := range []string{
+		"Contributor Agent Roles",
+		"Delegatable to contributors",
+		"toggleDelegatableAgentRole",
+		"contribute_delegatable_roles",
+		"scanner','quality','outreach",
+		"ci-maintainer",
+		"sec-check",
+		"architect",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Governor Hub agent-role UI missing %q", want)
+		}
+	}
+
+	s, deps := apiServer(t)
+	rec := doPut(s, "/api/config/governor/hub", map[string]any{
+		"contribute_delegatable_roles": []string{"scanner", "quality", "outreach", "sec-check", "supervisor"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/config/governor/hub got %d: %s", rec.Code, rec.Body.String())
+	}
+	if deps.Config.Hub.IsContributeRoleDelegatable("supervisor") {
+		t.Fatal("supervisor must not become delegatable")
+	}
+	if !deps.Config.Hub.IsContributeRoleDelegatable("scanner") || !deps.Config.Hub.IsContributeRoleDelegatable("sec-check") {
+		t.Fatalf("delegatable roles not persisted/resolved: %+v", deps.Config.Hub.ContributeDelegatableRoles)
+	}
+	got := doGet(s, "/api/config/governor")
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET governor got %d", got.Code)
+	}
+	if !strings.Contains(got.Body.String(), `"contribute_delegatable_roles"`) || !strings.Contains(got.Body.String(), `"sec-check"`) {
+		t.Fatalf("GET did not round-trip delegatable roles: %s", got.Body.String())
+	}
+}
+
 // contributorWriteCase is one mutation endpoint exercised by the tab.
 type contributorWriteCase struct {
 	name   string
@@ -152,6 +201,7 @@ type contributorWriteCase struct {
 func contributorWriteCases() []contributorWriteCase {
 	return []contributorWriteCase{
 		{"trust", (*Server).handleContributorTrust, http.MethodPut, "/api/contributors/alice/trust", `{"tier":"trusted"}`},
+		{"agent_role", (*Server).handleContributorAgentRole, http.MethodPut, "/api/contributors/alice/agent-role", `{"agent_role":"scanner"}`},
 		{"agent_role_grants", (*Server).handleContributorAgentRoleGrants, http.MethodPut, "/api/contributors/alice/agent-role-grants", `{"agent_role_grants":["ci-maintainer"]}`},
 		{"revoke", (*Server).handleContributorRevoke, http.MethodPost, "/api/contributors/alice/revoke", ``},
 		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},

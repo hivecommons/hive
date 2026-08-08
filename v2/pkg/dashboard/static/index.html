@@ -15827,6 +15827,8 @@ function burnAreaChart() {
       const denyAuthors = (hub.contribute_deny_authors || []);
       const allowModels = (hub.contribute_allow_models || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
+      const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
       // Filter modes: 'allow' = only matching pass; 'deny' (default) = matching skipped.
       const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
       const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
@@ -15896,6 +15898,19 @@ function burnAreaChart() {
         <div class="config-field" style="margin-left:44px" ${hub.contribute_cooldown_enabled ? '' : 'title="Enable Task Cooldown to edit the period"'}>
           <label>Cooldown Period (hours) <span class="config-info">i<span class="config-tooltip">The with-PR completion cooldown, in hours. 168 = one week (default). Range 1–8760.</span></span></label>
           <input type="number" id="hub-cooldown-hours" min="1" max="8760" value="${hub.contribute_cooldown_hours || 168}" onchange="markDirty('hub','contribute_cooldown_hours',parseInt(this.value,10)||168)" ${hub.contribute_cooldown_enabled ? '' : 'disabled style="opacity:0.5"'}>
+        </div>
+
+        <div class="config-field">
+          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a clanker's card; supervisor is never delegatable.</span></span></label>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${['scanner','quality','outreach'].map(function(r) {
+              return '<label style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--muted)" title="Default contributor role; always delegatable"><input type="checkbox" checked disabled> ' + r + ' <span style="font-size:0.65rem;color:var(--green)">always on</span></label>';
+            }).join('')}
+            ${privilegedDelegatableRoles.map(function(r) {
+              const checked = delegatableRoles.includes(r);
+              return '<label style="display:flex;align-items:center;gap:8px;font-size:0.78rem"><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onchange="toggleDelegatableAgentRole(\'' + r + '\',this.checked)"> ' + r + ' <span style="font-size:0.65rem;color:var(--muted)">Delegatable to contributors</span></label>';
+            }).join('')}
+          </div>
         </div>
 
         ${renderFilterWithMode({
@@ -16018,6 +16033,19 @@ function burnAreaChart() {
         hoursInput.disabled = !isOn;
         hoursInput.style.opacity = isOn ? '1' : '0.5';
       }
+    }
+
+    function toggleDelegatableAgentRole(role, enabled) {
+      var hub = (_configState.data && _configState.data.hub) || {};
+      var base = ['scanner', 'quality', 'outreach'];
+      var roles = (hub.contribute_delegatable_roles || base).map(function(r) { return String(r || '').toLowerCase(); });
+      base.forEach(function(r) { if (!roles.includes(r)) roles.push(r); });
+      role = String(role || '').toLowerCase();
+      roles = roles.filter(function(r) { return r && r !== 'supervisor' && (enabled || r !== role); });
+      if (enabled && role && !roles.includes(role)) roles.push(role);
+      roles.sort();
+      hub.contribute_delegatable_roles = roles;
+      markDirty('hub', 'contribute_delegatable_roles', roles);
     }
 
     // renderFilterWithMode renders one contribute filter as a mode toggle

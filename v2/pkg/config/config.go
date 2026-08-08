@@ -2055,11 +2055,11 @@ var defaultContributeDelegatableRoles = []string{"scanner", "quality", "outreach
 // a clanker may claim. Empty config preserves the safe v1 default; supervisor is
 // deliberately removed even if an operator lists it because it manages the fleet.
 func (h HubConfig) ContributeDelegatableRoleSet() map[string]bool {
-	roles := h.ContributeDelegatableRoles
-	if len(roles) == 0 {
-		roles = defaultContributeDelegatableRoles
+	out := make(map[string]bool, len(defaultContributeDelegatableRoles)+len(h.ContributeDelegatableRoles))
+	for _, role := range defaultContributeDelegatableRoles {
+		out[role] = true
 	}
-	out := make(map[string]bool, len(roles))
+	roles := h.ContributeDelegatableRoles
 	for _, role := range roles {
 		role = strings.ToLower(strings.TrimSpace(role))
 		if role == "" || role == "supervisor" {
