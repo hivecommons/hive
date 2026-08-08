@@ -3909,12 +3909,28 @@ type EscalationConfig struct {
 // value preserves existing behavior: merge eligibility does not require a
 // review-verdicts.json aggregate approval unless an operator opts in.
 type ReviewConfig struct {
-	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	RequireApproval    bool     `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	FanOut             bool     `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
+	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
+	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
 }
 
 // DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated
 // here (a constant, checked by test) to avoid a config→escalation import.
 const DefaultEscalationThreshold = 3
+
+// DefaultMaxParallelReviews matches review.DefaultMaxParallelReviews; duplicated
+// here to avoid a config→review import cycle.
+const DefaultMaxParallelReviews = 5
+
+// EffectiveMaxParallelReviews resolves the review fan-out width.
+func (r ReviewConfig) EffectiveMaxParallelReviews() int {
+	if r.MaxParallelReviews > 0 {
+		return r.MaxParallelReviews
+	}
+	return DefaultMaxParallelReviews
+}
 
 // EffectiveThreshold resolves the configured threshold with its default.
 func (e EscalationConfig) EffectiveThreshold() int {

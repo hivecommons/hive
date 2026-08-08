@@ -4352,6 +4352,7 @@ func runEvalCycle(
 	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
+	refreshReviewVerdicts(cfg, logger)
 	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, logger)
 
 	// Stuck-PR reaper (backstop): re-dispatch a fix for any hive-authored PR
@@ -4483,8 +4484,19 @@ func runEvalCycle(
 	}
 
 	sched.SetLastActionable(actionable)
-	if len(agentsDue) > 0 {
-		messages := sched.BuildKickMessages(actionable, agentsDue)
+	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, logger)
+	messages := sched.BuildKickMessages(actionable, agentsDue)
+	reviewKickByMessage := map[string]review.DispatchKick{}
+	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
+		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {
+			logger.Info("review swarm kick suppressed by governor gate", "agent", k.Agent, "pr", k.PRRef)
+			continue
+		}
+		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
+		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
+	}
+	var deliveredReviewKicks []review.DispatchKick
+	if len(messages) > 0 {
 		for _, msg := range messages {
 			agentCfg := cfg.Agents[msg.Agent]
 			_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
@@ -4501,6 +4513,10 @@ func runEvalCycle(
 				kickSpan.End()
 				logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
 				continue
+			}
+			if k, ok := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]; ok {
+				deliveredReviewKicks = append(deliveredReviewKicks, k)
+				persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 			}
 			kickSpan.End()
 			gov.RecordKick(msg.Agent)
@@ -4524,6 +4540,7 @@ func runEvalCycle(
 			}
 		}
 	}
+	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
 	if actionable.Issues.SLAViolations > 0 {
 		const doubleSLAMinutes = 60
@@ -5972,6 +5989,86 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		return
 	}
 	atomicWrite(ciFailingPath, failData)
+}
+
+func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr *agent.Manager, logger *slog.Logger) review.DispatchPlan {
+	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
+		return review.DispatchPlan{}
+	}
+	state, err := review.LoadDispatchState("")
+	if err != nil && !os.IsNotExist(err) {
+		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
+	}
+	artifact, err := review.LoadArtifact("")
+	if err != nil && !os.IsNotExist(err) {
+		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
+	}
+	prs := make([]review.PullRequest, 0, len(actionable.PRs.Items))
+	for _, pr := range actionable.PRs.Items {
+		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
+		prs = append(prs, review.PullRequest{
+			Repo:    pr.Repo,
+			Number:  pr.Number,
+			Title:   pr.Title,
+			Author:  pr.Author,
+			HeadSHA: pr.HeadSHA,
+			URL:     pr.URL,
+			Lane:    string(lane),
+		})
+	}
+	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
+	for name, ac := range cfg.EnabledAgents() {
+		agents = append(agents, review.AgentCapability{
+			Name:           name,
+			Enabled:        true,
+			Paused:         ac.Paused || (agentMgr != nil && agentMgr.IsPaused(name)),
+			OnDemand:       ac.OnDemand,
+			UsesKick:       ac.UsesGovernorKick(),
+			Role:           ac.Role,
+			LaneKeywords:   ac.LaneKeywords,
+			DetectKeywords: ac.DetectKeywords,
+			Aliases:        ac.Aliases,
+		})
+	}
+	plan := review.PlanDispatch(prs, artifact, state, review.DispatchOptions{
+		RequireApproval:    cfg.Review.RequireApproval,
+		FanOut:             cfg.Review.FanOut,
+		MaxParallelReviews: cfg.Review.EffectiveMaxParallelReviews(),
+		ReviewerAgents:     cfg.Review.ReviewerAgents,
+		FixerAgent:         cfg.Review.FixerAgent,
+		ProjectOrg:         cfg.Project.Org,
+		AIAuthor:           cfg.EffectiveAIAuthor(),
+		Agents:             agents,
+	})
+	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
+		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
+	}
+	return plan
+}
+
+func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
+	if cfg == nil || !cfg.Review.RequireApproval {
+		return
+	}
+	artifact, err := review.CollectAndWrite("", "", review.AggregateOptions{})
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Warn("failed to refresh review verdicts", "error", err)
+		}
+		return
+	}
+	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.DispatchKick, logger *slog.Logger) {
+	planned := append(append([]review.DispatchKick(nil), plan.ReviewKicks...), plan.FixKicks...)
+	if plan.State.GeneratedAt.IsZero() && len(planned) == 0 {
+		return
+	}
+	state := review.ConfirmDelivered(plan.State, planned, delivered)
+	if err := review.WriteDispatchState("", state); err != nil {
+		logger.Warn("failed to persist review dispatch state", "error", err)
+	}
 }
 
 func atomicWrite(path string, data []byte) {

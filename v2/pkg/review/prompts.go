@@ -13,6 +13,7 @@ type PullRequest struct {
 	Author  string
 	HeadSHA string
 	URL     string
+	Lane    string
 }
 
 func BuildPerspectivePrompt(p Perspective, pr PullRequest) string {

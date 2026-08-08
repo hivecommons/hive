@@ -1,6 +1,6 @@
-# Review swarm (phase 1)
+# Review swarm
 
-Hive's review swarm adds a structured review-to-fix decision point for pull requests. Phase 1 implements the data model, prompt construction, verdict collector, and optional merge-gate integration; governor fan-out to parallel review agents is deferred.
+Hive's review swarm adds a structured review-to-fix decision point for pull requests. It includes the review data model, prompt construction, verdict collector, optional merge-gate integration, governor fan-out to review-capable agents, and a bounded auto-fix cycle for review findings.
 
 ## Perspectives
 
@@ -33,22 +33,30 @@ The default human threshold is `high`. Review-triggered fix cycles use the same 
 
 ## Configuration
 
-Merge-gate use is opt-in and preserves existing behavior by default:
+Merge-gate and fan-out use are opt-in and preserve existing behavior by default:
 
 ```yaml
 review:
   require_approval: true
+  fan_out: true
+  max_parallel_reviews: 5
+  reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
+  fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
 ```
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
-## Prompt construction
+`review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
+
+## Dispatch and prompt construction
 
 `pkg/review` provides prompt builders for one prompt per perspective plus a sequential fallback prompt. These prompts instruct review-capable agents to emit the extended AgentReport JSON shape above.
 
+Phase 2 adds dispatch state in `/var/run/hive-metrics/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
+
+When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
+
 ## Deferred work
 
-- Wire governor/scheduler fan-out so the five perspective prompts run in parallel review-capable agents.
-- Feed `changes_requested` aggregates directly into an auto-fix kick lane.
 - Map aggregate verdicts to labels/comments (`hold`, `needs-human`, close recommendation) once fan-out exists.
 - Add dashboard visibility for review verdict artifacts.

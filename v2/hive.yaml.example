@@ -206,6 +206,10 @@ governor:
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.
 # review:
 #   require_approval: false
+#   fan_out: false
+#   max_parallel_reviews: 5
+#   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 
 # GitHub authentication — use ONE of these methods
 github:
