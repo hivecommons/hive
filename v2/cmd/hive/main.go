@@ -894,6 +894,25 @@ func main() {
 		"agents", len(cfg.Agents),
 		"hive_id", cfg.HiveID,
 	)
+	startupRepoTargetIssue := config.ValidateRepoTargets(cfg)
+	if startupRepoTargetIssue != nil {
+		logger.Warn("repo target misconfigured — owner action required",
+			"issue", startupRepoTargetIssue.Message,
+			"hive_id", cfg.HiveID,
+			"org", cfg.Project.Org,
+			"repos", cfg.Project.Repos,
+			"primary_repo", cfg.Project.PrimaryRepo,
+		)
+	}
+	repoTargetMisconfigured := func() bool {
+		return config.ValidateRepoTargets(cfg) != nil
+	}
+	repoTargetIssueMessage := func() string {
+		if issue := config.ValidateRepoTargets(cfg); issue != nil {
+			return issue.Message
+		}
+		return ""
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2847,11 +2866,13 @@ func main() {
 					errMsg, _ := dashSrv.InferenceAuthState()
 					return errMsg
 				}(),
-				Repos:       cfg.Project.Repos,
-				PrimaryRepo: cfg.Project.PrimaryRepo,
-				ACMMLevel:   acmmLvl,
-				Agents:      agents,
-				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				RepoTargetMisconfigured: repoTargetMisconfigured(),
+				RepoTargetIssue:         repoTargetIssueMessage(),
+				Repos:                   cfg.Project.Repos,
+				PrimaryRepo:             cfg.Project.PrimaryRepo,
+				ACMMLevel:               acmmLvl,
+				Agents:                  agents,
+				Governor:                hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -3133,15 +3154,17 @@ func main() {
 					acmmLvl = *cfg.ACMMLevel
 				}
 				return &hub.HeartbeatPayload{
-					HiveID:    cfg.HiveID,
-					Org:       cfg.Project.Org,
-					ACMMLevel: acmmLvl,
-					Agents:    agents,
-					GitHash:   gitShort,
-					ClusterID: cfg.Hub.ClusterID,
-					HiveType:  cfg.Hub.HiveType,
-					IsPublic:  cfg.Hub.IsPublic,
-					Version:   "3.0.0",
+					HiveID:                  cfg.HiveID,
+					Org:                     cfg.Project.Org,
+					ACMMLevel:               acmmLvl,
+					Agents:                  agents,
+					GitHash:                 gitShort,
+					ClusterID:               cfg.Hub.ClusterID,
+					HiveType:                cfg.Hub.HiveType,
+					IsPublic:                cfg.Hub.IsPublic,
+					Version:                 "3.0.0",
+					RepoTargetMisconfigured: repoTargetMisconfigured(),
+					RepoTargetIssue:         repoTargetIssueMessage(),
 				}
 			}, targetSHA, logger)
 
@@ -3502,6 +3525,15 @@ func main() {
 						logger.Error("failed to save adopted vanity dashboard URL", "error", err)
 					}
 				}
+				return
+			}
+			if issue := config.ValidateProjectRepoTargets(pc.Org, pc.Repos, pc.PrimaryRepo, cfg.GitHub.HostLabel()); issue != nil {
+				logger.Error("REFUSING hub project config: repo target is misconfigured — project left unchanged",
+					"error", issue.Message,
+					"pushed_org", pc.Org,
+					"pushed_repos", pc.Repos,
+					"pushed_primary_repo", pc.PrimaryRepo,
+				)
 				return
 			}
 			curACMM := 0

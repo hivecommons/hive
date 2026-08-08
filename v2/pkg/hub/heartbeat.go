@@ -430,6 +430,11 @@ type HeartbeatPayload struct {
 	Timestamp          string `json:"timestamp"`
 	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`
+	// RepoTargetMisconfigured carries an operator-facing config-shape issue
+	// detected by the spoke. It is visibility only: the spoke keeps running and
+	// the hub does not rewrite the project fields.
+	RepoTargetMisconfigured bool   `json:"repo_target_misconfigured,omitempty"`
+	RepoTargetIssue         string `json:"repo_target_issue,omitempty"`
 	// GitHubAppState is the spoke's classification of WHY App auth is failing
 	// (a github.AppAuthState token: "key-missing", "key-invalid",
 	// "not-installed", "wrong-installation", "insufficient-permissions").

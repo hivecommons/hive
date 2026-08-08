@@ -29,6 +29,28 @@ var saasUsersDir = "/data/saas/users"
 
 const hubAdminUsername = "clubanderson"
 
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func repoTargetForgeHost(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return "github.com"
+	}
+	if u, err := url.Parse(baseURL); err == nil && u.Host != "" {
+		return strings.ToLower(u.Host)
+	}
+	return strings.ToLower(strings.Trim(strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://"), "/"))
+}
+
 // hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
 // restarts. The behind-latest check runs every SHA-poll cycle, so without this
 // the hub could re-trigger a restart before the previous rollout's new pod
@@ -2757,6 +2779,18 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	reposForValidation := splitCSV(req.Repos)
+	if len(reposForValidation) == 0 {
+		reposForValidation = []string{""}
+	}
+	primaryForValidation := strings.TrimSpace(req.PrimaryRepo)
+	if primaryForValidation == "" && len(reposForValidation) > 0 {
+		primaryForValidation = reposForValidation[0]
+	}
+	if issue := config.ValidateProjectRepoTargets(req.Org, reposForValidation, primaryForValidation, repoTargetForgeHost(req.GitHubBaseURL)); issue != nil {
+		writeJSONError(w, http.StatusBadRequest, issue.Message)
+		return
+	}
 	if req.Org == "" || req.Repos == "" {
 		http.Error(w, `{"error":"org and repos are required"}`, http.StatusBadRequest)
 		return
@@ -7093,6 +7127,14 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid primary repo"}`, http.StatusBadRequest)
 		return
 	}
+	forgeHost := body.GitHubHost
+	if strings.EqualFold(forgeHost, githubHostPublic) || forgeHost == "" {
+		forgeHost = "github.com"
+	}
+	if issue := config.ValidateProjectRepoTargets(body.Org, repos, primaryRepo, forgeHost); issue != nil {
+		writeJSONError(w, http.StatusBadRequest, issue.Message)
+		return
+	}
 
 	acmm := body.ACMMLevel
 	if acmm == 0 {
@@ -8723,7 +8765,8 @@ const dashboardHTML = `<!DOCTYPE html>
          EXCEPT on an unassigned placeholder, where having no usable App is the
          pool's designed state (mirrored here so dot and chip never disagree). */
       var appMissing = !isPlaceholderHive(h) && !!h.githubAppRequired && !h.githubAppPermIssue;
-      var degraded = (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
+      var repoTargetBad = !isPlaceholderHive(h) && !!h.repoTargetMisconfigured;
+      var degraded = repoTargetBad || (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
       /* An offline hive has no live reading at all, so it is not "OK" even if
          its last stored health snapshot said ok. */
       var ok = !degraded && st === 'ok' && !!h.online;
@@ -9098,6 +9141,12 @@ const dashboardHTML = `<!DOCTYPE html>
            auth-class checks (sanitizePlaceholderRows, placeholder_health.go);
            this line says WHY the row is green instead of claiming an App. */
         lines.push('– Unassigned — GitHub auth not configured by design');
+      }
+      else if (h.repoTargetMisconfigured) {
+        lines.push('⚠ ' + (h.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Governor Config → Repos.'));
+        if (st === 'ok' || st === 'unknown') {
+          st = 'warning'; c = colors.warning; ic = icons.warning; statusLabel = 'Warning'; lines[0] = statusLabel;
+        }
       }
       else if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
         /* Operator-side: the key we distribute has not landed, or is for the

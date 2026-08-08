@@ -222,12 +222,14 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory          []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory             []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired     bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue    string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState        string       `json:"githubAppState,omitempty"`
+	OrphanedUpgradeSweeps   int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory            []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory               []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired       bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue      string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState          string       `json:"githubAppState,omitempty"`
+	RepoTargetMisconfigured bool         `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue         string       `json:"repoTargetIssue,omitempty"`
 	// ConflictingReporters names two spoke instances that are BOTH reporting
 	// as this hive (e.g. "hive-abc… ↔ hive-def…"), set when their beats
 	// alternate. Non-empty is a critical drift signal: every field in this
@@ -1352,6 +1354,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// identifier sanitizer stripped every space out of it.
 		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		RepoTargetMisconfigured: payload.RepoTargetMisconfigured,
+		RepoTargetIssue:         sanitizeProseField(payload.RepoTargetIssue),
 		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
 		GitHubAppSlug:           payload.GitHubAppSlug,

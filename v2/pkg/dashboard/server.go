@@ -258,6 +258,8 @@ type StatusPayload struct {
 	// blank raw fields suppressing the banner while auth was not-installed).
 	GitHubAppInstallMissing bool               `json:"githubAppInstallMissing,omitempty"`
 	GitHubBaseURL           string             `json:"githubBaseURL,omitempty"`
+	RepoTargetMisconfigured bool               `json:"repoTargetMisconfigured,omitempty"`
+	RepoTargetIssue         string             `json:"repoTargetIssue,omitempty"`
 	InferenceBackends       []InferenceBackend `json:"inferenceBackends,omitempty"`
 	SystemAlerts            []SystemAlert      `json:"systemAlerts,omitempty"`
 	HubBanner               *HubBannerState    `json:"hubBanner,omitempty"`
@@ -1059,6 +1061,13 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
 		status.GitHubBaseURL = s.deps.Config.GitHub.ResolvedBaseURL()
+		if issue := config.ValidateRepoTargets(s.deps.Config); issue != nil {
+			status.RepoTargetMisconfigured = true
+			status.RepoTargetIssue = issue.Message
+		} else {
+			status.RepoTargetMisconfigured = false
+			status.RepoTargetIssue = ""
+		}
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
 
@@ -2273,6 +2282,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	} else {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "no auth"})
 		fails++
+	}
+
+	if status != nil && status.RepoTargetMisconfigured {
+		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue})
+		warns++
 	}
 
 	// 3. Agents

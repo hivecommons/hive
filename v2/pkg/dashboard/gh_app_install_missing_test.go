@@ -180,6 +180,23 @@ func TestGitHubAppBannerKeysOffInstallMissingAndAuthState(t *testing.T) {
 	}
 }
 
+func TestRepoTargetBannerPinsFixCTA(t *testing.T) {
+	html := spokeIndexHTML(t)
+	required := []string{
+		`id="repo-target-banner"`,
+		"function renderRepoTargetBanner(data)",
+		"data.repoTargetMisconfigured",
+		"data.repoTargetIssue",
+		"openConfigDialog('governor',null,'Repos')",
+		"Fix in Repos",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("repo target banner missing %q", snippet)
+		}
+	}
+}
+
 // TestForgeAppTabAlwaysOffersInstallAction locks the Forge App tab contract:
 // installation_id 0 (with a real app_id) shows the install link FIRST and by
 // itself; classified not-installed/wrong-installation also trigger it; the

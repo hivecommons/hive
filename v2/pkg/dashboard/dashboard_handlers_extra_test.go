@@ -681,10 +681,10 @@ func TestHandleGovernorReposStripOrgPrefix(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d (body: %s)", w.Code, w.Body.String())
 	}
-	// Verify org prefix was stripped
+	// Verify org prefix was not silently stripped
 	repos := srv.deps.Config.Project.Repos
 	for _, r := range repos {
 		if strings.HasPrefix(r, "testorg/") {

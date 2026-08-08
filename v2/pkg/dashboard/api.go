@@ -4845,6 +4845,18 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	prevPrimary := s.deps.Config.Project.PrimaryRepo
 
 	spokeHost := s.hiveForgeHost()
+	validateRepos := prevRepos
+	if len(body.Repos) > 0 {
+		validateRepos = body.Repos
+	}
+	validatePrimary := prevPrimary
+	if body.PrimaryRepo != nil {
+		validatePrimary = *body.PrimaryRepo
+	}
+	if issue := config.ValidateProjectRepoTargets(org, validateRepos, validatePrimary, spokeHost); issue != nil {
+		jsonError(w, issue.Message, http.StatusBadRequest)
+		return
+	}
 	for _, ref := range body.Repos {
 		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
 			jsonError(w, fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host. Remove the mismatched repo or use a repo on %s.", strings.TrimSpace(ref), h, spokeHost, spokeHost), http.StatusBadRequest)

@@ -2825,6 +2825,14 @@
     <button type="button" onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line-strong);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
+  <div id="repo-target-banner" class="gh-app-install-banner perm-issue" hidden>
+    <span style="font-size:1.5rem">&#9888;&#65039;</span>
+    <div style="flex:1">
+      <div class="gh-app-title">Repo Target Misconfigured</div>
+      <div class="gh-app-desc" id="repo-target-banner-desc">Expected org/repo.</div>
+    </div>
+    <button type="button" class="gh-app-btn" onclick="openConfigDialog('governor',null,'Repos')">Fix in Repos</button>
+  </div>
   <div id="hub-banner" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="governor" id="governor"></div>
@@ -5985,6 +5993,20 @@
         if (oldDetails) oldDetails.remove();
         banner.setAttribute('hidden', '');
         banner.style.cssText = 'display:none';
+      }
+    }
+
+    function renderRepoTargetBanner(data) {
+      var banner = document.getElementById('repo-target-banner');
+      if (!banner) return;
+      if (data && data.repoTargetMisconfigured) {
+        var desc = document.getElementById('repo-target-banner-desc');
+        if (desc) desc.textContent = data.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Governor Config → Repos.';
+        banner.removeAttribute('hidden');
+        banner.style.cssText = 'display:flex !important';
+      } else {
+        banner.setAttribute('hidden', '');
+        banner.style.display = 'none';
       }
     }
 
@@ -11068,6 +11090,7 @@ function burnAreaChart() {
       }
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
+      renderRepoTargetBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
       renderSystemAlerts(data.systemAlerts || []);
