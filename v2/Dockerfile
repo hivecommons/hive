@@ -215,7 +215,14 @@ ARG PLUK_VERSION=0.8.0
 RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 1777 /var/run/pluk/logs /var/run/pluk/commands
-RUN (which git && git clone -b feat/cli-agent-mode https://github.com/clubanderson/agentic-strategy-evolution /opt/nous && \
+# Nous framework: pinned to a specific commit SHA to prevent supply-chain
+# injection via a push to the mutable branch ref. Update NOUS_COMMIT
+# deliberately when pulling upstream changes, after reviewing the diff at
+# that SHA. feat/cli-agent-mode HEAD verified 2026-08-08.
+ARG NOUS_COMMIT=8de28905b87474b870c56e1ecbd3c970532683b8
+RUN (which git && \
+    git clone https://github.com/clubanderson/agentic-strategy-evolution /opt/nous && \
+    git -C /opt/nous checkout "${NOUS_COMMIT}" && \
     python3 -m venv /opt/nous/venv && \
     /opt/nous/venv/bin/pip install --no-cache-dir -e /opt/nous 2>&1) || \
     echo "WARN: Nous install failed — run_campaign.py may not work"
