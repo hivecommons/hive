@@ -161,30 +161,42 @@ func TestAutoMergeSweepHelpersAndNilClient(t *testing.T) {
 }
 
 func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
+	type status struct{ context, state string }
+	type check struct{ name, status, conclusion string }
 	tests := []struct {
-		name            string
-		statusState     string
-		statusTotal     int
-		checkStatus     string
-		checkConclusion string
-		wantGreen       bool
-		wantReason      string
+		name       string
+		statuses   []status
+		checks     []check
+		wantGreen  bool
+		wantReason string
 	}{
-		{name: "failure status blocks", statusState: "failure", statusTotal: 1, wantReason: "status-failure"},
-		{name: "pending status with no red checks relies on mergeable", statusState: "pending", statusTotal: 1, checkStatus: "queued", wantGreen: true},
-		{name: "check failure blocks", statusState: "success", statusTotal: 1, checkStatus: "completed", checkConclusion: "failure", wantReason: "check-failure"},
-		{name: "no statuses or checks is green after mergeable gate", statusState: "pending", statusTotal: 0, wantGreen: true},
+		{name: "failure status blocks", statuses: []status{{"ci/build", "failure"}}, wantReason: "status-failure"},
+		{name: "error status blocks", statuses: []status{{"ci/build", "error"}}, wantReason: "status-error"},
+		{name: "pending status blocks until CI completes", statuses: []status{{"ci/build", "pending"}}, wantReason: "status-pending"},
+		{name: "in-progress check blocks until CI completes", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "in_progress", ""}}, wantReason: "check-pending"},
+		{name: "queued check blocks until CI completes", checks: []check{{"build", "queued", ""}}, wantReason: "check-pending"},
+		{name: "check failure blocks", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "completed", "failure"}}, wantReason: "check-failure"},
+		{name: "pending meta status and check are ignored", statuses: []status{{"tide", "pending"}, {"ci/build", "success"}}, checks: []check{{"tide", "in_progress", ""}, {"build", "completed", "success"}}, wantGreen: true},
+		{name: "no statuses or checks is green after mergeable gate", wantGreen: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
-					json.NewEncoder(w).Encode(map[string]any{"state": tt.statusState, "total_count": tt.statusTotal})
+					statuses := []map[string]string{}
+					combined := "success"
+					for _, s := range tt.statuses {
+						statuses = append(statuses, map[string]string{"context": s.context, "state": s.state})
+						if s.state != "success" {
+							combined = s.state
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]any{"state": combined, "total_count": len(statuses), "statuses": statuses})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
 					runs := []map[string]string{}
-					if tt.checkStatus != "" {
-						runs = append(runs, map[string]string{"name": "build", "status": tt.checkStatus, "conclusion": tt.checkConclusion})
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
 				default:
@@ -282,7 +294,7 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI."}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
-					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1})
+					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
 					json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
 				case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
@@ -317,7 +329,7 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI."}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
-			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1})
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
@@ -439,8 +451,11 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]
-			total := 1
-			json.NewEncoder(w).Encode(map[string]any{"state": pr.statusState, "total_count": total})
+			json.NewEncoder(w).Encode(map[string]any{
+				"state":       pr.statusState,
+				"total_count": 1,
+				"statuses":    []map[string]string{{"context": "ci/build", "state": pr.statusState}},
+			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
 			number := shaNumber(t, r.URL.Path)
 			pr := byNumber[number]

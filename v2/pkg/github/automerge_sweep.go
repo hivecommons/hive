@@ -211,13 +211,39 @@ func parseHiveQueueReview(body string) string {
 	return matches[1]
 }
 
+// commitGreen reports whether every non-meta commit status and check run on
+// the head SHA has actually succeeded. Pending is NOT green: the sweep runs
+// every minute and a queue action usually lands seconds after the PR opens,
+// so treating in-flight CI as green would squash the PR before its first CI
+// run finishes — mergeable_state cannot catch that, because "unstable"
+// (non-required checks outstanding) deliberately maps to MergeableYes and
+// managed repos generally have no branch protection making any check
+// required. Meta gates (tide, netlify previews, ...) are excluded on both
+// surfaces — tide in particular posts a commit status that stays "pending"
+// forever on Prow-managed repos and must never wedge the queue.
 func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool, string, error) {
-	status, _, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, &gh.ListOptions{PerPage: 100})
-	if err != nil {
-		return false, "status-check", err
-	}
-	if status.GetTotalCount() > 0 && (status.GetState() == "failure" || status.GetState() == "error") {
-		return false, "status-" + status.GetState(), nil
+	statusOpts := &gh.ListOptions{PerPage: 100}
+	for {
+		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
+		if err != nil {
+			return false, "status-check", err
+		}
+		for _, s := range status.Statuses {
+			if isMetaCheck(s.GetContext()) {
+				continue
+			}
+			switch s.GetState() {
+			case "success":
+			case "pending":
+				return false, "status-pending", nil
+			default: // "failure", "error"
+				return false, "status-" + s.GetState(), nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		statusOpts.Page = resp.NextPage
 	}
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
@@ -231,7 +257,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 				continue
 			}
 			if cr.GetStatus() != "completed" {
-				continue
+				return false, "check-pending", nil
 			}
 			switch cr.GetConclusion() {
 			case "success", "neutral", "skipped":
