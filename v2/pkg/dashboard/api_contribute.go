@@ -1099,15 +1099,11 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
 .cc-q-menu-btn{background:none;border:none;color:var(--cc-muted-2);cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
 .cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:var(--cc-text);background:var(--cc-border-2)}
-.cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
+.cc-q-menu{position:fixed;top:0;left:0;right:auto;bottom:auto;z-index:10002;min-width:190px;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
 .cc-q-menu.open{display:block}
-/* Flip-up variant: for rows near the BOTTOM of the scrolling .cc-queue, the
-   default drop-down menu (top:100%%) would extend past the container's overflow
-   boundary and get clipped ("Optional hold reason" cut off). ccBindQueueMenus
-   measures on open and adds .cc-q-menu-up when there is more room above than
-   below, anchoring the menu to the button's TOP so it opens upward and stays
-   inside the visible card. */
-.cc-q-menu.cc-q-menu-up{top:auto;bottom:100%%}
+/* Fixed-positioned so the per-row menu escapes the scrolling .cc-queue overflow
+   clip; ccBindQueueMenus measures the trigger and flips/clamps inside the viewport
+   (and visible queue panel) before paint. */
 .cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:var(--cc-text-2);font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
 .cc-q-menu button.cc-q-act:hover{background:var(--cc-border-2);color:var(--cc-text)}
 .cc-q-menu-ic{color:var(--cc-muted-2);flex-shrink:0;width:16px;text-align:center}
@@ -2837,13 +2833,17 @@ function _wireCooldownInfo(){
   var btn=document.getElementById('cooldown-info-btn');
   var pop=document.getElementById('cooldown-info-pop');
   if(!btn||!pop)return;
+  function place(){if(!pop.hidden)ccPlaceFixedPopover(btn,pop,{fallbackWidth:300,boundary:btn.closest('.ops-card')});}
   function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
   btn.addEventListener('click',function(e){
     e.stopPropagation();
     var open=pop.hidden;
-    pop.hidden=!open;
-    btn.setAttribute('aria-expanded',open?'true':'false');
+    if(open){pop.hidden=false;btn.setAttribute('aria-expanded','true');place();}
+    else close();
   });
+  pop.addEventListener('click',function(e){e.stopPropagation();});
+  window.addEventListener('resize',place);
+  window.addEventListener('scroll',place,true);
   document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
 }
@@ -2856,17 +2856,58 @@ function _wireAffinityInfo(){
   var btn=document.getElementById('affinity-info-btn');
   var pop=document.getElementById('affinity-info-pop');
   if(!btn||!pop)return;
+  function place(){if(!pop.hidden)ccPlaceFixedPopover(btn,pop,{fallbackWidth:300,boundary:btn.closest('.ops-card')});}
   function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
   btn.addEventListener('click',function(e){
     e.stopPropagation();
     var open=pop.hidden;
-    pop.hidden=!open;
-    btn.setAttribute('aria-expanded',open?'true':'false');
+    if(open){pop.hidden=false;btn.setAttribute('aria-expanded','true');place();}
+    else close();
   });
+  pop.addEventListener('click',function(e){e.stopPropagation();});
+  window.addEventListener('resize',place);
+  window.addEventListener('scroll',place,true);
   document.addEventListener('click',function(e){if(!pop.hidden&&e.target!==btn&&!pop.contains(e.target))close();});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_wireAffinityInfo);else _wireAffinityInfo();
+
+// ccPlaceFixedPopover places an already-visible popover/menu using viewport
+// coordinates so it is not clipped by card/queue overflow. It prefers below the
+// trigger, flips above when needed, and clamps inside the viewport plus an optional
+// boundary element (for example the visible .cc-queue panel).
+function ccPlaceFixedPopover(anchor,pop,opts){
+  opts=opts||{};
+  var edge=opts.edge||8,gap=opts.gap||8;
+  pop.style.position='fixed';
+  pop.style.left='0px';
+  pop.style.top='0px';
+  pop.style.right='auto';
+  pop.style.bottom='auto';
+  var b=anchor.getBoundingClientRect();
+  var vw=document.documentElement.clientWidth||window.innerWidth||0;
+  var vh=document.documentElement.clientHeight||window.innerHeight||0;
+  var r=pop.getBoundingClientRect();
+  var w=r.width||pop.offsetWidth||opts.fallbackWidth||320;
+  var h=r.height||pop.offsetHeight||opts.fallbackHeight||0;
+  var minTop=edge,maxBottom=vh-edge;
+  if(opts.boundary&&opts.boundary.getBoundingClientRect){
+    var cb=opts.boundary.getBoundingClientRect();
+    minTop=Math.max(minTop,cb.top+edge);
+    maxBottom=Math.min(maxBottom,cb.bottom-edge);
+  }
+  if(maxBottom<=minTop){minTop=edge;maxBottom=vh-edge;}
+  var rawLeft=(opts.align==='right')?(b.right-w):b.left;
+  var maxLeft=Math.max(edge,vw-w-edge);
+  var left=Math.min(Math.max(rawLeft,edge),maxLeft);
+  var below=maxBottom-b.bottom-gap;
+  var above=b.top-gap-minTop;
+  var top=(below>=h||below>=above)?(b.bottom+gap):(b.top-gap-h);
+  var maxTop=Math.max(minTop,maxBottom-h);
+  top=Math.min(Math.max(top,minTop),maxTop);
+  pop.style.left=left+'px';
+  pop.style.top=top+'px';
+}
 
 // _wireCustomCSSInfo toggles the compact custom-stylesheet help next to the
 // Leaderboard/Profile style picker. The element is rendered with the Me card, so
@@ -2878,25 +2919,7 @@ function _wireCustomCSSInfo(){
   btn.setAttribute('data-wired','1');
   function place(){
     if(pop.hidden)return;
-    pop.style.position='fixed';
-    pop.style.left='0px';
-    pop.style.top='0px';
-    pop.style.right='auto';
-    pop.style.bottom='auto';
-    var edge=8,gap=8;
-    var b=btn.getBoundingClientRect();
-    var vw=document.documentElement.clientWidth||window.innerWidth||0;
-    var vh=document.documentElement.clientHeight||window.innerHeight||0;
-    var r=pop.getBoundingClientRect();
-    var w=r.width||pop.offsetWidth||320;
-    var h=r.height||pop.offsetHeight||0;
-    var maxLeft=Math.max(edge,vw-w-edge);
-    var left=Math.min(Math.max(b.left,edge),maxLeft);
-    var below=vh-b.bottom-gap;
-    var above=b.top-gap;
-    var top=(below>=h||below>=above)?Math.min(b.bottom+gap,vh-h-edge):Math.max(edge,b.top-gap-h);
-    pop.style.left=left+'px';
-    pop.style.top=top+'px';
+    ccPlaceFixedPopover(btn,pop,{fallbackWidth:320});
   }
   function close(){pop.hidden=true;btn.setAttribute('aria-expanded','false');}
   btn.addEventListener('click',function(e){
@@ -4083,7 +4106,7 @@ function ccUpdateFilterNote(shown,total){
 // in the FULL ccQueue regardless of any active search filter.
 function ccCloseQueueMenus(){
   var open=document.querySelectorAll('.cc-q-menu.open');
-  for(var i=0;i<open.length;i++){open[i].classList.remove('open');open[i].classList.remove('cc-q-menu-up');}
+  for(var i=0;i<open.length;i++){open[i].classList.remove('open');}
   var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
   for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
   // No-blink guard companion: a poll re-render that arrived while a menu was open was
@@ -4110,23 +4133,11 @@ function ccBindQueueMenus(root){
       var isOpen=menu.classList.contains('open');
       ccCloseQueueMenus();
       if(!isOpen){
-        // Decide direction BEFORE it paints so it never flashes clipped: if the
-        // menu (once shown) would extend past the bottom of the scrolling
-        // .cc-queue container, flip it to open upward. Compare the button's
-        // position to the container's viewport box, not the window, so it tracks
-        // the actual clip boundary (the queue's overflow-y:auto edge).
-        menu.classList.remove('cc-q-menu-up');
+        // Position with viewport coordinates BEFORE it paints so the menu escapes
+        // the scrolling .cc-queue overflow clip and flips/clamps when near the
+        // viewport or visible queue-panel bottom.
         menu.classList.add('open');
-        var clip=btn.closest('.cc-queue');
-        if(clip){
-          var bBot=btn.getBoundingClientRect().bottom;
-          var cBox=clip.getBoundingClientRect();
-          var menuH=menu.offsetHeight||220; // measured now that it is display:block
-          // Flip up when there isn't room below within the clip AND there is more room above.
-          if(bBot+menuH>cBox.bottom && (btn.getBoundingClientRect().top-cBox.top)>(cBox.bottom-bBot)){
-            menu.classList.add('cc-q-menu-up');
-          }
-        }
+        ccPlaceFixedPopover(btn,menu,{align:'right',gap:6,fallbackWidth:220,fallbackHeight:220,boundary:btn.closest('.cc-queue')});
         btn.setAttribute('aria-expanded','true');
       }
     });
@@ -4892,6 +4903,8 @@ function ccRenderMeQuota(){
 // ── Global menu-dismiss: click outside or Escape closes any open row menu ───────
 document.addEventListener('click',function(){ccCloseQueueMenus();});
 document.addEventListener('keydown',function(e){if(e.key==='Escape')ccCloseQueueMenus();});
+window.addEventListener('resize',function(){ccCloseQueueMenus();});
+window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);
 })();
 </script>
 <script>

@@ -61,6 +61,7 @@ func TestCooldownInfoButtonAndExplainer(t *testing.T) {
 		`aria-controls="cooldown-info-pop"`,
 		// The wiring that toggles the popover.
 		`function _wireCooldownInfo(`,
+		`ccPlaceFixedPopover(btn,pop,{fallbackWidth:300,boundary:btn.closest('.ops-card')});`,
 		// Explainer substance: what cooldown is + how an issue enters it.
 		`out of the ready queue`,
 		`verified PR`,
