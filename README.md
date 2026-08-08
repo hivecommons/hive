@@ -276,6 +276,8 @@ flowchart LR
 
 **See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout.
 
+See also the [v2 docs index](v2/docs/README.md), [public roadmap](v2/docs/roadmap.md), and [landscape comparison](v2/docs/landscape.md) for community-facing documentation and positioning.
+
 ## Contribute to a Hive
 
 Community members can contribute compute to any hive through **ClankeR**, the
