@@ -1331,6 +1331,16 @@ func main() {
 				_ = agentMgr.UpdateConfig(name, agentCfg)
 			}
 		}
+		// Re-establish the fleet breaker AFTER per-agent pauses are restored
+		// above: the agents it held are already back in the paused state (with
+		// PausedTrigger == fleet-breaker from their persisted pause), so this
+		// only re-attaches the breaker so a later release resumes exactly them.
+		// An engaged breaker must REMAIN engaged across restart — it does not
+		// auto-release, and it does not re-pause or resume anything here.
+		if saved.Breaker != nil && saved.Breaker.Engaged {
+			agentMgr.RestoreBreaker(true, saved.Breaker.Paused)
+			logger.Info("fleet breaker restored from state", "held", len(saved.Breaker.Paused))
+		}
 		if saved.BudgetLimit > 0 {
 			gov.SetBudgetLimit(saved.BudgetLimit)
 		}
@@ -4793,6 +4803,12 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		IssueCosts:           issueCosts,
 		LastEval:             govState.LastEval,
 		ACMMLevel:            cfg.ACMMLevel,
+	}
+
+	// Persist the fleet breaker so an engaged kill-switch survives a restart.
+	// Only written when engaged — a never-thrown breaker adds nothing.
+	if engaged, breakerPaused := agentMgr.BreakerState(); engaged {
+		state.Breaker = &snapshot.BreakerState{Engaged: true, Paused: breakerPaused}
 	}
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {
