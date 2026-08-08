@@ -393,6 +393,12 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
       PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
       if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
         tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+      elif echo "$PANE" | grep -q "Do you trust the contents of this directory"; then
+        # Codex's own directory-trust prompt: a numbered menu ("1. Yes,
+        # continue" / "2. No, quit"), distinct wording and shape from the
+        # generic "trust this folder" pattern above — needs an explicit "1"
+        # selection, not a bare Enter (Enter alone just re-renders the menu).
+        tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
       elif echo "$PANE" | grep -q "Choose the text style"; then
         tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
       elif echo "$PANE" | grep -q "Share anonymous usage data\|help improve goose\|Would you like"; then
@@ -402,7 +408,7 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
       elif echo "$PANE" | grep -qi "custom API key"; then
         # Claude Code asks whether to use ANTHROPIC_API_KEY (litellm backend)
         tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
-      elif echo "$PANE" | grep -q "bypass permissions\|autopilot\|goose>\|G >\|❯\|/ commands\|> *$"; then
+      elif echo "$PANE" | grep -q "bypass permissions\|autopilot\|goose>\|G >\|❯\|›\|/ commands\|> *$"; then
         break
       fi
     done
