@@ -13,31 +13,39 @@ import (
 )
 
 const (
-	leaderboardCustomStyleMaxBytes   = 128 * 1024
-	leaderboardCustomStyleCacheTTL   = 5 * time.Minute
-	leaderboardCustomStyleMaxCache   = 64
-	leaderboardCustomStyleFetchTTL   = 10 * time.Second
-	leaderboardCustomStyleDefaultRef = "HEAD"
+	customStyleMaxBytes   = 128 * 1024
+	customStyleCacheTTL   = 5 * time.Minute
+	customStyleMaxCache   = 64
+	customStyleFetchTTL   = 10 * time.Second
+	customStyleDefaultRef = "HEAD"
+
+	customStyleScopeDashboard   = "dashboard"
+	customStyleScopeLeaderboard = "leaderboard"
 )
 
-var leaderboardCustomStyleRawBaseURL = "https://raw.githubusercontent.com"
+var customStyleRawBaseURL = "https://raw.githubusercontent.com"
 
-type leaderboardCustomStyleSource struct {
+var customStyleAllowedScopes = map[string]string{
+	customStyleScopeDashboard:   "#hive-dashboard-root",
+	customStyleScopeLeaderboard: "#tab-leaderboard",
+}
+
+type customStyleSource struct {
 	Owner string
 	Repo  string
 	Path  string
 	Ref   string
 }
 
-type leaderboardCustomStyleCacheEntry struct {
+type customStyleCacheEntry struct {
 	css       []byte
 	expiresAt time.Time
 }
 
 var (
-	leaderboardCustomStyleCacheMu sync.Mutex
-	leaderboardCustomStyleCache   = map[string]leaderboardCustomStyleCacheEntry{}
-	leaderboardCustomStyleClient  = &http.Client{Timeout: leaderboardCustomStyleFetchTTL}
+	customStyleCacheMu sync.Mutex
+	customStyleCache   = map[string]customStyleCacheEntry{}
+	customStyleClient  = &http.Client{Timeout: customStyleFetchTTL}
 )
 
 var (
@@ -49,46 +57,46 @@ var (
 	cssURLRE          = regexp.MustCompile(`(?is)url\(\s*(['"]?)([^'")]+)['"]?\s*\)`)
 )
 
-func validateLeaderboardCustomStyleSource(src string) (leaderboardCustomStyleSource, error) {
+func validateCustomStyleSource(src string) (customStyleSource, error) {
 	src = strings.TrimSpace(src)
 	if src == "" {
-		return leaderboardCustomStyleSource{}, fmt.Errorf("style source is required")
+		return customStyleSource{}, fmt.Errorf("style source is required")
 	}
 	if strings.Contains(src, "://") || strings.HasPrefix(src, "//") {
-		return leaderboardCustomStyleSource{}, fmt.Errorf("use owner/repo/path.css, not a full URL")
+		return customStyleSource{}, fmt.Errorf("use owner/repo/path.css, not a full URL")
 	}
-	ref := leaderboardCustomStyleDefaultRef
+	ref := customStyleDefaultRef
 	if at := strings.LastIndex(src, "@"); at >= 0 {
 		if at == len(src)-1 {
-			return leaderboardCustomStyleSource{}, fmt.Errorf("ref is empty")
+			return customStyleSource{}, fmt.Errorf("ref is empty")
 		}
 		ref = src[at+1:]
 		src = src[:at]
 	}
 	parts := strings.Split(src, "/")
 	if len(parts) < 3 {
-		return leaderboardCustomStyleSource{}, fmt.Errorf("style source must be owner/repo/path.css")
+		return customStyleSource{}, fmt.Errorf("style source must be owner/repo/path.css")
 	}
 	owner, repo := parts[0], parts[1]
 	cssPath := strings.Join(parts[2:], "/")
 	if !githubOwnerNameRE.MatchString(owner) {
-		return leaderboardCustomStyleSource{}, fmt.Errorf("invalid owner")
+		return customStyleSource{}, fmt.Errorf("invalid owner")
 	}
 	if !githubRepoNameRE.MatchString(repo) || repo == "." || repo == ".." {
-		return leaderboardCustomStyleSource{}, fmt.Errorf("invalid repo")
+		return customStyleSource{}, fmt.Errorf("invalid repo")
 	}
-	if err := validateLeaderboardCustomStylePath(cssPath); err != nil {
-		return leaderboardCustomStyleSource{}, err
+	if err := validateCustomStylePath(cssPath); err != nil {
+		return customStyleSource{}, err
 	}
-	if ref != leaderboardCustomStyleDefaultRef {
+	if ref != customStyleDefaultRef {
 		if !githubRefNameRE.MatchString(ref) || strings.Contains(ref, "..") || strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") {
-			return leaderboardCustomStyleSource{}, fmt.Errorf("invalid ref")
+			return customStyleSource{}, fmt.Errorf("invalid ref")
 		}
 	}
-	return leaderboardCustomStyleSource{Owner: owner, Repo: repo, Path: cssPath, Ref: ref}, nil
+	return customStyleSource{Owner: owner, Repo: repo, Path: cssPath, Ref: ref}, nil
 }
 
-func validateLeaderboardCustomStylePath(cssPath string) error {
+func validateCustomStylePath(cssPath string) error {
 	if cssPath == "" || strings.HasPrefix(cssPath, "/") || strings.Contains(cssPath, "\\") || strings.Contains(cssPath, "://") {
 		return fmt.Errorf("invalid path")
 	}
@@ -106,12 +114,16 @@ func validateLeaderboardCustomStylePath(cssPath string) error {
 	return nil
 }
 
-func leaderboardCustomStyleCacheKey(src leaderboardCustomStyleSource) string {
+func customStyleCacheKey(src customStyleSource, scope string) string {
+	return src.Owner + "/" + src.Repo + "/" + src.Path + "@" + src.Ref + "|" + scope
+}
+
+func customStyleSourceKey(src customStyleSource) string {
 	return src.Owner + "/" + src.Repo + "/" + src.Path + "@" + src.Ref
 }
 
-func leaderboardCustomStyleRawURL(src leaderboardCustomStyleSource) string {
-	parts := []string{strings.TrimRight(leaderboardCustomStyleRawBaseURL, "/"), pathEscape(src.Owner), pathEscape(src.Repo), pathEscape(src.Ref)}
+func customStyleRawURL(src customStyleSource) string {
+	parts := []string{strings.TrimRight(customStyleRawBaseURL, "/"), pathEscape(src.Owner), pathEscape(src.Repo), pathEscape(src.Ref)}
 	for _, segment := range strings.Split(src.Path, "/") {
 		parts = append(parts, pathEscape(segment))
 	}
@@ -122,49 +134,65 @@ func pathEscape(s string) string {
 	return strings.ReplaceAll(url.PathEscape(s), "%2F", "/")
 }
 
-func getLeaderboardCustomStyle(ctx context.Context, rawSrc string) ([]byte, leaderboardCustomStyleSource, error) {
-	src, err := validateLeaderboardCustomStyleSource(rawSrc)
-	if err != nil {
-		return nil, leaderboardCustomStyleSource{}, err
+func normalizeCustomStyleScope(scope string) (string, string, error) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = customStyleScopeDashboard
 	}
-	key := leaderboardCustomStyleCacheKey(src)
+	root, ok := customStyleAllowedScopes[scope]
+	if !ok {
+		return "", "", fmt.Errorf("invalid style scope")
+	}
+	return scope, root, nil
+}
+
+func getCustomStyle(ctx context.Context, rawSrc, rawScope string) ([]byte, customStyleSource, error) {
+	scope, root, err := normalizeCustomStyleScope(rawScope)
+	if err != nil {
+		return nil, customStyleSource{}, err
+	}
+	src, err := validateCustomStyleSource(rawSrc)
+	if err != nil {
+		return nil, customStyleSource{}, err
+	}
+	key := customStyleCacheKey(src, scope)
 	now := time.Now()
-	leaderboardCustomStyleCacheMu.Lock()
-	if entry, ok := leaderboardCustomStyleCache[key]; ok && now.Before(entry.expiresAt) {
+	customStyleCacheMu.Lock()
+	if entry, ok := customStyleCache[key]; ok && now.Before(entry.expiresAt) {
 		css := append([]byte(nil), entry.css...)
-		leaderboardCustomStyleCacheMu.Unlock()
+		customStyleCacheMu.Unlock()
 		return css, src, nil
 	}
-	leaderboardCustomStyleCacheMu.Unlock()
+	customStyleCacheMu.Unlock()
 
-	css, err := fetchAndSanitizeLeaderboardCustomStyle(ctx, src)
+	css, err := fetchAndSanitizeCustomStyle(ctx, src, root)
 	if err != nil {
 		return nil, src, err
 	}
-	leaderboardCustomStyleCacheMu.Lock()
-	if len(leaderboardCustomStyleCache) >= leaderboardCustomStyleMaxCache {
-		for k := range leaderboardCustomStyleCache {
-			delete(leaderboardCustomStyleCache, k)
+	customStyleCacheMu.Lock()
+	if len(customStyleCache) >= customStyleMaxCache {
+		for k := range customStyleCache {
+			delete(customStyleCache, k)
 			break
 		}
 	}
-	leaderboardCustomStyleCache[key] = leaderboardCustomStyleCacheEntry{css: append([]byte(nil), css...), expiresAt: now.Add(leaderboardCustomStyleCacheTTL)}
-	leaderboardCustomStyleCacheMu.Unlock()
+	customStyleCache[key] = customStyleCacheEntry{css: append([]byte(nil), css...), expiresAt: now.Add(customStyleCacheTTL)}
+	customStyleCacheMu.Unlock()
 	return css, src, nil
 }
 
-func fetchAndSanitizeLeaderboardCustomStyle(ctx context.Context, src leaderboardCustomStyleSource) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, leaderboardCustomStyleRawURL(src), nil)
+func fetchAndSanitizeCustomStyle(ctx context.Context, src customStyleSource, scopeRoot string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, customStyleRawURL(src), nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := leaderboardCustomStyleClient.Do(req)
+	resp, err := customStyleClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, errLeaderboardStyleNotFound
+		return nil, errCustomStyleNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("style fetch failed")
@@ -173,18 +201,18 @@ func fetchAndSanitizeLeaderboardCustomStyle(ctx context.Context, src leaderboard
 	if ct != "" && !strings.Contains(ct, "text/css") && !strings.Contains(ct, "text/plain") {
 		return nil, fmt.Errorf("style response is not CSS")
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, leaderboardCustomStyleMaxBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, customStyleMaxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	return sanitizeLeaderboardCustomStyle(body)
+	return sanitizeCustomStyle(body, scopeRoot)
 }
 
-var errLeaderboardStyleNotFound = fmt.Errorf("style not found")
+var errCustomStyleNotFound = fmt.Errorf("style not found")
 
-func sanitizeLeaderboardCustomStyle(css []byte) ([]byte, error) {
-	if len(css) > leaderboardCustomStyleMaxBytes {
-		return nil, fmt.Errorf("style exceeds %d byte limit", leaderboardCustomStyleMaxBytes)
+func sanitizeCustomStyle(css []byte, scopeRoot string) ([]byte, error) {
+	if len(css) > customStyleMaxBytes {
+		return nil, fmt.Errorf("style exceeds %d byte limit", customStyleMaxBytes)
 	}
 	s := cssImportRE.ReplaceAllString(string(css), "")
 	s = cssURLRE.ReplaceAllStringFunc(s, sanitizeCSSURLToken)
@@ -202,10 +230,10 @@ func sanitizeLeaderboardCustomStyle(css []byte) ([]byte, error) {
 		}
 		kept = append(kept, line)
 	}
-	return []byte(scopeLeaderboardCustomStyle(strings.Join(kept, "\n"))), nil
+	return []byte(scopeCustomStyle(strings.Join(kept, "\n"), scopeRoot)), nil
 }
 
-func scopeLeaderboardCustomStyle(css string) string {
+func scopeCustomStyle(css, scopeRoot string) string {
 	var out strings.Builder
 	remaining := css
 	for {
@@ -224,7 +252,7 @@ func scopeLeaderboardCustomStyle(css string) string {
 		if selector == "" || strings.Contains(selector, "@") {
 			continue
 		}
-		scoped := scopeLeaderboardSelectors(selector)
+		scoped := scopeCustomStyleSelectors(selector, scopeRoot)
 		if scoped == "" {
 			continue
 		}
@@ -236,7 +264,7 @@ func scopeLeaderboardCustomStyle(css string) string {
 	return out.String()
 }
 
-func scopeLeaderboardSelectors(selector string) string {
+func scopeCustomStyleSelectors(selector, scopeRoot string) string {
 	parts := strings.Split(selector, ",")
 	scoped := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -244,11 +272,25 @@ func scopeLeaderboardSelectors(selector string) string {
 		if part == "" {
 			continue
 		}
-		if part == "#tab-leaderboard" {
+		if part == scopeRoot || (scopeRoot == customStyleAllowedScopes[customStyleScopeDashboard] && (strings.HasPrefix(part, scopeRoot+" ") || strings.HasPrefix(part, scopeRoot+".") || strings.HasPrefix(part, scopeRoot+":"))) {
 			scoped = append(scoped, part)
 			continue
 		}
-		scoped = append(scoped, "#tab-leaderboard "+part)
+		if scopeRoot == customStyleAllowedScopes[customStyleScopeDashboard] {
+			if part == "body" || part == "html" || part == ":root" {
+				scoped = append(scoped, scopeRoot)
+				continue
+			}
+			for _, rootSelector := range []string{"body", "html", ":root"} {
+				if strings.HasPrefix(part, rootSelector+".") || strings.HasPrefix(part, rootSelector+":") || strings.HasPrefix(part, rootSelector+"#") {
+					part = scopeRoot + strings.TrimPrefix(part, rootSelector)
+					scoped = append(scoped, part)
+					goto nextSelector
+				}
+			}
+		}
+		scoped = append(scoped, scopeRoot+" "+part)
+	nextSelector:
 	}
 	return strings.Join(scoped, ", ")
 }
@@ -276,12 +318,11 @@ func sanitizeCSSURLToken(token string) string {
 	return "url(" + raw + ")"
 }
 
-func (s *Server) handleLeaderboardStyle(w http.ResponseWriter, r *http.Request) {
-	src := r.URL.Query().Get("src")
-	css, _, err := getLeaderboardCustomStyle(r.Context(), src)
+func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
+	css, _, err := getCustomStyle(r.Context(), r.URL.Query().Get("src"), r.URL.Query().Get("scope"))
 	if err != nil {
 		status := http.StatusUnprocessableEntity
-		if err == errLeaderboardStyleNotFound {
+		if err == errCustomStyleNotFound {
 			status = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), status)
@@ -290,4 +331,36 @@ func (s *Server) handleLeaderboardStyle(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	_, _ = w.Write(css)
+}
+
+func (s *Server) handleLeaderboardStyle(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	q.Set("scope", customStyleScopeLeaderboard)
+	r.URL.RawQuery = q.Encode()
+	s.handleStyle(w, r)
+}
+
+// Back-compatible leaderboard names kept for the PR #2834 tests and callers.
+type leaderboardCustomStyleSource = customStyleSource
+type leaderboardCustomStyleCacheEntry = customStyleCacheEntry
+
+const (
+	leaderboardCustomStyleMaxBytes   = customStyleMaxBytes
+	leaderboardCustomStyleDefaultRef = customStyleDefaultRef
+)
+
+func validateLeaderboardCustomStyleSource(src string) (leaderboardCustomStyleSource, error) {
+	return validateCustomStyleSource(src)
+}
+
+func leaderboardCustomStyleCacheKey(src leaderboardCustomStyleSource) string {
+	return customStyleSourceKey(src)
+}
+
+func getLeaderboardCustomStyle(ctx context.Context, rawSrc string) ([]byte, leaderboardCustomStyleSource, error) {
+	return getCustomStyle(ctx, rawSrc, customStyleScopeLeaderboard)
+}
+
+func sanitizeLeaderboardCustomStyle(css []byte) ([]byte, error) {
+	return sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
 }

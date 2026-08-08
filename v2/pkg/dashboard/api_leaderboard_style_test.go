@@ -9,16 +9,16 @@ import (
 
 func resetLeaderboardStyleTestState(t *testing.T) {
 	t.Helper()
-	origBase := leaderboardCustomStyleRawBaseURL
-	leaderboardCustomStyleCacheMu.Lock()
-	origCache := leaderboardCustomStyleCache
-	leaderboardCustomStyleCache = map[string]leaderboardCustomStyleCacheEntry{}
-	leaderboardCustomStyleCacheMu.Unlock()
+	origBase := customStyleRawBaseURL
+	customStyleCacheMu.Lock()
+	origCache := customStyleCache
+	customStyleCache = map[string]customStyleCacheEntry{}
+	customStyleCacheMu.Unlock()
 	t.Cleanup(func() {
-		leaderboardCustomStyleRawBaseURL = origBase
-		leaderboardCustomStyleCacheMu.Lock()
-		leaderboardCustomStyleCache = origCache
-		leaderboardCustomStyleCacheMu.Unlock()
+		customStyleRawBaseURL = origBase
+		customStyleCacheMu.Lock()
+		customStyleCache = origCache
+		customStyleCacheMu.Unlock()
 	})
 }
 
@@ -92,7 +92,7 @@ body{display:none}
 			t.Fatalf("sanitized CSS missing scoped selector %q:\n%s", scoped, out)
 		}
 	}
-	if _, err := sanitizeLeaderboardCustomStyle([]byte(strings.Repeat("a", leaderboardCustomStyleMaxBytes+1))); err == nil {
+	if _, err := sanitizeLeaderboardCustomStyle([]byte(strings.Repeat("a", customStyleMaxBytes+1))); err == nil {
 		t.Fatal("oversized CSS did not fail")
 	}
 }
@@ -109,7 +109,7 @@ func TestHandleLeaderboardStyleFetchesSanitizesAndCaches(t *testing.T) {
 		_, _ = w.Write([]byte(`.ok{color:red}.bad{background:url(https://evil.example/pixel.png)}`))
 	}))
 	defer raw.Close()
-	leaderboardCustomStyleRawBaseURL = raw.URL
+	customStyleRawBaseURL = raw.URL
 
 	srv := newFullServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/leaderboard/style?src=owner/repo/lb/theme.css@main", nil)
@@ -139,7 +139,7 @@ func TestHandleLeaderboardStyle404(t *testing.T) {
 	resetLeaderboardStyleTestState(t)
 	raw := httptest.NewServer(http.NotFoundHandler())
 	defer raw.Close()
-	leaderboardCustomStyleRawBaseURL = raw.URL
+	customStyleRawBaseURL = raw.URL
 
 	srv := newFullServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/leaderboard/style?src=owner/repo/theme.css@main", nil)
@@ -157,7 +157,7 @@ func TestContributeLeaderboardCustomStyleMarkup(t *testing.T) {
 		_, _ = w.Write([]byte(`.lb-row{border-color:hotpink}`))
 	}))
 	defer raw.Close()
-	leaderboardCustomStyleRawBaseURL = raw.URL
+	customStyleRawBaseURL = raw.URL
 
 	srv := newFullServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/contribute/leaderboard?style=owner/repo/lb/theme.css@main", nil)
@@ -179,9 +179,75 @@ func TestContributeLeaderboardCustomStyleMarkup(t *testing.T) {
 	rec = httptest.NewRecorder()
 	missingRaw := httptest.NewServer(http.NotFoundHandler())
 	defer missingRaw.Close()
-	leaderboardCustomStyleRawBaseURL = missingRaw.URL
+	customStyleRawBaseURL = missingRaw.URL
 	srv.handleContributeLanding(rec, req)
 	if !strings.Contains(rec.Body.String(), "Custom style could not be loaded — using default") {
 		t.Fatal("missing custom style fallback notice")
+	}
+}
+
+func TestHandleDashboardStyleScopesToDashboardRoot(t *testing.T) {
+	resetLeaderboardStyleTestState(t)
+	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		_, _ = w.Write([]byte(`:root{--bg:#111}body{background:#111}.card{color:red}#hive-dashboard-root .ready{color:green}`))
+	}))
+	defer raw.Close()
+	customStyleRawBaseURL = raw.URL
+
+	srv := newFullServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/style?src=owner/repo/dashboard/theme.css@main&scope=dashboard", nil)
+	rec := httptest.NewRecorder()
+	srv.handleStyle(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"#hive-dashboard-root{--bg:#111}", "#hive-dashboard-root{background:#111}", "#hive-dashboard-root .card{color:red}", "#hive-dashboard-root .ready{color:green}"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard CSS missing scoped selector %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "#tab-leaderboard") {
+		t.Fatalf("dashboard CSS used leaderboard scope:\n%s", body)
+	}
+}
+
+func TestHandleDashboardStyleRejectsInvalidScopeAndSource(t *testing.T) {
+	srv := newFullServer(t)
+	for _, path := range []string{
+		"/api/style?src=https://evil.example/theme.css&scope=dashboard",
+		"/api/style?src=owner/repo/theme.txt&scope=dashboard",
+		"/api/style?src=owner/repo/theme.css&scope=login",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.handleStyle(rec, req)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s status = %d, want 422", path, rec.Code)
+		}
+	}
+}
+
+func TestDashboardCustomStyleMarkupAndPreviewSupport(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`<div id="hive-dashboard-root" class="hive-dashboard-root">`,
+		`link.id='dashboard-custom-style-link';`,
+		`/api/style?src=`,
+		`&scope=`,
+		`id="dashboard-custom-style-note"`,
+		`Custom style active: `,
+		`clearDashboardCustomStyleParam`,
+		`window.hiveURLWithHash`,
+		`window.hiveURLWithHash('#section-' + section)`,
+		`window.hiveURLWithHash(name ? '#' + name : '')`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("dashboard HTML missing %q", snippet)
+		}
+	}
+	if !isPublicPath("/api/style") {
+		t.Fatal("/api/style must be public so /snapshot read-only previews can load sanitized CSS")
 	}
 }

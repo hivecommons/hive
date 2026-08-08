@@ -892,6 +892,9 @@ func isPublicPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/snapshot"):
 		return true
+	case path == "/api/style":
+		// Sanitized, same-origin CSS for public snapshot/read-only preview links.
+		return true
 	case path == "/contribute" || strings.HasPrefix(path, "/contribute/"):
 		return true
 	case strings.HasPrefix(path, "/api/contribute"):

@@ -308,6 +308,9 @@
       border-radius: 6px; border: 1px solid transparent; transition: all 0.15s;
     }
     .oc-topbar-center .oc-tb-link:hover { background: var(--bg); color: var(--text); border-color: var(--border); }
+    .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: 999px; background: rgba(128,191,255,0.10); color: var(--text); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dashboard-custom-style-note.warn { border-color: rgba(210,153,34,0.45); background: rgba(210,153,34,0.12); }
+    .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; line-height: 1; padding: 0; }
     .oc-topbar-right { display: flex; align-items: center; gap: 14px; }
     .oc-health-badge { --pill-c: var(--green); font-weight: 600; } /* pill recipe at end of style block */
     .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); }
@@ -2492,6 +2495,77 @@
     }
   });
 })();
+(function(){
+  var STYLE_SCOPE = 'dashboard';
+  var STYLE_ROOT_ID = 'hive-dashboard-root';
+  function currentStyleSrc(){
+    try { return new URL(window.location.href).searchParams.get('style') || ''; } catch(e) { return ''; }
+  }
+  function styleLabel(src){
+    var parts=String(src||'').split('@')[0].split('/');
+    return parts.length>=2?(parts[0]+'/'+parts[1]):'custom';
+  }
+  function styleURLWithHash(hash){
+    try {
+      var u=new URL(window.location.href);
+      return u.pathname+u.search+(hash||'');
+    } catch(e) { return (hash || location.pathname); }
+  }
+  window.hiveURLWithHash = styleURLWithHash;
+  window.clearDashboardCustomStyleParam = function(){
+    try {
+      var u=new URL(window.location.href);
+      u.searchParams.delete('style');
+      history.replaceState(null,'',u.pathname+(u.searchParams.toString()?('?'+u.searchParams.toString()):'')+u.hash);
+    } catch(e) {}
+    window.HIVE_DASHBOARD_CUSTOM_STYLE_SRC='';
+    var link=document.getElementById('dashboard-custom-style-link');
+    if(link)link.remove();
+    var note=document.getElementById('dashboard-custom-style-note');
+    if(note)note.style.display='none';
+    var root=document.getElementById(STYLE_ROOT_ID);
+    if(root)root.classList.remove('custom-style-active');
+  };
+  window.showDashboardCustomStyleNotice = function(ok){
+    var note=document.getElementById('dashboard-custom-style-note');
+    if(!note)return;
+    var src=window.HIVE_DASHBOARD_CUSTOM_STYLE_SRC||currentStyleSrc();
+    note.classList.toggle('warn', !ok);
+    note.title=ok?'Custom style active: '+src+' — remove ?style= to reset':'Custom style could not be loaded — using default dashboard styles';
+    note.textContent=ok?'Custom style: '+styleLabel(src):'Custom style failed';
+    var btn=document.createElement('button');
+    btn.type='button';
+    btn.textContent='×';
+    btn.setAttribute('aria-label', ok?'Remove custom style':'Dismiss');
+    btn.onclick=ok?window.clearDashboardCustomStyleParam:function(){note.style.display='none';};
+    note.appendChild(btn);
+    note.style.display='inline-flex';
+    if(typeof showToast==='function')showToast(ok?'Custom style active: '+styleLabel(src):'Custom style could not be loaded — using default dashboard styles', ok?'info':'error');
+  };
+  var src=currentStyleSrc();
+  if(src){
+    window.HIVE_DASHBOARD_CUSTOM_STYLE_SRC=src;
+    var styleState='pending';
+    function renderStyleState(){
+      var root=document.getElementById(STYLE_ROOT_ID);
+      if(styleState==='loaded'){
+        if(root)root.classList.add('custom-style-active');
+        window.showDashboardCustomStyleNotice(true);
+      }else if(styleState==='failed'){
+        if(root)root.classList.remove('custom-style-active');
+        window.showDashboardCustomStyleNotice(false);
+      }
+    }
+    var link=document.createElement('link');
+    link.id='dashboard-custom-style-link';
+    link.rel='stylesheet';
+    link.href='/api/style?src='+encodeURIComponent(src)+'&scope='+encodeURIComponent(STYLE_SCOPE);
+    link.onload=function(){ styleState='loaded'; renderStyleState(); };
+    link.onerror=function(){ styleState='failed'; renderStyleState(); };
+    document.head.appendChild(link);
+    document.addEventListener('DOMContentLoaded', renderStyleState);
+  }
+})();
 
 </script>
 <div id="gh-auth-banner" class="gh-auth-banner" style="display:none">
@@ -2575,6 +2649,7 @@
     <button class="gh-cancel" onclick="document.getElementById('gh-setup-overlay').style.display='none'">Close</button>
   </div>
 </div>
+<div id="hive-dashboard-root" class="hive-dashboard-root">
 <div id="toast-container"></div>
 
 <!-- Hive Chat FAB + Panel -->
@@ -2733,6 +2808,7 @@
     </div>
     <div class="oc-topbar-center">
       <span class="oc-tb-link" onclick="openConfigDialog('governor')" title="Config — governor, agents, thresholds, and all hive settings" aria-label="Config">⚙️</span>
+      <span id="dashboard-custom-style-note" class="dashboard-custom-style-note" style="display:none" role="status"></span>
       <span class="oc-tb-link" onclick="ocNavigate('debug-section')" title="System Diagnostics — health checks and troubleshooting" aria-label="System Diagnostics"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button class="layout-toggle" onclick="toggleLayout()" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
@@ -3289,6 +3365,7 @@
       <li><a href="https://medium.com/p/b9381a7e9773" target="_blank" rel="noopener">&#128221; Blog: ACMM Framework</a></li>
     </ul>
   </aside>
+</div><!-- /#hive-dashboard-root -->
 
   <script>
     // Wrap fetch to inject auth token for mutation requests (PUT/POST/PATCH/DELETE)
@@ -3423,6 +3500,8 @@
     function applyLayout(mode) {
       document.body.classList.toggle('light-mode', mode === 'light');
       document.body.classList.add('has-info-sidebar');
+      const customStyleRoot = document.getElementById('hive-dashboard-root');
+      if (customStyleRoot) { customStyleRoot.classList.toggle('light-mode', mode === 'light'); customStyleRoot.classList.toggle('dark-mode', mode !== 'light'); }
       const lbl = LAYOUT_LABELS[mode] || LAYOUT_LABELS.dark;
       const ttl = LAYOUT_TITLES[mode] || LAYOUT_TITLES.dark;
       document.querySelectorAll('.layout-toggle').forEach(btn => {
@@ -3530,7 +3609,7 @@
 
     function ocNavigate(section, skipScroll) {
       _ocSelectedAgent = null;
-      history.replaceState(null, '', '#section-' + section);
+      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#section-' + section) : '#section-' + section);
       ocStopPanePoll();
       const detail = document.getElementById('oc-agent-detail');
       if (detail) { detail.classList.remove('active'); detail.innerHTML = ''; }
@@ -3630,7 +3709,7 @@
 
     function ocSelectAgent(name) {
       _ocSelectedAgent = name;
-      history.replaceState(null, '', name ? '#' + name : location.pathname);
+      history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash(name ? '#' + name : '') : (name ? '#' + name : location.pathname));
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
       const active = document.querySelector(`.oc-nav-item[data-agent-nav="${name}"]`);
       if (active) active.classList.add('active');
@@ -13690,7 +13769,7 @@ function burnAreaChart() {
       _configModalOpen = false;
       _configState = { type: null, agent: null, tab: null, data: {}, dirty: {}, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.add('hidden');
-      if (location.hash.startsWith('#config/')) history.replaceState(null, '', location.pathname);
+      if (location.hash.startsWith('#config/')) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('') : location.pathname);
     }
 
     function handleConfigHash() {
@@ -14059,7 +14138,7 @@ function burnAreaChart() {
       });
       renderConfigTab(tabId);
       const hashTarget = _configState.type === 'governor' ? 'governor' : _configState.agent;
-      if (hashTarget) history.replaceState(null, '', '#config/' + encodeURIComponent(hashTarget) + '/' + encodeURIComponent(tabId));
+      if (hashTarget) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('#config/' + encodeURIComponent(hashTarget) + '/' + encodeURIComponent(tabId)) : '#config/' + encodeURIComponent(hashTarget) + '/' + encodeURIComponent(tabId));
     }
 
     async function loadConfigData(type, agentName) {
