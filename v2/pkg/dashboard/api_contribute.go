@@ -533,7 +533,7 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	customStyleHeadHTML := ""
 	customStyleNoticeHTML := ""
 	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
-		if _, src, err := getLeaderboardCustomStyle(r.Context(), rawStyle); err == nil {
+		if _, src, dropped, err := getLeaderboardCustomStyleWithDropped(r.Context(), rawStyle); err == nil {
 			styleKey := leaderboardCustomStyleCacheKey(src)
 			escapedSrc := html.EscapeString(styleKey)
 			styleKeyJSON, _ := json.Marshal(styleKey)
@@ -542,7 +542,17 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 				url.QueryEscape(styleKey),
 				string(styleKeyJSON),
 			)
-			customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+			// Anti-silent-drop (#2972): if the sanitizer removed anything, say so
+			// in the notice with the reasons, so a theme author can see WHY a rule
+			// did not apply instead of staring at a healthy-looking no-op.
+			if len(dropped) > 0 {
+				customStyleNoticeHTML = fmt.Sprintf(
+					`<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code> — %d rule%s removed by the sanitizer:%s</div>`,
+					escapedSrc, len(dropped), plural(len(dropped)), droppedRulesHTML(dropped),
+				)
+			} else {
+				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+			}
 		} else {
 			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
 		}
@@ -1403,6 +1413,9 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .lb-custom-style-note{margin:0 0 16px;padding:10px 12px;border:1px solid rgba(88,166,255,.35);border-radius:8px;background:rgba(88,166,255,.10);color:var(--cc-text);font-size:.86rem}
 .lb-custom-style-note code{color:var(--cc-accent)}
 .lb-custom-style-note--warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12)}
+.lb-custom-style-dropped{margin:8px 0 0;padding-left:18px;font-size:.82rem;line-height:1.5}
+.lb-custom-style-dropped li{margin:2px 0}
+.lb-custom-style-dropped code{color:var(--cc-accent)}
 .lb-custom-style-note button{margin-left:8px;background:transparent;border:1px solid var(--cc-border);border-radius:6px;color:var(--cc-text);padding:2px 8px;cursor:pointer}
 </style>%s</head><body>
 <div class="page-tabs" role="tablist">

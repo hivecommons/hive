@@ -7,6 +7,198 @@ import (
 	"testing"
 )
 
+// dropReasonFor returns the reason recorded for the first dropped rule whose
+// excerpt contains needle, or "" if none.
+func dropReasonFor(dropped []droppedCSSRule, needle string) string {
+	for _, d := range dropped {
+		if strings.Contains(d.Rule, needle) {
+			return d.Reason
+		}
+	}
+	return ""
+}
+
+// TestSanitizeCustomPropertiesAndVarSurvive covers #2972: custom-property
+// declarations and var() references must pass through, but a custom property
+// whose value is an unsafe url() must still be neutralised.
+func TestSanitizeCustomPropertiesAndVarSurvive(t *testing.T) {
+	css := []byte(`
+:root { --bf-accent: #5c7bd1; --bf-soft: rgba(92,123,209,.2); }
+.me-card { border: 1px solid var(--bf-accent); color: var(--bf-soft); }
+.evilvar { --leak: url(https://evil.example/x.png); }
+`)
+	got, dropped, err := sanitizeLeaderboardCustomStyleWithDropped(css)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	for _, want := range []string{"--bf-accent: #5c7bd1", "var(--bf-accent)", "var(--bf-soft)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("custom property theming dropped, missing %q:\n%s", want, out)
+		}
+	}
+	// The custom property is kept, but its unsafe url() target is emptied.
+	if strings.Contains(out, "evil.example") {
+		t.Fatalf("unsafe url() in custom property survived:\n%s", out)
+	}
+	if !strings.Contains(out, "--leak: url(\"\")") {
+		t.Fatalf("expected neutralised --leak, got:\n%s", out)
+	}
+	_ = dropped
+}
+
+// TestSanitizeSafeAtRulesSurvive covers #2972: @media/@supports/@keyframes must
+// survive with their inner declarations sanitized, and their inner rules scoped
+// (for @media/@supports). @import stays rejected.
+func TestSanitizeSafeAtRulesSurvive(t *testing.T) {
+	css := []byte(`
+@import "https://evil.example/x.css";
+@media (prefers-color-scheme: light) { .me-row { color: #111; } }
+@supports (display: grid) { .me-grid { display: grid; } }
+@keyframes pulse { from { opacity: 0; } to { opacity: 1; } }
+@font-face { font-family: x; src: url(https://evil.example/f.woff); }
+`)
+	got, dropped, err := sanitizeLeaderboardCustomStyleWithDropped(css)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	for _, want := range []string{
+		"@media (prefers-color-scheme: light)",
+		"#tab-leaderboard .me-row{ color: #111; }",
+		"@supports (display: grid)",
+		"#tab-leaderboard .me-grid{ display: grid; }",
+		"@keyframes pulse",
+		"from{ opacity: 0; }",
+		"to{ opacity: 1; }",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("safe at-rule content missing %q:\n%s", want, out)
+		}
+	}
+	// @import and @font-face must be gone.
+	if strings.Contains(out, "@import") || strings.Contains(out, "evil.example") {
+		t.Fatalf("@import survived:\n%s", out)
+	}
+	if strings.Contains(out, "@font-face") {
+		t.Fatalf("@font-face survived (network src exfil vector):\n%s", out)
+	}
+	// @font-face rejection must be REPORTED, not silent.
+	if r := dropReasonFor(dropped, "@font-face"); r == "" {
+		t.Fatalf("@font-face rejection not reported in dropped list: %+v", dropped)
+	}
+}
+
+// TestSanitizeDangerousVectorsStillBlockedAndReported covers the security
+// contract plus the anti-silent-drop guarantee: each dangerous vector is both
+// removed AND surfaced with a reason.
+func TestSanitizeDangerousVectorsStillBlockedAndReported(t *testing.T) {
+	css := []byte(`
+.expr { width: expression(alert(1)); color: red; }
+.moz { -moz-binding: url(/x.xml); }
+.beh { behavior: url(/x.htc); }
+.iset { background-image: image-set("https://evil.example/p.png" 1x); }
+.remote { background: url(https://evil.example/p.png); }
+`)
+	got, dropped, err := sanitizeLeaderboardCustomStyleWithDropped(css)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	for _, bad := range []string{"expression(", "-moz-binding", "behavior:", "image-set(", "evil.example"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("dangerous token %q survived:\n%s", bad, out)
+		}
+	}
+	// The .expr rule keeps its safe sibling declaration; only expression() drops.
+	if !strings.Contains(out, "#tab-leaderboard .expr{color: red;}") {
+		t.Fatalf("safe declaration in mixed rule was lost:\n%s", out)
+	}
+	// Each dangerous drop is reported.
+	for needle, mustMention := range map[string]string{
+		"expression":   "expression",
+		"-moz-binding": "-moz-binding",
+		"behavior":     "behavior",
+		"image-set":    "exfil",
+	} {
+		if r := dropReasonFor(dropped, needle); !strings.Contains(strings.ToLower(r), mustMention) {
+			t.Fatalf("drop for %q not reported with reason mentioning %q: %+v", needle, mustMention, dropped)
+		}
+	}
+}
+
+// TestSanitizeNestedAtRuleDoesNotCorruptFollowingRules is the specific bug from
+// the report: the old string parser desynced on the first nested brace and
+// corrupted every rule after an @media block.
+func TestSanitizeNestedAtRuleDoesNotCorruptFollowingRules(t *testing.T) {
+	css := []byte(`
+@media (min-width: 600px) { .a { color: red; } }
+.after { color: blue; }
+`)
+	got, err := sanitizeLeaderboardCustomStyle(css)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	if !strings.Contains(out, "#tab-leaderboard .after{ color: blue; }") {
+		t.Fatalf("rule after @media was corrupted/lost:\n%s", out)
+	}
+	if strings.Contains(out, "#tab-leaderboard }") {
+		t.Fatalf("stray brace from parser desync:\n%s", out)
+	}
+}
+
+// TestStyleHandlerReportsDroppedHeader covers the X-Style-Rules-Dropped header
+// contract for curl-based authors (#2972 suggestion 1).
+func TestStyleHandlerReportsDroppedHeader(t *testing.T) {
+	resetLeaderboardStyleTestState(t)
+	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		_, _ = w.Write([]byte(`.ok{color:red}.bad{width:expression(alert(1))}`))
+	}))
+	defer raw.Close()
+	customStyleRawBaseURL = raw.URL
+
+	srv := newFullServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/leaderboard/style?src=owner/repo/lb/theme.css@main", nil)
+	rec := httptest.NewRecorder()
+	srv.handleLeaderboardStyle(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("X-Style-Rules-Dropped"); got != "1" {
+		t.Fatalf("X-Style-Rules-Dropped = %q, want 1", got)
+	}
+	detail := rec.Header().Get("X-Style-Rules-Dropped-Detail")
+	if !strings.Contains(detail, "expression") {
+		t.Fatalf("dropped detail missing reason: %q", detail)
+	}
+}
+
+// TestContributeNoticeListsDroppedRules covers the anti-silent-drop guarantee in
+// the /contribute UI notice.
+func TestContributeNoticeListsDroppedRules(t *testing.T) {
+	resetLeaderboardStyleTestState(t)
+	raw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		_, _ = w.Write([]byte(`.ok{color:red}@import "https://evil.example/x.css";.bad{behavior:url(/x.htc)}`))
+	}))
+	defer raw.Close()
+	customStyleRawBaseURL = raw.URL
+
+	srv := newFullServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/contribute/leaderboard?style=owner/repo/lb/theme.css@main", nil)
+	rec := httptest.NewRecorder()
+	srv.handleContributeLanding(rec, req)
+	html := rec.Body.String()
+	if !strings.Contains(html, "removed by the sanitizer") {
+		t.Fatalf("contribute notice does not report dropped rules:\n%s", html)
+	}
+	if !strings.Contains(html, "lb-custom-style-dropped") {
+		t.Fatalf("contribute notice missing dropped list markup")
+	}
+}
+
 func resetLeaderboardStyleTestState(t *testing.T) {
 	t.Helper()
 	origBase := customStyleRawBaseURL
