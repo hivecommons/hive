@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,14 @@ const (
 	proxyListenPort      = 18443
 	proxyCACertPath      = "/data/proxy-ca.pem"
 )
+
+// BreakerTrigger is the distinct PausedTrigger stamped on every pause the fleet
+// breaker performs. It serves two jobs: the audit log attributes the pause to
+// the breaker, and ReleaseBreaker uses it as the guard that distinguishes a
+// pause the breaker still owns (safe to auto-resume) from one an operator
+// re-applied during the breaker window (must stay paused). Anything whose
+// current PausedTrigger != BreakerTrigger was last paused by something else.
+const BreakerTrigger = "fleet-breaker"
 
 type AgentProcess struct {
 	Name              string
@@ -212,6 +221,19 @@ type Manager struct {
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
 	persistPauseCallback func(name string, paused bool)
+
+	// breakerEngaged and breakerPaused hold the fleet-breaker's state, guarded
+	// by m.mu. When an operator throws the breaker, EngageBreaker pauses every
+	// running, non-on-demand agent and records the set of names it paused here.
+	// Releasing resumes ONLY that set, and only for agents whose pause is still
+	// attributable to the breaker (PausedTrigger == BreakerTrigger) — an agent
+	// an operator re-paused during the breaker window keeps its manual pause.
+	// Both fields persist into /data/hive-state.json (see cmd/hive persistState)
+	// so an engaged breaker survives the frequent pod restarts: on boot the
+	// agents restore paused from their own persisted pause, and RestoreBreaker
+	// re-associates them with the breaker so a later release resumes them.
+	breakerEngaged bool
+	breakerPaused  map[string]bool
 
 	// recordPromptCallback, when set, persists the fully-expanded prompt text
 	// delivered to an agent so owners can review it later.
@@ -5109,6 +5131,151 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		return m.launchInTmux(ctx, agent)
 	}
 	return nil
+}
+
+// EngageBreaker throws the fleet-wide kill-switch: it pauses every agent that
+// is currently RUNNING and not OnDemand, records exactly that set, and returns
+// the names it paused. Agents that are on-demand (e.g. brainstorm) or already
+// paused (a prior operator/manual pause) are skipped entirely and never enter
+// the recorded set, so releasing the breaker later cannot un-pause them.
+//
+// Idempotent: if the breaker is already engaged, it re-pauses nothing and
+// returns the existing recorded set unchanged.
+//
+// Pausing is done by calling Pause with BreakerTrigger. Pause takes m.mu
+// itself, so this method collects the target names under m.mu, releases it,
+// then pauses each — mirroring the lock discipline the dashboard uses when it
+// pauses agents one at a time.
+func (m *Manager) EngageBreaker() (paused []string) {
+	m.mu.Lock()
+	if m.breakerEngaged {
+		existing := make([]string, 0, len(m.breakerPaused))
+		for name := range m.breakerPaused {
+			existing = append(existing, name)
+		}
+		m.mu.Unlock()
+		sort.Strings(existing)
+		return existing
+	}
+
+	targets := make([]string, 0, len(m.agents))
+	for name, agent := range m.agents {
+		if agent == nil {
+			continue
+		}
+		// Skip on-demand agents (they are meant to sit idle until summoned) and
+		// any agent that is already paused — a pause the operator owns, which
+		// the breaker must not adopt and must not later reverse.
+		if agent.Config.OnDemand {
+			continue
+		}
+		if agent.Paused || agent.State != StateRunning {
+			continue
+		}
+		targets = append(targets, name)
+	}
+
+	set := make(map[string]bool, len(targets))
+	for _, name := range targets {
+		set[name] = true
+	}
+	m.breakerEngaged = true
+	m.breakerPaused = set
+	m.mu.Unlock()
+
+	sort.Strings(targets)
+	for _, name := range targets {
+		if err := m.Pause(name, BreakerTrigger, "fleet breaker engaged"); err != nil {
+			m.logger.Warn("fleet breaker: pause failed", "agent", name, "error", err)
+		}
+	}
+	m.logger.Info("fleet breaker engaged", "paused", len(targets))
+	return targets
+}
+
+// ReleaseBreaker disengages the fleet-wide kill-switch. It resumes ONLY the
+// agents the breaker itself paused (the recorded set) and, within that set,
+// only those whose pause is STILL attributable to the breaker: current
+// PausedTrigger == BreakerTrigger and still paused. An agent an operator
+// re-paused during the breaker window has a different trigger and is left
+// paused; an on-demand agent could never enter the set in the first place.
+// Returns the names it resumed.
+func (m *Manager) ReleaseBreaker(ctx context.Context) (resumed []string) {
+	m.mu.Lock()
+	if !m.breakerEngaged {
+		m.mu.Unlock()
+		return nil
+	}
+
+	candidates := make([]string, 0, len(m.breakerPaused))
+	for name := range m.breakerPaused {
+		agent, ok := m.agents[name]
+		if !ok || agent == nil {
+			continue
+		}
+		// Only resume agents still paused BY the breaker. If the operator
+		// re-paused (trigger changed) or resumed-then-repaused during the
+		// window, leave the agent exactly as the operator left it.
+		if agent.Paused && agent.PausedTrigger == BreakerTrigger {
+			candidates = append(candidates, name)
+		}
+	}
+	m.breakerEngaged = false
+	m.breakerPaused = nil
+	m.mu.Unlock()
+
+	sort.Strings(candidates)
+	for _, name := range candidates {
+		if err := m.Resume(ctx, name, BreakerTrigger, "fleet breaker released"); err != nil {
+			m.logger.Warn("fleet breaker: resume failed", "agent", name, "error", err)
+			continue
+		}
+		resumed = append(resumed, name)
+	}
+	m.logger.Info("fleet breaker released", "resumed", len(resumed))
+	return resumed
+}
+
+// BreakerState reports whether the fleet breaker is engaged and the sorted set
+// of agent names it currently holds paused.
+func (m *Manager) BreakerState() (engaged bool, paused []string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	engaged = m.breakerEngaged
+	paused = make([]string, 0, len(m.breakerPaused))
+	for name := range m.breakerPaused {
+		paused = append(paused, name)
+	}
+	sort.Strings(paused)
+	return engaged, paused
+}
+
+// RestoreBreaker re-establishes the breaker's in-memory state from persisted
+// snapshot data on boot. The agents themselves are restored paused via their
+// own persisted pause (with PausedTrigger == BreakerTrigger), so this only has
+// to re-mark the breaker engaged and re-record the set. It does NOT re-pause or
+// resume anything — a boot restore must never change agent state, only reattach
+// the breaker so a later ReleaseBreaker knows which agents to resume. Only
+// names still present AND still paused-by-the-breaker are re-adopted.
+func (m *Manager) RestoreBreaker(engaged bool, paused []string) {
+	if !engaged {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	set := make(map[string]bool, len(paused))
+	for _, name := range paused {
+		agent, ok := m.agents[name]
+		if !ok || agent == nil {
+			continue
+		}
+		if agent.Paused && agent.PausedTrigger == BreakerTrigger {
+			set[name] = true
+		}
+	}
+	m.breakerEngaged = true
+	m.breakerPaused = set
+	m.logger.Info("fleet breaker restored", "engaged", true, "held", len(set))
 }
 
 // SetBootstrapOverride sets a one-shot bootstrap prompt override. On the next
