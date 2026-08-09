@@ -538,16 +538,22 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	customStyleHeadHTML := ""
 	customStyleNoticeHTML := ""
 	if rawStyle := strings.TrimSpace(r.URL.Query().Get("style")); rawStyle != "" {
-		if _, src, err := getLeaderboardCustomStyle(r.Context(), rawStyle); err == nil {
+		if _, src, report, err := getCustomStyle(r.Context(), rawStyle, customStyleScopeLeaderboard); err == nil {
 			styleKey := leaderboardCustomStyleCacheKey(src)
 			escapedSrc := html.EscapeString(styleKey)
 			styleKeyJSON, _ := json.Marshal(styleKey)
+			droppedJSON, _ := json.Marshal(report.Dropped)
 			customStyleHeadHTML = fmt.Sprintf(
-				`<link id="leaderboard-custom-style-link" rel="stylesheet" href="/api/leaderboard/style?src=%s"><script>window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC=%s;</script>`,
+				`<link id="leaderboard-custom-style-link" rel="stylesheet" href="/api/leaderboard/style?src=%s"><script>window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC=%s;window.HIVE_LEADERBOARD_CUSTOM_STYLE_DROPPED=%s;</script>`,
 				url.QueryEscape(styleKey),
 				string(styleKeyJSON),
+				string(droppedJSON),
 			)
-			customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+			if report.Dropped > 0 {
+				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status" title="Some CSS was removed because it can fetch external resources, uses unsupported at-rules, or contains legacy executable CSS.">Custom style active: <code>%s</code> (%d rules removed by sanitizer)</div>`, escapedSrc, report.Dropped)
+			} else {
+				customStyleNoticeHTML = fmt.Sprintf(`<div class="lb-custom-style-note" id="leaderboard-custom-style-note" role="status">Custom style active: <code>%s</code></div>`, escapedSrc)
+			}
 		} else {
 			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
 		}
@@ -2593,7 +2599,11 @@ function renderMeCard(mount,p){
   for(var i=1;i<=ME_STYLE_COUNT;i++){
     styleOpts+='<option value="'+i+'"'+(!customStyleSrc&&i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
   }
-  if(customStyleSrc)styleOpts+='<option value="custom" selected>Custom ('+esc(leaderboardCustomStyleLabel(customStyleSrc))+')</option>';
+  if(customStyleSrc){
+    var dropped=parseInt(window.HIVE_LEADERBOARD_CUSTOM_STYLE_DROPPED||'0',10)||0;
+    var customLabel=dropped>0?('Custom ('+dropped+' rules removed by sanitizer)'):('Custom ('+leaderboardCustomStyleLabel(customStyleSrc)+')');
+    styleOpts+='<option value="custom" selected title="'+esc(dropped>0?'Some CSS was removed by the sanitizer; see Custom CSS help.':leaderboardCustomStyleLabel(customStyleSrc))+'">'+esc(customLabel)+'</option>';
+  }
 
   var html=''
   +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
@@ -2622,7 +2632,7 @@ function renderMeCard(mount,p){
     +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
     +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
     +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
-    +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
+    +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
   +'</div>'
   +meInviteSection(p)
   +'</div></div>';

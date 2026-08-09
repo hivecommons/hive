@@ -2556,9 +2556,10 @@
     var note=document.getElementById('dashboard-custom-style-note');
     if(!note)return;
     var src=window.HIVE_DASHBOARD_CUSTOM_STYLE_SRC||currentStyleSrc();
+    var dropped=parseInt(window.HIVE_DASHBOARD_CUSTOM_STYLE_DROPPED||'0',10)||0;
     note.classList.toggle('warn', !ok);
-    note.title=ok?'Custom style active: '+src+' — remove ?style= to reset':'Custom style could not be loaded — using default dashboard styles';
-    note.textContent=ok?'Custom style: '+styleLabel(src):'Custom style failed';
+    note.title=ok?(dropped>0?('Custom style active: '+src+' — '+dropped+' rules removed by sanitizer'):'Custom style active: '+src+' — remove ?style= to reset'):'Custom style could not be loaded — using default dashboard styles';
+    note.textContent=ok?(dropped>0?('Custom style: '+styleLabel(src)+' ('+dropped+' removed)'):'Custom style: '+styleLabel(src)):'Custom style failed';
     var btn=document.createElement('button');
     btn.type='button';
     btn.textContent='×';
@@ -2586,7 +2587,13 @@
     link.id='dashboard-custom-style-link';
     link.rel='stylesheet';
     link.href='/api/style?src='+encodeURIComponent(src)+'&scope='+encodeURIComponent(STYLE_SCOPE);
-    link.onload=function(){ styleState='loaded'; renderStyleState(); };
+    link.onload=function(){
+      styleState='loaded';
+      fetch('/api/style?src='+encodeURIComponent(src)+'&scope='+encodeURIComponent(STYLE_SCOPE)+'&report=1',{cache:'no-store'})
+        .then(function(r){return r.ok?r.json():null;})
+        .then(function(j){window.HIVE_DASHBOARD_CUSTOM_STYLE_DROPPED=(j&&j.report&&j.report.dropped)||0;renderStyleState();})
+        .catch(function(){renderStyleState();});
+    };
     link.onerror=function(){ styleState='failed'; renderStyleState(); };
     document.head.appendChild(link);
     document.addEventListener('DOMContentLoaded', renderStyleState);

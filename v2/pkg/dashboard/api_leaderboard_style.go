@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,7 +40,13 @@ type customStyleSource struct {
 
 type customStyleCacheEntry struct {
 	css       []byte
+	report    customStyleSanitizeReport
 	expiresAt time.Time
+}
+
+type customStyleSanitizeReport struct {
+	Dropped int      `json:"dropped"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 var (
@@ -53,7 +60,6 @@ var (
 	githubRepoNameRE  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 	githubRefNameRE   = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,100}$`)
 	githubCSSPathRE   = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
-	cssImportRE       = regexp.MustCompile(`(?is)@import\b[^;]*(;|$)`)
 	cssURLRE          = regexp.MustCompile(`(?is)url\(\s*(['"]?)([^'")]+)['"]?\s*\)`)
 )
 
@@ -146,28 +152,29 @@ func normalizeCustomStyleScope(scope string) (string, string, error) {
 	return scope, root, nil
 }
 
-func getCustomStyle(ctx context.Context, rawSrc, rawScope string) ([]byte, customStyleSource, error) {
+func getCustomStyle(ctx context.Context, rawSrc, rawScope string) ([]byte, customStyleSource, customStyleSanitizeReport, error) {
 	scope, root, err := normalizeCustomStyleScope(rawScope)
 	if err != nil {
-		return nil, customStyleSource{}, err
+		return nil, customStyleSource{}, customStyleSanitizeReport{}, err
 	}
 	src, err := validateCustomStyleSource(rawSrc)
 	if err != nil {
-		return nil, customStyleSource{}, err
+		return nil, customStyleSource{}, customStyleSanitizeReport{}, err
 	}
 	key := customStyleCacheKey(src, scope)
 	now := time.Now()
 	customStyleCacheMu.Lock()
 	if entry, ok := customStyleCache[key]; ok && now.Before(entry.expiresAt) {
 		css := append([]byte(nil), entry.css...)
+		report := entry.report.clone()
 		customStyleCacheMu.Unlock()
-		return css, src, nil
+		return css, src, report, nil
 	}
 	customStyleCacheMu.Unlock()
 
-	css, err := fetchAndSanitizeCustomStyle(ctx, src, root)
+	css, report, err := fetchAndSanitizeCustomStyle(ctx, src, root)
 	if err != nil {
-		return nil, src, err
+		return nil, src, report, err
 	}
 	customStyleCacheMu.Lock()
 	if len(customStyleCache) >= customStyleMaxCache {
@@ -176,84 +183,131 @@ func getCustomStyle(ctx context.Context, rawSrc, rawScope string) ([]byte, custo
 			break
 		}
 	}
-	customStyleCache[key] = customStyleCacheEntry{css: append([]byte(nil), css...), expiresAt: now.Add(customStyleCacheTTL)}
+	customStyleCache[key] = customStyleCacheEntry{css: append([]byte(nil), css...), report: report.clone(), expiresAt: now.Add(customStyleCacheTTL)}
 	customStyleCacheMu.Unlock()
-	return css, src, nil
+	return css, src, report, nil
 }
 
-func fetchAndSanitizeCustomStyle(ctx context.Context, src customStyleSource, scopeRoot string) ([]byte, error) {
+func fetchAndSanitizeCustomStyle(ctx context.Context, src customStyleSource, scopeRoot string) ([]byte, customStyleSanitizeReport, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, customStyleRawURL(src), nil)
 	if err != nil {
-		return nil, err
+		return nil, customStyleSanitizeReport{}, err
 	}
 	resp, err := customStyleClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, customStyleSanitizeReport{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, errCustomStyleNotFound
+		return nil, customStyleSanitizeReport{}, errCustomStyleNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("style fetch failed")
+		return nil, customStyleSanitizeReport{}, fmt.Errorf("style fetch failed")
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if ct != "" && !strings.Contains(ct, "text/css") && !strings.Contains(ct, "text/plain") {
-		return nil, fmt.Errorf("style response is not CSS")
+		return nil, customStyleSanitizeReport{}, fmt.Errorf("style response is not CSS")
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, customStyleMaxBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, customStyleSanitizeReport{}, err
 	}
 	return sanitizeCustomStyle(body, scopeRoot)
 }
 
 var errCustomStyleNotFound = fmt.Errorf("style not found")
 
-func sanitizeCustomStyle(css []byte, scopeRoot string) ([]byte, error) {
+func sanitizeCustomStyle(css []byte, scopeRoot string) ([]byte, customStyleSanitizeReport, error) {
 	if len(css) > customStyleMaxBytes {
-		return nil, fmt.Errorf("style exceeds %d byte limit", customStyleMaxBytes)
+		return nil, customStyleSanitizeReport{}, fmt.Errorf("style exceeds %d byte limit", customStyleMaxBytes)
 	}
-	s := cssImportRE.ReplaceAllString(string(css), "")
-	s = cssURLRE.ReplaceAllStringFunc(s, sanitizeCSSURLToken)
-	var kept []string
-	for _, line := range strings.Split(s, "\n") {
-		lower := strings.ToLower(line)
-		if strings.Contains(line, `\`) {
-			continue
-		}
-		if strings.Contains(lower, "://") || strings.Contains(lower, "image-set(") {
-			continue
-		}
-		if strings.Contains(lower, "expression(") || strings.Contains(lower, "-moz-binding") || strings.Contains(lower, "behavior:") {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return []byte(scopeCustomStyle(strings.Join(kept, "\n"), scopeRoot)), nil
+	report := customStyleSanitizeReport{}
+	out := parseCustomStyleRules(stripCSSComments(string(css)), scopeRoot, &report)
+	return []byte(out), report, nil
 }
 
-func scopeCustomStyle(css, scopeRoot string) string {
+func (r customStyleSanitizeReport) clone() customStyleSanitizeReport {
+	out := customStyleSanitizeReport{Dropped: r.Dropped}
+	if len(r.Reasons) > 0 {
+		out.Reasons = append([]string(nil), r.Reasons...)
+	}
+	return out
+}
+
+func (r *customStyleSanitizeReport) drop(reason string) {
+	r.Dropped++
+	if len(r.Reasons) < 25 {
+		r.Reasons = append(r.Reasons, reason)
+	}
+}
+
+func stripCSSComments(css string) string {
 	var out strings.Builder
-	remaining := css
-	for {
-		open := strings.Index(remaining, "{")
-		if open < 0 {
+	for i := 0; i < len(css); {
+		if i+1 < len(css) && css[i] == '/' && css[i+1] == '*' {
+			i += 2
+			for i+1 < len(css) && !(css[i] == '*' && css[i+1] == '/') {
+				if css[i] == '\n' {
+					out.WriteByte('\n')
+				}
+				i++
+			}
+			if i+1 < len(css) {
+				i += 2
+			}
+			continue
+		}
+		out.WriteByte(css[i])
+		i++
+	}
+	return out.String()
+}
+
+func parseCustomStyleRules(css, scopeRoot string, report *customStyleSanitizeReport) string {
+	var out strings.Builder
+	for i := 0; i < len(css); {
+		i = skipCSSSpace(css, i)
+		if i >= len(css) {
 			break
 		}
-		selector := strings.TrimSpace(remaining[:open])
-		remaining = remaining[open+1:]
-		close := strings.Index(remaining, "}")
-		if close < 0 {
+		if css[i] == '@' {
+			next, rule := sanitizeCustomAtRule(css, i, scopeRoot, report)
+			if rule != "" {
+				out.WriteString(rule)
+				out.WriteByte('\n')
+			}
+			if next <= i {
+				break
+			}
+			i = next
+			continue
+		}
+		headerEnd := findCSSControl(css, i)
+		if headerEnd < 0 || css[headerEnd] != '{' {
 			break
 		}
-		body := remaining[:close]
-		remaining = remaining[close+1:]
-		if selector == "" || strings.Contains(selector, "@") {
+		selector := strings.TrimSpace(css[i:headerEnd])
+		body, next, ok := readCSSBlock(css, headerEnd)
+		if !ok {
+			break
+		}
+		i = next
+		if selector == "" {
+			report.drop("empty selector")
+			continue
+		}
+		if strings.Contains(selector, `\`) {
+			report.drop("CSS escape sequence")
 			continue
 		}
 		scoped := scopeCustomStyleSelectors(selector, scopeRoot)
 		if scoped == "" {
+			report.drop("empty selector")
+			continue
+		}
+		body = sanitizeCSSDeclarations(body, report, sanitizeCSSOptions{})
+		if strings.TrimSpace(body) == "" {
+			report.drop("empty rule")
 			continue
 		}
 		out.WriteString(scoped)
@@ -264,23 +318,345 @@ func scopeCustomStyle(css, scopeRoot string) string {
 	return out.String()
 }
 
+func sanitizeCustomAtRule(css string, start int, scopeRoot string, report *customStyleSanitizeReport) (int, string) {
+	headerEnd := findCSSControl(css, start)
+	if headerEnd < 0 {
+		report.drop("unterminated at-rule")
+		return len(css), ""
+	}
+	header := strings.TrimSpace(css[start:headerEnd])
+	name := strings.ToLower(strings.TrimPrefix(readAtRuleName(header), "@"))
+	if strings.Contains(header, `\`) {
+		report.drop("escaped at-rule")
+		if css[headerEnd] == '{' {
+			_, next, ok := readCSSBlock(css, headerEnd)
+			if ok {
+				return next, ""
+			}
+		}
+		return headerEnd + 1, ""
+	}
+	if css[headerEnd] == ';' {
+		report.drop("unsupported at-rule: " + name)
+		return headerEnd + 1, ""
+	}
+	body, next, ok := readCSSBlock(css, headerEnd)
+	if !ok {
+		report.drop("unterminated at-rule: " + name)
+		return len(css), ""
+	}
+	switch name {
+	case "import":
+		report.drop("@import")
+		return next, ""
+	case "media", "supports", "container":
+		inner := parseCustomStyleRules(body, scopeRoot, report)
+		if strings.TrimSpace(inner) == "" {
+			report.drop("empty at-rule: " + name)
+			return next, ""
+		}
+		return next, header + "{" + inner + "}"
+	case "keyframes", "-webkit-keyframes":
+		inner := sanitizeKeyframes(body, report)
+		if strings.TrimSpace(inner) == "" {
+			report.drop("empty keyframes")
+			return next, ""
+		}
+		return next, header + "{" + inner + "}"
+	case "font-face":
+		if !fontFaceSrcAllowed(body) {
+			report.drop("@font-face external src")
+			return next, ""
+		}
+		decls := sanitizeCSSDeclarations(body, report, sanitizeCSSOptions{allowAnyDataURL: true})
+		if strings.TrimSpace(decls) == "" {
+			report.drop("empty @font-face")
+			return next, ""
+		}
+		return next, header + "{" + decls + "}"
+	default:
+		report.drop("unsupported at-rule: " + name)
+		return next, ""
+	}
+}
+
+func readAtRuleName(header string) string {
+	for i, r := range header {
+		if i == 0 {
+			continue
+		}
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '-' {
+			continue
+		}
+		return header[:i]
+	}
+	return header
+}
+
+func skipCSSSpace(css string, i int) int {
+	for i < len(css) {
+		switch css[i] {
+		case ' ', '\n', '\r', '\t', '\f':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func findCSSControl(css string, start int) int {
+	parenDepth, bracketDepth := 0, 0
+	var quote byte
+	for i := start; i < len(css); i++ {
+		ch := css[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{', ';':
+			if parenDepth == 0 && bracketDepth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func readCSSBlock(css string, open int) (string, int, bool) {
+	if open < 0 || open >= len(css) || css[open] != '{' {
+		return "", open, false
+	}
+	depth := 1
+	var quote byte
+	for i := open + 1; i < len(css); i++ {
+		ch := css[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return css[open+1 : i], i + 1, true
+			}
+		}
+	}
+	return "", len(css), false
+}
+
+type sanitizeCSSOptions struct {
+	allowAnyDataURL bool
+}
+
+func sanitizeCSSDeclarations(body string, report *customStyleSanitizeReport, opts sanitizeCSSOptions) string {
+	decls := splitCSSDeclarations(body)
+	kept := make([]string, 0, len(decls))
+	for _, decl := range decls {
+		decl = strings.TrimSpace(decl)
+		if decl == "" {
+			continue
+		}
+		colon := findDeclarationColon(decl)
+		if colon <= 0 {
+			report.drop("malformed declaration")
+			continue
+		}
+		lower := strings.ToLower(decl)
+		prop := strings.TrimSpace(strings.ToLower(decl[:colon]))
+		if strings.Contains(decl, `\`) {
+			report.drop("CSS escape sequence")
+			continue
+		}
+		if prop == "behavior" || strings.Contains(lower, "expression(") || strings.Contains(lower, "-moz-binding") {
+			report.drop("legacy executable CSS")
+			continue
+		}
+		if strings.Contains(lower, "image-set(") {
+			report.drop("image-set")
+			continue
+		}
+		next := sanitizeCSSURLsInDeclaration(decl, report, opts)
+		kept = append(kept, next)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return strings.Join(kept, ";")
+}
+
+func splitCSSDeclarations(body string) []string {
+	var out []string
+	start, parenDepth := 0, 0
+	var quote byte
+	for i := 0; i < len(body); i++ {
+		ch := body[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case ';':
+			if parenDepth == 0 {
+				out = append(out, body[start:i])
+				start = i + 1
+			}
+		}
+	}
+	if start < len(body) {
+		out = append(out, body[start:])
+	}
+	return out
+}
+
+func findDeclarationColon(decl string) int {
+	parenDepth := 0
+	var quote byte
+	for i := 0; i < len(decl); i++ {
+		ch := decl[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case ':':
+			if parenDepth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func sanitizeKeyframes(body string, report *customStyleSanitizeReport) string {
+	var out strings.Builder
+	for i := 0; i < len(body); {
+		i = skipCSSSpace(body, i)
+		if i >= len(body) {
+			break
+		}
+		headerEnd := findCSSControl(body, i)
+		if headerEnd < 0 || body[headerEnd] != '{' {
+			break
+		}
+		step := strings.TrimSpace(body[i:headerEnd])
+		declBody, next, ok := readCSSBlock(body, headerEnd)
+		if !ok {
+			break
+		}
+		i = next
+		decls := sanitizeCSSDeclarations(declBody, report, sanitizeCSSOptions{})
+		if strings.Contains(step, `\`) {
+			report.drop("CSS escape sequence")
+			continue
+		}
+		if step == "" || strings.TrimSpace(decls) == "" {
+			report.drop("empty keyframe step")
+			continue
+		}
+		out.WriteString(step)
+		out.WriteString("{")
+		out.WriteString(decls)
+		out.WriteString("}")
+	}
+	return out.String()
+}
+
+func fontFaceSrcAllowed(body string) bool {
+	for _, decl := range splitCSSDeclarations(body) {
+		colon := findDeclarationColon(decl)
+		if colon <= 0 {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(decl[:colon]), "src") {
+			return cssURLsAllowedForFontSrc(decl[colon+1:])
+		}
+	}
+	return true
+}
+
+func cssURLsAllowedForFontSrc(value string) bool {
+	allowed := true
+	cssURLRE.ReplaceAllStringFunc(value, func(token string) string {
+		matches := cssURLRE.FindStringSubmatch(token)
+		if len(matches) < 3 || !isAllowedCSSURL(matches[2], true) {
+			allowed = false
+		}
+		return token
+	})
+	return allowed
+}
+
 func scopeCustomStyleSelectors(selector, scopeRoot string) string {
-	parts := strings.Split(selector, ",")
+	parts := splitSelectorList(selector)
 	scoped := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		if part == scopeRoot || (scopeRoot == customStyleAllowedScopes[customStyleScopeDashboard] && (strings.HasPrefix(part, scopeRoot+" ") || strings.HasPrefix(part, scopeRoot+".") || strings.HasPrefix(part, scopeRoot+":"))) {
+		if scopeRootEscapesWithSiblingCombinator(part, scopeRoot) {
+			continue
+		}
+		if part == scopeRoot || strings.HasPrefix(part, scopeRoot+" ") || strings.HasPrefix(part, scopeRoot+".") || strings.HasPrefix(part, scopeRoot+":") || strings.HasPrefix(part, scopeRoot+"[") {
 			scoped = append(scoped, part)
 			continue
 		}
-		if scopeRoot == customStyleAllowedScopes[customStyleScopeDashboard] {
-			if part == "body" || part == "html" || part == ":root" {
-				scoped = append(scoped, scopeRoot)
-				continue
+		if part == "body" || part == "html" || part == ":root" {
+			scoped = append(scoped, scopeRoot)
+			continue
+		}
+		if themed, ok := scopeThemeAncestorSelector(part, scopeRoot); ok {
+			if themed != "" {
+				scoped = append(scoped, themed)
 			}
+			continue
+		}
+		if scopeRoot == customStyleAllowedScopes[customStyleScopeDashboard] {
 			for _, rootSelector := range []string{"body", "html", ":root"} {
 				if strings.HasPrefix(part, rootSelector+".") || strings.HasPrefix(part, rootSelector+":") || strings.HasPrefix(part, rootSelector+"#") {
 					part = scopeRoot + strings.TrimPrefix(part, rootSelector)
@@ -295,6 +671,116 @@ func scopeCustomStyleSelectors(selector, scopeRoot string) string {
 	return strings.Join(scoped, ", ")
 }
 
+func scopeRootEscapesWithSiblingCombinator(selector, scopeRoot string) bool {
+	if !strings.HasPrefix(selector, scopeRoot) {
+		return false
+	}
+	i := len(scopeRoot)
+	parenDepth, bracketDepth := 0, 0
+	var quote byte
+	for i < len(selector) {
+		ch := selector[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			i++
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '+', '~':
+			if parenDepth == 0 && bracketDepth == 0 {
+				return true
+			}
+		case ' ', '\n', '\r', '\t', '\f', '>':
+			if parenDepth == 0 && bracketDepth == 0 {
+				return nextNonSpaceIsSiblingCombinator(selector, i)
+			}
+		}
+		i++
+	}
+	return false
+}
+
+func nextNonSpaceIsSiblingCombinator(selector string, i int) bool {
+	for i < len(selector) {
+		switch selector[i] {
+		case ' ', '\n', '\r', '\t', '\f':
+			i++
+			continue
+		}
+		return selector[i] == '+' || selector[i] == '~'
+	}
+	return false
+}
+
+func splitSelectorList(selector string) []string {
+	var out []string
+	start, parenDepth, bracketDepth := 0, 0, 0
+	var quote byte
+	for i := 0; i < len(selector); i++ {
+		ch := selector[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case ',':
+			if parenDepth == 0 && bracketDepth == 0 {
+				out = append(out, selector[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, selector[start:])
+	return out
+}
+
+func scopeThemeAncestorSelector(selector, scopeRoot string) (string, bool) {
+	for _, prefix := range []string{"[data-theme", "html[data-theme", "body[data-theme", ":root[data-theme"} {
+		if strings.HasPrefix(selector, prefix) {
+			if end := strings.Index(selector, "]"); end >= 0 {
+				themed := strings.TrimSpace(selector[:end+1]) + " " + scopeRoot + selector[end+1:]
+				if idx := strings.Index(themed, scopeRoot); idx >= 0 && scopeRootEscapesWithSiblingCombinator(strings.TrimSpace(themed[idx:]), scopeRoot) {
+					return "", true
+				}
+				return themed, true
+			}
+		}
+	}
+	return "", false
+}
+
 func sanitizeCSSURLToken(token string) string {
 	matches := cssURLRE.FindStringSubmatch(token)
 	if len(matches) < 3 {
@@ -302,30 +788,90 @@ func sanitizeCSSURLToken(token string) string {
 	}
 	raw := strings.TrimSpace(matches[2])
 	raw = strings.Trim(raw, `"'`)
-	lower := strings.ToLower(raw)
-	if strings.HasPrefix(lower, "data:image/") {
-		return "url(" + raw + ")"
-	}
-	if colon := strings.Index(raw, ":"); colon >= 0 {
-		slash := strings.IndexAny(raw, "/?#")
-		if slash == -1 || colon < slash {
-			return "url(\"\")"
-		}
-	}
-	if strings.HasPrefix(raw, "//") || strings.Contains(lower, "://") || strings.HasPrefix(lower, "data:") {
-		return "url(\"\")"
+	if !isAllowedCSSURL(raw, false) {
+		return `url("")`
 	}
 	return "url(" + raw + ")"
 }
 
+func sanitizeCSSURLsInDeclaration(decl string, report *customStyleSanitizeReport, opts sanitizeCSSOptions) string {
+	return cssURLRE.ReplaceAllStringFunc(decl, func(token string) string {
+		matches := cssURLRE.FindStringSubmatch(token)
+		if len(matches) < 3 {
+			report.drop("malformed url()")
+			return `url("")`
+		}
+		if !isAllowedCSSURL(matches[2], opts.allowAnyDataURL) {
+			report.drop("external url()")
+			return `url("")`
+		}
+		return sanitizeCSSURLTokenWithDataOption(token, opts.allowAnyDataURL)
+	})
+}
+
+func sanitizeCSSURLTokenWithDataOption(token string, allowAnyDataURL bool) string {
+	matches := cssURLRE.FindStringSubmatch(token)
+	if len(matches) < 3 {
+		return ""
+	}
+	raw := strings.TrimSpace(matches[2])
+	raw = strings.Trim(raw, `"'`)
+	if !isAllowedCSSURL(raw, allowAnyDataURL) {
+		return `url("")`
+	}
+	return "url(" + raw + ")"
+}
+
+func isAllowedCSSURL(raw string, allowAnyDataURL bool) bool {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, `"'`)
+	lower := strings.ToLower(raw)
+	if strings.Contains(raw, `\`) {
+		return false
+	}
+	if allowAnyDataURL && strings.HasPrefix(lower, "data:") {
+		return true
+	}
+	if strings.HasPrefix(lower, "data:image/") {
+		return true
+	}
+	if colon := strings.Index(raw, ":"); colon >= 0 {
+		slash := strings.IndexAny(raw, "/?#")
+		if slash == -1 || colon < slash {
+			return false
+		}
+	}
+	if strings.HasPrefix(raw, "//") || strings.Contains(lower, "://") || strings.HasPrefix(lower, "data:") {
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
-	css, _, err := getCustomStyle(r.Context(), r.URL.Query().Get("src"), r.URL.Query().Get("scope"))
+	css, src, report, err := getCustomStyle(r.Context(), r.URL.Query().Get("src"), r.URL.Query().Get("scope"))
 	if err != nil {
 		status := http.StatusUnprocessableEntity
 		if err == errCustomStyleNotFound {
 			status = http.StatusNotFound
 		}
 		http.Error(w, err.Error(), status)
+		return
+	}
+	if report.Dropped > 0 {
+		w.Header().Set("X-Hive-Style-Dropped", fmt.Sprintf("%d", report.Dropped))
+	}
+	if r.URL.Query().Get("report") == "1" {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		_ = json.NewEncoder(w).Encode(struct {
+			Source string                    `json:"source"`
+			CSS    string                    `json:"css"`
+			Report customStyleSanitizeReport `json:"report"`
+		}{
+			Source: customStyleSourceKey(src),
+			CSS:    string(css),
+			Report: report,
+		})
 		return
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -358,9 +904,11 @@ func leaderboardCustomStyleCacheKey(src leaderboardCustomStyleSource) string {
 }
 
 func getLeaderboardCustomStyle(ctx context.Context, rawSrc string) ([]byte, leaderboardCustomStyleSource, error) {
-	return getCustomStyle(ctx, rawSrc, customStyleScopeLeaderboard)
+	css, src, _, err := getCustomStyle(ctx, rawSrc, customStyleScopeLeaderboard)
+	return css, src, err
 }
 
 func sanitizeLeaderboardCustomStyle(css []byte) ([]byte, error) {
-	return sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
+	out, _, err := sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
+	return out, err
 }

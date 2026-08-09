@@ -103,9 +103,19 @@ preview accept a shareable custom stylesheet parameter:
 The `@ref` suffix is optional and defaults to the repo's `HEAD`. Hive only
 accepts the `owner/repo/path.css` triplet form, fetches public GitHub raw content
 server-side without credentials, sanitizes CSS, strips external imports/URLs, and
-serves it from same-origin endpoints with a 128 KiB size cap. The sanitizer
-removes legacy executable CSS vectors and CSS escape sequences. Leaderboard CSS
-is scoped to `#tab-leaderboard`; dashboard and snapshot CSS is scoped to
+serves it from same-origin endpoints with a 128 KiB size cap. The sanitizer keeps
+normal declarations including custom properties (`--x`/`var(--x)`), attribute and
+pseudo selectors, gradients, `calc()`/`clamp()`/modern color functions, and the
+recursive at-rules `@media`, `@supports`, `@container`, and `@keyframes`.
+`@font-face` blocks are kept only when every `src` URL is same-origin/relative or
+`data:`. It removes `@import`, external or protocol-relative `url()` fetches,
+CSS escape sequences, `image-set()`, and legacy executable CSS vectors such as
+`expression()`, `behavior`, and `-moz-binding`.
+
+Sanitized style responses include `X-Hive-Style-Dropped: N` when anything was
+removed. Add `&report=1` to `/api/style` or `/api/leaderboard/style` to get JSON
+with the sanitized CSS and a short list of sanitizer reasons. Leaderboard CSS is
+scoped to `#tab-leaderboard`; dashboard and snapshot CSS is scoped to
 `#hive-dashboard-root`, which deliberately leaves login/setup overlays outside
 the custom-theme surface. `/api/style` is public so unauthenticated snapshots can
 load sanitized CSS, and the existing `style-src 'self'` CSP remains sufficient.
