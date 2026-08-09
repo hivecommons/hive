@@ -43,13 +43,13 @@ const proxyAuthHeader = "X-Hive-Proxy-Auth"
 // when the owner role came from a trusted source, not an inbound client header.
 const ownerRoleVerifiedHeader = "X-Hive-Owner-Role-Verified"
 
-// proxyProofRequired controls F2 enforcement strictness. Default false =
-// fail-open rollout: a request with no proof header is still trusted on its
-// identity headers (so hosted hives aren't locked out while the hub half rolls
-// out fleet-wide). Set HIVE_PROXY_PROOF_REQUIRED=true (once every hub is
-// confirmed injecting the header) to fail closed: a missing/incorrect proof
-// header is rejected. A WRONG proof header is ALWAYS rejected regardless.
-var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") == "true"
+// proxyProofRequired controls F2 enforcement strictness. Default true =
+// fail-closed: a request with no X-Hive-Proxy-Auth proof header (or a wrong
+// one) is rejected even if it carries X-Hive-User/X-Hive-Role identity
+// headers. Set HIVE_PROXY_PROOF_REQUIRED=false only during a temporary
+// rollout window where some hub replicas may not yet inject the proof header.
+// A WRONG proof header is ALWAYS rejected regardless of this setting.
+var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") != "false"
 
 type Server struct {
 	port       int
