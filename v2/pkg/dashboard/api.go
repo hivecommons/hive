@@ -52,6 +52,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
 	s.mux.HandleFunc("POST /api/backup", s.handleBackupDownload)
 	s.mux.HandleFunc("POST /api/banner-dismissed", s.handleBannerDismissed)
+	s.mux.HandleFunc("GET /api/snapshot/frame-ancestors", s.handleSnapshotFrameAncestors)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
 	s.mux.HandleFunc("GET /snapshot", s.handleSnapshotPage)
 	s.mux.HandleFunc("GET /api/history", s.handleHistory)
@@ -736,6 +737,14 @@ func (s *Server) handleSnapshotAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	json.NewEncoder(w).Encode(status)
+}
+
+func (s *Server) handleSnapshotFrameAncestors(w http.ResponseWriter, r *http.Request) {
+	var origins []string
+	if s.deps != nil && s.deps.Config != nil {
+		origins = s.deps.Config.Dashboard.SnapshotFrameAncestors
+	}
+	jsonResponse(w, map[string]any{"origins": origins})
 }
 
 func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
@@ -3840,6 +3849,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"snapshot_url":                       cfg.Hub.SnapshotURL,
 			"is_public":                          cfg.Hub.IsPublic,
 			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
+			"snapshot_frame_ancestors":           cfg.Dashboard.SnapshotFrameAncestors,
 			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
 			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":               cfg.Hub.ContributeSuspended,
@@ -4292,6 +4302,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		SnapshotURL                    string                     `json:"snapshot_url"`
 		IsPublic                       *bool                      `json:"is_public"`
 		AutoSnapshot                   *bool                      `json:"auto_snapshot"`
+		SnapshotFrameAncestors         []string                   `json:"snapshot_frame_ancestors"`
 		AutoUpgrade                    *bool                      `json:"auto_upgrade"`
 		ContributeSuspended            *bool                      `json:"contribute_suspended"`
 		ContributeTitlesMode           *string                    `json:"contribute_titles_mode"`
@@ -4331,6 +4342,14 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AutoSnapshot != nil {
 		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
+	}
+	if body.SnapshotFrameAncestors != nil {
+		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Dashboard.SnapshotFrameAncestors = normalized
 	}
 	if body.AutoUpgrade != nil {
 		cfg.Hub.AutoUpgrade = *body.AutoUpgrade

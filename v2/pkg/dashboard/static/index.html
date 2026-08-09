@@ -15826,6 +15826,7 @@ function burnAreaChart() {
       const denyTitles = (hub.contribute_deny_titles || []);
       const denyAuthors = (hub.contribute_deny_authors || []);
       const allowModels = (hub.contribute_allow_models || []);
+      const frameAncestors = (hub.snapshot_frame_ancestors || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
       const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
       const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
@@ -15876,6 +15877,12 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Snapshot / Preview URL <span class="config-info">i<span class="config-tooltip">${hub.auto_snapshot ? 'Auto-generated from Dashboard URL. Read-only while auto-publish is on.' : 'Enter a custom preview URL (e.g. your own static dashboard). Sent to hub as the Preview link.'}</span></span></label>
           <input type="text" id="hub-snapshot-url" value="${esc(snapUrl)}" onchange="markDirty('hub','snapshot_url',this.value)" ${hub.auto_snapshot ? 'disabled style="opacity:0.5"' : ''} placeholder="${hub.auto_snapshot ? '' : 'https://your-site.com/dashboard-preview'}">
+        </div>
+        <div class="config-field">
+          <label>Snapshot frame allowlist <span class="config-info">i<span class="config-tooltip">Exact HTTPS origins allowed to embed the public read-only /snapshot page. Empty keeps frame-ancestors 'none' and X-Frame-Options: DENY. X-Frame-Options is omitted for /snapshot only when this allowlist is non-empty because XFO cannot express allowlists.</span></span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${frameAncestors.map(function(o) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(96,165,250,0.15);color:var(--blue);border:1px solid rgba(96,165,250,0.3)">' + esc(o) + ' <span onclick="removeHubFilter(\'snapshot_frame_ancestors\',' + esc(JSON.stringify(o)) + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('') || '<span style="font-size:0.72rem;color:var(--muted)">No origins allowed — /snapshot cannot be framed.</span>'}</div>
+          <textarea rows="3" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="https://docs.projectbluefin.io" onchange="setSnapshotFrameAncestorsFromText(this.value)">${esc(frameAncestors.join('\n'))}</textarea>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">One exact origin per line: <code>https://host</code> or <code>https://host:port</code>. Paths, http://, credentials, and wildcards are rejected.</span>
         </div>
 
         <hr style="border-color:var(--border);margin:16px 0">
@@ -16130,6 +16137,14 @@ function burnAreaChart() {
       if (!_configState.data.hub || !_configState.data.hub[key]) return;
       _configState.data.hub[key] = _configState.data.hub[key].filter(function(v) { return v !== val; });
       markDirty('hub', key, _configState.data.hub[key]);
+      renderConfigTab('Hub');
+    }
+
+    function setSnapshotFrameAncestorsFromText(value) {
+      const origins = (value || '').split(/\r?\n|,/).map(function(v) { return v.trim(); }).filter(Boolean);
+      if (!_configState.data.hub) _configState.data.hub = {};
+      _configState.data.hub.snapshot_frame_ancestors = origins;
+      markDirty('hub', 'snapshot_frame_ancestors', origins);
       renderConfigTab('Hub');
     }
 
