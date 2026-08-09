@@ -269,6 +269,7 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 
 ## What to read next
 
+- **[Supervisor agent](supervisor.md)** — what the supervisor does, how it differs from the governor, when to enable it, `bead_role` semantics, and policy modes.
 - **[Introduction](https://kubestellar.io/docs/hive/overview/introduction)** — what hive is, setup, and the command surface.
 - **[Architecture](https://kubestellar.io/docs/hive/overview/architecture)** — the two scheduling models and how the supervisor drives agents.
 - **[Troubleshooting](https://kubestellar.io/docs/hive/getting-started/troubleshooting)** — stuck sessions, login expiry, restart loops.

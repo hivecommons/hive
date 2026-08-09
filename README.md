@@ -175,7 +175,7 @@ kubectl apply -f deploy/k8s/service.yaml
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, and [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for the full agent configuration guide — every field, methods and model discovery, pinning, cadences, and ACMM packs.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, and [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for the full agent configuration guide — every field, methods and model discovery, pinning, cadences, and ACMM packs. Read [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent — what it does, how it differs from the governor, when to enable it, and how `bead_role` and policy modes work.
 
 ```yaml
 project:
