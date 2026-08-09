@@ -197,6 +197,34 @@ const (
 	importHTTPTimeoutS  = 10
 )
 
+// importAllowedHosts is the set of GitHub hostnames that agent import URLs may
+// target. All other hosts (including localhost, RFC-1918 ranges, and cloud
+// metadata endpoints) are rejected to prevent SSRF.
+var importAllowedHosts = map[string]bool{
+	"github.com":             true,
+	"raw.githubusercontent.com": true,
+	"gist.github.com":        true,
+}
+
+// validateImportURL rejects URLs that could cause SSRF. Only https:// scheme
+// and GitHub-owned hostnames are permitted. An error is returned if the URL
+// fails any check; the caller should surface it as a 400 Bad Request.
+func validateImportURL(rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("import URL must use https:// scheme (got %q)", u.Scheme)
+	}
+	// Strip port to compare only the hostname.
+	host := u.Hostname()
+	if !importAllowedHosts[strings.ToLower(host)] {
+		return fmt.Errorf("import URL host %q is not allowed; only github.com and raw.githubusercontent.com are permitted", host)
+	}
+	return nil
+}
+
 // agentConfigFromDefinition maps a parsed AgentDefinition to an AgentConfig with
 // the import defaults applied (backend copilot, immediate restart, worker bead
 // role, enabled). It is the single mapping used by both the whole-agent import
@@ -255,6 +283,13 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(body.URL) > importMaxURLLen {
 			jsonError(w, fmt.Sprintf("url must be at most %d characters", importMaxURLLen), http.StatusBadRequest)
+			return
+		}
+		// Validate URL scheme and host before fetching to prevent SSRF.
+		// Only https:// to GitHub domains is accepted; file://, http://, and
+		// internal addresses are rejected regardless of keepLinked.
+		if err := validateImportURL(body.URL); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		client := &http.Client{Timeout: importHTTPTimeoutS * 1e9} // nanoseconds
