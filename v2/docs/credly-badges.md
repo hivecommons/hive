@@ -1,19 +1,21 @@
 # Credly badges — integration design (planned, not yet built)
 
 Status: **design only.** The contributor "Me" card (Leaderboard tab of
-`/contribute`) already shows a **Badges** section, but it is a labeled
-placeholder — it displays the milestone → badge *mapping* and makes **no external
-Credly call**. This document describes the real integration to build later, once
-the operator has completed the Credly setup below.
+`/contribute`) shows a **Heraldry** section that mirrors a contributor's OWN
+public Credly badges (self-linked via the dossier's `credly_name` field — see
+`dossier.go`), but no hive-issued badges exist yet; issuing them requires the
+operator setup below. Once the operator provisions templates and issuance goes
+live, hive-issued badges appear in the same Heraldry hall automatically — same
+public profile JSON, same mount.
 
 ## Why placeholder-first
 
 Issuing verifiable Credly badges requires assets and credentials that only the
 operator can provision: a Credly (Acclaim) organization, badge **templates**, and
 an **Issuer API token**. None of these can be hardcoded or shipped in the repo, so
-the live integration is deferred. The card ships the mapping now so contributors
-see what they will earn, and so the wiring point is obvious when the integration
-lands.
+the live integration is deferred. The card ships the Heraldry mount (and the
+milestone → badge mapping below) now, so the wiring point is obvious when the
+integration lands.
 
 ## What the operator must set up first
 
@@ -50,8 +52,7 @@ attained milestone maps to one Credly badge template:
 | `tasks-25`                          | 25 tasks shipped                | 25-task milestone |
 | `tasks-100`                         | 100 tasks shipped               | 100-task milestone|
 
-The client-side placeholder mirrors this table (`ME_CREDLY_MAP` in the Leaderboard
-tab script). Keep the two in sync when templates are created.
+Keep this table in sync with the badge templates when they are created.
 
 ## When to issue
 

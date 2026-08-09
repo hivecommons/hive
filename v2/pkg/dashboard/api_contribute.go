@@ -179,11 +179,28 @@ type ContributorProfile struct {
 	// AssignedAgentRole is the owner-selected effective clanker role. Empty means
 	// no owner override (the relay's optional HIVE_AGENT_ROLE claim may apply);
 	// "none" is an explicit owner override to general contribute work.
-	AssignedAgentRole string         `json:"assigned_agent_role,omitempty"`
-	Active            bool           `json:"active,omitempty"`
-	CurrentTask       *WSTaskAssign  `json:"current_task,omitempty"`
-	ActiveTasks       []WSTaskAssign `json:"active_tasks,omitempty"`
-	Sessions          int            `json:"sessions,omitempty"`
+	AssignedAgentRole string `json:"assigned_agent_role,omitempty"`
+	// ── Contributor dossier (self-service, ALL optional — see dossier.go) ──
+	// Free-choice identity fields the contributor sets themselves via
+	// POST /api/contribute/dossier. They gate nothing, decay never, and are
+	// sanitised/bounded on write (and HTML-escaped again on render).
+	Archetype       string   `json:"archetype,omitempty"`
+	Specializations []string `json:"specializations,omitempty"`
+	Testimony       string   `json:"testimony,omitempty"`
+	EquippedTitle   string   `json:"equipped_title,omitempty"`
+	// CredlyName is the contributor's Credly vanity name ([a-z0-9-] only); when
+	// set, the heraldry endpoint mirrors their PUBLIC Credly badges.
+	CredlyName string `json:"credly_name,omitempty"`
+	// EmblemSeed seeds the CSS-generative identity emblem (client-side only).
+	EmblemSeed string `json:"emblem_seed,omitempty"`
+	// Collaborators is the append-only record of people this contributor has
+	// worked alongside — see collaborators.go. Written symmetrically to both
+	// parties; never decays, never removed.
+	Collaborators []CollaboratorRecord `json:"collaborators,omitempty"`
+	Active        bool                 `json:"active,omitempty"`
+	CurrentTask   *WSTaskAssign        `json:"current_task,omitempty"`
+	ActiveTasks   []WSTaskAssign       `json:"active_tasks,omitempty"`
+	Sessions      int                  `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
@@ -223,6 +240,13 @@ func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 
 func (s *Server) registerContributeRoutes() {
 	s.contributeHub = NewContributeWSHub(s.logger, s)
+	// Seed the collaborator graph from invite attribution recorded before
+	// collaborators existed, so the dossier zone is not empty on hives that have
+	// been running invites for months. Idempotent — a pair already on record is
+	// skipped, so repeated restarts never inflate the counts.
+	if n := backfillInviteCollaborations(); n > 0 {
+		s.logger.Info("backfilled invite collaborations", "pairs", n)
+	}
 	s.mux.HandleFunc("GET /contribute", s.handleContributeLanding)
 	// Path-style deep links: /contribute/onboarding|management|operations|leaderboard
 	// (and the short id forms) all serve the SAME landing HTML — the client JS reads
@@ -230,6 +254,13 @@ func (s *Server) registerContributeRoutes() {
 	// server-side; it exists so each tab is a real bookmarkable/shareable URL. Any
 	// /contribute/<tab> is already treated as public by isPublicPath (server.go).
 	s.mux.HandleFunc("GET /contribute/{tab}", s.handleContributeLanding)
+	// Public dossier permalink: /contribute/dossier/{username} renders ANY
+	// contributor's record, so a dossier is a shareable artifact rather than a
+	// surface only its owner can see. Two path segments, so it never collides
+	// with the single-segment {tab} pattern above. Owner-only controls (the edit
+	// form, invite minting, style picker, quota) are withheld unless the viewer
+	// IS the subject — see handleContributorDossierPage.
+	s.mux.HandleFunc("GET /contribute/dossier/{username}", s.handleContributorDossierPage)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.contributeHub.HandleWS)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeRegister)
 	// Trusted invite link (issue #2598). A trusted/merger/advisor contributor mints an
@@ -291,6 +322,11 @@ func (s *Server) registerContributeRoutes() {
 	// it is a preference, not an operator control. GET reads, PUT replaces.
 	s.mux.HandleFunc("GET /api/contribute/interests", s.handleContributeInterests)
 	s.mux.HandleFunc("PUT /api/contribute/interests", s.handleContributeInterests)
+	// Contributor-owned DOSSIER fields (archetype / specializations / testimony /
+	// equipped title / credly link / emblem seed) — self-service like interests
+	// above; identity resolved server-side, every field optional. See dossier.go.
+	s.mux.HandleFunc("GET /api/contribute/dossier", s.handleContributeDossier)
+	s.mux.HandleFunc("POST /api/contribute/dossier", s.handleContributeDossier)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -313,6 +349,11 @@ func (s *Server) registerContributeRoutes() {
 	// registry). Read-only; public via isPublicPath's /api/leaderboard prefix. The
 	// Leaderboard tab calls it to render the personal "Me" card. See me_profile.go.
 	s.mux.HandleFunc("GET /api/leaderboard/contributor/{username}", s.handleContributorProfile)
+	// HERALDRY — the trimmed public Credly badges for one contributor (their own
+	// credly.com profile mirrored through a 6h cache). Read-only; lives under the
+	// /api/leaderboard prefix so isPublicPath makes it public like the profile
+	// endpoint above. See dossier.go.
+	s.mux.HandleFunc("GET /api/leaderboard/contributor/{username}/heraldry", s.handleContributorHeraldry)
 
 	s.mux.HandleFunc("GET /api/hives", s.handleHivesList)
 	s.mux.HandleFunc("POST /api/hives/register", s.handleHivesRegister)
@@ -445,6 +486,28 @@ func findContributor(id string) *ContributorProfile {
 // handleContributeLanding renders the public sign-up page for ClankeR, the
 // contributor relay: it explains the deal, offers per-CLI copy-paste setup
 // commands, and shows a live feed of contributor activity.
+// handleContributorDossierPage serves the public dossier permalink
+// /contribute/dossier/{username}.
+//
+// It deliberately serves the SAME landing HTML as every other /contribute
+// surface: the client reads location.pathname, activates the Profile tab and
+// renders the named contributor's record. One renderer, two entry points — the
+// tab is simply "your own username, already signed in".
+//
+// Nothing sensitive is gated here, because nothing sensitive is served here: the
+// dossier is built from BuildContributorProfile, which returns only data the
+// public leaderboard already exposes. Owner-only CONTROLS are hidden client-side
+// as a UX affordance, while the endpoints behind them (dossier save, invite
+// minting) each resolve the caller server-side and refuse to act for anyone but
+// their owner — the same posture the rest of this file takes.
+func (s *Server) handleContributorDossierPage(w http.ResponseWriter, r *http.Request) {
+	if !validGitHubUsername(r.PathValue("username")) {
+		http.Redirect(w, r, "/contribute/leaderboard", http.StatusFound)
+		return
+	}
+	s.handleContributeLanding(w, r)
+}
+
 func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	projectName := ""
@@ -563,6 +626,9 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <style>
+/* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
+   dossier hero name + rank designation (.dz-heroname / .dz-rankpill .rank-name). */
+%s
 /* ── Theme tokens (#2612 part d) ─────────────────────────────────────────────
    The /contribute page shipped with a hardcoded GitHub-dark palette and zero
    light-mode infrastructure. These custom properties name the palette once so
@@ -750,6 +816,8 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .lb-head{color:var(--cc-muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:var(--cc-bg)}
 .lb-rank{color:var(--cc-muted);font-variant-numeric:tabular-nums}
 .lb-name{color:var(--cc-text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-name__link{color:inherit;text-decoration:none}
+.lb-name__link:hover{color:var(--cc-accent);text-decoration:underline}
 .lb-tier{color:var(--cc-muted)}
 .lb-stat{text-align:right;color:var(--cc-text-2);font-variant-numeric:tabular-nums}
 .lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:var(--cc-muted)}
@@ -812,50 +880,107 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
    (see below) — same canonical tier colors/dot, just sized up for a hero slot. */
 .tier-badge.tier-hero{font-size:.78rem;padding:5px 12px 5px 8px}
 .tier-badge.tier-hero::before{width:10px;height:10px}
-/* ── Personal "Me" card ──────────────────────────────────────────────────────
-   A pride-forward personal accomplishment showcase pinned above the standings.
-   It reuses the SAME canonical ranked-surface primitives the leaderboard/ops
-   cards above use — .tier-badge (tier-hero variant) for the tier medallion and
-   the .lb-stat.lb-primary bold-numeral treatment for its stat grid — so the
-   Me-card, the leaderboard rows, and the ops cards read as ONE cohesive ranked
-   family rather than two parallel styling systems. Seven cosmetic style skins
-   (.me-card--style1..7) are palette/framing/density variations over the SAME
-   real data. Subtle and professional, reduced-motion safe. --me-accent drives
-   the per-tier accent wash (medallion ring, chips, stat numerals). */
-.me-card{position:relative;background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:14px;overflow:hidden;margin-bottom:20px;--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.14)}
-.me-card__band{position:relative;padding:20px 22px 18px;background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0) 70%%);border-bottom:1px solid var(--cc-border-2)}
-.me-card__toprow{display:flex;align-items:center;gap:16px}
-.me-medallion{position:relative;width:64px;height:64px;flex-shrink:0;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),var(--cc-bg) 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
-.me-medallion img{width:52px;height:52px;border-radius:50%%;object-fit:cover;background:var(--cc-border)}
-/* #2595 fix: the tier badge now lives in its OWN layout slot beside the name
-   (.me-id__tier), NOT absolutely positioned over the avatar — so the "Contributor"
-   / "Trusted" / "Newcomer" pill can never overlap the avatar image. */
-.me-id__tier{margin:4px 0 2px}
-.me-id__tier .tier-badge{position:static;transform:none}
-.me-id{min-width:0;flex:1}
-.me-id__name{font-size:1.25rem;font-weight:700;color:var(--cc-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.me-id__lead{font-size:.85rem;color:var(--cc-muted);margin-top:2px}
-.me-id__lead b{color:var(--me-accent)}
-.me-rankpill{margin-left:auto;flex-shrink:0;text-align:center;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:12px;padding:8px 14px}
-.me-rankpill__num{font-size:1.25rem;font-weight:800;color:var(--cc-text);font-variant-numeric:tabular-nums;line-height:1}
-.me-rankpill__lbl{font-size:.62rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
-.me-card__body{padding:18px 22px 20px}
-.me-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.me-stat{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 8px;text-align:center}
-/* Stat numeral reuses the canonical bold/tabular "hero numeral" treatment
-   (same weight/tabular-nums as .lb-stat.lb-primary), tinted by --me-accent. */
-.me-stat .lb-stat.lb-primary{display:block;font-size:1.6rem;color:var(--me-accent);padding:0}
-.me-stat__lbl{font-size:.66rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.04em;margin-top:5px}
-.me-sec{margin-top:18px}
-.me-sec__title{font-size:.72rem;color:var(--cc-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:8px}
-.me-sec__title .me-soon{font-size:.6rem;font-weight:600;color:var(--cc-muted);border:1px solid var(--cc-border);border-radius:999px;padding:1px 7px;text-transform:none;letter-spacing:0}
-.me-chips{display:flex;flex-wrap:wrap;gap:7px}
-.me-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid transparent;background:var(--cc-bg);color:var(--cc-muted);border-color:var(--cc-border)}
-.me-chip--got{background:var(--me-accent-soft);color:var(--me-accent);border-color:var(--me-accent)}
-.me-chip--next{background:var(--cc-bg);color:var(--cc-text-2);border-color:var(--cc-border);border-style:dashed}
-.me-chip--badge{background:var(--cc-bg);color:var(--cc-muted);border-color:var(--cc-border);border-style:dashed;opacity:.85}
-.me-hives{display:flex;flex-direction:column;gap:6px}
-.me-hive{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--cc-text-2)}
+/* ── Contributor dossier (faithful port of the approved character-sheet mockup)
+   The signed-in "Me" surface is a zoned dossier SHEET, not a single card:
+   masthead + epigraph, ZONE A full-width identity plate over the generative
+   emblem field, a 5fr/7fr sheet grid (Deeds of Record | Operator Profile),
+   the full-width Golden Path, Triumphs+Heraldry | Collaborators, Field Log |
+   Theaters of Operation, and a record footer. --me-accent is the viewer's
+   ceremony rank metal by default; the 7 style skins only re-tint it. Reduced-
+   motion safe. No decay, no streaks, no nags. */
+.me-card{position:relative;margin-bottom:20px;--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.14)}
+/* Masthead: "{project} · contributor record" (accent) + "DOSSIER {user}" (mono). */
+.dz-masthead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.dz-masthead .brand{font-size:.82rem;font-weight:700;letter-spacing:.04em;color:var(--cc-accent)}
+.dz-masthead .id{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem;color:var(--cc-muted-2);text-transform:uppercase}
+.dz-epigraph{font-size:.82rem;color:var(--cc-muted);margin:0 0 20px}
+.dz-epigraph em{font-style:italic;color:var(--cc-text-2)}
+/* Zone-card primitives (mockup .card/.zone/.zone-head with the metal dot). */
+.dz-zcard{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:20px 22px 22px}
+.dz-zone-head{display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cc-muted);padding-bottom:10px;margin-bottom:14px;border-bottom:1px solid var(--cc-border-2)}
+.dz-zone-head::before{content:"";width:8px;height:8px;border-radius:50%%;background:var(--me-accent)}
+/* The sheet grid: 5fr/7fr two-column rhythm, stacking on small screens. */
+.dz-grid{display:grid;grid-template-columns:5fr 7fr;gap:16px;margin-bottom:16px}
+@media(max-width:860px){.dz-grid{grid-template-columns:1fr}}
+/* ZONE A — identity plate: full-width, bottom-anchored content over the
+   generative EMBLEM FIELD (layered conic/radial/repeating-linear gradients,
+   deterministically seeded from emblem_seed/username via the --a1/--a2/--p1/
+   --p2 custom props the client sets inline). color-mix keeps the darkening
+   tied to --cc-bg so the plate degrades gracefully in light mode. */
+.dz-identity{position:relative;overflow:hidden;margin-bottom:16px;border:1px solid var(--cc-border);border-radius:14px;min-height:300px;display:flex;flex-direction:column;justify-content:flex-end;background:var(--cc-surface)}
+@media(max-width:860px){.dz-identity{min-height:220px}}
+.me-emblem{position:absolute;inset:0;pointer-events:none;--a1:210deg;--a2:160deg;--p1:30%%;--p2:62%%;background:repeating-linear-gradient(var(--a2),transparent 0 22px,rgba(255,255,255,.02) 22px 23px),conic-gradient(from var(--a1) at var(--p1) 20%%,transparent 0deg,var(--me-accent-soft) 40deg,transparent 90deg,var(--me-accent-soft) 165deg,transparent 210deg,var(--me-accent-soft) 300deg,transparent 360deg),radial-gradient(700px 340px at var(--p2) 0%%,var(--me-accent-soft),transparent 70%%),linear-gradient(180deg,color-mix(in srgb,var(--cc-bg) 10%%,transparent),color-mix(in srgb,var(--cc-bg) 92%%,transparent) 85%%),var(--cc-bg-deep)}
+.dz-identity-inner{position:relative;padding:28px 26px 22px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+/* Circular medallion with the rank-metal ring. */
+.dz-medallion{width:84px;height:84px;flex:none;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),var(--cc-bg) 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
+.dz-medallion img{width:70px;height:70px;border-radius:50%%;object-fit:cover;background:var(--cc-border)}
+.dz-namebloc{flex:1;min-width:240px}
+/* Hero name: the Michroma display treatment (embedded above — no network). */
+.dz-heroname{font-family:'Michroma','Arial Narrow',sans-serif;font-size:clamp(1.6rem,3.6vw,2.6rem);font-weight:400;letter-spacing:.1em;line-height:1.1;text-transform:uppercase;color:var(--cc-text);margin:0}
+/* Rank pill: the ceremony DESIGNATION (rank metal) big, "trust · tier" small. */
+.dz-rankpill{flex:none;text-align:center;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:12px;padding:10px 16px}
+.dz-rankpill .rank-name{font-family:'Michroma','Arial Narrow',sans-serif;font-size:.92rem;letter-spacing:.14em;color:var(--me-accent);text-transform:uppercase}
+.dz-rankpill .rank-sub{font-size:.64rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--cc-muted);margin-top:4px}
+/* Livebar strip along the bottom of the plate — only when a task is live. */
+.dz-livebar{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 26px 12px;border-top:1px solid var(--cc-border-2);background:color-mix(in srgb,var(--cc-bg-deep) 40%%,transparent);font-size:.74rem;color:var(--cc-text-2)}
+.dz-livebar .dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex:none}
+@media(prefers-reduced-motion:no-preference){.dz-livebar .dot{animation:dzpulse 2s infinite}@keyframes dzpulse{50%%{opacity:.35}}}
+.dz-livebar .live-tag{font-weight:700;font-size:.68rem;letter-spacing:.06em;color:#3fb950}
+.dz-livebar .live-dim{color:var(--cc-muted);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.7rem}
+/* Founding mark: real registration order only (first twenty), never faked. */
+.me-founding{display:inline-block;margin-top:8px;padding:2px 9px;border-radius:999px;font-size:.64rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--me-accent);border:1px solid var(--me-accent);background:var(--me-accent-soft)}
+/* ZONE B — Deeds of Record: 2-col grid of stat blocks. The numeral keeps the
+   canonical bold .lb-stat.lb-primary treatment, tinted only for standing. */
+.dz-deeds{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dz-deed{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 10px;text-align:center}
+.dz-deed .num{font-size:1.4rem;font-weight:700;color:var(--cc-text);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace}
+.dz-deed .num small{font-size:.85rem;color:var(--cc-muted);font-weight:400}
+.dz-deed .cap{font-size:.66rem;color:var(--cc-muted);margin-top:4px}
+.dz-deed--standing .num{color:var(--me-accent)}
+/* Full-width Golden Path card: zone-head left, "next designation" right. */
+.dz-path-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+.dz-path-head .dz-zone-head{margin:0;border:none;padding:0}
+.dz-path-next{font-size:.82rem;color:var(--cc-muted)}
+.dz-path-next b{font-family:'Michroma','Arial Narrow',sans-serif;font-size:.88rem;letter-spacing:.1em;color:var(--cc-text);font-weight:400}
+/* ZONE D — Triumphs: milestone SEALS (mockup .seal blocks; attained ones are
+   solid, the next one to chase renders with a dashed border, never a nag). */
+.dz-seals{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.dz-seal{background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:12px 14px}
+.dz-seal .glyph{width:8px;height:8px;border-radius:50%%;background:var(--me-accent);margin-bottom:8px}
+.dz-seal .t-name{font-size:.78rem;font-weight:700;letter-spacing:.04em;color:var(--cc-text)}
+.dz-seal .t-sub{font-size:.7rem;color:var(--cc-muted);margin-top:5px;line-height:1.5}
+.dz-seal--next{border-style:dashed}
+.dz-seal--next .glyph{background:var(--cc-border)}
+.dz-seal--next .t-name{color:var(--cc-text-2)}
+/* Heraldry divider inside the Triumphs card. */
+.dz-heraldry-head{margin-top:18px;padding-top:14px;border-top:1px dashed var(--cc-border);display:flex;justify-content:space-between;align-items:baseline;font-size:.7rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-muted);margin-bottom:14px}
+/* ZONE E — Collaborators: the empty state shown until the first real joint
+   operation is recorded. An invitation to go and meet someone, not a placeholder. */
+.dz-collab-empty{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.78rem;color:var(--cc-muted);line-height:1.8}
+/* Collaborators — the people you have worked alongside. Each row links to that
+   contributor's own dossier, so the collection is navigable. */
+.dz-collabs{display:grid;gap:8px}
+.dz-collab{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:9px;
+  border:1px solid var(--cc-border);background:var(--cc-bg);text-decoration:none;color:inherit}
+.dz-collab:hover{border-color:var(--me-accent)}
+.dz-collab__av{width:28px;height:28px;border-radius:50%%;flex:none;background:var(--cc-surface)}
+.dz-collab__body{display:flex;flex-direction:column;min-width:0}
+.dz-collab__name{font-size:.84rem;font-weight:600;color:var(--cc-text)}
+.dz-collab__how{font-size:.7rem;color:var(--cc-muted-2);text-transform:uppercase;letter-spacing:.04em}
+/* ZONE F — Field Log rows: mono time-ago + entry. */
+.dz-flog{display:grid;gap:10px}
+.dz-frow{display:grid;grid-template-columns:5.5rem 1fr;gap:12px;align-items:baseline}
+.dz-frow .f-when{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.7rem;color:var(--cc-muted-2)}
+.dz-frow .f-what{font-size:.8rem;color:var(--cc-text-2);line-height:1.55}
+.dz-frow .f-what b{font-weight:600;color:var(--cc-accent)}
+.dz-frow .f-what span{color:var(--cc-muted)}
+/* Record footer: HIVE // id + the per-hive closing quote. */
+.dz-footer{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-top:8px;padding:14px 4px 0;border-top:1px solid var(--cc-border-2);font-size:.72rem;color:var(--cc-muted-2);font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;text-transform:uppercase}
+.dz-footer .quote{color:var(--cc-muted);text-transform:none}
+/* Theaters of Operation: hives render as rows — name + relationship pill. */
+.me-hives{display:grid;gap:8px}
+.me-hive{display:flex;align-items:center;gap:10px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px;padding:10px 14px;font-size:.82rem;color:var(--cc-text-2)}
+.me-hive__name{font-size:.82rem;font-weight:700;letter-spacing:.03em;color:var(--cc-text);flex:1;text-transform:uppercase}
 .me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
 .me-hive__rel--owner{background:rgba(210,153,34,.16);color:#d29922}
 .me-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
@@ -866,24 +991,97 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-stylepick select{background:var(--cc-bg);border:1px solid var(--cc-border);color:var(--cc-text-2);border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
 .me-signin{background:var(--cc-surface);border:1px dashed var(--cc-border);border-radius:14px;padding:22px;text-align:center;color:var(--cc-muted);font-size:.9rem;margin-bottom:20px}
 .me-signin b{color:var(--cc-text)}
+/* Leaderboard standing strip — the one-line remnant of the dossier on the
+   standings tab. Deliberately unobtrusive: the Rankings are the content here. */
+.me-standing{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+  background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;
+  padding:10px 16px;margin-bottom:16px;font-size:.86rem;color:var(--cc-muted)}
+.me-standing b{color:var(--cc-text)}
+.me-standing__link{color:var(--cc-accent);text-decoration:none;font-weight:600;white-space:nowrap}
+.me-standing__link:hover{text-decoration:underline}
 /* ── The 7 profile-style skins (palette / framing / density variations) ────────
    Each is a tasteful, readable, professional variant of the SAME card. They only
    change accent palette, header treatment, medallion framing, and density —
    never the data or the affordances. Default (style1) needs no override. */
+/* style1 "Rank metal" is the DEFAULT: it takes its accent from the viewer's
+   ceremony rank metal (--me-metal/--me-metal-soft, set inline by the client
+   from the trust tier). Styles 2..7 override --me-accent directly, so picking
+   any other skin beats the rank metal — exactly like the old Signal blue. */
+.me-card--style1{--me-accent:var(--me-metal,#58a6ff);--me-accent-soft:var(--me-metal-soft,rgba(88,166,255,.14))}
 .me-card--style2{--me-accent:#3fb950;--me-accent-soft:rgba(63,185,80,.14)}
 .me-card--style3{--me-accent:#d29922;--me-accent-soft:rgba(210,153,34,.15)}
 .me-card--style4{--me-accent:#a371f7;--me-accent-soft:rgba(163,113,247,.15)}
 .me-card--style5{--me-accent:var(--cc-muted);--me-accent-soft:rgba(139,148,158,.12)}     /* minimal / restrained */
-.me-card--style5 .me-card__band{background:var(--cc-surface)}
-.me-card--style5 .me-medallion{background:var(--cc-bg)}
+.me-card--style5 .dz-identity{min-height:0}
+.me-card--style5 .me-emblem{display:none}
+.me-card--style5 .dz-medallion{background:var(--cc-bg)}
 .me-card--style6{--me-accent:#f778ba;--me-accent-soft:rgba(247,120,186,.14)}
-.me-card--style6 .me-card__band{background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0))}
+.me-card--style6 .me-emblem{opacity:.75}
 .me-card--style7{--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.18)}     /* roomy "ranked" */
-.me-card--style7 .me-card__band{padding:26px 24px 22px}
-.me-card--style7 .me-card__body{padding:22px 24px 24px}
-.me-card--style7 .me-medallion{width:74px;height:74px}
-.me-card--style7 .me-medallion img{width:60px;height:60px}
-@media(max-width:520px){.me-card__toprow{flex-wrap:wrap}.me-rankpill{margin-left:0}.me-statgrid{grid-template-columns:1fr}}
+.me-card--style7 .dz-identity{min-height:340px}
+.me-card--style7 .dz-identity-inner{padding:34px 30px 26px}
+/* ── Contributor dossier additions (me-card v2) ───────────────────────────────
+   Identity band gains an equipped-title callsign + designation line; the body
+   gains the operator-profile rows (archetype / specializations / loadout /
+   sponsor / active), the testimony blockquote, THE GOLDEN PATH progress zone and the
+   HERALDRY hall (the viewer's own public Credly badges, floating free — no
+   boxes). Everything is tinted by the SAME --me-accent the 7 style skins drive,
+   so every skin themes the dossier for free. No decay, no streaks, no nags. */
+.me-callsign{font-size:.74rem;font-weight:600;letter-spacing:.18em;color:var(--me-accent);text-transform:uppercase;margin-bottom:4px}
+.me-desig{font-size:.82rem;color:var(--cc-muted);margin-top:8px}
+.me-desig b{font-weight:600;color:var(--cc-text-2)}
+.me-prows{display:grid;gap:9px}
+.me-prow{display:grid;grid-template-columns:128px 1fr;gap:12px;align-items:baseline}
+.me-prow .k{font-size:.68rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-muted)}
+.me-prow .v{font-size:.86rem;color:var(--cc-text)}
+.me-prow .v.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.78rem}
+.me-prow .v .unset{color:var(--cc-muted-2)}
+.me-specs{display:flex;flex-wrap:wrap;gap:6px}
+.me-spec{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid var(--me-accent);background:var(--me-accent-soft);color:var(--me-accent)}
+.me-testimony{margin-top:14px;padding:12px 14px;background:var(--cc-bg);border-left:3px solid var(--me-accent);border-radius:6px;font-size:.9rem;color:var(--cc-text-2)}
+.me-testimony .attr{display:block;font-size:.64rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--cc-muted);margin-top:6px}
+.me-dossier-invite{margin-top:14px;font-size:.8rem}.me-dossier-invite a{color:var(--me-accent);text-decoration:none;cursor:pointer}
+.me-dossier-invite a:hover{text-decoration:underline}
+.me-dossier-form{display:none;margin-top:12px;padding:14px;background:var(--cc-bg);border:1px solid var(--cc-border);border-radius:10px}
+.me-dossier-form.open{display:grid;gap:10px}
+.me-dossier-form label{display:grid;gap:4px;font-size:.66rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-muted)}
+.me-dossier-form input,.me-dossier-form textarea{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:8px;color:var(--cc-text);font-family:inherit;font-size:.85rem;padding:8px 10px;outline:none;resize:vertical}
+.me-dossier-form input:focus,.me-dossier-form textarea:focus{border-color:var(--me-accent)}
+.me-dossier-form .hint{font-size:.68rem;font-weight:400;letter-spacing:0;text-transform:none;color:var(--cc-muted-2)}
+.me-dossier-form .actions{display:flex;gap:10px;align-items:center}
+.me-dossier-save{padding:8px 16px;border-radius:10px;font-size:.82rem;font-weight:600;background:var(--me-accent);color:var(--cc-bg);border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
+.me-dossier-cancel{background:transparent;border:none;color:var(--cc-muted);font-size:.78rem;cursor:pointer;font-family:inherit}
+.me-path-reqs{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px 22px;margin-top:12px}
+.me-path-req{margin-top:4px}
+.me-path-req .req-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
+.me-path-req .req-name{font-size:.68rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--cc-muted)}
+.me-path-req .req-num{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem;color:var(--cc-text-2)}
+.me-path-req .bar{height:6px;border-radius:999px;background:var(--cc-border-2);position:relative;overflow:hidden}
+.me-path-req .bar i{position:absolute;inset:0 auto 0 0;border-radius:999px;background:var(--me-accent);display:block}
+/* Ceremony ladder: RECRUIT · OPERATOR · SPECIALIST · WARDEN · VANGUARD · PARAGON */
+.me-ladder{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:14px;font-size:.68rem;font-weight:600;color:var(--cc-muted-2)}
+.me-ladder .rung{display:flex;align-items:center;gap:6px}
+.me-ladder .rung::after{content:"\00B7";color:var(--cc-border);margin-left:6px}
+.me-ladder .rung:last-child::after{content:none}
+.me-ladder .rung.attained{color:var(--me-accent)}
+/* A rung no trust tier can grant yet — visibly out of reach, never implied next. */
+.me-ladder .rung.aspirational{opacity:.45;font-style:italic}
+.me-ladder .rung.current{color:var(--cc-text)}
+.me-path-note{margin-top:10px;font-size:.72rem;color:var(--cc-muted)}
+.me-heraldry{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:20px 12px}
+.me-arms{position:relative;text-align:center;text-decoration:none;padding:4px 4px 2px;transition:transform .18s ease;display:block}
+.me-arms:hover{transform:translateY(-3px)}
+.me-arms .shield{width:96px;height:96px;margin:0 auto;display:block;position:relative;z-index:1;filter:drop-shadow(0 10px 14px rgba(1,4,9,.65))}
+.me-arms .shield::before{content:"";position:absolute;inset:-14px;z-index:-1;border-radius:50%%;background:radial-gradient(closest-side,var(--me-accent-soft),transparent 72%%)}
+.me-arms .shield img{width:100%%;height:100%%;object-fit:contain}
+.me-arms .plinth{display:block;width:64px;height:8px;margin:2px auto 0;border-radius:50%%;background:radial-gradient(closest-side,rgba(1,4,9,.85),transparent)}
+.me-arms .ribbon{display:inline-block;margin-top:8px;max-width:100%%;font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cc-text);line-height:1.35}
+.me-arms .a-sub{display:block;font-size:.62rem;color:var(--cc-muted);margin-top:3px;line-height:1.45}
+.me-heraldry-note{font-size:.78rem;color:var(--cc-muted)}
+.me-heraldry-note a{color:var(--me-accent);text-decoration:none;cursor:pointer}
+.lb-title{font-size:.68rem;font-weight:600;letter-spacing:.06em;color:var(--cc-accent);margin-left:7px}
+@media(max-width:560px){.me-prow{grid-template-columns:1fr;gap:2px}}
+@media(max-width:520px){.dz-identity-inner{flex-wrap:wrap}.dz-deeds{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.me-card *{transition:none!important;animation:none!important}}
 .ops-note{color:var(--cc-muted-2);font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:var(--cc-bg);padding:1px 6px;border-radius:4px}
@@ -1418,6 +1616,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
 <button class="page-tab" role="tab" id="ptab-manage" aria-selected="false" data-panel="tab-manage">Management</button>
 <button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
+<button class="page-tab" role="tab" id="ptab-profile" aria-selected="false" data-panel="tab-profile">Profile</button>
 </div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
@@ -1535,6 +1734,11 @@ var runtimeSel=document.getElementById('runtime-select');
 var runtimeGroup=document.getElementById('runtime-group');
 var cmds=document.getElementById('copy-cmds');
 var hubURL='%s';
+var ccProjectName='%s';
+// Shared with the second script block's IIFE (the dossier renderer lives there
+// and needs the project name for its masthead). Without this the bare reference
+// in renderMeCard resolves to nothing and every dossier render throws.
+window.ccProjectName=ccProjectName;
 // Prerequisite line (just + gh) per OS, using each project's own documented
 // install method. macOS stays brew install just gh — the historical default.
 var prereqByOS={
@@ -2100,16 +2304,26 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <h1>Leaderboard</h1>
 <p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
 %s
-<!-- Personal "Me" card. Pinned ABOVE the full standings. Hydrated from the HUB
-     profile endpoint (/api/leaderboard/contributor/{username}) once we know the
-     logged-in username (from /api/gh-user-auth/status). For an anonymous / unknown
-     viewer it renders a subtle sign-in prompt instead of erroring. The full
-     standings still render below, unchanged. -->
-<div id="me-card-mount"></div>
+<!-- Standing strip. The full dossier now lives on its OWN tab (/contribute/profile)
+     so the standings are the primary content here again; all that remains is a
+     one-line "where you stand" cue that links across. Anonymous viewers get the
+     same one-line footprint, not a card. -->
+<div id="me-standing-mount"></div>
 <div class="ops-card card-accent">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count count-strong" id="leaderboard-count"></span></div>
 <div id="leaderboard-list"><div class="ops-empty">Loading leaderboard&hellip;</div></div>
 </div>
+</div>
+</div>
+<div class="tab-panel" id="tab-profile" role="tabpanel" aria-labelledby="ptab-profile">
+<div class="ops">
+<!-- The contributor dossier. Hydrated from the HUB profile endpoint
+     (/api/leaderboard/contributor/{username}) once the logged-in username is
+     known (from /api/gh-user-auth/status). Anonymous / unknown viewers get a
+     subtle sign-in prompt rather than an error. The SAME renderer serves the
+     public route /contribute/dossier/{username}; owner-only controls are gated
+     server-side there and by ME_IS_OWNER here. -->
+<div id="me-card-mount"></div>
 </div>
 </div>
 <!-- "File an issue on this page" (#2594). A subtle footer present on EVERY tab.
@@ -2133,6 +2347,11 @@ It clears automatically when the period elapses. An operator can shorten or disa
 // undefined and threw. Declaring+initializing them here — before any function that
 // uses them can run — makes the ordering explicit and regression-proof.
 var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','merger','advisor'];
+// ccProjectName is declared in the ONBOARDING script block's IIFE, so it is not
+// in scope here. It is republished on window there; mirror it into this closure
+// as part of the same init-order discipline. renderMeCard's masthead reads it,
+// and a bare cross-IIFE reference threw ReferenceError on every dossier render.
+var ccProjectName=(typeof window!=='undefined'&&window.ccProjectName)||'Hive';
 // ADMIN_COOLDOWN_DEFAULT_HOURS mirrors the server default (contributeCooldownDefaultHours,
 // 168h = one week) so the period input shows the effective default when unset.
 // ADMIN_COOLDOWN_MIN/MAX_HOURS mirror the server clamp bounds.
@@ -2152,6 +2371,7 @@ var panels=document.querySelectorAll('.tab-panel');
 var opsStarted=false;   // Operations fleet polling started
 var adminStarted=false; // /api/role gate resolved (adminEnabled set)
 var lbStarted=false;    // Leaderboard hydrated (fetches /api/leaderboard once)
+var profileStarted=false; // Profile tab hydrated (fetches the dossier once)
 // The role gate now backs controls in BOTH tabs: the admin block under Management
 // AND the per-clanker trust/revoke/remove buttons under Operations. So initAdmin()
 // must run when EITHER tab is first opened — otherwise a viewer who lands straight
@@ -2169,12 +2389,13 @@ var lbStarted=false;    // Leaderboard hydrated (fetches /api/leaderboard once)
 // (management/operations) and the legacy short id (manage/ops) deep-link, and
 // the pre-existing ?tab=leaderboard query form keeps working. Onboarding has no
 // slug: it lives at the bare /contribute.
-var PANEL_SLUG={'tab-manage':'management','tab-ops':'operations','tab-leaderboard':'leaderboard'};
+var PANEL_SLUG={'tab-manage':'management','tab-ops':'operations','tab-leaderboard':'leaderboard','tab-profile':'profile'};
 var SLUG_PANEL={
   'onboarding':'tab-onboarding',
   'management':'tab-manage','manage':'tab-manage',
   'operations':'tab-ops','ops':'tab-ops',
-  'leaderboard':'tab-leaderboard'
+  'leaderboard':'tab-leaderboard',
+  'profile':'tab-profile','dossier':'tab-profile','me':'tab-profile'
 };
 // Resolve a friendly name / short id to the tab BUTTON element (id ptab-*), or
 // null if it names no real tab. panelToButtonId turns a data-panel value back
@@ -2216,10 +2437,14 @@ function activateTab(t,push){
     try{ccTriagePoll();}catch(e){console.error('ccTriagePoll failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
-  // The personal "Me" card loads alongside the standings; a throw in one must
-  // never block the other, so each is guarded independently.
+  // The standings and the standing strip are independent: a throw in one must
+  // never block the other.
   if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;
     try{loadLeaderboard();}catch(e){console.error('loadLeaderboard failed',e);}
+    try{loadMeStanding();}catch(e){console.error('loadMeStanding failed',e);}
+  }
+  // Profile hydrates the full dossier on first open, on its own tab.
+  if(dp==='tab-profile'&&!profileStarted){profileStarted=true;
     try{loadMeCard();}catch(e){console.error('loadMeCard failed',e);}
   }
   // Reflect the visible tab in the URL. pushState only — never a reload. Skipped
@@ -2241,7 +2466,7 @@ function activateTab(t,push){
 // surface. Uses ONLY the existing enhancement label (never a non-existent
 // "contribute" label — the #2536/#2540 regression). Rebuilt on load + every tab
 // change. Pure link building; no fetch, CSP-safe.
-var REPORT_TAB_NAME={'tab-onboarding':'onboarding','tab-ops':'operations','tab-manage':'management','tab-leaderboard':'leaderboard'};
+var REPORT_TAB_NAME={'tab-onboarding':'onboarding','tab-ops':'operations','tab-manage':'management','tab-leaderboard':'leaderboard','tab-profile':'profile'};
 function ccUpdateReportLink(dp){
   var a=document.getElementById('cc-report-link');if(!a)return;
   var tabName=REPORT_TAB_NAME[dp]||'onboarding';
@@ -2338,10 +2563,18 @@ function lbRow(e,rank){
   // viewers match nothing, so no row is highlighted.
   var isMe=(!e.is_agent&&ccMeUsername&&uname&&uname.toLowerCase()===ccMeUsername.toLowerCase());
   var youChip=isMe?' <span class="lb-you">you</span>':'';
+  // Self-chosen dossier title (equipped_title) — a small quoted accent after the
+  // name. Optional; absent for contributors who set none (never a placeholder).
+  var title=(!e.is_agent&&e.equipped_title)?(' <span class="lb-title">“'+esc(e.equipped_title)+'”</span>'):'';
+  // Human contributors link to their public dossier — the standings become a way
+  // INTO the records. Agents have no dossier, so they stay plain text.
+  var nameCell=(!e.is_agent&&uname)
+    ?('<a class="lb-name__link" href="/contribute/dossier/'+encodeURIComponent(uname)+'">'+name+'</a>')
+    :name;
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
-    +'<div class="lb-name">'+badge+name+youChip+'</div>'
+    +'<div class="lb-name">'+badge+nameCell+title+youChip+'</div>'
     +'<div class="lb-tier">'+tier+'</div>'
     +'<div class="lb-stat lb-primary">'+done+'</div>'
     +'<div class="lb-stat">'+failed+'</div>'
@@ -2389,18 +2622,53 @@ function renderLeaderboard(contribs){
 // real (tier / stats / milestones / hives / rank come straight from the hub).
 var ME_STYLE_KEY='hive.me.cardStyle';   // localStorage key for the chosen skin
 var ME_STYLE_COUNT=7;                    // number of profile-style skins offered
-var ME_STYLE_NAMES=['Signal blue','Verdant','Amber rank','Violet advisor','Minimal','Rose','Roomy ranked'];
-// Milestone id -> the Credly badge it WOULD map to once badges go live (Part C).
-// This is a static mapping surfaced as a "coming soon" placeholder — no external
-// call is made. See v2/docs/credly-badges.md for the real integration design.
-var ME_CREDLY_MAP={
-  'tier-contributor':'Contributor badge',
-  'tier-trusted':'Trusted badge',
-  'tier-merger':'Merger badge',
-  'tier-advisor':'Advisor badge',
-  'tasks-25':'25-task milestone badge',
-  'tasks-100':'100-task milestone badge'
+var ME_STYLE_NAMES=['Rank metal','Verdant','Amber rank','Violet advisor','Minimal','Rose','Roomy ranked'];
+// Ceremony rank metals: trust tier → [designation, metal accent, soft wash].
+// The metal drives style1 ("Rank metal", the default skin) via --me-metal;
+// picking any other skin overrides --me-accent and beats the metal.
+var ME_RANK_META={
+  newcomer:['RECRUIT','#9aa3ae','rgba(154,163,174,.12)'],
+  contributor:['OPERATOR','#58a6ff','rgba(88,166,255,.14)'],
+  trusted:['SPECIALIST','#4db8a0','rgba(77,184,160,.14)'],
+  merger:['SPECIALIST','#4db8a0','rgba(77,184,160,.14)'],
+  advisor:['WARDEN','#8a97f7','rgba(138,151,247,.14)']
 };
+// The ladder shows every rung a real trust tier can stand on, plus the two that
+// are explicitly aspirational. MERGER is a capability grant (it confers merge
+// rights), not a ceremony step, so it shares SPECIALIST's rung rather than
+// inventing a designation for it — the ladder measures standing, not permissions.
+//
+// VANGUARD and PARAGON are deliberately UNCLAIMED. Gold (#e8c15a) is VANGUARD's
+// metal and no trust tier grants it: per the design spec it takes sustained
+// presence plus maintainer recognition, and the first one should be an event,
+// not a side effect of reaching the top trust tier. Ceremony stays decoupled
+// from the security model — that is the whole point of a separate ladder.
+var ME_LADDER=['RECRUIT','OPERATOR','SPECIALIST','WARDEN','VANGUARD','PARAGON'];
+// Ladder index the viewer currently stands on. Every real tier maps to a rung;
+// an unknown tier falls back to 0 rather than rendering nothing.
+var ME_LADDER_AT={newcomer:0,contributor:1,trusted:2,merger:2,advisor:3};
+// Rungs at or beyond this index are aspirational: no trust tier grants them yet,
+// and the ladder marks them as such rather than implying they are next.
+var ME_LADDER_ASPIRATIONAL_AT=4;
+// Per-hive flavor strings (a hive can later configure these; the defaults ship
+// on generic hives). EPIGRAPH sits under the dossier masthead; FOOTER_QUOTE
+// closes the record.
+var EPIGRAPH={text:'Be the one who moves, not the one who is moved.',attr:'Zavala'};
+var FOOTER_QUOTE='Every record here began with one PR.';
+
+// meEmblemProps deterministically derives the generative emblem-field custom
+// props (--a1/--a2/--p1/--p2) from a seed string (emblem_seed or the GitHub
+// username) via a djb2 hash — same seed, same emblem, forever.
+function meEmblemProps(seed){
+  var h=5381;
+  for(var i=0;i<seed.length;i++){h=(((h<<5)+h)+seed.charCodeAt(i))>>>0;}
+  return {
+    a1:(h%%360)+'deg',
+    a2:(Math.floor(h/7)%%360)+'deg',
+    p1:(20+(h%%51))+'%%',
+    p2:(20+(Math.floor(h/13)%%61))+'%%'
+  };
+}
 
 function meStyleClass(){
   var n=parseInt(localStorage.getItem(ME_STYLE_KEY)||'1',10);
@@ -2425,20 +2693,92 @@ function clearLeaderboardCustomStyleParam(){
   if(note)note.remove();
 }
 
+// loadMeStanding fills the Leaderboard tab's one-line standing strip: where the
+// viewer places, and a link across to their full dossier. Deliberately tiny —
+// the standings are the content of that tab, not the dossier.
+// ME_VIEW_USERNAME is set when the page was opened as a PUBLIC dossier
+// permalink (/contribute/dossier/<username>) — the record being read then
+// belongs to someone who may not be the viewer. Empty on the Profile tab, which
+// always shows the signed-in viewer's own record.
+var ME_VIEW_USERNAME=(function(){
+  try{
+    var m=window.location.pathname.match(/^\/contribute\/dossier\/([A-Za-z0-9-]{1,39})\/?$/);
+    return m?m[1]:'';
+  }catch(e){return '';}
+})();
+// ME_IS_OWNER gates the owner-only CONTROLS (edit form, invite, style picker,
+// quota). UX only: every endpoint behind those controls independently resolves
+// the caller server-side and refuses to act for anyone but its owner.
+var ME_IS_OWNER=true;
+
+function loadMeStanding(){
+  var mount=document.getElementById('me-standing-mount');
+  if(!mount)return;
+  fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
+    if(!auth||!auth.logged_in||!auth.username){
+      mount.innerHTML='<div class="me-standing"><span><b>Sign in</b> to see where you stand.</span></div>';
+      return;
+    }
+    var u=auth.username;
+    if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
+    fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
+      if(!p||!p.found){
+        mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — ship a task to enter the standings.</span></div>';
+        return;
+      }
+      var place=(p.rank&&p.total)?('You stand <b>#'+p.rank+'</b> of '+p.total):'You are on the board';
+      mount.innerHTML='<div class="me-standing"><span>'+place+'</span>'
+        +'<a class="me-standing__link" href="/contribute/profile" id="me-standing-link">View your dossier &#9656;</a></div>';
+      var lnk=document.getElementById('me-standing-link');
+      if(lnk)lnk.addEventListener('click',function(ev){
+        ev.preventDefault();
+        activateTab(document.getElementById('ptab-profile'));
+      });
+    }).catch(function(e){console.error('standing load failed',e);});
+  }).catch(function(e){console.error('auth status failed',e);});
+}
+
 function loadMeCard(){
   var mount=document.getElementById('me-card-mount');
   if(!mount)return;
+  // Render the dossier for one username, marking whether the viewer owns it.
+  function show(who,isOwner){
+    ME_IS_OWNER=isOwner;
+    fetch('/api/leaderboard/contributor/'+encodeURIComponent(who)).then(function(r){return r.json();}).then(function(p){
+      if(!p||!p.found){
+        if(isOwner){renderMeSignIn(mount,who);}
+        else{mount.innerHTML='<div class="me-signin">No contributor record for <b>'+esc(who)+'</b> on this hive.</div>';}
+        return;
+      }
+      // A throw inside renderMeCard is a BUG, not a missing profile. Reporting it
+      // as "you have no profile" is what hid the ccProjectName ReferenceError for
+      // a whole commit cycle — so render failures now say so, and log the stack.
+      try{renderMeCard(mount,p);}
+      catch(e){console.error('renderMeCard failed',e);renderMeError(mount,e);}
+    }).catch(function(e){console.error('profile load failed',e);
+      mount.innerHTML='<div class="me-signin">Could not load this dossier.</div>';});
+  }
   fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
-    if(!auth||!auth.logged_in||!auth.username){renderMeSignIn(mount);return;}
-    var u=auth.username;
+    var viewer=(auth&&auth.logged_in&&auth.username)?auth.username:'';
     // Remember the viewer's username so the Rankings list can highlight their own
     // row. If the standings already rendered (race), re-render to apply the mark.
-    if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
-    fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
-      if(!p||!p.found){renderMeSignIn(mount,u);return;}
-      renderMeCard(mount,p);
-    }).catch(function(){renderMeSignIn(mount,u);});
-  }).catch(function(){renderMeSignIn(mount);});
+    if(viewer&&ccMeUsername!==viewer){ccMeUsername=viewer;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
+    // A public permalink shows THAT contributor, signed in or not.
+    if(ME_VIEW_USERNAME){
+      show(ME_VIEW_USERNAME,viewer.toLowerCase()===ME_VIEW_USERNAME.toLowerCase());
+      return;
+    }
+    if(!viewer){renderMeSignIn(mount);return;}
+    show(viewer,true);
+  }).catch(function(e){console.error('auth status failed',e);
+    if(ME_VIEW_USERNAME){show(ME_VIEW_USERNAME,false);}
+    else{renderMeSignIn(mount);}});
+}
+
+// A render failure is shown as a failure — never disguised as a missing profile.
+function renderMeError(mount,e){
+  mount.innerHTML='<div class="me-signin">Your dossier could not be rendered. '
+    +'This is a bug, not a problem with your account — the details are in the browser console.</div>';
 }
 
 // Anonymous / not-yet-a-contributor: a subtle prompt, not an error.
@@ -2459,17 +2799,21 @@ function meLinkedInURL(p){
     +(tier?(' as a '+tier+' contributor'):' as a contributor')
     +(org?(' on '+org):'')+' via the Hive contributor program.';
   return 'https://www.linkedin.com/sharing/share-offsite/?url='
-    +encodeURIComponent(window.location.origin+'/contribute/leaderboard')
+    +encodeURIComponent(window.location.origin+'/contribute/dossier/'+encodeURIComponent(p.github_username))
     +'&summary='+encodeURIComponent(text);
 }
 
-function meMilestoneChips(p){
-  var got=[],next='';
+// meSeals renders the Triumphs zone: milestone SEALS (mockup .seal blocks).
+// Attained milestones are solid seals; the nearest not-yet-attained milestone
+// renders once as a dashed "next" seal with the honest "X to go" cue.
+function meSeals(p){
+  var out=[];
   var ms=(p.milestones||[]);
   for(var i=0;i<ms.length;i++){
     if(ms[i].attained){
-      got.push('<span class="me-chip me-chip--got" title="'+esc(ms[i].detail||'')+'">'
-        +(ms[i].icon?esc(ms[i].icon)+' ':'')+esc(ms[i].label)+'</span>');
+      out.push('<div class="dz-seal"><div class="glyph"></div><div class="t-name">'
+        +(ms[i].icon?esc(ms[i].icon)+' ':'')+esc(ms[i].label)+'</div>'
+        +'<div class="t-sub">'+esc(ms[i].detail||'')+'</div></div>');
     }
   }
   if(p.next_milestone){
@@ -2480,38 +2824,88 @@ function meMilestoneChips(p){
     else if(nm.id==='tier-contributor'){var g2=nm.value-(p.tasks_with_pr||0);if(g2>0)toGo=' — '+g2+' PR-tasks to go';}
     else if(nm.id==='tier-trusted'){var g3=nm.value-(p.tasks_with_pr||0);if(g3>0)toGo=' — '+g3+' PR-tasks to go';}
     else if(nm.id==='tier-merger'){toGo=' — maintainer grant required';}
-    next='<span class="me-chip me-chip--next" title="'+esc(nm.detail||'')+'">○ '+esc(nm.label)+esc(toGo)+'</span>';
+    out.push('<div class="dz-seal dz-seal--next"><div class="glyph"></div><div class="t-name">'+esc(nm.label)+'</div>'
+      +'<div class="t-sub">'+esc(nm.detail||'')+esc(toGo)+'</div></div>');
   }
-  if(!got.length&&!next)return '<span class="me-chip">No milestones yet — ship your first task</span>';
-  return got.join('')+next;
+  if(!out.length)return '<p class="dz-collab-empty">The record awaits its first entry.</p>';
+  return '<div class="dz-seals">'+out.join('')+'</div>';
 }
 
-function meCredlyChips(p){
-  // Placeholder / "coming soon" mapping: which attained milestones WOULD yield
-  // which Credly badge. No external Credly call is made this round.
-  var out=[],seen={},ms=(p.milestones||[]);
-  for(var i=0;i<ms.length;i++){
-    if(ms[i].attained&&ME_CREDLY_MAP[ms[i].id]&&!seen[ms[i].id]){
-      seen[ms[i].id]=1;
-      out.push('<span class="me-chip me-chip--badge" title="Planned Credly badge (not yet issued)">◇ '+esc(ME_CREDLY_MAP[ms[i].id])+'</span>');
-    }
+// meDeedsGrid renders the DEEDS OF RECORD stat blocks: tasks shipped, PRs
+// landed, standing (#rank / total), plus — when the server's cached public
+// GitHub fetch succeeded — service years and renown (followers). The GitHub
+// blocks are simply absent when the fields are; nothing is fabricated.
+//
+// The failure count is deliberately NOT here. This is a public honour grid, and
+// broadcasting a contributor's failures contradicts the dossier's own rule that
+// nothing decays and nothing nags. The number remains visible in the Rankings
+// table, which is the operational view.
+function meDeedsGrid(p){
+  var deeds=[
+    [String(p.tasks_completed||0),'tasks shipped',''],
+    [String(p.tasks_with_pr||0),'PRs landed',''],
+    [(p.rank&&p.total)?('#'+p.rank+' <small>/ '+p.total+'</small>'):'—','standing',' dz-deed--standing']
+  ];
+  if(p.service_years!=null)deeds.push([String(p.service_years)+' <small>yrs</small>','github service','']);
+  if(p.renown!=null)deeds.push([String(p.renown),'renown · followers','']);
+  var out='';
+  for(var i=0;i<deeds.length;i++){
+    out+='<div class="dz-deed'+deeds[i][2]+'"><div class="num">'+deeds[i][0]+'</div><div class="cap">'+deeds[i][1]+'</div></div>';
   }
-  if(!out.length)out.push('<span class="me-chip me-chip--badge">Earn a tier or milestone to unlock a badge</span>');
-  return out.join('');
+  return out;
+}
+
+// meLadder renders the ceremony ladder with the viewer's current rung
+// highlighted (▸ prefix); earlier rungs read as attained in the rank metal.
+// Rungs no tier can grant yet are marked aspirational rather than implied next.
+function meLadder(p){
+  var at=ME_LADDER_AT[p.trust_tier||'newcomer']||0;
+  var out='<div class="me-ladder">';
+  for(var i=0;i<ME_LADDER.length;i++){
+    var cls=i<at?' attained':(i===at?' current':'');
+    if(i>=ME_LADDER_ASPIRATIONAL_AT&&i!==at)cls+=' aspirational';
+    out+='<span class="rung'+cls+'">'+(i===at?'▸ ':'')+ME_LADDER[i]+'</span>';
+  }
+  return out+'</div>';
+}
+
+// meCollaborators renders the people this contributor has worked alongside —
+// a collection that GROWS and never decays. Each entry carries how they met and
+// how many occasions there have been, both straight from the server record;
+// nothing here is inferred client-side. The empty state is an honest invitation
+// rather than a permanent placeholder.
+var ME_COLLAB_HOW={invite:'invited',issue:'worked an issue together',presence:'served at the same time'};
+function meCollaborators(p){
+  var cs=(p.collaborators||[]);
+  if(!cs.length){
+    return '<p class="dz-collab-empty">No joint operations recorded yet.<br>'
+      +'Invite someone, or take up an issue another contributor has worked.</p>';
+  }
+  var out='<div class="dz-collabs">';
+  for(var i=0;i<cs.length;i++){
+    var c=cs[i];
+    var how=ME_COLLAB_HOW[c.how]||'worked together';
+    var occ=(c.occasions>1)?(' · '+c.occasions+' occasions'):'';
+    out+='<a class="dz-collab" href="/contribute/dossier/'+encodeURIComponent(c.username)+'">'
+      +'<img class="dz-collab__av" src="https://github.com/'+encodeURIComponent(c.username)+'.png" alt="" '
+        +'onerror="this.style.visibility=\'hidden\'">'
+      +'<span class="dz-collab__body"><span class="dz-collab__name">'+esc(c.username)+'</span>'
+      +'<span class="dz-collab__how">'+esc(how)+esc(occ)+'</span></span></a>';
+  }
+  return out+'</div>';
 }
 
 function meHivesRows(p){
   var hs=(p.hives||[]);
-  if(!hs.length)return '<div class="me-hive">No federated hives registered yet.</div>';
+  if(!hs.length)return '<div class="me-hive"><span style="color:var(--cc-muted);font-size:.8rem">No federated hives registered yet.</span></div>';
   var out=[];
   for(var i=0;i<hs.length;i++){
     var rel=hs[i].relationship||'contributor';
     var relCls=(rel==='owner')?'me-hive__rel me-hive__rel--owner':'me-hive__rel';
-    var verb=(rel==='owner')?'Owner of':(rel==='member'?'Member of':'Contributing to');
     var label=esc(hs[i].project_name||hs[i].org||hs[i].id||'hive');
-    out.push('<div class="me-hive"><span class="'+relCls+'">'+esc(rel)+'</span>'
-      +'<span>'+esc(verb)+' <b style="color:#e6edf3">'+label+'</b>'
-      +(hs[i].org?(' <span style="color:#8b949e">('+esc(hs[i].org)+')</span>'):'')+'</span></div>');
+    out.push('<div class="me-hive"><span class="me-hive__name">'+label
+      +(hs[i].org?(' <span style="color:var(--cc-muted);font-weight:400;text-transform:none">('+esc(hs[i].org)+')</span>'):'')+'</span>'
+      +'<span class="'+relCls+'">'+esc(rel)+'</span></div>');
   }
   return out.join('');
 }
@@ -2526,6 +2920,7 @@ var INVITE_TIERS={trusted:true,merger:true,advisor:true};
 // a viewer whose real trust tier is trusted/merger/advisor. Any other tier (newcomer /
 // contributor) — and anonymous viewers never reach renderMeCard — get nothing.
 function meInviteSection(p){
+  if(!ME_IS_OWNER)return ''; // minting invites is never offered on someone else's record
   if(!p||!INVITE_TIERS[p.trust_tier])return '';
   return '<div class="me-invite">'
     +'<button type="button" class="me-invite__btn" id="me-invite-btn">✉️ Invite someone to contribute</button>'
@@ -2584,15 +2979,51 @@ function initInviteBanner(){
   banner.hidden=false;
 }
 
+// meFieldLogSeed renders the honest server-known entries for the Field Log:
+// the most recent completed task and the record opening. Nothing synthetic —
+// if the live activity feed has richer per-contributor entries, meLoadFieldLog
+// replaces these after fetch.
+function meFieldLogSeed(p){
+  var rows=[];
+  if(p.last_completed_task){
+    var lt=p.last_completed_task;
+    var ref=(lt.repo?esc(lt.repo):'')+(lt.number?('#'+lt.number):'');
+    var when=p.last_active?meTimeAgo(p.last_active):'—';
+    rows.push('<div class="dz-frow"><span class="f-when">'+esc(when)+'</span><span class="f-what">shipped '
+      +(ref?('<b>'+ref+'</b> '):'')+(lt.title?('<span>· '+esc(lt.title)+'</span>'):'')+'</span></div>');
+  }
+  var est=meYearMonth(p.registered_at);
+  rows.push('<div class="dz-frow"><span class="f-when">'+esc(est||'—')+'</span><span class="f-what">record opened <span>· enlisted on this hive</span></span></div>');
+  return rows.join('');
+}
+
+// meLoadFieldLog hydrates the Field Log from the hive's REAL recent activity
+// feed (/api/contribute/activity), filtered to the viewer's own entries. When
+// the feed holds nothing for them the honest server-known seed rows stay.
+function meLoadFieldLog(username){
+  var slot=document.getElementById('me-flog-slot');
+  if(!slot)return;
+  fetch('/api/contribute/activity').then(function(r){return r.json();}).then(function(d){
+    var acts=(d&&d.activity||[]).filter(function(e){
+      return e.username&&e.username.toLowerCase()===username.toLowerCase();
+    });
+    if(!acts.length)return;
+    var verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up',completed:'shipped',failed:'failed'};
+    var rows=acts.slice(-6).reverse().map(function(e){
+      var what=(verbs[e.action]||esc(e.action))+(e.task?(' <b>'+esc(e.task)+'</b>'):'')
+        +(e.cli?(' <span>via '+esc(e.cli)+(e.model?(' · '+esc(e.model)):'')+'</span>'):'');
+      return '<div class="dz-frow"><span class="f-when">'+esc(meTimeAgo(e.timestamp)||'')+'</span><span class="f-what">'+what+'</span></div>';
+    });
+    slot.innerHTML=rows.join('');
+  }).catch(function(){});
+}
+
 function renderMeCard(mount,p){
   var tier=p.trust_tier||'newcomer';
-  var tierNice=tier.charAt(0).toUpperCase()+tier.slice(1);
-  var rankTxt=(p.rank&&p.total)?('#'+p.rank):'—';
-  var rankSub=(p.rank&&p.total)?('of '+p.total):'unranked';
   var avatar=p.avatar_url||('https://github.com/'+encodeURIComponent(p.github_username)+'.png');
   var styleN=meStyleClass();
-  var lead='You’re a <b>'+esc(tierNice)+'</b> contributor'
-    +((p.rank&&p.total)?(' — ranked #'+p.rank+' of '+p.total+' on this hive'):'')+'.';
+  var rankMeta=ME_RANK_META[tier]||ME_RANK_META.newcomer;
+  var em=meEmblemProps(p.emblem_seed||p.github_username||'');
 
   var styleOpts='';
   var customStyleSrc=window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC||'';
@@ -2605,45 +3036,118 @@ function renderMeCard(mount,p){
     styleOpts+='<option value="custom" selected title="'+esc(dropped>0?'Some CSS was removed by the sanitizer; see Custom CSS help.':leaderboardCustomStyleLabel(customStyleSrc))+'">'+esc(customLabel)+'</option>';
   }
 
+  // Identity plate extras: the equipped title (self-chosen, quoted, in the
+  // accent) above the name, and a designation line (archetype · est. date).
+  var callsign=p.equipped_title?('<div class="me-callsign">“'+esc(p.equipped_title)+'”</div>'):'';
+  var desigBits=[];
+  if(p.archetype)desigBits.push('<b>'+esc(p.archetype)+'</b>');
+  var estYM=meYearMonth(p.registered_at);
+  if(estYM)desigBits.push('est. '+esc(estYM));
+  var desig=desigBits.length?('<div class="me-desig">'+desigBits.join(' · ')+'</div>'):'';
+  // Founding mark: only when the server established a REAL registration order
+  // within the founding cohort — otherwise absent, never faked.
+  var founding=(p.founding_position&&p.founding_position>=1&&p.founding_position<=20)
+    ?'<div><span class="me-founding">Founding cohort · first twenty</span></div>':'';
+
+  // Livebar: rendered ONLY when a task is genuinely live on the hub.
+  var livebar='';
+  if(p.current_task){
+    var loadoutBits=[p.cli_backend,p.model].filter(function(x){return !!x;}).map(esc);
+    if(p.sessions)loadoutBits.push(p.sessions+' session'+(p.sessions===1?'':'s'));
+    livebar='<div class="dz-livebar"><span class="dot"></span><span class="live-tag">ON OPERATION</span>'
+      +'<span>'+(p.current_task.number?('#'+p.current_task.number+' · '):'')+esc(p.current_task.title||'')+'</span>'
+      +(loadoutBits.length?('<span class="live-dim">'+loadoutBits.join(' · ')+'</span>'):'')
+      +'</div>';
+  }
+
+  // Next-designation ladder rung for the Golden Path header. A rung at or beyond
+  // the aspirational cut is NOT announced as "next": nothing a contributor can
+  // count toward grants it, and pairing that word with the progress bars below
+  // would invent a gate. Per the design spec those designations are conferred
+  // (sustained presence plus maintainer recognition), so the header says so.
+  var ladderAt=ME_LADDER_AT[tier]||0;
+  var nextIdx=ladderAt+1;
+  var nextRung=nextIdx<ME_LADDER.length?ME_LADDER[nextIdx]:'';
+  var nextIsConferred=nextIdx>=ME_LADDER_ASPIRATIONAL_AT;
+
+  var footId=(p.hives&&p.hives[0]&&p.hives[0].id)?p.hives[0].id:ccProjectName;
+
   var html=''
-  +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
-  +'<div class="me-card__band"><div class="me-card__toprow">'
-  +'<div class="me-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
-  +'<div class="me-id"><div class="me-id__name">'+esc(p.github_username)+'</div>'
-    +'<div class="me-id__tier">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'
-    +'<div class="me-id__lead">'+lead+'</div></div>'
-  +'<div class="me-rankpill"><div class="me-rankpill__num">'+esc(rankTxt)+'</div><div class="me-rankpill__lbl">'+esc(rankSub)+'</div></div>'
-  +'</div></div>'
-  +'<div class="me-card__body">'
-  +'<div class="me-statgrid">'
-    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_completed||0)+'</div><div class="me-stat__lbl">Shipped</div></div>'
-    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_with_pr||0)+'</div><div class="me-stat__lbl">With PR</div></div>'
-    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_failed||0)+'</div><div class="me-stat__lbl">Failed</div></div>'
+  +'<div class="me-card me-card--style'+styleN+'" id="me-card" style="--me-metal:'+rankMeta[1]+';--me-metal-soft:'+rankMeta[2]+'">'
+  // Masthead + epigraph (per-hive flavor; defaults ship on generic hives).
+  +'<header class="dz-masthead"><span class="brand">'+ccProjectName+' · contributor record</span>'
+    +'<span class="id">DOSSIER '+esc(p.github_username)+'</span></header>'
+  +(EPIGRAPH&&EPIGRAPH.text?('<p class="dz-epigraph"><em>“'+esc(EPIGRAPH.text)+'”</em>'+(EPIGRAPH.attr?(' — '+esc(EPIGRAPH.attr)):'')+'</p>'):'')
+  // ZONE A — identity plate.
+  +'<section class="dz-identity" aria-label="Identity">'
+  +'<div class="me-emblem" style="--a1:'+em.a1+';--a2:'+em.a2+';--p1:'+em.p1+';--p2:'+em.p2+'"></div>'
+  +'<div class="dz-identity-inner">'
+  +'<div class="dz-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
+  +'<div class="dz-namebloc">'+callsign+'<h1 class="dz-heroname">'+esc(p.github_username)+'</h1>'+desig+founding+'</div>'
+  +'<div class="dz-rankpill"><div class="rank-name">'+esc(rankMeta[0])+'</div><div class="rank-sub">trust · '+esc(tier)+'</div></div>'
+  +'</div>'+livebar+'</section>'
+  // ZONE B | ZONE C — Deeds of Record | Operator Profile.
+  +'<div class="dz-grid">'
+  +'<section class="dz-zcard" aria-label="Deeds of record"><div class="dz-zone-head">Deeds of Record</div>'
+    +'<div class="dz-deeds">'+meDeedsGrid(p)+'</div></section>'
+  +'<section class="dz-zcard" aria-label="Profile"><div class="dz-zone-head">Operator Profile</div>'
+    +meProfileRows(p)+meTestimonySection(p)+meDossierForm(p)+'</section>'
   +'</div>'
-  +'<div class="me-sec"><div class="me-sec__title">Daily quota</div><div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note" style="margin:0">Loading your quota&hellip;</div></div></div>'
-  +'<div class="me-sec"><div class="me-sec__title">Milestones unlocked</div><div class="me-chips">'+meMilestoneChips(p)+'</div></div>'
-  +'<div class="me-sec"><div class="me-sec__title">My hives</div><div class="me-hives">'+meHivesRows(p)+'</div></div>'
-  +'<div class="me-sec"><div class="me-sec__title">Badges <span class="me-soon">Credly · coming soon</span></div><div class="me-chips">'+meCredlyChips(p)+'</div>'
-    +'<div class="ops-note">Verifiable Credly badges are planned. Once live, each tier / milestone issues a badge with Credly’s own native LinkedIn share. See the design doc for setup.</div></div>'
-  +'<div class="me-actions">'
-    +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
-    +'<span class="me-stylepick" title="Personalize your card — more customization coming">Profile style <select id="me-style-select" aria-label="Profile style (more customization coming)">'+styleOpts+'</select></span>'
-    +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
-    +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
-    +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
-    +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
-    +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
+  // Full-width — The Golden Path.
+  +'<section class="dz-zcard" style="margin-bottom:16px" aria-label="The Golden Path">'
+  +'<div class="dz-path-head"><div class="dz-zone-head">The Golden Path</div>'
+    +(nextRung?('<div class="dz-path-next">'+(nextIsConferred?'<b>'+nextRung+'</b> is conferred, not counted toward':'next designation <b>'+nextRung+'</b>')+'</div>'):'')+'</div>'
+  +mePathProgress(p)+meLadder(p)
+  +'<div class="me-path-note">The path does not expire. Nothing here is lost by stepping away.</div></section>'
+  // ZONE D | ZONE E — Triumphs (+ Heraldry) | Collaborators.
+  +'<div class="dz-grid">'
+  +'<section class="dz-zcard" aria-label="Triumphs"><div class="dz-zone-head">Triumphs</div>'
+    +meSeals(p)
+    +'<div class="dz-heraldry-head"><span>Heraldry · verified via Credly</span></div>'
+    +'<div id="me-heraldry-slot"><div class="ops-note" style="margin:0">Loading heraldry&hellip;</div></div></section>'
+  +'<section class="dz-zcard" aria-label="Collaborators"><div class="dz-zone-head">Collaborators</div>'
+    +meCollaborators(p)+'</section>'
   +'</div>'
-  +meInviteSection(p)
-  +'</div></div>';
+  // ZONE F | ZONE G — Field Log | Theaters of Operation.
+  +'<div class="dz-grid">'
+  +'<section class="dz-zcard" aria-label="Field log"><div class="dz-zone-head">Field Log</div>'
+    +'<div class="dz-flog" id="me-flog-slot">'+meFieldLogSeed(p)+'</div></section>'
+  +'<section class="dz-zcard" aria-label="Theaters of operation"><div class="dz-zone-head">Theaters of Operation</div>'
+    +'<div class="me-hives">'+meHivesRows(p)+'</div></section>'
+  +'</div>'
+  // Record footer.
+  +'<footer class="dz-footer"><span>HIVE // '+esc(footId)+'</span><span class="quote">'+esc(FOOTER_QUOTE)+'</span></footer>'
+  // Below the dossier: the OWNER's own controls — quota, share, style, invite.
+  // A visitor reading someone else's record gets none of them: they are personal
+  // affordances, not part of the record itself.
+  +(ME_IS_OWNER?(
+     '<section class="dz-zcard" style="margin-top:16px" aria-label="Daily quota"><div class="dz-zone-head">Daily quota</div>'
+    +'<div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note" style="margin:0">Loading your quota&hellip;</div></div>'
+    +'<div class="me-actions">'
+      +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
+      +'<span class="me-stylepick">Profile style <select id="me-style-select" aria-label="Profile style">'+styleOpts+'</select></span>'
+      +'<span class="info-affordance custom-css-help"><button type="button" class="info-btn" id="custom-css-info-btn" aria-haspopup="true" aria-expanded="false" aria-controls="custom-css-info-pop" aria-label="Custom CSS stylesheet help" title="Custom CSS">Custom CSS</button>'
+      +'<div class="info-pop custom-css-pop" id="custom-css-info-pop" role="tooltip" hidden><h4>Custom CSS</h4>'
+      +'Use <code>?style=owner/repo/path/theme.css@ref</code> to load a theme. Example:'
+      +'<input class="custom-css-example" readonly aria-label="Custom CSS example" value="?style=castrojo/themes/lb/bluefin.css@main" onclick="this.select()">'
+      +'Omit <code>@ref</code> to use the repo&rsquo;s <code>HEAD</code>. Public GitHub repos only; CSS is sanitized server-side and capped at <code>128 KiB</code>. Allowed: custom properties, attribute and pseudo selectors, <code>calc()</code>/<code>clamp()</code>/gradients, and <code>@media</code>, <code>@supports</code>, <code>@container</code>, <code>@keyframes</code>. <code>@font-face</code> is kept only with same-origin or <code>data:</code> sources. Removed: <code>@import</code>, external <code>url()</code> fetches, CSS escapes, and legacy executable CSS. Add <code>&amp;report=1</code> to the style API URL for sanitizer details. The same param works on <code>/</code> and <code>/snapshot</code>.</div></span>'
+    +'</div>'
+    +meInviteSection(p)
+    +'</section>'):'')
+  +'</div>';
   mount.innerHTML=html;
 
   wireMeInvite();
   _wireCustomCSSInfo();
-  // #2595 daily-quota widget on the Me card: hydrate from the shared limits read
-  // (viewer's real used_day vs their tier's max_per_day). Load lazily if not cached.
-  if(typeof ccLimits!=='undefined'&&ccLimits!==null){try{ccRenderMeQuota();}catch(e){}}
-  else if(typeof ccLoadLimits==='function'){try{ccLoadLimits();}catch(e){}}
+  wireMeDossier(p);
+  loadMeHeraldry(p.github_username);
+  meLoadFieldLog(p.github_username);
+  // #2595 daily-quota widget: the viewer's OWN remaining quota, so it is loaded
+  // only on their own record — a visitor has no quota to show here.
+  if(ME_IS_OWNER){
+    if(typeof ccLimits!=='undefined'&&ccLimits!==null){try{ccRenderMeQuota();}catch(e){}}
+    else if(typeof ccLoadLimits==='function'){try{ccLoadLimits();}catch(e){}}
+  }
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
@@ -2658,6 +3162,200 @@ function renderMeCard(mount,p){
   });
 }
 
+// ── Contributor dossier (me-card v2) ─────────────────────────────────────────
+// meYearMonth extracts "YYYY-MM" from an RFC3339 timestamp for the "est." line.
+function meYearMonth(iso){
+  if(!iso||iso.length<7)return '';
+  var m=/^(\d{4})-(\d{2})/.exec(iso);
+  return m?(m[1]+'-'+m[2]):'';
+}
+
+// meTimeAgo renders a coarse relative time ("2h ago") from an RFC3339 string.
+// Only ever called with a server-vetted RECENT timestamp (last_active is
+// omitted server-side beyond 14 days — absence is never rendered).
+function meTimeAgo(iso){
+  var t=Date.parse(iso);
+  if(isNaN(t))return '';
+  var s=Math.max(0,Math.floor((Date.now()-t)/1000));
+  if(s<60)return 'just now';
+  if(s<3600)return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+
+// meProfileRows renders the dossier operator-profile rows. Unset fields render
+// as a quiet em-dash — never a nag, never a completion meter.
+function meProfileRows(p){
+  var unset='<span class="unset">—</span>';
+  var rows=[];
+  rows.push(['Archetype',p.archetype?esc(p.archetype):unset,'']);
+  var specs=(p.specializations||[]);
+  rows.push(['Specializations',specs.length?('<span class="me-specs">'+specs.map(function(s){return '<span class="me-spec">'+esc(s)+'</span>';}).join('')+'</span>'):unset,'']);
+  var loadout=p.cli_backend?esc(p.cli_backend):'';
+  rows.push(['Loadout',loadout||unset,loadout?' mono':'']);
+  var clanker=p.model?esc(p.model):'';
+  rows.push(['Clanker',clanker||unset,clanker?' mono':'']);
+  rows.push(['Sponsor',p.invited_by?esc(p.invited_by):unset,'']);
+  var active='since '+esc(meYearMonth(p.registered_at)||'—');
+  if(p.last_active){var ago=meTimeAgo(p.last_active);if(ago)active+=' · last op '+esc(ago);}
+  rows.push(['Active',active,'']);
+  var html='<div class="me-prows">';
+  for(var i=0;i<rows.length;i++){
+    html+='<div class="me-prow"><span class="k">'+rows[i][0]+'</span><span class="v'+rows[i][2]+'">'+rows[i][1]+'</span></div>';
+  }
+  return html+'</div>';
+}
+
+// meTestimonySection: the contributor's own words as a blockquote, or (when
+// unset) a quiet single-link invite to the inline dossier form. Optional
+// forever — no completion meter, no badge for filling it in.
+function meTestimonySection(p){
+  // A visitor sees the testimony as part of the record, but never the invitation
+  // to edit it — that belongs to its owner alone.
+  if(p.testimony){
+    return '<div class="me-testimony">'+esc(p.testimony)+'<span class="attr">Testimony · in their own words</span></div>'
+      +(ME_IS_OWNER?'<div class="me-dossier-invite"><a id="me-dossier-open">▸ Edit your dossier</a></div>':'');
+  }
+  if(!ME_IS_OWNER)return '';
+  return '<div class="me-dossier-invite"><a id="me-dossier-open">▸ Complete your dossier</a></div>';
+}
+
+// meDossierForm: the small inline self-service editor. Every field optional,
+// saved via POST /api/contribute/dossier (identity resolved server-side).
+function meDossierForm(p){
+  if(!ME_IS_OWNER)return ''; // the editor is the owner's alone
+  var specs=(p.specializations||[]).join(', ');
+  return '<div class="me-dossier-form" id="me-dossier-form">'
+    +'<label>Equipped title <input id="me-df-title" maxlength="40" placeholder="e.g. WOLFHERDER" value="'+esc(p.equipped_title||'')+'"><span class="hint">Shown quoted above your name and on the rankings.</span></label>'
+    +'<label>Archetype <input id="me-df-archetype" maxlength="40" placeholder="e.g. Community Steward" value="'+esc(p.archetype||'')+'"></label>'
+    +'<label>Specializations <input id="me-df-specs" placeholder="docs, triage, ci (comma-separated, up to 8)" value="'+esc(specs)+'"></label>'
+    +'<label>Testimony <textarea id="me-df-testimony" rows="2" maxlength="200" placeholder="Your own words — why you’re here (200 chars)">'+esc(p.testimony||'')+'</textarea></label>'
+    +'<label>Credly name <input id="me-df-credly" maxlength="60" placeholder="your-credly-vanity-name" value="'+esc(p.credly_name||'')+'"><span class="hint">Links your public Credly badges as heraldry. Optional — your record stands either way.</span></label>'
+    +'<div class="actions"><button type="button" class="me-dossier-save" id="me-df-save">Save dossier</button>'
+    +'<button type="button" class="me-dossier-cancel" id="me-df-cancel">Cancel</button>'
+    +'<span class="hint">Every field is optional.</span></div>'
+  +'</div>';
+}
+
+// meWireCredlyLink wires the "Link it" invite to the dossier form. Both the
+// form and the heraldry slot render this affordance, and the slot re-renders
+// asynchronously, so the lookup happens at call time rather than being closed
+// over by either caller.
+function meWireCredlyLink(){
+  var link=document.getElementById('me-heraldry-link');
+  var form=document.getElementById('me-dossier-form');
+  if(!link||!form)return;
+  link.addEventListener('click',function(){
+    form.classList.add('open');
+    var f=document.getElementById('me-df-credly');
+    if(f)f.focus();
+  });
+}
+
+// wireMeDossier hooks up the open/cancel/save affordances of the inline form.
+function wireMeDossier(p){
+  var open=document.getElementById('me-dossier-open');
+  var form=document.getElementById('me-dossier-form');
+  if(open&&form)open.addEventListener('click',function(){form.classList.toggle('open');});
+  var link2=document.getElementById('me-heraldry-link');
+  if(link2)meWireCredlyLink();
+  var cancel=document.getElementById('me-df-cancel');
+  if(cancel&&form)cancel.addEventListener('click',function(){form.classList.remove('open');});
+  var save=document.getElementById('me-df-save');
+  if(!save)return;
+  save.addEventListener('click',function(){
+    save.disabled=true;
+    var val=function(id){var el=document.getElementById(id);return el?el.value:'';};
+    var specs=val('me-df-specs').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
+    var body={
+      equipped_title:val('me-df-title'),
+      archetype:val('me-df-archetype'),
+      specializations:specs,
+      testimony:val('me-df-testimony'),
+      credly_name:val('me-df-credly')
+    };
+    fetch('/api/contribute/dossier',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        save.disabled=false;
+        if(!res.ok){toast((res.j&&res.j.error)||'Could not save dossier',false);return;}
+        toast('Dossier saved',true);
+        loadMeCard();
+      }).catch(function(){save.disabled=false;toast('Could not save dossier',false);});
+  });
+}
+
+// mePathProgress renders the req progress bars toward the nearest
+// not-yet-attained NUMERIC milestones (real thresholds vs real counts —
+// nothing fabricated): the next tasks-shipped landmark and, if still pending,
+// the next PR-task tier threshold. Requirements only fill, never drain; there
+// is nothing here that decays. Maintainer-granted milestones (no number) get
+// no bar — there is nothing honest to fill.
+function mePathProgress(p){
+  var reqs=[];
+  var ms=p.milestones||[];
+  for(var i=0;i<ms.length;i++){
+    var m=ms[i];
+    if(m.attained||!m.value)continue;
+    if(m.id&&m.id.indexOf('tasks-')===0){reqs.push([m.label,(p.tasks_completed||0),m.value]);break;}
+  }
+  for(var j=0;j<ms.length;j++){
+    var t=ms[j];
+    if(t.attained||!t.value)continue;
+    if(t.id==='tier-contributor'||t.id==='tier-trusted'){reqs.push([t.label,(p.tasks_with_pr||0),t.value]);break;}
+  }
+  if(!reqs.length)return '';
+  var out='<div class="me-path-reqs">';
+  for(var k=0;k<reqs.length;k++){
+    var have=reqs[k][1],need=reqs[k][2];
+    var pct=Math.min(100,Math.round(have/need*100));
+    out+='<div class="me-path-req"><div class="req-top"><span class="req-name">'+esc(reqs[k][0])+'</span>'
+      +'<span class="req-num">'+have+' / '+need+'</span></div>'
+      +'<div class="bar"><i style="width:'+pct+'%%"></i></div></div>';
+  }
+  return out+'</div>';
+}
+
+// loadMeHeraldry lazily fetches + mounts the viewer's public Credly badges.
+// The unlinked state is a quiet invite, never a nag; badges float free with a
+// soft halo + plinth shadow (heraldic, not corporate — no boxes).
+function loadMeHeraldry(username){
+  var slot=document.getElementById('me-heraldry-slot');
+  if(!slot)return;
+  var unlinked='<div class="me-heraldry-note">Have a Credly profile? <a id="me-heraldry-link">Link it</a> to mount your heraldry here. Optional — your record stands either way.</div>';
+  var wireLink=meWireCredlyLink;
+  fetch('/api/leaderboard/contributor/'+encodeURIComponent(username)+'/heraldry')
+    .then(function(r){return r.json();})
+    .then(function(h){
+      if(!h||!h.linked){slot.innerHTML=unlinked;wireLink();return;}
+      var badges=h.badges||[];
+      if(!badges.length){slot.innerHTML='<div class="me-heraldry-note">No public badges on the linked profile yet.</div>';return;}
+      // Cap the hall at 8 so it reads curated, not exhaustive; the profile link
+      // carries the rest.
+      var cap=8,total=badges.length;
+      var shown=badges.slice(0,cap);
+      var out='<div class="me-heraldry">';
+      for(var i=0;i<shown.length;i++){
+        var b=shown[i];
+        var yr=(b.issued_at||'').slice(0,4);
+        var sub=[b.issuer_summary,yr].filter(function(x){return !!x;}).map(esc).join(' · ');
+        var inner='<span class="shield"><img src="'+esc(b.image_url||'')+'" alt="" loading="lazy"></span>'
+          +'<span class="plinth"></span>'
+          +'<span class="ribbon">'+esc(b.name||'')+'</span>'
+          +(sub?('<span class="a-sub">'+sub+'</span>'):'');
+        out+=b.public_url
+          ?('<a class="me-arms" href="'+esc(b.public_url)+'" target="_blank" rel="noopener noreferrer" title="Verify on Credly">'+inner+'</a>')
+          :('<span class="me-arms">'+inner+'</span>');
+      }
+      out+='</div>';
+      if(total>cap){
+        var prof='https://www.credly.com/users/'+encodeURIComponent(h.credly_name||'');
+        out+='<div class="me-heraldry-note" style="margin-top:10px">+'+(total-cap)+' more on <a href="'+esc(prof)+'" target="_blank" rel="noopener noreferrer">Credly</a></div>';
+      }
+      slot.innerHTML=out;
+    }).catch(function(){slot.innerHTML=unlinked;wireLink();});
+}
+
 var currentFilter='all';
 var lastWork=[];
 document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener('click',function(){
@@ -2667,7 +3365,17 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
   renderWork(lastWork);
 });});
 
-function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+// esc HTML-escapes a value for interpolation into markup. It escapes QUOTES as
+// well as &<>, because the dossier and admin renderers interpolate values into
+// attribute context (value="..." / href="..." / title="...") as often as into
+// text. The previous textContent→innerHTML round-trip escaped only &<>, so a
+// stored or upstream-fetched value containing a double quote could close the
+// attribute and inject markup — reachable on the PUBLIC dossier permalink via a
+// crafted Credly image/badge URL. Escaping quotes is safe in text context too:
+// &quot; and &#39; render as " and ' there.
+function esc(s){return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
 // ── Sparklines (#persistent-history) ───────────────────────────────────────────
 // A dependency-free, CSP-safe inline-SVG trend renderer. Given an array of
@@ -5010,7 +5718,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows, customStyleNoticeHTML)
+</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, projectName, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
@@ -5092,6 +5800,10 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 	if inviter := verifyInviteToken(req.Invite, time.Now()); inviter != "" && inviter != username {
 		profile.InvitedBy = inviter
 		s.logger.Info("contributor registered via trusted invite", "username", username, "invited_by", inviter)
+		// A redeemed invite is the first real relationship between two
+		// contributors, so it is also the first entry in both dossiers'
+		// Collaborators zone. Recorded after the profile is saved below.
+		defer recordCollaboration(username, inviter, collabHowInvite, time.Now())
 	}
 
 	s.logger.Info("contributor registered", "username", username, "id", profile.ContributorID)
@@ -6186,10 +6898,17 @@ type FederationHive struct {
 	HubURL             string `json:"hub_url"`
 	DashboardURL       string `json:"dashboard_url,omitempty"`
 	ActiveContributors int    `json:"active_contributors"`
-	ActiveAgents       int    `json:"active_agents"`
-	ActionableItems    int    `json:"actionable_items"`
-	RegisteredAt       string `json:"registered_at"`
-	LastHeartbeat      string `json:"last_heartbeat,omitempty"`
+	// ActiveContributorNames optionally names the contributors present on this
+	// hive. It is what makes an honest "Theaters of Operation" possible: without
+	// it a dossier cannot tell the hives a person actually works on from the
+	// hives that merely exist. Optional and backward-compatible — a hive that
+	// does not report names is simply never listed as anyone's theatre, which is
+	// the correct conservative default.
+	ActiveContributorNames []string `json:"active_contributor_names,omitempty"`
+	ActiveAgents           int      `json:"active_agents"`
+	ActionableItems        int      `json:"actionable_items"`
+	RegisteredAt           string   `json:"registered_at"`
+	LastHeartbeat          string   `json:"last_heartbeat,omitempty"`
 }
 
 func loadFederationRegistry() *FederationRegistry {
@@ -6308,14 +7027,32 @@ func (s *Server) handleHivesHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ActiveContributors int `json:"active_contributors"`
-		ActiveAgents       int `json:"active_agents"`
-		ActionableItems    int `json:"actionable_items"`
+		ActiveContributors     int      `json:"active_contributors"`
+		ActiveContributorNames []string `json:"active_contributor_names"`
+		ActiveAgents           int      `json:"active_agents"`
+		ActionableItems        int      `json:"actionable_items"`
 	}
 	const maxFedCount = 10000
+	const maxFedNames = 200
 	if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 		if req.ActiveContributors >= 0 && req.ActiveContributors <= maxFedCount {
 			found.ActiveContributors = req.ActiveContributors
+		}
+		if req.ActiveContributorNames != nil {
+			// Bounded + sanitised: a heartbeat names who is present, it does not
+			// get to write arbitrary strings into every dossier's Theaters zone.
+			names := make([]string, 0, len(req.ActiveContributorNames))
+			for _, n := range req.ActiveContributorNames {
+				n = strings.TrimSpace(n)
+				if !validGitHubUsername(n) {
+					continue
+				}
+				names = append(names, n)
+				if len(names) >= maxFedNames {
+					break
+				}
+			}
+			found.ActiveContributorNames = names
 		}
 		if req.ActiveAgents >= 0 && req.ActiveAgents <= maxFedCount {
 			found.ActiveAgents = req.ActiveAgents
@@ -6378,10 +7115,13 @@ type LeaderboardEntry struct {
 	TasksFailed    int    `json:"tasks_failed"`
 	Findings       int    `json:"findings,omitempty"`
 	RegisteredAt   string `json:"registered_at"`
-	Active         bool   `json:"active,omitempty"`
-	CurrentTask    string `json:"current_task,omitempty"`
-	IsAgent        bool   `json:"is_agent,omitempty"`
-	Emoji          string `json:"emoji,omitempty"`
+	// EquippedTitle is the contributor's self-chosen dossier title (e.g.
+	// "WOLFHERDER"); rendered as a small accent after the name. Optional.
+	EquippedTitle string `json:"equipped_title,omitempty"`
+	Active        bool   `json:"active,omitempty"`
+	CurrentTask   string `json:"current_task,omitempty"`
+	IsAgent       bool   `json:"is_agent,omitempty"`
+	Emoji         string `json:"emoji,omitempty"`
 }
 
 // buildLeaderboard loads all contributor profiles, sorts by tasks completed
@@ -6408,6 +7148,7 @@ func buildLeaderboard() []LeaderboardEntry {
 			TasksCompleted: p.TasksCompleted,
 			TasksFailed:    p.TasksFailed,
 			RegisteredAt:   p.RegisteredAt,
+			EquippedTitle:  p.EquippedTitle,
 		})
 	}
 	return entries

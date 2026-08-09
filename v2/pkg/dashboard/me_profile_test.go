@@ -45,9 +45,15 @@ func TestMeProfile_AggregatesSeededContributor(t *testing.T) {
 		GitHubUsername: "bob", ContributorID: "c-bob", TrustTier: "newcomer",
 		TasksCompleted: 2, TasksWithPR: 0, TasksFailed: 1,
 	})
-	// Register a federation hive so "my hives" is populated from the registry.
+	// Register federation hives so "my hives" is exercised. Only the hive that
+	// NAMES alice may appear: a hive that merely exists is not a theatre she has
+	// operated in, and listing it would fabricate a relationship.
 	reg := loadFederationRegistry()
-	reg.Hives = append(reg.Hives, FederationHive{ID: "hive-ks", ProjectName: "KubeStellar", Org: "kubestellar", HubURL: "https://x"})
+	reg.Hives = append(reg.Hives,
+		FederationHive{ID: "hive-ks", ProjectName: "KubeStellar", Org: "kubestellar", HubURL: "https://x",
+			ActiveContributorNames: []string{"alice"}},
+		FederationHive{ID: "hive-other", ProjectName: "Somewhere Else", Org: "other", HubURL: "https://y"},
+	)
 	if err := saveFederationRegistry(reg); err != nil {
 		t.Fatalf("save registry: %v", err)
 	}
@@ -104,7 +110,8 @@ func TestMeProfile_AggregatesSeededContributor(t *testing.T) {
 	if p.NextMilestone == nil {
 		t.Fatal("expected a next milestone (progression cue)")
 	}
-	// Hives from the registry.
+	// Hives: ONLY the hive that names her. The unrelated registered hive must not
+	// appear — an unearned theatre is a fabricated relationship.
 	if len(p.Hives) != 1 || p.Hives[0].ProjectName != "KubeStellar" {
 		t.Fatalf("my hives wrong: %+v", p.Hives)
 	}
