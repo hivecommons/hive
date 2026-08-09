@@ -211,6 +211,10 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if isPrivateURL(r.Context(), endpoint) {
+		jsonError(w, "gateway endpoint must not point to private/internal addresses", http.StatusBadRequest)
+		return
+	}
 
 	// Guardrail: an env-var NAME field must never hold a key VALUE (which would
 	// bake the key into hive.yaml and resolve empty at runtime — the LiteLLM leak).
@@ -403,6 +407,10 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	}
 	if err := validateGatewayEndpoint(endpoint); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isPrivateURL(r.Context(), endpoint) {
+		jsonError(w, "gateway endpoint must not point to private/internal addresses", http.StatusBadRequest)
 		return
 	}
 	key := strings.TrimSpace(body.APIKey)
