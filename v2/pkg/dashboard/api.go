@@ -6933,7 +6933,34 @@ func (s *Server) handleVaultsList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.deps.Knowledge.Vaults())
 }
 
+// vaultPathDeniedPrefixes lists filesystem subtrees that must never be indexed
+// as knowledge vaults regardless of caller role. These prefixes contain secrets,
+// credentials, and sensitive OS/runtime state that an attacker could exfiltrate
+// via the knowledge search API if connected as a vault.
+var vaultPathDeniedPrefixes = []string{
+	"/etc",
+	"/proc",
+	"/sys",
+	"/run",
+	"/var/run",
+	"/dev",
+	"/root",
+	"/boot",
+}
+
 func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
+	// Vault connection is an owner-only operation: it indexes an entire directory
+	// tree and makes its contents queryable. Restricting to owner prevents a
+	// write-role contributor from exfiltrating secrets via the knowledge API.
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = "owner"
+	}
+	if role != "owner" {
+		jsonError(w, "owner access required", http.StatusForbidden)
+		return
+	}
+
 	if s.deps.Knowledge == nil {
 		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
 		return
@@ -6958,6 +6985,15 @@ func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
 	if !filepath.IsAbs(req.Path) {
 		jsonError(w, "vault path must be absolute", http.StatusBadRequest)
 		return
+	}
+	// Reject well-known sensitive filesystem prefixes regardless of role to
+	// prevent accidental or deliberate secret exposure via the knowledge search.
+	cleanPath := filepath.Clean(req.Path)
+	for _, denied := range vaultPathDeniedPrefixes {
+		if cleanPath == denied || strings.HasPrefix(cleanPath, denied+"/") {
+			jsonError(w, "vault path is in a restricted filesystem location", http.StatusBadRequest)
+			return
+		}
 	}
 	if req.Name == "" {
 		req.Name = filepath.Base(req.Path)
