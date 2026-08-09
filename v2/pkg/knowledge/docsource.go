@@ -44,6 +44,7 @@ type DocumentSource struct {
 	config         DocSourceConfig
 	metadata       DocMetadata
 	storageDir     string
+	knowledgeDir   string
 	vaultDir       string
 	graphStore     *GraphStore
 	logger         *slog.Logger
@@ -57,6 +58,7 @@ func NewDocumentSource(config DocSourceConfig, baseDir, vaultDir string, graphSt
 		slug:           slug,
 		config:         config,
 		storageDir:     filepath.Join(baseDir, docStorageDir, slug),
+		knowledgeDir:   baseDir,
 		vaultDir:       vaultDir,
 		graphStore:     graphStore,
 		logger:         logger,
@@ -126,6 +128,9 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 			return nil, fmt.Errorf("fetching URL: %w", err)
 		}
 	} else if ds.config.FilePath != "" {
+		if err := ds.validateFilePath(ds.config.FilePath); err != nil {
+			return nil, err
+		}
 		content, err = os.ReadFile(ds.config.FilePath)
 		if err != nil {
 			return nil, fmt.Errorf("reading file: %w", err)
@@ -258,6 +263,43 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 		ct = detectContentType(url)
 	}
 	return body, normalizeContentType(ct), nil
+}
+
+// allowedFilePrefixes is the list of directory prefixes from which the hive
+// may read local documents. Restricting to /data/knowledge prevents an
+// authenticated caller from using file_path to read arbitrary server files
+// (e.g. /data/hive.yaml, /secrets/*, /etc/passwd).
+// Tests that use a DocumentSource with a file outside the knowledge dir must
+// override this variable for the duration of the test.
+var allowedFilePrefixes = []string{localKnowledgeDir + "/"}
+
+// validateLocalFilePath rejects any file_path that falls outside the
+// allowed knowledge directory. The path is cleaned before comparison to
+// block ../ traversal.
+func validateLocalFilePath(path string) error {
+	clean := filepath.Clean(path)
+	for _, prefix := range allowedFilePrefixes {
+		if strings.HasPrefix(clean, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("file_path %q is outside the allowed knowledge directory (%s)", path, localKnowledgeDir)
+}
+
+// validateFilePath checks the file_path on this DocumentSource. Uses the
+// instance's knowledgeDir (set at construction time) when available, so that
+// unit tests constructing a DocumentSource with a temporary baseDir get their
+// correct prefix automatically. Falls back to the global allowedFilePrefixes.
+func (ds *DocumentSource) validateFilePath(path string) error {
+	if ds.knowledgeDir != "" {
+		clean := filepath.Clean(path)
+		prefix := ds.knowledgeDir + string(filepath.Separator)
+		if strings.HasPrefix(clean, prefix) {
+			return nil
+		}
+		return fmt.Errorf("file_path %q is outside the allowed knowledge directory (%s)", path, ds.knowledgeDir)
+	}
+	return validateLocalFilePath(path)
 }
 
 func (ds *DocumentSource) parseContent(content []byte, contentType string) ([]DocChunk, string) {

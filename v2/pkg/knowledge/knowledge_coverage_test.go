@@ -391,8 +391,11 @@ func TestDocumentSource_ImportWithGraph(t *testing.T) {
 	baseDir := filepath.Join(tmpDir, "knowledge")
 	gs := newTestGraphStore(t)
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
 	content := "First para about one thing.\n\nSecond para about another thing.\n\nThird para wraps up."
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
