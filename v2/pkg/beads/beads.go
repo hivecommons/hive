@@ -127,7 +127,13 @@ func NewStore(dir string) (*Store, error) {
 	// UIDs (2001+) sharing only the node group — the dir must be group-writable
 	// with setgid, and MkdirAll's mode is clipped by the umask, so set it
 	// explicitly. Best-effort: an already-correct or foreign-owned dir is fine.
-	_ = os.Chmod(dir, 0o2770)
+	//
+	// NOTE the constant: os.Chmod takes an os.FileMode, where setgid is
+	// os.ModeSetgid (1<<29) and NOT the Unix octal 0o2000. Passing 0o2770 here
+	// silently requests plain 0770 — the setgid bit is dropped before the
+	// syscall, with no error — which is why the dir came out drwxrwx--- and the
+	// regression test caught it only on Linux (where the assertion is guarded).
+	_ = os.Chmod(dir, 0o770|os.ModeSetgid)
 
 	s := &Store{
 		dir:   dir,

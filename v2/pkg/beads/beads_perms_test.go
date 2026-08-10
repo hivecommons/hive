@@ -41,7 +41,14 @@ func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
 	if mode := fi.Mode().Perm(); mode != 0o770 {
 		t.Errorf("dir mode = %o, want 770", mode)
 	}
-	if runtime.GOOS == "linux" && fi.Mode()&os.ModeSetgid == 0 {
+	// Deliberately NOT guarded on runtime.GOOS: setgid is set through the
+	// portable os.ModeSetgid, which macOS honours too. The old linux-only guard
+	// is exactly why the underlying bug survived — os.Chmod(dir, 0o2770) drops
+	// setgid before the syscall (os.FileMode expects os.ModeSetgid, not the Unix
+	// octal 0o2000), so the dir came out plain 0770 everywhere, but only Linux
+	// CI ever asserted it. Keeping this cross-platform means a dev machine
+	// catches the next regression instead of shipping it to CI.
+	if fi.Mode()&os.ModeSetgid == 0 {
 		t.Errorf("dir mode %v lacks setgid bit", fi.Mode())
 	}
 
