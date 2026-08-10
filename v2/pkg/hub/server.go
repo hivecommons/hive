@@ -912,6 +912,21 @@ type HubServer struct {
 	spokeProxyAuthCache map[string]spokeProxyAuthEntry
 	spokeProxyAuthMu    sync.Mutex
 
+	// authRolloutSeen records, per hive, which credential FORMAT that spoke last
+	// authenticated with — the readiness signal for #3234.
+	//
+	// N1 and N2 shipped verify-both/mint-new compatibility lanes so the fleet
+	// could roll without a flag day. Those lanes ARE the vulnerabilities they
+	// replaced (a fleet-wide bearer does not bind identity; a symmetric session
+	// key that verifies can also mint), so they must be deleted — but deleting
+	// them before every spoke has re-provisioned 401s the whole fleet.
+	//
+	// Without this, "has the fleet rolled?" is unanswerable except by inspecting
+	// every Deployment by hand. Key: hive ID → last-seen auth path. Guarded by
+	// authRolloutMu.
+	authRolloutSeen map[string]authRolloutEntry
+	authRolloutMu   sync.RWMutex
+
 	// pendingGateways stores OpenRouter gateways funded via the hub's
 	// scan-to-fund flow, to deliver to firewalled/heartbeat-only spokes via the
 	// heartbeat response. Key: hive ID → gateway (carries the secret key VALUE,
@@ -1079,6 +1094,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
 		spokeProxyAuthCache:     make(map[string]spokeProxyAuthEntry),
+		authRolloutSeen:         make(map[string]authRolloutEntry),
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),
 		alerts:                  newAlertState(),
@@ -1228,6 +1244,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		// #3234: record WHICH format authenticated, so an operator can tell when
+		// every spoke has re-provisioned and the legacy compat lane — which does
+		// not bind identity — can finally be deleted.
+		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	// Normalize the reported SHA to the canonical short length up front so every
 	// downstream comparison is same-length against the hub's 7-char stored SHAs.
@@ -2354,6 +2374,10 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		// #3234: record WHICH format authenticated, so an operator can tell when
+		// every spoke has re-provisioned and the legacy compat lane — which does
+		// not bind identity — can finally be deleted.
+		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	for i, lb := range payload.Leaderboard {
 		payload.Leaderboard[i].GitHubUsername = sanitizeField(lb.GitHubUsername)
