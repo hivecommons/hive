@@ -1177,12 +1177,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// secret — the master never leaves the hub (C2 domain separation). Spokes are
 	// injected only this sub-key, so a spoke operator's bearer can prove
 	// "I am a provisioned spoke" but cannot sign a session/SSO/impersonation value.
+	// The bearer is captured here but VERIFIED below, after the body is parsed:
+	// the per-hive bearer (N1) can only be checked once the claimed hive_id is
+	// known. The legacy fleet-wide key is still accepted during the rollout —
+	// see verifyHeartbeatBearer.
+	presentedBearer := ""
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.heartbeatKey()) {
+		if !strings.HasPrefix(auth, "Bearer ") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		presentedBearer = strings.TrimPrefix(auth, "Bearer ")
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes))
@@ -1202,15 +1208,34 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hive_id required", http.StatusBadRequest)
 		return
 	}
+	if !isValidName(payload.HiveID) {
+		http.Error(w, "invalid hive_id", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY (audit N1, CWE-200/639/862): bind the bearer to the CLAIMED
+	// identity.
+	//
+	// The bearer used to be checked against s.heartbeatKey() alone — one
+	// fleet-wide value derived from a fixed label, so every spoke held the same
+	// bytes. Possession proved "some provisioned spoke" and nothing more, and
+	// payload.HiveID was then trusted verbatim. Three key-delivery lanes read
+	// off that claimed ID (pending OpenRouter key, legacy pending App config,
+	// standing cluster App key), so any spoke could beat as any victim and be
+	// handed the victim's key material.
+	if s.hubSecret != "" {
+		if !s.verifyHeartbeatBearer(presentedBearer, payload.HiveID) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
 	// Normalize the reported SHA to the canonical short length up front so every
 	// downstream comparison is same-length against the hub's 7-char stored SHAs.
 	// (Spokes now build gitShort with `--short=7`; this covers any that predate
 	// that or report a longer value.)
 	payload.GitHash = shortSHA(payload.GitHash)
-	if !isValidName(payload.HiveID) {
-		http.Error(w, "invalid hive_id", http.StatusBadRequest)
-		return
-	}
+	// (hive_id is validated above, before the bearer check — the per-hive bearer
+	// is derived from it, so it must be well-formed before it can authenticate.)
 	if payload.Org != "" && !isValidName(payload.Org) {
 		http.Error(w, "invalid org name", http.StatusBadRequest)
 		return
@@ -2287,12 +2312,17 @@ func (s *HubServer) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	// Same derived HEARTBEAT sub-key as /api/heartbeat (task-status is the spoke's
 	// other beat channel); the master secret is never accepted here.
+	//
+	// N1: like /api/heartbeat, the bearer is captured here and verified below,
+	// once the claimed hive_id is known — the per-hive bearer is derived from it.
+	presentedBearer := ""
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !secureCompareHub(strings.TrimPrefix(auth, "Bearer "), s.heartbeatKey()) {
+		if !strings.HasPrefix(auth, "Bearer ") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		presentedBearer = strings.TrimPrefix(auth, "Bearer ")
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes))
@@ -2313,6 +2343,17 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	if payload.HiveID == "" {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
+	}
+	if !isValidName(payload.HiveID) {
+		http.Error(w, "invalid hive_id", http.StatusBadRequest)
+		return
+	}
+	// N1: bind the bearer to the claimed hive, same as /api/heartbeat.
+	if s.hubSecret != "" {
+		if !s.verifyHeartbeatBearer(presentedBearer, payload.HiveID) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 	for i, lb := range payload.Leaderboard {
 		payload.Leaderboard[i].GitHubUsername = sanitizeField(lb.GitHubUsername)
