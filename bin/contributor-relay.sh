@@ -731,7 +731,15 @@ function tmuxSendKeys(text) {
   }
   try {
     try {
-      execSync(`find /tmp -maxdepth 1 -type d -user dev -not -name 'tmux-*' -not -name 'claude-*' -not -name 'node-*' -not -name '.' -mmin +60 -exec rm -rf {} + 2>/dev/null; find /tmp -maxdepth 1 -type f -user dev -name '*.out' -o -name '*.html' -mmin +60 -exec rm -f {} + 2>/dev/null`, { timeout: 15000 });
+      // SECURITY (N20, CWE-20): the second find MUST parenthesize the -o group.
+      // `-type f -user dev -name '*.out' -o -name '*.html' -mmin +60 -exec rm`
+      // parses as (-type f AND -user dev AND -name '*.out') OR (-name '*.html'
+      // AND -mmin +60 AND -exec rm) because -o binds looser than the implicit
+      // -a. The right branch therefore drops BOTH -type f and -user dev, so ANY
+      // owner's /tmp/*.html older than 60min was deleted — including root's, and
+      // including directories. The left branch had no -exec, so the *.out
+      // cleanup this line exists to perform never actually ran.
+      execSync(`find /tmp -maxdepth 1 -type d -user dev -not -name 'tmux-*' -not -name 'claude-*' -not -name 'node-*' -not -name '.' -mmin +60 -exec rm -rf {} + 2>/dev/null; find /tmp -maxdepth 1 -type f -user dev \\( -name '*.out' -o -name '*.html' \\) -mmin +60 -exec rm -f {} + 2>/dev/null`, { timeout: 15000 });
     } catch (_) {}
     const ctxPct = checkContextUsage();
     const RESET_EVERY_N = 3;

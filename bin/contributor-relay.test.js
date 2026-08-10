@@ -1391,6 +1391,43 @@ test('the modal panes still win over the ready marker they also draw', () => {
   }
 });
 
+// N20 (CWE-20): the /tmp cleanup's second `find` must parenthesize its -o group.
+//
+// `-type f -user dev -name '*.out' -o -name '*.html' -mmin +60 -exec rm -f`
+// parses as (-type f AND -user dev AND -name '*.out') OR (-name '*.html' AND
+// -mmin +60 AND -exec rm), because -o binds looser than the implicit -a. The
+// right branch drops BOTH -type f and -user dev, so ANY owner's /tmp/*.html
+// older than 60 minutes was deleted — root's included, directories included.
+// The left branch carries no -exec, so the *.out cleanup never ran at all.
+//
+// This asserts on the SOURCE rather than a live run: the command is built as a
+// template literal, and the bug is in shell-operator precedence, so what matters
+// is the exact string handed to the shell.
+test('the /tmp cleanup find scopes its -o group (N20: no cross-owner *.html deletion)', () => {
+  const src = fs.readFileSync(RELAY_PATH, 'utf8');
+  // Match the execSync CODE line, not the comment above it that quotes the
+  // vulnerable form for explanation.
+  const line = src.split('\n').find((l) => l.includes('execSync(') && l.includes("-name '*.out'"));
+  assert.ok(line, 'could not find the /tmp cleanup command');
+
+  // The escaped parens must be present around the -o alternation. In the
+  // template literal these are written \\( / \\) so the SHELL receives \( / \).
+  // In the source the escapes are written \\( / \\) (two chars: backslash,
+  // paren) so the template literal yields \( / \) for the shell. Match that
+  // literally via indexOf rather than fighting a third layer of regex escaping.
+  assert.ok(
+    line.includes("-type f -user dev \\\\( -name '*.out' -o -name '*.html' \\\\) -mmin +60"),
+    'the -o group is not parenthesized — any owner\'s /tmp/*.html would be deleted:\n' + line
+  );
+
+  // Guard the specific broken form, so a future edit cannot silently reintroduce
+  // it by dropping the escapes.
+  assert.ok(
+    !line.includes("-user dev -name '*.out' -o -name"),
+    'the unparenthesized (vulnerable) form is back:\n' + line
+  );
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;
