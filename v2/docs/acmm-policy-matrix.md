@@ -25,7 +25,7 @@ A single interactive advisor helps with repo setup and architecture decisions. G
 | Agent | Mode | Template |
 |-------|------|----------|
 | guide | advisory | `guide-advisory.md` |
-| brainstorm | advisory | `brainstorm-inception.md` |
+| brainstorm | advisory | `brainstorm-advisory.md` |
 
 ### L2 — Advisory (Instructed) (5 agents)
 

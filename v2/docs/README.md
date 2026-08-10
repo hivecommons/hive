@@ -10,6 +10,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Dashboard route and health checks](health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
+- [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
 
 ## Contributors and access
 
@@ -23,6 +24,9 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [Sandbox isolation and agent guardrails](sandbox-isolation.md) — isolation layers and operator guardrail notes.
 - [Podman rootless CI](podman-rootless-ci.md) — rootless Podman contract for `contribute-hive`.
+- [CLI backend setup](../../docs/backend-setup.md) — setup notes for Claude, Copilot, Goose, Bob, Pi, Codex, and Aider.
+- [Inference backends](../../docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
+- [v1 to v2 migration](../../docs/migration-v1-v2.md) — migration checklist and rollback notes.
 
 ## Architecture and design
 
@@ -33,5 +37,4 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 ## Historical/design notes
 
-Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](credly-badges.md).
-
+Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](credly-badges.md). `ioscan` is also documented as absent from v2 HEAD until code is reintroduced.

@@ -29,7 +29,7 @@ agents:
   scanner:
     # id: scan-01                         # Stable internal key (defaults to YAML key)
     enabled: true
-    backend: claude                       # claude | copilot | gemini | goose
+    backend: claude                       # claude | copilot | gemini | goose | bob | pi | codex | aider | vllm | llm-d | litellm | watsonx
     model: claude-sonnet-4-6
     caveman_mode: full                    # lite | full | ultra | wenyan — compresses output ~65%
     beads_dir: /data/beads/scanner
@@ -132,6 +132,50 @@ agents:
     display_name: Security
     description: Audits dependencies, container images, secrets exposure
     sort_order: 60
+  guide:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/guide
+    clear_on_kick: true
+    display_name: Guide
+    description: Documentation and architecture guide — explains, documents, and files doc work
+    role: guide
+    sort_order: 15
+    emoji: "🧭"
+    color: "#8e44ad"
+    kick_template: guide-advisory.md
+    include_repos: true
+  strategist:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/strategist
+    clear_on_kick: true
+    display_name: Strategist
+    description: Roadmap alignment, experiments, and cross-agent trend analysis
+    role: strategist
+    sort_order: 70
+    emoji: "🧠"
+    color: "#f39c12"
+    kick_template: strategist-holdgated.md
+    include_repos: false
+  brainstorm:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/brainstorm
+    clear_on_kick: true
+    display_name: Brainstorm
+    description: On-demand inception and ideation agent
+    role: brainstorm
+    sort_order: 5
+    emoji: "💡"
+    color: "#f39c12"
+    kick_template: brainstorm-advisory.md
+    include_repos: false
+    on_demand: true
+    stale_timeout: 7200
 
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
@@ -143,24 +187,33 @@ governor:
       ci-maintainer: pause                # "pause" means don't kick this agent
       tester: pause                       # coverage isn't urgent during fire-fighting
       architect: pause
+      guide: pause
+      strategist: pause
+      # brainstorm is on_demand and is not kicked by the governor
     busy:
       threshold: 10
       scanner: 15m
       ci-maintainer: 1h
       tester: 2h
       architect: pause
+      guide: 4h
+      strategist: pause
     quiet:
       threshold: 2
       scanner: 15m
       ci-maintainer: 45m
       tester: 45m
       architect: pause
+      guide: 4h
+      strategist: 4h
     idle:
       threshold: 0
       scanner: 15m
       ci-maintainer: 15m
       tester: 30m                         # most active when nothing else is happening
       architect: 30m
+      guide: 4h
+      strategist: 4h
 
   # LiteLLM inference backend (optional) — route agents through an
   # OpenAI-compatible LiteLLM proxy. Agents using backend "litellm" launch

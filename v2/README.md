@@ -62,7 +62,7 @@ When dashboard authentication is enabled, `hivectl` reads
 output, stdin-based imports, and explicit confirmation for destructive
 operations.
 
-See [docs/hivectl.md](docs/hivectl.md) for the full command reference.
+See [docs/hivectl.md](docs/hivectl.md) for the full command reference. The architecture overview also calls out `hivectl` as the non-interactive API client for automation.
 
 See [docs/README.md](docs/README.md) for the full v2 documentation index.
 
@@ -86,7 +86,7 @@ hub-fronted URL probing, and alert hysteresis.
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
 
 ```yaml
 project:
@@ -197,6 +197,10 @@ governor:
       threshold: 0
 ```
 
+## Contributor relay image
+
+`Dockerfile.contributor` and `compose-contributor.yaml` build/run the ClankeR contributor image used by `just contribute-hive`. The image contains the relay scripts plus common CLIs; compose mounts your local contributor config read-only and selects `AGENT_BACKEND`. See [../docs/backend-setup.md](../docs/backend-setup.md#contributor-relay-image).
+
 ## Inference Backends
 
 Besides CLI backends (claude, copilot, …), agents can run against
@@ -229,6 +233,8 @@ for litellm); `HIVE_LITELLM_MODELS` is a comma-separated fallback list.
 With `local_proxy: true`, hive supervises a bundled `litellm` process on
 loopback (config at `/data/litellm/config.yaml`) and routes through it
 instead of the remote endpoint — agents never bypass the Go translator.
+
+See [../docs/inference-backends.md](../docs/inference-backends.md) for setup and troubleshooting, and [deploy/inference/README.md](deploy/inference/README.md) for the sample in-cluster vLLM-compatible deployment.
 
 ## Knowledge
 

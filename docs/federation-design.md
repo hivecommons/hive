@@ -2,52 +2,23 @@
 
 ## Overview
 
-Hive Federation allows any open source project to run their own Hive instance
-and join a network where contributors can discover and join any participating
-project's swarm. A contributor runs `just contribute-browse` to find projects
-that need help, then `just contribute-hive` pointed at that project's hub —
-**ClankeR**, the contributor relay, carries that project's tasks to the agent on
-their machine.
+Hive Federation lets independent Hive instances publish themselves in a registry so contributors can discover projects and connect a local ClankeR contributor relay to one or more hubs. The registry is a directory, not a control plane: every hive keeps its own credentials, queue, agents, contributor registry, and trust policy.
 
-## How a New Project Signs Up
+## Current v2 implementation
 
-### 1. Install the Hive GitHub App
+The v2 Go dashboard API implements the federation endpoints in `v2/pkg/dashboard/api_contribute.go`:
 
-The project maintainer installs the shared [Hive GitHub App](https://github.com/apps/kubestellar-hive-bot) on their GitHub org/repos. This gives their Hive instance the ability to mint scoped installation tokens for contributors.
+- `GET /api/hives` — list registered hives.
+- `POST /api/hives/register` — add or update a hive entry.
+- `POST /api/hives/:id/heartbeat` — update live counts such as active contributors/agents and actionable work.
+- `DELETE /api/hives/:id` — remove a hive.
+- `POST /api/hives/onboard` — generate starter deployment/config text.
 
-### 2. Generate Starter Config
+Registry storage defaults to `/data/federation/registry.json` in v2 and can be overridden for tests with `HIVE_FEDERATION_REGISTRY_PATH`.
 
-```bash
-curl -X POST https://hive.kubestellar.io/api/hives/onboard \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_name": "drasi",
-    "org": "drasi-project",
-    "repos": ["drasi-project/drasi-platform", "drasi-project/drasi-docs"],
-    "github_app_id": "123456",
-    "github_app_installation_id": "789012"
-  }'
-```
+## Project onboarding
 
-Returns:
-- `hive-project.yaml` — project config with repos, agents, dashboard settings
-- `docker-compose.yaml` — ready to deploy
-- Step-by-step instructions
-
-### 3. Deploy Their Hive
-
-```bash
-# On their server/VM
-mkdir -p /etc/hive
-# Save hive-project.yaml to /etc/hive/
-# Save GitHub App private key to /etc/hive/gh-app-key.pem
-docker compose up -d
-```
-
-The Hive starts with `scanner` and `supervisor` agents by default.
-The project can enable more agents as their needs grow.
-
-### 4. Register with the Federation
+A project maintainer installs/configures GitHub auth for their Hive, generates or writes v2 config, deploys the Hive, and registers it:
 
 ```bash
 curl -X POST https://hive.kubestellar.io/api/hives/register \
@@ -57,62 +28,31 @@ curl -X POST https://hive.kubestellar.io/api/hives/register \
     "org": "drasi-project",
     "hub_url": "wss://drasi-hive.example.com:3001/contribute",
     "dashboard_url": "https://drasi-hive.example.com:3001",
-    "contact_email": "maintainer@drasi.io"
+    "contact_email": "maintainer@example.com"
   }'
 ```
 
-Now the project appears in `just contribute-browse` and on the
-federation directory at `https://hive.kubestellar.io/api/hives`.
+The starter endpoint can produce bootstrap text, but it is not a substitute for reviewing secrets, storage, ingress, and ACMM level before production.
 
-## Contributor Flow
+## Contributor flow
 
-```
-$ just contribute-browse
-
-=== Available Hives ===
-
-  KubeStellar Console (kubestellar)
-    Hub: wss://hive.kubestellar.io:3001/contribute
-    Dashboard: https://hive.kubestellar.io:3001
-    Contributors: 12 active
-    Actionable: 8 items
-
-  Drasi (drasi-project)
-    Hub: wss://drasi-hive.example.com:3001/contribute
-    Dashboard: https://drasi-hive.example.com:3001
-    Contributors: 3 active
-    Actionable: 15 items
-
-  Keptn (keptn)
-    Hub: wss://keptn-hive.cncf.io:3001/contribute
-    Dashboard: https://keptn-hive.cncf.io:3001
-    Contributors: 0 active
-    Actionable: 23 items
-```
-
-The contributor can then target a specific hive:
+A contributor can browse hives, then point ClankeR at one or more hubs:
 
 ```bash
+just contribute-browse
 HIVE_HUB=wss://drasi-hive.example.com:3001/contribute just contribute-hive
 ```
 
-Or register with multiple hives and subscribe to them from one relay session (added by [@hanthor](https://github.com/hanthor) in [#2846](https://github.com/kubestellar/hive/pull/2846)):
+Multiple hubs are supported by comma-separated `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` values in the same order. The relay keeps separate WebSocket connections/heartbeats and works on one task at a time.
 
-```bash
-export HIVE_HUB=wss://drasi-hive.example.com:3001/contribute,wss://keptn-hive.cncf.io:3001/contribute
-export HIVE_REGISTRATION_TOKEN=drasi-token,keptn-token
-just contribute-hive
-```
-
-Keep the tokens in the same order as the hub URLs. The relay uses one CLI/tmux session, keeps a separate WebSocket connection and heartbeat per hub, works on one task at a time, and only round-robins to the next hub when the active hub explicitly reports that no task is available.
-
-## Federation Architecture
+## Architecture
 
 ```
 ┌──────────────────────────┐
-│  Federation Registry     │  hive.kubestellar.io
-│  GET /api/hives          │  (the KubeStellar hive doubles as registry)
-│  POST /api/hives/register│
+│ Federation registry      │
+│ GET /api/hives           │
+│ POST /api/hives/register │
+│ POST /api/hives/:id/heartbeat
 └──────────┬───────────────┘
            │ lists
     ┌──────┴──────┬──────────────┐
@@ -120,58 +60,30 @@ Keep the tokens in the same order as the hub URLs. The relay uses one CLI/tmux s
 ┌─────────┐ ┌─────────┐  ┌─────────┐
 │ KS Hive │ │ Drasi   │  │ Keptn   │
 │ Hub     │ │ Hive Hub│  │ Hive Hub│
-│ :3001   │ │ :3001   │  │ :3001   │
 └────┬────┘ └────┬────┘  └────┬────┘
      │           │            │
-  Contributors connect directly to each hub
+  contributors connect directly to each hub
 ```
 
-Each hive is fully independent:
-- Own GitHub App credentials
-- Own agent fleet
-- Own work queue
-- Own contributor registry
-- Own trust tiers
+Each hive owns:
 
-The federation registry is just a directory — it doesn't proxy traffic or
-manage credentials across hives. Each hub handles its own WebSocket
-connections and token minting.
+- GitHub App/PAT credentials.
+- Agent fleet and ACMM level.
+- Work queue and claims.
+- Contributor registration and trust tier.
+- Dashboard and `/contribute` WebSocket endpoint.
 
-## What Each Hive Gets
+## Operational notes
 
-- **Dashboard** at port 3001 with agent status, queue, sparklines
-- **Agent fleet** (scanner, supervisor, + whatever they enable)
-- **Contributor WebSocket** (ClankeR) at `/contribute`
-- **Scoped GitHub tokens** via the shared Hive GitHub App
-- **Governor** that adapts agent cadence to queue depth
-- **Nous Strategy Lab** for automated experimentation (optional)
+- The registry does not proxy contributor traffic or mint credentials for remote hives.
+- Heartbeats are implemented; operators still need to run the heartbeat sender or otherwise call the endpoint.
+- Registration has validation and a maximum registry size, but production deployments should still place the public registry behind normal rate limiting and abuse controls.
 
-## Future: Cross-Hive Contributor Reputation
+## Design-future items
 
-A contributor who builds trust in one hive could have that reputation
-portable to other hives. A signed attestation from Hive A saying
-"this contributor completed 20 tasks with 0 revocations" could be
-presented to Hive B to skip the newcomer tier.
+These are not complete in v2 HEAD and should be treated as future design work:
 
-This is out of scope for the initial implementation but the
-per-hive contributor profile (`/etc/hive/contributors/<user>.json`)
-already tracks the data needed to issue such attestations.
-
-## Implementation Status
-
-### Done (in PR #798)
-- `GET /api/hives` — list registered hives
-- `POST /api/hives/register` — register a remote hive
-- `DELETE /api/hives/:id` — remove a hive
-- `POST /api/hives/onboard` — generate starter config
-- `just contribute-browse` — discover available hives
-- Federation registry storage at `/etc/hive/federation/registry.json`
-
-### TODO
-- [ ] Heartbeat: registered hives periodically ping the registry with
-      their current active contributor count and actionable items
-- [ ] Web UI: add a "Join a Hive" page at `/contribute` with project
-      cards showing description, star count, contributor needs
-- [ ] GitHub App installation guide with screenshots
-- [ ] Cross-hive reputation attestations
-- [ ] Rate limiting on registration endpoint
+- A polished web UI for joining hives from project cards.
+- Screenshot-level GitHub App installation guide.
+- Portable cross-hive contributor reputation attestations.
+- Stronger public registry abuse controls beyond the current API validation and size cap.
