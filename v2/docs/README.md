@@ -21,6 +21,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](backup-restore.md) — `hive-backup`, Kubernetes CronJob, and spoke backup scope.
 - [Deployment helper scripts](deployment-scripts.md) — Proxmox LXC and blue-green Compose helpers.
+- [`bin/` pipeline script index](../../bin/README.md) — map of the 45 deterministic pipeline and operational shell/Python scripts, grouped by function.
 - [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
 - [Dashboard OpenAPI spec](../../dashboard/openapi.json) — machine-readable REST API reference for integrations.
 - [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
