@@ -1232,16 +1232,17 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 }
 
 // requireOwnerRole returns true when the request carries owner-level access.
-// An empty X-Hive-Role is treated as owner (open/dev spokes with no auth_token
-// or hub-proxied spokes where the hub omits the header). Any non-owner role
-// set by the hub or device-flow session is rejected. Call this for state-mutating
-// endpoints that should be restricted to operators (pause, resume, fleet breaker).
+// The authentication middleware owns X-Hive-Role and strips client-supplied
+// values before injecting roles for trusted sources. Owner-only mutations also
+// require its server-only verification marker, so legacy/proofless proxy
+// headers and shared-token requests fail closed instead of trusting spoofable
+// client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		return true // open spoke or internal automation — treat as owner
+	if role == "" && r.Header.Get(authCheckedHeader) != "true" {
+		return true
 	}
-	if role != "owner" {
+	if role != "owner" || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
 		jsonError(w, "owner access required", http.StatusForbidden)
 		return false
 	}
