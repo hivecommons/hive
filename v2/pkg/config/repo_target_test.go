@@ -60,22 +60,29 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 			org:   "kubestellar",
 			repos: []string{"hive/"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'hive/' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Governor Config → Repos.",
+			want:  "Repo target misconfigured: repo 'hive/' contains '/' — expected repo name only (or 'kubestellar/<repo>') so the target resolves to org/repo. Fix in Governor Config → Repos.",
 		},
 		{
-			name:  "repo contains slash",
+			name:  "repo contains slash for a different org",
 			org:   "kubestellar",
 			repos: []string{"other/hive"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'other/hive' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Governor Config → Repos.",
+			want:  "Repo target misconfigured: repo 'other/hive' contains '/' — expected repo name only (or 'kubestellar/<repo>') so the target resolves to org/repo. Fix in Governor Config → Repos.",
 		},
 		{
-			name:    "primary contains slash",
+			// #3021: re-adding an existing repo as "<org>/<repo>" where the org
+			// matches project.org is unambiguous and must be accepted.
+			name:  "repo qualified with matching org accepted",
+			org:   "kubestellar",
+			repos: []string{"kubestellar/hive"},
+			forge: "github.com",
+		},
+		{
+			name:    "primary qualified with matching org accepted",
 			org:     "kubestellar",
 			repos:   []string{"hive"},
 			primary: "kubestellar/hive",
 			forge:   "github.com",
-			want:    "Repo target misconfigured: repo 'kubestellar/hive' contains '/' — expected repo name only so the target resolves to org/repo. Fix in Governor Config → Repos.",
 		},
 		{
 			name:  "full url pasted into org",
