@@ -21,7 +21,12 @@ set -euo pipefail
 # made the guard below fire "gh CLI is not available" for every agent gh call,
 # silently breaking the CLI GitHub workflow (issue/PR view, create, merge). Keep
 # the legacy path as a fallback for any environment that does ship it there.
-REAL_GH="/opt/hive/bin/gh-real"
+# HIVE_GH_WRAPPER_REAL_GH lets the test harness point the wrapper at a stub so
+# the gates can be exercised as a black box (bin/test_gh_wrapper_gates.sh). It is
+# NOT a security control and grants nothing: an agent that could set it could
+# equally invoke its own binary directly, and every gate below runs before this
+# path is ever exec'd. Unset in production, where the image ships the real gh.
+REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 [[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 
@@ -262,6 +267,27 @@ if [ -n "$AGENT_MODE" ]; then
       ;;
     ISSUES_PRS_MERGE)
       # Everything allowed — merge-eligible gate still checked below
+      ;;
+    *)
+      # SECURITY (N15 chain A, CWE-20/732): fail CLOSED on an unrecognized mode.
+      #
+      # Without this arm an unknown non-empty mode matched nothing and fell
+      # through with ZERO enforcement — every gate above silently skipped. That
+      # is reachable: AGENT_MODE is read from /tmp/.hive-mode-<name> (see the
+      # block near :155), a world-writable path whose name comes from
+      # agent-controlled env (HIVE_AGENT / HIVE_AGENT_ID). Because the file wins
+      # over the env var, anyone who can write /tmp — any agent UID in the pod,
+      # or a managed-repo PR that lands a file there — could plant a garbage
+      # value and permanently un-gate a victim agent, durable across restarts
+      # and `hive agent reset`.
+      #
+      # Note an EMPTY mode is different and still safe: it leaves AGENT_MODE=""
+      # so the `if [ -n "$AGENT_MODE" ]` above is false and the level-based
+      # fallback below applies. Only a non-empty unknown value lands here.
+      echo "⛔ BLOCKED: unrecognized agent mode '${AGENT_MODE}' for ${AGENT_NAME_GW} — refusing to run gh." >&2
+      echo "Valid modes: NO_GITHUB, ADVISORY, ISSUES_ONLY, ISSUES_AND_PRS, ISSUES_PRS_MERGE." >&2
+      echo "If ${MODE_FILE} exists with unexpected contents, it may have been tampered with; report to the operator." >&2
+      exit 1
       ;;
   esac
 else

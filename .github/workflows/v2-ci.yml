@@ -3,10 +3,16 @@ name: v2 CI
 on:
   push:
     branches: [v2, v4]
-    paths: ['v2/**', 'bin/contributor-agent*', 'bin/contributor-relay*']
+    # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
+    # merge gate behind the proxy hard-deny) and previously matched no path
+    # filter at all — a change to it triggered no CI whatsoever.
+    paths: ['v2/**', 'bin/**', '.github/workflows/v2-ci.yml']
   pull_request:
     branches: [v2, v4]
-    paths: ['v2/**', 'bin/contributor-agent*', 'bin/contributor-relay*']
+    # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
+    # merge gate behind the proxy hard-deny) and previously matched no path
+    # filter at all — a change to it triggered no CI whatsoever.
+    paths: ['v2/**', 'bin/**', '.github/workflows/v2-ci.yml']
 
 permissions:
   contents: read
@@ -38,6 +44,16 @@ jobs:
       # fails the PR rather than a deploy.
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
+
+      # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
+      # if its argument parsing is wrong, a prompt-injected agent merges
+      # unvetted code. It had NO tests and matched no CI path filter. This
+      # EXECUTES the wrapper against a stub gh and asserts on exit codes —
+      # grepping the script text (as the entrypoint tests do) cannot catch a
+      # parser bug, which is exactly how the audit's N7 bypass survived.
+      - name: gh-wrapper gate tests
+        working-directory: .
+        run: bash bin/test_gh_wrapper_gates.sh
 
       - uses: actions/setup-node@v4
         with:
