@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
 )
@@ -90,7 +89,9 @@ func TestBeadWatcher_MatchesBead(t *testing.T) {
 func TestBeadWatcher_MatchesBead_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	badPath := filepath.Join(dir, "bad.json")
-	os.WriteFile(badPath, []byte("not json"), 0644)
+	if err := os.WriteFile(badPath, []byte("not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := &kickRecorder{}
 	m := NewManager(map[string]config.AgentConfig{}, rec.fn, nil, quietLogger())
@@ -119,7 +120,9 @@ func TestBeadWatcher_MatchesBead_NonStringValue(t *testing.T) {
 	}
 	data, _ := json.Marshal(bead)
 	beadPath := filepath.Join(dir, "bead.json")
-	os.WriteFile(beadPath, data, 0644)
+	if err := os.WriteFile(beadPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := &kickRecorder{}
 	m := NewManager(map[string]config.AgentConfig{}, rec.fn, nil, quietLogger())
@@ -141,7 +144,9 @@ func TestBeadWatcher_CheckTriggersKick(t *testing.T) {
 	// Write a matching bead.
 	bead := map[string]interface{}{"type": "advisory", "actor": "quality"}
 	data, _ := json.Marshal(bead)
-	os.WriteFile(filepath.Join(dir, "bead-trigger.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(dir, "bead-trigger.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	agents := map[string]config.AgentConfig{
 		"strategist": {
@@ -176,7 +181,9 @@ func TestBeadWatcher_DeduplicatesBeads(t *testing.T) {
 
 	bead := map[string]interface{}{"type": "advisory"}
 	data, _ := json.Marshal(bead)
-	os.WriteFile(filepath.Join(dir, "bead-dup.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(dir, "bead-dup.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	agents := map[string]config.AgentConfig{
 		"scanner": {
@@ -195,11 +202,9 @@ func TestBeadWatcher_DeduplicatesBeads(t *testing.T) {
 
 	// Check twice — second should NOT re-trigger.
 	bw.check()
-	time.Sleep(50 * time.Millisecond)
 	bw.check()
-	time.Sleep(50 * time.Millisecond)
 
-	kicks := rec.snapshot()
+	kicks := rec.waitForKicks(t, 2)
 	if len(kicks) != 1 {
 		t.Errorf("expected exactly 1 kick (dedup), got %d", len(kicks))
 	}
@@ -210,7 +215,9 @@ func TestBeadWatcher_SkipsDisabledChannel(t *testing.T) {
 
 	bead := map[string]interface{}{"type": "advisory"}
 	data, _ := json.Marshal(bead)
-	os.WriteFile(filepath.Join(dir, "bead.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(dir, "bead.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	disabled := false
 	agents := map[string]config.AgentConfig{
@@ -230,7 +237,6 @@ func TestBeadWatcher_SkipsDisabledChannel(t *testing.T) {
 	bw.agents = agents
 
 	bw.check()
-	time.Sleep(50 * time.Millisecond)
 
 	if len(rec.snapshot()) != 0 {
 		t.Error("disabled channel should not trigger kicks")
@@ -255,7 +261,6 @@ func TestBeadWatcher_SkipsEmptyBeadsDir(t *testing.T) {
 
 	// Should not panic.
 	bw.check()
-	time.Sleep(20 * time.Millisecond)
 
 	if len(rec.snapshot()) != 0 {
 		t.Error("empty beads_dir should not trigger kicks")
@@ -264,7 +269,9 @@ func TestBeadWatcher_SkipsEmptyBeadsDir(t *testing.T) {
 
 func TestBeadWatcher_SkipsDirectories(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
+	if err := os.MkdirAll(filepath.Join(dir, "subdir"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	agents := map[string]config.AgentConfig{
 		"scanner": {
@@ -282,7 +289,6 @@ func TestBeadWatcher_SkipsDirectories(t *testing.T) {
 	bw.agents = agents
 
 	bw.check()
-	time.Sleep(20 * time.Millisecond)
 
 	if len(rec.snapshot()) != 0 {
 		t.Error("directories should be skipped")
@@ -296,7 +302,7 @@ func TestBeadWatcher_Rebuild(t *testing.T) {
 
 	newAgents := map[string]config.AgentConfig{
 		"new-agent": {
-			BeadsDir: "/tmp/fake",
+			BeadsDir: t.TempDir(),
 			Channels: []config.ChannelConfig{{Type: "bead"}},
 		},
 	}
@@ -337,7 +343,6 @@ func TestCronScheduler_StartAndStop(t *testing.T) {
 	m.cron.Start(ctx)
 	// Stop via context cancellation.
 	cancel()
-	time.Sleep(20 * time.Millisecond)
 	// Double stop should not panic.
 	m.cron.Stop()
 }
@@ -395,7 +400,9 @@ func TestCronScheduler_SkipsDisabledChannel(t *testing.T) {
 	defer cancel()
 	m.cron.Start(ctx)
 
-	time.Sleep(1200 * time.Millisecond)
+	if entries := m.cron.runner.Entries(); len(entries) != 0 {
+		t.Fatalf("disabled schedule channel registered %d jobs, want 0", len(entries))
+	}
 	if len(rec.snapshot()) != 0 {
 		t.Error("disabled schedule channel should not fire")
 	}
@@ -418,7 +425,9 @@ func TestCronScheduler_InvalidScheduleDoesNotPanic(t *testing.T) {
 	defer cancel()
 	// Should not panic, just log a warning.
 	m.cron.Start(ctx)
-	time.Sleep(50 * time.Millisecond)
+	if entries := m.cron.runner.Entries(); len(entries) != 0 {
+		t.Fatalf("invalid schedule registered %d jobs, want 0", len(entries))
+	}
 	m.cron.Stop()
 }
 
