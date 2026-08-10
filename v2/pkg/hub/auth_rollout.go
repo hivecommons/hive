@@ -80,6 +80,23 @@ type AuthRolloutStatus struct {
 // authRolloutStaleAfter bounds how old an observation may be and still count.
 // A hive that has not heartbeated within this window is treated as absent, not
 // as legacy — otherwise a long-deleted hive would block the removal forever.
+//
+// 24h is chosen against the two ways this can be wrong, which fail in opposite
+// directions:
+//
+//   - TOO SHORT and a hive that is merely paused, mid-upgrade, or on a
+//     temporarily unreachable cluster drops out of the denominator. The fleet
+//     then reads ready while that spoke is still on the legacy bearer, and
+//     removing the lane 401s it the moment it comes back.
+//   - TOO LONG and every hive ever deleted keeps counting as a legacy laggard,
+//     so readiness never arrives and the compat lane becomes permanent — the
+//     precise failure this whole signal exists to prevent.
+//
+// Spokes beat on the order of a minute, so 24h is ~1000x the cadence: far past
+// any transient blip, but short enough that a decommissioned hive clears within
+// a day. If the fleet ever adopts long-lived paused hives that stop beating
+// entirely, revisit this — a paused hive should ideally be excluded explicitly
+// rather than by timeout.
 const authRolloutStaleAfter = 24 * time.Hour
 
 // AuthRolloutReadiness reports whether the N1 heartbeat compat lane can be
