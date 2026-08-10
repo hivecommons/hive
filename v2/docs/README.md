@@ -17,6 +17,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
 - [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
+- [Deployment scripts](../deploy/README.md) — inventory of v2 deployment helpers, including dashboard TTY panes and `hive-panes`.
 
 ## Contributors and access
 

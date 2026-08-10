@@ -77,7 +77,7 @@ agents:
 ```yaml
     backend: copilot             # the method: claude | copilot | goose | codex | pi |
                                  #   bob | aider, or an inference backend:
-                                 #   vllm | llm-d | litellm
+                                 #   vllm | llm-d | litellm | watsonx | named gateway
     model: claude-sonnet-4-6     # model id for that method
     cli_pinned: true             # pin the CLI so nothing auto-switches it
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
@@ -156,6 +156,7 @@ Rounding out the schema — fields you will rarely touch:
 | `vllm` | inference | endpoint + optional key — no login | **live** — `/v1/models` |
 | `llm-d` | inference | endpoint + optional key — no login | **live** — `/v1/models` |
 | `litellm` | inference | endpoint + API key — no login | **live** — `/v1/models`, entitlement-filtered per key |
+| `openrouter` (gateway name) | inference | Model Gateway key or scan-to-fund flow — no CLI login | **live** — OpenRouter `/v1/models`, plus curated fallback |
 
 Two rules of thumb:
 
@@ -163,6 +164,8 @@ Two rules of thumb:
 - **Inference methods are endpoints.** You configure a base URL and a key *reference* (env var name or key-file path — the value goes in `/data/secrets/`, never in YAML). Agents on `vllm`/`llm-d`/`litellm` launch the Claude CLI routed through hive's inference translator, so there is no separate login.
 
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
+
+Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `v2/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session.
 
 Every discovery probe is best-effort: a failed or absent probe falls back to a current static list, so a model dropdown is never empty. Fallback entries are marked "unverified" in the UI.
 

@@ -14,6 +14,34 @@ just contribute-hive
 
 `compose-contributor.yaml`, `Dockerfile.contributor`, and the `just contribute-hive` recipe are the reference container path. Native mode is available through `just contribute-hive <backend> local` when a container runtime is not desired.
 
+## Docker Compose workflow
+
+The containerized path is `v2/compose-contributor.yaml` plus `v2/Dockerfile.contributor`; the `just contribute-hive` recipe wraps it. From the repository root you can also run Compose directly after `just contribute-setup` has written `${HOME}/.config/hive/contributor.env`:
+
+```bash
+export AGENT_BACKEND=claude
+docker compose -f v2/compose-contributor.yaml up --build
+```
+
+The compose file mounts local contributor state read-only into the container:
+
+- `${HOME}/.config/hive` for Hive registration/config.
+- `${HOME}/.claude` and `${HOME}/.config/claude-code` for Claude-family CLI auth.
+
+Important environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HIVE_HUB` | value from `contributor.env`, else public hub default | WebSocket hub(s) to subscribe to. Use comma-separated URLs for multi-hub mode. Direct Compose reads the registered value from the mounted config file. |
+| `HIVE_REGISTRATION_TOKEN` | value from `contributor.env` | Registration token(s), positional with `HIVE_HUB` when multiple hubs are listed. Required; run `just contribute-setup` / `just contribute-register` first. |
+| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `litellm`, etc., depending on image support and credentials). |
+| `AGENT_MODEL` | unset | Optional model override passed to the contributor agent. |
+| `CONTRIBUTOR_MODE` | `interactive` | `interactive` keeps a tmux/TTY session. `headless` is for one-shot/no-TTY task delivery. |
+
+To change hubs for direct Compose, re-run the registration/setup flow for the target hub or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
+
+Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables. Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
+
 ## Multi-hub subscription
 
 A single relay can subscribe to multiple hives. Register with each hive first, then provide matching comma-separated lists:
