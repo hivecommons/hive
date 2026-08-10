@@ -15,6 +15,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
+- [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](../../discord/README.md).
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
