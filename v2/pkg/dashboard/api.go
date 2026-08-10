@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -55,6 +56,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/backup/status", s.handleBackupStatus)
 	s.mux.HandleFunc("POST /api/backup", s.handleBackupDownload)
 	s.mux.HandleFunc("POST /api/banner-dismissed", s.handleBannerDismissed)
+	s.mux.HandleFunc("GET /api/snapshot/frame-ancestors", s.handleSnapshotFrameAncestors)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
 	s.mux.HandleFunc("GET /snapshot", s.handleSnapshotPage)
 	s.mux.HandleFunc("GET /api/history", s.handleHistory)
@@ -776,6 +778,14 @@ func (s *Server) handleSnapshotAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+func (s *Server) handleSnapshotFrameAncestors(w http.ResponseWriter, r *http.Request) {
+	var origins []string
+	if s.deps != nil && s.deps.Config != nil {
+		origins = s.deps.Config.Dashboard.SnapshotFrameAncestors
+	}
+	jsonResponse(w, map[string]any{"origins": origins})
+}
+
 func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 	hubURL := "https://hive.kubestellar.io"
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.URL != "" {
@@ -1259,7 +1269,27 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 	})
 }
 
+// requireOwnerRole returns true when the request carries owner-level access.
+// An empty X-Hive-Role is treated as owner (open/dev spokes with no auth_token
+// or hub-proxied spokes where the hub omits the header). Any non-owner role
+// set by the hub or device-flow session is rejected. Call this for state-mutating
+// endpoints that should be restricted to operators (pause, resume, fleet breaker).
+func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		return true // open spoke or internal automation — treat as owner
+	}
+	if role != "owner" {
+		jsonError(w, "owner access required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// No-op guard: the agent is already paused. Do NOT call Pause again —
@@ -1284,6 +1314,9 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// No-op guard, mirror of handlePause: resuming an agent that is not
@@ -1342,9 +1375,12 @@ func (s *Server) handleBreakerState(w http.ResponseWriter, r *http.Request) {
 
 // handleBreakerEngage throws the fleet breaker: it pauses every running,
 // non-on-demand agent and records exactly that set. Already-paused and
-// on-demand agents are left untouched (see Manager.EngageBreaker). Owner-role
-// gated via the shared roleEnforcement middleware, exactly like pause/resume.
+// on-demand agents are left untouched (see Manager.EngageBreaker). Restricted
+// to owner role because engaging the breaker halts all agents fleet-wide.
 func (s *Server) handleBreakerEngage(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
 		return
@@ -1365,8 +1401,11 @@ func (s *Server) handleBreakerEngage(w http.ResponseWriter, r *http.Request) {
 // handleBreakerRelease disengages the fleet breaker: it resumes ONLY the agents
 // the breaker paused and still owns (PausedTrigger unchanged). On-demand,
 // pre-existing, and operator-re-paused agents are never resumed (see
-// Manager.ReleaseBreaker). Owner-role gated via roleEnforcement.
+// Manager.ReleaseBreaker). Restricted to owner role.
 func (s *Server) handleBreakerRelease(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
 		return
@@ -3999,6 +4038,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"snapshot_url":                       cfg.Hub.SnapshotURL,
 			"is_public":                          cfg.Hub.IsPublic,
 			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
+			"snapshot_frame_ancestors":           cfg.Dashboard.SnapshotFrameAncestors,
 			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
 			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":               cfg.Hub.ContributeSuspended,
@@ -4017,11 +4057,12 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
 			// 168h default surfaces when unset) so the number input shows the value
 			// actually in force.
-			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
-			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"disabled_repos":              cfg.Hub.DisabledRepos,
-			"disabled_tiers":              cfg.Hub.DisabledTiers,
-			"tier_limits":                 cfg.Hub.TierLimits,
+			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
+			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"disabled_repos":               cfg.Hub.DisabledRepos,
+			"disabled_tiers":               cfg.Hub.DisabledTiers,
+			"tier_limits":                  cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
@@ -4467,6 +4508,26 @@ func (s *Server) handleGovernorAttribution(w http.ResponseWriter, r *http.Reques
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+func normalizeContributeDelegatableRoles(roles []string) []string {
+	seen := map[string]bool{}
+	for _, role := range []string{"scanner", "quality", "outreach"} {
+		seen[role] = true
+	}
+	for _, role := range roles {
+		role = normalizeAgentRole(role)
+		if role == "" || role == "supervisor" {
+			continue
+		}
+		seen[role] = true
+	}
+	out := make([]string, 0, len(seen))
+	for role := range seen {
+		out = append(out, role)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Enabled                        *bool                      `json:"enabled"`
@@ -4475,6 +4536,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		SnapshotURL                    string                     `json:"snapshot_url"`
 		IsPublic                       *bool                      `json:"is_public"`
 		AutoSnapshot                   *bool                      `json:"auto_snapshot"`
+		SnapshotFrameAncestors         []string                   `json:"snapshot_frame_ancestors"`
 		AutoUpgrade                    *bool                      `json:"auto_upgrade"`
 		ContributeSuspended            *bool                      `json:"contribute_suspended"`
 		ContributeTitlesMode           *string                    `json:"contribute_titles_mode"`
@@ -4489,6 +4551,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                      `json:"contribute_cooldown_enabled"`
 		ContributeCooldownHours        *int                       `json:"contribute_cooldown_hours"`
+		ContributeDelegatableRoles     []string                   `json:"contribute_delegatable_roles"`
 		DisabledRepos                  []string                   `json:"disabled_repos"`
 		DisabledTiers                  []string                   `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
@@ -4496,6 +4559,18 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	// Validate snapshot frame ancestors before opening the config
+	// transaction so a bad payload yields a 400 (not a 500 from
+	// mutateConfig). normalized is applied to Dashboard inside the closure.
+	var normalizedFrameAncestors []string
+	if body.SnapshotFrameAncestors != nil {
+		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		normalizedFrameAncestors = normalized
 	}
 	if err := s.mutateConfig(func(candidate *config.Config) error {
 		if body.Enabled != nil {
@@ -4513,6 +4588,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AutoSnapshot != nil {
 			candidate.Hub.AutoSnapshot = *body.AutoSnapshot
+		}
+		if body.SnapshotFrameAncestors != nil {
+			candidate.Dashboard.SnapshotFrameAncestors = normalizedFrameAncestors
 		}
 		if body.AutoUpgrade != nil {
 			candidate.Hub.AutoUpgrade = *body.AutoUpgrade
@@ -4563,6 +4641,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		// issue forever. A client sending 0 means "use the default".
 		if body.ContributeCooldownHours != nil {
 			candidate.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
+		}
+		if body.ContributeDelegatableRoles != nil {
+			candidate.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 		}
 		if body.DisabledRepos != nil {
 			candidate.Hub.DisabledRepos = body.DisabledRepos
@@ -6578,6 +6659,12 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		if !ok || len(ff) == 0 {
 			continue
 		}
+		// Facts within a type group arrive aggregated across layers, vaults, and
+		// git sources, so their relative order is not stable between fetches
+		// (see #3090). Sort by the natural identifier (Slug, then Title, then
+		// Body) so identical knowledge always serializes byte-for-byte the same
+		// and unchanged data does not rewrite downstream files on every refresh.
+		sortFactsStable(ff)
 		label := typeLabels[t]
 		if label == "" {
 			label = strings.Title(t)
@@ -6594,9 +6681,30 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	body := sb.String()
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, len(facts)))
-	w.Write([]byte(sb.String()))
+	// ETag over the rendered body (not just the fact count) so consumers can
+	// skip a rewrite whenever the content is unchanged, and always see a new
+	// tag when it genuinely changes.
+	sum := sha256.Sum256([]byte(body))
+	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sum))
+	w.Write([]byte(body))
+}
+
+// sortFactsStable orders facts by their natural identifier so an unchanged
+// knowledge base serializes to byte-identical output regardless of the order
+// facts were aggregated across sources. Slug is the primary key (unique per
+// fact); Title and Body are tiebreakers for facts that lack a slug.
+func sortFactsStable(facts []knowledge.Fact) {
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Slug != facts[j].Slug {
+			return facts[i].Slug < facts[j].Slug
+		}
+		if facts[i].Title != facts[j].Title {
+			return facts[i].Title < facts[j].Title
+		}
+		return facts[i].Body < facts[j].Body
+	})
 }
 
 func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
@@ -7053,7 +7161,34 @@ func (s *Server) handleVaultsList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.deps.Knowledge.Vaults())
 }
 
+// vaultPathDeniedPrefixes lists filesystem subtrees that must never be indexed
+// as knowledge vaults regardless of caller role. These prefixes contain secrets,
+// credentials, and sensitive OS/runtime state that an attacker could exfiltrate
+// via the knowledge search API if connected as a vault.
+var vaultPathDeniedPrefixes = []string{
+	"/etc",
+	"/proc",
+	"/sys",
+	"/run",
+	"/var/run",
+	"/dev",
+	"/root",
+	"/boot",
+}
+
 func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
+	// Vault connection is an owner-only operation: it indexes an entire directory
+	// tree and makes its contents queryable. Restricting to owner prevents a
+	// write-role contributor from exfiltrating secrets via the knowledge API.
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = "owner"
+	}
+	if role != "owner" {
+		jsonError(w, "owner access required", http.StatusForbidden)
+		return
+	}
+
 	if s.deps.Knowledge == nil {
 		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
 		return
@@ -7078,6 +7213,15 @@ func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
 	if !filepath.IsAbs(req.Path) {
 		jsonError(w, "vault path must be absolute", http.StatusBadRequest)
 		return
+	}
+	// Reject well-known sensitive filesystem prefixes regardless of role to
+	// prevent accidental or deliberate secret exposure via the knowledge search.
+	cleanPath := filepath.Clean(req.Path)
+	for _, denied := range vaultPathDeniedPrefixes {
+		if cleanPath == denied || strings.HasPrefix(cleanPath, denied+"/") {
+			jsonError(w, "vault path is in a restricted filesystem location", http.StatusBadRequest)
+			return
+		}
 	}
 	if req.Name == "" {
 		req.Name = filepath.Base(req.Path)

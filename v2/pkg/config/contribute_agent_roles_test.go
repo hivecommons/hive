@@ -27,7 +27,7 @@ func TestContributeDelegatableRoleSet_ExplicitAllowListStillDeniesSupervisor(t *
 	if h.IsContributeRoleDelegatable("supervisor") {
 		t.Fatal("supervisor must never be delegatable, even when listed")
 	}
-	if h.IsContributeRoleDelegatable("quality") {
-		t.Fatal("non-listed role must not be enabled when explicit allow-list is set")
+	if !h.IsContributeRoleDelegatable("quality") || !h.IsContributeRoleDelegatable("outreach") {
+		t.Fatal("safe default trio must stay enabled even when privileged roles are explicitly allow-listed")
 	}
 }

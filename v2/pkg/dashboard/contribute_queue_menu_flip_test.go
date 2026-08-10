@@ -5,29 +5,35 @@ import (
 	"testing"
 )
 
-// TestContributeQueueMenuFlipsUp guards the fix for the ready-work queue's per-row
-// "⋯" menu being clipped by the .cc-queue scroll container (overflow-y:auto) when a
-// row near the BOTTOM opens its menu — the operator reported the move/hold menu was
-// "behind the scroll borders" ("Optional hold reason" cut off). The fix: a
-// .cc-q-menu-up variant anchored to bottom:100%, applied by the open handler when
-// the menu would extend past the container's clip boundary.
-func TestContributeQueueMenuFlipsUp(t *testing.T) {
+// TestContributeQueueMenuUsesFixedViewportPlacement guards the fix for the
+// ready-work queue's per-row "⋯" menu being clipped by the .cc-queue scroll
+// container (overflow-y:auto) when a row near the BOTTOM opens its menu — the
+// operator reported the move/hold/move-to menu was "behind the scroll area". The
+// fix: fixed-position viewport placement shared with the custom-CSS popover, using
+// the queue panel as a boundary for flip/clamp decisions.
+func TestContributeQueueMenuUsesFixedViewportPlacement(t *testing.T) {
 	body := renderContributePage(t)
 	mustContain := []string{
-		// The flip-up CSS variant exists and anchors upward.
-		".cc-q-menu.cc-q-menu-up{top:auto;bottom:100%",
-		// The open handler measures against the scrolling .cc-queue clip box.
-		"btn.closest('.cc-queue')",
-		// ...and applies the up-variant class when there's no room below.
-		"menu.classList.add('cc-q-menu-up')",
+		// The queue menu itself escapes the scrolling clip.
+		".cc-q-menu{position:fixed",
+		// The shared helper places fixed popovers by measuring trigger geometry.
+		"function ccPlaceFixedPopover(anchor,pop,opts)",
+		"anchor.getBoundingClientRect()",
+		// The open handler clamps/flips against the visible scrolling queue panel.
+		"ccPlaceFixedPopover(btn,menu,{align:'right',gap:6",
+		"boundary:btn.closest('.cc-queue')",
+		// Scroll/resize invalidates viewport positioning and closes the open menu.
+		"window.addEventListener('resize',function(){ccCloseQueueMenus();});",
+		"window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(body, s) {
 			t.Errorf("contribute page missing queue-menu flip-up snippet %q", s)
 		}
 	}
-	// Closing a menu must also clear the up-variant so a reopened row isn't stuck flipped.
-	if !strings.Contains(body, "classList.remove('cc-q-menu-up')") {
-		t.Errorf("ccCloseQueueMenus must clear cc-q-menu-up on close")
+	// The old absolute-positioned flip class stayed inside the overflow clip and
+	// cannot fix the reported bug; keep it out so regressions are obvious.
+	if strings.Contains(body, "cc-q-menu-up") {
+		t.Errorf("queue menu should use fixed viewport placement, not cc-q-menu-up")
 	}
 }

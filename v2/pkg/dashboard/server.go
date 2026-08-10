@@ -908,11 +908,22 @@ func (s *Server) Stop() error {
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Frame-Options", "DENY")
+		frameAncestors := "'none'"
+		snapshotAllowlist := false
+		if r.URL.Path == "/snapshot" && s.deps != nil && s.deps.Config != nil && len(s.deps.Config.Dashboard.SnapshotFrameAncestors) > 0 {
+			frameAncestors = s.deps.Config.Dashboard.SnapshotFrameAncestorsCSP()
+			snapshotAllowlist = true
+		}
+		// X-Frame-Options cannot express an origin allowlist. When /snapshot has
+		// an explicit CSP frame-ancestors allowlist, omit XFO for that document
+		// only; every other route keeps DENY, and an empty allowlist fails closed.
+		if !snapshotAllowlist {
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})

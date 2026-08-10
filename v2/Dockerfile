@@ -16,7 +16,7 @@ RUN npm ci \
  && node -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync("/visual-hive-release/release-manifest.json","utf8"));if(m.gitCommit!==process.argv[1])throw new Error(`Visual Hive release commit mismatch: ${m.gitCommit}`)' "$VISUAL_HIVE_REF" \
  && node /visual-hive-release/visual-hive.mjs --version
 
-FROM golang:1.25.12-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -40,7 +40,7 @@ RUN DETECTED_GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || true) && \
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
-FROM node:24-slim AS tmux-builder
+FROM node:26-slim AS tmux-builder
 ARG TMUX_VERSION=3.5a
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc make pkg-config libevent-dev libncurses-dev bison ca-certificates \
@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION}
 
-FROM node:24-slim
+FROM node:26-slim
 
 # --- Layer 1: system packages (rarely changes) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -257,7 +257,14 @@ ARG PLUK_VERSION=0.8.0
 RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 1777 /var/run/pluk/logs /var/run/pluk/commands
-RUN (which git && git clone -b feat/cli-agent-mode https://github.com/clubanderson/agentic-strategy-evolution /opt/nous && \
+# Nous framework: pinned to a specific commit SHA to prevent supply-chain
+# injection via a push to the mutable branch ref. Update NOUS_COMMIT
+# deliberately when pulling upstream changes, after reviewing the diff at
+# that SHA. feat/cli-agent-mode HEAD verified 2026-08-08.
+ARG NOUS_COMMIT=8de28905b87474b870c56e1ecbd3c970532683b8
+RUN (which git && \
+    git clone https://github.com/clubanderson/agentic-strategy-evolution /opt/nous && \
+    git -C /opt/nous checkout "${NOUS_COMMIT}" && \
     python3 -m venv /opt/nous/venv && \
     /opt/nous/venv/bin/pip install --no-cache-dir -e /opt/nous 2>&1) || \
     echo "WARN: Nous install failed — run_campaign.py may not work"

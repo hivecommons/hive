@@ -48,12 +48,14 @@ func TestContributeTabOrderSlugMappingIntact(t *testing.T) {
 
 	for _, want := range []string{
 		// Panel -> slug map (address-bar reflection).
-		`var PANEL_SLUG={'tab-manage':'management','tab-ops':'operations','tab-leaderboard':'leaderboard'}`,
+		`var PANEL_SLUG={'tab-manage':'management','tab-ops':'operations','tab-leaderboard':'leaderboard','tab-profile':'profile'}`,
 		// Slug/short-id -> panel map (deep-linking, both clean and legacy forms).
 		`'operations':'tab-ops','ops':'tab-ops'`,
 		`'management':'tab-manage','manage':'tab-manage'`,
 		`'leaderboard':'tab-leaderboard'`,
 		`'onboarding':'tab-onboarding'`,
+		// Profile is a first-class tab; /contribute/dossier/<user> resolves here too.
+		`'profile':'tab-profile','dossier':'tab-profile','me':'tab-profile'`,
 		// pushState/popstate + on-load deep-link wiring still present.
 		`function tabFromLocation`,
 		`window.history.pushState`,
@@ -63,6 +65,7 @@ func TestContributeTabOrderSlugMappingIntact(t *testing.T) {
 		`data-panel="tab-ops"`,
 		`data-panel="tab-manage"`,
 		`data-panel="tab-leaderboard"`,
+		`data-panel="tab-profile"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("tab reorder disturbed URL routing: missing %q", want)

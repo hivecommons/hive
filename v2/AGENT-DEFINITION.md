@@ -35,6 +35,9 @@ Export via `GET /api/config/agent/{name}/export`.
 
 ## Spec Fields
 
+These defaults match the loader in `v2/pkg/config`: an omitted `enabled` defaults to `true`, and an omitted `clear_on_kick` defaults to `true`. For the narrative configuration guide, see [docs/agent-configuration.md](docs/agent-configuration.md).
+
+
 ### Identity & Display
 
 | Field | Type | Default | Description |
@@ -53,9 +56,9 @@ Export via `GET /api/config/agent/{name}/export`.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | false | Whether the agent is active |
+| `enabled` | bool | true | Whether the agent is active unless explicitly set to `false` |
 | `on_demand` | bool | false | Skip governor scheduling; only manual kicks |
-| `clear_on_kick` | bool | false | Send `/clear` before each kick |
+| `clear_on_kick` | bool | true | Send `/clear` before each kick unless explicitly set to `false` |
 | `stale_timeout` | int | 28800 | Seconds before an agent is considered stale |
 | `restart_strategy` | string | `"immediate"` | How to restart after crash |
 | `launch_cmd` | string | — | Override the auto-generated launch command |

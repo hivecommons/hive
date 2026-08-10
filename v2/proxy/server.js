@@ -14,6 +14,7 @@ const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
+const SNAPSHOT_FRAME_ANCESTORS_FALLBACK = parseSnapshotFrameAncestors(process.env.HIVE_SNAPSHOT_FRAME_ANCESTORS || '');
 
 if (!DASHBOARD_TOKEN && process.env.NODE_ENV === 'production') {
   console.error('[SECURITY] HIVE_DASHBOARD_TOKEN is not set — all mutations are unauthenticated!');
@@ -22,6 +23,39 @@ if (!DASHBOARD_TOKEN && process.env.NODE_ENV === 'production') {
 
 const app = express();
 app.disable('x-powered-by');
+
+function parseSnapshotFrameAncestors(raw) {
+  const origins = raw.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+  const seen = new Set();
+  const dnsHostPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
+  const ipHostPattern = /^(?:\d{1,3}\.){3}\d{1,3}$|^\[[0-9a-f:.]+\]$/i;
+  return origins.map((origin) => {
+    let parsed;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`invalid HIVE_SNAPSHOT_FRAME_ANCESTORS entry ${origin}: expected an https origin`);
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash ||
+      parsed.hostname.includes('*') ||
+      (!dnsHostPattern.test(parsed.hostname) && !ipHostPattern.test(parsed.hostname)) ||
+      (parsed.port && (Number(parsed.port) < 1 || Number(parsed.port) > 65535))
+    ) {
+      throw new Error(`invalid HIVE_SNAPSHOT_FRAME_ANCESTORS entry ${origin}: expected exact https://host[:port] origin`);
+    }
+    const normalized = `https://${parsed.host}`;
+    if (seen.has(normalized)) return '';
+    seen.add(normalized);
+    return normalized;
+  }).filter(Boolean);
+}
 
 function requireAuth(req, res, next) {
   if (!DASHBOARD_TOKEN) return next();
@@ -36,7 +70,23 @@ function requireAuth(req, res, next) {
   next();
 }
 
-app.use((req, res, next) => {
+async function snapshotFrameAncestors() {
+  try {
+    const headers = {};
+    if (DASHBOARD_TOKEN) headers['X-Hive-Internal'] = DASHBOARD_TOKEN;
+    const resp = await fetch(`${GO_API_URL}/api/snapshot/frame-ancestors`, { headers });
+    if (!resp.ok) return SNAPSHOT_FRAME_ANCESTORS_FALLBACK;
+    const data = await resp.json();
+    return parseSnapshotFrameAncestors((data.origins || []).join(' '));
+  } catch {
+    return SNAPSHOT_FRAME_ANCESTORS_FALLBACK;
+  }
+}
+
+app.use(async (req, res, next) => {
+  const frameAllowlist = req.path === '/snapshot' ? await snapshotFrameAncestors() : [];
+  const snapshotFramingAllowed = frameAllowlist.length > 0;
+  const frameAncestors = snapshotFramingAllowed ? frameAllowlist.join(' ') : "'none'";
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://cdn.redoc.ly",
@@ -48,10 +98,12 @@ app.use((req, res, next) => {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${frameAncestors}`,
   ].join('; '));
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // X-Frame-Options has no allowlist form; rely on CSP frame-ancestors for the
+  // explicitly allowlisted public /snapshot document, keep DENY everywhere else.
+  if (!snapshotFramingAllowed) res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');

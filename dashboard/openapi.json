@@ -23,6 +23,7 @@
     { "name": "Status", "description": "Live hive status and monitoring" },
     { "name": "History", "description": "Sparkline, trend, and timeline data" },
     { "name": "Tokens", "description": "Token usage and cost tracking" },
+    { "name": "Audit", "description": "Recent dashboard and agent lifecycle audit entries" },
     { "name": "Governor", "description": "Governor mode and configuration" },
     { "name": "Agents", "description": "Agent configuration and state" },
     { "name": "Strategy Lab", "description": "Nous experiment engine" },
@@ -31,6 +32,41 @@
     { "name": "System", "description": "Version, config, and diagnostics" }
   ],
   "paths": {
+    "/api/audit": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Recent audit log entries",
+        "description": "Returns up to 200 newest audit entries from the dashboard audit ring. Requires read-write or higher access.",
+        "responses": {
+          "200": {
+            "description": "Audit entries, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": { "type": "string", "format": "date-time" },
+                          "user": { "type": "string" },
+                          "action": { "type": "string" },
+                          "detail": { "type": "string" },
+                          "agent": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": { "description": "Insufficient access" }
+        }
+      }
+    },
     "/api/status": {
       "get": {
         "tags": ["Status"],

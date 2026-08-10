@@ -6,6 +6,10 @@
 # 3. Launches the CLI agent in a tmux session
 # 4. The relay feeds tasks into the tmux session and reports results
 #
+# Knowledge contract: ${HOME}/agent.md is created only after the hub returns a
+# verified live knowledge export. If the export cannot be fetched or validated,
+# the file is absent rather than populated with placeholder text.
+#
 # Environment (from ~/.config/hive/contributor.env):
 #   HIVE_HUB                — WebSocket URL; comma-separated URLs subscribe to multiple hubs
 #   HIVE_REGISTRATION_TOKEN — contributor's token; for multiple hubs, one comma-separated token
@@ -36,6 +40,56 @@ export HIVE_AGENT_SESSION="$TMUX_SESSION"
 export HIVE_AGENT_ID="contributor"
 export HIVE_CONTRIBUTOR_MODE="true"
 export HIVE_CONTRIBUTOR_CLI="$AGENT_BACKEND"
+
+knowledge_export_looks_valid() {
+  local path="$1"
+  local first_line
+
+  [[ -s "$path" ]] || return 1
+  IFS= read -r first_line < "$path" || return 1
+  [[ "$first_line" == "# Agent Knowledge" ]] || return 1
+  grep -qx "This file is auto-generated from the hive knowledge base\\." "$path"
+}
+
+fetch_knowledge_export() {
+  local url="$1"
+  local dest="$2"
+  local tmp_body tmp_status http_code curl_rc
+  local -a proto_redir_args
+
+  mkdir -p "$(dirname "$dest")"
+  tmp_body=$(mktemp "${dest}.tmp.XXXXXX") || return 1
+  tmp_status=$(mktemp "${dest}.status.XXXXXX") || {
+    rm -f "$tmp_body"
+    return 1
+  }
+
+  proto_redir_args=(--proto-redir "=http,https")
+  if [[ "$url" == https://* ]]; then
+    proto_redir_args=(--proto-redir "=https")
+  fi
+
+  curl_rc=0
+  curl --silent --show-error --location "${proto_redir_args[@]}" --max-redirs "${KNOWLEDGE_MAX_REDIRS:-3}" \
+    --max-time "${KNOWLEDGE_FETCH_MAX_TIME:-15}" \
+    --output "$tmp_body" \
+    --write-out "%{http_code}" \
+    "$url" > "$tmp_status" 2>/dev/null || curl_rc=$?
+
+  http_code="$(cat "$tmp_status" 2>/dev/null || echo 000)"
+  if [[ "$curl_rc" -eq 0 && "$http_code" == "200" ]] && knowledge_export_looks_valid "$tmp_body"; then
+    if [[ -e "$dest" ]] && cmp -s "$tmp_body" "$dest"; then
+      rm -f "$tmp_body"
+    else
+      mv "$tmp_body" "$dest"
+    fi
+    rm -f "$tmp_status"
+    return 0
+  fi
+
+  rm -f "$tmp_body" "$tmp_status"
+  return 1
+}
 
 # Task-delivery mode (kubestellar/hive#2538). "interactive" (default) launches
 # the CLI in a tmux pane and the relay types tasks into it; "headless" skips the
@@ -103,6 +157,19 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND:-}" == "1" ]]; then
   echo "backend_binary=$(backend_binary "$AGENT_BACKEND")"
   echo "backend_perm_flag=$(backend_perm_flag "$AGENT_BACKEND")"
   exit 0
+fi
+
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
+  AGENT_MD="${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST:-${HOME}/agent.md}"
+  HUB_HTTP=$(echo "$HIVE_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
+  KNOWLEDGE_EXPORT_URL="${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_URL:-${HUB_HTTP}/api/knowledge/export}"
+  if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
+    echo "knowledge_fetch=installed"
+    exit 0
+  fi
+  rm -f "$AGENT_MD"
+  echo "knowledge_fetch=unavailable"
+  exit 1
 fi
 
 # Detect CLI authentication
@@ -232,25 +299,20 @@ fi
 # Download agent knowledge base from hub
 AGENT_MD="${HOME}/agent.md"
 HUB_HTTP=$(echo "$HIVE_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
-curl -sf "${HUB_HTTP}/api/knowledge/export" -o "$AGENT_MD" 2>/dev/null && \
-  echo "Agent knowledge downloaded ($(wc -l < "$AGENT_MD") lines)" || \
-  echo "# Agent Knowledge\n\nKnowledge base not yet available." > "$AGENT_MD"
+KNOWLEDGE_EXPORT_URL="${HUB_HTTP}/api/knowledge/export"
+if fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD"; then
+  echo "Agent knowledge downloaded ($(wc -l < "$AGENT_MD") lines)"
+else
+  rm -f "$AGENT_MD"
+  echo "Agent knowledge unavailable; ${AGENT_MD} left absent."
+fi
 
 # Refresh agent.md every 10 minutes in the background
 KNOWLEDGE_REFRESH_SECS=600
 (
   while true; do
     sleep "$KNOWLEDGE_REFRESH_SECS"
-    TMPF=$(mktemp)
-    if curl -sf "${HUB_HTTP}/api/knowledge/export" -o "$TMPF" 2>/dev/null; then
-      if ! cmp -s "$TMPF" "$AGENT_MD"; then
-        mv "$TMPF" "$AGENT_MD"
-      else
-        rm -f "$TMPF"
-      fi
-    else
-      rm -f "$TMPF"
-    fi
+    fetch_knowledge_export "$KNOWLEDGE_EXPORT_URL" "$AGENT_MD" || true
   done
 ) &
 
@@ -401,7 +463,7 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   AUTO_DISMISS_ATTEMPTS=10
   AUTO_DISMISS_INTERVAL=3
   (
-    for i in $(seq 1 $AUTO_DISMISS_ATTEMPTS); do
+    for _attempt in $(seq 1 $AUTO_DISMISS_ATTEMPTS); do
       sleep "$AUTO_DISMISS_INTERVAL"
       PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -10 2>/dev/null || true)
       if echo "$PANE" | grep -q "trust this folder\|trust the files\|Confirm folder trust\|Enter to confirm"; then
