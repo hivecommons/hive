@@ -38,6 +38,7 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{
 						"number": 7,
 						"user":   map[string]string{"login": tt.author},
+						"head":   map[string]string{"sha": "head7"},
 					})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+ghpkg.AutoMergeQueuedLabel:
 					http.NotFound(w, r)

@@ -17,6 +17,8 @@ type sweepPR struct {
 	number          int
 	author          string
 	queuedBy        string
+	headSHA         string
+	reviewCommitID  *string
 	label           bool
 	draft           bool
 	mergeableState  string
@@ -52,6 +54,92 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	}
 	if len(audits) != 1 || audits[0].Repo != "widget" || audits[0].Number != 7 || audits[0].QueuedBy != "bob" {
 		t.Fatalf("audit events = %#v, want PR 7 queued by bob", audits)
+	}
+	if audits[0].HeadSHA != "sha7" {
+		t.Fatalf("audit head SHA = %q, want sha7", audits[0].HeadSHA)
+	}
+}
+
+func TestSweepQueuedAutoMergesDequeuesWhenApprovalHeadChanged(t *testing.T) {
+	reviewHead := "oldsha"
+	var merged []int
+	var removedLabel, commented bool
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number:          7,
+		author:          "alice",
+		queuedBy:        "bob",
+		headSHA:         "newsha",
+		reviewCommitID:  &reviewHead,
+		label:           true,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+	}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+AutoMergeQueuedLabel:
+			removedLabel = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			commented = true
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	})
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("merged result=%v merge calls=%v, want stale approval skipped", result.Merged, merged)
+	}
+	if !removedLabel || !commented {
+		t.Fatalf("removedLabel=%v commented=%v, want queue invalidated with comment", removedLabel, commented)
+	}
+}
+
+func TestSweepQueuedAutoMergesDequeuesWhenApprovalHeadMissing(t *testing.T) {
+	missingHead := ""
+	var merged []int
+	var removedLabel, commented bool
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number:          7,
+		author:          "alice",
+		queuedBy:        "bob",
+		reviewCommitID:  &missingHead,
+		label:           true,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+	}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+AutoMergeQueuedLabel:
+			removedLabel = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			commented = true
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	})
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("merged result=%v merge calls=%v, want missing approval head skipped", result.Merged, merged)
+	}
+	if !removedLabel || !commented {
+		t.Fatalf("removedLabel=%v commented=%v, want queue invalidated with comment", removedLabel, commented)
 	}
 }
 
@@ -248,7 +336,7 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 					if tt.noReview {
 						json.NewEncoder(w).Encode([]map[string]any{})
 					} else {
-						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI."}})
+						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7"}})
 					}
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -292,7 +380,7 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 						"labels":          []map[string]string{{"name": AutoMergeQueuedLabel}},
 					})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI."}})
+					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -327,7 +415,7 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 				"labels": []map[string]string{{"name": AutoMergeQueuedLabel}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI."}})
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -343,6 +431,88 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
 	if err == nil || reason != "merge-failed" {
 		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want merge-failed error", reason, err)
+	}
+}
+
+func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"state": "APPROVED", "body": "Approved by @old for Hive auto-merge on green CI.", "commit_id": "oldsha"},
+			{"state": "COMMENTED", "body": "Approved by @ignored for Hive auto-merge on green CI.", "commit_id": "ignored"},
+			{"state": "APPROVED", "body": "Approved by @new for Hive auto-merge on green CI.", "commit_id": "newsha"},
+		})
+	}))
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	approval, ok, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
+	if err != nil {
+		t.Fatalf("latestHiveQueueApproval returned error: %v", err)
+	}
+	if !ok || approval.QueuedBy != "new" || approval.HeadSHA != "newsha" {
+		t.Fatalf("approval=(%+v,%v), want new/newsha", approval, ok)
+	}
+}
+
+func TestInvalidateQueuedAutoMergeIgnoresMissingLabelAndComments(t *testing.T) {
+	var commented bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+AutoMergeQueuedLabel:
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			commented = true
+			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	if err := c.invalidateQueuedAutoMerge(context.Background(), "acme", "widget", 7, AutoMergeQueuedLabel, "re-queue required"); err != nil {
+		t.Fatalf("invalidateQueuedAutoMerge returned error: %v", err)
+	}
+	if !commented {
+		t.Fatal("expected stale queue invalidation comment")
+	}
+}
+
+func TestInvalidateQueuedAutoMergeReportsAPIErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		deleteCode int
+		commentOK  bool
+	}{
+		{name: "remove label error", deleteCode: http.StatusInternalServerError, commentOK: true},
+		{name: "comment error", deleteCode: http.StatusOK, commentOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+AutoMergeQueuedLabel:
+					w.WriteHeader(tt.deleteCode)
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+					if tt.commentOK {
+						json.NewEncoder(w).Encode(map[string]any{"id": 1})
+						return
+					}
+					http.Error(w, "boom", http.StatusInternalServerError)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+
+			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			if err := c.invalidateQueuedAutoMerge(context.Background(), "acme", "widget", 7, AutoMergeQueuedLabel, "re-queue required"); err == nil {
+				t.Fatal("invalidateQueuedAutoMerge returned nil error")
+			}
+		})
 	}
 }
 
@@ -407,7 +577,7 @@ func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	}
 }
 
-func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int) *httptest.Server {
+func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]sweepPR, len(prs))
 	for _, pr := range prs {
@@ -434,10 +604,22 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/reviews")
 			pr := byNumber[number]
 			body := "Approved by @" + pr.queuedBy + " for Hive auto-merge on green CI."
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": body}})
+			headSHA := "sha" + strconv.Itoa(pr.number)
+			if pr.headSHA != "" {
+				headSHA = pr.headSHA
+			}
+			reviewCommitID := headSHA
+			if pr.reviewCommitID != nil {
+				reviewCommitID = *pr.reviewCommitID
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": body, "commit_id": reviewCommitID}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]
+			headSHA := "sha" + strconv.Itoa(pr.number)
+			if pr.headSHA != "" {
+				headSHA = pr.headSHA
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"number":          pr.number,
 				"state":           "open",
@@ -445,7 +627,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"mergeable_state": pr.mergeableState,
 				"mergeable":       pr.mergeableState == "clean",
 				"user":            map[string]string{"login": pr.author},
-				"head":            map[string]string{"sha": "sha" + strconv.Itoa(pr.number)},
+				"head":            map[string]string{"sha": headSHA},
 				"labels":          []map[string]string{{"name": expectedLabel}},
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
@@ -472,6 +654,10 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			*merged = append(*merged, number)
 			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
 		default:
+			for _, extra := range extras {
+				extra(w, r)
+				return
+			}
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
 	}))

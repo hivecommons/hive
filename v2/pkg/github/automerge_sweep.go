@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -33,6 +34,11 @@ type AutoMergeSweepResult struct {
 	Merged  []AutoMergeSweepEvent
 	Seen    int
 	Skipped int
+}
+
+type hiveQueueApproval struct {
+	QueuedBy string
+	HeadSHA  string
 }
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
@@ -126,13 +132,33 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	}
 
 	author := safeGetLogin(pr.GetUser())
-	queuedBy, ok, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
+	headSHA := ""
+	if pr.GetHead() != nil {
+		headSHA = pr.GetHead().GetSHA()
+	}
+	if headSHA == "" {
+		return AutoMergeSweepEvent{}, "missing-head-sha", nil
+	}
+	approval, ok, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
 	if err != nil {
 		return AutoMergeSweepEvent{}, "queue-approval-check", err
 	}
 	if !ok {
 		return AutoMergeSweepEvent{}, "no-hive-queue-approval", nil
 	}
+	if approval.HeadSHA == "" {
+		if err := c.invalidateQueuedAutoMerge(ctx, owner, repo, number, label, "Hive auto-merge approval is missing a reviewed head SHA — re-queue required."); err != nil {
+			return AutoMergeSweepEvent{}, "queue-approval-missing-head", err
+		}
+		return AutoMergeSweepEvent{}, "queue-approval-missing-head", nil
+	}
+	if approval.HeadSHA != headSHA {
+		if err := c.invalidateQueuedAutoMerge(ctx, owner, repo, number, label, "Hive auto-merge approval head changed since approval — re-queue required."); err != nil {
+			return AutoMergeSweepEvent{}, "queue-approval-head-changed", err
+		}
+		return AutoMergeSweepEvent{}, "queue-approval-head-changed", nil
+	}
+	queuedBy := approval.QueuedBy
 	if strings.EqualFold(author, queuedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
 	}
@@ -140,13 +166,6 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
 	if mergeable != MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
-	}
-	headSHA := ""
-	if pr.GetHead() != nil {
-		headSHA = pr.GetHead().GetSHA()
-	}
-	if headSHA == "" {
-		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 	green, reason, err := c.commitGreen(ctx, owner, repo, headSHA)
 	if err != nil {
@@ -179,20 +198,20 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	return event, "", nil
 }
 
-func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (string, bool, error) {
+func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := ""
+	latest := hiveQueueApproval{}
 	for {
 		reviews, resp, err := c.client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			return "", false, err
+			return hiveQueueApproval{}, false, err
 		}
 		for _, review := range reviews {
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
 			if queuedBy := parseHiveQueueReview(review.GetBody()); queuedBy != "" {
-				latest = queuedBy
+				latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
 			}
 		}
 		if resp.NextPage == 0 {
@@ -200,7 +219,17 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 		}
 		opts.Page = resp.NextPage
 	}
-	return latest, latest != "", nil
+	return latest, latest.QueuedBy != "", nil
+}
+
+func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {
+	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("removing %s label: %w", label, err)
+	}
+	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return fmt.Errorf("commenting on stale auto-merge approval: %w", err)
+	}
+	return nil
 }
 
 func parseHiveQueueReview(body string) string {
