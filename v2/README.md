@@ -321,6 +321,7 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 ## Additional references
 
 - [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
+- [Troubleshooting](docs/troubleshooting.md) — v2 container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
 - [Config layering](docs/config-layering.md) — effective config provenance and precedence.
 - [Dashboard API reference](docs/api-reference.md) — generated route index.
 - [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.

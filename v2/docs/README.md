@@ -9,6 +9,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, and GitHub token scopes.
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
+- [Troubleshooting](troubleshooting.md) — v2 container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
 - [Cross-cluster migration](cross-cluster-migration.md) — moving a hive between clusters without losing state.
 - [Dashboard route and health checks](health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
@@ -16,6 +17,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
+- [Custom stylesheets](custom-stylesheets.md) — public CSS theme injection for dashboard, leaderboard, and snapshot surfaces.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](backup-restore.md) — `hive-backup`, Kubernetes CronJob, and spoke backup scope.
@@ -34,7 +36,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 ## Configuration and agents
 
 - [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
-- [Supervisor agent](supervisor.md) — supervisor policy templates and when to use each.
+- [Supervisor agent](supervisor.md) — supervisor policy modes, bead roles, and when to enable the orchestration lane.
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Knowledge curator](knowledge-curator.md) — automatic fact extraction and promotion knobs.
 - [GitHub App setup](github-app-setup.md) — app creation, permissions, Setup URL, and `/gh-setup`.

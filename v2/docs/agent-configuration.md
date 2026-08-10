@@ -113,6 +113,9 @@ agents:
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
 
+For prompt file resolution and the complete built-in `${VAR}` reference, see
+[Policy and prompt templates](../policies/README.md).
+
 ### Declarative extensions
 
 Three optional blocks replace hardcoded behavior with declarations:

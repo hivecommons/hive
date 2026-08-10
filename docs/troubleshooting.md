@@ -2,11 +2,10 @@
 
 > **Legacy v1/systemd documentation.** This page troubleshoots the original
 > supervisor/tmux/systemd deployment (`bin/supervisor.sh`, `systemctl`, and
-> `/etc/hive/agent.env`). For current v2 Docker/Go operations, use the
-> [`v2/docs/README.md`](../v2/docs/README.md) index, especially
-> [`v2/docs/health-checks.md`](../v2/docs/health-checks.md),
-> [`v2/docs/operator-reference.md`](../v2/docs/operator-reference.md), and
-> [`v2/docs/manual-provisioning.md`](../v2/docs/manual-provisioning.md).
+> `/etc/hive/agent.env`). For current v2 Docker/Go operations, use
+> [v2 troubleshooting](../v2/docs/troubleshooting.md) and the
+> [`v2/docs/README.md`](../v2/docs/README.md) index.
+
 
 ## The `/loop` prompt never fires — the agent just sits at the prompt
 

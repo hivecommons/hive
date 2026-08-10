@@ -84,7 +84,7 @@ The repository includes `githooks/post-checkout`. Install it only if you want th
 git config core.hooksPath githooks
 ```
 
-The hook runs after branch checkouts in the primary worktree. It prevents that worktree from staying on a branch other than `main` by printing guidance and checking `main` back out. It is intended for long-running dashboard checkouts where feature work should happen in separate `git worktree add ...` directories. It does not run for file checkouts. Because `core.hooksPath` can apply beyond the primary checkout, install it only in the checkout you want protected; if it fires somewhere else, remove or override that hooksPath setting there.
+The hook runs after branch checkouts in the primary worktree. It prevents that worktree from staying on a branch other than `main` by printing guidance and checking `main` back out. It is intended for long-running dashboard checkouts where feature work should happen in separate `git worktree add ...` directories. It does not run for file checkouts or linked worktrees, because linked worktrees have a `.git` file instead of a `.git` directory.
 
 If the hook is not installed, normal Git behavior applies. If it blocks a checkout unexpectedly, use a separate worktree from an unprotected checkout or remove the hooksPath setting for repositories where the guard is not desired.
 

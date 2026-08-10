@@ -13,8 +13,8 @@ BRANCH_FLAG="$3"   # 1 = branch checkout, 0 = file checkout
 # Only guard branch checkouts
 [[ "$BRANCH_FLAG" != "1" ]] && exit 0
 
-# Only guard the primary worktree — worktrees have a .git *file*, not dir
-[[ ! -d "$(git rev-parse --git-dir 2>/dev/null)" ]] && exit 0
+# Only guard the primary worktree — linked worktrees have a .git *file*, not dir.
+[[ ! -d .git ]] && exit 0
 
 CURRENT_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null)"
 
