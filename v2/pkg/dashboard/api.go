@@ -4788,6 +4788,15 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 				http.StatusBadRequest)
 			return
 		}
+		// SECURITY (audit N8, CWE-200/918): the same confinement the gateway
+		// upsert applies. This is the LiteLLM twin of that handler and carries
+		// the identical defect — the guardrail above short-circuits for ANY
+		// absolute path, so an arbitrary file could be stored and later read.
+		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
+			jsonError(w, "api_key_file must be under /secrets or "+config.WritableSecretsDir,
+				http.StatusBadRequest)
+			return
+		}
 		lc.APIKeyFile = keyFile
 	}
 	if body.DefaultModel != nil {

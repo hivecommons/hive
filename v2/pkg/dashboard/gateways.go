@@ -227,6 +227,19 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 			jsonError(w, "this looks like an API key — send it as api_key instead; api_key_file takes a file PATH", http.StatusBadRequest)
 			return
 		}
+		// SECURITY (audit N8, CWE-200/918): reject an out-of-root path at the
+		// door with a clear 400, rather than storing it and letting it resolve
+		// to "" later (which would look like a mysteriously broken gateway).
+		//
+		// Note the guardrail ABOVE only fires for a RELATIVE key-looking string —
+		// `!strings.HasPrefix(keyFile, "/")` short-circuits it for every absolute
+		// path, which is precisely why any absolute path used to be accepted and
+		// stored verbatim. ResolveAPIKey enforces the same confinement at read
+		// time for paths that reach hive.yaml by other routes.
+		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
+			jsonError(w, "api_key_file must be under /secrets or "+config.WritableSecretsDir, http.StatusBadRequest)
+			return
+		}
 	}
 
 	cfg := s.deps.Config
@@ -531,6 +544,24 @@ func validateGatewayEndpoint(endpoint string) error {
 // key so it survives pod restarts and hosted users can set keys without cluster
 // access.
 var gatewaySecretsDir = config.WritableSecretsDir
+
+// setGatewaySecretsDirForTest repoints where gateway key VALUES are written AND
+// registers that directory with config's secret-file read gate (audit N8), then
+// returns a restore func.
+//
+// The two must move together. The read gate confines api_key_file to the managed
+// secrets dirs; a test that repoints only the write var would store a key it can
+// never read back, and "just disable the gate in tests" would mean the
+// confinement is never actually exercised.
+func setGatewaySecretsDirForTest(dir string) func() {
+	prevDir := gatewaySecretsDir
+	gatewaySecretsDir = dir
+	restoreRoot := config.AllowSecretFileRoot(dir)
+	return func() {
+		restoreRoot()
+		gatewaySecretsDir = prevDir
+	}
+}
 
 // storeGatewayAPIKey writes a gateway's key VALUE to an owner-only file on the
 // PVC and returns the file PATH to record in hive.yaml (api_key_file). The key

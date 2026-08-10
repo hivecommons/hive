@@ -17,7 +17,12 @@ import (
 // path, mirroring how the server records keys (api_key_file, never inline).
 func writeTempKeyFile(t *testing.T, key string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "gateway_api_key")
+	dir := t.TempDir()
+	// N8: api_key_file reads are confined to the managed secrets dirs, so this
+	// temp dir has to be registered as an allowed root for the duration of the
+	// test — otherwise ResolveAPIKey correctly refuses to read it.
+	t.Cleanup(config.AllowSecretFileRoot(dir))
+	path := filepath.Join(dir, "gateway_api_key")
 	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
 		t.Fatalf("writing key file: %v", err)
 	}

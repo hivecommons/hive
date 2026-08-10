@@ -14,6 +14,9 @@ import (
 // any other gateway. project_id/region are plain (non-secret) inline fields.
 func TestWatsonxGatewayParse(t *testing.T) {
 	dir := t.TempDir()
+	// N8: api_key_file reads are confined to the managed secrets dirs; declare
+	// this test's temp dir as an allowed root.
+	defer SetSecretFileRootsForTest(dir)()
 	keyFile := filepath.Join(dir, "wx_api_key")
 	if err := os.WriteFile(keyFile, []byte("ibm-cloud-key-VALUE\n"), 0o600); err != nil {
 		t.Fatal(err)
