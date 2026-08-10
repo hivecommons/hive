@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node server.test.js"
+    "test": "node server.test.js && node terminal_cookie_verify.test.js"
   },
   "dependencies": {
     "express": "^5.2.0",
