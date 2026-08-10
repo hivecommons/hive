@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
-// enableDefinitionAllowlist puts a slug on the seed-only GitHub allowlist so the
-// keep-linked / prompt-source paths are permitted for it in tests.
 func enableDefinitionAllowlist(deps *Dependencies, slugs ...string) {
 	deps.Config.Variables.Security.AllowGitHubPrompt = true
 	deps.Config.Variables.Security.GitHubPromptAllowlist = slugs
@@ -56,6 +55,110 @@ func TestDefinitionSourceFromURL(t *testing.T) {
 			}
 			if ds.URL != tc.url {
 				t.Errorf("URL not round-tripped: %q", ds.URL)
+			}
+		})
+	}
+}
+
+func TestAgentImportURLPolicy(t *testing.T) {
+	defSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			name = "imported-url-policy-agent"
+		}
+		fmt.Fprintf(w, "apiVersion: hive.kubestellar.io/v1\nkind: %s\nmetadata:\n  name: %s\nspec:\n  backend: claude\n", exportKind, name)
+	}))
+	defer defSrv.Close()
+	routeImportFetchesToServer(t, defSrv)
+
+	cases := []struct {
+		name          string
+		importURL     string
+		keepLinked    bool
+		wantStatus    int
+		wantErr       string
+		wantLinked    bool
+		wantAgentName string
+	}{
+		{
+			name:       "gist keep-linked rejected clearly",
+			importURL:  "https://gist.github.com/someone/abcdef/raw/agent.yaml?name=gist-linked",
+			keepLinked: true,
+			wantStatus: http.StatusBadRequest,
+			wantErr:    "keep linked imports do not support gist URLs",
+		},
+		{
+			name:          "gist one-shot accepted",
+			importURL:     "https://gist.github.com/someone/abcdef/raw/agent.yaml?name=gist-one-shot",
+			wantStatus:    http.StatusOK,
+			wantAgentName: "gist-one-shot",
+		},
+		{
+			name:          "github blob one-shot accepted",
+			importURL:     "https://github.com/kubestellar/hive/blob/main/agents/blob-plain.yaml?name=blob-one-shot",
+			wantStatus:    http.StatusOK,
+			wantAgentName: "blob-one-shot",
+		},
+		{
+			name:          "github blob keep-linked accepted",
+			importURL:     "https://github.com/kubestellar/hive/blob/main/agents/blob-linked.yaml?name=blob-linked",
+			keepLinked:    true,
+			wantStatus:    http.StatusOK,
+			wantLinked:    true,
+			wantAgentName: "blob-linked",
+		},
+		{
+			name:          "raw github one-shot accepted",
+			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-plain.yaml?name=raw-one-shot",
+			wantStatus:    http.StatusOK,
+			wantAgentName: "raw-one-shot",
+		},
+		{
+			name:          "raw github keep-linked accepted",
+			importURL:     "https://raw.githubusercontent.com/kubestellar/hive/main/agents/raw-linked.yaml?name=raw-linked",
+			keepLinked:    true,
+			wantStatus:    http.StatusOK,
+			wantLinked:    true,
+			wantAgentName: "raw-linked",
+		},
+		{
+			name:       "disallowed host rejected",
+			importURL:  "https://example.com/kubestellar/hive/blob/main/agent.yaml?name=bad-host",
+			wantStatus: http.StatusBadRequest,
+			wantErr:    "example.com",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, deps := apiServer(t)
+			deps.Config.Data.AgentsDir = t.TempDir()
+			enableDefinitionAllowlist(deps, "kubestellar/hive")
+
+			rec := doPost(s, "/api/agents/import", map[string]interface{}{
+				"source":     "url",
+				"url":        tc.importURL,
+				"keepLinked": tc.keepLinked,
+			})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", tc.wantStatus, rec.Code, rec.Body.String())
+			}
+			if tc.wantErr != "" {
+				if !strings.Contains(rec.Body.String(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %s", tc.wantErr, rec.Body.String())
+				}
+				return
+			}
+
+			agent, ok := deps.Config.Agents[tc.wantAgentName]
+			if !ok {
+				t.Fatalf("expected imported agent %q", tc.wantAgentName)
+			}
+			if tc.wantLinked && agent.DefinitionSource == nil {
+				t.Fatal("expected keep-linked import to set definition_source")
+			}
+			if !tc.wantLinked && agent.DefinitionSource != nil {
+				t.Fatalf("expected one-shot import to leave definition_source unset, got %+v", agent.DefinitionSource)
 			}
 		})
 	}
