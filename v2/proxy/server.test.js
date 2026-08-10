@@ -472,6 +472,67 @@ async function testC3F_InsufficientRoleDenied() {
   console.log('  ✓ read-only role assertion → denied (owner/read-write required for a shell)');
 }
 
+// N4 (CWE-862/613) — THE TESTS THE SUITE WAS MISSING.
+//
+// Every C3F case above uses `dave`, who is deliberately NOT on the static
+// allowlist. Their 403s are therefore produced by the FALLBACK denying a
+// non-member — they prove nothing about role enforcement, and they passed
+// against the vulnerable code.
+//
+// `carol:read` IS on the allowlist (see the HIVE_AUTHORIZED_USERS fixture). She
+// is the case that mattered: authorizeTerminal treated "valid assertion, role
+// too low" the same as "no assertion", fell through to the allowlist, and the
+// allowlist parse discarded her ":read" suffix — so a read-only viewer got a
+// shell in a credential-holding container.
+async function testN4_AllowlistedReadOnlyDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'carol');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'carol', role: 'read', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403,
+    `N4: carol is allowlisted but read-only — a valid read assertion must DENY, got ${resp.status}`);
+  const { opened } = await terminalWS(cookie, HOSTED_HOST, assertion);
+  assert.ok(!opened, 'N4: carol read-only WS must be closed');
+  console.log('  ✓ allowlisted READ-ONLY user + valid read assertion → denied (no fallback)');
+}
+
+// Same user with NO assertion at all. This one legitimately reaches the
+// fallback — there is no authoritative role to read — and the role-aware
+// allowlist is what must deny her now that ":read" is honoured.
+async function testN4_AllowlistedReadOnlyNoAssertionDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'carol');
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, null);
+  assert.equal(resp.status, 403,
+    `N4: carol with NO assertion must be denied by the role-aware allowlist, got ${resp.status}`);
+  const { opened } = await terminalWS(cookie, HOSTED_HOST, null);
+  assert.ok(!opened, 'N4: carol with no assertion WS must be closed');
+  console.log('  ✓ allowlisted READ-ONLY user, no assertion → denied (:read honoured in allowlist)');
+}
+
+// An EXPIRED assertion is "tells us nothing", so it falls back — and the
+// role-aware allowlist must still deny a read-only user. Under the old code this
+// was a shell.
+async function testN4_AllowlistedReadOnlyExpiredDenied() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'carol');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'carol', role: 'owner', hiveID: HIVE_B_ID, ttlSec: 600, iatOffsetSec: -1000 });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 403,
+    `N4: carol with an EXPIRED owner assertion must be denied, got ${resp.status}`);
+  console.log('  ✓ allowlisted READ-ONLY user + expired assertion → denied (revocation/expiry take effect)');
+}
+
+// CONTROL: the fix must not break legitimate access. alice:owner still gets in,
+// both with a valid owner assertion and via the allowlist fallback.
+async function testN4_OwnerStillAllowed() {
+  const cookie = mintCookie(HIVE_B_SECRET, 'alice');
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'alice', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 200, `alice:owner with a valid assertion must be 200, got ${resp.status}`);
+  const noAssertion = await terminalHTTP(cookie, HOSTED_HOST, null);
+  assert.equal(noAssertion.status, 200,
+    `alice:owner must still pass via the allowlist fallback, got ${noAssertion.status}`);
+  console.log('  ✓ owner still allowed (with assertion and via fallback) — fix is not over-broad');
+}
+
 // FORGED assertion (wrong signing secret) → signature fails → not usable → denied.
 async function testC3F_ForgedAssertionDenied() {
   const cookie = mintCookie(HIVE_B_SECRET, 'dave');
@@ -677,6 +738,10 @@ try {
   await testC3F_ExpiredAssertionDenied();
   await testC3F_WrongHiveAssertionDenied();
   await testC3F_InsufficientRoleDenied();
+  await testN4_AllowlistedReadOnlyDenied();
+  await testN4_AllowlistedReadOnlyNoAssertionDenied();
+  await testN4_AllowlistedReadOnlyExpiredDenied();
+  await testN4_OwnerStillAllowed();
   await testC3F_ForgedAssertionDenied();
   await testC3F_WrongVersionDenied();
   await testC3F_UserMismatchDenied();

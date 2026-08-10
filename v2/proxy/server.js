@@ -90,6 +90,20 @@ const IS_HOSTED = SESSION_KEY !== '' || SESSION_PUBLIC_KEY !== '';
 // never "a user allowed on THIS hive".
 const HIVE_ID = process.env.HIVE_ID || '';
 
+// TERMINAL_ROLES are the roles sufficient to open a shell: owner and read-write.
+// A `read`-only grant authenticates and authorizes the DASHBOARD but is NOT
+// enough for a terminal — the finding asks role sufficiency (owner/operator) be
+// enforced, and a read-only user with shell access would be a privilege
+// escalation. Role strings mirror pkg/config (RoleOwner, RoleReadWrite) and the
+// hub saasRole* constants.
+const TERMINAL_ROLES = new Set(['owner', 'read-write']);
+
+// Declared ABOVE the HIVE_AUTHORIZED_USERS parse below, because
+// parseAuthorizedUsernames now consults it (N4 role-aware allowlist). A `const`
+// sits in a temporal dead zone until its declaration executes, and that parse
+// runs at module load — with this further down, the proxy threw "Cannot access
+// 'TERMINAL_ROLES' before initialization" and failed to start at all.
+
 // HIVE_AUTHORIZED_USERS is this hive's per-hive allowlist, injected by the hub
 // (authorizedUsersForHive): a comma-separated list of `username` or
 // `username:role` entries (owner + everyone with this hive in their SaaS
@@ -115,6 +129,8 @@ const HIVE_AUTHORIZED_USERS = parseAuthorizedUsernames(process.env.HIVE_AUTHORIZ
 // the ingress" — there is no ingress to defer to — so the terminal must deny.
 const HIVE_INGRESS_AUTHZ = (process.env.HIVE_INGRESS_AUTHZ || '') === 'true';
 
+
+
 // parseAuthorizedUsernames turns "owner:owner,alice:read,bob" into a Set of
 // lowercased usernames. It mirrors the Go parseAuthorizedUsers split (comma
 // list, ":role" suffix optional) but keeps only the identity, which is all the
@@ -122,8 +138,23 @@ const HIVE_INGRESS_AUTHZ = (process.env.HIVE_INGRESS_AUTHZ || '') === 'true';
 function parseAuthorizedUsernames(raw) {
   const set = new Set();
   for (const entry of raw.split(',')) {
-    const name = entry.split(':')[0].trim().toLowerCase();
-    if (name) set.add(name);
+    const parts = entry.split(':');
+    const name = parts[0].trim().toLowerCase();
+    if (!name) continue;
+    // SECURITY (audit N4, CWE-862): the role suffix is NOT decoration — honour it.
+    //
+    // This used to keep only `parts[0]`, discarding ":read". authorizedUsersForHive
+    // emits EVERY user granted the hive, as `owner:owner` plus `name:read` for the
+    // rest, so dropping the suffix made a read-only viewer indistinguishable from
+    // an owner in this set — and the terminal gate then handed them a shell in a
+    // credential-holding container.
+    //
+    // A missing suffix means "no role stated"; those entries are kept, since the
+    // list has historically carried bare names and the caller (isAuthorizedForThisHive)
+    // is only reached when there is no authoritative assertion to read a role from.
+    const role = (parts[1] || '').trim().toLowerCase();
+    if (role && !TERMINAL_ROLES.has(role)) continue;
+    set.add(name);
   }
   return set;
 }
@@ -210,14 +241,6 @@ const TERMINAL_ASSERTION_COOKIE = 'hive_terminal_assertion';
 // bounds. Matches the Go ssoClockSkew (30s).
 const TERMINAL_CLOCK_SKEW_S = 30;
 
-// TERMINAL_ROLES are the roles sufficient to open a shell: owner and read-write.
-// A `read`-only grant authenticates and authorizes the DASHBOARD but is NOT
-// enough for a terminal — the finding asks role sufficiency (owner/operator) be
-// enforced, and a read-only user with shell access would be a privilege
-// escalation. Role strings mirror pkg/config (RoleOwner, RoleReadWrite) and the
-// hub saasRole* constants.
-const TERMINAL_ROLES = new Set(['owner', 'read-write']);
-
 // verifyTerminalAssertion mirrors Go hub.VerifyTerminalAssertion. It returns
 // { username, role } on success, or null on ANY failure (bad signature, wrong
 // version, wrong hive, expired/not-yet-valid, malformed) — fail closed, never
@@ -273,17 +296,37 @@ function verifyTerminalAssertion(key, token, expectedHiveID, nowSec) {
 function authorizeTerminal(cookieUser, assertionCookie) {
   const nowSec = Math.floor(Date.now() / 1000);
   const claim = verifyTerminalAssertion(TERMINAL_SIGNING_KEY, assertionCookie, HIVE_ID, nowSec);
-  if (claim && TERMINAL_ROLES.has((claim.role || '').toLowerCase())) {
-    // A valid this-hive assertion with a sufficient role is the primary grant.
-    // Bind it to the SAME user the hub-wide cookie authenticated: an attacker
-    // must present BOTH a validly-signed hub cookie for user X AND a validly-
-    // signed terminal assertion for user X on THIS hive.
-    if (claim.username && cookieUser &&
-        claim.username.toLowerCase() === cookieUser.toLowerCase()) {
-      return true;
-    }
+
+  if (claim) {
+    // The assertion VERIFIED — a correctly signed, unexpired, this-hive grant.
+    // Its role is therefore authoritative, and this function must answer from it
+    // alone. It must NOT fall through to the allowlist.
+    //
+    // SECURITY (audit N4, CWE-862/613): the fallback below used to be reached
+    // for every non-grant outcome, including a valid assertion whose role was
+    // merely insufficient. That silently upgraded read-only users to a shell,
+    // because the allowlist parse (parseAuthorizedUsernames) DISCARDS the
+    // ":read" suffix and authorizedUsersForHive puts every granted user in the
+    // list — so `carol:read` was indistinguishable from `alice:owner` there.
+    //
+    // Worse, the allowlist is a provision-time env snapshot: hub-side revocation
+    // never reaches a running spoke, so a revoked user kept shell access
+    // indefinitely on a stale list. Honouring the assertion's own role — and its
+    // expiry — is what makes revocation and downgrade actually take effect.
+    const roleOK = TERMINAL_ROLES.has((claim.role || '').toLowerCase());
+    const userOK = !!claim.username && !!cookieUser &&
+      claim.username.toLowerCase() === cookieUser.toLowerCase();
+    // Bind the grant to the SAME user the hub-wide cookie authenticated: an
+    // attacker must present BOTH a validly-signed hub cookie for user X AND a
+    // validly-signed terminal assertion for user X on THIS hive.
+    return roleOK && userOK;
   }
-  // No usable assertion → fall back to the #2756 static allowlist + fail-closed.
+
+  // No USABLE assertion — absent, expired, wrong hive, or bad signature. There
+  // is no authoritative role to read, so fall back to the #2756 static allowlist
+  // (itself fail-closed). Note this is deliberately narrower than before: it is
+  // now reached only when the assertion tells us NOTHING, never when it tells us
+  // "no".
   return isAuthorizedForThisHive(cookieUser);
 }
 
