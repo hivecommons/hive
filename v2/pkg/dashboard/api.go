@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -6401,6 +6402,12 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		if !ok || len(ff) == 0 {
 			continue
 		}
+		// Facts within a type group arrive aggregated across layers, vaults, and
+		// git sources, so their relative order is not stable between fetches
+		// (see #3090). Sort by the natural identifier (Slug, then Title, then
+		// Body) so identical knowledge always serializes byte-for-byte the same
+		// and unchanged data does not rewrite downstream files on every refresh.
+		sortFactsStable(ff)
 		label := typeLabels[t]
 		if label == "" {
 			label = strings.Title(t)
@@ -6417,9 +6424,30 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	body := sb.String()
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, len(facts)))
-	w.Write([]byte(sb.String()))
+	// ETag over the rendered body (not just the fact count) so consumers can
+	// skip a rewrite whenever the content is unchanged, and always see a new
+	// tag when it genuinely changes.
+	sum := sha256.Sum256([]byte(body))
+	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sum))
+	w.Write([]byte(body))
+}
+
+// sortFactsStable orders facts by their natural identifier so an unchanged
+// knowledge base serializes to byte-identical output regardless of the order
+// facts were aggregated across sources. Slug is the primary key (unique per
+// fact); Title and Body are tiebreakers for facts that lack a slug.
+func sortFactsStable(facts []knowledge.Fact) {
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Slug != facts[j].Slug {
+			return facts[i].Slug < facts[j].Slug
+		}
+		if facts[i].Title != facts[j].Title {
+			return facts[i].Title < facts[j].Title
+		}
+		return facts[i].Body < facts[j].Body
+	})
 }
 
 func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
