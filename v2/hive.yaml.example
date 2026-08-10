@@ -180,6 +180,10 @@ agents:
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
+  labels:
+    automerge: lgtm                     # Label applied by merger queue; default is lgtm
+    # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+
   modes:
     surge:
       threshold: 20                       # Queue depth >= 20 triggers SURGE
@@ -214,6 +218,19 @@ governor:
       architect: 30m
       guide: 4h
       strategist: 4h
+
+  # Trajectory review lane — periodic second-model review of running agents.
+  # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.
+  trajectory:
+    enabled: true
+    # endpoint: https://litellm.example.com
+    # api_key_env: HIVE_LITELLM_API_KEY
+    # api_key_file: /secrets/litellm_api_key
+    # interval_s: 300
+    # model: gpt-4o-mini
+    # transcript_lines: 200
+    # on_divergence: pause               # pause | alert
+    # exempt_agents: [outreach]
 
   # LiteLLM inference backend (optional) — route agents through an
   # OpenAI-compatible LiteLLM proxy. Agents using backend "litellm" launch
@@ -274,7 +291,43 @@ notifications:
 dashboard:
   port: 3001
   snapshot_dir: /data/snapshots
+  # Exact HTTPS origins allowed to embed /snapshot; empty denies all framing.
+  # snapshot_frame_ancestors:
+  #   - https://status.example.com
   auth_token: ${HIVE_DASHBOARD_TOKEN}     # Optional — omit to allow unauthenticated access
+  # authorized_users: [owner, reviewer:read, maintainer:read-write]
+  # hub_proxied: false                    # True when trusted hub nginx injects identity headers
+  # agent_poll_interval_s: 5
+
+# Hub/spoke metadata — normally written by hosted-hive provisioning.
+# Standalone operators usually leave this disabled.
+# hub:
+#   enabled: false
+#   url: https://hive-hub.example.com
+#   cluster_id: my-cluster
+#   dashboard_url: https://hive.example.com
+#   snapshot_url: https://hive.example.com/snapshot
+#   is_public: false
+#   auto_snapshot: true
+#   auto_upgrade: true
+#
+# hive_id: my-hive
+# acmm_level: 2
+
+# Variable resolvers — env-only interpolation is the default. Script/http and
+# GitHub prompt sources are trusted-seed features and are denied unless enabled.
+# variables:
+#   security:
+#     allow_exec: false
+#     allow_http: false
+#     http_allowlist: []
+#     allow_github_prompt: false
+#     github_prompt_allowlist: []
+#   defs:
+#     EXAMPLE_TOKEN:
+#       type: env
+#       env: EXAMPLE_TOKEN
+#       scope: config
 
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)
 # Facts are primed into agent kicks automatically — agents never query the wiki.
@@ -326,3 +379,6 @@ knowledge:
 data:
   metrics_dir: /data/metrics
   logs_dir: /data/logs
+  claude_sessions_dir: /data/home/.claude/projects
+  copilot_sessions_dir: /data/home/.copilot/session-state
+  agents_dir: /data/agent-configs

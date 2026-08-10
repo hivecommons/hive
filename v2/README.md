@@ -62,7 +62,7 @@ When dashboard authentication is enabled, `hivectl` reads
 output, stdin-based imports, and explicit confirmation for destructive
 operations.
 
-See [docs/hivectl.md](docs/hivectl.md) for the full command reference. The architecture overview also calls out `hivectl` as the non-interactive API client for automation.
+See [docs/hivectl.md](docs/hivectl.md) for the full command reference. The architecture overview also calls out `hivectl` as the non-interactive API client for automation. For raw dashboard endpoints, see [docs/api-reference.md](docs/api-reference.md).
 
 See [docs/README.md](docs/README.md) for the full v2 documentation index.
 
@@ -86,7 +86,7 @@ hub-fronted URL probing, and alert hysteresis.
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs and token scopes, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
 
 ```yaml
 project:
@@ -311,6 +311,13 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 | `deploy/architect-only.yaml` | Single `architect` agent managing KubeStellar Console repos — Docker on Proxmox LXC, ntfy notifications |
 | `deploy/hive-level2-knuckle.yaml` | ACMM L2 advisory config for `projectbluefin/knuckle` — agents observe and report, no issues or PRs |
 | `deploy/hive-level3-knuckle.yaml` | ACMM L3 measured config for `projectbluefin/knuckle` — quality uses the measured policy for testing issues, other agents stay advisory |
+
+## Additional references
+
+- [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
+- [Config layering](docs/config-layering.md) — effective config provenance and precedence.
+- [Dashboard API reference](docs/api-reference.md) — generated route index.
+- [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.
 
 ## Build from Source
 
