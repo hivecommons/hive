@@ -9,7 +9,7 @@
 #   HIVE_FEDERATION_ID       — this hive's ID in the registry
 #
 # Reads from:
-#   /var/run/hive-metrics/contributors.json — active contributor count
+#   /var/run/hive-metrics/contributors.json — active contributor count + names
 #   /var/run/hive-metrics/actionable.json   — actionable items count
 
 set -euo pipefail
@@ -24,6 +24,7 @@ if [[ -z "$HIVE_ID" ]]; then
 fi
 
 ACTIVE_CONTRIBUTORS=0
+ACTIVE_CONTRIBUTOR_NAMES='[]'
 if [[ -f "$METRICS_DIR/contributors.json" ]]; then
   ACTIVE_CONTRIBUTORS=$(python3 -c "
 import json
@@ -32,6 +33,18 @@ try:
         d = json.load(f)
     print(len(d.get('active', [])))
 except: print(0)
+" 2>/dev/null)
+  # Names make an honest cross-hive 'Theaters of Operation' possible: a dossier
+  # can only claim a hive that reported the contributor by name. Capped so the
+  # heartbeat body stays small.
+  ACTIVE_CONTRIBUTOR_NAMES=$(python3 -c "
+import json
+try:
+    with open('$METRICS_DIR/contributors.json') as f:
+        d = json.load(f)
+    names = [c.get('github_username', '') for c in d.get('active', [])]
+    print(json.dumps([n for n in names if n][:100]))
+except: print('[]')
 " 2>/dev/null)
 fi
 
@@ -58,5 +71,5 @@ fi
 
 curl -sf -X POST "${REGISTRY_URL}/api/hives/${HIVE_ID}/heartbeat" \
   -H "Content-Type: application/json" \
-  -d "{\"active_contributors\":${ACTIVE_CONTRIBUTORS},\"active_agents\":${ACTIVE_AGENTS},\"actionable_items\":${ACTIONABLE_ITEMS}}" \
+  -d "{\"active_contributors\":${ACTIVE_CONTRIBUTORS},\"active_contributor_names\":${ACTIVE_CONTRIBUTOR_NAMES},\"active_agents\":${ACTIVE_AGENTS},\"actionable_items\":${ACTIONABLE_ITEMS}}" \
   >/dev/null 2>&1 || echo "Heartbeat failed — registry may be unreachable" >&2

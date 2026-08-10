@@ -1,0 +1,24 @@
+# v2 deployment scripts
+
+This directory contains Kubernetes/LXC manifests plus runtime helper scripts used by the Hive container. The dashboard terminal pane uses two small helpers that are easy to miss:
+
+## Dashboard TTY helpers
+
+### `ttyd-tmux.sh`
+
+`ttyd` serves the browser terminal websocket, but agent tmux sessions may be owned by per-agent UIDs. Because tmux only lets the socket owner attach, `ttyd-tmux.sh <session>` finds the matching `/tmp/tmux-*/<session>` socket, derives its numeric UID/GID, and uses `su-exec` to attach as that owner. It temporarily disables tmux mouse mode while attached and restores it on exit.
+
+Use it indirectly through the dashboard terminal link. If a terminal pane says no tmux socket was found, check that the agent session name exists and that the socket is present under `/tmp/tmux-*` in the container.
+
+### `hive-panes.sh`
+
+`hive-panes [lines]` prints the last N raw-output lines from every other agent's pluk JSONL log in `/var/run/pluk/logs`. It skips the caller named by `HIVE_PROXY_AGENT`, strips ANSI/control sequences, and never attaches to another tmux session. Agents can run it for read-only peer awareness when diagnosing fleet activity.
+
+## Other files
+
+- `entrypoint.sh` — container startup, config layering, proxy/agent setup, and long-lived process supervision.
+- `k8s/` — namespace, deployment, service, PVC, Secret, ConfigMap, and route/RBAC manifests.
+- `inference/` — sample in-cluster OpenAI-compatible inference deployment and RBAC.
+- `docker-compose.architect.yaml`, `hive-quickstart.yaml`, `hive-level*.yaml`, `architect-only.yaml`, `hive.yaml` — example deployment/configuration manifests.
+- `blue-green-deploy.sh`, `bootstrap-lxc.sh`, `create-lxc.sh` — operational scripts for non-Kubernetes deployments.
+- `test_*.sh` — shell tests for entrypoint/runtime deployment behavior.

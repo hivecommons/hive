@@ -18,6 +18,8 @@ package dashboard
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // Milestone thresholds. These mirror the REAL auto-promotion / trust thresholds
@@ -86,14 +88,69 @@ type ContributorProfileResponse struct {
 	// ── My hives (contributes-to + owns), from the central registry ──
 	Hives []ContributorHiveRel `json:"hives"`
 
+	// ── Collaborators (people worked alongside; append-only) ──
+	Collaborators []CollaboratorRecord `json:"collaborators"`
+
 	// RegisteredAt is when the contributor first registered (public).
 	RegisteredAt string `json:"registered_at,omitempty"`
+
+	// FoundingPosition is the contributor's REAL 1-based registration order on
+	// this hive, included only when within the founding cohort (first twenty).
+	// Derived from stored RegisteredAt timestamps — never fabricated.
+	FoundingPosition int `json:"founding_position,omitempty"`
+
+	// ── Public GitHub enrichment (cached server-side, best-effort) ──
+	// ServiceYears is whole years since the GitHub account was created;
+	// Renown is the public follower count. Both are omitted entirely when the
+	// public api.github.com fetch fails (pointers so a real 0 still renders).
+	ServiceYears *int `json:"service_years,omitempty"`
+	Renown       *int `json:"renown,omitempty"`
+
+	// ── Loadout / sponsorship / presence (safe, already-stored profile data) ──
+	// CLIBackend + Model are the contributor's declared agent loadout; InvitedBy
+	// is pure attribution (never affects tier). Sessions + CurrentTask reflect
+	// the live hub connection state — CurrentTask carries only the safe summary
+	// (title + number), never tokens or repo internals.
+	CLIBackend  string              `json:"cli_backend,omitempty"`
+	Model       string              `json:"model,omitempty"`
+	InvitedBy   string              `json:"invited_by,omitempty"`
+	Sessions    int                 `json:"sessions,omitempty"`
+	CurrentTask *DossierTaskSummary `json:"current_task,omitempty"`
+	// LastCompletedTask is the safe summary of the most recent completion the
+	// hub recorded for this contributor — the honest seed for the Field Log
+	// zone (no synthetic activity is ever fabricated client-side).
+	LastCompletedTask *DossierTaskSummary `json:"last_completed_task,omitempty"`
+	// LastActive is included ONLY when within the last 14 days (dossier design
+	// firewall: absence is never rendered — an older timestamp is omitted
+	// entirely so no client can derive an "inactive since" from this response).
+	LastActive string `json:"last_active,omitempty"`
+
+	// ── Dossier (self-service identity fields, all optional — see dossier.go) ──
+	Archetype       string   `json:"archetype,omitempty"`
+	Specializations []string `json:"specializations,omitempty"`
+	Testimony       string   `json:"testimony,omitempty"`
+	EquippedTitle   string   `json:"equipped_title,omitempty"`
+	CredlyName      string   `json:"credly_name,omitempty"`
+	EmblemSeed      string   `json:"emblem_seed,omitempty"`
 
 	// Scope notes that these stats are aggregated from the hub data available on
 	// THIS hive. If a future build tracks per-hive contributor profiles centrally
 	// this becomes "cross-hive"; today it is the central profile this hub holds.
 	Scope string `json:"scope"`
 }
+
+// DossierTaskSummary is the SAFE slice of a live task assignment the Me card
+// may render: the issue/task title and number only — no tokens, no task IDs.
+type DossierTaskSummary struct {
+	Title  string `json:"title"`
+	Number int    `json:"number,omitempty"`
+	// Repo is the public owner/repo slug, included where known (field log).
+	Repo string `json:"repo,omitempty"`
+}
+
+// dossierRecencyWindow bounds how long a last_active timestamp stays in the
+// profile response. Outside it, the field is omitted — never "inactive since".
+const dossierRecencyWindow = 14 * 24 * time.Hour
 
 // tierRankValue orders the trust tiers so milestone derivation knows which tiers
 // a contributor has already passed through. Higher = more trusted.
@@ -182,22 +239,46 @@ func buildMilestones(p *ContributorProfile) ([]ContributorMilestone, *Contributo
 
 func taskShippedMilestoneID(n int) string { return "tasks-" + strconv.Itoa(n) }
 
-// buildContributorHives derives the hives the user contributes to and/or owns
-// from CENTRAL hub data. Every registered federation hive on which the user has
-// a contributor presence is listed; the relationship reflects what the central
-// registry knows. Owner is reserved for a future registry owner/claimedBy field
-// (the current FederationHive schema does not persist an owner), so today a
-// registered contributor reads as "contributor" and any hive without a contributor
-// presence is not listed — no fabricated ownership.
-func buildContributorHives(username string) []ContributorHiveRel {
+// buildContributorHives lists the hives where this contributor has DEMONSTRABLE
+// presence — never merely the hives that exist.
+//
+// The previous implementation returned every hive in the federation registry,
+// each labelled "contributor", regardless of whether the user had ever touched
+// it; on a fleet of forty hives that produced forty fabricated relationships.
+// The registry (FederationHive) carries no membership data, so the only honest
+// sources are:
+//
+//   - THIS hive, where the contributor demonstrably has a profile (that is how
+//     we found them at all), and
+//   - any federation hive whose registration/heartbeat explicitly names them in
+//     ActiveContributorNames.
+//
+// A remote hive that reports no names simply is not listed. Under-reporting is
+// the correct failure mode: an absent theatre is honest, an invented one is not.
+//
+// The local hive is listed on the strength of the profile alone, WITHOUT
+// requiring a registry entry: a hive does not register itself into its own
+// federation registry (registration mints IDs of the form "hive-{org}-{project}"
+// for REMOTE hives), so gating the local theatre on a registry match left the
+// zone permanently empty on every ordinary deployment.
+func buildContributorHives(username, localID string) []ContributorHiveRel {
 	reg := loadFederationRegistry()
-	out := make([]ContributorHiveRel, 0, len(reg.Hives))
-	// The contributor has a profile on THIS hive (that is why we found them), so
-	// every registered hive is a place the central registry can attribute them to
-	// only if it holds per-hive membership. Absent that, we list the registered
-	// federation hives so the user sees the fleet they belong to, marked
-	// "contributor" — the honest relationship the central data supports.
+	out := make([]ContributorHiveRel, 0, len(reg.Hives)+1)
+	seenLocal := false
+
 	for _, h := range reg.Hives {
+		named := false
+		for _, n := range h.ActiveContributorNames {
+			if strings.EqualFold(strings.TrimSpace(n), username) {
+				named = true
+				break
+			}
+		}
+		isLocal := localID != "" && (h.ID == localID || strings.EqualFold(h.ProjectName, localID))
+		if !named && !isLocal {
+			continue
+		}
+		seenLocal = seenLocal || isLocal
 		out = append(out, ContributorHiveRel{
 			ID:           h.ID,
 			ProjectName:  h.ProjectName,
@@ -205,8 +286,39 @@ func buildContributorHives(username string) []ContributorHiveRel {
 			Relationship: "contributor",
 		})
 	}
+
+	// The hive we ARE, when it is not (and normally never will be) present in
+	// its own registry. The profile itself is the evidence.
+	if localID != "" && !seenLocal {
+		out = append(out, ContributorHiveRel{
+			ID:           localID,
+			ProjectName:  localID,
+			Relationship: "contributor",
+		})
+	}
 	return out
 }
+
+// localHiveIdentity names the hive this dashboard IS, so a contributor's own
+// hive is listed without needing to appear in its own heartbeat. It resolves
+// from the configured project name — the same value the hive registers and
+// renders under. Empty when the project is unnamed, in which case only
+// explicitly-named hives are listed (an absent theatre is honest; an invented
+// one is not).
+func (s *Server) localHiveIdentity() string {
+	if hiveIdentityForTest != "" {
+		return hiveIdentityForTest
+	}
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		return strings.TrimSpace(s.deps.Config.Project.Name)
+	}
+	return ""
+}
+
+// hiveIdentityForTest lets tests pin the local hive identity without standing up
+// a full config. Empty in production, where the value comes from the configured
+// project name.
+var hiveIdentityForTest string
 
 // BuildContributorProfile aggregates the central profile for one username. It is
 // the testable core of the endpoint. A missing profile returns {Found:false}
@@ -217,6 +329,7 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 		Scope:          "central-hub",
 		Milestones:     []ContributorMilestone{},
 		Hives:          []ContributorHiveRel{},
+		Collaborators:  []CollaboratorRecord{},
 	}
 
 	p, err := loadContributorProfile(username)
@@ -235,6 +348,51 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.TasksWithPR = p.TasksWithPR
 	resp.TasksFailed = p.TasksFailed
 	resp.RegisteredAt = p.RegisteredAt
+
+	// Loadout + sponsorship (already-stored public-safe profile data).
+	resp.CLIBackend = p.CLIBackend
+	resp.Model = p.Model
+	resp.InvitedBy = p.InvitedBy
+
+	// Dossier self-service fields (all optional; stored sanitised).
+	resp.Archetype = p.Archetype
+	resp.Specializations = p.Specializations
+	resp.Testimony = p.Testimony
+	resp.EquippedTitle = p.EquippedTitle
+	resp.CredlyName = p.CredlyName
+	resp.EmblemSeed = p.EmblemSeed
+
+	// Field-log seed: the most recent completion the hub recorded (safe slice
+	// only — title/number/repo). Absent when nothing has completed yet.
+	if p.LastCompletedTask != nil {
+		resp.LastCompletedTask = &DossierTaskSummary{
+			Title:  p.LastCompletedTask.Title,
+			Number: p.LastCompletedTask.Number,
+			Repo:   p.LastCompletedTask.Repo,
+		}
+	}
+
+	// last_active: ONLY when recent (dossier firewall — absence is never
+	// rendered, so an out-of-window timestamp is omitted entirely).
+	if p.LastActive != "" {
+		if t, err := time.Parse(time.RFC3339, p.LastActive); err == nil && time.Since(t) <= dossierRecencyWindow {
+			resp.LastActive = p.LastActive
+		}
+	}
+
+	// Live presence: sessions + a SAFE summary of the current task (title +
+	// number only), from the same hub live state the leaderboard uses.
+	if s.contributeHub != nil {
+		if ls, ok := s.contributeHub.LiveStates()[p.ContributorID]; ok {
+			resp.Sessions = ls.Sessions
+			if ls.CurrentTask != nil {
+				resp.CurrentTask = &DossierTaskSummary{
+					Title:  ls.CurrentTask.Title,
+					Number: ls.CurrentTask.Number,
+				}
+			}
+		}
+	}
 
 	// Rank + total among CONTRIBUTORS ONLY (#2601): the public Rankings now exclude
 	// the hive's own internal agents, so the Me-card rank/total must match that
@@ -255,8 +413,67 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.Total = contribRank
 
 	resp.Milestones, resp.NextMilestone = buildMilestones(p)
-	resp.Hives = buildContributorHives(username)
+	resp.Hives = buildContributorHives(username, s.localHiveIdentity())
+	resp.Collaborators = sortedCollaborators(p)
+
+	// Founding mark: the contributor's real registration order, shown only for
+	// the founding cohort. Derived from stored timestamps — if the order cannot
+	// be established (missing/unparsable RegisteredAt) the mark is simply absent.
+	if pos := registrationPosition(username); pos >= 1 && pos <= foundingCohortSize {
+		resp.FoundingPosition = pos
+	}
+
+	// Public GitHub enrichment (cached 6h; omitted entirely on fetch failure).
+	if years, followers, ok := githubPublicFor(username); ok {
+		yearsV, followersV := years, followers
+		resp.ServiceYears = &yearsV
+		resp.Renown = &followersV
+	}
 	return resp
+}
+
+// foundingCohortSize bounds the founding mark: only the first twenty
+// registrations on a hive carry "FOUNDING COHORT · FIRST TWENTY".
+const foundingCohortSize = 20
+
+// registrationPosition returns the 1-based registration order of username
+// among all stored contributor profiles, earliest RegisteredAt first (ties
+// broken by username for determinism). Profiles without a parsable
+// RegisteredAt cannot be ordered and are excluded; if the target itself has no
+// parsable timestamp the position is unknown and 0 is returned — the founding
+// mark is then skipped rather than faked.
+func registrationPosition(username string) int {
+	profiles := listContributorProfiles()
+	var mine time.Time
+	found := false
+	for i := range profiles {
+		if profiles[i].GitHubUsername == username {
+			t, err := time.Parse(time.RFC3339, profiles[i].RegisteredAt)
+			if err != nil {
+				return 0
+			}
+			mine = t
+			found = true
+			break
+		}
+	}
+	if !found {
+		return 0
+	}
+	pos := 1
+	for i := range profiles {
+		if profiles[i].GitHubUsername == username {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, profiles[i].RegisteredAt)
+		if err != nil {
+			continue
+		}
+		if t.Before(mine) || (t.Equal(mine) && profiles[i].GitHubUsername < username) {
+			pos++
+		}
+	}
+	return pos
 }
 
 // avatarForUsername prefers the profile's stored avatar, else the canonical

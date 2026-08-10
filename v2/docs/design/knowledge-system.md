@@ -8,6 +8,14 @@ This design is informed by contrasting MetaSwarm (dsifry/metaswarm) with Hive. M
 
 ---
 
+## Pre-seeded deployment wiki
+
+The container image includes a small Obsidian-compatible seed vault in `v2/deploy/data/wiki/`. Current seed files are `agents.md` and `getting-started.md`; they introduce Hive agent roles, governor modes, beads, and the knowledge layer. Operators can extend these Markdown files in a derived image or mount/clone their own vault.
+
+The image copies `v2/deploy/data/` to `/opt/hive/seed-data/`. At startup, `deploy/entrypoint.sh` copies missing seed files from there into `/data/`, so the wiki seed lands at `/data/wiki/` without overwriting existing operator content. The entrypoint also prepares `/data/vaults/hive-wiki`; if `HIVE_WIKI_GIT_URL` is set and the vault is not already a git checkout, it clones that URL there, otherwise the local vault directory is created for the knowledge service to use. The seed files are intended as starter knowledge, not immutable product documentation: edit or replace them with project-specific runbooks, gotchas, and policies that should be available to agent priming.
+
+Fixes #2924.
+
 ## 1. Layered Knowledge Architecture
 
 ### Implementation: geronimo-iia/llm-wiki (Rust)

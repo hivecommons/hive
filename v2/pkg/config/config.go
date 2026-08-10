@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -2055,11 +2057,11 @@ var defaultContributeDelegatableRoles = []string{"scanner", "quality", "outreach
 // a clanker may claim. Empty config preserves the safe v1 default; supervisor is
 // deliberately removed even if an operator lists it because it manages the fleet.
 func (h HubConfig) ContributeDelegatableRoleSet() map[string]bool {
-	roles := h.ContributeDelegatableRoles
-	if len(roles) == 0 {
-		roles = defaultContributeDelegatableRoles
+	out := make(map[string]bool, len(defaultContributeDelegatableRoles)+len(h.ContributeDelegatableRoles))
+	for _, role := range defaultContributeDelegatableRoles {
+		out[role] = true
 	}
-	out := make(map[string]bool, len(roles))
+	roles := h.ContributeDelegatableRoles
 	for _, role := range roles {
 		role = strings.ToLower(strings.TrimSpace(role))
 		if role == "" || role == "supervisor" {
@@ -2105,6 +2107,12 @@ type DashboardConfig struct {
 	SnapshotDir        string `yaml:"snapshot_dir"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
+	// embed the public, read-only /snapshot document. Empty keeps the historical
+	// fail-closed framing policy (X-Frame-Options: DENY plus CSP
+	// frame-ancestors 'none'). Wildcards and paths are deliberately rejected so
+	// the configured value is a small, auditable origin allowlist.
+	SnapshotFrameAncestors []string `yaml:"snapshot_frame_ancestors,omitempty" json:"snapshot_frame_ancestors,omitempty"`
 	// AuthorizedUsers is the allowlist of GitHub usernames permitted to log in
 	// to a direct-route (non-hub-proxied) spoke via the device flow. The first
 	// entry is treated as the owner (read-write); the rest are granted viewers
@@ -2127,6 +2135,63 @@ type DashboardConfig struct {
 	// wrongly forced into direct-route mode (which broke their dashboard link and
 	// snapshot preview) the moment they were granted an authorized_users list.
 	HubProxied bool `yaml:"hub_proxied"`
+}
+
+var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)
+
+// ValidateSnapshotFrameAncestors validates and normalizes the /snapshot framing
+// allowlist. Only exact HTTPS origins are accepted: scheme + host with optional
+// port, and no path, query, fragment, credentials, or wildcard hostnames.
+func ValidateSnapshotFrameAncestors(origins []string) ([]string, error) {
+	normalized := make([]string, 0, len(origins))
+	seen := map[string]struct{}{}
+	for _, raw := range origins {
+		origin := strings.TrimSpace(raw)
+		if origin == "" {
+			continue
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return nil, fmt.Errorf("snapshot_frame_ancestors entry %q must be an https origin", raw)
+		}
+		if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || strings.Contains(u.Hostname(), "*") {
+			return nil, fmt.Errorf("snapshot_frame_ancestors entry %q must be an exact https origin with no path, credentials, query, fragment, or wildcard", raw)
+		}
+		if !validSnapshotFrameAncestorHost(u.Hostname()) {
+			return nil, fmt.Errorf("snapshot_frame_ancestors entry %q has an invalid host", raw)
+		}
+		if port := u.Port(); port != "" {
+			n, err := strconv.Atoi(port)
+			if err != nil || n < 1 || n > 65535 {
+				return nil, fmt.Errorf("snapshot_frame_ancestors entry %q has an invalid port", raw)
+			}
+		}
+		origin = "https://" + u.Host
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		normalized = append(normalized, origin)
+	}
+	return normalized, nil
+}
+
+func validSnapshotFrameAncestorHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	return snapshotFrameAncestorHostPattern.MatchString(host)
+}
+
+// SnapshotFrameAncestorsCSP returns the CSP source list for /snapshot framing.
+func (d DashboardConfig) SnapshotFrameAncestorsCSP() string {
+	if len(d.SnapshotFrameAncestors) == 0 {
+		return "'none'"
+	}
+	return strings.Join(d.SnapshotFrameAncestors, " ")
 }
 
 // Role strings used for direct-route spoke authorization. These mirror the
@@ -2673,6 +2738,9 @@ func (c *Config) applyDefaults() {
 	if c.Dashboard.AgentPollIntervalS == 0 {
 		c.Dashboard.AgentPollIntervalS = defaultAgentPollIntervalS
 	}
+	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err == nil {
+		c.Dashboard.SnapshotFrameAncestors = normalized
+	}
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
 	}
@@ -3128,6 +3196,11 @@ func (c *Config) validate() error {
 	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
+	}
+	if normalized, err := ValidateSnapshotFrameAncestors(c.Dashboard.SnapshotFrameAncestors); err != nil {
+		return err
+	} else {
+		c.Dashboard.SnapshotFrameAncestors = normalized
 	}
 	for modeName, mode := range c.Governor.Modes {
 		for agentName, cadence := range mode.Cadences {

@@ -65,6 +65,7 @@ https://evil.example/wrap.png
 body{display:none}
 .a,.b{color:blue}
 #tab-leaderboard ~ footer{display:none}
+[data-theme="light"] ~ footer{display:none}
 .data{background:url(data:image/png;base64,abc)}
 .relative{background:url(/assets/bg.png)}
 .dot{background:url(./bg.png)}
@@ -87,13 +88,97 @@ body{display:none}
 			t.Fatalf("sanitized CSS missing %q:\n%s", good, out)
 		}
 	}
-	for _, scoped := range []string{"#tab-leaderboard body{display:none}", "#tab-leaderboard .a, #tab-leaderboard .b{color:blue}", "#tab-leaderboard #tab-leaderboard ~ footer{display:none}"} {
+	for _, scoped := range []string{"#tab-leaderboard{display:none}", "#tab-leaderboard .a, #tab-leaderboard .b{color:blue}"} {
 		if !strings.Contains(out, scoped) {
 			t.Fatalf("sanitized CSS missing scoped selector %q:\n%s", scoped, out)
 		}
 	}
+	if strings.Contains(out, "footer") {
+		t.Fatalf("sanitized CSS allowed a selector outside the leaderboard scope:\n%s", out)
+	}
 	if _, err := sanitizeLeaderboardCustomStyle([]byte(strings.Repeat("a", customStyleMaxBytes+1))); err == nil {
 		t.Fatal("oversized CSS did not fail")
+	}
+}
+
+func TestSanitizeLeaderboardCustomStylePreservesModernThemeCSS(t *testing.T) {
+	css := []byte(`
+	/* Header comments should not eat the next rule. */
+	:root{
+	  --bf-accent:#5c7bd1;
+	  --bf-soft:color-mix(in srgb, var(--bf-accent) 20%, transparent);
+	}
+	[data-theme="light"] .me-card{background:linear-gradient(180deg,#fff,#eef);border-color:var(--bf-accent)}
+	.me-card:is(.featured,.mine) .me-card__band{padding:clamp(12px,2vw,24px);width:calc(100% - 2rem)}
+	.lb-row[data-rank="1"]::before{content:"★"}
+	@media (prefers-reduced-motion:no-preference){
+	  .me-medallion{animation:pulse 1s ease-in-out}
+	}
+	@supports (color: color-mix(in srgb, red, blue)){
+	  .me-rankpill__num{color:var(--bf-accent)}
+	}
+	@container (min-width: 40rem){
+	  .me-card .me-sec__title{letter-spacing:.04em}
+	}
+	@keyframes pulse{
+	  from{opacity:.7;transform:scale(.98)}
+	  to{opacity:1;transform:scale(1)}
+	}
+	`)
+	got, report, err := sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Dropped != 0 {
+		t.Fatalf("report.Dropped = %d reasons=%v", report.Dropped, report.Reasons)
+	}
+	out := string(got)
+	for _, want := range []string{
+		"#tab-leaderboard{--bf-accent:#5c7bd1;--bf-soft:color-mix(in srgb, var(--bf-accent) 20%, transparent)}",
+		`[data-theme="light"] #tab-leaderboard .me-card{background:linear-gradient(180deg,#fff,#eef);border-color:var(--bf-accent)}`,
+		"#tab-leaderboard .me-card:is(.featured,.mine) .me-card__band{padding:clamp(12px,2vw,24px);width:calc(100% - 2rem)}",
+		`#tab-leaderboard .lb-row[data-rank="1"]::before{content:"★"}`,
+		"@media (prefers-reduced-motion:no-preference){#tab-leaderboard .me-medallion{animation:pulse 1s ease-in-out}",
+		"@supports (color: color-mix(in srgb, red, blue)){#tab-leaderboard .me-rankpill__num{color:var(--bf-accent)}",
+		"@container (min-width: 40rem){#tab-leaderboard .me-card .me-sec__title{letter-spacing:.04em}",
+		"@keyframes pulse{from{opacity:.7;transform:scale(.98)}to{opacity:1;transform:scale(1)}}",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sanitized CSS missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSanitizeLeaderboardCustomStyleReportsDroppedConstructs(t *testing.T) {
+	css := []byte(`
+	@import url("https://evil.example/theme.css");
+	@font-face{font-family:Bad;src:url(https://evil.example/font.woff2)}
+	@font-face{font-family:Good;src:url(/assets/good.woff2),url(data:font/woff2;base64,abc)}
+	.bad{background:url(https://evil.example/pixel.png);color:red}
+	.foo\31{color:red}
+	@keyframes badstep{fr\6fm{opacity:1}to{opacity:0}}
+	@\69mport "https://evil.example/escaped.css";
+	`)
+	got, report, err := sanitizeCustomStyle(css, customStyleAllowedScopes[customStyleScopeLeaderboard])
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	for _, bad := range []string{"@import", "evil.example", `\69`, `\31`, `\6f`} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("sanitized CSS still contains %q:\n%s", bad, out)
+		}
+	}
+	for _, want := range []string{
+		"@font-face{font-family:Good;src:url(/assets/good.woff2),url(data:font/woff2;base64,abc)}",
+		`#tab-leaderboard .bad{background:url("");color:red}`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sanitized CSS missing %q:\n%s", want, out)
+		}
+	}
+	if report.Dropped < 6 {
+		t.Fatalf("report.Dropped = %d, want at least 6 reasons=%v", report.Dropped, report.Reasons)
 	}
 }
 
@@ -124,6 +209,9 @@ func TestHandleLeaderboardStyleFetchesSanitizesAndCaches(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "#tab-leaderboard .ok{color:red}") || strings.Contains(body, "evil.example") {
 		t.Fatalf("unexpected sanitized body: %s", body)
 	}
+	if got := rec.Header().Get("X-Hive-Style-Dropped"); got != "1" {
+		t.Fatalf("X-Hive-Style-Dropped = %q, want 1", got)
+	}
 
 	rec = httptest.NewRecorder()
 	srv.handleLeaderboardStyle(rec, req)
@@ -132,6 +220,16 @@ func TestHandleLeaderboardStyleFetchesSanitizesAndCaches(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Fatalf("raw hits = %d, want cache hit after first fetch", hits)
+	}
+
+	reportReq := httptest.NewRequest(http.MethodGet, "/api/leaderboard/style?src=owner/repo/lb/theme.css@main&report=1", nil)
+	rec = httptest.NewRecorder()
+	srv.handleLeaderboardStyle(rec, reportReq)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("report status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") || !strings.Contains(rec.Body.String(), `"dropped":1`) {
+		t.Fatalf("unexpected report response headers=%v body=%s", rec.Header(), rec.Body.String())
 	}
 }
 
@@ -167,7 +265,7 @@ func TestContributeLeaderboardCustomStyleMarkup(t *testing.T) {
 	for _, snippet := range []string{
 		`id="leaderboard-custom-style-link" rel="stylesheet" href="/api/leaderboard/style?src=owner%2Frepo%2Flb%2Ftheme.css%40main"`,
 		`window.HIVE_LEADERBOARD_CUSTOM_STYLE_SRC="owner/repo/lb/theme.css@main";`,
-		`Custom (` + `'+esc(leaderboardCustomStyleLabel(customStyleSrc))+'` + `)`,
+		`rules removed by sanitizer`,
 		`clearLeaderboardCustomStyleParam();`,
 	} {
 		if !strings.Contains(html, snippet) {

@@ -33,22 +33,24 @@ func TestMyWorkDoneFilterFromCompletedActivity(t *testing.T) {
 	}
 }
 
-// TestMeCardTierBadgeNoOverlap proves the me-card tier badge lives in its own layout
-// slot (.me-id__tier) beside the identity, NOT absolutely positioned over the avatar.
+// TestMeCardTierBadgeNoOverlap proves the viewer's trust tier renders in its own
+// layout slot (the identity plate's rank pill — "trust · tier"), never as a badge
+// absolutely positioned over the avatar medallion (#2595 overlap regression).
 func TestMeCardTierBadgeNoOverlap(t *testing.T) {
 	body := renderContributePage(t)
 
-	if !strings.Contains(body, `'<div class="me-id__tier">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'`) {
-		t.Error("tier badge is not in its own .me-id__tier layout slot")
+	if !strings.Contains(body, `<div class="rank-sub">trust · '+esc(tier)+'</div>`) {
+		t.Error("trust tier is not rendered in the rank pill's own layout slot")
 	}
 	if strings.Contains(body, `onerror="this.style.visibility=\'hidden\'">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'`) {
 		t.Error("tier badge is still emitted INSIDE the medallion (overlap regression)")
 	}
-	if strings.Contains(body, ".me-medallion .tier-badge{position:absolute") {
-		t.Error("the absolute .me-medallion .tier-badge overlay rule still present (overlap)")
+	if strings.Contains(body, ".me-medallion .tier-badge{position:absolute") ||
+		strings.Contains(body, ".dz-medallion .tier-badge{position:absolute") {
+		t.Error("an absolute medallion tier-badge overlay rule is present (overlap)")
 	}
-	if !strings.Contains(body, ".me-id__tier{margin:") {
-		t.Error(".me-id__tier layout slot styling missing")
+	if !strings.Contains(body, ".dz-rankpill{") {
+		t.Error(".dz-rankpill layout slot styling missing")
 	}
 }
 

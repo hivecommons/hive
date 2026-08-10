@@ -696,14 +696,26 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return errors.New("queuedBy is required for auto-merge audit and self-merge checks")
 	}
 	owner, repoName := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
+	if err != nil {
+		return fmt.Errorf("fetching PR head for auto-merge approval: %w", err)
+	}
+	headSHA := ""
+	if pr.GetHead() != nil {
+		headSHA = pr.GetHead().GetSHA()
+	}
+	if headSHA == "" {
+		return errors.New("PR head SHA is required for auto-merge approval")
+	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
-	_, _, err := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
-		Body:  gh.Ptr(body),
-		Event: gh.Ptr("APPROVE"),
+	_, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
+		CommitID: gh.Ptr(headSHA),
+		Body:     gh.Ptr(body),
+		Event:    gh.Ptr("APPROVE"),
 	})
 	if err != nil {
 		return fmt.Errorf("approving PR: %w", err)

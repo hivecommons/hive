@@ -30,7 +30,7 @@ jobs:
   contract-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run rootless-Podman static contract check
         run: bash v2/scripts/check-podman-contract.sh Justfile

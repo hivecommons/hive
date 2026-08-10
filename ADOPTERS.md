@@ -19,13 +19,13 @@ Listed below are organizations that have adopted, or benefitted from, KubeStella
 ## Adopter Tiers
 
 ### 🥇 Production Adopters
-Organizations running KubeStellar Console in production environments.
+Organizations running KubeStellar Hive in production environments.
 
 ### 🥈 Development Adopters
-Organizations using KubeStellar Console in development or staging environments.
+Organizations using KubeStellar Hive in development or staging environments.
 
 ### 🥉 Evaluation Adopters
-Organizations actively evaluating KubeStellar Console for future use.
+Organizations actively evaluating KubeStellar Hive for future use.
 
 ---
 

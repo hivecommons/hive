@@ -71,13 +71,15 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws          *websocket.Conn
-	profile     *ContributorProfile
-	cliBackend  string
-	model       string
-	role        string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	connectedAt time.Time
-	currentTask *WSTaskAssign
+	ws           *websocket.Conn
+	profile      *ContributorProfile
+	cliBackend   string
+	model        string
+	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	clientRole   string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
+	assignedRole string // owner-selected role; "none" forces general work
+	connectedAt  time.Time
+	currentTask  *WSTaskAssign
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -176,6 +178,7 @@ type WSMessage struct {
 	TrustTier         string   `json:"trust_tier,omitempty"`
 	Permissions       []string `json:"permissions,omitempty"`
 	Reason            string   `json:"reason,omitempty"`
+	Message           string   `json:"message,omitempty"`
 	RegistrationToken string   `json:"registration_token,omitempty"`
 	CLIBackend        string   `json:"cli_backend,omitempty"`
 	Model             string   `json:"model,omitempty"`
@@ -1249,6 +1252,7 @@ type ContributorLiveState struct {
 	CurrentTask *WSTaskAssign  `json:"current_task,omitempty"`
 	Tasks       []WSTaskAssign `json:"tasks,omitempty"`
 	Sessions    int            `json:"sessions"`
+	Role        string         `json:"role,omitempty"`
 }
 
 func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
@@ -1261,6 +1265,7 @@ func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
 		if c.profile != nil {
 			cid = c.profile.ContributorID
 		}
+		role := c.role
 		stale := time.Since(c.lastPong) > wsHeartbeatTimeout
 		var task *WSTaskAssign
 		if c.currentTask != nil && !stale {
@@ -1272,6 +1277,9 @@ func (h *ContributeWSHub) LiveStates() map[string]ContributorLiveState {
 			existing := out[cid]
 			existing.Active = true
 			existing.Sessions++
+			if role != "" {
+				existing.Role = role
+			}
 			if task != nil {
 				existing.CurrentTask = task
 				dupe := false
@@ -1309,6 +1317,72 @@ func (h *ContributeWSHub) RoleBreakdown() map[string]int {
 	return breakdown
 }
 
+func (h *ContributeWSHub) SetAssignedAgentRole(contributorID, assignedRole string, grants []string) {
+	if h == nil || contributorID == "" {
+		return
+	}
+	assignedRole = normalizeAgentRole(assignedRole)
+	effectiveRole := effectiveAssignedAgentRole(assignedRole)
+	h.mu.RLock()
+	var targets []*ContributorConnection
+	for _, c := range h.connections {
+		c.mu.Lock()
+		matches := c.profile != nil && (c.profile.ContributorID == contributorID || strings.EqualFold(c.profile.GitHubUsername, contributorID))
+		c.mu.Unlock()
+		if matches {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		c.mu.Lock()
+		if c.profile != nil {
+			c.profile.AssignedAgentRole = assignedRole
+			c.profile.AgentRoleGrants = append([]string(nil), grants...)
+		}
+		c.assignedRole = assignedRole
+		c.role = effectiveRole
+		c.mu.Unlock()
+		label := effectiveRole
+		if label == "" {
+			label = "general work"
+		}
+		msg := fmt.Sprintf("role assigned: %s — your next task will be %s", label, label)
+		if effectiveRole != "" {
+			msg = fmt.Sprintf("role assigned: %s — your next task will be %s work", effectiveRole, effectiveRole)
+		}
+		if c.ws != nil {
+			if err := c.send(WSMessage{Type: "notice", Seq: h.nextSeq(), Message: msg}); err != nil {
+				h.logger.Warn("[contribute-ws] failed to send role assignment notice", "error", err)
+			}
+		}
+	}
+}
+
+func (h *ContributeWSHub) SetContributorAgentRoleGrants(contributorID string, grants []string) {
+	if h == nil || contributorID == "" {
+		return
+	}
+	h.mu.RLock()
+	var targets []*ContributorConnection
+	for _, c := range h.connections {
+		c.mu.Lock()
+		matches := c.profile != nil && (c.profile.ContributorID == contributorID || strings.EqualFold(c.profile.GitHubUsername, contributorID))
+		c.mu.Unlock()
+		if matches {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		c.mu.Lock()
+		if c.profile != nil {
+			c.profile.AgentRoleGrants = append([]string(nil), grants...)
+		}
+		c.mu.Unlock()
+	}
+}
+
 // FleetClanker is a read-only view of one connected contributor ("clanker")
 // session as the operator-facing Management & Operations tab renders it. It
 // carries only what the contributor handshake already put on the wire plus the
@@ -1319,6 +1393,9 @@ type FleetClanker struct {
 	CLIBackend     string        `json:"cli_backend,omitempty"`
 	Model          string        `json:"model,omitempty"`
 	Role           string        `json:"role,omitempty"`
+	ClientRole     string        `json:"client_role,omitempty"`
+	AssignedRole   string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch   string        `json:"role_mismatch,omitempty"`
 	TrustTier      string        `json:"trust_tier,omitempty"`
 	ConnectedAt    string        `json:"connected_at,omitempty"`
 	LastActivity   string        `json:"last_activity,omitempty"`
@@ -1349,6 +1426,10 @@ type FleetClanker struct {
 	// PUT /api/contribute/interests. Omitted when the contributor has declared
 	// none.
 	LabelInterests []string `json:"label_interests,omitempty"`
+	// AgentRoleGrants is the operator-managed grant list for privileged spoke
+	// agent roles. It is shown to owner/read-write viewers in the fleet row; the
+	// server-side mutation endpoint remains the enforcement boundary.
+	AgentRoleGrants []string `json:"agent_role_grants,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -1399,9 +1480,18 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			CLIBackend:   c.cliBackend,
 			Model:        c.model,
 			Role:         c.role,
+			ClientRole:   c.clientRole,
+			AssignedRole: c.assignedRole,
 			ConnectedAt:  c.connectedAt.UTC().Format(time.RFC3339),
 			LastActivity: c.lastPong.UTC().Format(time.RFC3339),
 			Stale:        time.Since(c.lastPong) > wsHeartbeatTimeout,
+		}
+		if c.assignedRole != "" && normalizeAgentRole(c.clientRole) != "" && normalizeAgentRole(c.clientRole) != effectiveAssignedAgentRole(c.assignedRole) {
+			if c.assignedRole == "none" {
+				fc.RoleMismatch = fmt.Sprintf("client requested %s; owner assigned general work", c.clientRole)
+			} else {
+				fc.RoleMismatch = fmt.Sprintf("client requested %s; owner assigned %s", c.clientRole, c.assignedRole)
+			}
 		}
 		// #2547: surface the client-declared capabilities read-only (a copy so the
 		// snapshot never aliases live connection state). Nil for unversioned clients.
@@ -1417,6 +1507,9 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			// so the snapshot never aliases the live profile slice).
 			if len(c.profile.LabelInterests) > 0 {
 				fc.LabelInterests = append([]string(nil), c.profile.LabelInterests...)
+			}
+			if len(c.profile.AgentRoleGrants) > 0 {
+				fc.AgentRoleGrants = append([]string(nil), c.profile.AgentRoleGrants...)
 			}
 		}
 		var task *WSTaskAssign
@@ -1571,13 +1664,15 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		out = append(out, ContributorConnection{
-			profile:     c.profile,
-			cliBackend:  c.cliBackend,
-			model:       c.model,
-			role:        c.role,
-			connectedAt: c.connectedAt,
-			currentTask: c.currentTask,
-			tmuxOutput:  append([]string{}, c.tmuxOutput...),
+			profile:      c.profile,
+			cliBackend:   c.cliBackend,
+			model:        c.model,
+			role:         c.role,
+			clientRole:   c.clientRole,
+			assignedRole: c.assignedRole,
+			connectedAt:  c.connectedAt,
+			currentTask:  c.currentTask,
+			tmuxOutput:   append([]string{}, c.tmuxOutput...),
 		})
 		c.mu.Unlock()
 	}
@@ -1723,7 +1818,12 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			requestedRole := normalizeAgentRole(msg.Role)
+			clientRole := normalizeAgentRole(msg.Role)
+			assignedRole := normalizeAgentRole(profile.AssignedAgentRole)
+			requestedRole := clientRole
+			if hasOwnerAgentRoleAssignment(profile) {
+				requestedRole = effectiveAssignedAgentRole(assignedRole)
+			}
 			probeContributor := &ContributorConnection{profile: profile}
 			if requestedRole != "" {
 				if ok, reason := h.roleClaimAllowed(probeContributor, requestedRole); !ok {
@@ -1746,8 +1846,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if profile.AvatarURL == "" {
 				profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
 			}
-			if requestedRole != "" {
-				profile.PreferredRole = requestedRole
+			if clientRole != "" {
+				profile.PreferredRole = clientRole
 			}
 			_ = saveContributorProfile(profile)
 
@@ -1776,6 +1876,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				cliBackend:   msg.CLIBackend,
 				model:        msg.Model,
 				role:         requestedRole,
+				clientRole:   clientRole,
+				assignedRole: assignedRole,
 				connectedAt:  time.Now(),
 				lastPong:     time.Now(),
 				capabilities: caps,
@@ -1980,6 +2082,25 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// progress ping for a task the hub already tracks.
 				resumed := false
 				if contributor.currentTask == nil && msg.TaskID != "" {
+					contributor.mu.Unlock()
+					h.selectMu.Lock()
+					if h.taskHeldByAnotherConnection(contributor, msg.Repo, msg.Number) {
+						h.selectMu.Unlock()
+						h.logger.Warn("[contribute-ws] stale task_progress resume rejected: task held by another connection",
+							"username", contributor.profile.GitHubUsername,
+							"task", msg.TaskID,
+							"repo", h.canonicalRepoKey(msg.Repo),
+							"number", msg.Number,
+						)
+						continue
+					}
+					contributor.mu.Lock()
+					if contributor.currentTask != nil {
+						contributor.lastLeaseRenew = time.Now()
+						contributor.mu.Unlock()
+						h.selectMu.Unlock()
+						continue
+					}
 					contributor.currentTask = &WSTaskAssign{
 						TaskID: msg.TaskID,
 						Kind:   msg.Kind,
@@ -2000,6 +2121,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// #2568: a RESUME adopts the task under a FRESH generation so the
 					// hub, not the client, owns the authoritative token from here on.
 					contributor.currentTaskGen = h.nextTaskGen()
+					h.selectMu.Unlock()
 				}
 				// #2568: renew the hub-owned lease on every progress report. This is
 				// what distinguishes "working slowly but alive" (lease keeps renewing,
@@ -2278,6 +2400,29 @@ func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 // an empty token (no App auth / no cache) leaves the relay's existing token in
 // place — the same lenient policy maybeRefreshToken uses — and tokenMintedAt stays
 // zero, so the next reconnect (or a later mint success) can still arm it.
+func (h *ContributeWSHub) taskHeldByAnotherConnection(candidate *ContributorConnection, repo string, number int) bool {
+	if h == nil || number <= 0 {
+		return false
+	}
+	canonicalRepo := h.canonicalRepoKey(repo)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, conn := range h.connections {
+		if conn == nil || conn == candidate {
+			continue
+		}
+		conn.mu.Lock()
+		held := conn.currentTask != nil &&
+			conn.currentTask.Number == number &&
+			h.canonicalRepoKey(conn.currentTask.Repo) == canonicalRepo
+		conn.mu.Unlock()
+		if held {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection) {
 	tier := ""
 	if c.profile != nil {

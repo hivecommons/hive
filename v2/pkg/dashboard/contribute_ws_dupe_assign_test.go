@@ -192,3 +192,48 @@ func TestDupeAssign_ResumedTaskExcludedFromSelection(t *testing.T) {
 		t.Fatalf("expected a task_unavailable no-work ack (the only issue is in-flight), got %+v", msg)
 	}
 }
+
+// TestDupeAssign_StaleReconnectCannotResumeIssueHeldByAnotherConnection covers
+// the #3093 seam: after a disconnect/lease expiry, an old relay can reconnect
+// and re-assert its locally retained task via task_progress. If the issue was
+// already granted to another connection while the first relay was away, the
+// resume path must not create a second in-flight owner for the same repo#issue.
+func TestDupeAssign_StaleReconnectCannotResumeIssueHeldByAnotherConnection(t *testing.T) {
+	hub, s := covK2Hub(t)
+	singleIssueStatus(s)
+
+	holder := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "new-owner", ContributorID: "c-new", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+	holder.mu.Lock()
+	holder.currentTask = &WSTaskAssign{TaskID: "ct-new-48", Kind: "issue", Repo: "projectbluefin/fsdk-containers", Number: 48}
+	holder.mu.Unlock()
+
+	returning := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "stale-owner", ContributorID: "c-old", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+
+	hub.mu.Lock()
+	hub.connections["conn-new"] = holder
+	hub.connections["conn-old"] = returning
+	hub.mu.Unlock()
+
+	if !hub.taskHeldByAnotherConnection(returning, "fsdk-containers", 48) {
+		t.Fatalf("stale reconnect did not detect that projectbluefin/fsdk-containers#48 is already held")
+	}
+
+	returning.mu.Lock()
+	if hub.taskHeldByAnotherConnection(returning, "fsdk-containers", 48) {
+		// This is the branch the task_progress resume handler now takes: reject the
+		// stale resume and leave currentTask nil.
+	} else {
+		returning.currentTask = &WSTaskAssign{TaskID: "ct-old-48", Kind: "issue", Repo: hub.canonicalRepoKey("fsdk-containers"), Number: 48}
+	}
+	got := returning.currentTask
+	returning.mu.Unlock()
+	if got != nil {
+		t.Fatalf("stale reconnect resurrected duplicate ownership: %+v", got)
+	}
+}
