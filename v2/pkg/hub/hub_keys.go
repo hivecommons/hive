@@ -59,6 +59,51 @@ func deriveDomainKey(master, info string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// derivePerHiveKey returns a sub-key bound to BOTH a trust domain and a single
+// hive: HMAC-SHA256(master, info || 0x00 || hiveID).
+//
+// SECURITY (audit N1/N3, CWE-321/798). deriveDomainKey above takes a FIXED
+// label, so every spoke in the fleet derives byte-identical keys from the one
+// master. Possession therefore proves "some provisioned spoke" and never "this
+// spoke" — which is the whole of the hosted kill chain: spoke A's key verifies
+// on spoke B, so one hostile tenant can forge terminal grants for another and
+// beat heartbeats as any victim.
+//
+// Mixing the hive ID in keeps every property the fleet-wide scheme had:
+// deterministic in the existing master (no new secret to store or rotate),
+// re-derivable by the hub on demand, and stable across re-provisioning.
+//
+// The 0x00 separator matters. Plain concatenation is ambiguous —
+// ("hive-terminal", "a|b") and ("hive-terminal|a", "b") would hash identically —
+// and hive IDs are operator-influenced. A NUL can appear in neither input: info
+// strings are compile-time constants and hive IDs are validated by isValidName.
+//
+// Returns "" for an empty master OR an empty hiveID: a keyless or identity-less
+// caller must fail closed rather than silently sharing one key again.
+func derivePerHiveKey(master, info, hiveID string) string {
+	if master == "" || hiveID == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(master))
+	mac.Write([]byte(info))
+	mac.Write([]byte{0})
+	mac.Write([]byte(hiveID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
+// hiveID (audit N1).
+func (s *HubServer) heartbeatKeyFor(hiveID string) string {
+	return derivePerHiveKey(s.hubSecret, infoHeartbeatKey, hiveID)
+}
+
+// heartbeatBearerIsPerHive reports whether the presented bearer is the modern,
+// identity-bound one. Rollout telemetry only — see issue #3234.
+func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
+	perHive := s.heartbeatKeyFor(hiveID)
+	return perHive != "" && secureCompareHub(presented, perHive)
+}
+
 // heartbeatKey returns the derived heartbeat bearer a v4 spoke presents on
 // /api/heartbeat and /api/task-status. The v2 hub accepts this IN ADDITION to
 // the legacy raw s.hubSecret (see heartbeatBearerOK), never instead of it.

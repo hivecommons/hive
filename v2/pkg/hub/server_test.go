@@ -32,7 +32,7 @@ func TestServerHeartbeatBearerOKSecurityContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := srv.heartbeatBearerOK(tt.auth); got != tt.want {
+			if got := srv.heartbeatBearerOK(tt.auth, ""); got != tt.want {
 				t.Errorf("heartbeatBearerOK(%q) = %v, want %v", tt.auth, got, tt.want)
 			}
 		})
@@ -41,7 +41,7 @@ func TestServerHeartbeatBearerOKSecurityContract(t *testing.T) {
 
 func TestServerHeartbeatBearerOKEmptySecretCurrentBehavior(t *testing.T) {
 	srv := &HubServer{}
-	if !srv.heartbeatBearerOK("Bearer ") {
+	if !srv.heartbeatBearerOK("Bearer ", "") {
 		t.Fatal("heartbeatBearerOK with an empty hubSecret currently accepts an empty bearer; keep the caller-side guard in place")
 	}
 }
