@@ -333,6 +333,9 @@ func downsampleSpark(points []SparkPoint, max int) []SparkPoint {
 	if len(points) <= max {
 		return points
 	}
+	if max == 1 {
+		return []SparkPoint{points[0]}
+	}
 	out := make([]SparkPoint, 0, max)
 	// Spread max samples across the series, inclusive of both endpoints.
 	step := float64(len(points)-1) / float64(max-1)
