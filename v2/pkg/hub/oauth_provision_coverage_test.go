@@ -106,8 +106,19 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	if sessionCookie.Value == "octocat" {
 		t.Error("session cookie must be signed, not the raw username")
 	}
-	if user, ok := verifyHubUserCookieValue(deriveDomainKey(testHubSecret, infoSessionKey), sessionCookie.Value); !ok || user != "octocat" {
+	// N2: the hub now mints ASYMMETRICALLY (Ed25519). Verify through the same
+	// dual-accept path production uses, against the PUBLIC key — a spoke holds
+	// only that and must be able to verify with it.
+	pub := ssoPublicKeyFromSeed(deriveDomainKey(testHubSecret, infoSessionEd25519Seed))
+	legacy := deriveDomainKey(testHubSecret, infoSessionKey)
+	if user, ok := verifyHubUserCookieEither(pub, legacy, sessionCookie.Value); !ok || user != "octocat" {
 		t.Errorf("minted cookie did not verify: (%q, %v)", user, ok)
+	}
+	// And it must be the v2 format, not a legacy HMAC cookie that merely still
+	// verifies — otherwise the hub is silently minting the forgeable format.
+	if !hubCookieIsV2(sessionCookie.Value) {
+		t.Errorf("hub minted a LEGACY (symmetric) session cookie %q — any spoke could forge one",
+			sessionCookie.Value)
 	}
 }
 

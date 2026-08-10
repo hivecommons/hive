@@ -1747,6 +1747,12 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
 		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
+		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
+		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
+		// which is symmetric and therefore let any spoke forge a hub ADMIN cookie.
+		// SessionKey is still shipped for the rollout window so a spoke on an older
+		// image keeps verifying legacy cookies; remove it once the fleet has rolled.
+		"SessionPublicKey": provisionSessionPublicKey(),
 		// N3: the terminal key is PER-HIVE, not fleet-wide. Without it
 		// TerminalSigningKey() falls through to the fleet-uniform SessionKey
 		// above, so an assertion minted on one spoke verifies on every other —
@@ -2584,6 +2590,15 @@ spec:
         # seed, can). Replaces the earlier symmetric HIVE_SSO_KEY.
         - name: HIVE_SSO_PUBLIC_KEY
           value: "{{.SSOPublicKey}}"
+        # N2 (CWE-321/798): the Ed25519 PUBLIC key for hub SESSION cookies.
+        # HIVE_SESSION_KEY above is symmetric, so every spoke that could VERIFY
+        # hive_hub_user could also MINT it — including "clubanderson.<sig>",
+        # which requireAdmin accepts on ~21 admin routes. With this the spoke
+        # verifies and cannot forge. HIVE_SESSION_KEY is still injected for the
+        # rollout window (a spoke on an older image only knows the legacy
+        # format); drop it once the fleet has rolled.
+        - name: HIVE_SESSION_PUBLIC_KEY
+          value: "{{.SessionPublicKey}}"
         # N3 (CWE-862): the terminal signing key is PER-HIVE. This spoke both
         # mints the assertion (dashboard/session.go, at login) and verifies it
         # (proxy/server.js, on /terminal), so a symmetric key is the right shape
