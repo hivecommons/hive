@@ -27,9 +27,8 @@ func TestCovD_GatewaysUpsert(t *testing.T) {
 
 	// Point the secret store at a temp dir so a submitted key VALUE can be
 	// stored without touching the real PVC path.
-	oldDir := gatewaySecretsDir
-	gatewaySecretsDir = t.TempDir()
-	defer func() { gatewaySecretsDir = oldDir }()
+	// N8: repoint the write dir AND register it with the read gate together.
+	defer setGatewaySecretsDirForTest(t.TempDir())()
 
 	// success: create a new custom gateway with a key value.
 	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
@@ -219,9 +218,8 @@ func TestCovD_GatewayHelpers(t *testing.T) {
 
 	// storeGatewayAPIKey writes an owner-only file and returns its path.
 	dir := t.TempDir()
-	oldDir := gatewaySecretsDir
-	gatewaySecretsDir = dir
-	defer func() { gatewaySecretsDir = oldDir }()
+	// N8: repoint the write dir AND register it with the read gate together.
+	defer setGatewaySecretsDirForTest(dir)()
 	path, err := s.storeGatewayAPIKey("MyGW", "sk-value")
 	if err != nil {
 		t.Fatalf("storeGatewayAPIKey: %v", err)

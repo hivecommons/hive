@@ -15,6 +15,9 @@ import (
 // while entitlement validated the fresh gateway key, causing inference 401s.
 func TestResolveLiteLLMInferenceKeyMatchesEntitlement(t *testing.T) {
 	dir := t.TempDir()
+	// N8: api_key_file reads are confined to the managed secrets dirs; declare
+	// this test's temp dir as an allowed root.
+	defer SetSecretFileRootsForTest(dir)()
 	// Key A: the fresh key saved via the Gateways tab (the gateway's file).
 	gatewayKeyFile := filepath.Join(dir, "gateway_litellm_api_key")
 	if err := os.WriteFile(gatewayKeyFile, []byte("sk-gateway-FRESH\n"), 0o600); err != nil {
@@ -62,6 +65,9 @@ func TestResolveLiteLLMInferenceKeyMatchesEntitlement(t *testing.T) {
 // must not change behavior for these hives.
 func TestResolveLiteLLMInferenceKeyLegacyFallback(t *testing.T) {
 	dir := t.TempDir()
+	// N8: api_key_file reads are confined to the managed secrets dirs; declare
+	// this test's temp dir as an allowed root.
+	defer SetSecretFileRootsForTest(dir)()
 	legacyKeyFile := filepath.Join(dir, "litellm_api_key")
 	if err := os.WriteFile(legacyKeyFile, []byte("sk-legacy-ONLY\n"), 0o600); err != nil {
 		t.Fatal(err)

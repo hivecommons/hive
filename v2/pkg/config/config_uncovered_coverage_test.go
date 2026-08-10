@@ -124,6 +124,9 @@ func TestGatewayConfig_ResolveAPIKey(t *testing.T) {
 
 	t.Run("from file when env unset", func(t *testing.T) {
 		dir := t.TempDir()
+		// N8: api_key_file reads are confined to the managed secrets dirs, so a
+		// test using a temp dir must declare it as an allowed root.
+		defer SetSecretFileRootsForTest(dir)()
 		keyPath := filepath.Join(dir, "key.txt")
 		if err := os.WriteFile(keyPath, []byte("  file-key-value  \n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -167,6 +170,8 @@ func TestGatewayConfig_ResolveAPIKey(t *testing.T) {
 func TestInferenceAuthConfig_ResolveAPIKey(t *testing.T) {
 	t.Run("from file", func(t *testing.T) {
 		dir := t.TempDir()
+		// N8: key-file reads are confined to the managed secrets dirs.
+		defer SetSecretFileRootsForTest(dir)()
 		keyPath := filepath.Join(dir, "key.txt")
 		os.WriteFile(keyPath, []byte("file-key"), 0o600)
 		c := &InferenceAuthConfig{APIKeyFile: keyPath}
@@ -217,6 +222,8 @@ func TestInferenceAuthConfig_ResolveAPIKey(t *testing.T) {
 func TestLiteLLMConfig_ResolveAPIKeySource(t *testing.T) {
 	t.Run("from configured file", func(t *testing.T) {
 		dir := t.TempDir()
+		// N8: key-file reads are confined to the managed secrets dirs.
+		defer SetSecretFileRootsForTest(dir)()
 		keyPath := filepath.Join(dir, "key.txt")
 		os.WriteFile(keyPath, []byte("secretvalue"), 0o600)
 		c := &LiteLLMConfig{APIKeyFile: keyPath}

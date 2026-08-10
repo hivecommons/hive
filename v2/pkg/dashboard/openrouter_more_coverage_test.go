@@ -20,9 +20,8 @@ func covK2ORServer(t *testing.T) *Server {
 // upsertOpenRouterGateway / ApplyDeliveredGateway success paths) can write.
 func covK2RedirectSecrets(t *testing.T) {
 	t.Helper()
-	orig := gatewaySecretsDir
-	gatewaySecretsDir = t.TempDir()
-	t.Cleanup(func() { gatewaySecretsDir = orig })
+	// N8: repoint the write dir AND register it with the read gate together.
+	t.Cleanup(setGatewaySecretsDirForTest(t.TempDir()))
 }
 
 func TestCovK2_UpsertOpenRouterGateway(t *testing.T) {
