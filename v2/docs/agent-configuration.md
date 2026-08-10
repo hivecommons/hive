@@ -138,10 +138,29 @@ Rounding out the schema — fields you will rarely touch:
 |---|---|---|
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
-| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan` | off |
+| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
+
+## Caveman prompt compression
+
+`caveman_mode` installs the upstream `JuliusBrussee/caveman` skill/proxy for supported backends before an agent starts. It is optional and experimental; leave it empty for maximum output fidelity.
+
+| Mode | Dashboard description | When to use |
+| --- | --- | --- |
+| `lite` | Removes filler while preserving normal language. | Lowest-risk token reduction for routine agents. |
+| `full` | Converts output toward terse "caveman-speak". | Default example mode when cost matters and operators accept rougher prose. |
+| `ultra` | Telegraphic compression. | High-volume lanes where compact summaries are more important than nuance. |
+| `wenyan` | Classical Chinese-style compression. | Specialized/experimental mode; use only when readers and downstream tools can tolerate it. |
+
+Implementation notes from v2 HEAD:
+
+- Config validation accepts only `lite`, `full`, `ultra`, `wenyan`, or empty.
+- `claude`, `copilot`, and `gemini` are auto-wired before first message.
+- `goose`, `codex`, and `aider` get the skill installed and then receive `/caveman <mode>` after the CLI reaches an input prompt.
+- Unsupported backends log that caveman is not supported and continue without compression.
+- The UI describes the feature as roughly 65% output reduction, but exact savings vary by prompt, backend, and task.
 
 ## Methods: subscription CLIs vs self-hosted inference
 

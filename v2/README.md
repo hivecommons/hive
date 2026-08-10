@@ -268,6 +268,8 @@ Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.examp
 - [Config layering](docs/config-layering.md) — ConfigMap vs PVC overlay precedence.
 - [Network requirements](docs/network-requirements.md) and [TLS setup](docs/tls-setup.md) — firewall, port, and HTTPS guidance.
 - [Token tracking](docs/token-tracking.md) and [security notes](docs/security.md) — cost/usage rollups and log redaction.
+- [GitHub App setup](docs/github-app-setup.md) — production App auth and `/gh-setup`.
+- [Knowledge curator](docs/knowledge-curator.md) — automatic fact extraction and promotion settings.
 - [Trajectory review](docs/trajectory-review.md) — trajectory safety lane.
 - [Credly badges](docs/credly-badges.md) — planned badge integration placeholder.
 
@@ -301,7 +303,9 @@ github:
 For GitHub App setup, configure the app's **Setup URL** to
 `https://<hive-host>/gh-setup` and enable **Redirect on update**. After an
 operator installs the app from the dashboard banner, GitHub redirects back and
-the hive verifies and saves the installation ID automatically.
+the hive verifies and saves the installation ID automatically. See
+[GitHub App setup](docs/github-app-setup.md) for permissions, key handling, and
+the callback flow.
 
 ## Deployment Examples
 
