@@ -100,13 +100,21 @@ func isGitRepo(dir string) bool {
 // gitPull runs `git pull --ff-only` in the given directory.
 // --ff-only avoids creating merge commits if there are local changes.
 func gitPull(ctx context.Context, dir string) error {
+	return gitPullWithEnv(ctx, dir, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"))
+}
+
+func gitSourcePull(ctx context.Context, dir string) error {
+	return gitPullWithEnv(ctx, dir, gitSourceEnv())
+}
+
+func gitPullWithEnv(ctx context.Context, dir string, env []string) error {
 	const gitPullTimeoutSeconds = 30
 	pullCtx, cancel := context.WithTimeout(ctx, gitPullTimeoutSeconds*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(pullCtx, "git", "pull", "--ff-only")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

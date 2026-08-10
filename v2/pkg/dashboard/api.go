@@ -7121,8 +7121,9 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "name and url are required", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(req.URL, "https://") && !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "git@") {
-		jsonError(w, "url must start with https://, http://, or git@", http.StatusBadRequest)
+	req.URL = strings.TrimSpace(req.URL)
+	if err := knowledge.ValidateGitSourceURL(req.URL); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if strings.Contains(req.Name, "..") || strings.ContainsAny(req.Name, "/\\") {

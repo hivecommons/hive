@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 const (
 	// gitSourceCloneTimeout caps how long the initial clone can take.
 	gitSourceCloneTimeout = 120 * time.Second
+
+	gitAllowedProtocols = "https:http"
 
 	// gitSourceSyncInterval is how often we pull updates from the remote.
 	gitSourceSyncInterval = 5 * time.Minute
@@ -49,6 +52,7 @@ type GitSource struct {
 // NewGitSource creates a git source. Call Init() to clone the repo and start
 // the FileStore. The clone lands under baseDir/git-sources/<slug>.
 func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *GitSource {
+	config.URL = strings.TrimSpace(config.URL)
 	slug := gitSourceSlug(config.URL, config.Subpath)
 	cloneDir := filepath.Join(baseDir, gitSourceCacheDir, slug)
 
@@ -71,6 +75,10 @@ func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *
 
 // Init clones the repo (or reuses an existing clone) and creates the FileStore.
 func (g *GitSource) Init(ctx context.Context) error {
+	if err := ValidateGitSourceURL(g.config.URL); err != nil {
+		return fmt.Errorf("git source %s: invalid url: %w", g.config.Name, err)
+	}
+
 	if err := g.ensureCloned(ctx); err != nil {
 		return fmt.Errorf("git source %s: clone failed: %w", g.config.Name, err)
 	}
@@ -130,7 +138,7 @@ func (g *GitSource) Sync(ctx context.Context) error {
 		return fmt.Errorf("clone dir %s is not a git repo", g.cloneDir)
 	}
 
-	if err := gitPull(ctx, g.cloneDir); err != nil {
+	if err := gitSourcePull(ctx, g.cloneDir); err != nil {
 		return fmt.Errorf("git source %s: pull failed: %w", g.config.Name, err)
 	}
 
@@ -173,7 +181,7 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 			"name", g.config.Name,
 			"dir", g.cloneDir,
 		)
-		return gitPull(ctx, g.cloneDir)
+		return gitSourcePull(ctx, g.cloneDir)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(g.cloneDir), 0o755); err != nil {
@@ -189,10 +197,10 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 		args = append(args, "--filter=blob:none", "--sparse")
 	}
 
-	args = append(args, g.config.URL, g.cloneDir)
+	args = append(args, "--", g.config.URL, g.cloneDir)
 
 	cmd := exec.CommandContext(cloneCtx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = gitSourceEnv()
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -219,19 +227,69 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 func (g *GitSource) setupSparseCheckout(ctx context.Context) error {
 	initCmd := exec.CommandContext(ctx, "git", "sparse-checkout", "init", "--cone")
 	initCmd.Dir = g.cloneDir
-	initCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	initCmd.Env = gitSourceEnv()
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sparse-checkout init: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	setCmd := exec.CommandContext(ctx, "git", "sparse-checkout", "set", g.config.Subpath)
 	setCmd.Dir = g.cloneDir
-	setCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	setCmd.Env = gitSourceEnv()
 	if out, err := setCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sparse-checkout set: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	return nil
+}
+
+// ValidateGitSourceURL enforces the transports permitted for git-backed knowledge sources.
+func ValidateGitSourceURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fmt.Errorf("git URL is required")
+	}
+	if strings.HasPrefix(trimmed, "-") {
+		return fmt.Errorf("git URL must not start with '-'")
+	}
+	if isSCPStyleGitURL(trimmed) {
+		return fmt.Errorf("git URL scp-like syntax is not allowed")
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("git URL is invalid")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "https" && scheme != "http" {
+		if scheme == "" {
+			return fmt.Errorf("git URL scheme is required")
+		}
+		return fmt.Errorf("git URL scheme %q is not allowed", scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("git URL host is required")
+	}
+	if strings.Contains(trimmed, "::") {
+		return fmt.Errorf("git URL must not contain git transport helper separator")
+	}
+
+	return nil
+}
+
+func isSCPStyleGitURL(raw string) bool {
+	if strings.Contains(raw, "://") {
+		return false
+	}
+	at := strings.Index(raw, "@")
+	colon := strings.Index(raw, ":")
+	return at > 0 && colon > at+1
+}
+
+func gitSourceEnv() []string {
+	return append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ALLOW_PROTOCOL="+gitAllowedProtocols,
+	)
 }
 
 // gitSourceSlug creates a filesystem-safe directory name from a git URL + subpath.
