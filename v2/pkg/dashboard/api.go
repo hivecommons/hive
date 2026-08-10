@@ -1231,7 +1231,27 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 	})
 }
 
+// requireOwnerRole returns true when the request carries owner-level access.
+// An empty X-Hive-Role is treated as owner (open/dev spokes with no auth_token
+// or hub-proxied spokes where the hub omits the header). Any non-owner role
+// set by the hub or device-flow session is rejected. Call this for state-mutating
+// endpoints that should be restricted to operators (pause, resume, fleet breaker).
+func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		return true // open spoke or internal automation — treat as owner
+	}
+	if role != "owner" {
+		jsonError(w, "owner access required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// No-op guard: the agent is already paused. Do NOT call Pause again —
@@ -1256,6 +1276,9 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := s.resolveAgentParam(r.PathValue("agent"))
 
 	// No-op guard, mirror of handlePause: resuming an agent that is not
@@ -1314,9 +1337,12 @@ func (s *Server) handleBreakerState(w http.ResponseWriter, r *http.Request) {
 
 // handleBreakerEngage throws the fleet breaker: it pauses every running,
 // non-on-demand agent and records exactly that set. Already-paused and
-// on-demand agents are left untouched (see Manager.EngageBreaker). Owner-role
-// gated via the shared roleEnforcement middleware, exactly like pause/resume.
+// on-demand agents are left untouched (see Manager.EngageBreaker). Restricted
+// to owner role because engaging the breaker halts all agents fleet-wide.
 func (s *Server) handleBreakerEngage(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
 		return
@@ -1337,8 +1363,11 @@ func (s *Server) handleBreakerEngage(w http.ResponseWriter, r *http.Request) {
 // handleBreakerRelease disengages the fleet breaker: it resumes ONLY the agents
 // the breaker paused and still owns (PausedTrigger unchanged). On-demand,
 // pre-existing, and operator-re-paused agents are never resumed (see
-// Manager.ReleaseBreaker). Owner-role gated via roleEnforcement.
+// Manager.ReleaseBreaker). Restricted to owner role.
 func (s *Server) handleBreakerRelease(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.AgentMgr == nil {
 		jsonError(w, "agent manager unavailable", http.StatusServiceUnavailable)
 		return
