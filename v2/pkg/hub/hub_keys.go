@@ -142,6 +142,69 @@ func provisionTerminalKey(hiveID string) string {
 	return derivePerHiveKey(provisionMasterSecret(), infoTerminalKey, hiveID)
 }
 
+// provisionHeartbeatKey returns the PER-HIVE heartbeat bearer injected into a
+// spoke as HIVE_HEARTBEAT_KEY (audit N1).
+//
+// The spoke presents this to the hub, so unlike the terminal key it crosses the
+// trust boundary — but it is still symmetric, because the hub can re-derive it
+// on demand from the master plus the claimed hive ID. That is precisely what
+// makes the identity binding possible: with a fleet-shared bearer the hub had no
+// way to check that the caller was the hive it claimed to be, which is why
+// handleHeartbeat trusted body-supplied hive_id and three key-delivery lanes
+// became IDOR.
+func provisionHeartbeatKey(hiveID string) string {
+	return derivePerHiveKey(provisionMasterSecret(), infoHeartbeatKey, hiveID)
+}
+
+// heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
+// hiveID. Mirror of provisionHeartbeatKey, resolved against the running hub's
+// own master rather than the provisioning-time lookup.
+func (s *HubServer) heartbeatKeyFor(hiveID string) string {
+	return derivePerHiveKey(s.hubSecret, infoHeartbeatKey, hiveID)
+}
+
+// verifyHeartbeatBearer authenticates a heartbeat and BINDS it to the claimed
+// hive (audit N1).
+//
+// Accepts either:
+//
+//  1. the per-hive bearer for exactly this hiveID — the post-fix path, which
+//     makes the claimed identity self-authenticating; or
+//  2. the legacy fleet-wide bearer — every spoke currently in the field holds
+//     this and will keep holding it until the hub re-provisions it.
+//
+// Lane 2 is a DELIBERATE, TEMPORARY compatibility path and it does NOT bind
+// identity — a spoke presenting the legacy key can still claim any hive_id, so
+// the N1 IDOR remains open for spokes that have not rolled. It exists because a
+// flag-day cutover would break every heartbeat in the fleet simultaneously,
+// which is the failure mode #2773 already documented for the v2-hub/v4-spoke
+// split. Remove it once the fleet has re-provisioned; the callers that consume
+// the identity are hardened independently, so the window is bounded by rollout
+// rather than by trust in the legacy key.
+//
+// Both comparisons are constant-time. Order matters only for the returned
+// telemetry, not for security: a caller holding the legacy key is accepted
+// regardless of which branch runs first.
+func (s *HubServer) verifyHeartbeatBearer(presented, hiveID string) bool {
+	if presented == "" {
+		return false
+	}
+	if perHive := s.heartbeatKeyFor(hiveID); perHive != "" && secureCompareHub(presented, perHive) {
+		return true
+	}
+	// Legacy fleet-wide bearer — accepted during rollout only.
+	return secureCompareHub(presented, s.heartbeatKey())
+}
+
+// heartbeatBearerIsPerHive reports whether the presented bearer is the modern,
+// identity-bound one. Used for rollout telemetry so an operator can see when the
+// fleet has fully migrated and the legacy lane in verifyHeartbeatBearer can be
+// deleted.
+func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
+	perHive := s.heartbeatKeyFor(hiveID)
+	return perHive != "" && secureCompareHub(presented, perHive)
+}
+
 // ssoPublicKeyFromSeed expands a hex Ed25519 seed into the hex-encoded 32-byte
 // public key. Returns "" if seedHex is not a valid 32-byte seed. Used by both the
 // hub-side public-key accessor and provisioning so the spoke and hub agree on the
@@ -194,6 +257,17 @@ func spokeDomainKey(envVar, info string) string {
 
 // SpokeHeartbeatKey returns the bearer a spoke presents on /api/heartbeat and
 // /api/task-status. Exported for use from the dashboard/heartbeat call sites.
+//
+// N1 note: a hub-provisioned spoke gets HIVE_HEARTBEAT_KEY, which is now the
+// PER-HIVE bearer — no spoke-side change is needed, the value in the env var
+// simply becomes identity-bound at the next re-provision.
+//
+// The HIVE_HUB_SECRET fallback below still derives the FLEET-wide bearer, and
+// deliberately so: it serves self-hosted operators who legitimately hold the
+// master and beat against their own hub, where "any spoke can claim any ID" is
+// not a cross-tenant concern because there is exactly one tenant. The hub keeps
+// accepting that value through verifyHeartbeatBearer's legacy lane. A hosted
+// spoke cannot reach this path — it never receives the master.
 func SpokeHeartbeatKey() string { return spokeDomainKey(EnvHeartbeatKey, infoHeartbeatKey) }
 
 // SpokeSessionKey returns the key a spoke uses to VERIFY the hub-minted
