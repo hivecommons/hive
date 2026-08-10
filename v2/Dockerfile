@@ -21,7 +21,7 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
-FROM node:24-slim AS tmux-builder
+FROM node:26-slim AS tmux-builder
 ARG TMUX_VERSION=3.5a
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc make pkg-config libevent-dev libncurses-dev bison ca-certificates \
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION}
 
-FROM node:24-slim
+FROM node:26-slim
 
 # --- Layer 1: system packages (rarely changes) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
