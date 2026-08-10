@@ -946,8 +946,8 @@ func TestAuthoritativeIssueCloseDoesNotDependOnSpecialistRuntimeState(t *testing
 	}{
 		{name: "paused role", change: func(_ *Controller, gov *governor.Governor) {
 			gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-				"idle":  {Cadences: map[string]string{"quality": "1m"}},
-				"quiet": {Cadences: map[string]string{"quality": "pause"}},
+				"idle":  {Cadences: map[string]config.Cadence{"quality": "1m"}},
+				"quiet": {Cadences: map[string]config.Cadence{"quality": "pause"}},
 			}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}})
 			gov.SetMode(governor.ModeQuiet)
 		}},
@@ -995,7 +995,7 @@ func TestAuthoritativeIssueCloseDoesNotDependOnSpecialistRuntimeState(t *testing
 			}
 
 			gov := governor.New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-				"idle": {Cadences: map[string]string{"quality": "1m"}},
+				"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 			}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			issues := &controllerIssueClient{governor: gov}
 			controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": store}, nil, issues, integrated.Config{
