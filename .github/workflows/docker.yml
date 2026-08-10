@@ -12,10 +12,15 @@ on:
       - '!copilot/**'
   workflow_dispatch:
 
-# Serialize Docker builds per branch so concurrent merges don't race.
+# Serialize Docker builds per branch so concurrent merges don't race. Do NOT
+# cancel in-progress builds: on a fast-merging release branch (v2 saw ~34 merges
+# in 2h), cancel-in-progress meant every build was killed by the next merge and
+# NONE ever completed, freezing <branch>-latest and blocking all deploys. With
+# cancel-in-progress:false the builds queue and each runs to completion, so
+# <branch>-latest always advances to the newest merged commit.
 concurrency:
   group: docker-build-${{ github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
