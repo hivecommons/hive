@@ -27,6 +27,8 @@ func TestIsPrivateURLBlocksDNSRebindingAndFailures(t *testing.T) {
 			return []string{"93.184.216.34"}, nil
 		case "rebind.example":
 			return []string{"10.0.0.1"}, nil
+		case "v6-rebind.example":
+			return []string{"::1", "fc00::1"}, nil
 		default:
 			return nil, context.DeadlineExceeded
 		}
@@ -39,9 +41,17 @@ func TestIsPrivateURLBlocksDNSRebindingAndFailures(t *testing.T) {
 		want bool
 	}{
 		{name: "literal localhost", raw: "http://localhost:8080/path", want: true},
+		{name: "literal ipv4 private", raw: "http://10.1.2.3/path", want: true},
+		{name: "literal ipv4 rfc1918", raw: "http://172.16.0.1/path", want: true},
+		{name: "literal ipv4 rfc1918 high", raw: "http://192.168.1.10/path", want: true},
 		{name: "literal metadata", raw: "http://169.254.169.254/latest", want: true},
+		{name: "literal ipv6 loopback", raw: "http://[::1]/path", want: true},
+		{name: "literal ipv6 unique local", raw: "http://[fc00::1]/path", want: true},
+		{name: "literal ipv6 link local", raw: "http://[fe80::1]/path", want: true},
+		{name: "literal ipv6 mapped loopback", raw: "http://[::ffff:127.0.0.1]/path", want: true},
 		{name: "public dns", raw: "https://public.example/path", want: false},
 		{name: "dns rebind", raw: "https://rebind.example/path", want: true},
+		{name: "dns ipv6 rebind", raw: "https://v6-rebind.example/path", want: true},
 		{name: "dns failure", raw: "https://missing.example/path", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

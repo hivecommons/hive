@@ -110,6 +110,31 @@ func TestGatewaysUpsert_RejectsInvalidEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewaysUpsert_RejectsPrivateEndpoint(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"name":"bad","kind":"custom","endpoint":"https://169.254.169.254/v1"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysUpsert(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+	if len(srv.deps.Config.Governor.Gateways) != 0 {
+		t.Errorf("config mutated on private endpoint")
+	}
+}
+
+func TestGatewaysDiscover_RejectsPrivateEndpoint(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"name":"bad","kind":"custom","endpoint":"https://[::1]/v1"}`
+	req := httptest.NewRequest("POST", "/api/config/governor/gateways/discover", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysDiscover(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}
+
 // TestGatewaysDelete_InUseConflict verifies deleting a gateway an agent
 // references returns 409 and lists the agent.
 func TestGatewaysDelete_InUseConflict(t *testing.T) {
