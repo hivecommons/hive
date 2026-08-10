@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // #2534 — Operator admin controls. Originally in a single "Management & Operations"
@@ -41,6 +44,7 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
+
 	body := w.Body.String()
 
 	// Admin controls area + the role gate that only shows it for owner/read-write.
@@ -73,8 +77,18 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 		`/trust`,
 		`/revoke`,
 		`data-role="tier"`,
+		`data-role="agent-role"`,
+		`Acting as`,
+		`none (general work)`,
+		`/agent-role`,
 		`data-role="revoke"`,
 		`data-role="remove"`,
+		`data-role="agent-role-add"`,
+		`data-role="agent-role-remove"`,
+		`/agent-role-grants`,
+		`Agent roles`,
+		`&middot; as '+esc(c.role)`,
+		`HIVE_AGENT_ROLE=scanner`,
 		// Themed confirm modal (never native window.confirm).
 		`id="admin-confirm-back"`,
 		`function adminConfirm(`,
@@ -132,6 +146,49 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 	}
 }
 
+func TestGovernorHubDelegatableRolesUIAndRoundTrip(t *testing.T) {
+	static, err := os.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read static index: %v", err)
+	}
+	body := string(static)
+	for _, want := range []string{
+		"Contributor Agent Roles",
+		"Delegatable to contributors",
+		"toggleDelegatableAgentRole",
+		"contribute_delegatable_roles",
+		"scanner','quality','outreach",
+		"ci-maintainer",
+		"sec-check",
+		"architect",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Governor Hub agent-role UI missing %q", want)
+		}
+	}
+
+	s, deps := apiServer(t)
+	rec := doPut(s, "/api/config/governor/hub", map[string]any{
+		"contribute_delegatable_roles": []string{"scanner", "quality", "outreach", "sec-check", "supervisor"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/config/governor/hub got %d: %s", rec.Code, rec.Body.String())
+	}
+	if deps.Config.Hub.IsContributeRoleDelegatable("supervisor") {
+		t.Fatal("supervisor must not become delegatable")
+	}
+	if !deps.Config.Hub.IsContributeRoleDelegatable("scanner") || !deps.Config.Hub.IsContributeRoleDelegatable("sec-check") {
+		t.Fatalf("delegatable roles not persisted/resolved: %+v", deps.Config.Hub.ContributeDelegatableRoles)
+	}
+	got := doGet(s, "/api/config/governor")
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET governor got %d", got.Code)
+	}
+	if !strings.Contains(got.Body.String(), `"contribute_delegatable_roles"`) || !strings.Contains(got.Body.String(), `"sec-check"`) {
+		t.Fatalf("GET did not round-trip delegatable roles: %s", got.Body.String())
+	}
+}
+
 // contributorWriteCase is one mutation endpoint exercised by the tab.
 type contributorWriteCase struct {
 	name   string
@@ -144,6 +201,8 @@ type contributorWriteCase struct {
 func contributorWriteCases() []contributorWriteCase {
 	return []contributorWriteCase{
 		{"trust", (*Server).handleContributorTrust, http.MethodPut, "/api/contributors/alice/trust", `{"tier":"trusted"}`},
+		{"agent_role", (*Server).handleContributorAgentRole, http.MethodPut, "/api/contributors/alice/agent-role", `{"agent_role":"scanner"}`},
+		{"agent_role_grants", (*Server).handleContributorAgentRoleGrants, http.MethodPut, "/api/contributors/alice/agent-role-grants", `{"agent_role_grants":["ci-maintainer"]}`},
 		{"revoke", (*Server).handleContributorRevoke, http.MethodPost, "/api/contributors/alice/revoke", ``},
 		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},
 		{"delete", (*Server).handleContributorDelete, http.MethodDelete, "/api/contributors/alice", ``},
@@ -218,6 +277,56 @@ func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
 				t.Errorf("role %q: tier not promoted: %+v", role, p)
 			}
 		})
+	}
+}
+
+func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{
+		GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "trusted",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, deps := apiServer(t)
+	deps.Config.Agents["ci-maintainer"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+	deps.Config.Agents["sec-check"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+	deps.Config.Hub.ContributeDelegatableRoles = []string{"scanner", "ci-maintainer", "sec-check", "supervisor"}
+
+	readReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["ci-maintainer"]}`))
+	readReq.Header.Set("Content-Type", "application/json")
+	readReq.Header.Set("X-Hive-Role", "read")
+	readRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(readRec, readReq)
+	if readRec.Code != http.StatusForbidden {
+		t.Fatalf("read viewer got %d, want 403 (body: %s)", readRec.Code, readRec.Body.String())
+	}
+	if p := findContributor("c-alice"); p == nil || len(p.AgentRoleGrants) != 0 {
+		t.Fatalf("read viewer mutated grants: %+v", p)
+	}
+
+	ownerReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["sec-check","ci-maintainer","ci-maintainer"]}`))
+	ownerReq.Header.Set("Content-Type", "application/json")
+	ownerReq.Header.Set("X-Hive-Role", "owner")
+	ownerRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(ownerRec, ownerReq)
+	if ownerRec.Code != http.StatusOK {
+		t.Fatalf("owner got %d, want 200 (body: %s)", ownerRec.Code, ownerRec.Body.String())
+	}
+	p := findContributor("c-alice")
+	if p == nil || strings.Join(p.AgentRoleGrants, ",") != "ci-maintainer,sec-check" {
+		t.Fatalf("grant round-trip mismatch: %+v", p)
+	}
+	if body := ownerRec.Body.String(); !strings.Contains(body, `"agent_role_grants":["ci-maintainer","sec-check"]`) {
+		t.Fatalf("response did not echo normalized grants: %s", body)
+	}
+
+	badReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["scanner"]}`))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("X-Hive-Role", "owner")
+	badRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("default non-privileged role got %d, want 400", badRec.Code)
 	}
 }
 

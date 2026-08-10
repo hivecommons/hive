@@ -13,6 +13,9 @@ agents:
     model: claude-sonnet-4-6
 ```
 
+
+For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [v2/examples/agents/customized-agent.yaml](../examples/agents/customized-agent.yaml).
+
 That is a complete, valid agent. Defaults fill in the rest at load time:
 
 - `enabled: true` (unless you explicitly write `enabled: false`)
@@ -77,7 +80,7 @@ agents:
 ```yaml
     backend: copilot             # the method: claude | copilot | goose | codex | pi |
                                  #   bob | aider, or an inference backend:
-                                 #   vllm | llm-d | litellm
+                                 #   vllm | llm-d | litellm | watsonx | named gateway
     model: claude-sonnet-4-6     # model id for that method
     cli_pinned: true             # pin the CLI so nothing auto-switches it
     launch_cmd: "/usr/bin/copilot --allow-all --model claude-sonnet-4-6"
@@ -105,6 +108,7 @@ agents:
                                  #   must exceed its longest cadence
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
+    replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
     lane_keywords: [bug, triage, fix]   # routes matching issues into this agent's lane
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
@@ -116,6 +120,11 @@ Three optional blocks replace hardcoded behavior with declarations:
 ```yaml
     channels:                    # how the agent gets triggered. Omit = governor timer.
       - type: kick               # kick | webhook | discord | schedule | bead
+      - type: webhook
+        events: ["issues.opened", "issues.labeled"]
+        repos: [repo-one]        # optional repo-name filter
+      - type: bead
+        match: { nudge_target: scanner }
       - type: schedule
         schedule: "0 */4 * * *"  # cron; required for type: schedule
     tools:                       # tool permissions. Omit = the mode field governs.
@@ -132,16 +141,51 @@ Three optional blocks replace hardcoded behavior with declarations:
 
 Presets map onto modes (`advisory` denies issue and PR creation, `issues-only` denies PRs, `issues-prs` and `full` deny nothing), and an explicit `allow` rule overrides a preset `deny`.
 
+### Replicated agents
+
+Set `replicas: N` on a declared agent to run a small pool with the same prompt, backend, model, mode, channel, tool, and metadata settings. `N` defaults to `1` and is capped at `5`; config load fails if it is outside `1..5`. Hive materializes derived names as `<base>-2`, `<base>-3`, ... (`scanner`, `scanner-2`, `scanner-3`). Do not declare those derived names yourself: a real `scanner-2` entry collides with `scanner: { replicas: 2 }` and is rejected. Derived replicas get their own IDs and bead directories (`/data/beads/scanner-2`) but inherit the base agent's kick template/prompt selection. Runtime-derived replicas are stripped before saving and recreated on the next load.
+
+### Trigger channels
+
+`channels:` declares non-default ways to wake an agent. If the block is omitted, governor timer kicks still work. If you include the block, add `type: kick` when the agent should keep normal governor kicks alongside other triggers.
+
+| Type | Required fields | Behavior |
+|---|---|---|
+| `kick` | none | Keep ordinary governor timer kicks. |
+| `webhook` | `events` | `/webhook`/GitHub webhook receiver matches `X-GitHub-Event` or `event.action` strings such as `issues.opened`; optional `repos` filters by repository name. If `HIVE_WEBHOOK_SECRET` is set, GitHub `X-Hub-Signature-256` HMAC is verified. |
+| `bead` | `match` | The bead watcher polls the agent's `beads_dir` about every 30 seconds and kicks when an individual JSON file has every `key: value` in `match` at the top level. Current watcher matching is not the nested `metadata` map inside the `bd` ledger file. |
+| `schedule` | `schedule` | Cron-style channel trigger independent of governor-mode cadences. |
+| `discord` | `patterns` | Declared shape for Discord-triggered work; patterns are validated by config load. |
+
 Rounding out the schema — fields you will rarely touch:
 
 | Field | What it does | Default |
 |---|---|---|
 | `id` | Stable identifier | agent name |
 | `acmm_levels` | ACMM levels this agent participates in | all |
-| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan` | off |
+| `caveman_mode` | Prompt-compression experiment: `lite`, `full`, `ultra`, `wenyan`; see below | off |
 | `metrics_collector` | Named metrics source for the stats panel | none |
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style) | none |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
+
+## Caveman prompt compression
+
+`caveman_mode` installs the upstream `JuliusBrussee/caveman` skill/proxy for supported backends before an agent starts. It is optional and experimental; leave it empty for maximum output fidelity.
+
+| Mode | Dashboard description | When to use |
+| --- | --- | --- |
+| `lite` | Removes filler while preserving normal language. | Lowest-risk token reduction for routine agents. |
+| `full` | Converts output toward terse "caveman-speak". | Default example mode when cost matters and operators accept rougher prose. |
+| `ultra` | Telegraphic compression. | High-volume lanes where compact summaries are more important than nuance. |
+| `wenyan` | Classical Chinese-style compression. | Specialized/experimental mode; use only when readers and downstream tools can tolerate it. |
+
+Implementation notes from v2 HEAD:
+
+- Config validation accepts only `lite`, `full`, `ultra`, `wenyan`, or empty.
+- `claude`, `copilot`, and `gemini` are auto-wired before first message.
+- `goose`, `codex`, and `aider` get the skill installed and then receive `/caveman <mode>` after the CLI reaches an input prompt.
+- Unsupported backends log that caveman is not supported and continue without compression.
+- The UI describes the feature as roughly 65% output reduction, but exact savings vary by prompt, backend, and task.
 
 ## Methods: subscription CLIs vs self-hosted inference
 
@@ -156,11 +200,16 @@ Rounding out the schema — fields you will rarely touch:
 | `vllm` | inference | endpoint + optional key — no login | **live** — `/v1/models` |
 | `llm-d` | inference | endpoint + optional key — no login | **live** — `/v1/models` |
 | `litellm` | inference | endpoint + API key — no login | **live** — `/v1/models`, entitlement-filtered per key |
+| `openrouter` (gateway name) | inference | Model Gateway key or scan-to-fund flow — no CLI login | **live** — OpenRouter `/v1/models`, plus curated fallback |
 
 Two rules of thumb:
 
 - **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login.
 - **Inference methods are endpoints.** You configure a base URL and a key *reference* (env var name or key-file path — the value goes in `/data/secrets/`, never in YAML). Agents on `vllm`/`llm-d`/`litellm` launch the Claude CLI routed through hive's inference translator, so there is no separate login.
+
+Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
+
+Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `v2/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session.
 
 Every discovery probe is best-effort: a failed or absent probe falls back to a current static list, so a model dropdown is never empty. Fallback entries are marked "unverified" in the UI.
 
@@ -267,8 +316,13 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 
 ## What to read next
 
+- **[Supervisor agent](supervisor.md)** — what the supervisor does, how it differs from the governor, when to enable it, `bead_role` semantics, and policy modes.
 - **[Introduction](https://kubestellar.io/docs/hive/overview/introduction)** — what hive is, setup, and the command surface.
 - **[Architecture](https://kubestellar.io/docs/hive/overview/architecture)** — the two scheduling models and how the supervisor drives agents.
 - **[Troubleshooting](https://kubestellar.io/docs/hive/getting-started/troubleshooting)** — stuck sessions, login expiry, restart loops.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
+- **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — moving a hive (and its PVC state) between clusters.
+- **[Dashboard OpenAPI spec](../../dashboard/openapi.json)** — REST endpoints used by the dashboard and integrations.
+- **[SQLite state backend example](../../examples/sqlite-state.md)** — single-machine alternative to beads for state queries.
+- **[ACMM policy fragments](../../examples/acmm/README.md)** — per-level ACMM policy reference fragments.

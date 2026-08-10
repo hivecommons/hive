@@ -12,12 +12,23 @@ func TestQueuePRAutoMergeApprovesThenLabels(t *testing.T) {
 	var sawReview, sawLabel bool
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": "head7"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+AutoMergeQueuedLabel:
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"name": AutoMergeQueuedLabel})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			var req struct {
+				CommitID string `json:"commit_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode review request: %v", err)
+			}
+			if req.CommitID != "head7" {
+				t.Fatalf("review commit_id=%q, want head7", req.CommitID)
+			}
 			if sawLabel {
 				t.Fatal("review must be created before the PR is labeled queued")
 			}
@@ -50,6 +61,8 @@ func TestQueuePRAutoMergeUsesConfiguredLabel(t *testing.T) {
 	var sawLabel bool
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{"head": map[string]string{"sha": "head7"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+label:
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
@@ -107,6 +120,21 @@ func TestQueuePRAutoMergeRequiresQueuedBy(t *testing.T) {
 	}
 	if called {
 		t.Fatal("GitHub API should not be called without queuedBy")
+	}
+}
+
+func TestQueuePRAutoMergeRequiresHeadSHA(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"number": 7})
+	}))
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	if err := c.QueuePRAutoMerge(context.Background(), "acme/widget", 7, "alice"); err == nil {
+		t.Fatal("QueuePRAutoMerge returned nil error for missing head SHA")
 	}
 }
 

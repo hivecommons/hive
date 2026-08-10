@@ -143,3 +143,25 @@ func TestSnapshotCacheHeaders(t *testing.T) {
 		t.Errorf("expected application/json, got %q", ct)
 	}
 }
+
+func TestSnapshotFrameAncestorsEndpoint(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Dashboard.SnapshotFrameAncestors = []string{"https://docs.projectbluefin.io"}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/snapshot/frame-ancestors", nil)
+	w := httptest.NewRecorder()
+	srv.handleSnapshotFrameAncestors(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Origins []string `json:"origins"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(body.Origins) != 1 || body.Origins[0] != "https://docs.projectbluefin.io" {
+		t.Fatalf("origins = %#v", body.Origins)
+	}
+}

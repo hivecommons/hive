@@ -32,6 +32,18 @@ func normalizeAgentRole(role string) string {
 	return strings.ToLower(strings.TrimSpace(role))
 }
 
+func effectiveAssignedAgentRole(assigned string) string {
+	assigned = normalizeAgentRole(assigned)
+	if assigned == "none" {
+		return ""
+	}
+	return assigned
+}
+
+func hasOwnerAgentRoleAssignment(profile *ContributorProfile) bool {
+	return profile != nil && normalizeAgentRole(profile.AssignedAgentRole) != ""
+}
+
 func hasAgentRoleGrant(profile *ContributorProfile, role string) bool {
 	if profile == nil {
 		return false

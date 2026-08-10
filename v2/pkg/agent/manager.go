@@ -1034,6 +1034,25 @@ func backendDefersStartupKick(backend string) bool {
 	}
 }
 
+// copilotGitHubWriteDenyFlags is the full set of Copilot `--deny-tool` flags for
+// every GitHub MCP write tool. It is denied in EVERY copilot launch mode so no
+// mode can author issues/PRs/comments as the logged-in Copilot USER via the
+// GitHub MCP. The MCP write path executes on GitHub's side using the Copilot
+// session's user OAuth, so the hive's proxy never sees a POST it could gate —
+// denying these tools at launch is the only reliable enforcement, forcing all
+// GitHub writes through the App-gated `gh` wrapper / `hive-open-pr`, which author
+// as the App bot (kubestellar-hive[bot]). READ tools (get_issue, list_issues,
+// get_pull_request, search, ...) stay enabled via --enable-all-github-mcp-tools;
+// only these WRITE tools are denied. The mode-based gh-wrapper/proxy gating
+// (IssuesOnly vs IssuesAndPRs) is a separate, unchanged layer.
+const copilotGitHubWriteDenyFlags = "" +
+	" --deny-tool='github(create_pull_request)'" +
+	" --deny-tool='github(create_pull_request_with_copilot)'" +
+	" --deny-tool='github(merge_pull_request)'" +
+	" --deny-tool='github(create_issue)'" +
+	" --deny-tool='github(update_issue)'" +
+	" --deny-tool='github(add_issue_comment)'"
+
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1189,23 +1208,17 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
 			// per task. Nothing here assumes a concrete id, so the sentinel flows
 			// through unchanged.
-			switch {
-			case mode >= ModeIssuesAndPRs:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
-					binary, model)
-			case mode == ModeIssuesOnly:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools"+
-					" --deny-tool='github(create_pull_request)'"+
-					" --deny-tool='github(merge_pull_request)'",
-					binary, model)
-			default:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all"+
-					" --deny-tool='github(create_pull_request)'"+
-					" --deny-tool='github(create_issue)'"+
-					" --deny-tool='github(update_issue)'"+
-					" --deny-tool='github(merge_pull_request)'",
-					binary, model)
-			}
+			// Every mode denies the FULL set of GitHub MCP write tools
+			// (copilotGitHubWriteDenyFlags) so no mode can author issues/PRs/
+			// comments as the login USER via the MCP; all GitHub writes must go
+			// through the App-gated gh wrapper / hive-open-pr. READ tools stay
+			// enabled via --enable-all-github-mcp-tools. The deny set is identical
+			// across ModeIssuesAndPRs / ModeIssuesOnly / advisory — the mode no
+			// longer changes what the MCP can write (it never legitimately should),
+			// it only governs the separate, unchanged gh-wrapper/proxy layer that
+			// still reads Mode for what the App-gated write path allows.
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools%s",
+				binary, model, copilotGitHubWriteDenyFlags)
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		case "goose":
@@ -1448,11 +1461,11 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	case "gemini":
 		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
 	case "goose":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "goose")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "goose")
 	case "codex":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "codex")
 	case "aider":
-		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "aider-desk")
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman#0d95a81d35a9", "-a", "aider-desk")
 	default:
 		m.logger.Info("caveman not supported for backend", "backend", backend)
 		return
