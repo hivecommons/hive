@@ -266,6 +266,8 @@ Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.examp
 - [Cross-cluster migration](docs/cross-cluster-migration.md) — move a hive between clusters.
 - [Manual provisioning](docs/manual-provisioning.md) — hosted/spoke provisioning and hub access.
 - [Config layering](docs/config-layering.md) — ConfigMap vs PVC overlay precedence.
+- [Network requirements](docs/network-requirements.md) and [TLS setup](docs/tls-setup.md) — firewall, port, and HTTPS guidance.
+- [Token tracking](docs/token-tracking.md) and [security notes](docs/security.md) — cost/usage rollups and log redaction.
 - [Trajectory review](docs/trajectory-review.md) — trajectory safety lane.
 - [Credly badges](docs/credly-badges.md) — planned badge integration placeholder.
 

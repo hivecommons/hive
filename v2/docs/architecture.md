@@ -315,6 +315,8 @@ reroutes Anthropic-shaped calls to OpenAI-shaped endpoints where needed.
 each backend's **session JSONL** files (plus a live proxy sniff of Copilot's
 usage block) and multiplies token counts by a dated per-model price table. This
 feeds the dashboard's live cost, hourly spend, and per-agent/model attribution.
+See [Token collection and usage tracking](token-tracking.md) for the data shape,
+`/api/cost`, and hub `/api/saas/usage` rollups.
 
 ---
 
@@ -331,12 +333,15 @@ flowchart LR
 ```
 
 - `/api/status` — full fleet + governor state (`BuildFrontendStatus`).
+- `/api/audit` — recent audit entries for read-write users: dashboard config changes, logins, GitHub App setup changes, and agent lifecycle events such as start, stop, launch failure, pause/resume/kick, add/remove, backend changes, and model changes. Entries are kept in memory and, when `/data` exists, appended to `/data/audit.jsonl` with lumberjack rotation (5 MB files, 3 backups, 90 days).
 - `/api/events` — Server-Sent Events; the dashboard is pushed a fresh snapshot on
   every eval cycle (and a lighter agent-only update on the fast poll).
 - `/api/health`, `/api/health/deep`, `/api/livez` — readiness and liveness; the
   `livez` probe catches the "HTTP up but eval loop / heartbeat stalled" case.
 - Notifications (`ntfy` / Slack / Discord) fire on budget warnings, SLA breaches,
   trajectory-drift pauses, and other governor events.
+- Log output is wrapped by `pkg/logscrub`, which redacts recognized GitHub token and JWT-like strings from messages and string attributes. See [Security notes](security.md) for guarantees and limits.
+- Network exposure and TLS termination are documented in [Network and port requirements](network-requirements.md) and [TLS setup](tls-setup.md).
 
 ---
 
