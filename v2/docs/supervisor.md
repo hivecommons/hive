@@ -2,117 +2,86 @@
 
 Author: RawNuke
 
-The supervisor agent is an internal orchestrator. It manages other agents, monitors their health, and coordinates the pipeline. It does not interact with GitHub.
+The supervisor agent is the hive's internal health-and-orchestration agent. It runs under the same agent machinery as the workers, but its policy keeps it in advisory, no-GitHub mode: it coordinates agents, reads beads and health state, and reports operator-facing status instead of writing code or acting on GitHub directly.
 
 ## What the supervisor does
 
-The supervisor is an AI agent that runs in a tmux session. On every kick from the governor, it:
+On each governor kick, the supervisor follows its configured policy template and work order. In the built-in ACMM packs this means it:
 
-- Reads its policy file and its ACMM level fragment.
-- Checks every agent session with `hive status`. It looks for stalls, rate limits, login expiry, and idle prompts.
-- Reads the bead store for each agent. It compares the last activity timestamp against the `stale_timeout`.
-- Kicks idle agents or stuck agents through the internal kick mechanism.
-- Delegates analysis to specialist agents. The supervisor is an orchestrator, not a fixer. It never writes code, opens issues, or merges pull requests.
-- Reports pipeline health and agent status in a structured summary.
+- Monitors all configured agents for stalls, rate limits, login problems, and other anomalies.
+- Reads recent bead activity and compares it with each agent's `stale_timeout` when that field is configured.
+- Uses the internal kick/orchestration path to prompt agents that need to run.
+- Coordinates agent lanes so duplicate or conflicting work is surfaced early.
+- Delegates code, issue, pull request, and repository analysis to specialist agents.
+- Produces sweep reports and health assessments for the dashboard/operator.
 
-The supervisor answers agent questions, coordinates lane boundaries to prevent duplicate work, and flags stale agents that show no bead activity in their expected window.
+The supervisor is an orchestrator, not a fixer. Its policy forbids GitHub issue, pull request, API, and `gh` access.
 
 ## Supervisor vs. governor
 
-The governor and the supervisor are two different layers of the hive:
+The governor and supervisor are different layers:
 
 | Layer | Component | What it does |
 |-------|-----------|--------------|
-| Scheduler | Governor (Go binary) | Evaluates queue depth on a timer. Switches between idle, quiet, busy, and surge modes. Adjusts per-agent kick cadences. Enforces budget limits. The governor controls *when* an agent is kicked. |
-| Orchestrator | Supervisor (AI agent) | Monitors session health. Detects stalls, rate limits, and stuck agents. Prioritizes work and dispatches to specialist agents. Ensures agents are working on the correct thing. The supervisor controls *what* the agent works on. |
+| Scheduler | Governor (Go binary) | Evaluates queue depth on a timer. Selects idle, quiet, busy, or surge mode. Applies configured agent cadences, including `pause` and time-of-day/cron cadence objects. Controls *when* agents are kicked. |
+| Orchestrator | Supervisor (AI agent) | Reviews agent health and bead activity, detects stalls, coordinates lane boundaries, and routes work to specialist agents. Controls *what operational guidance* agents receive. |
 
-The governor handles cadence timing and budget. The supervisor handles direction and health. Both run together in a production hive. The governor kicks the supervisor like any other agent. The supervisor then monitors the agents the governor just kicked.
+The governor can kick the supervisor like any other enabled agent. In the ACMM packs, the supervisor then performs a health sweep and may kick or redirect workers through the internal orchestration path.
 
 ## When to enable the supervisor
 
-Enable the supervisor agent in a multi-agent deployment. The hive works without it when:
+Enable the supervisor for multi-agent deployments where agents have overlapping responsibilities or where operators are not continuously watching the dashboard. It helps detect stalled sessions, rate limits, stale beads, and duplicate work.
 
-- The hive runs one or two agents. The bare governor timer is enough.
-- The operator watches the dashboard and handles health manually.
-- The agents are simple scanners that do not need coordination.
+A small hive can run without it when one or two simple agents are watched manually. Keeping it enabled costs one extra agent session and model usage, but gives the system a dedicated health sweep lane.
 
-Enable the supervisor when:
+### Cadence and budget considerations
 
-- The hive runs three or more agents. The supervisor prevents duplicate work across lanes.
-- The operator cannot watch the dashboard all the time. The supervisor detects stalls and stuck agents.
-- The agents have overlapping responsibilities. The supervisor enforces lane boundaries.
+Supervisor cadence is configuration-driven:
 
-The supervisor is safe to keep enabled. It costs one extra agent session. It never touches GitHub. It only reads the bead store and sends kick instructions to the other agents.
+- `hive.yaml.example` defines a supervisor agent, but its sample governor table does not assign supervisor cadences.
+- Built-in ACMM packs set supervisor cadences. L2 uses `5m`; L3/L4 pause the supervisor in surge mode and use `5m` otherwise; L5 uses `5m`; L6 uses `1m`, `2m`, `3m`, or `5m` depending on mode.
+- Cadences may be plain intervals, `pause`/`off`, or the time-of-day and cron cadence objects supported by the governor.
 
-### Budget considerations
-
-The supervisor agent uses model tokens like any other agent. At a 5-minute kick cadence, it runs frequently. Reduce the kick cadence first when your token budget is tight. Do not remove the supervisor. A 15-minute or 30-minute cadence is enough for health monitoring in a small hive.
+If token budget is tight, lengthen the supervisor cadence before disabling the agent entirely.
 
 ## `bead_role: supervisor` vs. `bead_role: worker`
 
-The `bead_role` field in the agent configuration controls how the dashboard renders the agent:
+The `bead_role` field controls how the dashboard partitions and sorts agent beads:
 
-| Field | Value | Dashboard effect |
-|-------|-------|------------------|
-| `bead_role` | `supervisor` | Sort order defaults to 0. The agent appears first in the sidebar. |
-| `bead_role` | `worker` | Sort order defaults to 100. The agent appears after all supervisors. |
+| Field | Value | Dashboard/config effect |
+|-------|-------|-------------------------|
+| `bead_role` | `supervisor` | `GetSortOrder()` defaults to `0` when no explicit `sort_order` is set; supervisor beads are grouped as supervisor beads. |
+| `bead_role` | `worker` | `GetSortOrder()` defaults to `100` when no explicit `sort_order` is set; worker beads are grouped as worker beads. |
 
-The `bead_role` value also sets the default `sort_order`. You can override it with an explicit `sort_order` field. An agent with `bead_role: supervisor` and `sort_order: 10` still appears before an agent with `bead_role: worker` and `sort_order: 20`.
+Known-agent defaults also populate metadata. For the built-in `supervisor` agent, the code default is `bead_role: supervisor` and `sort_order: 10`; `hive.yaml.example` also sets `sort_order: 10`. Explicit `sort_order` always wins.
 
-For known agent names, `bead_role` defaults to `worker`. The supervisor is the only agent that ships with `bead_role: supervisor` in `hive.yaml.example`.
+## Policy modes: `supervisor-nogithub.md` and `supervisor-advisory.md`
 
-## Policy modes: `supervisor-advisory.md` vs. `supervisor-nogithub.md`
+Two supervisor policy files exist:
 
-Two policy templates exist for the supervisor agent. Both are advisory. Both restrict the supervisor from GitHub interaction. The ACMM policy matrix assigns `supervisor-advisory.md` to the supervisor at every level from L2 to L6.
+- `v2/policies/supervisor-nogithub.md`
+- `v2/policies/supervisor-advisory.md`
 
-### `supervisor-advisory.md`
+They currently contain the same no-GitHub advisory rules. The built-in ACMM pack files (`v2/pkg/config/packs/level-2.yaml` through `level-6.yaml`) use `supervisor-nogithub.md` for the supervisor. Older documentation may still mention `supervisor-advisory.md`; the current pack source is authoritative.
 
-Location: `v2/policies/supervisor-advisory.md`
+Both templates enforce:
 
-This is the default policy template at all ACMM levels. The supervisor runs in advisory mode:
+- No `gh` commands, GitHub API calls, or issue/PR reads.
+- Internal orchestration only: kick agents, monitor health, read beads, and coordinate the pipeline.
+- No GitHub-referencing beads with `--external-ref "gh-*"`.
+- Delegation of analysis and code actions to specialist agents.
 
-- **No GitHub interaction.** No `gh` commands, no API calls, no reading issues or pull requests.
-- **Internal orchestration only.** Kick agents, monitor health, read beads, coordinate the pipeline.
-- **No GitHub-referencing beads.** Beads must not carry `--external-ref "gh-*"`.
-- **Delegates all analysis.** The supervisor never writes code or opens pull requests. Specialist agents handle every analysis task.
-
-### `supervisor-nogithub.md`
-
-Location: `v2/policies/supervisor-nogithub.md`
-
-This template is a variant with the same rules as `supervisor-advisory.md`. The NO-GitHub constraint is explicit in the heading. Use this template when the operator wants an additional visible reminder that the supervisor has no GitHub access. The two templates are functionally identical. Both enforce the same advisory mode with no GitHub interaction.
-
-### Why the supervisor never gets GitHub access
-
-The ACMM policy matrix shows the supervisor at advisory mode at every level (L2-L6). This is by design:
-
-- The supervisor orchestrates agents. It does not fix bugs or write code.
-- The supervisor coordinates the pipeline. It delegates every code action to a specialist agent with the correct mode (measured, holdgated, or full).
-- A supervisor with GitHub access would add audit risk. Its actions cannot be traced to a single lane.
-- The supervisor monitors the beads ledger. It does not need to cross-check against GitHub issues.
-
-The policy files enforce this constraint at the agent level. The `${GH_AUTH}` template variable is never injected into a supervisor policy template. The governor also sets the mode to advisory for the supervisor, regardless of the ACMM level.
+The ACMM mode remains advisory for the supervisor at every level. `${GH_AUTH}` is only injected for measured, hold-gated, and full templates, so the supervisor does not receive GitHub credentials through the policy template path.
 
 ## How the supervisor interacts with other agents
 
-The supervisor reads the bead store for every agent. It checks:
+The supervisor checks each agent's health inputs, including recent bead activity, configured stale timeouts, and visible session state. When it finds a problem, it reports the problem and uses the internal kick/orchestration path where appropriate.
 
-- **Recent activity.** When was the last bead created or updated by each agent?
-- **Stale agents.** Has an agent been silent longer than its `stale_timeout`?
-- **Stuck agents.** Is an agent displaying an idle prompt when it should be working?
-- **Lane enforcement.** Are two agents working on the same issue?
-
-When the supervisor finds a problem, it:
-
-1. Kicks the stuck agent with a work order.
-2. Flags the issue in the structured status report.
-3. Sends an ntfy notification when configured.
-
-The supervisor does not pause or unpause agents. Pausing is an operator-only action. The supervisor does not stop or restart sessions. It reports problems and lets the operator or the governor handle recovery.
+Some ACMM pack descriptions refer to restarts or self-healing at higher levels. In current policy, the supervisor still remains no-GitHub and delegates code or repository actions; runtime restart behavior is controlled by agent configuration such as `restart_strategy`, not by GitHub access.
 
 ## Configuration reference
 
-The supervisor agent entry in `hive.yaml`:
+The supervisor entry in `hive.yaml.example` is:
 
 ```yaml
 agents:
@@ -128,9 +97,7 @@ agents:
     bead_role: supervisor
 ```
 
-The `bead_role: supervisor` field sets the dashboard sort order. The `clear_on_kick: true` field resets the agent session context before each kick. The supervisor runs on a short cadence in the governor mode tables (typically 5 minutes).
-
-The supervisor uses the `supervisor-advisory.md` kick template at every ACMM level. The template is resolved from the hive's policies checkout, falling back to the embedded default in the binary.
+ACMM packs may override these values. For example, the pack definitions use `backend: copilot`, `kick_template: supervisor-nogithub.md`, `clear_on_kick: false`, and level-specific `stale_timeout` values.
 
 ## What to read next
 
