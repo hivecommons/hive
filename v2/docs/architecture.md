@@ -11,9 +11,10 @@ merge-gating, permission enforcement) from **judgment calls** (reading code,
 reasoning about a fix, writing a PR). Deterministic work runs in Go and shell
 before any LLM sees the task; agents only handle the judgment.
 
-> This document describes the `v2` branch. The planning-intelligence subsystem
-> (goal decomposition, plan review, stall-replan) is **v3-only** and is called
-> out where relevant.
+> This document describes the `v2` branch. Automatic goal decomposition, plan
+> review, and stall-triggered re-planning are not implemented in v2 HEAD; treat
+> any mention of those capabilities outside this page as future/design-only
+> material unless the code grows matching planner/replan paths.
 
 ---
 

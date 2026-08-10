@@ -1,5 +1,13 @@
 # Troubleshooting
 
+> **Legacy v1/systemd documentation.** This page troubleshoots the original
+> supervisor/tmux/systemd deployment (`bin/supervisor.sh`, `systemctl`, and
+> `/etc/hive/agent.env`). For current v2 Docker/Go operations, use the
+> [`v2/docs/README.md`](../v2/docs/README.md) index, especially
+> [`v2/docs/health-checks.md`](../v2/docs/health-checks.md),
+> [`v2/docs/operator-reference.md`](../v2/docs/operator-reference.md), and
+> [`v2/docs/manual-provisioning.md`](../v2/docs/manual-provisioning.md).
+
 ## The `/loop` prompt never fires — the agent just sits at the prompt
 
 Cause: the supervisor's `AGENT_READY_MARKER` doesn't appear in the agent's TUI, so the supervisor gives up before sending `AGENT_LOOP_PROMPT`.

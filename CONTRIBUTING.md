@@ -20,6 +20,9 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
   - `v2/docs/` — architecture and operator/developer reference material.
   - `v2/test/` — integration and regression tests.
 - `bin/` — shell helpers used by the existing automation and maintainer workflows.
+- `config/hive-project.yaml.example` — project metadata for the top-level
+  deterministic shell pipeline; see [config/README.md](config/README.md). This
+  is separate from the v2 Go runtime config in `v2/hive.yaml.example`.
 - `dashboard/`, `docs/`, `config/`, `systemd/`, `launchd/`, and top-level scripts — supporting assets for hub, dashboard, installation, and operational workflows.
 - `Justfile` — contributor relay recipes; see [Just recipes](docs/development.md#just-recipes).
 

@@ -38,6 +38,9 @@ docker compose up -d
 
 The [Hive Hub](https://hive.kubestellar.io) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
 
+If you need to run your own private hub instead, see the v2
+[self-hosted hub deployment guide](v2/docs/hub-deployment.md).
+
 ### Self-Hosted Deployment
 
 #### 1. Create the namespace
@@ -175,7 +178,11 @@ kubectl apply -f deploy/k8s/service.yaml
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
+All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
+
+The top-level deterministic shell pipeline uses a separate project file,
+`config/hive-project.yaml.example`; see [config/README.md](config/README.md)
+before running the top-level `bin/` scripts directly.
 
 ```yaml
 project:
