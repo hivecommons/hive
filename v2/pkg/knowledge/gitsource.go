@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -244,6 +245,7 @@ func (g *GitSource) setupSparseCheckout(ctx context.Context) error {
 }
 
 // ValidateGitSourceURL enforces the transports permitted for git-backed knowledge sources.
+// It also blocks private/loopback destinations to prevent SSRF via git clone.
 func ValidateGitSourceURL(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -270,7 +272,7 @@ func ValidateGitSourceURL(raw string) error {
 	if parsed.Host == "" {
 		return fmt.Errorf("git URL host is required")
 	}
-	if strings.Contains(trimmed, "::") {
+	if gitURLContainsTransportHelperSeparator(trimmed) {
 		return fmt.Errorf("git URL must not contain git transport helper separator")
 	}
 
@@ -294,23 +296,101 @@ func allowPrivateGitSource() bool {
 }
 
 // gitSourceHostIsPrivate reports whether host is a loopback/private/link-local
-// literal IP or "localhost". A hostname that is not an IP literal is treated as
-// public here (DNS is not resolved at validation time to avoid a rebinding
-// TOCTOU); the fail-closed default plus the operator-only config surface bound
-// the exposure.
+// literal IP or "localhost". It also recognizes legacy IPv4 encodings accepted
+// by libcurl/git (single-integer, octal, hex, and shortened dotted forms). A DNS
+// name is treated as public here; DNS resolution at validation time cannot
+// prevent a later rebinding before git clone resolves the host.
 func gitSourceHostIsPrivate(host string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
+	if zoneStart := strings.LastIndex(host, "%"); zoneStart > -1 && strings.Contains(host, ":") {
+		host = host[:zoneStart]
+	}
 	if host == "" || host == "localhost" {
 		return host == "localhost"
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return false
+		var ok bool
+		ip, ok = parseGitSourceIPv4Literal(host)
+		if !ok {
+			return false
+		}
 	}
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
+		if v4[0] == 0 {
+			return true
+		}
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+func parseGitSourceIPv4Literal(host string) (net.IP, bool) {
+	if strings.Contains(host, ":") {
+		return nil, false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return nil, false
+	}
+
+	nums := make([]uint64, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return nil, false
+		}
+		n, err := strconv.ParseUint(part, 0, 32)
+		if err != nil {
+			return nil, false
+		}
+		nums[i] = n
+	}
+
+	var value uint64
+	switch len(nums) {
+	case 1:
+		value = nums[0]
+	case 2:
+		if nums[0] > 0xff || nums[1] > 0xffffff {
+			return nil, false
+		}
+		value = nums[0]<<24 | nums[1]
+	case 3:
+		if nums[0] > 0xff || nums[1] > 0xff || nums[2] > 0xffff {
+			return nil, false
+		}
+		value = nums[0]<<24 | nums[1]<<16 | nums[2]
+	case 4:
+		for _, n := range nums {
+			if n > 0xff {
+				return nil, false
+			}
+		}
+		value = nums[0]<<24 | nums[1]<<16 | nums[2]<<8 | nums[3]
+	default:
+		return nil, false
+	}
+	if value > 0xffffffff {
+		return nil, false
+	}
+
+	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true
+}
+
+func gitURLContainsTransportHelperSeparator(raw string) bool {
+	inIPv6Literal := false
+	for i := 0; i < len(raw)-1; i++ {
+		switch raw[i] {
+		case '[':
+			inIPv6Literal = true
+		case ']':
+			inIPv6Literal = false
+		}
+		if !inIPv6Literal && raw[i] == ':' && raw[i+1] == ':' {
+			return true
+		}
+	}
+	return false
 }
 
 func isSCPStyleGitURL(raw string) bool {

@@ -26,6 +26,17 @@ func TestValidateGitSourceURL(t *testing.T) {
 		{name: "empty host", raw: "https:///org/repo.git", wantErr: true},
 		{name: "leading dash", raw: "--upload-pack=/bin/sh", wantErr: true},
 		{name: "transport helper separator", raw: "https://github.com/org/repo::helper", wantErr: true},
+		{name: "transport helper separator in query", raw: "https://github.com/org/repo?ref=main::helper", wantErr: true},
+		{name: "transport helper separator in userinfo", raw: "https://user::pass@github.com/org/repo", wantErr: true},
+		// private/loopback SSRF guards
+		{name: "loopback 127.0.0.1", raw: "http://127.0.0.1/repo.git", wantErr: true},
+		{name: "localhost", raw: "https://localhost/repo.git", wantErr: true},
+		{name: "RFC-1918 10.x", raw: "http://10.0.0.1/internal.git", wantErr: true},
+		{name: "RFC-1918 192.168.x", raw: "http://192.168.1.1/private.git", wantErr: true},
+		{name: "RFC-1918 172.16.x", raw: "http://172.16.0.1/repo.git", wantErr: true},
+		{name: "link-local", raw: "http://169.254.169.254/latest/meta-data/", wantErr: true},
+		{name: "IPv6 loopback", raw: "http://[::1]/repo.git", wantErr: true},
+		{name: "all zeros", raw: "http://0.0.0.0/repo.git", wantErr: true},
 	}
 
 	for _, tc := range tests {
