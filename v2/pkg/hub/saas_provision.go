@@ -1734,6 +1734,13 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HeartbeatKey": deriveDomainKey(provisionMasterSecret(), infoHeartbeatKey),
 		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
+		// N3: the terminal key is PER-HIVE, not fleet-wide. Without it
+		// TerminalSigningKey() falls through to the fleet-uniform SessionKey
+		// above, so an assertion minted on one spoke verifies on every other —
+		// any tenant could forge a shell grant on any other tenant. The spoke
+		// both mints and verifies this key locally, so symmetric is correct;
+		// only the sharing was wrong.
+		"TerminalKey": provisionTerminalKey(h.ID),
 		// Cluster-aware fields.
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
@@ -2564,6 +2571,16 @@ spec:
         # seed, can). Replaces the earlier symmetric HIVE_SSO_KEY.
         - name: HIVE_SSO_PUBLIC_KEY
           value: "{{.SSOPublicKey}}"
+        # N3 (CWE-862): the terminal signing key is PER-HIVE. This spoke both
+        # mints the assertion (dashboard/session.go, at login) and verifies it
+        # (proxy/server.js, on /terminal), so a symmetric key is the right shape
+        # — but it must not be shared. Without this var TerminalSigningKey()
+        # fell through to HIVE_SESSION_KEY, which is byte-identical fleet-wide,
+        # so an assertion minted here verified on EVERY other tenant's spoke:
+        # one hostile operator could forge a shell grant for an arbitrary user
+        # on an arbitrary hive. Both resolvers already prefer this var.
+        - name: HIVE_TERMINAL_KEY
+          value: "{{.TerminalKey}}"
 {{- if .IsNginxIngress}}
         # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
         # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every

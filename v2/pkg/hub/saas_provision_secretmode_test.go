@@ -51,6 +51,7 @@ func renderManifest(t *testing.T, requiresSCC bool) string {
 		"HeartbeatKey":      "hb",
 		"SessionKey":        "sk",
 		"SSOPublicKey":      "pk",
+		"TerminalKey":       "per-hive-terminal-key",
 		"AuthorizedUsers":   "alice:owner",
 		"IsNginxIngress":    false,
 		"HasInference":      false,
