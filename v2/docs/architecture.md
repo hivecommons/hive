@@ -334,6 +334,7 @@ flowchart LR
 
 - `/api/status` — full fleet + governor state (`BuildFrontendStatus`).
 - `/api/audit` — recent audit entries for read-write users: dashboard config changes, logins, GitHub App setup changes, and agent lifecycle events such as start, stop, launch failure, pause/resume/kick, add/remove, backend changes, and model changes. Entries are kept in memory and, when `/data` exists, appended to `/data/audit.jsonl` with lumberjack rotation (5 MB files, 3 backups, 90 days).
+- The machine-readable dashboard API reference is [dashboard/openapi.json](../../dashboard/openapi.json).
 - `/api/events` — Server-Sent Events; the dashboard is pushed a fresh snapshot on
   every eval cycle (and a lighter agent-only update on the fast poll).
 - `/api/health`, `/api/health/deep`, `/api/livez` — readiness and liveness; the
@@ -372,16 +373,18 @@ flowchart TB
 
 | Store | Path | Role |
 |-------|------|------|
-| Beads ledger | `/data/beads/<agent>/beads.json` | Per-agent work items (source of truth for tasks) |
-| Running config | `/data/hive.yaml.dashboard` (overlay) + `/data/hive.yaml.runtime`; seed `/etc/hive/hive.yaml` | Authoritative runtime config lives on the PVC |
+| Beads ledger | `/data/beads/<agent>/beads.json` | Per-agent work items (source of truth for tasks); see [SQLite state backend](../../examples/sqlite-state.md) for a single-machine alternative |
+| Running config | `/data/hive.yaml.dashboard` (overlay) + `/data/hive.yaml.runtime`; seed `/etc/hive/hive.yaml` | Authoritative runtime config lives on the PVC; precedence is documented in [config layering](config-layering.md) |
 | Pipeline outputs | `/var/run/hive-metrics/{actionable,merge-eligible,pipeline-run}.json` | Deterministic pre-kick artifacts |
 | Knowledge graph | `/data/graph/knowledge.db` + `/data/vaults/` | Facts, primers, inception scaffolds |
 | Secrets | `/secrets/gh-app-key.pem`, `/data/gh-user-token`, `/data/proxy-ca.pem` | GitHub App key, user token, MITM CA |
-| Per-agent mode | `/tmp/.hive-mode-<agent>` | Hot-reloadable proxy enforcement mode |
+| Per-agent mode | `/tmp/.hive-mode-<agent>` | Hot-reloadable proxy enforcement mode; per-agent `gh` wrapper denials are configured with [restriction files](../../config/restrictions/README.md) |
 
 ---
 
 *See also: [agent-configuration.md](agent-configuration.md) ·
 [acmm-policy-matrix.md](acmm-policy-matrix.md) ·
+[manual-provisioning.md](manual-provisioning.md) ·
+[cross-cluster-migration.md](cross-cluster-migration.md) ·
 [trajectory-review.md](trajectory-review.md) ·
 [design/knowledge-system.md](design/knowledge-system.md)*

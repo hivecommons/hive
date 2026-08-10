@@ -12,3 +12,8 @@ node_modules/
 # Scratch output from extracting index.html's inline <script> bodies for
 # `node --check`. A build artifact of the verification step, never source.
 _inline.js
+
+# Generated local artifacts
+/cov.out
+/dash.js
+/pr-body.md

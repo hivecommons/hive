@@ -252,6 +252,8 @@ Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that
 
 Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `v2/docs/acmm-policy-matrix.md` for the full matrix. Browse the [v2 docs index](v2/docs/README.md) for operations, contributor relay, snapshots, health checks, and design guides.
 
+Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
+
 ## Architecture
 
 Hive runs as a single container with three long-lived processes:
@@ -274,7 +276,7 @@ flowchart LR
     dash["Dashboard :3001"] -.->|"SSE"| gov
 ```
 
-**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](v2/docs/trajectory-review.md), [dashboard health checks](v2/docs/health-checks.md), and [sandbox guardrails](v2/docs/sandbox-isolation.md).
+**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](v2/docs/trajectory-review.md), [dashboard health checks](v2/docs/health-checks.md), [sandbox guardrails](v2/docs/sandbox-isolation.md), [manual provisioning](v2/docs/manual-provisioning.md), [cross-cluster migration](v2/docs/cross-cluster-migration.md), and [config layering](v2/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
 
 ## Contribute to a Hive
 

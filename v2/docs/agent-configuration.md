@@ -13,6 +13,9 @@ agents:
     model: claude-sonnet-4-6
 ```
 
+
+For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [v2/examples/agents/customized-agent.yaml](../examples/agents/customized-agent.yaml).
+
 That is a complete, valid agent. Defaults fill in the rest at load time:
 
 - `enabled: true` (unless you explicitly write `enabled: false`)
@@ -274,4 +277,8 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 - **[Architecture](https://kubestellar.io/docs/hive/overview/architecture)** — the two scheduling models and how the supervisor drives agents.
 - **[Troubleshooting](https://kubestellar.io/docs/hive/getting-started/troubleshooting)** — stuck sessions, login expiry, restart loops.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
+- **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — moving a hive (and its PVC state) between clusters.
+- **[Dashboard OpenAPI spec](../../dashboard/openapi.json)** — REST endpoints used by the dashboard and integrations.
+- **[SQLite state backend example](../../examples/sqlite-state.md)** — single-machine alternative to beads for state queries.
+- **[ACMM policy fragments](../../examples/acmm/README.md)** — per-level ACMM policy reference fragments.

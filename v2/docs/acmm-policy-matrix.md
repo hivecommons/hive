@@ -99,6 +99,10 @@ Agents open issues, create PRs, and auto-merge on green CI. No hold label. Outre
 | outreach | full | `outreach-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
+## Tester lane
+
+`v2/hive.yaml.example` includes a `tester` support agent that runs automated test suites, coverage gates, and nightly regression checks. It is intentionally outside the built-in ACMM policy packs in `v2/pkg/config/packs/`: the packs generate governance lanes, while `tester` is an operator-enabled local lane with cadences in the example config. If enabled, give it an explicit policy/template appropriate for the repository before granting write permissions.
+
 ## Key Rules
 
 1. **All PRs are holdgated below L6.** No agent can auto-merge unless running at L6 (Fully Autonomous).

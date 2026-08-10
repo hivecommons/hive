@@ -238,7 +238,7 @@ See [../docs/inference-backends.md](../docs/inference-backends.md) for setup and
 
 ## Knowledge
 
-A 4-layer wiki system (powered by [llm-wiki](https://github.com/geronimo-iia/llm-wiki)) that primes agents with relevant facts on each kick. Layers are merged by precedence: personal > project > org > community.
+A 4-layer wiki system (powered by [llm-wiki](https://github.com/geronimo-iia/llm-wiki)) that primes agents with relevant facts on each kick. Layers are merged by precedence: personal > project > org > community. See the [knowledge system design](docs/design/knowledge-system.md) for curator, git-source indexing, and primer behavior.
 
 ```yaml
 knowledge:
@@ -258,7 +258,7 @@ knowledge:
 
 An experiment framework that lets you test configuration changes (models, cadences, thresholds) against live data before committing them. Experiments run in a sandbox with rollback on failure.
 
-Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.example` for available options.
+Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.example` for available options. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
 
 ## Further reading
 
@@ -305,7 +305,7 @@ the hive verifies and saves the installation ID automatically.
 
 ## Deployment Examples
 
-The `deploy/` directory contains pre-built configurations for common deployment patterns. Copy the one that matches your use case to `hive.yaml` and adjust the `github:` section.
+The `deploy/` directory contains pre-built configurations for common deployment patterns. Copy the one that matches your use case to `hive.yaml` and adjust the `github:` section. For Kubernetes or OpenShift installs that need more than the quick-start manifests, follow [manual provisioning](docs/manual-provisioning.md).
 
 | File | Use Case |
 |------|----------|

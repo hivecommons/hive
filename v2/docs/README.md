@@ -16,6 +16,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
+- [Dashboard OpenAPI spec](../../dashboard/openapi.json) — machine-readable REST API reference for integrations.
 - [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
 
 ## Contributors and access
@@ -28,7 +29,9 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 - [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, and ACMM packs.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
+- [ACMM policy fragments](../../examples/acmm/README.md) — per-level ACMM policy references.
 - [Sandbox isolation and agent guardrails](sandbox-isolation.md) — isolation layers and operator guardrail notes.
+- [Per-agent gh restrictions](../../config/restrictions/README.md) — file-based wrapper denials in `/etc/hive/restrictions/`.
 - [Podman rootless CI](podman-rootless-ci.md) — rootless Podman contract for `contribute-hive`.
 - [CLI backend setup](../../docs/backend-setup.md) — setup notes for Claude, Copilot, Goose, Bob, Pi, Codex, and Aider.
 - [Inference backends](../../docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
