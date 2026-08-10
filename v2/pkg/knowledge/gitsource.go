@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,26 @@ type GitSource struct {
 	ready    bool
 }
 
+// gitAllowedSchemes are the URL schemes accepted by validateGitSourceURL.
+// Only https and http are permitted in production. Tests may extend this set
+// (via a package-level init in a _test.go file) to use local file:// repos.
+var gitAllowedSchemes = map[string]bool{"https": true, "http": true}
+
+// validateGitSourceURL rejects schemes that git accepts but are dangerous in a
+// server-side fetch context: file:// can read local filesystem paths (LFI),
+// ssh:// opens outbound connections that may exfiltrate host keys, and the
+// ext:: helper can execute arbitrary commands. Only https and http are allowed.
+func validateGitSourceURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid git source URL: %w", err)
+	}
+	if gitAllowedSchemes[u.Scheme] {
+		return nil
+	}
+	return fmt.Errorf("git source URL scheme %q is not allowed (only https and http are permitted)", u.Scheme)
+}
+
 // NewGitSource creates a git source. Call Init() to clone the repo and start
 // the FileStore. The clone lands under baseDir/git-sources/<slug>.
 func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *GitSource {
@@ -71,6 +92,9 @@ func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *
 
 // Init clones the repo (or reuses an existing clone) and creates the FileStore.
 func (g *GitSource) Init(ctx context.Context) error {
+	if err := validateGitSourceURL(g.config.URL); err != nil {
+		return fmt.Errorf("git source %s: %w", g.config.Name, err)
+	}
 	if err := g.ensureCloned(ctx); err != nil {
 		return fmt.Errorf("git source %s: clone failed: %w", g.config.Name, err)
 	}
