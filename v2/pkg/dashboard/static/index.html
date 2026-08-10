@@ -3540,9 +3540,8 @@
     //  - a circular icon button showing pause bars while the fleet runs
     //    (click = engage/throw the breaker) and a play triangle once engaged
     //    (click = release/resume). Same SVG glyphs as renderQueueSuspendControl.
-    // The pill is shown to everyone; the button is interactive only for a
-    // read-write+ viewer via dashboardRoleAtLeast(window._hiveRole,'read-write')
-    // (server also 403s the POST for read-only viewers).
+    // The pill is shown to everyone; the button is interactive only for owners
+    // (server also 403s the POST for non-owner viewers).
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
@@ -3556,9 +3555,9 @@
       }
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
-        // Owner-gating: hide the control for read-only viewers, leaving only the
+        // Owner-gating: hide the control for non-owner viewers, leaving only the
         // status pill. window._hiveRole is set by showGHAuthState from /api/role.
-        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write')) {
+        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
           btn.style.display = 'none';
         } else {
           btn.style.display = '';
@@ -4138,6 +4137,8 @@
         <div class="oc-detail-actions">
           ${isOnDemand
             ? '<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>'
+            : !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')
+            ? ''
             : `<button class="btn-toggle ${isPaused ? 'paused' : isOff ? 'off' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : isOff ? 'Start this agent — it is currently off in this governor mode' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : isOff ? '▶ start' : '⏸ pause'}</button>`}
           <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>
           <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
@@ -5699,11 +5700,14 @@
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
+        const canPauseToggle = canToggle && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const toggleBtn = canToggle ? (isOff
           ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`
           : isOnDemand
           ? `<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>`
-          : `<button class="btn-toggle ${isPaused ? 'paused' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : '⏸ pause'}</button>`) : '';
+          : canPauseToggle
+          ? `<button class="btn-toggle ${isPaused ? 'paused' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : '⏸ pause'}</button>`
+          : '') : '';
         // liveSummary is pushed via SSE every 5s — no separate fetch needed
         let summaryEl = '';
         if (a.liveSummary) {
