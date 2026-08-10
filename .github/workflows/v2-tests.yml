@@ -4,6 +4,17 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+  # Gate PRs, not just the cron. `go test ./pkg/...` runs nowhere else — v2-ci.yml
+  # builds and vets but never runs the unit tests — so before this, a Go
+  # regression test could only fail AFTER merge, as a cron-filed ci-failure
+  # issue. That is the wrong end of the loop for security regressions: the test
+  # proving a fix works has to be able to block the PR that breaks it again.
+  #
+  # create-issue-on-failure below stays gated on `github.event_name == 'schedule'`,
+  # so a red PR fails the check without also filing an issue.
+  pull_request:
+    branches: [v2, v4]
+    paths: ['v2/**', '.github/workflows/v2-tests.yml']
 
 permissions:
   contents: read

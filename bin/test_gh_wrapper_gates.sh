@@ -80,6 +80,7 @@ run_wrapper() {
   local gate=other
   [[ "$out" == *"unrecognized agent mode"* ]] && gate=mode-default
   [[ "$out" == *"NOT in merge-eligible.json"* || "$out" == *"cannot verify merge eligibility"* ]] && gate=eligibility
+  [[ "$out" == *"needs an explicit PR number or URL"* ]] && gate=no-identifier
 
   echo "exit=${rc} stub=${reached} gate=${gate}"
   # Surface wrapper output only when debugging a failure.
@@ -154,24 +155,48 @@ assert_reached "NO_GITHUB allows a non-issue/pr subcommand (repo view)" \
 # VALUE as the action, so action != "merge" and every gate is skipped. The fix
 # is a real flag parser; until it lands these cases record the live bypass so
 # the harness fails loudly the moment behaviour changes in either direction.
-echo "-- N7 flag-reorder bypass (expected to FAIL until the parser is fixed) --"
-reorder="$(run_wrapper "ISSUES_AND_PRS" 5 -- pr --repo owner/repo merge 123)"
-if [[ "$reorder" == "exit=1 stub=no" ]]; then
-  echo "  PASS: flag-reorder merge is gated (N7 parser fix has landed)"
-  PASS=$((PASS + 1))
-else
-  echo "  KNOWN-GAP (N7): 'gh pr --repo owner/repo merge 123' bypassed the merge gate under ISSUES_AND_PRS"
-  echo "                  got '$reorder'; the flag value is parsed as the action. Fix: real flag parsing."
-fi
+# ── N7: the flag-reorder bypass ───────────────────────────────────────────────
+# `gh pr --repo o/r merge 123` used to make the subcmd/action extractor read
+# --repo's VALUE as the action, so action != "merge" and every gate was skipped.
+# Each of these must be gated for the SAME reason the un-reordered form is.
+echo "-- N7 flag-reorder must not skip the gates --"
+assert_blocked "reordered merge is gated under ISSUES_AND_PRS" \
+  "$(run_wrapper "ISSUES_AND_PRS" 5 -- pr --repo owner/repo merge 123)"
+assert_blocked "reordered merge is gated under ISSUES_ONLY" \
+  "$(run_wrapper "ISSUES_ONLY" 5 -- pr --repo owner/repo merge 123)"
+assert_blocked "reordered merge is gated under ADVISORY" \
+  "$(run_wrapper "ADVISORY" 5 -- pr --repo owner/repo merge 123)"
+assert_blocked "-R short form is gated too" \
+  "$(run_wrapper "ISSUES_AND_PRS" 5 -- pr -R owner/repo merge 123)"
+assert_blocked "a value-taking flag before the action does not hide it (--title)" \
+  "$(run_wrapper "ISSUES_ONLY" 5 -- pr --title 'merge me' merge 123)"
+# --flag=value is self-contained and must NOT consume the next token.
+assert_blocked "--repo=value form is gated" \
+  "$(run_wrapper "ISSUES_AND_PRS" 5 -- pr --repo=owner/repo merge 123)"
 
-bare="$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge)"
-if [[ "$bare" == "exit=1 stub=no" ]]; then
-  echo "  PASS: bare 'pr merge' is gated (eligibility fix has landed)"
-  PASS=$((PASS + 1))
-else
-  echo "  KNOWN-GAP (N7): bare 'gh pr merge' skipped the eligibility check (empty pr_num)"
-  echo "                  got '$bare'"
-fi
+# At the most permissive mode the merge-eligibility gate is the wall. A PR that
+# is not in merge-eligible.json must be refused however the args are arranged.
+echo "-- N7 eligibility gate applies to every merge form --"
+assert_blocked "reordered merge still hits eligibility at ISSUES_PRS_MERGE" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr --repo owner/repo merge 123)" eligibility
+assert_blocked "plain merge hits eligibility at ISSUES_PRS_MERGE" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123)" eligibility
+# No identifier => cannot be checked against merge-eligible.json => denied.
+# The wrapper cannot resolve the current branch's PR without calling gh, which
+# is the very thing under gate, so requiring an explicit number is the only
+# fail-closed answer.
+assert_blocked "bare 'pr merge' (current branch, no number) is not a free pass" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge)" no-identifier
+assert_blocked "'pr merge --repo o/r' with no number is not a free pass" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge --repo owner/repo)" no-identifier
+
+# Availability: forms that gh accepts must reach the eligibility check rather
+# than being wrongly denied. A PR URL previously landed in pr_num verbatim and
+# never matched a number, so a legitimate merge was refused.
+assert_blocked "PR URL is normalized and reaches the eligibility gate" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge https://github.com/owner/repo/pull/123)" eligibility
+assert_blocked "-R form reaches the eligibility gate (not a parse denial)" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123 -R owner/repo)" eligibility
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="
