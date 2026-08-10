@@ -32,7 +32,7 @@ jobs:
       # PR that fixed coverage still failed, and a PR that broke it would still
       # have passed. Leaving `ref` empty checks out the PR merge commit, which
       # is the code that is actually about to land.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.ref || 'v2' }}
 
