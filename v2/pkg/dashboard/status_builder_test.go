@@ -1071,3 +1071,151 @@ func TestBuildPlatform_DefaultGitLabURLNotSurfaced(t *testing.T) {
 		t.Error("unset mint key path must report KeyPresent=false")
 	}
 }
+
+func testBoolPtr(v bool) *bool { return &v }
+
+func TestBuildSecurity(t *testing.T) {
+	tests := []struct {
+		name              string
+		cfg               *config.Config
+		wantTotal         int
+		wantSandboxed     int
+		wantReviewCapable int
+	}{
+		{
+			name: "nil config",
+		},
+		{
+			name: "empty agents map",
+			cfg:  &config.Config{Agents: map[string]config.AgentConfig{}},
+		},
+		{
+			name: "all sandboxed",
+			cfg: &config.Config{
+				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+				Agents: map[string]config.AgentConfig{
+					"scanner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				},
+			},
+			wantTotal:     2,
+			wantSandboxed: 2,
+		},
+		{
+			name: "none sandboxed",
+			cfg: &config.Config{
+				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+				Agents: map[string]config.AgentConfig{
+					"scanner": {Enabled: true},
+					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(false)}},
+				},
+			},
+			wantTotal: 2,
+		},
+		{
+			name: "mixed sandbox and review capabilities",
+			cfg: &config.Config{
+				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+				Review:       config.ReviewConfig{ReviewerAgents: []string{"explicit-reviewer"}},
+				Agents: map[string]config.AgentConfig{
+					"sandboxed-reviewer": {Enabled: true, Role: "code reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					"explicit-reviewer":  {Enabled: true},
+					"sandboxed-planner":  {Enabled: true, Role: "planner", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					"disabled-reviewer":  {Enabled: false, Role: "reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				},
+			},
+			wantTotal:         4,
+			wantSandboxed:     3,
+			wantReviewCapable: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildSecurity(tt.cfg)
+			if got == nil {
+				t.Fatal("buildSecurity returned nil")
+			}
+			if got.TotalAgents != tt.wantTotal {
+				t.Errorf("TotalAgents = %d, want %d", got.TotalAgents, tt.wantTotal)
+			}
+			if got.SandboxedAgents != tt.wantSandboxed {
+				t.Errorf("SandboxedAgents = %d, want %d", got.SandboxedAgents, tt.wantSandboxed)
+			}
+			if got.ReviewCapableAgents != tt.wantReviewCapable {
+				t.Errorf("ReviewCapableAgents = %d, want %d", got.ReviewCapableAgents, tt.wantReviewCapable)
+			}
+		})
+	}
+}
+
+func TestDashboardAgentReviewCapable(t *testing.T) {
+	tests := []struct {
+		name    string
+		agent   string
+		cfg     config.AgentConfig
+		allowed []string
+		want    bool
+	}{
+		{
+			name:    "explicit allow list inclusion",
+			agent:   "security-reviewer",
+			cfg:     config.AgentConfig{Enabled: true},
+			allowed: []string{"security-reviewer", "auditor"},
+			want:    true,
+		},
+		{
+			name:    "explicit allow list exclusion beats keyword fallback",
+			agent:   "security-reviewer",
+			cfg:     config.AgentConfig{Enabled: true, Role: "reviewer"},
+			allowed: []string{"auditor"},
+		},
+		{
+			name:  "fallback role keyword",
+			agent: "worker",
+			cfg:   config.AgentConfig{Enabled: true, Role: "PR reviewer"},
+			want:  true,
+		},
+		{
+			name:  "fallback alias keyword",
+			agent: "worker",
+			cfg:   config.AgentConfig{Enabled: true, Aliases: []string{"code-review-bot"}},
+			want:  true,
+		},
+		{
+			name:  "fallback lane keyword",
+			agent: "worker",
+			cfg:   config.AgentConfig{Enabled: true, LaneKeywords: []string{"needs-review"}},
+			want:  true,
+		},
+		{
+			name:  "fallback detect keyword",
+			agent: "worker",
+			cfg:   config.AgentConfig{Enabled: true, DetectKeywords: []string{"review-requested"}},
+			want:  true,
+		},
+		{
+			name:  "paused agent is never review capable",
+			agent: "security-reviewer",
+			cfg:   config.AgentConfig{Enabled: true, Paused: true, Role: "reviewer"},
+		},
+		{
+			name:  "on demand agent is never review capable",
+			agent: "security-reviewer",
+			cfg:   config.AgentConfig{Enabled: true, OnDemand: true, Role: "reviewer"},
+		},
+		{
+			name:  "disabled agent is never review capable",
+			agent: "security-reviewer",
+			cfg:   config.AgentConfig{Enabled: false, Role: "reviewer"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dashboardAgentReviewCapable(tt.agent, tt.cfg, tt.allowed); got != tt.want {
+				t.Errorf("dashboardAgentReviewCapable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
