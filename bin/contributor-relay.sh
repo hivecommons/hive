@@ -401,7 +401,7 @@ function runHeadlessTask(task) {
   const { bin, args } = buildHeadlessArgv(prompt);
   console.log(`Headless: running ${bin} (one-shot) for ${task.repo}#${task.number}`);
   writeHeadlessStatus(HEADLESS_STATE_WORKING, { task_id: task.task_id, repo: task.repo, number: task.number });
-  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working' });
+  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working' });
 
   let settled = false;
   const finish = (fn) => { if (settled) return; settled = true; fn(); };
@@ -436,7 +436,7 @@ function runHeadlessTask(task) {
       const prURL = detectPRURL(outTail, task.repo);
       if (prURL) console.log(`Detected PR for ${task.task_id}: ${prURL}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, pr_url: prURL });
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
       currentTask = null;
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -1014,9 +1014,10 @@ function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
   const taskId = currentTask.task_id;
+  const taskGen = currentTask.task_gen;
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
   console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}: ${reason}`);
-  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, reason, permanent, tmux_output: tmuxLines });
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, tmux_output: tmuxLines });
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1110,7 +1111,7 @@ function progressTick() {
     // Empty when no PR link is found — the hub then applies the short cooldown.
     const prURL = detectPRURL(tmuxLines, currentTask.repo);
     if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
+    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.
@@ -1149,13 +1150,14 @@ function progressTick() {
       type: 'task_progress',
       seq: nextSeq(),
       task_id: currentTask.task_id,
+      task_gen: currentTask.task_gen,
       status: 'blocked_on_human',
       attention: true,
       summary: 'Agent is waiting for human input in the tmux pane',
       tmux_output: tmuxLines,
     });
   } else {
-    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, status: 'working', tmux_output: tmuxLines });
+    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
   }
 }
 
@@ -1200,7 +1202,7 @@ function handleMessage(data, hub) {
       if (currentTask && hub === currentTaskHub()) {
         console.log(`Reconnected while working on ${currentTask.repo}#${currentTask.number} — resuming`);
         sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
-        sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
+        sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
         startProgressReporting();
       } else if (!currentTask && hub === hubs[activeHubIndex]) {
         // Only the hub currently in the poll rotation asks for work. A hub
@@ -1266,7 +1268,7 @@ function handleMessage(data, hub) {
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
       }
       fs.writeFileSync(TASK_FILE, JSON.stringify(msg, null, 2));
-      send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id });
+      send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
         // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
         // invocation and report completion/failure from its exit status — no

@@ -2082,6 +2082,25 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				// progress ping for a task the hub already tracks.
 				resumed := false
 				if contributor.currentTask == nil && msg.TaskID != "" {
+					contributor.mu.Unlock()
+					h.selectMu.Lock()
+					if h.taskHeldByAnotherConnection(contributor, msg.Repo, msg.Number) {
+						h.selectMu.Unlock()
+						h.logger.Warn("[contribute-ws] stale task_progress resume rejected: task held by another connection",
+							"username", contributor.profile.GitHubUsername,
+							"task", msg.TaskID,
+							"repo", h.canonicalRepoKey(msg.Repo),
+							"number", msg.Number,
+						)
+						continue
+					}
+					contributor.mu.Lock()
+					if contributor.currentTask != nil {
+						contributor.lastLeaseRenew = time.Now()
+						contributor.mu.Unlock()
+						h.selectMu.Unlock()
+						continue
+					}
 					contributor.currentTask = &WSTaskAssign{
 						TaskID: msg.TaskID,
 						Kind:   msg.Kind,
@@ -2102,6 +2121,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// #2568: a RESUME adopts the task under a FRESH generation so the
 					// hub, not the client, owns the authoritative token from here on.
 					contributor.currentTaskGen = h.nextTaskGen()
+					h.selectMu.Unlock()
 				}
 				// #2568: renew the hub-owned lease on every progress report. This is
 				// what distinguishes "working slowly but alive" (lease keeps renewing,
@@ -2380,6 +2400,29 @@ func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
 // an empty token (no App auth / no cache) leaves the relay's existing token in
 // place — the same lenient policy maybeRefreshToken uses — and tokenMintedAt stays
 // zero, so the next reconnect (or a later mint success) can still arm it.
+func (h *ContributeWSHub) taskHeldByAnotherConnection(candidate *ContributorConnection, repo string, number int) bool {
+	if h == nil || number <= 0 {
+		return false
+	}
+	canonicalRepo := h.canonicalRepoKey(repo)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, conn := range h.connections {
+		if conn == nil || conn == candidate {
+			continue
+		}
+		conn.mu.Lock()
+		held := conn.currentTask != nil &&
+			conn.currentTask.Number == number &&
+			h.canonicalRepoKey(conn.currentTask.Repo) == canonicalRepo
+		conn.mu.Unlock()
+		if held {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *ContributeWSHub) resumeTaskToken(c *ContributorConnection) {
 	tier := ""
 	if c.profile != nil {
