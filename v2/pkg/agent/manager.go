@@ -1034,24 +1034,38 @@ func backendDefersStartupKick(backend string) bool {
 	}
 }
 
-// copilotGitHubWriteDenyFlags is the full set of Copilot `--deny-tool` flags for
-// every GitHub MCP write tool. It is denied in EVERY copilot launch mode so no
-// mode can author issues/PRs/comments as the logged-in Copilot USER via the
-// GitHub MCP. The MCP write path executes on GitHub's side using the Copilot
-// session's user OAuth, so the hive's proxy never sees a POST it could gate —
-// denying these tools at launch is the only reliable enforcement, forcing all
-// GitHub writes through the App-gated `gh` wrapper / `hive-open-pr`, which author
-// as the App bot (kubestellar-hive[bot]). READ tools (get_issue, list_issues,
-// get_pull_request, search, ...) stay enabled via --enable-all-github-mcp-tools;
-// only these WRITE tools are denied. The mode-based gh-wrapper/proxy gating
-// (IssuesOnly vs IssuesAndPRs) is a separate, unchanged layer.
+// copilotGitHubWriteDenyFlags is defense-in-depth: explicit `--deny-tool` flags
+// for every GitHub MCP write tool, so no copilot mode can author issues/PRs/
+// comments as the logged-in Copilot USER via the built-in GitHub MCP server.
+//
+// PRIMARY defense is NOT these flags — it is DROPPING `--enable-all-github-mcp-
+// tools` from the launch command (see launch cmd below). The built-in GitHub MCP
+// server ("github-mcp-server") is READ-ONLY BY DEFAULT in Copilot CLI (since
+// v0.0.350); the write tools (create_issue/create_pull_request/...) are ONLY
+// registered when `--enable-all-github-mcp-tools` is passed. Without that flag
+// the write tools never exist, so there is nothing to invoke.
+//
+// The DENY NAMES MUST use the built-in server's real name `github-mcp-server`,
+// NOT `github`. Our earlier fix (#3120/#3121) used `github(create_issue)` — but
+// `github` is only the name for a SEPARATELY-added server; the built-in one is
+// `github-mcp-server` (confirmed via `copilot --help`: "--disable-builtin-mcps
+// ... (currently: github-mcp-server)"). A deny on the wrong server name is a
+// silent no-op, which is why that fix did not actually block the writes and the
+// user-authored issues continued. Deny syntax is ServerName(tool).
+//
+// READ tools (get_issue, list_issues, get_pull_request, search, ...) remain
+// available via the read-only default — agents still investigate; they just
+// cannot WRITE via the MCP. All GitHub writes go through the App-gated `gh`
+// wrapper / `hive-open-pr`, which author as the App bot (kubestellar-hive[bot]).
+// The mode-based gh-wrapper/proxy gating (IssuesOnly vs IssuesAndPRs) is a
+// separate, unchanged layer.
 const copilotGitHubWriteDenyFlags = "" +
-	" --deny-tool='github(create_pull_request)'" +
-	" --deny-tool='github(create_pull_request_with_copilot)'" +
-	" --deny-tool='github(merge_pull_request)'" +
-	" --deny-tool='github(create_issue)'" +
-	" --deny-tool='github(update_issue)'" +
-	" --deny-tool='github(add_issue_comment)'"
+	" --deny-tool='github-mcp-server(create_pull_request)'" +
+	" --deny-tool='github-mcp-server(create_pull_request_with_copilot)'" +
+	" --deny-tool='github-mcp-server(merge_pull_request)'" +
+	" --deny-tool='github-mcp-server(create_issue)'" +
+	" --deny-tool='github-mcp-server(update_issue)'" +
+	" --deny-tool='github-mcp-server(add_issue_comment)'"
 
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if ctx == nil {
@@ -1208,16 +1222,19 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
 			// per task. Nothing here assumes a concrete id, so the sentinel flows
 			// through unchanged.
-			// Every mode denies the FULL set of GitHub MCP write tools
-			// (copilotGitHubWriteDenyFlags) so no mode can author issues/PRs/
-			// comments as the login USER via the MCP; all GitHub writes must go
-			// through the App-gated gh wrapper / hive-open-pr. READ tools stay
-			// enabled via --enable-all-github-mcp-tools. The deny set is identical
-			// across ModeIssuesAndPRs / ModeIssuesOnly / advisory — the mode no
-			// longer changes what the MCP can write (it never legitimately should),
-			// it only governs the separate, unchanged gh-wrapper/proxy layer that
-			// still reads Mode for what the App-gated write path allows.
-			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools%s",
+			// PRIMARY authorship defense: do NOT pass --enable-all-github-mcp-
+			// tools. The built-in github-mcp-server is READ-ONLY by default, so
+			// the write tools (create_issue/create_pull_request/...) are never
+			// registered — an agent cannot author issues/PRs as the login USER
+			// via the MCP because those tools do not exist. READ tools
+			// (get_issue/list/search) stay available via the read-only default,
+			// so agents can still investigate. All GitHub WRITES go through the
+			// App-gated gh wrapper / hive-open-pr → authored as kubestellar-hive
+			// [bot]. copilotGitHubWriteDenyFlags is belt-and-suspenders (correctly
+			// named github-mcp-server(tool) denies) in case a future flag re-
+			// enables writes. Mode still governs the separate gh-wrapper/proxy
+			// layer, unchanged.
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
 				binary, model, copilotGitHubWriteDenyFlags)
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -5990,20 +6007,19 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	case "copilot":
-		hasGHDeny := false
-		for _, p := range denies {
-			if strings.Contains(p, "github") {
-				hasGHDeny = true
-				break
-			}
-		}
+		// Never pass --enable-all-github-mcp-tools: the built-in github-mcp-server
+		// is read-only by default, so GitHub MCP WRITE tools are never registered
+		// and an agent cannot author issues/PRs as the login USER. READ tools stay
+		// available. (Previously this ADDED --enable-all-github-mcp-tools whenever
+		// denies lacked a github entry — enabling all writes — and translated
+		// mcp__github__ to the WRONG server name `github(`; the built-in server is
+		// `github-mcp-server`, so those denies were silent no-ops.)
 		cmd := fmt.Sprintf("%s --model %s --no-auto-update --allow-all", binary, model)
-		if !hasGHDeny {
-			cmd += " --enable-all-github-mcp-tools"
-		}
 		for _, p := range denies {
-			copilotPattern := strings.ReplaceAll(p, "mcp__github__", "github(")
-			if strings.HasPrefix(copilotPattern, "github(") {
+			// Map claude-style mcp__github__<tool> to copilot's
+			// github-mcp-server(<tool>) deny syntax (correct built-in server name).
+			copilotPattern := strings.ReplaceAll(p, "mcp__github__", "github-mcp-server(")
+			if strings.HasPrefix(copilotPattern, "github-mcp-server(") {
 				copilotPattern += ")"
 			}
 			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
