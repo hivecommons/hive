@@ -39,7 +39,7 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
