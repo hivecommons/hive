@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/defsrc"
@@ -197,6 +198,18 @@ const (
 	importHTTPTimeoutS  = 10
 )
 
+var importAllowedHosts = map[string]struct{}{
+	"github.com":                 {},
+	"raw.githubusercontent.com":  {},
+	"gist.github.com":            {},
+	"gist.githubusercontent.com": {},
+}
+
+const (
+	importURLFormsOneShot = "https://github.com/<owner>/<repo>/blob/<ref>/<path>, https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>, https://gist.github.com/<user>/<gist-id>[/raw[/<file>]], or https://gist.githubusercontent.com/<user>/<gist-id>/raw/<path>"
+	importURLFormsLinked  = "https://github.com/<owner>/<repo>/blob/<ref>/<path> or https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>"
+)
+
 // agentConfigFromDefinition maps a parsed AgentDefinition to an AgentConfig with
 // the import defaults applied (backend copilot, immediate restart, worker bead
 // role, enabled). It is the single mapping used by both the whole-agent import
@@ -257,8 +270,13 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("url must be at most %d characters", importMaxURLLen), http.StatusBadRequest)
 			return
 		}
-		client := &http.Client{Timeout: importHTTPTimeoutS * 1e9} // nanoseconds
-		resp, err := client.Get(body.URL)
+		if err := s.validateImportURL(body.URL, body.KeepLinked); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		fetchURL := importFetchURL(body.URL)
+		client := &http.Client{Timeout: time.Duration(importHTTPTimeoutS) * time.Second}
+		resp, err := client.Get(fetchURL)
 		if err != nil {
 			jsonError(w, "failed to fetch URL: "+err.Error(), http.StatusBadGateway)
 			return
@@ -477,6 +495,68 @@ var githubBlobURLPattern = regexp.MustCompile(`^/([^/]+)/([^/]+)/blob/([^/]+)/(.
 //	https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>
 var githubRawURLPattern = regexp.MustCompile(`^/([^/]+)/([^/]+)/([^/]+)/(.+)$`)
 
+func (s *Server) validateImportURL(rawURL string, keepLinked bool) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("import URL must be an https URL; supported forms: %s", importURLFormsOneShot)
+	}
+
+	host := strings.ToLower(u.Hostname())
+	if _, ok := importAllowedHosts[host]; !ok {
+		return fmt.Errorf("import URL host %q is not supported; supported forms: %s", host, importURLFormsOneShot)
+	}
+
+	if isGistImportHost(host) {
+		if keepLinked {
+			return fmt.Errorf("keep linked imports do not support gist URLs; use a GitHub repository file URL (%s), or uncheck Keep linked for a one-shot gist import", importURLFormsLinked)
+		}
+		if strings.Trim(u.Path, "/") == "" {
+			return fmt.Errorf("gist import URL must include a gist path; supported forms: %s", importURLFormsOneShot)
+		}
+		return nil
+	}
+
+	if host == "raw.githubusercontent.com" {
+		if githubRawURLPattern.FindStringSubmatch(u.Path) == nil {
+			return fmt.Errorf("import URL %q is not a supported raw GitHub file URL; supported forms: %s", rawURL, importURLFormsOneShot)
+		}
+		return nil
+	}
+
+	if host == "github.com" && githubBlobURLPattern.FindStringSubmatch(u.Path) != nil {
+		return nil
+	}
+
+	forms := importURLFormsOneShot
+	if keepLinked {
+		forms = importURLFormsLinked
+	}
+	return fmt.Errorf("import URL %q is not a supported GitHub file URL; supported forms: %s", rawURL, forms)
+}
+
+func isGistImportHost(host string) bool {
+	return host == "gist.github.com" || host == "gist.githubusercontent.com"
+}
+
+func importFetchURL(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+		return rawURL
+	}
+	m := githubBlobURLPattern.FindStringSubmatch(u.Path)
+	if m == nil {
+		return rawURL
+	}
+	raw := url.URL{
+		Scheme:   "https",
+		Host:     "raw.githubusercontent.com",
+		Path:     "/" + strings.Join([]string{m[1], m[2], m[3], m[4]}, "/"),
+		RawQuery: u.RawQuery,
+		Fragment: u.Fragment,
+	}
+	return raw.String()
+}
+
 // definitionSourceFromURL parses a GitHub blob or raw file URL into a
 // DefinitionSourceConfig (owner/repo/path/ref). It is used when an operator
 // imports an agent with "keep linked" checked, so the pasted human-facing URL
@@ -494,7 +574,7 @@ func (s *Server) definitionSourceFromURL(rawURL string) (*config.DefinitionSourc
 		m = githubBlobURLPattern.FindStringSubmatch(u.Path)
 	}
 	if m == nil {
-		return nil, fmt.Errorf("URL %q is not a recognized GitHub file URL (expected .../<owner>/<repo>/blob/<ref>/<path> or a raw.githubusercontent.com file URL)", rawURL)
+		return nil, fmt.Errorf("URL %q is not a recognized GitHub file URL (expected a GitHub blob URL .../<owner>/<repo>/blob/<ref>/<path> or https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>)", rawURL)
 	}
 	return &config.DefinitionSourceConfig{
 		Type:  "github",
