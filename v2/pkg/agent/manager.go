@@ -1424,43 +1424,23 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 			}
 			base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
-			switch {
-			case mode >= ModeIssuesAndPRs:
-				launchCmd = base
-			case mode == ModeIssuesOnly:
-				launchCmd = base +
-					" --disallowed-tools 'mcp__github__create_pull_request'" +
-					" --disallowed-tools 'mcp__github__merge_pull_request'"
-			default:
-				launchCmd = base +
-					" --disallowed-tools 'mcp__github__create_pull_request'" +
-					" --disallowed-tools 'mcp__github__create_issue'" +
-					" --disallowed-tools 'mcp__github__update_issue'" +
-					" --disallowed-tools 'mcp__github__merge_pull_request'"
-			}
+			// Deny ALL GitHub MCP write tools in EVERY mode: agents author via the
+			// App-gated gh wrapper, never as the user via the MCP. Mode governs the
+			// gh-wrapper/proxy layer only, not what the MCP may write.
+			launchCmd = base + claudeGitHubWriteDenyFlags
 		case "copilot":
 			// model is passed verbatim to `copilot --model %s`. It may be a
 			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
 			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
 			// per task. Nothing here assumes a concrete id, so the sentinel flows
 			// through unchanged.
-			switch {
-			case mode >= ModeIssuesAndPRs:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
-					binary, model)
-			case mode == ModeIssuesOnly:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools"+
-					" --deny-tool='github(create_pull_request)'"+
-					" --deny-tool='github(merge_pull_request)'",
-					binary, model)
-			default:
-				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all"+
-					" --deny-tool='github(create_pull_request)'"+
-					" --deny-tool='github(create_issue)'"+
-					" --deny-tool='github(update_issue)'"+
-					" --deny-tool='github(merge_pull_request)'",
-					binary, model)
-			}
+			// Keep --enable-all-github-mcp-tools so READ tools (get_issue/list/
+			// search) stay available, then deny ALL write tools in EVERY mode:
+			// agents author via the App-gated gh wrapper, never as the user via
+			// the MCP. Mode governs the gh-wrapper/proxy layer only, not what the
+			// MCP may write.
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools%s",
+				binary, model, copilotGitHubWriteDenyFlags)
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		case "goose":
@@ -4728,6 +4708,32 @@ const codexProductMarker = "OpenAI Codex"
 
 // bobBackend is the backend name for the IBM bobshell ("bob") CLI.
 const bobBackend = "bob"
+
+// copilotGitHubWriteDenyFlags denies EVERY GitHub MCP write tool for the copilot
+// CLI. Agents must never author issues/PRs via the GitHub MCP — those calls run
+// with the logged-in user's OAuth token, bypass the proxy, and skip the App gate.
+// All GitHub writes route through the App-gated `gh` wrapper / hive-open-pr, which
+// authors as kubestellar-hive[bot]. Applied in EVERY agent mode so the mode only
+// governs the gh-wrapper/proxy layer, never what the MCP may write. Read tools
+// (get_issue/list/search) stay enabled via --enable-all-github-mcp-tools.
+const copilotGitHubWriteDenyFlags = " --deny-tool='github(create_pull_request)'" +
+	" --deny-tool='github(create_pull_request_with_copilot)'" +
+	" --deny-tool='github(merge_pull_request)'" +
+	" --deny-tool='github(create_issue)'" +
+	" --deny-tool='github(update_issue)'" +
+	" --deny-tool='github(add_issue_comment)'"
+
+// claudeGitHubWriteDenyFlags denies EVERY GitHub MCP write tool for the claude
+// CLI — the same logical set as copilotGitHubWriteDenyFlags, in claude's
+// --disallowed-tools 'mcp__github__<tool>' syntax. Same rationale: agents author
+// as the App via the gh wrapper, never as the user via the MCP. Read tools stay
+// enabled. Applied in EVERY agent mode.
+const claudeGitHubWriteDenyFlags = " --disallowed-tools 'mcp__github__create_pull_request'" +
+	" --disallowed-tools 'mcp__github__create_pull_request_with_copilot'" +
+	" --disallowed-tools 'mcp__github__merge_pull_request'" +
+	" --disallowed-tools 'mcp__github__create_issue'" +
+	" --disallowed-tools 'mcp__github__update_issue'" +
+	" --disallowed-tools 'mcp__github__add_issue_comment'"
 
 // bobLaunchCmd builds bob's interactive launch command.
 //
