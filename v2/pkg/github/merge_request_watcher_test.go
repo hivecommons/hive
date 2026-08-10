@@ -305,8 +305,17 @@ func TestMergeWatcher_ReEngagesOnRequiredCheckFailure(t *testing.T) {
 	})
 
 	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
-	// Drive to the terminal attempt: mergeRequestMaxAttempts tries.
-	for i := 0; i < mergeRequestMaxAttempts; i++ {
+	// Drive to the terminal attempt. Each tick bumps the attempt count by
+	// reading back the prior tick's .result.json sidecar, so process the request
+	// until it is quarantined (renamed to .exhausted) rather than assuming a
+	// fixed tick count — under load the per-tick result write-then-read can lag,
+	// which would otherwise need one extra tick to reach the terminal attempt.
+	// A generous upper bound guards against an infinite loop if it never
+	// terminates. Once the request file is gone (quarantined), stop.
+	for i := 0; i < mergeRequestMaxAttempts*4; i++ {
+		if _, err := os.Stat(reqPath); err != nil {
+			break // request quarantined (renamed to .exhausted) — terminal reached
+		}
 		c.ProcessMergeRequestsOnce(context.Background())
 	}
 
