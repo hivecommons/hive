@@ -131,7 +131,7 @@ jobs:
     needs: [gate, build]
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digests-*
@@ -248,7 +248,7 @@ jobs:
     needs: [gate, build-contributor]
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/contrib-digests
           pattern: contrib-digests-*
@@ -368,7 +368,7 @@ jobs:
     needs: [gate, build-hub]
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/hub-digests
           pattern: hub-digests-*
