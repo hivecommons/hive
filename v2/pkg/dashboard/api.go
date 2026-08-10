@@ -1239,9 +1239,6 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 // client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" && r.Header.Get(authCheckedHeader) != "true" {
-		return true
-	}
 	if role != "owner" || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
 		jsonError(w, "owner access required", http.StatusForbidden)
 		return false

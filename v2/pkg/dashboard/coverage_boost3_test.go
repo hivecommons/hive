@@ -669,6 +669,7 @@ func TestHandlePause_Boost(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/pause/scanner", strings.NewReader(`{"reason":"testing"}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handlePause(w, req)

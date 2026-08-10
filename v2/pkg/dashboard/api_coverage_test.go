@@ -879,7 +879,7 @@ func TestHandleUnpin_NotFound(t *testing.T) {
 
 func TestHandlePause(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/pause/scanner", nil)
+	rec := doOwnerPost(s, "/api/pause/scanner", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1353,7 +1353,7 @@ func TestHandleModelSet_UnknownAgent(t *testing.T) {
 
 func TestHandleResume_UnknownAgent(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/resume/nonexistent", nil)
+	rec := doOwnerPost(s, "/api/resume/nonexistent", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

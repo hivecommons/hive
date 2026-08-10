@@ -43,11 +43,6 @@ const proxyAuthHeader = "X-Hive-Proxy-Auth"
 // when the owner role came from a trusted source, not an inbound client header.
 const ownerRoleVerifiedHeader = "X-Hive-Owner-Role-Verified"
 
-// authCheckedHeader marks requests that passed through authenticate. It keeps
-// owner checks fail-closed on real routes while direct handler unit tests can
-// still exercise business logic without constructing the full middleware chain.
-const authCheckedHeader = "X-Hive-Auth-Checked"
-
 // proxyProofRequired controls F2 enforcement strictness. Default false =
 // fail-open rollout: a request with no proof header is still trusted on its
 // identity headers (so hosted hives aren't locked out while the hub half rolls
@@ -770,8 +765,6 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if s.authToken == "" && !directRouteAuthz {
-			r.Header.Del(authCheckedHeader)
-			r.Header.Set(authCheckedHeader, "true")
 			// Open by design — but still resolve a session if the caller has one,
 			// so an SSO handoff on a token-less spoke yields a request that KNOWS
 			// who the user is. Without this the handoff sets a cookie, the next
@@ -803,8 +796,6 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		r.Header.Del("X-Hive-User")
 		r.Header.Del("X-Hive-Role")
 		r.Header.Del(ownerRoleVerifiedHeader)
-		r.Header.Del(authCheckedHeader)
-		r.Header.Set(authCheckedHeader, "true")
 
 		// Internal automation authenticates with the shared token via the
 		// X-Hive-Internal header; this is a trusted server-to-server path
