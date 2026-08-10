@@ -2259,15 +2259,34 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				completedTask := contributor.currentTask
-				contributor.currentTask = nil
-				// #2539: drop the previewable prompt with the task it belonged to so
-				// the ops tab does not show a stale instruction after completion.
-				contributor.currentPrompt = ""
-				contributor.currentLabels = nil
-				contributor.tokenMintedAt = time.Time{}
-				// #2537: clear any pending/delivered credential state with the task.
-				contributor.pendingToken = ""
-				contributor.credentialDelivered = false
+				// SECURITY (audit N9, CWE-862/639): clear ONLY when the reported
+				// task_id actually matches the held assignment.
+				//
+				// This block used to run unconditionally, while revokeLease and
+				// markTaskCompleted below run only `if hasTask`. So a completion
+				// naming ANY other task released the assignment without revoking the
+				// lease or booking a cooldown: the contributor went `ready` and was
+				// minted a SECOND live repo credential under max_concurrent=1, and
+				// the "unassigned task ignored" warning below said otherwise while
+				// the state had in fact already been mutated.
+				//
+				// The #2568 Gate does not cover this: generationAccepted() returns
+				// true whenever clientGen == 0, and omitting task_gen yields 0, so
+				// the guard is opt-in from the client.
+				if hasTask {
+					contributor.currentTask = nil
+					// #2539: drop the previewable prompt with the task it belonged to
+					// so the ops tab does not show a stale instruction after completion.
+					contributor.currentPrompt = ""
+					contributor.currentLabels = nil
+					contributor.tokenMintedAt = time.Time{}
+					// #2537: clear any pending/delivered credential state with the task.
+					contributor.pendingToken = ""
+					contributor.credentialDelivered = false
+				}
+				// tmuxOutput is diagnostic only and carries no authority, so it is
+				// recorded either way — it is often the only evidence of what a
+				// confused relay was doing when it reported the wrong task.
 				contributor.tmuxOutput = msg.TmuxOutput
 				contributor.mu.Unlock()
 
@@ -2344,7 +2363,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					_ = saveContributorProfile(contributor.profile)
 				} else {
-					h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored",
+					// N9: this is now literally true. It previously logged "ignored"
+					// after the handler had already cleared currentTask and the
+					// credential state, which made the bypass look like a no-op in the
+					// logs.
+					h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored (assignment left intact)",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
 					)
@@ -2372,11 +2395,19 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				}
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				failedTask := contributor.currentTask
-				contributor.currentTask = nil
-				contributor.tokenMintedAt = time.Time{}
-				// #2537: clear any pending/delivered credential state with the task.
-				contributor.pendingToken = ""
-				contributor.credentialDelivered = false
+				// SECURITY (audit N9, CWE-862/639): same hole as task_complete —
+				// clear only on a genuine TaskID match. Unconditionally, a failure
+				// naming any other task released the assignment while revokeLease
+				// and recordTaskFailure below stayed inside `if hasTask`, so no
+				// cooldown was booked and the abandoned issue became instantly
+				// re-admissible while the credential stayed live.
+				if hasTask {
+					contributor.currentTask = nil
+					contributor.tokenMintedAt = time.Time{}
+					// #2537: clear any pending/delivered credential state with the task.
+					contributor.pendingToken = ""
+					contributor.credentialDelivered = false
+				}
 				contributor.mu.Unlock()
 
 				if hasTask {
