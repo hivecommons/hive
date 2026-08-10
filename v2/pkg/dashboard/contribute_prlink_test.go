@@ -317,6 +317,26 @@ func TestOpportunisticHeat_RecencyPlusLabels(t *testing.T) {
 	}
 }
 
+func TestOpportunisticHeat_MultipleMatchingLabelsStack(t *testing.T) {
+	heat, reason := opportunisticHeat(recencyHeatFloorMinutes, true, []string{"help wanted", "enhancement"})
+	if heat != 3.0 {
+		t.Errorf("heat = %f, want 3.0 for stacked help wanted + enhancement bumps", heat)
+	}
+	if reason != "help wanted" {
+		t.Errorf("reason = %q, want first matching label reason", reason)
+	}
+}
+
+func TestOpportunisticHeat_NegativeAge(t *testing.T) {
+	heat, reason := opportunisticHeat(-5, true, nil)
+	if heat != 0 {
+		t.Errorf("heat = %f, want 0 for negative age", heat)
+	}
+	if reason != "actionable" {
+		t.Errorf("reason = %q, want actionable", reason)
+	}
+}
+
 func TestOpportunisticHeat_UnknownLabelIgnored(t *testing.T) {
 	heat, _ := opportunisticHeat(0, false, []string{"wontfix", "duplicate"})
 	if heat != 0 {
