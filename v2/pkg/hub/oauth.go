@@ -269,7 +269,10 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// Set the session cookie to a signed, tamper-evident value so it cannot be
 	// forged. If the hub has no secret to sign with, fail the login rather than
 	// emit an unsigned (trusted-by-default) cookie.
-	cookieValue := mintHubUserCookieValue(s.sessionKey(), user.Login)
+	// N2: mint ASYMMETRICALLY. The hub holds the Ed25519 private seed; spokes
+	// receive only the public key, so a spoke operator can verify this cookie but
+	// can no longer forge one (notably an admin cookie).
+	cookieValue := mintHubUserCookieValueV2(s.sessionSigningSeed(), user.Login)
 	if cookieValue == "" {
 		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", user.Login)
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
@@ -320,7 +323,8 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Trust the carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
-	username, ok := verifyHubUserCookieValue(s.sessionKey(), cookie.Value)
+	// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
+	username, ok := verifyHubUserCookieEither(s.sessionPublicKey(), s.sessionKey(), cookie.Value)
 	if !ok || loadSaaSUser(username) == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))

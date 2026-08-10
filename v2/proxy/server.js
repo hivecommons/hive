@@ -35,10 +35,52 @@ function deriveSessionKey() {
   return crypto.createHmac('sha256', master).update(INFO_SESSION_KEY).digest('hex');
 }
 const SESSION_KEY = deriveSessionKey();
+
+// SESSION_PUBLIC_KEY is the hub's Ed25519 PUBLIC key for session cookies (audit
+// N2). The hub holds the private seed and is the only party that can MINT a
+// cookie; this spoke can only VERIFY.
+//
+// SESSION_KEY above is symmetric, so a spoke able to verify was equally able to
+// mint — any spoke operator could read it from the pod env and forge
+// `clubanderson.<sig>`, a hub ADMIN cookie honoured on ~21 admin routes. Both
+// are read during the rollout window: this spoke may be running an older image
+// than the hub, or vice versa. Once the fleet has rolled, HIVE_SESSION_KEY (and
+// the legacy branch in verifyHubUserCookieEither) go away.
+//
+// Derived from HIVE_HUB_SECRET as a fallback for self-hosted spokes whose
+// operator legitimately holds the master. The info string MUST stay byte-for-byte
+// identical to infoSessionEd25519Seed in v2/pkg/hub/hub_keys.go.
+const INFO_SESSION_ED25519_SEED = 'hive-session-ed25519-v1';
+function deriveSessionPublicKey() {
+  const explicit = (process.env.HIVE_SESSION_PUBLIC_KEY || '').trim();
+  if (explicit) return explicit;
+  const master = (process.env.HIVE_HUB_SECRET || '').trim();
+  if (!master) return '';
+  const seedHex = crypto.createHmac('sha256', master).update(INFO_SESSION_ED25519_SEED).digest('hex');
+  try {
+    // Node cannot expand a raw Ed25519 seed directly, so wrap it in the PKCS#8
+    // prefix for a 32-byte Ed25519 private key and export the public half. This
+    // mirrors Go's ed25519.NewKeyFromSeed(seed).Public().
+    const pkcs8 = Buffer.concat([
+      Buffer.from('302e020100300506032b657004220420', 'hex'),
+      Buffer.from(seedHex, 'hex'),
+    ]);
+    const priv = crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+    const spki = crypto.createPublicKey(priv).export({ format: 'der', type: 'spki' });
+    // Strip the 12-byte SPKI header to get the raw 32-byte public key, matching
+    // the hex encoding the hub ships in HIVE_SESSION_PUBLIC_KEY.
+    return Buffer.from(spki.subarray(spki.length - 32)).toString('hex');
+  } catch (_) {
+    return '';
+  }
+}
+const SESSION_PUBLIC_KEY = deriveSessionPublicKey();
 // Boot-time "am I hub-hosted?" signal. Either the injected session key (modern)
 // or a master secret (legacy) proves hosted mode, where identity comes from the
 // hub cookie rather than a shared dashboard token.
-const IS_HOSTED = SESSION_KEY !== '';
+// N2: either key proves hosted mode. A freshly provisioned spoke may hold only
+// the public key once HIVE_SESSION_KEY is dropped after the rollout.
+const IS_HOSTED = SESSION_KEY !== '' || SESSION_PUBLIC_KEY !== '';
 
 // HIVE_ID is this spoke's own hive identity, injected by the hub at provision
 // time (mirrors the HIVE_ID env the Go dashboard reads). It is the anchor for
@@ -326,6 +368,46 @@ function verifyHubUserCookie(secret, value) {
   return username;
 }
 
+// HUB_COOKIE_V2_MARKER separates the username from an Ed25519 signature. It must
+// stay byte-identical to hubCookieV2Marker in v2/pkg/hub/hub_cookie.go. A legacy
+// HMAC signature is base64url and so can never contain a '.', which is what makes
+// the two formats distinguishable by structure rather than by guessing.
+const HUB_COOKIE_V2_MARKER = '.v2.';
+
+// verifyHubUserCookieV2 mirrors verifyHubUserCookieValueV2 in
+// v2/pkg/hub/hub_cookie.go EXACTLY: value is `<username>.v2.<base64url(sig)>`
+// where sig is Ed25519 over the username, verified against the hub's PUBLIC key.
+// Returns the verified username, or '' on any failure.
+function verifyHubUserCookieV2(pubHex, value) {
+  if (!pubHex || !value) return '';
+  const idx = value.lastIndexOf(HUB_COOKIE_V2_MARKER);
+  if (idx <= 0) return '';
+  const username = value.slice(0, idx);
+  const sigB64 = value.slice(idx + HUB_COOKIE_V2_MARKER.length);
+  if (!username || !sigB64) return '';
+  try {
+    const raw = Buffer.from(pubHex, 'hex');
+    if (raw.length !== 32) return '';
+    // Wrap the raw 32-byte key in its SPKI header so Node can import it.
+    const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]);
+    const pub = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const sig = Buffer.from(sigB64, 'base64url');
+    return crypto.verify(null, Buffer.from(username), pub, sig) ? username : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+// verifyHubUserCookieEither accepts a v2 (Ed25519) cookie or, during the rollout
+// window only, a legacy HMAC one — mirroring the Go helper of the same name.
+// The legacy branch is the N2 vulnerability (verify-capable implies mint-capable)
+// and is removed once the fleet has rolled and existing cookies have aged out.
+function verifyHubUserCookieEither(pubHex, legacySecret, value) {
+  const v2 = verifyHubUserCookieV2(pubHex, value);
+  if (v2) return v2;
+  return verifyHubUserCookie(legacySecret, value);
+}
+
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
@@ -434,7 +516,7 @@ app.use('/terminal', (req, res, next) => {
     }, {});
     // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
     // signature — a non-empty value is NOT proof of authentication.
-    const user = verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user']);
+    const user = verifyHubUserCookieEither(SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -536,7 +618,7 @@ server.on('upgrade', (req, socket, head) => {
         return acc;
       }, {});
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
-      const wsUser = verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user']);
+      const wsUser = verifyHubUserCookieEither(SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
       if (!wsUser) {
         socket.destroy();
         return;

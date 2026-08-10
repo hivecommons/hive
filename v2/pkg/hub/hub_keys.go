@@ -51,6 +51,18 @@ const (
 	// in the existing master — no new secret, no rotation. Distinct label from the
 	// legacy symmetric infoSSOKey so the two can never derive to the same bytes.
 	infoSSOEd25519Seed = "hive-sso-ed25519-v1"
+
+	// infoSessionEd25519Seed derives the Ed25519 signing SEED for the hub SESSION
+	// cookie (audit N2). Same construction as infoSSOEd25519Seed and for the same
+	// reason: a spoke must be able to VERIFY a hub-minted value without being able
+	// to MINT one.
+	//
+	// The symmetric infoSessionKey above cannot give that. It is provisioned into
+	// every spoke so the spoke's proxy can check `hive_hub_user`, but an HMAC key
+	// that verifies also signs — so any spoke operator could read it from their pod
+	// env and mint `clubanderson.<sig>`, which requireAdmin accepts on ~21 admin
+	// routes. Distinct label from infoSessionKey so the two can never collide.
+	infoSessionEd25519Seed = "hive-session-ed25519-v1"
 )
 
 // deriveDomainKey returns a domain-separated sub-key of master for the given
@@ -123,6 +135,26 @@ func (s *HubServer) ssoSigningSeed() string {
 
 func (s *HubServer) impersonateKey() string {
 	return deriveDomainKey(s.hubSecret, infoImpersonateKey)
+}
+
+// sessionSigningSeed returns the hex-encoded 32-byte Ed25519 SEED the hub signs
+// session cookies with (audit N2). PRIVATE key material: it must NEVER be
+// injected into a spoke — spokes receive only sessionPublicKey().
+func (s *HubServer) sessionSigningSeed() string {
+	return deriveDomainKey(s.hubSecret, infoSessionEd25519Seed)
+}
+
+// sessionPublicKey returns the hex Ed25519 PUBLIC key a spoke verifies hub
+// session cookies with. Safe to place in a Deployment: it verifies, it cannot
+// sign.
+func (s *HubServer) sessionPublicKey() string {
+	return ssoPublicKeyFromSeed(s.sessionSigningSeed())
+}
+
+// provisionSessionPublicKey is the provisioning-time mirror of
+// sessionPublicKey, resolved against provisionMasterSecret().
+func provisionSessionPublicKey() string {
+	return ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSessionEd25519Seed))
 }
 
 // provisionTerminalKey returns the PER-HIVE terminal signing key injected into a
