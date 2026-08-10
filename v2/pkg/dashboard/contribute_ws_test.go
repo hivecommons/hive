@@ -579,7 +579,7 @@ func TestWSAutoPromotionRequiresReportedPR(t *testing.T) {
 
 	// complete drives one task through the hub as if it had been assigned,
 	// reporting a PR only when prURL is non-empty.
-	complete := func(taskID, prURL string) {
+	complete := func(taskID, prURL string, wantCompleted, wantWithPR int, wantTier string) {
 		t.Helper()
 		s.contributeHub.mu.RLock()
 		var c *ContributorConnection
@@ -594,12 +594,23 @@ func TestWSAutoPromotionRequiresReportedPR(t *testing.T) {
 		c.currentTask = &WSTaskAssign{TaskID: taskID, Kind: "issue", Repo: "acme/widgets", Number: 1}
 		c.mu.Unlock()
 
-		conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: taskID, Result: "done", PRURL: prURL})
-		time.Sleep(50 * time.Millisecond)
+		if err := conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: taskID, Result: "done", PRURL: prURL}); err != nil {
+			t.Fatalf("write task_complete: %v", err)
+		}
+		waitFor(t, func() bool {
+			p := findContributor(reg["contributor_id"])
+			if p == nil {
+				return false
+			}
+			if p.TasksCompleted < wantCompleted || p.TasksWithPR < wantWithPR {
+				return false
+			}
+			return wantTier == "" || p.TrustTier == wantTier
+		}, fmt.Sprintf("completion %s to be recorded", taskID))
 	}
 
 	for i := 0; i < contributorAutoPromoteAt; i++ {
-		complete(fmt.Sprintf("no-pr-%d", i), "")
+		complete(fmt.Sprintf("no-pr-%d", i), "", i+1, 0, "newcomer")
 	}
 
 	p := findContributor(reg["contributor_id"])
@@ -617,7 +628,7 @@ func TestWSAutoPromotionRequiresReportedPR(t *testing.T) {
 	}
 
 	for i := 0; i < contributorAutoPromoteAt; i++ {
-		complete(fmt.Sprintf("with-pr-%d", i), "https://github.com/acme/widgets/pull/7")
+		complete(fmt.Sprintf("with-pr-%d", i), "https://github.com/acme/widgets/pull/7", contributorAutoPromoteAt+i+1, i+1, "")
 	}
 
 	p = findContributor(reg["contributor_id"])
