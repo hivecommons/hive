@@ -2909,9 +2909,13 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	user.Hives[hiveID] = "owner"
 	saveSaaSUser(user)
 
+	provisionHiveRecord := *h
+	provisionHiveRecord.Repos = append([]string(nil), h.Repos...)
+	provisionReq := req
 	provisionWG.Add(1)
 	go func() {
 		defer provisionWG.Done()
+		h := &provisionHiveRecord
 		cluster := s.clusterForHive(h)
 		if cluster == nil {
 			h.Status = "error"
@@ -2920,7 +2924,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("no cluster config for provisioning", "hive_id", hiveID, "cluster_id", h.ClusterID)
 			return
 		}
-		if err := provisionHive(h, &req, cluster, s.appKeysByAppID(), s.logger); err != nil {
+		if err := provisionHive(h, &provisionReq, cluster, s.appKeysByAppID(), s.logger); err != nil {
 			h.Status = "error"
 			h.Error = err.Error()
 			saveSaaSHive(h)
