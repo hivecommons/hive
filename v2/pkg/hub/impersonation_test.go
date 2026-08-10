@@ -242,6 +242,10 @@ func TestAdminReadSurfacesHiddenDuringImpersonation(t *testing.T) {
 	rec = httptest.NewRecorder()
 	guardedExit := s.requireAdmin(next)
 	exitReq := httptest.NewRequest(http.MethodPost, impersonateExitPath, nil)
+	// N6: requireAdmin now runs isCSRFSafe, so a POST must look like one the
+	// dashboard actually sends — same-origin fetches carry Origin (and the JSON
+	// content-type). Mirrors the requireAuth POST at :154-155.
+	exitReq.Header.Set("Origin", "https://hive.kubestellar.io")
 	exitReq.AddCookie(testAuthCookie(hubAdminUsername))
 	exitReq.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
 	guardedExit(rec, exitReq)
@@ -265,6 +269,9 @@ func TestImpersonateExitClearsCookieAndStaysCallable(t *testing.T) {
 	guarded := s.requireAdmin(s.handleImpersonateExit)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, impersonateExitPath, nil)
+	// N6: requireAdmin now enforces CSRF; send the Origin a real same-origin
+	// dashboard fetch would carry.
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
 	req.AddCookie(testAuthCookie(hubAdminUsername))
 	req.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
 	guarded(rec, req)

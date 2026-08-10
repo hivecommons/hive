@@ -795,6 +795,21 @@ func listAllSaaSUsers() []SaaSUser {
 
 func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// SECURITY (N6, CWE-352): admin routes carry the SAME CSRF exposure as
+		// requireAuth ones — the hub session cookie is ambient, so a cross-site
+		// form POST to e.g. /api/saas/hub/upgrade or the cluster-app-key writer
+		// executes with the admin's identity. requireAuth has always checked this
+		// (see :499); requireAdmin never did, leaving every admin mutation
+		// reachable from ANY origin — strictly worse than the sibling-tenant lane,
+		// which at least requires a *.hive.kubestellar.io foothold. Checked first,
+		// before any identity resolution, so a forged request never reaches the
+		// impersonation logic below.
+		if !isCSRFSafe(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			return
+		}
 		// Gate on the REAL logged-in user, not the effective (possibly
 		// impersonated) identity. While the admin is viewing as a normal user,
 		// getAuthUser resolves to that user on GETs — but admin routes (and in
