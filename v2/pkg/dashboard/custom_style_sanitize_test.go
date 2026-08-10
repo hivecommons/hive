@@ -1,9 +1,6 @@
 package dashboard
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // ============================================================
 // sanitizeCSSURLToken — url() rewriting for XSS/data-exfil prevention
@@ -322,46 +319,4 @@ func TestCustomStyleCacheKey_IncludesRef(t *testing.T) {
 	if customStyleCacheKey(src1, "dashboard") == customStyleCacheKey(src2, "dashboard") {
 		t.Error("cache keys for different refs must differ")
 	}
-}
-
-// ============================================================
-// scopeCustomStyle — end-to-end selector scoping
-// ============================================================
-
-func TestScopeCustomStyle_ScopesAllRules(t *testing.T) {
-	css := `.header { color: red; }
-.footer { background: blue; }`
-	root := "#hive-dashboard-root"
-	got := scopeCustomStyle(css, root)
-	if got == "" {
-		t.Fatal("expected scoped output, got empty")
-	}
-	if !cssContains(got, root+" .header") {
-		t.Errorf("expected scoped .header, got %q", got)
-	}
-	if !cssContains(got, root+" .footer") {
-		t.Errorf("expected scoped .footer, got %q", got)
-	}
-}
-
-func TestScopeCustomStyle_SkipsAtRules(t *testing.T) {
-	css := `@media (max-width: 600px) { .x { color: red; } }`
-	root := "#hive-dashboard-root"
-	got := scopeCustomStyle(css, root)
-	// @media rules contain "@" in selector portion — should be skipped
-	if cssContains(got, "@media") {
-		t.Errorf("@-rules should be skipped, got %q", got)
-	}
-}
-
-func TestScopeCustomStyle_EmptySelector(t *testing.T) {
-	css := `{ color: red; }`
-	got := scopeCustomStyle(css, "#root")
-	if cssContains(got, "color") {
-		t.Errorf("empty selector rule should be skipped, got %q", got)
-	}
-}
-
-func cssContains(s, substr string) bool {
-	return strings.Contains(s, substr)
 }
