@@ -103,5 +103,5 @@ ACMM packs may override these values. For example, the pack definitions use `bac
 
 - **[Agent Configuration](agent-configuration.md)** — every agent field, methods, model pinning, cadences, and ACMM packs.
 - **[ACMM Policy Matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
-- **[Architecture](https://kubestellar.io/docs/hive/overview/architecture)** — the two scheduling models and how the supervisor drives agents.
-- **[Troubleshooting](https://kubestellar.io/docs/hive/getting-started/troubleshooting)** — stuck sessions, login expiry, restart loops.
+- **[Architecture](architecture.md)** — the process model, governor loop, and how the supervisor drives agents.
+- **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
