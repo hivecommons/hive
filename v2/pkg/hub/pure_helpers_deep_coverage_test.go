@@ -59,7 +59,7 @@ func TestImageTagIsMutableEdgeCases(t *testing.T) {
 // publicURLSelfCheckStatusForError (heartbeat.go)
 // ============================================================
 
-func TestPublicURLSelfCheckStatusForError(t *testing.T) {
+func TestPublicURLSelfCheckStatusForErrorAdditionalCases(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
