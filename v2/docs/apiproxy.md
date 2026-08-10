@@ -29,8 +29,9 @@ Environment:
 
 ## Deployment notes
 
-At v2 HEAD, the binary listens on `:<port>` (all interfaces). Treat it as an
-internal sidecar or bind it behind a firewall/network policy unless you have a
-newer change that binds to localhost by default. Security PR #2935, which tracks
-localhost binding and warning on `ANTHROPIC_API_KEY` key-injection fallback, was still open when
-this document was written.
+By default the binary listens on `:<port>` (all interfaces). Treat it as an
+internal sidecar and bind it behind a firewall or NetworkPolicy so nothing on
+the pod network can reach it directly. If your build exposes a bind-address
+flag, prefer binding to `127.0.0.1` so only same-container callers can reach the
+proxy. Avoid relying on the `ANTHROPIC_API_KEY` fallback upstream key in
+production — configure `PROXY_AUTH_TOKEN` explicitly instead.

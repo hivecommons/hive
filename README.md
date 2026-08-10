@@ -46,7 +46,7 @@ If you need to run your own private hub instead, see the v2
 #### 1. Create the namespace
 
 ```bash
-kubectl apply -f deploy/k8s/namespace.yaml
+kubectl apply -f v2/deploy/k8s/namespace.yaml
 ```
 
 Or manually:
@@ -74,7 +74,7 @@ kubectl -n hive create secret generic hive-secrets \
 #### 3. Create ConfigMap from hive.yaml
 
 ```bash
-cp hive.yaml.example hive.yaml
+cp v2/hive.yaml.example hive.yaml
 # Edit hive.yaml: set your org, repos, agents, and governor config
 
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
@@ -85,7 +85,7 @@ kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 Apply the provided PVC manifest:
 
 ```bash
-kubectl apply -f deploy/k8s/pvc.yaml
+kubectl apply -f v2/deploy/k8s/pvc.yaml
 ```
 
 The default PVC requests 10Gi with `ReadWriteOnce`. For zero-downtime rollouts with rolling updates, use an NFS-backed StorageClass with `ReadWriteMany`:
@@ -108,8 +108,8 @@ spec:
 #### 5. Deploy
 
 ```bash
-kubectl apply -f deploy/k8s/deployment.yaml
-kubectl apply -f deploy/k8s/service.yaml
+kubectl apply -f v2/deploy/k8s/deployment.yaml
+kubectl apply -f v2/deploy/k8s/service.yaml
 ```
 
 The deployment runs a single replica with liveness and readiness probes on `/api/health`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
@@ -151,13 +151,13 @@ Long timeouts are needed for SSE streaming connections to the dashboard.
 #### Quick apply (all manifests)
 
 ```bash
-kubectl apply -f deploy/k8s/namespace.yaml
+kubectl apply -f v2/deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
-kubectl apply -f deploy/k8s/pvc.yaml
-kubectl apply -f deploy/k8s/deployment.yaml
-kubectl apply -f deploy/k8s/service.yaml
+kubectl apply -f v2/deploy/k8s/pvc.yaml
+kubectl apply -f v2/deploy/k8s/deployment.yaml
+kubectl apply -f v2/deploy/k8s/service.yaml
 ```
 
 ### Ports
@@ -178,7 +178,7 @@ kubectl apply -f deploy/k8s/service.yaml
 
 ## Configuration
 
-All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
+All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [v2/hive.yaml.example](v2/hive.yaml.example) for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
 
 The top-level deterministic shell pipeline uses a separate project file,
 `config/hive-project.yaml.example`; see [config/README.md](config/README.md)

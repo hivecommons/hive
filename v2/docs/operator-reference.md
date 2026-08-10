@@ -107,6 +107,12 @@ installation instead of broadening the PAT.
 |---|---|
 | `HIVE_METRICS_ENABLED` | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default because it exposes estimated cost data. |
 
+> **Note on `tokens_24h`:** despite its name, the per-spoke heartbeat field
+> `tokens_24h` (stored on the hub as `totalTokens24h`) is a **cumulative total**,
+> not a rolling 24-hour window. Read it as lifetime token consumption for the
+> spoke. See [token-tracking.md](token-tracking.md) for the full heartbeat and
+> `/api/saas/usage` rollup details.
+
 ### Inference endpoint fallbacks
 
 | Name | Default | Purpose |
