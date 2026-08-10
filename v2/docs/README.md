@@ -34,8 +34,11 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 ## Configuration and agents
 
 - [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
+- [Supervisor agent](supervisor.md) — supervisor policy templates and when to use each.
+- [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Knowledge curator](knowledge-curator.md) — automatic fact extraction and promotion knobs.
 - [GitHub App setup](github-app-setup.md) — app creation, permissions, Setup URL, and `/gh-setup`.
+- [Agent definition format](../AGENT-DEFINITION.md) — the portable YAML format for importing/exporting agents.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [ACMM policy fragments](../../examples/acmm/README.md) — per-level ACMM policy references.
 - [Sandbox isolation and agent guardrails](sandbox-isolation.md) — isolation layers and operator guardrail notes.
