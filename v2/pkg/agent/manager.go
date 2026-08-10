@@ -1492,7 +1492,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// written for them. bob used to land here and get a file nothing ever
 		// read; that dead write is gone with the deferral above.
 		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
-		if err := os.WriteFile(promptFile, []byte(bootstrapPrompt), 0o644); err != nil {
+		// N15: owner-only + O_NOFOLLOW (see writeAgentStateFile).
+		if err := writeAgentStateFile(promptFile, []byte(bootstrapPrompt)); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
 		} else if backend == "goose" {
 			launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", promptFile)
@@ -1504,7 +1505,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// visible to tmux capture-pane (--instructions - uses hidden TUI).
 	if backend == "goose" && bootstrapPrompt == "" {
 		minimalPrompt := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
-		os.WriteFile(minimalPrompt, []byte("You are an AI agent. Wait for instructions from the supervisor."), 0o644)
+		if err := writeAgentStateFile(minimalPrompt, []byte("You are an AI agent. Wait for instructions from the supervisor.")); err != nil {
+			m.logger.Warn("failed to write minimal bootstrap prompt", "name", agent.Name, "error", err)
+		}
 		launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", minimalPrompt)
 	}
 
@@ -5146,6 +5149,55 @@ func (m *Manager) ClearAllModeOverrides() {
 	}
 }
 
+// agentStateFileMode is owner-only. These files sit in the pod-shared /tmp and
+// carry per-agent CONTROL state — the enforcement mode the gh wrapper reads, and
+// the bootstrap prompt goose is launched with — so anything group- or
+// world-writable lets one agent steer another.
+const agentStateFileMode = 0o600
+
+// writeAgentStateFile writes per-agent control state to a shared-/tmp path
+// without following symlinks.
+//
+// SECURITY (audit N15, CWE-367/732/20). These files were written with a plain
+// os.WriteFile at 0o644, which:
+//
+//   - follows symlinks — os.WriteFile opens O_WRONLY|O_CREATE|O_TRUNC with no
+//     O_NOFOLLOW, so a pre-planted symlink at the (predictable) path redirects
+//     the hive's own write to any file the process can reach; and
+//   - left the result world-readable, and the containing /tmp world-writable,
+//     so any agent UID could replace another agent's file afterwards.
+//
+// Both matter because the path is derived from the agent NAME, which is
+// guessable, and because the readers treat these files as authoritative:
+// bin/gh-wrapper.sh takes its enforcement mode from .hive-mode-<name> in
+// preference to the trustworthy env var, and goose is launched with whatever
+// .hive-bootstrap-<name>.txt contains as its first instruction.
+//
+// O_NOFOLLOW makes a planted symlink fail loudly instead of redirecting the
+// write. The file is deliberately NOT O_EXCL: these are rewritten on every
+// mode change and every relaunch, so failing when the file already exists would
+// break the normal path.
+func writeAgentStateFile(path string, data []byte) error {
+	f, err := os.OpenFile(path,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
+		agentStateFileMode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// O_CREATE honours the mode only when the file did not already exist, so an
+	// existing 0644 file from a previous release keeps its old mode without
+	// this. Chmod on the path is acceptable here because O_NOFOLLOW above has
+	// already established it is not a symlink.
+	return os.Chmod(path, agentStateFileMode)
+}
+
 // SyncModeFiles rewrites /tmp/.hive-mode-* for all running agents to reflect the given ACMM level.
 func (m *Manager) SyncModeFiles(level int) {
 	m.mu.RLock()
@@ -5165,7 +5217,7 @@ func (m *Manager) SyncModeFiles(level int) {
 			}
 		}
 		modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", name)
-		if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
+		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
 	}
@@ -5422,7 +5474,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
 	}
 	modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
-	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
+	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
 	// Plain proxy URL without userinfo — Claude Code's native binary fails

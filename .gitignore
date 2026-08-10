@@ -12,3 +12,7 @@ node_modules/
 # Scratch output from extracting index.html's inline <script> bodies for
 # `node --check`. A build artifact of the verification step, never source.
 _inline.js
+
+# Test-run scratch: pkg/agent tests create stub CLI binaries under a
+# randomly-suffixed dir. Generated per run; never part of the tree.
+.hive-agent-stubs-*/
