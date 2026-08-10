@@ -299,7 +299,11 @@ See the [Hive Hub contribute page](https://hive.kubestellar.io) for details.
 
 See the [Hive Hub](https://hive.kubestellar.io) to browse registered hives, view leaderboards, and find hives accepting contributions.
 
-To contribute to Hive itself, open issues and PRs on this repository.
+To contribute to Hive itself, see [CONTRIBUTING.md](CONTRIBUTING.md) and open issues or PRs on this repository.
+
+## Security
+
+Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Do not report security vulnerabilities through public issues or pull requests.
 
 ---
 
