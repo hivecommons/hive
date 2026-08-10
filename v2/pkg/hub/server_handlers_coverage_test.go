@@ -15,7 +15,7 @@ func TestHeartbeatBearerOK_LegacyRawSecret(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	secret := srv.hubSecret
 
-	if !srv.heartbeatBearerOK("Bearer " + secret, "") {
+	if !srv.heartbeatBearerOK("Bearer "+secret, "") {
 		t.Error("heartbeatBearerOK must accept raw master secret")
 	}
 }
@@ -27,7 +27,7 @@ func TestHeartbeatBearerOK_DerivedKey(t *testing.T) {
 		t.Fatal("heartbeatKey() returned empty — test cannot proceed")
 	}
 
-	if !srv.heartbeatBearerOK("Bearer " + derived, "") {
+	if !srv.heartbeatBearerOK("Bearer "+derived, "") {
 		t.Error("heartbeatBearerOK must accept derived heartbeat key")
 	}
 }

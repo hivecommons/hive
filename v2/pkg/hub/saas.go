@@ -543,6 +543,17 @@ func isTrustedOrigin(raw string) bool {
 // resolveIdentity — never inside it — so the write-block and the admin gate can
 // always reason about who is really driving the request.
 func (s *HubServer) getRealAuthUser(r *http.Request) string {
+	// N2: prefer the Ed25519 cookie when the browser carries one. It is the only
+	// value a spoke cannot forge, so it must win over the symmetric fallbacks.
+	if c, err := r.Cookie(hubUserCookieV2Name); err == nil && c.Value != "" {
+		if username, ok := verifyHubUserCookieValueV2(s.sessionPublicKey(), c.Value); ok {
+			if loadSaaSUser(username) != nil {
+				return username
+			}
+		}
+		// A stale/invalid v2 cookie is not fatal — fall through to the HMAC one
+		// rather than locking the user out (e.g. after a secret rotation).
+	}
 	cookie, err := r.Cookie("hive_hub_user")
 	if err == nil && cookie.Value != "" {
 		// The cookie value is only trusted when its HMAC signature verifies
