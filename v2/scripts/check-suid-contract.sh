@@ -96,8 +96,13 @@ check "su-exec owned root:hive-launch (dedicated launcher group)" \
 # 5. The dedicated launcher group must exist and NOT include agent UIDs. dev is
 # added to it; agent users are created in the entrypoint with `-g node` only, so
 # a `-G hive-launch` on any agent useradd would be a regression.
+# The group must still be a --system group named hive-launch, but the flags
+# between them are not fixed: N5 added `--gid` to pin the GID so the deployment
+# manifests can name it in fsGroup (Secret defaultMode 0440 is only a boundary
+# if the group is one agents are NOT in). Match --system and the group name
+# without assuming they are adjacent.
 check "hive-launch launcher group is created" \
-  'groupadd[[:space:]]+--system[[:space:]]+hive-launch'
+  'groupadd[[:space:]]+([^[:space:]]+[[:space:]]+)*--system([[:space:]]+[^[:space:]]+)*[[:space:]]+hive-launch'
 check "dev is a member of hive-launch" \
   'useradd.*-G[[:space:]]+hive-launch'
 
