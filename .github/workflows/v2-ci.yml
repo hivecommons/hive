@@ -62,7 +62,7 @@ jobs:
       # dropped headless mode, a broken probe, a token leak into stdout) fails
       # the PR. Requires `just`; the test SKIPs cleanly if it is ever absent.
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash v2/deploy/test_contribute_k8s_workload.sh
