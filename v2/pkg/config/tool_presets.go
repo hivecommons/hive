@@ -3,14 +3,22 @@ package config
 // ToolPresets maps preset names to their default deny rules.
 // These match the existing Mode-based hardcoded behavior in agent/manager.go.
 var ToolPresets = map[string][]ToolRule{
+	// The deny sets below cover the FULL GitHub MCP write surface so an agent
+	// cannot author issues/PRs/comments as the login USER via the MCP; the same
+	// write-tool set is denied at Copilot launch (copilotGitHubWriteDenyFlags in
+	// agent/manager.go). All GitHub writes must route through the App-gated gh
+	// wrapper / hive-open-pr so they are authored by the App bot.
 	"advisory": {
 		{Pattern: "mcp__github__create_pull_request", Action: "deny"},
+		{Pattern: "mcp__github__create_pull_request_with_copilot", Action: "deny"},
 		{Pattern: "mcp__github__create_issue", Action: "deny"},
 		{Pattern: "mcp__github__update_issue", Action: "deny"},
+		{Pattern: "mcp__github__add_issue_comment", Action: "deny"},
 		{Pattern: "mcp__github__merge_pull_request", Action: "deny"},
 	},
 	"issues-only": {
 		{Pattern: "mcp__github__create_pull_request", Action: "deny"},
+		{Pattern: "mcp__github__create_pull_request_with_copilot", Action: "deny"},
 		{Pattern: "mcp__github__merge_pull_request", Action: "deny"},
 	},
 	"issues-prs": {},

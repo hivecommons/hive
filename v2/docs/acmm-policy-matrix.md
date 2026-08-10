@@ -39,7 +39,7 @@ A single interactive advisor helps with repo setup and architecture decisions. G
 | Agent | Mode | Template |
 |-------|------|----------|
 | guide | advisory | `guide-advisory.md` |
-| brainstorm | advisory | `brainstorm-inception.md` |
+| brainstorm | advisory | `brainstorm-advisory.md` |
 
 ### L2 — Advisory (Instructed) (5 agents)
 
@@ -47,7 +47,7 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 
 | Agent | Mode | Template |
 |-------|------|----------|
-| supervisor | advisory | `supervisor-advisory.md` |
+| supervisor | advisory | `supervisor-nogithub.md` |
 | scanner | advisory | `scanner-advisory.md` |
 | quality | advisory | `quality-advisory.md` |
 | guide | advisory | `guide-advisory.md` |
@@ -59,7 +59,7 @@ Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI w
 
 | Agent | Mode | Template |
 |-------|------|----------|
-| supervisor | advisory | `supervisor-advisory.md` |
+| supervisor | advisory | `supervisor-nogithub.md` |
 | scanner | advisory | `scanner-advisory.md` |
 | ci-maintainer | advisory | `ci-maintainer-advisory.md` |
 | **quality** | **holdgated** | `quality-holdgated.md` |
@@ -72,7 +72,7 @@ All agents open GitHub issues — bugs, docs gaps, CI problems, security vulnera
 
 | Agent | Mode | Template |
 |-------|------|----------|
-| supervisor | advisory | `supervisor-advisory.md` |
+| supervisor | advisory | `supervisor-nogithub.md` |
 | scanner | measured | `scanner-issues.md` |
 | ci-maintainer | holdgated | `ci-maintainer-holdgated.md` |
 | **quality** | **holdgated** | `quality-holdgated.md` |
@@ -86,7 +86,7 @@ Agents open issues AND pull requests. All PRs get a hold label — humans batch-
 
 | Agent | Mode | Template |
 |-------|------|----------|
-| supervisor | advisory | `supervisor-advisory.md` |
+| supervisor | advisory | `supervisor-nogithub.md` |
 | scanner | holdgated | `scanner-holdgated.md` |
 | ci-maintainer | holdgated | `ci-maintainer-holdgated.md` |
 | quality | holdgated | `quality-holdgated.md` |
@@ -102,7 +102,7 @@ Agents open issues, create PRs, and auto-merge on green CI. No hold label. Outre
 
 | Agent | Mode | Template |
 |-------|------|----------|
-| supervisor | advisory | `supervisor-advisory.md` |
+| supervisor | advisory | `supervisor-nogithub.md` |
 | scanner | full | `scanner-automerge.md` |
 | ci-maintainer | full | `ci-maintainer-full.md` |
 | quality | full | `quality-full.md` |
@@ -113,11 +113,15 @@ Agents open issues, create PRs, and auto-merge on green CI. No hold label. Outre
 | outreach | full | `outreach-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
+## Tester lane
+
+`v2/hive.yaml.example` includes a `tester` support agent that runs automated test suites, coverage gates, and nightly regression checks. It is intentionally outside the built-in ACMM policy packs in `v2/pkg/config/packs/`: the packs generate governance lanes, while `tester` is an operator-enabled local lane with cadences in the example config. If enabled, give it an explicit policy/template appropriate for the repository before granting write permissions.
+
 ## Key Rules
 
 1. **All PRs are holdgated below L6.** No agent can auto-merge unless running at L6 (Fully Autonomous).
 2. **Advisory agents never get GH auth.** The `${GH_AUTH}` template variable is only injected into measured, holdgated, and full templates.
-3. **Supervisor uses advisory mode.** At every level, supervisor uses `supervisor-advisory.md` — it monitors agent health, not code.
+3. **Supervisor uses no-GitHub advisory mode.** At every level, supervisor uses `supervisor-nogithub.md` in the built-in ACMM packs — it monitors agent health, not code.
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.

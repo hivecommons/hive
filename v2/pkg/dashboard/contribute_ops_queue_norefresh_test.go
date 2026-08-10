@@ -81,6 +81,7 @@ func TestOwnerLabelAffinityRoster(t *testing.T) {
 		`aria-controls="affinity-info-pop"`,
 		`class="info-btn"`,
 		`function _wireAffinityInfo(`,
+		`ccPlaceFixedPopover(btn,pop,{fallbackWidth:300,boundary:btn.closest('.ops-card')});`,
 		// The explainer copy called out in the issue.
 		`Contributors subscribe to labels`,
 		`a soft hint, nothing is hidden`,

@@ -35,9 +35,9 @@ jobs:
       run:
         working-directory: v2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25.12'
           cache-dependency-path: v2/go.sum
@@ -71,7 +71,7 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -94,7 +94,7 @@ jobs:
       # dropped headless mode, a broken probe, a token leak into stdout) fails
       # the PR. Requires `just`; the test SKIPs cleanly if it is ever absent.
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash v2/deploy/test_contribute_k8s_workload.sh
@@ -107,7 +107,7 @@ jobs:
       issues: write
     steps:
       - name: Create issue for test failure
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate Docker runtime prerequisites
         run: bash v2/deploy/test_dockerfile_visual_runtime.sh
@@ -173,20 +173,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: v2/Dockerfile

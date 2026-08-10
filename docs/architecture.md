@@ -28,6 +28,14 @@ The agent starts, reads its policy, then **waits at the prompt** for the supervi
 
 ---
 
+
+## v2 runtime and control plane
+
+v2 runs the dashboard/API service, agent manager, governor, policy resolver, and optional contributor hub from the Go server plus the Node reverse proxy in `v2/proxy`. Operators automate it through the dashboard API or `hivectl`, the non-interactive CLI documented in [`v2/docs/hivectl.md`](../v2/docs/hivectl.md).
+
+Agent behavior is controlled by layered config and policy templates: see [`v2/docs/agent-configuration.md`](../v2/docs/agent-configuration.md), [`v2/policies/README.md`](../v2/policies/README.md), and [`docs/backend-setup.md`](backend-setup.md).
+
+---
 ## Four components, four failure modes
 
 | # | Unit | Trigger | Catches |

@@ -284,7 +284,7 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px; z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; min-width: 0; }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
@@ -302,7 +302,7 @@
     }
     #oc-drawer-toggle:active { background: var(--panel-strong); }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; gap: 6px; }
+    .oc-topbar-center { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .oc-topbar-center .oc-tb-link {
       font-size: 0.72rem; color: var(--muted); cursor: pointer; padding: 4px 10px;
       border-radius: 6px; border: 1px solid transparent; transition: all 0.15s;
@@ -311,7 +311,7 @@
     .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: 999px; background: rgba(128,191,255,0.10); color: var(--text); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dashboard-custom-style-note.warn { border-color: rgba(210,153,34,0.45); background: rgba(210,153,34,0.12); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; line-height: 1; padding: 0; }
-    .oc-topbar-right { display: flex; align-items: center; gap: 14px; }
+    .oc-topbar-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .oc-health-badge { --pill-c: var(--green); font-weight: 600; } /* pill recipe at end of style block */
     .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); }
     .oc-topbar .git-version { color: var(--muted); }
@@ -340,6 +340,33 @@
     #fleet-breaker-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
     #fleet-breaker-pill.pill-passed { background: rgba(63,185,80,.12); color: #3fb950; border-color: rgba(63,185,80,.3); }
     #fleet-breaker-pill.pill-blocked { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.3); }
+
+    @media (max-width: 1200px) {
+      body { padding-top: 88px; }
+      .oc-topbar {
+        flex-wrap: wrap; height: auto; min-height: 48px;
+        justify-content: flex-start; align-content: center;
+        column-gap: 12px; row-gap: 4px; padding-top: 6px; padding-bottom: 6px;
+      }
+      .oc-topbar-left { flex: 1 1 260px; }
+      #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #oc-git-version, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
+      #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+      .oc-topbar-right {
+        flex: 1 1 100%; justify-content: flex-end;
+        gap: 10px; flex-wrap: nowrap; overflow: visible;
+      }
+      .oc-topbar-right .widget-dl { margin-left: 0; margin-right: 0; }
+      #oc-hive-id {
+        flex: 0 1 auto; min-width: 0; max-width: clamp(9rem, 32vw, 16rem);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .oc-topbar-ts { white-space: nowrap; }
+    }
+    @media (min-width: 769px) and (max-width: 900px) {
+      .oc-topbar-ts, #oc-git-version { display: none; }
+      #oc-hive-id { max-width: 8rem; }
+    }
 
     /* Light main content area */
     body.light-mode {
@@ -678,8 +705,11 @@
       .oc-topbar-left, .oc-topbar-center, .oc-topbar-right { flex-shrink: 0; }
       /* center grows to fill row 1, so the health/right group always
          drops to its own row instead of half-fitting at the edge */
+      .oc-topbar-left { flex: 0 0 auto; min-width: 0; }
       .oc-topbar-center { flex-grow: 1; justify-content: center; }
       .oc-topbar-ts, #oc-git-version, .widget-dl { display: none; }
+      #oc-project-name { display: none; }
+      #oc-hive-id { max-width: 6rem; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
       .oc-health-badge { white-space: nowrap; }
@@ -2556,9 +2586,10 @@
     var note=document.getElementById('dashboard-custom-style-note');
     if(!note)return;
     var src=window.HIVE_DASHBOARD_CUSTOM_STYLE_SRC||currentStyleSrc();
+    var dropped=parseInt(window.HIVE_DASHBOARD_CUSTOM_STYLE_DROPPED||'0',10)||0;
     note.classList.toggle('warn', !ok);
-    note.title=ok?'Custom style active: '+src+' — remove ?style= to reset':'Custom style could not be loaded — using default dashboard styles';
-    note.textContent=ok?'Custom style: '+styleLabel(src):'Custom style failed';
+    note.title=ok?(dropped>0?('Custom style active: '+src+' — '+dropped+' rules removed by sanitizer'):'Custom style active: '+src+' — remove ?style= to reset'):'Custom style could not be loaded — using default dashboard styles';
+    note.textContent=ok?(dropped>0?('Custom style: '+styleLabel(src)+' ('+dropped+' removed)'):'Custom style: '+styleLabel(src)):'Custom style failed';
     var btn=document.createElement('button');
     btn.type='button';
     btn.textContent='×';
@@ -2586,7 +2617,13 @@
     link.id='dashboard-custom-style-link';
     link.rel='stylesheet';
     link.href='/api/style?src='+encodeURIComponent(src)+'&scope='+encodeURIComponent(STYLE_SCOPE);
-    link.onload=function(){ styleState='loaded'; renderStyleState(); };
+    link.onload=function(){
+      styleState='loaded';
+      fetch('/api/style?src='+encodeURIComponent(src)+'&scope='+encodeURIComponent(STYLE_SCOPE)+'&report=1',{cache:'no-store'})
+        .then(function(r){return r.ok?r.json():null;})
+        .then(function(j){window.HIVE_DASHBOARD_CUSTOM_STYLE_DROPPED=(j&&j.report&&j.report.dropped)||0;renderStyleState();})
+        .catch(function(){renderStyleState();});
+    };
     link.onerror=function(){ styleState='failed'; renderStyleState(); };
     document.head.appendChild(link);
     document.addEventListener('DOMContentLoaded', renderStyleState);
@@ -3533,9 +3570,8 @@
     //  - a circular icon button showing pause bars while the fleet runs
     //    (click = engage/throw the breaker) and a play triangle once engaged
     //    (click = release/resume). Same SVG glyphs as renderQueueSuspendControl.
-    // The pill is shown to everyone; the button is interactive only for a
-    // read-write+ viewer via dashboardRoleAtLeast(window._hiveRole,'read-write')
-    // (server also 403s the POST for read-only viewers).
+    // The pill is shown to everyone; the button is interactive only for owners
+    // (server also 403s the POST for non-owner viewers).
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
@@ -3549,9 +3585,9 @@
       }
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
-        // Owner-gating: hide the control for read-only viewers, leaving only the
+        // Owner-gating: hide the control for non-owner viewers, leaving only the
         // status pill. window._hiveRole is set by showGHAuthState from /api/role.
-        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write')) {
+        if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
           btn.style.display = 'none';
         } else {
           btn.style.display = '';
@@ -4131,6 +4167,8 @@
         <div class="oc-detail-actions">
           ${isOnDemand
             ? '<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>'
+            : !dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')
+            ? ''
             : `<button class="btn-toggle ${isPaused ? 'paused' : isOff ? 'off' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : isOff ? 'Start this agent — it is currently off in this governor mode' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : isOff ? '▶ start' : '⏸ pause'}</button>`}
           <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>
           <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
@@ -5692,11 +5730,14 @@
         // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
         const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
+        const canPauseToggle = canToggle && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const toggleBtn = canToggle ? (isOff
           ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`
           : isOnDemand
           ? `<button class="btn-toggle on-demand" title="On-demand agent — kicked manually, not by governor cadence">⚡ on demand</button>`
-          : `<button class="btn-toggle ${isPaused ? 'paused' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : '⏸ pause'}</button>`) : '';
+          : canPauseToggle
+          ? `<button class="btn-toggle ${isPaused ? 'paused' : 'running'}" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="${isPaused}" title="${isPaused ? 'Resume this agent — it will start running on its configured cadence' : 'Pause this agent — stops governor from kicking it until resumed'}">${isPaused ? '▶ resume' : '⏸ pause'}</button>`
+          : '') : '';
         // liveSummary is pushed via SSE every 5s — no separate fetch needed
         let summaryEl = '';
         if (a.liveSummary) {
@@ -15826,7 +15867,10 @@ function burnAreaChart() {
       const denyTitles = (hub.contribute_deny_titles || []);
       const denyAuthors = (hub.contribute_deny_authors || []);
       const allowModels = (hub.contribute_allow_models || []);
+      const frameAncestors = (hub.snapshot_frame_ancestors || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      const delegatableRoles = (hub.contribute_delegatable_roles || ['scanner','quality','outreach']).map(function(r) { return String(r || '').toLowerCase(); });
+      const privilegedDelegatableRoles = ['ci-maintainer', 'sec-check', 'architect'];
       // Filter modes: 'allow' = only matching pass; 'deny' (default) = matching skipped.
       const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
       const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
@@ -15875,6 +15919,12 @@ function burnAreaChart() {
           <label>Snapshot / Preview URL <span class="config-info">i<span class="config-tooltip">${hub.auto_snapshot ? 'Auto-generated from Dashboard URL. Read-only while auto-publish is on.' : 'Enter a custom preview URL (e.g. your own static dashboard). Sent to hub as the Preview link.'}</span></span></label>
           <input type="text" id="hub-snapshot-url" value="${esc(snapUrl)}" onchange="markDirty('hub','snapshot_url',this.value)" ${hub.auto_snapshot ? 'disabled style="opacity:0.5"' : ''} placeholder="${hub.auto_snapshot ? '' : 'https://your-site.com/dashboard-preview'}">
         </div>
+        <div class="config-field">
+          <label>Snapshot frame allowlist <span class="config-info">i<span class="config-tooltip">Exact HTTPS origins allowed to embed the public read-only /snapshot page. Empty keeps frame-ancestors 'none' and X-Frame-Options: DENY. X-Frame-Options is omitted for /snapshot only when this allowlist is non-empty because XFO cannot express allowlists.</span></span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${frameAncestors.map(function(o) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(96,165,250,0.15);color:var(--blue);border:1px solid rgba(96,165,250,0.3)">' + esc(o) + ' <span onclick="removeHubFilter(\'snapshot_frame_ancestors\',' + esc(JSON.stringify(o)) + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('') || '<span style="font-size:0.72rem;color:var(--muted)">No origins allowed — /snapshot cannot be framed.</span>'}</div>
+          <textarea rows="3" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="https://docs.projectbluefin.io" onchange="setSnapshotFrameAncestorsFromText(this.value)">${esc(frameAncestors.join('\n'))}</textarea>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">One exact origin per line: <code>https://host</code> or <code>https://host:port</code>. Paths, http://, credentials, and wildcards are rejected.</span>
+        </div>
 
         <hr style="border-color:var(--border);margin:16px 0">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Contribute Work Queue <span id="hub-queue-count" style="font-size:0.72rem;padding:2px 8px;border-radius:9999px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">loading...</span></h4>
@@ -15896,6 +15946,19 @@ function burnAreaChart() {
         <div class="config-field" style="margin-left:44px" ${hub.contribute_cooldown_enabled ? '' : 'title="Enable Task Cooldown to edit the period"'}>
           <label>Cooldown Period (hours) <span class="config-info">i<span class="config-tooltip">The with-PR completion cooldown, in hours. 168 = one week (default). Range 1–8760.</span></span></label>
           <input type="number" id="hub-cooldown-hours" min="1" max="8760" value="${hub.contribute_cooldown_hours || 168}" onchange="markDirty('hub','contribute_cooldown_hours',parseInt(this.value,10)||168)" ${hub.contribute_cooldown_enabled ? '' : 'disabled style="opacity:0.5"'}>
+        </div>
+
+        <div class="config-field">
+          <label>Contributor Agent Roles <span class="config-info">i<span class="config-tooltip">Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a clanker's card; supervisor is never delegatable.</span></span></label>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${['scanner','quality','outreach'].map(function(r) {
+              return '<label style="display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--muted)" title="Default contributor role; always delegatable"><input type="checkbox" checked disabled> ' + r + ' <span style="font-size:0.65rem;color:var(--green)">always on</span></label>';
+            }).join('')}
+            ${privilegedDelegatableRoles.map(function(r) {
+              const checked = delegatableRoles.includes(r);
+              return '<label style="display:flex;align-items:center;gap:8px;font-size:0.78rem"><input type="checkbox" ' + (checked ? 'checked ' : '') + 'onchange="toggleDelegatableAgentRole(\'' + r + '\',this.checked)"> ' + r + ' <span style="font-size:0.65rem;color:var(--muted)">Delegatable to contributors</span></label>';
+            }).join('')}
+          </div>
         </div>
 
         ${renderFilterWithMode({
@@ -16020,6 +16083,19 @@ function burnAreaChart() {
       }
     }
 
+    function toggleDelegatableAgentRole(role, enabled) {
+      var hub = (_configState.data && _configState.data.hub) || {};
+      var base = ['scanner', 'quality', 'outreach'];
+      var roles = (hub.contribute_delegatable_roles || base).map(function(r) { return String(r || '').toLowerCase(); });
+      base.forEach(function(r) { if (!roles.includes(r)) roles.push(r); });
+      role = String(role || '').toLowerCase();
+      roles = roles.filter(function(r) { return r && r !== 'supervisor' && (enabled || r !== role); });
+      if (enabled && role && !roles.includes(role)) roles.push(role);
+      roles.sort();
+      hub.contribute_delegatable_roles = roles;
+      markDirty('hub', 'contribute_delegatable_roles', roles);
+    }
+
     // renderFilterWithMode renders one contribute filter as a mode toggle
     // (Allow only / Deny) plus a single list of patterns — the well-known
     // allowlist/denylist pattern. cfg: {label, noun, unit, modeKey, listKey,
@@ -16102,6 +16178,14 @@ function burnAreaChart() {
       if (!_configState.data.hub || !_configState.data.hub[key]) return;
       _configState.data.hub[key] = _configState.data.hub[key].filter(function(v) { return v !== val; });
       markDirty('hub', key, _configState.data.hub[key]);
+      renderConfigTab('Hub');
+    }
+
+    function setSnapshotFrameAncestorsFromText(value) {
+      const origins = (value || '').split(/\r?\n|,/).map(function(v) { return v.trim(); }).filter(Boolean);
+      if (!_configState.data.hub) _configState.data.hub = {};
+      _configState.data.hub.snapshot_frame_ancestors = origins;
+      markDirty('hub', 'snapshot_frame_ancestors', origins);
       renderConfigTab('Hub');
     }
 

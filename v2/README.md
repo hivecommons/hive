@@ -68,7 +68,9 @@ When dashboard authentication is enabled, `hivectl` reads
 output, stdin-based imports, and explicit confirmation for destructive
 operations.
 
-See [docs/hivectl.md](docs/hivectl.md) for the full command reference.
+See [docs/hivectl.md](docs/hivectl.md) for the full command reference. The architecture overview also calls out `hivectl` as the non-interactive API client for automation. For raw dashboard endpoints, see [docs/api-reference.md](docs/api-reference.md).
+
+See [docs/README.md](docs/README.md) for the full v2 documentation index.
 
 ## Kubernetes
 
@@ -81,7 +83,12 @@ kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 kubectl apply -f deploy/k8s/pvc.yaml
 kubectl apply -f deploy/k8s/deployment.yaml
 kubectl apply -f deploy/k8s/service.yaml
+kubectl apply -f deploy/k8s/dashboard-route-rbac.yaml
 ```
+
+`dashboard-route-rbac.yaml` lets the spoke report `route_exists` in heartbeats.
+See [docs/health-checks.md](docs/health-checks.md) for listener probes,
+hub-fronted URL probing, and alert hysteresis.
 
 ## Visual Hive evidence import
 
@@ -98,7 +105,7 @@ Visual Hive remains the deterministic verdict authority. Imported beads may rout
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs and token scopes, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
 
 ```yaml
 project:
@@ -113,21 +120,18 @@ project:
 ### Custom stylesheets
 
 The ClankeR leaderboard, the spoke dashboard, and the read-only `/snapshot`
-preview accept a shareable custom stylesheet parameter:
+preview accept a shareable sanitized CSS theme from a public GitHub repo:
 
-`/contribute/leaderboard?style=owner/repo/path/to/theme.css@ref`
-`/?style=owner/repo/path/to/theme.css@ref`
-`/snapshot?style=owner/repo/path/to/theme.css@ref`
+```text
+/contribute/leaderboard?style=owner/repo/path/to/theme.css@ref
+/?style=owner/repo/path/to/theme.css@ref
+/snapshot?style=owner/repo/path/to/theme.css@ref
+```
 
-The `@ref` suffix is optional and defaults to the repo's `HEAD`. Hive only
-accepts the `owner/repo/path.css` triplet form, fetches public GitHub raw content
-server-side without credentials, sanitizes CSS, strips external imports/URLs, and
-serves it from same-origin endpoints with a 128 KiB size cap. The sanitizer
-removes legacy executable CSS vectors and CSS escape sequences. Leaderboard CSS
-is scoped to `#tab-leaderboard`; dashboard and snapshot CSS is scoped to
-`#hive-dashboard-root`, which deliberately leaves login/setup overlays outside
-the custom-theme surface. `/api/style` is public so unauthenticated snapshots can
-load sanitized CSS, and the existing `style-src 'self'` CSP remains sufficient.
+See [docs/custom-stylesheets.md](docs/custom-stylesheets.md) for sanitizer
+rules, `report=1`, scoping, and examples. See
+[docs/snapshots.md](docs/snapshots.md) for the public snapshot page and
+frame-ancestor sharing configuration.
 
 ## Agents
 
@@ -178,6 +182,22 @@ policies:
   poll_interval: 5m
 ```
 
+## ClankeR contributor relay
+
+ClankeR lets contributors lend their own AI CLI subscription to a hive through
+`/contribute`. Contributors start as `newcomer`, auto-promote to `contributor`
+after 5 PR-backed completions and `trusted` after 20, and may receive
+maintainer-granted tiers such as `merger`. The merger tier can queue **other
+people's** PRs for Hive's auto-merge-on-green sweep, never its own.
+
+Relays can subscribe to multiple hubs by setting comma-separated `HIVE_HUB` and
+matching `HIVE_REGISTRATION_TOKEN` lists. Operators can also allow contributors
+to act as selected spoke roles with `HIVE_AGENT_ROLE` / **Acting as**,
+profile-level grant chips, and `hub.contribute_delegatable_roles`.
+
+See [docs/contributor-relay.md](docs/contributor-relay.md) and
+[docs/contributor-trust-and-roles.md](docs/contributor-trust-and-roles.md).
+
 ## Governor
 
 The governor evaluates queue depth every `eval_interval_s` seconds and switches between four modes — **SURGE**, **BUSY**, **QUIET**, **IDLE** — each with its own cadences per agent. Agents can be paused in any mode by setting their cadence to `pause`.
@@ -195,6 +215,10 @@ governor:
     idle:
       threshold: 0
 ```
+
+## Contributor relay image
+
+`Dockerfile.contributor` and `compose-contributor.yaml` build/run the ClankeR contributor image used by `just contribute-hive`. The image contains the relay scripts plus common CLIs; compose mounts your local contributor config read-only and selects `AGENT_BACKEND`. See [../docs/backend-setup.md](../docs/backend-setup.md#contributor-relay-image).
 
 ## Inference Backends
 
@@ -229,9 +253,11 @@ With `local_proxy: true`, hive supervises a bundled `litellm` process on
 loopback (config at `/data/litellm/config.yaml`) and routes through it
 instead of the remote endpoint — agents never bypass the Go translator.
 
+See [../docs/inference-backends.md](../docs/inference-backends.md) for setup and troubleshooting, and [deploy/inference/README.md](deploy/inference/README.md) for the sample in-cluster vLLM-compatible deployment.
+
 ## Knowledge
 
-A 4-layer wiki system (powered by [llm-wiki](https://github.com/geronimo-iia/llm-wiki)) that primes agents with relevant facts on each kick. Layers are merged by precedence: personal > project > org > community.
+A 4-layer wiki system (powered by [llm-wiki](https://github.com/geronimo-iia/llm-wiki)) that primes agents with relevant facts on each kick. Layers are merged by precedence: personal > project > org > community. See the [knowledge system design](docs/design/knowledge-system.md) for curator, git-source indexing, and primer behavior.
 
 ```yaml
 knowledge:
@@ -251,7 +277,20 @@ knowledge:
 
 An experiment framework that lets you test configuration changes (models, cadences, thresholds) against live data before committing them. Experiments run in a sandbox with rollback on failure.
 
-Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.example` for available options.
+Configure via the dashboard or the `/api/nous/*` endpoints. See `hive.yaml.example` for available options. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
+
+## Further reading
+
+- [v2 docs index](docs/README.md) — all operator, contributor, and design docs.
+- [Cross-cluster migration](docs/cross-cluster-migration.md) — move a hive between clusters.
+- [Manual provisioning](docs/manual-provisioning.md) — hosted/spoke provisioning and hub access.
+- [Config layering](docs/config-layering.md) — ConfigMap vs PVC overlay precedence.
+- [Network requirements](docs/network-requirements.md) and [TLS setup](docs/tls-setup.md) — firewall, port, and HTTPS guidance.
+- [Token tracking](docs/token-tracking.md) and [security notes](docs/security.md) — cost/usage rollups and log redaction.
+- [GitHub App setup](docs/github-app-setup.md) — production App auth and `/gh-setup`.
+- [Knowledge curator](docs/knowledge-curator.md) — automatic fact extraction and promotion settings.
+- [Trajectory review](docs/trajectory-review.md) — trajectory safety lane.
+- [Credly badges](docs/credly-badges.md) — planned badge integration placeholder.
 
 ## Ports and Volumes
 
@@ -283,7 +322,27 @@ github:
 For GitHub App setup, configure the app's **Setup URL** to
 `https://<hive-host>/gh-setup` and enable **Redirect on update**. After an
 operator installs the app from the dashboard banner, GitHub redirects back and
-the hive verifies and saves the installation ID automatically.
+the hive verifies and saves the installation ID automatically. See
+[GitHub App setup](docs/github-app-setup.md) for permissions, key handling, and
+the callback flow.
+
+## Deployment Examples
+
+The `deploy/` directory contains pre-built configurations for common deployment patterns. Copy the one that matches your use case to `hive.yaml` and adjust the `github:` section. For Kubernetes or OpenShift installs that need more than the quick-start manifests, follow [manual provisioning](docs/manual-provisioning.md).
+
+| File | Use Case |
+|------|----------|
+| `deploy/hive-quickstart.yaml` | Quick-start evaluation roster targeting `kubestellar/hive-tester` with all ten built-in agent lanes enabled under `acmm_level: 1` |
+| `deploy/architect-only.yaml` | Single `architect` agent managing KubeStellar Console repos — Docker on Proxmox LXC, ntfy notifications |
+| `deploy/hive-level2-knuckle.yaml` | ACMM L2 advisory config for `projectbluefin/knuckle` — agents observe and report, no issues or PRs |
+| `deploy/hive-level3-knuckle.yaml` | ACMM L3 measured config for `projectbluefin/knuckle` — quality uses the measured policy for testing issues, other agents stay advisory |
+
+## Additional references
+
+- [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
+- [Config layering](docs/config-layering.md) — effective config provenance and precedence.
+- [Dashboard API reference](docs/api-reference.md) — generated route index.
+- [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.
 
 ## Build from Source
 

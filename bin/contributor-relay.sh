@@ -401,7 +401,7 @@ function runHeadlessTask(task) {
   const { bin, args } = buildHeadlessArgv(prompt);
   console.log(`Headless: running ${bin} (one-shot) for ${task.repo}#${task.number}`);
   writeHeadlessStatus(HEADLESS_STATE_WORKING, { task_id: task.task_id, repo: task.repo, number: task.number });
-  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working' });
+  send({ type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working' });
 
   let settled = false;
   const finish = (fn) => { if (settled) return; settled = true; fn(); };
@@ -436,7 +436,7 @@ function runHeadlessTask(task) {
       const prURL = detectPRURL(outTail, task.repo);
       if (prURL) console.log(`Detected PR for ${task.task_id}: ${prURL}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, pr_url: prURL });
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
       currentTask = null;
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -819,6 +819,34 @@ function paneLooksBlockedOnHuman(text) {
     /\b(?:choose|select|option|pick|which|how (?:should|to) proceed|what (?:would|should).+like)\b/i.test(recent) &&
     currentMenuLine &&
     (recent.match(/(?:^|\n)\s*(?:[❯>]\s*)?\d+[\).]\s+\S+/g) || []).length >= 2;
+
+  // Elicitation / fill-in-a-form prompt (kubestellar/hive#2844). Goose (and any
+  // backend that raises an MCP elicitation) can pause mid-turn and render a form
+  // for the operator to fill in. Such a pane usually ends in a bare "> " or
+  // still shows goose's "> Enter to send" hint, so the per-backend classifier
+  // sees hasIdlePrompt && hasCompletionMarker and calls the turn DONE — the exact
+  // false "complete" this function exists to prevent. A form does NOT necessarily
+  // carry a trailing "?", a y/N, a numbered menu, or a permission keyword, so the
+  // checks above miss it. Detect it POSITIVELY and CONTEXTUALLY: require an
+  // explicit request-for-input lead-in AND a form/field structure (or one of
+  // goose's own elicitation-timeout markers). Requiring both — the lead-in is the
+  // load-bearing half — keeps ordinary finished output that merely contains a
+  // "label: value" line (e.g. "opened a PR: https://…") from matching, the same
+  // bare-substring lesson as the /login false-positive fix.
+  const hasInputRequestLeadIn =
+    /\b(?:needs?|need)\s+(?:some\s+|more\s+|the\s+following\s+)?(?:information|input|details|details? to proceed)\b/i.test(recent) ||
+    /\b(?:please\s+)?(?:fill\s+in|provide|enter|supply|complete|specify)\b.*\b(?:the\s+following|form|field|details|information|value|below)\b/i.test(recent) ||
+    /\b(?:the\s+following|these)\s+(?:information|details|fields|values)\b.*\b(?:required|needed|to proceed)\b/i.test(recent) ||
+    /\bwaiting\s+for\s+(?:your\s+|user\s+)?(?:input|response|answer)\b/i.test(recent);
+  const hasFormStructure =
+    /\[\s*[^\]\n]*\s*\]/.test(recent) ||             // a bracketed input/field or [ Submit ]/[ Cancel ] button
+    /^\s*\S.*:\s*(?:_+|\[.*\]|)\s*$/m.test(recent);  // "Label:" field rows (optionally blank/underscore/bracket)
+  // Goose bounds elicitation with its own timeout; these strings are an
+  // unambiguous "was blocked on a human" signal all on their own.
+  const hasElicitationMarker =
+    /\bElicitation request timed out\b/i.test(recent) ||
+    /\bTimeout waiting for user response\b/i.test(recent);
+  const hasElicitationForm = (hasInputRequestLeadIn && hasFormStructure) || hasElicitationMarker;
   const blockingPatterns = [
     // Confirmation prompts and TUI continuation screens.
     /\[[Yy]\/[Nn]\]|\([Yy]\/[Nn]\)|\b[Yy]es\/[Nn]o\b/,
@@ -833,7 +861,7 @@ function paneLooksBlockedOnHuman(text) {
     /\b(?:Paste|Enter).*(?:API key|token|code|password)\b/i,
   ];
 
-  return hasQuestion || hasNumberedMenu || blockingPatterns.some(re => re.test(beforePrompt));
+  return hasQuestion || hasNumberedMenu || hasElicitationForm || blockingPatterns.some(re => re.test(beforePrompt));
 }
 
 function classifyTmuxPane(text) {
@@ -986,9 +1014,10 @@ function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
   const taskId = currentTask.task_id;
+  const taskGen = currentTask.task_gen;
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
   console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}: ${reason}`);
-  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, reason, permanent, tmux_output: tmuxLines });
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, tmux_output: tmuxLines });
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1082,7 +1111,7 @@ function progressTick() {
     // Empty when no PR link is found — the hub then applies the short cooldown.
     const prURL = detectPRURL(tmuxLines, currentTask.repo);
     if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
+    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.
@@ -1121,13 +1150,14 @@ function progressTick() {
       type: 'task_progress',
       seq: nextSeq(),
       task_id: currentTask.task_id,
+      task_gen: currentTask.task_gen,
       status: 'blocked_on_human',
       attention: true,
       summary: 'Agent is waiting for human input in the tmux pane',
       tmux_output: tmuxLines,
     });
   } else {
-    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, status: 'working', tmux_output: tmuxLines });
+    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
   }
 }
 
@@ -1172,7 +1202,7 @@ function handleMessage(data, hub) {
       if (currentTask && hub === currentTaskHub()) {
         console.log(`Reconnected while working on ${currentTask.repo}#${currentTask.number} — resuming`);
         sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: currentTask.task_id });
-        sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
+        sendTo(hub, { type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, kind: currentTask.kind, repo: currentTask.repo, number: currentTask.number, title: currentTask.title, status: 'working' });
         startProgressReporting();
       } else if (!currentTask && hub === hubs[activeHubIndex]) {
         // Only the hub currently in the poll rotation asks for work. A hub
@@ -1238,7 +1268,7 @@ function handleMessage(data, hub) {
         tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
       }
       fs.writeFileSync(TASK_FILE, JSON.stringify(msg, null, 2));
-      send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id });
+      send({ type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
       if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
         // Non-interactive path (kubestellar/hive#2538): drive a one-shot CLI
         // invocation and report completion/failure from its exit status — no
@@ -1310,6 +1340,10 @@ function handleMessage(data, hub) {
         // handler sends 'ready' once it comes up and finds itself active.
         sendTo(next, { type: 'ready', seq: nextSeq() });
       }, TASK_UNAVAILABLE_RETRY_MS);
+      break;
+
+    case 'notice':
+      console.log(msg.message || msg.reason || 'Notice from hub');
       break;
 
     case 'ping':

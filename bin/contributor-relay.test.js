@@ -590,10 +590,57 @@ test('interactive pane classifier distinguishes complete, blocked, and working s
         pane: 'calling tool github.create_pull_request\n> Enter to send\n',
         want: relay.PANE_STATE_WORKING,
       },
+      // kubestellar/hive#2844 — MCP elicitation forms. Each of these leaves the
+      // pane at goose's idle chrome ("> " / "> Enter to send") with no working
+      // word, so the pre-fix classifier called them IDLE_COMPLETE and the relay
+      // reported the unanswered form as a finished task.
+      {
+        name: 'elicitation form ending in a bare > input line',
+        pane: 'Extension needs some information to proceed:\n\n  Project name: my-service\n  Environment:  production\n  Region:       us-east-1\n\n> \n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'elicitation form with bracketed fields and no > at all',
+        pane: 'Extension needs some information to proceed:\n\n  Project name: [                    ]\n  Environment:  [ production        ]\n\n  [ Submit ]   [ Cancel ]\n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'elicitation form while goose "> Enter to send" hint is still on screen',
+        pane: 'Please fill in the deployment details below:\n\n  Namespace: default\n  Replicas:  3\n\n> Enter to send\n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
+      {
+        name: 'goose elicitation timeout marker',
+        pane: 'Elicitation request timed out or failed\n> Enter to send\n',
+        want: relay.PANE_STATE_BLOCKED_ON_HUMAN,
+      },
     ];
 
     for (const tc of fixtures) {
       assert.strictEqual(relay.classifyTmuxPane(tc.pane), tc.want, tc.name);
+    }
+  } finally { teardown(relay); }
+});
+
+test('elicitation-form detection does not false-positive on ordinary finished output (#2844)', () => {
+  const relay = loadRelay({ backend: 'goose' });
+  try {
+    // Finished panes that happen to contain form-ish shapes or words like
+    // "provide"/"continue" mid-sentence, or a "label: value" line, must stay
+    // COMPLETE. The elicitation matcher requires BOTH an explicit request-for-
+    // input lead-in AND a form structure, so none of these should trip it — the
+    // same bare-substring lesson as the /login false-positive fix.
+    const finished = [
+      'Implemented the fix and opened a PR: https://github.com/x/y/pull/1\n\ngoose is ready\n> Enter to send\n',
+      'Done.\nFiles changed: 3\nTests: passing\n> Enter to send\n',
+      'I updated the docs to provide the following context for readers.\n> Enter to send\n',
+      'The build will continue to run in CI. All done.\n> Enter to send\n',
+      'Refactored the parser [see commit abc123]. Complete.\n> Enter to send\n',
+    ];
+    for (const pane of finished) {
+      assert.strictEqual(
+        relay.classifyTmuxPane(pane), relay.PANE_STATE_IDLE_COMPLETE,
+        `finished pane wrongly classified as blocked/working: ${JSON.stringify(pane)}`);
     }
   } finally { teardown(relay); }
 });
@@ -620,6 +667,26 @@ test('blocked interactive panes report attention instead of task_complete', () =
     assert.ok(progress, `expected blocked_on_human progress, got: ${JSON.stringify(relay.__sent)}`);
     assert.strictEqual(progress.attention, true, 'blocked status must request human attention');
     assert.ok(relay.getCurrentTask(), 'the task must remain active while waiting for a human');
+  } finally { teardown(relay); }
+});
+
+test('goose elicitation form is reported as blocked, never as task_complete (#2844)', () => {
+  // The exact scenario Jorge reported: an MCP elicitation form left the pane at
+  // goose's "> Enter to send" chrome, and the relay sent task_complete for work
+  // that had not happened. It must now go out as attention/blocked instead.
+  const formPane = 'Extension needs some information to proceed:\n\n  Project name: my-service\n  Region:       us-east-1\n\n> Enter to send\n';
+  const relay = loadRelay({ backend: 'goose', cliStates: [formPane, formPane] });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 'ct-elicit');
+    relay.__crashTick();
+
+    assert.ok(!relay.__sent.some(m => m.type === 'task_complete'),
+      'an unanswered elicitation form must never be reported as completed');
+    const progress = relay.__sent.find(m => m.type === 'task_progress' && m.status === 'blocked_on_human');
+    assert.ok(progress, `expected blocked_on_human progress, got: ${JSON.stringify(relay.__sent)}`);
+    assert.strictEqual(progress.attention, true, 'blocked status must request human attention');
+    assert.ok(relay.getCurrentTask(), 'the task must remain active while the form is unanswered');
   } finally { teardown(relay); }
 });
 
@@ -720,6 +787,20 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
     assert.ok(sentB.some(m => m.type === 'task_failed' && m.reason === 'Hub is not the active polling slot'),
       'unexpected assignment must be rejected back to the hub that sent it');
   } finally { teardown(relay); }
+});
+
+test('hub notice messages are logged for operators', () => {
+  const relay = loadRelay();
+  const lines = [];
+  const oldLog = console.log;
+  console.log = (msg) => { lines.push(String(msg)); };
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'notice', message: 'role assigned: scanner — your next task will be scanner work' }));
+    assert.ok(lines.some(l => l.includes('role assigned: scanner')), 'notice message was not logged');
+  } finally {
+    console.log = oldLog;
+    teardown(relay);
+  }
 });
 
 test('token_refresh, task_revoke, and blocked progress only affect the hub that owns the active task', () => {

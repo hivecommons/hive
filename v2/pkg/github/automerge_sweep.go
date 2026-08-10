@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -33,6 +34,11 @@ type AutoMergeSweepResult struct {
 	Merged  []AutoMergeSweepEvent
 	Seen    int
 	Skipped int
+}
+
+type hiveQueueApproval struct {
+	QueuedBy string
+	HeadSHA  string
 }
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
@@ -126,13 +132,33 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	}
 
 	author := safeGetLogin(pr.GetUser())
-	queuedBy, ok, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
+	headSHA := ""
+	if pr.GetHead() != nil {
+		headSHA = pr.GetHead().GetSHA()
+	}
+	if headSHA == "" {
+		return AutoMergeSweepEvent{}, "missing-head-sha", nil
+	}
+	approval, ok, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
 	if err != nil {
 		return AutoMergeSweepEvent{}, "queue-approval-check", err
 	}
 	if !ok {
 		return AutoMergeSweepEvent{}, "no-hive-queue-approval", nil
 	}
+	if approval.HeadSHA == "" {
+		if err := c.invalidateQueuedAutoMerge(ctx, owner, repo, number, label, "Hive auto-merge approval is missing a reviewed head SHA — re-queue required."); err != nil {
+			return AutoMergeSweepEvent{}, "queue-approval-missing-head", err
+		}
+		return AutoMergeSweepEvent{}, "queue-approval-missing-head", nil
+	}
+	if approval.HeadSHA != headSHA {
+		if err := c.invalidateQueuedAutoMerge(ctx, owner, repo, number, label, "Hive auto-merge approval head changed since approval — re-queue required."); err != nil {
+			return AutoMergeSweepEvent{}, "queue-approval-head-changed", err
+		}
+		return AutoMergeSweepEvent{}, "queue-approval-head-changed", nil
+	}
+	queuedBy := approval.QueuedBy
 	if strings.EqualFold(author, queuedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
 	}
@@ -140,13 +166,6 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
 	if mergeable != MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
-	}
-	headSHA := ""
-	if pr.GetHead() != nil {
-		headSHA = pr.GetHead().GetSHA()
-	}
-	if headSHA == "" {
-		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 	green, reason, err := c.commitGreen(ctx, owner, repo, headSHA)
 	if err != nil {
@@ -179,20 +198,20 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	return event, "", nil
 }
 
-func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (string, bool, error) {
+func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := ""
+	latest := hiveQueueApproval{}
 	for {
 		reviews, resp, err := c.client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			return "", false, err
+			return hiveQueueApproval{}, false, err
 		}
 		for _, review := range reviews {
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
 			if queuedBy := parseHiveQueueReview(review.GetBody()); queuedBy != "" {
-				latest = queuedBy
+				latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
 			}
 		}
 		if resp.NextPage == 0 {
@@ -200,7 +219,17 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 		}
 		opts.Page = resp.NextPage
 	}
-	return latest, latest != "", nil
+	return latest, latest.QueuedBy != "", nil
+}
+
+func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {
+	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("removing %s label: %w", label, err)
+	}
+	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return fmt.Errorf("commenting on stale auto-merge approval: %w", err)
+	}
+	return nil
 }
 
 func parseHiveQueueReview(body string) string {
@@ -211,13 +240,39 @@ func parseHiveQueueReview(body string) string {
 	return matches[1]
 }
 
+// commitGreen reports whether every non-meta commit status and check run on
+// the head SHA has actually succeeded. Pending is NOT green: the sweep runs
+// every minute and a queue action usually lands seconds after the PR opens,
+// so treating in-flight CI as green would squash the PR before its first CI
+// run finishes — mergeable_state cannot catch that, because "unstable"
+// (non-required checks outstanding) deliberately maps to MergeableYes and
+// managed repos generally have no branch protection making any check
+// required. Meta gates (tide, netlify previews, ...) are excluded on both
+// surfaces — tide in particular posts a commit status that stays "pending"
+// forever on Prow-managed repos and must never wedge the queue.
 func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool, string, error) {
-	status, _, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, &gh.ListOptions{PerPage: 100})
-	if err != nil {
-		return false, "status-check", err
-	}
-	if status.GetTotalCount() > 0 && (status.GetState() == "failure" || status.GetState() == "error") {
-		return false, "status-" + status.GetState(), nil
+	statusOpts := &gh.ListOptions{PerPage: 100}
+	for {
+		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
+		if err != nil {
+			return false, "status-check", err
+		}
+		for _, s := range status.Statuses {
+			if isMetaCheck(s.GetContext()) {
+				continue
+			}
+			switch s.GetState() {
+			case "success":
+			case "pending":
+				return false, "status-pending", nil
+			default: // "failure", "error"
+				return false, "status-" + s.GetState(), nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		statusOpts.Page = resp.NextPage
 	}
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
@@ -231,7 +286,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 				continue
 			}
 			if cr.GetStatus() != "completed" {
-				continue
+				return false, "check-pending", nil
 			}
 			switch cr.GetConclusion() {
 			case "success", "neutral", "skipped":

@@ -29,10 +29,11 @@ agents:
   scanner:
     # id: scan-01                         # Stable internal key (defaults to YAML key)
     enabled: true
-    backend: claude                       # claude | copilot | gemini | goose
+    backend: claude                       # claude | copilot | gemini | goose | bob | pi | codex | aider | vllm | llm-d | litellm | watsonx
     model: claude-sonnet-4-6
     caveman_mode: full                    # lite | full | ultra | wenyan — compresses output ~65%
     beads_dir: /data/beads/scanner
+    # replicas: 3                         # Optional pool: scanner, scanner-2, scanner-3 (max 5)
     clear_on_kick: true                   # Send /clear before each kick to reset context
     display_name: Code Scanner
     description: Triages GitHub issues and PRs — dispatches fix agents, enforces SLA
@@ -132,10 +133,58 @@ agents:
     display_name: Security
     description: Audits dependencies, container images, secrets exposure
     sort_order: 60
+  guide:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/guide
+    clear_on_kick: true
+    display_name: Guide
+    description: Documentation and architecture guide — explains, documents, and files doc work
+    role: guide
+    sort_order: 15
+    emoji: "🧭"
+    color: "#8e44ad"
+    kick_template: guide-advisory.md
+    include_repos: true
+  strategist:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/strategist
+    clear_on_kick: true
+    display_name: Strategist
+    description: Roadmap alignment, experiments, and cross-agent trend analysis
+    role: strategist
+    sort_order: 70
+    emoji: "🧠"
+    color: "#f39c12"
+    kick_template: strategist-holdgated.md
+    include_repos: false
+  brainstorm:
+    enabled: false
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/brainstorm
+    clear_on_kick: true
+    display_name: Brainstorm
+    description: On-demand inception and ideation agent
+    role: brainstorm
+    sort_order: 5
+    emoji: "💡"
+    color: "#f39c12"
+    kick_template: brainstorm-advisory.md
+    include_repos: false
+    on_demand: true
+    stale_timeout: 7200
 
 # Governor — adaptive scheduler that adjusts agent cadences based on queue depth
 governor:
   eval_interval_s: 300                    # Seconds between governor evaluations
+  labels:
+    automerge: lgtm                     # Label applied by merger queue; default is lgtm
+    # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+
   modes:
     surge:
       threshold: 20                       # Queue depth >= 20 triggers SURGE
@@ -143,24 +192,58 @@ governor:
       ci-maintainer: pause                # "pause" means don't kick this agent
       tester: pause                       # coverage isn't urgent during fire-fighting
       architect: pause
+      guide: pause
+      strategist: pause
+      # brainstorm is on_demand and is not kicked by the governor
     busy:
       threshold: 10
       scanner: 15m
       ci-maintainer: 1h
       tester: 2h
       architect: pause
+      guide: 4h
+      strategist: pause
     quiet:
       threshold: 2
       scanner: 15m
       ci-maintainer: 45m
       tester: 45m
       architect: pause
+      guide: 4h
+      strategist: 4h
     idle:
       threshold: 0
       scanner: 15m
       ci-maintainer: 15m
       tester: 30m                         # most active when nothing else is happening
       architect: 30m
+      guide: 4h
+      strategist: 4h
+
+  # Time-of-day cadences are available anywhere an interval appears above.
+  # Each entry must use exactly one of: interval string (e.g. 4h/pause),
+  # times+tz, or cron+tz. Do not mix interval, times, and cron in one value.
+  # examples:
+  #   guide:
+  #     times: ["09:00", "17:00"]        # wall-clock local times
+  #     days: [mon, tue, wed, thu, fri]   # optional; omit for every day
+  #     tz: America/New_York              # required for times/cron
+  #   strategist:
+  #     cron: "30 8 * * mon-fri"          # five-field cron expression
+  #     tz: UTC
+
+  # Trajectory review lane — periodic second-model review of running agents.
+  # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.
+  trajectory:
+    enabled: true
+    # endpoint: https://litellm.example.com
+    # api_key_env: HIVE_LITELLM_API_KEY
+    # api_key_file: /secrets/litellm_api_key
+    # interval_s: 300
+    # model: gpt-4o-mini
+    # transcript_lines: 200
+    # on_divergence: pause               # pause | alert
+    # exempt_agents: [outreach]
 
   # LiteLLM inference backend (optional) — route agents through an
   # OpenAI-compatible LiteLLM proxy. Agents using backend "litellm" launch
@@ -221,7 +304,43 @@ notifications:
 dashboard:
   port: 3001
   snapshot_dir: /data/snapshots
+  # Exact HTTPS origins allowed to embed /snapshot; empty denies all framing.
+  # snapshot_frame_ancestors:
+  #   - https://status.example.com
   auth_token: ${HIVE_DASHBOARD_TOKEN}     # Optional — omit to allow unauthenticated access
+  # authorized_users: [owner, reviewer:read, maintainer:read-write]
+  # hub_proxied: false                    # True when trusted hub nginx injects identity headers
+  # agent_poll_interval_s: 5
+
+# Hub/spoke metadata — normally written by hosted-hive provisioning.
+# Standalone operators usually leave this disabled.
+# hub:
+#   enabled: false
+#   url: https://hive-hub.example.com
+#   cluster_id: my-cluster
+#   dashboard_url: https://hive.example.com
+#   snapshot_url: https://hive.example.com/snapshot
+#   is_public: false
+#   auto_snapshot: true
+#   auto_upgrade: true
+#
+# hive_id: my-hive
+# acmm_level: 2
+
+# Variable resolvers — env-only interpolation is the default. Script/http and
+# GitHub prompt sources are trusted-seed features and are denied unless enabled.
+# variables:
+#   security:
+#     allow_exec: false
+#     allow_http: false
+#     http_allowlist: []
+#     allow_github_prompt: false
+#     github_prompt_allowlist: []
+#   defs:
+#     EXAMPLE_TOKEN:
+#       type: env
+#       env: EXAMPLE_TOKEN
+#       scope: config
 
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)
 # Facts are primed into agent kicks automatically — agents never query the wiki.
@@ -273,3 +392,6 @@ knowledge:
 data:
   metrics_dir: /data/metrics
   logs_dir: /data/logs
+  claude_sessions_dir: /data/home/.claude/projects
+  copilot_sessions_dir: /data/home/.copilot/session-state
+  agents_dir: /data/agent-configs

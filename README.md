@@ -175,7 +175,7 @@ kubectl apply -f deploy/k8s/service.yaml
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, and [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for the full agent configuration guide — every field, methods and model discovery, pinning, cadences, and ACMM packs.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
 
 ```yaml
 project:
@@ -250,7 +250,9 @@ Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that
 | L5 | Semi-Autonomous (Semi-Automated) | 9 | All agents open hold-gated PRs. Humans batch-review and approve. |
 | L6 | Fully Autonomous | 10 | Agents open PRs and auto-merge on green CI. No hold label required. |
 
-Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `v2/docs/acmm-policy-matrix.md` for the full matrix.
+Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `v2/docs/acmm-policy-matrix.md` for the full matrix. Browse the [v2 docs index](v2/docs/README.md) for operations, contributor relay, snapshots, health checks, and design guides.
+
+Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
 
 ## Architecture
 
@@ -274,7 +276,7 @@ flowchart LR
     dash["Dashboard :3001"] -.->|"SSE"| gov
 ```
 
-**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout.
+**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](v2/docs/trajectory-review.md), [dashboard health checks](v2/docs/health-checks.md), [sandbox guardrails](v2/docs/sandbox-isolation.md), [manual provisioning](v2/docs/manual-provisioning.md), [cross-cluster migration](v2/docs/cross-cluster-migration.md), and [config layering](v2/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
 
 ## Contribute to a Hive
 
@@ -291,13 +293,19 @@ just contribute-hive
 
 Supported CLIs: Claude Code, GitHub Copilot, Pi, Goose, Bob. Contributors start as newcomer (rate-limited) and auto-promote based on completed tasks. Your credentials never leave your machine.
 
+A relay can subscribe to multiple hives with comma-separated `HIVE_HUB` and matching `HIVE_REGISTRATION_TOKEN` values, and operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [v2/docs/contributor-relay.md](v2/docs/contributor-relay.md) and [v2/docs/contributor-trust-and-roles.md](v2/docs/contributor-trust-and-roles.md).
+
 See the [Hive Hub contribute page](https://hive.kubestellar.io) for details.
 
 ## Contributing
 
 See the [Hive Hub](https://hive.kubestellar.io) to browse registered hives, view leaderboards, and find hives accepting contributions.
 
-To contribute to Hive itself, open issues and PRs on this repository.
+To contribute to Hive itself, see [CONTRIBUTING.md](CONTRIBUTING.md) and open issues or PRs on this repository.
+
+## Security
+
+Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Do not report security vulnerabilities through public issues or pull requests.
 
 ---
 
