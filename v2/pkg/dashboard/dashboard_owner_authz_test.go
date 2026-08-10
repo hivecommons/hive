@@ -133,8 +133,8 @@ func TestOwnerOnlyMutationsRejectProoflessHubOwnerRole(t *testing.T) {
 
 	s.Handler().ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("proofless hub owner role status = %d, want 403", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("proofless hub owner role status = %d, want 401", w.Code)
 	}
 }
 

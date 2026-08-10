@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -46,10 +45,8 @@ const ownerRoleVerifiedHeader = "X-Hive-Owner-Role-Verified"
 // proxyProofRequired controls F2 enforcement strictness. Default true =
 // fail-closed: a request with no X-Hive-Proxy-Auth proof header (or a wrong
 // one) is rejected even if it carries X-Hive-User/X-Hive-Role identity
-// headers. Set HIVE_PROXY_PROOF_REQUIRED=false only during a temporary
-// rollout window where some hub replicas may not yet inject the proof header.
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
-var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") != "false"
+var proxyProofRequired = true
 
 type Server struct {
 	port       int
@@ -827,12 +824,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// only the trusted proxy can produce. Require it as PROOF the request
 		// transited the hub.
 		//
-		// ROLLOUT SAFETY — fail open until the hub half is everywhere: if the hub
-		// has NOT sent X-Hive-Proxy-Auth (older hub image mid-rollout), fall back
-		// to the pre-F2 behavior (trust the identity headers) so no hosted hive is
-		// locked out. Once the hub half is confirmed deployed fleet-wide, a
-		// follow-up flips proxyProofRequired to make a missing/incorrect proof
-		// header fail closed.
+		// Missing or incorrect proof fails closed. Older hub images that do not
+		// inject X-Hive-Proxy-Auth must be upgraded before their identity headers
+		// are accepted.
+		proxyProofRejectReason := ""
 		if !trusted && !directRouteAuthz &&
 			inboundUser != "" && inboundRole != "" {
 			proof := r.Header.Get(proxyAuthHeader)
@@ -853,6 +848,11 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			default:
 				// Proof header present but WRONG, or strict mode with no proof:
 				// this did not come through the trusted hub proxy — reject.
+				if proof == "" {
+					proxyProofRejectReason = "missing proxy proof header"
+				} else {
+					proxyProofRejectReason = "invalid proxy proof header"
+				}
 			}
 			if trusted {
 				r.Header.Set("X-Hive-User", inboundUser)
@@ -896,6 +896,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		if !trusted {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Content-Type", "application/json")
+				if proxyProofRejectReason != "" {
+					http.Error(w, fmt.Sprintf(`{"error":%q}`, proxyProofRejectReason), http.StatusUnauthorized)
+					return
+				}
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			} else {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

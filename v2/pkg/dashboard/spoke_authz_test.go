@@ -190,6 +190,7 @@ func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	req.Header.Set("X-Hive-User", "clubanderson")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, s.authToken)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -202,8 +203,7 @@ func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
 
 // TestMiddleware_F2ProxyProof covers the F2 proof-of-proxy header enforcement on
 // a hub-proxied spoke: a valid proof is trusted; a WRONG proof is always
-// rejected; a MISSING proof is trusted only in the fail-open rollout default and
-// rejected once strict enforcement is enabled.
+// rejected; a MISSING proof is rejected in the default fail-closed mode.
 func TestMiddleware_F2ProxyProof(t *testing.T) {
 	newReq := func(proof string) *http.Request {
 		r := httptest.NewRequest("GET", "/api/config", nil)
@@ -239,12 +239,31 @@ func TestMiddleware_F2ProxyProof(t *testing.T) {
 	if c := run(t, true, "wrong-token"); c == http.StatusOK {
 		t.Error("wrong proof must be rejected in strict mode")
 	}
-	// Missing proof: trusted in fail-open (rollout), rejected in strict.
+	// Missing proof: trusted only when a test explicitly simulates the legacy
+	// rollout mode, rejected in the default strict mode.
 	if c := run(t, false, ""); c != http.StatusOK {
 		t.Errorf("missing proof (fail-open) = %d, want 200 (rollout safety)", c)
 	}
 	if c := run(t, true, ""); c == http.StatusOK {
 		t.Error("missing proof must be rejected in strict mode")
+	}
+}
+
+func TestMiddleware_F2ProxyProofDefaultRejectsMissingProof(t *testing.T) {
+	s := newFullServer(t)
+	s.authToken = "shared-secret-token"
+	handler := s.authenticate(recordingHandler(nil, nil))
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	req.Header.Set("X-Hive-User", "clubanderson")
+	req.Header.Set("X-Hive-Role", "owner")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing proof with default enforcement = %d, want 401", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "missing proxy proof header") {
+		t.Fatalf("missing proof error = %q, want clear proxy proof error", w.Body.String())
 	}
 }
 

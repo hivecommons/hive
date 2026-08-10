@@ -605,6 +605,7 @@ func TestSecurityHeaders_WithAuthToken(t *testing.T) {
 	req = httptest.NewRequest("GET", "/api/kick/scanner", nil)
 	req.Header.Set("X-Hive-User", "testuser")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(proxyAuthHeader, "secret-token")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
