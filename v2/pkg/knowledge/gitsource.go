@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -273,7 +274,43 @@ func ValidateGitSourceURL(raw string) error {
 		return fmt.Errorf("git URL must not contain git transport helper separator")
 	}
 
+	// SSRF: reject private/loopback/link-local hosts so a git knowledge source
+	// can't be pointed at the pod network, internal services, or the cloud
+	// metadata endpoint (169.254.169.254). Mirrors the document-import guard.
+	// Operators running a legitimately-internal Git server (e.g. an in-cluster
+	// GitLab) set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true to opt in; default is
+	// fail-closed.
+	if !allowPrivateGitSource() && gitSourceHostIsPrivate(parsed.Hostname()) {
+		return fmt.Errorf("git URL host resolves to a private/internal address (set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true for an internal Git server)")
+	}
+
 	return nil
+}
+
+// allowPrivateGitSource reports whether a git knowledge source pointing at a
+// private/internal address is permitted. Default false (fail-closed).
+func allowPrivateGitSource() bool {
+	return os.Getenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE") == "true"
+}
+
+// gitSourceHostIsPrivate reports whether host is a loopback/private/link-local
+// literal IP or "localhost". A hostname that is not an IP literal is treated as
+// public here (DNS is not resolved at validation time to avoid a rebinding
+// TOCTOU); the fail-closed default plus the operator-only config surface bound
+// the exposure.
+func gitSourceHostIsPrivate(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "" || host == "localhost" {
+		return host == "localhost"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 }
 
 func isSCPStyleGitURL(raw string) bool {
