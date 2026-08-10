@@ -1,61 +1,55 @@
 package hub
 
 import (
+	"strings"
 	"testing"
 )
 
-// --- firstCSV ---
-
 func TestFirstCSV(t *testing.T) {
 	cases := []struct {
-		in, want string
+		name, in, want string
 	}{
-		{"", ""},
-		{"  ", ""},
-		{",,,", ""},
-		{"alpha", "alpha"},
-		{"alpha,beta", "alpha"},
-		{" , beta , gamma", "beta"},
-		{"  alpha  , beta", "alpha"},
-		{",alpha", "alpha"},
+		{"empty", "", ""},
+		{"whitespace only", "  ", ""},
+		{"only commas", ",,,", ""},
+		{"single value", "alpha", "alpha"},
+		{"first of many", "alpha,beta", "alpha"},
+		{"skips leading blanks", " , beta , gamma", "beta"},
+		{"trims selected value", "  alpha  , beta", "alpha"},
+		{"leading comma", ",alpha", "alpha"},
 	}
 	for _, tc := range cases {
-		got := firstCSV(tc.in)
-		if got != tc.want {
-			t.Errorf("firstCSV(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := firstCSV(tc.in); got != tc.want {
+				t.Errorf("firstCSV(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
-
-// --- replaceFirstCSV ---
 
 func TestReplaceFirstCSV(t *testing.T) {
 	cases := []struct {
-		s, first, want string
+		name, s, first, want string
 	}{
-		// Replace existing first element
-		{"alpha,beta,gamma", "NEW", "NEW,beta,gamma"},
-		// Leading whitespace entry is skipped; "alpha" is the first non-empty
-		{" , alpha , beta", "NEW", " ,NEW, beta"},
-		// Empty replacement removes the first non-empty entry
-		{"alpha,beta", "", "beta"},
-		{"alpha,beta", "  ", "beta"},
-		// All-empty input: returns the trimmed replacement
-		{",,", "NEW", "NEW"},
-		{"", "NEW", "NEW"},
-		// Empty replacement with empty input
-		{"", "", ""},
-		{",,", "", ""},
+		{"replace single", "alpha", "NEW", "NEW"},
+		{"replace first of many", "alpha,beta,gamma", "NEW", "NEW,beta,gamma"},
+		{"replace after leading comma", ",beta,gamma", "NEW", ",NEW,gamma"},
+		{"replace after blank entry", " , alpha , beta", "NEW", " ,NEW, beta"},
+		{"empty replacement removes first", "alpha,beta", "", "beta"},
+		{"blank replacement removes first", "alpha,beta", "  ", "beta"},
+		{"all empty returns trimmed replacement", ",,", "NEW", "NEW"},
+		{"empty input returns trimmed replacement", "", " NEW ", "NEW"},
+		{"empty replacement with empty input", "", "", ""},
+		{"empty replacement with all empty input", ",,", "", ""},
 	}
 	for _, tc := range cases {
-		got := replaceFirstCSV(tc.s, tc.first)
-		if got != tc.want {
-			t.Errorf("replaceFirstCSV(%q, %q) = %q, want %q", tc.s, tc.first, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replaceFirstCSV(tc.s, tc.first); got != tc.want {
+				t.Errorf("replaceFirstCSV(%q, %q) = %q, want %q", tc.s, tc.first, got, tc.want)
+			}
+		})
 	}
 }
-
-// --- looksLikeGitHubForgeHost ---
 
 func TestLooksLikeGitHubForgeHost(t *testing.T) {
 	cases := []struct {
@@ -66,29 +60,20 @@ func TestLooksLikeGitHubForgeHost(t *testing.T) {
 		{"GitHub.COM", true},
 		{"github.ibm.com", true},
 		{"GITHUB.enterprise.org", true},
-		// Not a forge host: no "github." prefix
 		{"gitlab.com", false},
 		{"example.com", false},
-		// Trailing dot (invalid TLD)
 		{"github.", false},
-		// Only "github" with no dot suffix (an org name)
 		{"github", false},
-		// Single label after prefix doesn't satisfy minForgeHostLabels (needs >=2 labels total)
-		// "github.com" has 2 labels, so it passes
 		{"github.x", true},
-		// Empty
 		{"", false},
 		{"  ", false},
 	}
 	for _, tc := range cases {
-		got := looksLikeGitHubForgeHost(tc.in)
-		if got != tc.want {
+		if got := looksLikeGitHubForgeHost(tc.in); got != tc.want {
 			t.Errorf("looksLikeGitHubForgeHost(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
-
-// --- normalizeRepoRef ---
 
 func TestNormalizeRepoRef(t *testing.T) {
 	cases := []struct {
@@ -105,161 +90,142 @@ func TestNormalizeRepoRef(t *testing.T) {
 		{"org/sub/deep/repo", "repo"},
 	}
 	for _, tc := range cases {
-		got := normalizeRepoRef(tc.in)
-		if got != tc.want {
+		if got := normalizeRepoRef(tc.in); got != tc.want {
 			t.Errorf("normalizeRepoRef(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
 
-// --- sanitizePublicURLSelfCheck ---
-
 func TestSanitizePublicURLSelfCheck(t *testing.T) {
-	t.Run("nil input returns nil", func(t *testing.T) {
-		if sanitizePublicURLSelfCheck(nil) != nil {
-			t.Fatal("expected nil")
+	t.Run("nil input", func(t *testing.T) {
+		if got := sanitizePublicURLSelfCheck(nil); got != nil {
+			t.Fatalf("expected nil, got %+v", got)
 		}
 	})
 
-	t.Run("valid OK status passes through", func(t *testing.T) {
-		in := &PublicURLSelfCheck{
-			Status:     "ok",
-			CheckedAt:  "2024-01-01T00:00:00Z",
-			Error:      "",
-			HTTPStatus: 200,
-		}
-		out := sanitizePublicURLSelfCheck(in)
-		if out == nil {
-			t.Fatal("expected non-nil")
-		}
-		if out.Status != "ok" {
-			t.Errorf("Status = %q, want ok", out.Status)
-		}
-		if out.HTTPStatus != 200 {
-			t.Errorf("HTTPStatus = %d, want 200", out.HTTPStatus)
+	t.Run("valid statuses are preserved", func(t *testing.T) {
+		for _, status := range []string{PublicURLSelfCheckOK, PublicURLSelfCheckFail, PublicURLSelfCheckUnknown} {
+			got := sanitizePublicURLSelfCheck(&PublicURLSelfCheck{Status: status, HTTPStatus: 200})
+			if got == nil || got.Status != status || got.HTTPStatus != 200 {
+				t.Fatalf("status %q sanitized to %+v", status, got)
+			}
 		}
 	})
 
-	t.Run("valid fail status passes through", func(t *testing.T) {
+	t.Run("invalid statuses are rejected", func(t *testing.T) {
+		for _, status := range []string{"", "OK", "FAIL", "bogus", "<script>", "ok ok"} {
+			if got := sanitizePublicURLSelfCheck(&PublicURLSelfCheck{Status: status}); got != nil {
+				t.Errorf("status %q: expected nil, got %+v", status, got)
+			}
+		}
+	})
+
+	t.Run("HTTPStatus is clamped", func(t *testing.T) {
+		tooHigh := sanitizePublicURLSelfCheck(&PublicURLSelfCheck{Status: PublicURLSelfCheckOK, HTTPStatus: 999})
+		if tooHigh == nil || tooHigh.HTTPStatus != 599 {
+			t.Fatalf("HTTPStatus over range sanitized to %+v, want 599", tooHigh)
+		}
+		negative := sanitizePublicURLSelfCheck(&PublicURLSelfCheck{Status: PublicURLSelfCheckFail, HTTPStatus: -5})
+		if negative == nil || negative.HTTPStatus != 0 {
+			t.Fatalf("negative HTTPStatus sanitized to %+v, want 0", negative)
+		}
+	})
+
+	t.Run("fields are sanitized and copied", func(t *testing.T) {
 		in := &PublicURLSelfCheck{
-			Status:     "fail",
-			CheckedAt:  "2024-01-01T00:00:00Z",
-			Error:      "connection refused",
+			Status:     PublicURLSelfCheckFail,
+			CheckedAt:  "2026-08-09T12:00:00Z<script>alert(1)</script>",
+			Error:      "timeout <b>connecting</b> to\nlocalhost & retry",
 			HTTPStatus: 503,
 		}
-		out := sanitizePublicURLSelfCheck(in)
-		if out == nil || out.Status != "fail" {
-			t.Fatalf("expected fail status, got %+v", out)
+		got := sanitizePublicURLSelfCheck(in)
+		if got == nil {
+			t.Fatal("expected non-nil result")
 		}
-		if out.HTTPStatus != 503 {
-			t.Errorf("HTTPStatus = %d, want 503", out.HTTPStatus)
+		if got == in {
+			t.Fatal("returned pointer aliases input")
 		}
-	})
-
-	t.Run("valid unknown status passes through", func(t *testing.T) {
-		in := &PublicURLSelfCheck{Status: "unknown"}
-		out := sanitizePublicURLSelfCheck(in)
-		if out == nil || out.Status != "unknown" {
-			t.Fatalf("expected unknown status, got %+v", out)
+		if got.CheckedAt != "2026-08-09T120000Zscriptalert1/script" {
+			t.Errorf("CheckedAt = %q, want strict heartbeat-field sanitization", got.CheckedAt)
 		}
-	})
-
-	t.Run("invalid status returns nil", func(t *testing.T) {
-		in := &PublicURLSelfCheck{Status: "bogus"}
-		if sanitizePublicURLSelfCheck(in) != nil {
-			t.Fatal("expected nil for invalid status")
-		}
-	})
-
-	t.Run("HTTPStatus clamped to 0-599", func(t *testing.T) {
-		in := &PublicURLSelfCheck{Status: "ok", HTTPStatus: 999}
-		out := sanitizePublicURLSelfCheck(in)
-		if out == nil {
-			t.Fatal("expected non-nil")
-		}
-		if out.HTTPStatus != 599 {
-			t.Errorf("HTTPStatus = %d, want 599 (clamped)", out.HTTPStatus)
-		}
-
-		in2 := &PublicURLSelfCheck{Status: "ok", HTTPStatus: -5}
-		out2 := sanitizePublicURLSelfCheck(in2)
-		if out2 == nil || out2.HTTPStatus != 0 {
-			t.Errorf("HTTPStatus = %d, want 0 (clamped)", out2.HTTPStatus)
+		assertDoesNotContainAny(t, got.Error, "<", ">", "&", "\n")
+		if !strings.Contains(got.Error, "timeout") || !strings.Contains(got.Error, "localhost") {
+			t.Errorf("Error = %q, want readable sanitized prose", got.Error)
 		}
 	})
 }
-
-// --- sanitizeRouteExistenceCheck ---
 
 func TestSanitizeRouteExistenceCheck(t *testing.T) {
-	t.Run("nil input returns nil", func(t *testing.T) {
-		if sanitizeRouteExistenceCheck(nil) != nil {
-			t.Fatal("expected nil")
+	t.Run("nil input", func(t *testing.T) {
+		if got := sanitizeRouteExistenceCheck(nil); got != nil {
+			t.Fatalf("expected nil, got %+v", got)
 		}
 	})
 
-	t.Run("found status passes through", func(t *testing.T) {
+	t.Run("valid statuses are preserved", func(t *testing.T) {
+		for _, status := range []string{RouteExistenceFound, RouteExistenceMissing, RouteExistenceUnknown} {
+			got := sanitizeRouteExistenceCheck(&RouteExistenceCheck{Status: status, Host: "hive.example.com", Kind: "Ingress"})
+			if got == nil || got.Status != status {
+				t.Fatalf("status %q sanitized to %+v", status, got)
+			}
+		}
+	})
+
+	t.Run("invalid statuses are rejected", func(t *testing.T) {
+		for _, status := range []string{"", "FOUND", "Missing", "present", "<img>", "found found"} {
+			if got := sanitizeRouteExistenceCheck(&RouteExistenceCheck{Status: status, Host: "x.com"}); got != nil {
+				t.Errorf("status %q: expected nil, got %+v", status, got)
+			}
+		}
+	})
+
+	t.Run("fields are sanitized and copied", func(t *testing.T) {
 		in := &RouteExistenceCheck{
-			Status:    "found",
-			CheckedAt: "2024-01-01T00:00:00Z",
-			Host:      "my-hive.example.com",
-			Kind:      "Ingress",
+			Status:    RouteExistenceFound,
+			CheckedAt: "2026-08-09T12:00:00Z  extra",
+			Host:      "hive.example.com<script>",
+			Kind:      "Ingress; DROP TABLE",
+			Error:     "no error <b>here</b> & retry",
 		}
-		out := sanitizeRouteExistenceCheck(in)
-		if out == nil || out.Status != "found" {
-			t.Fatalf("expected found, got %+v", out)
+		got := sanitizeRouteExistenceCheck(in)
+		if got == nil {
+			t.Fatal("expected non-nil result")
 		}
-		if out.Host != "my-hive.example.com" {
-			t.Errorf("Host = %q", out.Host)
+		if got == in {
+			t.Fatal("returned pointer aliases input")
 		}
-		if out.Kind != "Ingress" {
-			t.Errorf("Kind = %q", out.Kind)
+		if got.CheckedAt != "2026-08-09T120000Zextra" {
+			t.Errorf("CheckedAt = %q, want strict heartbeat-field sanitization", got.CheckedAt)
 		}
-	})
-
-	t.Run("missing status passes through", func(t *testing.T) {
-		in := &RouteExistenceCheck{Status: "missing", Host: "h.example.com"}
-		out := sanitizeRouteExistenceCheck(in)
-		if out == nil || out.Status != "missing" {
-			t.Fatalf("expected missing, got %+v", out)
+		if got.Host != "hive.example.comscript" {
+			t.Errorf("Host = %q, want strict heartbeat-field sanitization", got.Host)
 		}
-	})
-
-	t.Run("unknown status passes through", func(t *testing.T) {
-		in := &RouteExistenceCheck{Status: "unknown", Error: "RBAC denied"}
-		out := sanitizeRouteExistenceCheck(in)
-		if out == nil || out.Status != "unknown" {
-			t.Fatalf("expected unknown, got %+v", out)
+		if got.Kind != "IngressDROPTABLE" {
+			t.Errorf("Kind = %q, want strict heartbeat-field sanitization", got.Kind)
 		}
-	})
-
-	t.Run("invalid status returns nil", func(t *testing.T) {
-		in := &RouteExistenceCheck{Status: "hacked"}
-		if sanitizeRouteExistenceCheck(in) != nil {
-			t.Fatal("expected nil for invalid status")
-		}
-	})
-
-	t.Run("dangerous characters in fields are sanitized", func(t *testing.T) {
-		in := &RouteExistenceCheck{
-			Status:    "found",
-			CheckedAt: "2024-01-01<script>",
-			Host:      "host<img>",
-			Kind:      "Ingress\"onload=",
-			Error:     "some error with <html>",
-		}
-		out := sanitizeRouteExistenceCheck(in)
-		if out == nil {
-			t.Fatal("expected non-nil")
-		}
-		// sanitizeHeartbeatField strips non-allowed chars
-		if out.CheckedAt == in.CheckedAt {
-			t.Logf("CheckedAt sanitized: %q -> %q", in.CheckedAt, out.CheckedAt)
-		}
+		assertDoesNotContainAny(t, got.Error, "<", ">", "&")
 	})
 }
 
-// --- gheAPIURLForHost ---
+func TestIsAvailableRegistryEntry(t *testing.T) {
+	cases := []struct {
+		name string
+		h    RegistryEntry
+		want bool
+	}{
+		{"statusAvailable", RegistryEntry{ProvStatus: statusAvailable}, true},
+		{"placeholder org prefix", RegistryEntry{Org: placeholderOrgPrefix + "oke-01-bb95"}, true},
+		{"active hive", RegistryEntry{ProvStatus: "active", Org: "my-real-org"}, false},
+		{"empty entry", RegistryEntry{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isAvailableRegistryEntry(tc.h); got != tc.want {
+				t.Errorf("isAvailableRegistryEntry(%+v) = %v, want %v", tc.h, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestGheAPIURLForHost(t *testing.T) {
 	cases := []struct {
@@ -273,9 +239,17 @@ func TestGheAPIURLForHost(t *testing.T) {
 		{"  GitHub.Enterprise.org  ", "https://github.enterprise.org/api/v3"},
 	}
 	for _, tc := range cases {
-		got := gheAPIURLForHost(tc.in)
-		if got != tc.want {
+		if got := gheAPIURLForHost(tc.in); got != tc.want {
 			t.Errorf("gheAPIURLForHost(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func assertDoesNotContainAny(t *testing.T, s string, forbidden ...string) {
+	t.Helper()
+	for _, bad := range forbidden {
+		if strings.Contains(s, bad) {
+			t.Errorf("%q still contains %q", s, bad)
 		}
 	}
 }
