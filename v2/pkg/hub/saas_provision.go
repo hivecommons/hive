@@ -1694,17 +1694,26 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return strings.Join(lines, "\n")
 		}(),
-		// AdditionalAppKeys delivers the fleet's OTHER App keys at provision time,
-		// each in its own per-app-id Secret entry. Naming is by APP ID, not by
-		// cluster: a key's identity is the App it belongs to, and the spoke selects
-		// by matching its configured app_id (resolveAppKeyFile). Per-cluster naming
-		// would be a lie here — the same PEM is valid on every cluster whose hives
-		// authenticate as that App, and a spoke has no way to know which cluster a
-		// file named for one was meant to serve. The primary key is excluded: it is
-		// already written as gh-app-key.pem above, and duplicating it would let the
-		// two copies drift.
-		"AdditionalAppKeys": provisionAdditionalAppKeys(
-			fleetKeys, resolveProvisionAppID(req.AppID, h, cluster)),
+		// SECURITY (audit N1, CWE-200): a spoke receives ONLY its own App key.
+		//
+		// This used to render every OTHER App key in the fleet into each new
+		// hive's Secret, so one tenant's pod held other tenants' GitHub App
+		// private keys — and with the 0644 projection (N5) every agent UID in
+		// that pod could read them. The stated rationale was pre-positioning a
+		// key for a possible future forge switch.
+		//
+		// That is the SAME argument this codebase already rejected when it
+		// removed the heartbeat's fleet-wide broadcast (see the note above
+		// appKeySyncDecision in cluster_app_key.go): speculative distribution of
+		// private key material is not justified by a migration that may never
+		// happen. When a hive IS re-assigned to a different App, that App's key
+		// is delivered at that moment through the reconcile / pending-identity
+		// lanes, keyed to the hive authoritatively assigned it.
+		//
+		// Kept as an empty list rather than deleting the template block, so a
+		// spoke rolling on an older manifest sees the field disappear cleanly
+		// instead of failing to render.
+		"AdditionalAppKeys": []provisionAppKey{},
 		"CPURequest":            cpuRequest,
 		"CPULimit":              cpuLimit,
 		"MemRequest":            memRequest,
@@ -1731,7 +1740,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// C2 follow-up: SSO is asymmetric — the spoke gets only the Ed25519 PUBLIC
 		// key (SSOPublicKey), derived from the same master seed the hub signs with,
 		// so even a hostile spoke operator holding this value cannot mint a token.
-		"HeartbeatKey": deriveDomainKey(provisionMasterSecret(), infoHeartbeatKey),
+		// N1: the heartbeat bearer is PER-HIVE. A fleet-wide bearer proved only
+		// "some provisioned spoke", so the hub had to trust body-supplied
+		// hive_id — and three key-delivery lanes read off that claimed ID.
+		// Binding the bearer to the hive makes the claim self-authenticating.
+		"HeartbeatKey": provisionHeartbeatKey(h.ID),
 		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
 		// N3: the terminal key is PER-HIVE, not fleet-wide. Without it
