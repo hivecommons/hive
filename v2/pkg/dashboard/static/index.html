@@ -284,7 +284,7 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px; z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; min-width: 0; }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
@@ -302,7 +302,7 @@
     }
     #oc-drawer-toggle:active { background: var(--panel-strong); }
     #oc-drawer-backdrop { display: none; }
-    .oc-topbar-center { display: flex; align-items: center; gap: 6px; }
+    .oc-topbar-center { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .oc-topbar-center .oc-tb-link {
       font-size: 0.72rem; color: var(--muted); cursor: pointer; padding: 4px 10px;
       border-radius: 6px; border: 1px solid transparent; transition: all 0.15s;
@@ -311,7 +311,7 @@
     .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: 999px; background: rgba(128,191,255,0.10); color: var(--text); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dashboard-custom-style-note.warn { border-color: rgba(210,153,34,0.45); background: rgba(210,153,34,0.12); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; line-height: 1; padding: 0; }
-    .oc-topbar-right { display: flex; align-items: center; gap: 14px; }
+    .oc-topbar-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .oc-health-badge { --pill-c: var(--green); font-weight: 600; } /* pill recipe at end of style block */
     .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); }
     .oc-topbar .git-version { color: var(--muted); }
@@ -340,6 +340,33 @@
     #fleet-breaker-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; border: 1px solid transparent; }
     #fleet-breaker-pill.pill-passed { background: rgba(63,185,80,.12); color: #3fb950; border-color: rgba(63,185,80,.3); }
     #fleet-breaker-pill.pill-blocked { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.3); }
+
+    @media (max-width: 1200px) {
+      body { padding-top: 88px; }
+      .oc-topbar {
+        flex-wrap: wrap; height: auto; min-height: 48px;
+        justify-content: flex-start; align-content: center;
+        column-gap: 12px; row-gap: 4px; padding-top: 6px; padding-bottom: 6px;
+      }
+      .oc-topbar-left { flex: 1 1 260px; }
+      #oc-project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #oc-git-version, #fleet-breaker-wrap, .oc-topbar-center, .oc-health-badge,
+      #welcome-topbar-btn, .widget-dl, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+      .oc-topbar-right {
+        flex: 1 1 100%; justify-content: flex-end;
+        gap: 10px; flex-wrap: nowrap; overflow: visible;
+      }
+      .oc-topbar-right .widget-dl { margin-left: 0; margin-right: 0; }
+      #oc-hive-id {
+        flex: 0 1 auto; min-width: 0; max-width: clamp(9rem, 32vw, 16rem);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .oc-topbar-ts { white-space: nowrap; }
+    }
+    @media (min-width: 769px) and (max-width: 900px) {
+      .oc-topbar-ts, #oc-git-version { display: none; }
+      #oc-hive-id { max-width: 8rem; }
+    }
 
     /* Light main content area */
     body.light-mode {
@@ -678,8 +705,11 @@
       .oc-topbar-left, .oc-topbar-center, .oc-topbar-right { flex-shrink: 0; }
       /* center grows to fill row 1, so the health/right group always
          drops to its own row instead of half-fitting at the edge */
+      .oc-topbar-left { flex: 0 0 auto; min-width: 0; }
       .oc-topbar-center { flex-grow: 1; justify-content: center; }
       .oc-topbar-ts, #oc-git-version, .widget-dl { display: none; }
+      #oc-project-name { display: none; }
+      #oc-hive-id { max-width: 6rem; }
       /* keep the pill one line so the right group wraps as a unit
          instead of being clipped at the viewport edge */
       .oc-health-badge { white-space: nowrap; }
