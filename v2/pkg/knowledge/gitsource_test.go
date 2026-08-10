@@ -21,6 +21,8 @@ func TestValidateGitSourceURL(t *testing.T) {
 		{name: "git scheme", raw: "git://github.com/org/repo.git", wantErr: true},
 		{name: "ext helper", raw: "ext::sh -c 'id'", wantErr: true},
 		{name: "scp like", raw: "git@github.com:o/r.git", wantErr: true},
+		{name: "missing scheme", raw: "github.com/org/repo.git", wantErr: true},
+		{name: "invalid escape", raw: "https://example.com/%zz", wantErr: true},
 		{name: "empty host", raw: "https:///org/repo.git", wantErr: true},
 		{name: "leading dash", raw: "--upload-pack=/bin/sh", wantErr: true},
 		{name: "transport helper separator", raw: "https://github.com/org/repo::helper", wantErr: true},
@@ -36,6 +38,18 @@ func TestValidateGitSourceURL(t *testing.T) {
 				t.Fatalf("ValidateGitSourceURL(%q) error = %v", tc.raw, err)
 			}
 		})
+	}
+}
+
+func TestGitSourceInitRejectsInvalidURL(t *testing.T) {
+	gs := NewGitSource(GitSourceConfig{
+		Name:  "bad",
+		URL:   "ssh://github.com/org/repo.git",
+		Layer: LayerProject,
+	}, t.TempDir(), slog.Default())
+
+	if err := gs.Init(context.Background()); err == nil {
+		t.Fatal("expected invalid URL error")
 	}
 }
 
