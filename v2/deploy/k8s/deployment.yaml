@@ -20,6 +20,19 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: hive
+      # SECURITY (audit N5, CWE-732/522): fsGroup pins the supplementary group
+      # Kubernetes applies to mounted volumes. Paired with `defaultMode: 0440` on
+      # the secrets projection below, it makes the GitHub App PEMs readable by
+      # `dev` (a member of hive-launch, GID 1002 — pinned in v2/Dockerfile) while
+      # excluding the agent UIDs (2001+).
+      #
+      # Mode alone cannot achieve that: `dev`'s PRIMARY group is `node`, which
+      # every agent UID also shares, so 0440 root:node would still hand the org
+      # App key to any prompt-injected agent. 0400 would be root-only and lock
+      # out `dev` itself. A dedicated group is the only split that works — the
+      # same reasoning the C6 su-exec fix used for `chmod 4750 root:hive-launch`.
+      securityContext:
+        fsGroup: 1002
       containers:
         - name: hive
           image: hive:latest
@@ -147,6 +160,19 @@ spec:
           secret:
             secretName: hive-secrets
             optional: true
+            # SECURITY (audit N5, CWE-732/522): without defaultMode Kubernetes
+            # projects Secret files 0644 — world-readable to every UID in the
+            # pod, so any agent (2001+) could read the org GitHub App private
+            # key. app_id + installation_id + key_file is all it takes to mint a
+            # full installation token (see bin/gh-app-token.sh), so this was a
+            # direct privilege escalation.
+            #
+            # The entrypoint's compensating `chmod 600 /secrets/*.pem` CANNOT
+            # fix it: /secrets is a read-only tmpfs projection, so chmod returns
+            # EROFS and the `2>/dev/null || true` swallows both the error and
+            # the exit code — it fails silently and the 0644 mode survives.
+            # 0440 + the pod-level fsGroup above is the enforcement.
+            defaultMode: 0440
         - name: data
           persistentVolumeClaim:
             claimName: hive-data

@@ -84,10 +84,25 @@ RUN curl -sL -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/
 # `hive-launch` is a dedicated supplementary group whose ONLY member is dev; it
 # gates exec of the SUID su-exec helper (chmod 4750 below) so agent UIDs — which
 # are in group node but NOT hive-launch — cannot run it. See the su-exec C6 note.
-RUN groupadd --system hive-launch \
+#
+# The GID is PINNED (not left to groupadd --system's dynamic allocation) because
+# Kubernetes `fsGroup` and Secret `defaultMode: 0440` are what keep the projected
+# GitHub App PEMs readable by dev while excluding agent UIDs (audit N5, CWE-732).
+# fsGroup takes a numeric GID — it cannot name a group — so this value is part of
+# the deployment contract and must stay in sync with v2/deploy/k8s/*.yaml and the
+# SaaS provisioning template in v2/pkg/hub/saas_provision.go.
+ARG HIVE_LAUNCH_GID=1002
+RUN if getent group "${HIVE_LAUNCH_GID}" >/dev/null; then \
+      echo "FATAL: GID ${HIVE_LAUNCH_GID} is already taken by '$(getent group "${HIVE_LAUNCH_GID}" | cut -d: -f1)'." >&2; \
+      echo "       fsGroup in the deployment manifests pins this GID; pick a free one and update" >&2; \
+      echo "       v2/deploy/k8s/*.yaml and saas_provision.go together." >&2; \
+      exit 1; \
+    fi \
+ && groupadd --system --gid "${HIVE_LAUNCH_GID}" hive-launch \
  && useradd -m -u 1001 -g node -G hive-launch -s /bin/bash dev \
  && chown root:hive-launch /usr/local/bin/su-exec \
- && chmod 4750 /usr/local/bin/su-exec
+ && chmod 4750 /usr/local/bin/su-exec \
+ && [ "$(stat -c '%G' /usr/local/bin/su-exec)" = "hive-launch" ]
 
 # --- Layer 2: ttyd (pinned version for reproducible builds) ---
 ARG TTYD_VERSION=1.7.7

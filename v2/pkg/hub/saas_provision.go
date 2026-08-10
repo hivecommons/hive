@@ -2412,6 +2412,22 @@ spec:
     spec:
 {{- if .RequiresSCC}}
       serviceAccountName: hive-sa
+{{- else}}
+      # SECURITY (audit N5, CWE-732/522): fsGroup makes the 0440 secrets
+      # projection (see the volume below) readable by dev — a member of
+      # hive-launch, GID 1002 pinned in v2/Dockerfile — while excluding the agent
+      # UIDs (2001+). Mode alone cannot do it: dev's primary group node is
+      # shared with every agent, so 0440 root:node still leaks the App key, and
+      # 0400 would lock out dev itself.
+      #
+      # NOT applied on the SCC lane. OpenShift's restricted SCC allocates its own
+      # fsGroup from the namespace range and rejects out-of-range values, so
+      # pinning 1002 there would fail admission and wedge the rollout
+      # (maxUnavailable=0 means a never-Ready surge pod hangs it indefinitely).
+      # OpenShift already gives each namespace a distinct, non-shared fsGroup, so
+      # the 0440 mode is doing the right thing there on its own.
+      securityContext:
+        fsGroup: 1002
 {{- end}}
       initContainers:
       - name: copy-config
@@ -2601,6 +2617,22 @@ spec:
       - name: secrets
         secret:
           secretName: hive-secrets
+          # SECURITY (audit N5, CWE-732/522): without defaultMode Kubernetes
+          # projects these files 0644, readable by every UID in the pod — so any
+          # agent (2001+) could read the GitHub App private key, and mint a full
+          # installation token from app_id + installation_id + key_file.
+          #
+          # The entrypoint's chmod 600 /secrets/*.pem cannot compensate: the
+          # projection is a read-only tmpfs, so chmod returns EROFS and the
+          # 2>/dev/null || true swallows it silently.
+          #
+          # 0440 pairs with the pod-level fsGroup below. Mode alone is not
+          # enough: dev shares its primary group node with every agent UID,
+          # so 0440 root:node would still expose the key; 0400 would be root-only
+          # and lock out dev. hive-launch (GID 1002, pinned in v2/Dockerfile)
+          # is the dedicated group that actually splits dev from the agents —
+          # the same argument the C6 su-exec fix made for 4750 root:hive-launch.
+          defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service

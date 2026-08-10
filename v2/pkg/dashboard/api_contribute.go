@@ -44,6 +44,11 @@ const (
 	inviteSecretFile = ".invite-secret"
 	// inviteSecretBytes is the length of the generated fallback signing secret.
 	inviteSecretBytes = 32
+	// contributorProfileFileMode is owner-only (audit N12, CWE-522). Contributor
+	// profiles carry the registration-token hash and PII; at the previous 0644
+	// every UID in the pod, agents included, could read them. Matches the 0600
+	// the invite secret has always used.
+	contributorProfileFileMode = 0o600
 )
 
 // inviteTrustTiers are the trust tiers permitted to mint an invite link. Only a
@@ -428,7 +433,13 @@ func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error 
 	}
 	path := filepath.Join(getContributorsDir(), p.GitHubUsername+".json")
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	// SECURITY (audit N12, CWE-522): owner-only. These profiles hold the
+	// registration-token HASH plus contributor PII (username, avatar, trust
+	// tier, activity), and 0644 made every one of them readable by any UID in
+	// the pod — including agent UIDs. Compare the invite secret at :79, which
+	// has always been 0600. The mode goes on the TEMP file, before the rename,
+	// so there is no window where the final path is world-readable.
+	if err := os.WriteFile(tmpPath, data, contributorProfileFileMode); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, path)

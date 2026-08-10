@@ -124,6 +124,12 @@ spec:
             - name: kubeconfigs
               secret:
                 secretName: hive-hub-kubeconfigs
+                # SECURITY (audit N5, CWE-732/522): default projection is 0644.
+                # These kubeconfigs carry cluster-admin credentials for remote
+                # spokes. 0400 (not the 0440 used for the hive pod) because this
+                # is a single-purpose backup pod running as the image's default
+                # user with no agent UIDs in it — nothing here needs group read.
+                defaultMode: 0400
 ---
 apiVersion: v1
 kind: ConfigMap
