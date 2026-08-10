@@ -182,7 +182,8 @@ func TestHandleRoleIgnoresLeakedHubCookie(t *testing.T) {
 }
 
 func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
-	// Empty allowlist = hub-proxied hive; nginx-injected headers must still work.
+	// Empty allowlist = hub-proxied hive; nginx-injected headers plus the
+	// proof-of-proxy header must still work.
 	s := newFullServer(t)
 	s.authToken = "shared-secret-token"
 	old := proxyProofRequired

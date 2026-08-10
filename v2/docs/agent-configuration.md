@@ -14,7 +14,7 @@ agents:
 ```
 
 
-For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [v2/examples/agents/customized-agent.yaml](../examples/agents/customized-agent.yaml).
+For the portable agent definition YAML format, see [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md). For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
 That is a complete, valid agent. Defaults fill in the rest at load time:
 
@@ -297,7 +297,7 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
-Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard (see [`v2/examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml)).
+Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
 ## When to add what
 
@@ -321,8 +321,10 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 
 - **[Supervisor agent](supervisor.md)** — what the supervisor does, how it differs from the governor, when to enable it, `bead_role` semantics, and policy modes.
 - **[Documentation index](README.md)** — what hive is, setup, and the full topic-guide surface.
-- **[Architecture](architecture.md)** — the process model, governor loop, and how the supervisor drives agents.
+- **[Architecture](architecture.md)** — process model, deterministic pipeline, governor loop, guardrails, and hub/spoke design.
+- **[Portable AgentDefinition format](../AGENT-DEFINITION.md)** — standalone YAML schema for agent imports, exports, and overlays.
 - **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
+- **[Troubleshooting](../../docs/troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
 - **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — moving a hive (and its PVC state) between clusters.

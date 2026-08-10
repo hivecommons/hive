@@ -17,6 +17,8 @@ docker compose up -d
 
 Dashboard at `http://localhost:3001`.
 
+The pre-built image tag is documented in [v2/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](v2/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
+
 To build from source instead of pulling the pre-built image:
 
 ```bash
@@ -178,7 +180,7 @@ kubectl apply -f v2/deploy/k8s/service.yaml
 
 ## Configuration
 
-All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [v2/hive.yaml.example](v2/hive.yaml.example) for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
+All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [v2/hive.yaml.example](v2/hive.yaml.example) for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/AGENT-DEFINITION.md](v2/AGENT-DEFINITION.md) for the portable agent YAML format, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
 
 The top-level deterministic shell pipeline uses a separate project file,
 `config/hive-project.yaml.example`; see [config/README.md](config/README.md)

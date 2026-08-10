@@ -1,95 +1,85 @@
-# `bin/` — deterministic pipeline scripts
+# `bin/` script index
 
-The shell/Python scripts that make up Hive's **deterministic pipeline** — the
-non-LLM layer that filters, classifies, gates, and enforces before any agent is
-kicked, plus the operational helpers that launch agents, wrap `gh`, and keep
-sessions alive. Agents handle judgment; these scripts handle everything that
-should be deterministic.
+The scripts in this directory are the deterministic shell/Node/Python layer around Hive's agent runtime. They enumerate work, classify it, gate merges, enforce GitHub permissions, launch/supervise CLIs, and publish operational telemetry before an LLM is asked to act.
 
-Most are invoked by the hive process, the governor, or `run-pipeline.sh` rather
-than run by hand. Each script's own header comment is the authoritative
-description; this index is a map.
+Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy.sh`; several write machine-readable state under `/var/run/hive-metrics` for the dashboard, governor, and agent prompts. For the architecture context, see [`v2/docs/architecture.md`](../v2/docs/architecture.md#4-the-deterministic-pipeline).
 
-## Pipeline (pre-kick stages)
+## Pre-kick pipeline and merge gates
 
-| Script | Purpose |
-|--------|---------|
-| `run-pipeline.sh` | Execute the pre-kick pipeline stages in dependency order. |
-| `enumerate-actionable.sh` | Canonical enumerator for actionable issues and PRs. |
-| `issue-classifier.sh` | Pre-classify actionable issues with deterministic metadata. |
-| `architecture-detector.sh` | Detect issues needing architecture review / lane transfer. |
-| `pr-cluster-detector.sh` | Group related actionable issues into clusters for bundled dispatch. |
-| `contributor-dispatcher.sh` | Report contributor assignment state. |
-| `merge-gate.sh` | Determine which open PRs are eligible for merge. |
-| `conflict-sweeper.sh` | Rebase or close CONFLICTING PRs. |
+| Script | Stage | Purpose |
+|---|---|---|
+| `run-pipeline.sh` | Orchestrator | Runs configured pre-kick stages in dependency order: enumerator, classifier, gate, and monitor. Supports `--agent` and `--stage` selectors. |
+| `enumerate-actionable.sh` | Enumerator | Builds `/var/run/hive-metrics/actionable.json` with actionable issues and PRs, excluding holds, drafts, selected labels, ADOPTERS-only PRs, and external issues missing a commit SHA. |
+| `issue-classifier.sh` | Classifier | Enriches `actionable.json` with deterministic metadata such as complexity tier, model recommendation, tracker status, cluster key, lane, and architecture-review flag. |
+| `architecture-detector.sh` | Classifier | Adds architecture signals to actionable issues from `hive-project.yaml` rules so the classifier can route them to the architect lane. |
+| `pr-cluster-detector.sh` | Classifier | Groups related actionable issues into clusters using component, reporter timing, label-combo, and failure-mode signals. |
+| `merge-gate.sh` | Gate | Writes `/var/run/hive-metrics/merge-eligible.json`; PRs qualify only when required CI passes, they are not drafts or excluded, and author/review policy allows merge. |
+| `conflict-sweeper.sh` | Gate/enforcer | Processes AI-authored PRs with `mergeable=CONFLICTING`, attempts a rebase, force-pushes clean rebases, or closes unrebasable PRs and reopens the original issue. |
+| `copilot-comment-checker.sh` | Monitor | Prefetches unaddressed Copilot review comments into `/var/run/hive-metrics/copilot-comments.json` for reviewer agents. |
+| `ga4-anomaly-detector.sh` | Monitor | Compares recent GA4 error counts with a 7-day baseline and writes `/var/run/hive-metrics/ga4-anomalies.json`; emits a no-data result if GA4 is unavailable. |
+| `outreach-tracker.sh` | Monitor | Tracks outreach PRs opened or merged on external repositories and writes `/var/run/hive-metrics/outreach-prs.json`. |
+| `contributor-dispatcher.sh` | Monitor | Reports current contributor assignment state from `/var/run/hive-metrics/contributors.json` into `/var/run/hive-metrics/contributor-assignments.json`; assignment itself happens in the dashboard WebSocket server. |
 
-## Agent lifecycle
+## Agent launch, supervision, and scheduling
 
-| Script | Purpose |
-|--------|---------|
-| `agent-launch.sh` | Unified launcher for any AI coding CLI backend. |
-| `supervisor.sh` | Keep a tmux session alive with an AI CLI agent inside. |
-| `supervisor-kick.sh` | Reliable agent session restart + kick (Copilot backend). |
-| `agent-healthcheck.sh` | Stall detector + auto-respawn + ntfy push. |
-| `kick-agents.sh` | Fire work orders at the scanner/ci-maintainer/architect/outreach sessions. |
-| `kick-governor.sh` | Adaptive kick governor for supervised agents. |
-| `supervisor-kick.sh` | Session restart + kick helper. |
-| `kick-outcome-tracker.sh` | Correlate governor kicks with queue/MTTR/token outcomes. |
-| `ttyd-tmux.sh` | Wrapper for ttyd → tmux (disables mouse mode for the browser). |
+| Script | Stage | Purpose |
+|---|---|---|
+| `agent-launch.sh` | Launcher | Unified AI CLI launcher for backends such as Claude and Copilot. Reads `--backend`/`--model` flags or `AGENT_BACKEND`/`AGENT_MODEL` environment variables. |
+| `supervisor.sh` | Supervisor | Keeps a tmux session alive with an AI CLI agent and supports optional rate-limit failover between backends. |
+| `supervisor-kick.sh` | Supervisor | Reliably restarts or creates a Copilot-backed session, sends one kick message, and verifies the agent began processing. |
+| `kick-agents.sh` | Kick sender | Sends work orders directly to named tmux sessions (`scanner`, `ci-maintainer`, `architect`, `outreach`, or `all`), handles backend rate-limit switching, and calls `run-pipeline.sh`. |
+| `kick-governor.sh` | Scheduler | Legacy adaptive governor that measures issue/PR backlog, chooses surge/busy/quiet/idle cadences, records kick audit entries, and calls `kick-agents.sh`. |
+| `agent-healthcheck.sh` | Health | Watches an agent log's mtime, kills stalled tmux sessions for supervisor respawn, and escalates after repeated failed respawns. |
+| `kick-outcome-tracker.sh` | Metrics | Correlates governor kicks with queue, MTTR, and token outcomes after a cooldown period. |
+| `gh-rate-check.sh` | Health | Scans tmux panes for GitHub API rate-limit messages, writes `/var/run/hive-metrics/gh_rate_limits.json`, and temporarily pauses affected CLI cohorts. |
+| `gh-zombie-reaper.sh` | Health | Kills long-running `gh` processes older than the configured threshold to stop rate-limit retry storms. |
+| `ttyd-tmux.sh` | Terminal UI | Wraps ttyd-to-tmux sessions and disables tmux mouse mode while the browser session is attached so normal text selection works. |
 
-## GitHub access and safety
+## GitHub credentials, policy enforcement, and PR creation
 
-| Script | Purpose |
-|--------|---------|
-| `gh-wrapper.sh` | `gh` wrapper — enforces per-agent + global restrictions and injects the App token. |
-| `gh-app-token.sh` | Generate a GitHub App installation token for the hive. |
-| `git-credential-hive.sh` | Git credential helper using the GitHub App token. |
-| `hive-open-pr.sh` | Open a PR via the App bot (not `gh pr create`). |
-| `gh-rate-check.sh` | Scan agent tmux panes for GitHub API rate-limit messages. |
-| `gh-zombie-reaper.sh` | Kill `gh` API processes older than `MAX_AGE_SECONDS`. |
-| `copilot-comment-checker.sh` | Pre-fetch unaddressed Copilot review comments. |
-| `setup-proxy-iptables.sh` | Force all GitHub HTTPS traffic through the ACMM proxy. |
+| Script | Stage | Purpose |
+|---|---|---|
+| `gh-app-token.sh` | Credentials | Generates and caches a GitHub App installation token; `--export` prints shell exports for callers. |
+| `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
+| `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
+| `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. |
+| `setup-proxy-iptables.sh` | Enforcement | Installs iptables rules in the container to force GitHub HTTPS traffic through the ACMM proxy even if an agent unsets proxy variables. |
+| `hive-config.sh` | Config | Shared shell config reader that exposes project, repo, agent, dashboard, health, and policy values parsed from `hive-project.yaml`. |
 
-## Contributor relay (ClankeR)
+## Deployment and local operation
 
-| Script | Purpose |
-|--------|---------|
-| `contributor-relay.sh` | ClankeR — the WebSocket client connecting a contributor agent to the hub. |
-| `contributor-agent.sh` | Entrypoint for the contributor container. |
+| Script | Stage | Purpose |
+|---|---|---|
+| `hive.sh` | CLI | Operator command wrapper for starting the supervisor, checking status, attaching, kicking agents, reading logs, and stopping agents. |
+| `hive-setup.sh` | Bootstrap | All-in-one Ubuntu 24.04 LXC setup for a Docker-based Hive v2 instance, including generated `hive.yaml` and env files. |
+| `hive-prereq-check.sh` | Bootstrap | Validates host prerequisites for a Docker-based Hive v2 install and can attempt fixes with `--fix`. |
+| `hive-deploy.sh` | Deploy | Pulls the latest Hive repository and syncs scripts to `/usr/local/bin`; also restarts Discord bot components when their files change. |
+| `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
+| `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
 
-## Metrics, notifications, tokens
+## Contributor relay
 
-| Script | Purpose |
-|--------|---------|
-| `token-collector.sh` | Correlate bead data with token usage for per-issue cost attribution. |
-| `token-usage.py` | Token usage aggregator for Hive agents. |
-| `notify.sh` | Shared notification library for hive scripts. |
-| `federation-heartbeat.sh` | Periodically send this hive's live stats to the federation. |
-| `outreach-tracker.sh` | Track outreach PRs opened/merged on external repos. |
-| `ga4-anomaly-detector.sh` | Pre-compute GA4 error anomalies for the ci-maintainer agent. |
-| `copilot-models.mjs` | List Copilot models available to this machine's auth (via `@github/copilot-sdk`). |
+| Script | Stage | Purpose |
+|---|---|---|
+| `contributor-agent.sh` | Contributor runtime | Contributor-container entrypoint: detects authenticated CLI backend, starts the relay, launches the CLI in tmux, and creates `${HOME}/agent.md` only from a verified live knowledge export. |
+| `contributor-relay.sh` | Contributor runtime | Node.js WebSocket client for ClankeR contributor agents. It authenticates to one or more hubs, receives tasks, injects GitHub tokens, reports progress/results, and supports interactive tmux or headless one-shot delivery. |
 
-## Setup and deployment
+## Model, token, and experiment helpers
 
-| Script | Purpose |
-|--------|---------|
-| `hive.sh` | KubeStellar AI hive entrypoint. |
-| `hive-config.sh` | Shared config reader for all hive scripts. |
-| `hive-setup.sh` | Bootstrap a fresh Ubuntu 24.04 LXC into a Hive v2 instance (Docker). |
-| `hive-prereq-check.sh` | Validate prerequisites for a Docker-based Hive v2 deployment. |
-| `hive-deploy.sh` | Pull the latest hive repo and sync scripts to `/usr/local/bin`. |
+| Script | Stage | Purpose |
+|---|---|---|
+| `copilot-models.mjs` | Model discovery | Uses `@github/copilot-sdk` and the installed Copilot CLI's own auth to print the available Copilot model catalog as one JSON line. |
+| `token-collector.sh` | Cost metrics | Reads scanner beads and token metrics to attribute issue cost; supports recent windows and `--all`. |
+| `token-usage.py` | Cost metrics | Aggregates Claude and Copilot CLI session token usage by agent and rolling time window. |
+| `nous-install.sh` | Nous | Clones or updates the external Nous strategy-evolution framework under `NOUS_DIR`, creates a venv, installs it editable, and prepares run directories. |
+| `nous-runner.sh` | Nous | Strategist helper that invokes the installed Nous framework on each kick. |
+| `nous-hive-gate.py` | Nous | Implements the Nous Gate protocol, posting suggest-mode decisions to the dashboard and polling for operator approval. |
+| `nous-sync.py` | Nous | Reads Nous governor/repo outputs, applies confidence decay and conflict detection, and writes principles, recommendations, and ledger data. |
 
-## Strategy Lab (Nous)
+## Regression tests
 
-| Script | Purpose |
-|--------|---------|
-| `nous-install.sh` | Install the Nous framework into `/opt/nous` (venv-based). |
-| `nous-runner.sh` | Strategist helper — invokes the real Nous framework. |
-| `nous-hive-gate.py` | Custom Nous Gate — bridges experiment-approval decisions into Hive. |
-| `nous-sync.py` | Analyst helper — reads Nous output and syncs findings to the dashboard. |
-
-## Tests
-
-`*.test.sh` / `*.test.js` files are regression tests for the scripts alongside
-them (e.g. `gh-wrapper.test.sh`, `contributor-agent.test.sh`,
-`contributor-relay.test.js` — the last is JavaScript despite the extension).
+| Script | Covers |
+|---|---|
+| `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
+| `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
+| `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |

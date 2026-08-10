@@ -284,7 +284,7 @@ github:
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
 
-# Notifications — configure one or more channels
+# Notifications — configure one or more channels. See docs/notifications.md.
 notifications:
   ntfy:
     server: https://ntfy.sh
@@ -293,11 +293,9 @@ notifications:
   #   webhook: ${SLACK_WEBHOOK_URL}
   # discord:
   #   webhook: ${DISCORD_WEBHOOK_URL}
-
-# Discord bot (optional) — responds to !hive commands
-# discord:
-#   bot_token: ${DISCORD_BOT_TOKEN}
-#   channel_id: "1234567890"
+  #   # Optional Discord bot integration; separate from webhook notifications.
+  #   bot_token: ${DISCORD_BOT_TOKEN}
+  #   channel_id: "1234567890"
 
 # Dashboard — embedded web UI with SSE live updates
 # Security headers (CSP, X-Frame-Options, etc.) are always active.

@@ -223,8 +223,7 @@ func TestToolRulesToLaunchCmd_Copilot(t *testing.T) {
 	// Authorship fix: copilot must NEVER pass --enable-all-github-mcp-tools —
 	// the built-in github-mcp-server is read-only by default, so GitHub MCP
 	// WRITE tools are never registered and an agent cannot author issues/PRs as
-	// the logged-in user. (This test previously asserted the OPPOSITE — that the
-	// flag was present — which was the bug: it let agents author as the user.)
+	// the logged-in user.
 	tools := denyTools("mcp__something__else")
 	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false)
 	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
@@ -241,8 +240,7 @@ func TestToolRulesToLaunchCmd_CopilotGithubDeny(t *testing.T) {
 	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
 		t.Errorf("copilot with github deny should NOT enable all github tools: %q", cmd)
 	}
-	// Deny must use the built-in server's REAL name github-mcp-server, not the
-	// bogus `github` name (which was a silent no-op — the source of the leak).
+	// Deny must use the built-in server's real name, not `github`.
 	if !containsBoot(cmd, "github-mcp-server(create_pull_request)") {
 		t.Errorf("copilot deny should translate to github-mcp-server(tool): %q", cmd)
 	}
