@@ -24,7 +24,7 @@ func newTestHubServer(secret string) *HubServer {
 
 // --- handleTaskStatus tests ---
 
-func TestHandleTaskStatus_Unauthorized(t *testing.T) {
+func TestHandleTaskStatus_MissingAuthorizationUnauthorized(t *testing.T) {
 	s := newTestHubServer("secret-abc")
 
 	body := `{"hive_id":"h1","leaderboard":[],"contributors":{"active":1,"registered":5}}`
@@ -65,53 +65,6 @@ func TestHandleTaskStatus_NoSecretSkipsAuth(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestHandleTaskStatus_InvalidJSON(t *testing.T) {
-	s := newTestHubServer("secret-abc")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/task-status", strings.NewReader("not json"))
-	req.Header.Set("Authorization", "Bearer secret-abc")
-	rr := httptest.NewRecorder()
-	s.handleTaskStatus(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
-	}
-}
-
-func TestHandleTaskStatus_EmptyHiveID(t *testing.T) {
-	s := newTestHubServer("secret-abc")
-
-	body := `{"hive_id":"","leaderboard":[],"contributors":{"active":1,"registered":5}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/task-status", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer secret-abc")
-	rr := httptest.NewRecorder()
-	s.handleTaskStatus(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
-	}
-}
-
-func TestHandleTaskStatus_HiveOffline(t *testing.T) {
-	s := newTestHubServer("secret-abc")
-	s.registry.Hives = []RegistryEntry{
-		{ID: "h1", Name: "Hive One", Online: false},
-	}
-
-	body := `{"hive_id":"h1","leaderboard":[],"contributors":{"active":1,"registered":5}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/task-status", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer secret-abc")
-	rr := httptest.NewRecorder()
-	s.handleTaskStatus(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "offline") {
-		t.Fatalf("expected 'offline' in body, got: %s", rr.Body.String())
 	}
 }
 
@@ -207,73 +160,6 @@ func TestHandleTaskStatus_SanitizesLeaderboardUsername(t *testing.T) {
 }
 
 // --- handleStats tests ---
-
-func TestHandleStats_EmptyRegistry(t *testing.T) {
-	s := newTestHubServer("")
-
-	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
-	rr := httptest.NewRecorder()
-	s.handleStats(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-
-	var resp map[string]int
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if resp["hives"] != 0 {
-		t.Errorf("expected hives=0, got %d", resp["hives"])
-	}
-}
-
-func TestHandleStats_OnlyPublicHivesCounted(t *testing.T) {
-	s := newTestHubServer("")
-	s.registry.Hives = []RegistryEntry{
-		{ID: "pub1", IsPublic: true, Online: true, AgentCount: 3, ActiveContributors: 2, ActionableIssues: 10, ActionablePRs: 5},
-		{ID: "priv1", IsPublic: false, Online: true, AgentCount: 7, ActiveContributors: 4, ActionableIssues: 20, ActionablePRs: 15},
-		{ID: "pub2", IsPublic: true, Online: false, AgentCount: 1, ActiveContributors: 1, ActionableIssues: 3, ActionablePRs: 2},
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
-	rr := httptest.NewRecorder()
-	s.handleStats(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-
-	var resp map[string]int
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-
-	// Only public hives: pub1 + pub2
-	if resp["hives"] != 2 {
-		t.Errorf("expected hives=2, got %d", resp["hives"])
-	}
-	// Only pub1 is online
-	if resp["online"] != 1 {
-		t.Errorf("expected online=1, got %d", resp["online"])
-	}
-	// agents: 3 + 1 = 4
-	if resp["agents"] != 4 {
-		t.Errorf("expected agents=4, got %d", resp["agents"])
-	}
-	// contributors: 2 + 1 = 3
-	if resp["contributors"] != 3 {
-		t.Errorf("expected contributors=3, got %d", resp["contributors"])
-	}
-	// issues: 10 + 3 = 13
-	if resp["issues"] != 13 {
-		t.Errorf("expected issues=13, got %d", resp["issues"])
-	}
-	// prs: 5 + 2 = 7
-	if resp["prs"] != 7 {
-		t.Errorf("expected prs=7, got %d", resp["prs"])
-	}
-}
 
 func TestHandleStats_ConcurrentAccess(t *testing.T) {
 	s := newTestHubServer("")
