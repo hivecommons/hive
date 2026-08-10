@@ -116,9 +116,58 @@ fi
 args=("$@")
 subcmd=""
 action=""
+
+# SECURITY (audit N7/H5, CWE-863): extracting the subcommand and action needs
+# REAL flag parsing, not "skip anything starting with -".
+#
+# The old loop skipped only tokens beginning with '-'. A SEPARATED flag VALUE
+# does not begin with '-', so it was consumed as a positional:
+#
+#   gh pr --repo owner/repo merge 123
+#          ^^^^^^ skipped   ^^^^^^^^^^ read as the action
+#
+# giving action="owner/repo" instead of "merge" — so EVERY gate keyed on
+# `action = "merge"` silently skipped: the ADVISORY / ISSUES_ONLY /
+# ISSUES_AND_PRS mode arms, the level-based fallback, AND the merge-eligibility
+# check. Any value-taking flag placed before the action worked: --repo, -R,
+# --title, --body, --label, --head, --base. The audit reproduced this against
+# real gh v2.47.0: an agent at ISSUES_PRS_MERGE (or below) could merge unvetted
+# code by reordering two flags.
+#
+# gh_flag_takes_value: does this flag consume the NEXT argv element?
+# `--flag=value` is self-contained and never does. Long forms are matched by
+# name; short forms are enumerated because gh's short flags are not uniform.
+gh_flag_takes_value() {
+  case "$1" in
+    *=*) return 1 ;;  # --flag=value carries its own value
+    # Long flags that take a value. Listed explicitly: a value-taking flag we
+    # fail to list would let its value be misread as the action again, so new
+    # flags must be added here rather than inferred.
+    --repo|--title|--body|--body-file|--label|--head|--base|--assignee|--reviewer| \
+    --milestone|--project|--template|--field|--raw-field|--method|--header| \
+    --hostname|--jq|--template-file|--search|--state|--author|--mention|--app| \
+    --branch|--subject|--match-body|--match-comments|--limit|--sort|--direction| \
+    --add-label|--remove-label|--add-assignee|--remove-assignee|--add-reviewer| \
+    --remove-reviewer|--add-project|--remove-project|--input|--cache|--comment| \
+    --file|--key|--value|--env|--org|--user|--owner|--commit-title|--commit-body| \
+    --match|--paginate-limit)
+      return 0 ;;
+    # Short flags that take a value.
+    -R|-t|-b|-B|-F|-f|-H|-l|-a|-A|-m|-p|-q|-c|-s|-L|-e|-d|-i|-k|-o|-u|-w|-x)
+      return 0 ;;
+    -*) return 1 ;;   # any other flag is boolean
+    *)  return 1 ;;
+  esac
+}
+
+_skip_next_gw=false
 for arg in "${args[@]}"; do
+  if $_skip_next_gw; then _skip_next_gw=false; continue; fi
   case "$arg" in
-    -*) continue ;;
+    --) # everything after -- is positional-only; stop flag interpretation
+        continue ;;
+    -*) if gh_flag_takes_value "$arg"; then _skip_next_gw=true; fi
+        continue ;;
     *)
       if [ -z "$subcmd" ]; then
         subcmd="$arg"
@@ -329,32 +378,80 @@ fi
 # Enforce merge gate — only PRs in merge-eligible.json can be merged
 MERGE_ELIGIBLE_FILE="/var/run/hive-metrics/merge-eligible.json"
 if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
+  # SECURITY (audit N7): parse the PR identifier with the SAME flag table the
+  # subcommand extractor uses, so a value can never be mistaken for the PR
+  # number (or vice versa). The previous loop special-cased only --repo, so
+  # `-R owner/repo` left "owner/repo" to be read as pr_num — which then failed
+  # the eligibility lookup and DENIED a legitimate merge (fail-closed, but a
+  # real availability bug), while other value-taking flags could feed it junk.
+  #
+  # gh accepts the PR as a number, a URL, or a branch name; all three are
+  # positionals after the `merge` action.
   pr_num=""
   pr_repo=""
   skip_next=false
-  past_merge=false
+  seen_pr=false
+  seen_merge=false
   for arg in "${args[@]}"; do
     if $skip_next; then skip_next=false; continue; fi
     case "$arg" in
-      pr|merge) past_merge=true; continue ;;
-      --repo) skip_next=true; continue ;;
-      --repo=*) pr_repo="${arg#--repo=}"; continue ;;
-      -*) continue ;;
+      --repo=*|-R=*) pr_repo="${arg#*=}"; continue ;;
+      --repo|-R)     skip_next=true; continue ;;
+      -*)
+        if gh_flag_takes_value "$arg"; then skip_next=true; fi
+        continue ;;
       *)
-        if $past_merge && [ -z "$pr_num" ]; then
-          pr_num="$arg"
-        fi
+        # Consume the subcommand and action positionals first, then take the
+        # next positional as the identifier.
+        if ! $seen_pr; then seen_pr=true; continue; fi
+        if ! $seen_merge; then seen_merge=true; continue; fi
+        [ -z "$pr_num" ] && pr_num="$arg"
         ;;
     esac
   done
 
+  # Recover a separated --repo/-R value (the loop above skips it by design).
   if [ -z "$pr_repo" ]; then
     for i in "${!args[@]}"; do
-      if [ "${args[$i]}" = "--repo" ] && [ -n "${args[$((i+1))]:-}" ]; then
-        pr_repo="${args[$((i+1))]}"
-        break
-      fi
+      case "${args[$i]}" in
+        --repo|-R)
+          if [ -n "${args[$((i+1))]:-}" ]; then pr_repo="${args[$((i+1))]}"; fi
+          break ;;
+      esac
     done
+  fi
+
+  # Normalize a PR URL to its number so the eligibility lookup can match it.
+  # `gh pr merge https://github.com/o/r/pull/123` is a legitimate form that the
+  # old parser passed through verbatim and therefore always denied.
+  case "$pr_num" in
+    http://*|https://*)
+      url_repo="$(printf '%s' "$pr_num" | sed -n 's#^https\{0,1\}://[^/]*/\([^/]*/[^/]*\)/pull/.*#\1#p')"
+      url_num="$(printf '%s' "$pr_num" | sed -n 's#.*/pull/\([0-9][0-9]*\).*#\1#p')"
+      if [ -n "$url_num" ]; then
+        pr_num="$url_num"
+        [ -z "$pr_repo" ] && pr_repo="$url_repo"
+      fi
+      ;;
+  esac
+
+  # SECURITY (audit N7): fail CLOSED when no PR identifier is present.
+  #
+  # `gh pr merge` (merge whatever PR belongs to the current branch) and
+  # `gh pr merge --repo owner/repo` carry no number, so pr_num stayed empty —
+  # and BOTH eligibility branches below were guarded on `[ -n "$pr_num" ]` with
+  # no else. Execution fell straight through to `exec "$REAL_GH"`, so the most
+  # permissive mode had no wall at all: an agent could merge the current
+  # branch's PR without it ever appearing in merge-eligible.json.
+  #
+  # The wrapper cannot resolve the current branch's PR without calling gh (which
+  # is the thing being gated), so the only safe answer is to require an explicit,
+  # checkable identifier.
+  if [ -z "$pr_num" ]; then
+    echo "⛔ BLOCKED: 'gh pr merge' needs an explicit PR number or URL." >&2
+    echo "The merge gate verifies the PR against ${MERGE_ELIGIBLE_FILE}, which it cannot do for an implicit current-branch merge." >&2
+    echo "Re-run as: gh pr merge <number> [--repo owner/repo]" >&2
+    exit 1
   fi
 
   if [ -n "$pr_num" ] && [ -f "$MERGE_ELIGIBLE_FILE" ]; then
