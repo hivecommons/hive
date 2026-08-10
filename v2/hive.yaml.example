@@ -33,6 +33,7 @@ agents:
     model: claude-sonnet-4-6
     caveman_mode: full                    # lite | full | ultra | wenyan — compresses output ~65%
     beads_dir: /data/beads/scanner
+    # replicas: 3                         # Optional pool: scanner, scanner-2, scanner-3 (max 5)
     clear_on_kick: true                   # Send /clear before each kick to reset context
     display_name: Code Scanner
     description: Triages GitHub issues and PRs — dispatches fix agents, enforces SLA
@@ -218,6 +219,18 @@ governor:
       architect: 30m
       guide: 4h
       strategist: 4h
+
+  # Time-of-day cadences are available anywhere an interval appears above.
+  # Each entry must use exactly one of: interval string (e.g. 4h/pause),
+  # times+tz, or cron+tz. Do not mix interval, times, and cron in one value.
+  # examples:
+  #   guide:
+  #     times: ["09:00", "17:00"]        # wall-clock local times
+  #     days: [mon, tue, wed, thu, fri]   # optional; omit for every day
+  #     tz: America/New_York              # required for times/cron
+  #   strategist:
+  #     cron: "30 8 * * mon-fri"          # five-field cron expression
+  #     tz: UTC
 
   # Trajectory review lane — periodic second-model review of running agents.
   # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.

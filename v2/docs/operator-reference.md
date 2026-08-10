@@ -37,6 +37,14 @@ Top-level YAML keys accepted by `config.Config`:
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
 
+## Fleet breaker
+
+The dashboard top bar includes a fleet breaker: a circular pause/play control plus a status pill. The `GET /api/breaker` state is readable by authenticated viewers, but engaging or releasing the breaker is owner-only (`POST /api/breaker/engage`, `POST /api/breaker/release`).
+
+Engage pauses every agent that is currently running and is not `on_demand`. Agents already paused before engage are skipped and keep their original pause reason. Release resumes only the exact agents the breaker paused and still owns (`PausedTrigger == fleet-breaker`); if an operator manually re-pauses an agent while the breaker is engaged, release leaves it paused. The breaker state is persisted so a crash/restart can still release the same captured set.
+
+Fixes #2953.
+
 ## `HIVE_GITHUB_TOKEN` permissions
 
 `github.token: ${HIVE_GITHUB_TOKEN}` creates the main GitHub client when a GitHub

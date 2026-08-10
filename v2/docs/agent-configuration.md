@@ -108,6 +108,7 @@ agents:
                                  #   must exceed its longest cadence
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
+    replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)
     lane_keywords: [bug, triage, fix]   # routes matching issues into this agent's lane
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
@@ -119,6 +120,11 @@ Three optional blocks replace hardcoded behavior with declarations:
 ```yaml
     channels:                    # how the agent gets triggered. Omit = governor timer.
       - type: kick               # kick | webhook | discord | schedule | bead
+      - type: webhook
+        events: ["issues.opened", "issues.labeled"]
+        repos: [repo-one]        # optional repo-name filter
+      - type: bead
+        match: { nudge_target: scanner }
       - type: schedule
         schedule: "0 */4 * * *"  # cron; required for type: schedule
     tools:                       # tool permissions. Omit = the mode field governs.
@@ -134,6 +140,22 @@ Three optional blocks replace hardcoded behavior with declarations:
 ```
 
 Presets map onto modes (`advisory` denies issue and PR creation, `issues-only` denies PRs, `issues-prs` and `full` deny nothing), and an explicit `allow` rule overrides a preset `deny`.
+
+### Replicated agents
+
+Set `replicas: N` on a declared agent to run a small pool with the same prompt, backend, model, mode, channel, tool, and metadata settings. `N` defaults to `1` and is capped at `5`; config load fails if it is outside `1..5`. Hive materializes derived names as `<base>-2`, `<base>-3`, ... (`scanner`, `scanner-2`, `scanner-3`). Do not declare those derived names yourself: a real `scanner-2` entry collides with `scanner: { replicas: 2 }` and is rejected. Derived replicas get their own IDs and bead directories (`/data/beads/scanner-2`) but inherit the base agent's kick template/prompt selection. Runtime-derived replicas are stripped before saving and recreated on the next load.
+
+### Trigger channels
+
+`channels:` declares non-default ways to wake an agent. If the block is omitted, governor timer kicks still work. If you include the block, add `type: kick` when the agent should keep normal governor kicks alongside other triggers.
+
+| Type | Required fields | Behavior |
+|---|---|---|
+| `kick` | none | Keep ordinary governor timer kicks. |
+| `webhook` | `events` | `/webhook`/GitHub webhook receiver matches `X-GitHub-Event` or `event.action` strings such as `issues.opened`; optional `repos` filters by repository name. If `HIVE_WEBHOOK_SECRET` is set, GitHub `X-Hub-Signature-256` HMAC is verified. |
+| `bead` | `match` | The bead watcher polls the agent's `beads_dir` about every 30 seconds and kicks when an individual JSON file has every `key: value` in `match` at the top level. Current watcher matching is not the nested `metadata` map inside the `bd` ledger file. |
+| `schedule` | `schedule` | Cron-style channel trigger independent of governor-mode cadences. |
+| `discord` | `patterns` | Declared shape for Discord-triggered work; patterns are validated by config load. |
 
 Rounding out the schema — fields you will rarely touch:
 

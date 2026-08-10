@@ -39,3 +39,22 @@ just contribute-hive
 
 The hive may override the request with an owner-assigned role. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) for tier, grant, and allow-list requirements.
 
+
+## Kubernetes contributor workload
+
+`just contribute-k8s` emits a complete Kubernetes workload for a long-lived contributor relay: Namespace, ConfigMap, Secret, and Deployment. It prints YAML to stdout by default, or writes a file when an output path is supplied:
+
+```bash
+just contribute-setup claude
+just contribute-k8s                          # default namespace hive-contributor
+just contribute-k8s my-namespace relay.yaml  # write a manifest
+just contribute-k8s my-namespace relay.yaml v2  # pin image tag
+kubectl apply -f relay.yaml
+kubectl -n my-namespace rollout status deploy/hive-contributor
+```
+
+The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, and `goose`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
+
+The generated Secret contains the registration token and `GH_TOKEN` as Kubernetes Secret data. Treat it as sensitive cluster-readable material and prefer a pinned image tag/digest for repeatable operation.
+
+Fixes #3024.

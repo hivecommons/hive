@@ -15,6 +15,9 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
+- [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
+- [Backup and restore](backup-restore.md) — `hive-backup`, Kubernetes CronJob, and spoke backup scope.
+- [Deployment helper scripts](deployment-scripts.md) — Proxmox LXC and blue-green Compose helpers.
 - [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
 - [Dashboard OpenAPI spec](../../dashboard/openapi.json) — machine-readable REST API reference for integrations.
 - [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
