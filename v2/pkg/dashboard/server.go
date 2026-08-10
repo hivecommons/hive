@@ -854,6 +854,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
+				// Shared auth-token = owner-level access. Stamp the role header so
+				// downstream owner checks (requireOwnerRole, backup_api.go) see an
+				// explicit "owner" instead of an empty header they must treat as
+				// implicit owner. Without this, role-enforcement helpers cannot
+				// distinguish "authenticated internal automation" from "unauthenticated
+				// request on an open spoke" — both have an empty X-Hive-Role.
+				r.Header.Set("X-Hive-Role", "owner")
 			}
 		}
 
