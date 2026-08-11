@@ -125,6 +125,9 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 
 // handleACMMCreateIssue creates a GitHub issue for a failed ACMM criterion.
 func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var req ACMMIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
