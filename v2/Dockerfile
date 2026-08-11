@@ -116,18 +116,29 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || 
 ARG CLAUDE_CODE_VERSION=2.1.226
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
-# --- Layer 8: Goose CLI (block/goose — official upstream, matches Dockerfile.contributor) ---
-# Pinned to match Dockerfile.contributor. aaif-goose was an unofficial fork;
-# block/goose is the official repository (Block/Square). sec-check #3417.
+# --- Layer 8: Goose CLI (official block/goose upstream) ---
+# Installs from the OFFICIAL block/goose repo (was the unofficial aaif-goose
+# fork, a supply-chain risk — #3417), pinned to a version matching
+# Dockerfile.contributor, and SHA-256-verified before extraction so a tampered
+# release cannot inject code into the spoke image. Bump GOOSE_SHA256_* whenever
+# GOOSE_VERSION changes (compute from the release's linux-gnu tarballs).
+# A download/extract failure is still tolerated (agents on backend: goose just
+# won't launch, same as other optional backends), but a CHECKSUM MISMATCH is a
+# hard failure — a tampered binary must never be installed.
 ARG GOOSE_VERSION=1.45.0
+ARG GOOSE_SHA256_X86_64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
+ARG GOOSE_SHA256_AARCH64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
 RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then GOOSE_ARCH=x86_64; \
-    elif [ "$ARCH" = "aarch64" ]; then GOOSE_ARCH=aarch64; \
-    else GOOSE_ARCH=x86_64; fi && \
-    curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" | \
-    tar xz -C /usr/local/bin goose && \
-    chmod +x /usr/local/bin/goose || \
-    echo "WARN: Goose CLI install failed — skipping"
+    if [ "$ARCH" = "aarch64" ]; then GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_AARCH64"; \
+    else GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_X86_64"; fi && \
+    if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
+      echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c - && \
+      tar xz -C /usr/local/bin -f /tmp/goose.tar.gz && \
+      chmod +x /usr/local/bin/goose && \
+      rm -f /tmp/goose.tar.gz; \
+    else \
+      echo "WARN: Goose CLI download failed — skipping (backend: goose will be unavailable)"; \
+    fi
 
 # --- Layer 8.5: pi CLI (@earendil-works/pi-coding-agent — backend: pi) ---
 # Tolerant of failure like the copilot/codex layers: agents configured for
