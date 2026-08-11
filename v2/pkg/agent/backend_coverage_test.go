@@ -219,10 +219,12 @@ func TestBackendBinary_GatewayBackendsAllLaunchClaude(t *testing.T) {
 			t.Errorf("backendBinary(%q) = %q, want the claude CLI (gateways share one binary)", b, got)
 		}
 	}
-	// The agentic CLIs must still map to their own binaries.
+	// The agentic CLIs installed in the unit-test image must still map to their own binaries.
+	// Pi is covered by backendBinaryName and Dockerfile tests because the host
+	// unit-test environment does not install the pi CLI.
 	for backend, want := range map[string]string{
 		"claude": "claude", "copilot": "copilot", "gemini": "gemini",
-		"goose": "goose", "pi": "goose", "bob": "bob",
+		"goose": "goose", "bob": "bob",
 	} {
 		got, err := backendBinary(backend)
 		if err != nil || filepath.Base(got) != want {
