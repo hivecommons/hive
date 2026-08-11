@@ -8,6 +8,37 @@ For the full centralized environment variable table, including hub, backup,
 inference, deployment, contributor, and legacy helper-script variables, see
 [Environment variable reference](env-vars.md).
 
+## Minimum required configuration
+
+Most of `hive.yaml.example` is optional. The smallest config the hive will start
+with (enforced by `Config.Validate`) is:
+
+- **`project.org`** — the GitHub org the hive works on. Startup crash-loops with
+  `project.org is required` if missing.
+- **at least one repo** under `project.repos` (bare repo name; the org is
+  `project.org`).
+- **GitHub credentials** — one of `github.token`, `github.app_id` (App auth), or
+  `github.forge`. Missing all three fails with
+  `github.token, github.app_id or github.forge is required`.
+- **at least one agent** under `agents:` (a bare `name: { backend, model }` is
+  enough; defaults fill in the rest — see [agent-configuration.md](agent-configuration.md)).
+
+Everything else — `governor` cadences, `knowledge`, `notifications`,
+`dashboard.auth_token`, gateways, `hub` — is optional and has working defaults.
+A minimal `hive.yaml`:
+
+```yaml
+project:
+  org: my-org
+  repos: [my-repo]
+github:
+  token: ${HIVE_GITHUB_TOKEN}
+agents:
+  scanner:
+    backend: copilot
+    model: claude-sonnet-4-6
+```
+
 ## Configuration blocks
 
 Top-level YAML keys accepted by `config.Config`:
