@@ -93,6 +93,7 @@ const (
 // accepted and treated as custom (the endpoint is what actually routes).
 var validGatewayKinds = map[string]bool{
 	config.GatewayKindOpenRouter: true,
+	config.GatewayKindGroq:       true,
 	config.GatewayKindLiteLLM:    true,
 	config.GatewayKindVLLM:       true,
 	config.GatewayKindLLMD:       true,

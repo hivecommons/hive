@@ -205,3 +205,15 @@ func TestGatewaysUpsert_PreservesKeyOnEdit(t *testing.T) {
 		t.Errorf("default_model not updated: %q", gw.DefaultModel)
 	}
 }
+
+// TestGroqIsValidGatewayKind guards the Groq gateway support (#3304): Groq is an
+// OpenAI-compatible endpoint, so it only needs to be an accepted kind with its
+// preset base URL — no special token minting like watsonx.
+func TestGroqIsValidGatewayKind(t *testing.T) {
+	if !validGatewayKinds[config.GatewayKindGroq] {
+		t.Fatal("groq must be an accepted gateway kind so the Governor → Gateways form can save it")
+	}
+	if config.GatewayKindGroq != "groq" {
+		t.Fatalf("GatewayKindGroq = %q, want \"groq\"", config.GatewayKindGroq)
+	}
+}
