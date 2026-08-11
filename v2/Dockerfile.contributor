@@ -106,10 +106,11 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # official checksum BEFORE extraction, so a compromised go.dev (or a MITM) cannot
 # inject a tampered toolchain. Bump GO_SHA256_AMD64/ARM64 whenever GO_VERSION
 # changes — the values come from https://go.dev/dl/?mode=json for that version.
+ARG TARGETARCH
 ARG GO_VERSION=1.24.4
 ARG GO_SHA256_AMD64=77e5da33bb72aeaef1ba4418b6fe511bc4d041873cbf82e5aa6318740df98717
 ARG GO_SHA256_ARM64=d5501ee5aca0f258d5fe9bfaed401958445014495dc115f202d43d5210b45241
-RUN ARCH=$(dpkg --print-architecture) \
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
        arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \
