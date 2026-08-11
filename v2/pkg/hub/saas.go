@@ -543,6 +543,17 @@ func isTrustedOrigin(raw string) bool {
 // resolveIdentity — never inside it — so the write-block and the admin gate can
 // always reason about who is really driving the request.
 func (s *HubServer) getRealAuthUser(r *http.Request) string {
+	// N2: prefer the Ed25519 cookie when the browser carries one. It is the only
+	// value a spoke cannot forge, so it must win over the symmetric fallbacks.
+	if c, err := r.Cookie(hubUserCookieV2Name); err == nil && c.Value != "" {
+		if username, ok := verifyHubUserCookieValueV2(s.sessionPublicKey(), c.Value); ok {
+			if loadSaaSUser(username) != nil {
+				return username
+			}
+		}
+		// A stale/invalid v2 cookie is not fatal — fall through to the HMAC one
+		// rather than locking the user out (e.g. after a secret rotation).
+	}
 	cookie, err := r.Cookie("hive_hub_user")
 	if err == nil && cookie.Value != "" {
 		// The cookie value is only trusted when its HMAC signature verifies
@@ -771,6 +782,21 @@ func listAllSaaSUsers() []SaaSUser {
 
 func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// SECURITY (audit N6, CWE-352): admin routes carry the SAME CSRF exposure
+		// as requireAuth ones — the hub session cookie is ambient, so a cross-site
+		// form POST to e.g. /api/saas/hub/upgrade or the cluster-app-key writer
+		// executes with the admin's identity. requireAuth has always checked this;
+		// requireAdmin never did, leaving every admin mutation reachable from ANY
+		// origin — strictly worse than the sibling-tenant lane, which at least
+		// needs a *.hive.kubestellar.io foothold. Checked first, before any
+		// identity resolution, so a forged request never reaches the
+		// impersonation logic below.
+		if !isCSRFSafe(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"CSRF check failed"}`))
+			return
+		}
 		// Gate on the REAL logged-in user, not the effective (possibly
 		// impersonated) identity. While the admin is viewing as a normal user,
 		// getAuthUser resolves to that user on GETs — but admin routes (and in

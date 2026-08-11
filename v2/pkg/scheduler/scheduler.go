@@ -105,11 +105,27 @@ func (s *Scheduler) GetLastActionable() *github.ActionableResult {
 	return s.lastActionable
 }
 
+// userSavedPolicyDir is where the dashboard prompt editor
+// (PUT /api/config/agent/{name}/prompt → handleAgentPromptSave) writes a
+// template a user edited in the UI. It must be searched BEFORE the git-cloned
+// policies repo (…/examples/kubestellar/agents/) and the embedded defaults, or
+// an edit made in the UI never reaches the kick — the kick keeps rendering the
+// stale upstream copy that shadows the override (issue #3239). The dashboard's
+// own read path (loadPromptTemplateRaw) already checks this location first; the
+// scheduler must agree so a saved edit takes effect on the next kick.
+//
+// It is a var (not a const) only so tests can point it at a temp dir; production
+// always uses the fixed /data/policies path that handleAgentPromptSave writes to.
+var userSavedPolicyDir = "/data/policies"
+
 // loadPromptTemplate searches standard paths for an agent's policy template.
 // It checks on-disk paths first, then falls back to embedded default policies.
 func (s *Scheduler) loadPromptTemplate(agentName string) string {
 	paths := []string{
 		fmt.Sprintf("/data/agents/%s/CLAUDE.md", agentName),
+		// User-saved override from the dashboard prompt editor wins over the
+		// git-cloned examples copy and embedded defaults (#3239).
+		fmt.Sprintf("%s/%s.md", userSavedPolicyDir, agentName),
 		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s.md", agentName),
 	}
 	if s.cfg.Policies.LocalDir != "" {
@@ -133,6 +149,12 @@ func (s *Scheduler) loadPromptTemplate(agentName string) string {
 // It checks on-disk paths first, then falls back to embedded default policies.
 func (s *Scheduler) loadNamedTemplate(templateName string) string {
 	paths := []string{
+		// User-saved override from the dashboard prompt editor wins over the
+		// git-cloned examples copy and embedded defaults (#3239). handleAgentPromptSave
+		// writes the edited template to /data/policies/<KickTemplate>, so when an
+		// agent has a kick_template set (e.g. quality-advisory.md at ACMM L2) the
+		// edit lands here and must be picked up on the next kick.
+		fmt.Sprintf("%s/%s", userSavedPolicyDir, templateName),
 		fmt.Sprintf("/data/policies/examples/kubestellar/agents/%s", templateName),
 	}
 	if s.cfg.Policies.LocalDir != "" {

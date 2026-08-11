@@ -3,8 +3,6 @@ package hub
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -362,13 +360,9 @@ func k8sAPIPatch(path string, body []byte) error {
 		return fmt.Errorf("reading service account token: %w", err)
 	}
 
-	tlsConfig := &tls.Config{}
-	if caCert, err := os.ReadFile(k8sCACertPath); err == nil {
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM(caCert)
-		tlsConfig.RootCAs = pool
-	} else {
-		tlsConfig.InsecureSkipVerify = true
+	tlsConfig, err := k8sTLSConfig()
+	if err != nil {
+		return err
 	}
 
 	client := &http.Client{

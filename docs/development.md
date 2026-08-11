@@ -64,7 +64,14 @@ Run `gofmt` on Go files you edit:
 gofmt -w path/to/file.go
 ```
 
-There is no separate documented repository-wide lint command in the current `Justfile`; use the Go build and test commands above unless CI or a maintainer asks for an additional check.
+The v2 CI workflow runs `go vet ./...` after building the Hive binary. Reproduce that check locally from the Go module:
+
+```bash
+cd v2
+go vet ./...
+```
+
+There is no public `just lint` recipe in the current root `Justfile`; use `go vet ./...` for the repository's documented local lint-equivalent check, plus `gofmt`, `go build`, and targeted `go test` for the files you change.
 
 ## Running Hive locally
 

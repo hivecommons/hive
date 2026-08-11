@@ -20,7 +20,7 @@ knowledge:
 
 | Field | Current behavior in v2 HEAD |
 | --- | --- |
-| `schedule` | Defaults to `daily` when knowledge is enabled. The config field is stored for the scheduled curator flow described in the design docs; v2 HEAD does not enforce a parser here, so use simple operator conventions such as `daily` until your deployment wires a scheduler. |
+| `schedule` | Defaults to `daily` when knowledge is enabled. The value is stored as `CuratorConfig.Schedule`. No scheduler in v2 HEAD parses or actions it. Extraction runs only when Go code invokes `Curator.RunExtraction` explicitly; see [Scheduling extraction](#scheduling-extraction). |
 | `extract_from` | Sources the curator should inspect. Implemented sources are `pr_comments` and `review_comments`. `ci_failures` appears in the example config/design but is not currently extracted by `Curator.extractFromPR`. |
 | `auto_promote_threshold` | Defaults to `0.9` when knowledge is enabled. `Promoter.AutoPromoteCandidates` selects facts whose llm-wiki page has `status == "verified"` and `confidence >= threshold`. |
 
@@ -37,5 +37,19 @@ The classifier is heuristic. It emits candidates for comments containing signals
 - `decided`, `agreed`, `going forward`, `from now on` → decisions.
 
 Extracted facts are sent to the wiki `/api/ingest` endpoint. Promotion only flows upward (for example project → org), preserving provenance in the promoted fact.
+
+## Scheduling extraction
+
+Extraction runs only when Go code invokes `Curator.RunExtraction` explicitly. No scheduler, CLI command, or HTTP endpoint triggers extraction in v2 HEAD.
+
+A Go caller builds a `Curator` with `NewCurator(ghClient, wikiURL, org, repos, config, logger)`. The caller calls `RunExtraction(ctx, since)` with a `since` time. The caller then calls `Ingest(ctx, facts)`. The call POSTs the facts to the wiki `/api/ingest` endpoint:
+
+```go
+c := NewCurator(ghClient, wikiURL, org, repos, config, logger)
+facts, err := c.RunExtraction(ctx, since)
+err = c.Ingest(ctx, facts)
+```
+
+The design doc `v2/docs/design/knowledge-system.md` plans a `scheduler.RunCurator(schedule)` wiring with a daily or on-merge trigger. This wiring is not implemented in v2 HEAD. The programmatic path above is the only way to run extraction today.
 
 See [Knowledge system design](design/knowledge-system.md) for architecture context; this page documents the implemented operator-facing knobs.

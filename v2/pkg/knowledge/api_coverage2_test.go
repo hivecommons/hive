@@ -87,7 +87,7 @@ func TestKnowledgeAPI_ListGetReimportDeleteDocument(t *testing.T) {
 	api, vaultDir := apiWithVault(t)
 
 	storageBase := t.TempDir()
-	srcFile := filepath.Join(t.TempDir(), "doc.txt")
+	srcFile := filepath.Join(storageBase, "doc.txt")
 	if err := os.WriteFile(srcFile, []byte("Para one.\n\nPara two."), 0o644); err != nil {
 		t.Fatal(err)
 	}

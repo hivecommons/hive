@@ -8,6 +8,51 @@ import (
 	"testing"
 )
 
+func TestValidateGitSourceURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{name: "https", raw: "https://github.com/org/repo.git"},
+		{name: "http", raw: "http://example.com/org/repo"},
+		{name: "file scheme", raw: "file:///etc/passwd", wantErr: true},
+		{name: "ssh scheme", raw: "ssh://github.com/org/repo.git", wantErr: true},
+		{name: "git scheme", raw: "git://github.com/org/repo.git", wantErr: true},
+		{name: "ext helper", raw: "ext::sh -c 'id'", wantErr: true},
+		{name: "scp like", raw: "git@github.com:o/r.git", wantErr: true},
+		{name: "missing scheme", raw: "github.com/org/repo.git", wantErr: true},
+		{name: "invalid escape", raw: "https://example.com/%zz", wantErr: true},
+		{name: "empty host", raw: "https:///org/repo.git", wantErr: true},
+		{name: "leading dash", raw: "--upload-pack=/bin/sh", wantErr: true},
+		{name: "transport helper separator", raw: "https://github.com/org/repo::helper", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGitSourceURL(tc.raw)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateGitSourceURL(%q) succeeded, want error", tc.raw)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateGitSourceURL(%q) error = %v", tc.raw, err)
+			}
+		})
+	}
+}
+
+func TestGitSourceInitRejectsInvalidURL(t *testing.T) {
+	gs := NewGitSource(GitSourceConfig{
+		Name:  "bad",
+		URL:   "ssh://github.com/org/repo.git",
+		Layer: LayerProject,
+	}, t.TempDir(), slog.Default())
+
+	if err := gs.Init(context.Background()); err == nil {
+		t.Fatal("expected invalid URL error")
+	}
+}
+
 func TestGitSourceSlug(t *testing.T) {
 	tests := []struct {
 		url     string
@@ -39,8 +84,8 @@ func TestGitSourceSlug(t *testing.T) {
 
 func TestNewGitSource_Defaults(t *testing.T) {
 	config := GitSourceConfig{
-		Name: "test",
-		URL:  "https://github.com/org/repo",
+		Name:  "test",
+		URL:   "https://github.com/org/repo",
 		Layer: LayerProject,
 	}
 

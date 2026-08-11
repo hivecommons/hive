@@ -24,6 +24,7 @@ func TestCovD_GatewaysList(t *testing.T) {
 // endpoint, bad endpoint, invalid kind, api_key_env-looks-like-key guardrail).
 func TestCovD_GatewaysUpsert(t *testing.T) {
 	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "public.example", "openrouter.ai", "x")
 
 	// Point the secret store at a temp dir so a submitted key VALUE can be
 	// stored without touching the real PVC path.
@@ -35,7 +36,7 @@ func TestCovD_GatewaysUpsert(t *testing.T) {
 	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
 		"name":     "mygw",
 		"kind":     "custom",
-		"endpoint": "http://127.0.0.1:1/v1",
+		"endpoint": "https://public.example/v1",
 		"api_key":  "sk-test-value",
 	})
 	if rec.Code != http.StatusOK {
@@ -135,6 +136,7 @@ func TestCovD_GatewaysDelete(t *testing.T) {
 // endpoint, and a probe against an unreachable endpoint (error path).
 func TestCovD_GatewaysDiscover(t *testing.T) {
 	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "public.example")
 
 	rec := doPostRawCovD(s, "/api/config/governor/gateways/discover", "{bad")
 	if rec.Code != http.StatusBadRequest {
@@ -150,7 +152,7 @@ func TestCovD_GatewaysDiscover(t *testing.T) {
 	}
 	// Reachability probe against an unroutable endpoint → {ok:false,error}.
 	rec = doPost(s, "/api/config/governor/gateways/discover", map[string]interface{}{
-		"name": "x", "endpoint": "http://127.0.0.1:1/v1",
+		"name": "x", "endpoint": "https://public.example/v1",
 	})
 	if rec.Code != http.StatusOK {
 		t.Errorf("discover probe = %d, want 200: %s", rec.Code, rec.Body.String())

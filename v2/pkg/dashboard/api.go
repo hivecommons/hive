@@ -1232,16 +1232,14 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 }
 
 // requireOwnerRole returns true when the request carries owner-level access.
-// An empty X-Hive-Role is treated as owner (open/dev spokes with no auth_token
-// or hub-proxied spokes where the hub omits the header). Any non-owner role
-// set by the hub or device-flow session is rejected. Call this for state-mutating
-// endpoints that should be restricted to operators (pause, resume, fleet breaker).
+// The authentication middleware owns X-Hive-Role and strips client-supplied
+// values before injecting roles for trusted sources. Owner-only mutations also
+// require its server-only verification marker, so legacy/proofless proxy
+// headers and shared-token requests fail closed instead of trusting spoofable
+// client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		return true // open spoke or internal automation — treat as owner
-	}
-	if role != "owner" {
+	if role != "owner" || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
 		jsonError(w, "owner access required", http.StatusForbidden)
 		return false
 	}
@@ -4535,7 +4533,10 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 			req.Header.Set(k, v)
 		}
 	}
-	client := &http.Client{Timeout: litellmProbeTimeout}
+	client := &http.Client{
+		Timeout:       litellmProbeTimeout,
+		CheckRedirect: noRedirectToPrivate,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("cannot reach gateway: %w", err)
@@ -7121,8 +7122,9 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "name and url are required", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(req.URL, "https://") && !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "git@") {
-		jsonError(w, "url must start with https://, http://, or git@", http.StatusBadRequest)
+	req.URL = strings.TrimSpace(req.URL)
+	if err := knowledge.ValidateGitSourceURL(req.URL); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if strings.Contains(req.Name, "..") || strings.ContainsAny(req.Name, "/\\") {
@@ -7313,6 +7315,16 @@ func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
 	if req.URL == "" && req.FilePath == "" && req.Context7ID == "" {
 		jsonError(w, "url, file_path, or context7_id is required", http.StatusBadRequest)
 		return
+	}
+	if req.URL != "" {
+		if !strings.HasPrefix(req.URL, "https://") && !strings.HasPrefix(req.URL, "http://") {
+			jsonError(w, "document url must use http or https scheme", http.StatusBadRequest)
+			return
+		}
+		if isPrivateURL(r.Context(), req.URL) {
+			jsonError(w, "document url must not point to private/internal addresses", http.StatusBadRequest)
+			return
+		}
 	}
 	if req.Layer == "" {
 		req.Layer = knowledge.LayerProject

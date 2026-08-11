@@ -43,19 +43,19 @@ func ValidateProjectRepoTargets(org string, repos []string, primaryRepo, forgeHo
 		return issue("project.repos", "repo is empty — expected org/repo")
 	}
 	for _, repo := range repos {
-		if repoIssue := validateRepoName("project.repos", repo); repoIssue != nil {
+		if repoIssue := validateRepoName("project.repos", org, repo); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	if strings.TrimSpace(primaryRepo) != "" {
-		if repoIssue := validateRepoName("project.primary_repo", primaryRepo); repoIssue != nil {
+		if repoIssue := validateRepoName("project.primary_repo", org, primaryRepo); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	return nil
 }
 
-func validateRepoName(field, repo string) *RepoTargetIssue {
+func validateRepoName(field, org, repo string) *RepoTargetIssue {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
 		return issue(field, "repo is empty — expected org/repo")
@@ -64,7 +64,20 @@ func validateRepoName(field, repo string) *RepoTargetIssue {
 		return issue(field, "repo '"+repo+"' is a URL — expected repo name only so the target resolves to org/repo")
 	}
 	if strings.Contains(repo, "/") {
-		return issue(field, "repo '"+repo+"' contains '/' — expected repo name only so the target resolves to org/repo")
+		// A fully-qualified "<org>/<repo>" is accepted when the org prefix
+		// matches the configured project.org — it is unambiguously the same
+		// target, and the save path strips the prefix down to the bare name.
+		// This is what a user naturally types/pastes when re-adding an existing
+		// repo from the Governor → Repos page (issue #3021). Anything else
+		// (a different org, a trailing slash, or multiple slashes) is still a
+		// misconfiguration.
+		org = strings.TrimSpace(org)
+		prefix := org + "/"
+		bare := strings.TrimPrefix(repo, prefix)
+		if org != "" && strings.HasPrefix(repo, prefix) && bare != "" && !strings.Contains(bare, "/") {
+			return nil
+		}
+		return issue(field, "repo '"+repo+"' contains '/' — expected repo name only (or '"+org+"/<repo>') so the target resolves to org/repo")
 	}
 	return nil
 }

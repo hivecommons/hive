@@ -36,6 +36,12 @@ reference_architectures:
   - AI/ML
 ---
 
+> **Purpose:** This page is a **CNCF reference-architecture submission template**,
+> not operator or contributor documentation. It describes how Hive relates to CNCF
+> projects for the CNCF landscape/reference-architecture process. For running or
+> developing Hive, start from the [docs index](README.md) and
+> [architecture.md](architecture.md) instead.
+
 ## Relevant CNCF projects
 
 {{< cardpane >}}

@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,13 +51,9 @@ func TestK8sAPIGetWithCACert(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	// Write a (PEM-shaped) CA cert so the AppendCertsFromPEM branch runs. It need
-	// not validate against the httptest server's cert because the server is plain
-	// HTTP; the branch simply builds a RootCAs pool.
-	caPEM := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
-	if err := os.WriteFile(k8sCACertPath, []byte(caPEM), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// Write a valid CA cert so the RootCAs branch runs. It need not validate
+	// against the httptest server's cert because the server is plain HTTP.
+	writeTestK8sCACert(t, k8sCACertPath)
 	if _, err := k8sAPIGet("/api/v1/nodes"); err != nil {
 		t.Fatalf("k8sAPIGet with CA cert: %v", err)
 	}

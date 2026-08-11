@@ -4,6 +4,10 @@ This page is a concise operator reference for fields and runtime knobs that are
 easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
 and `cmd/hive/main.go` on v2.
 
+For the full centralized environment variable table, including hub, backup,
+inference, deployment, contributor, and legacy helper-script variables, see
+[Environment variable reference](env-vars.md).
+
 ## Configuration blocks
 
 Top-level YAML keys accepted by `config.Config`:
@@ -15,7 +19,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `agents` | Agent definitions and behavior metadata. | Per-agent overlays may also live under `data.agents_dir`. |
 | `governor` | Cadences, labels, sensing, health, budgets, inference gateways, trajectory review. | See notable fields below. |
 | `github` | PAT or GitHub App credentials and forge URLs. | Use one auth method. |
-| `notifications` | ntfy, Slack, and Discord webhooks. | All optional. |
+| `notifications` | ntfy, Slack, and Discord webhooks. | All optional; see [notifications.md](notifications.md). |
 | `dashboard` | Web UI port, snapshots, auth token, frame allowlist, authorized users. | `auth_token` can come from `HIVE_DASHBOARD_TOKEN`. |
 | `data` | Metrics, logs, session, and agent overlay directories. | Defaults are `/data/...` in containers. |
 | `knowledge` | Wiki layers, vaults, git/document sources, primer, curator, bead synthesizer. | Disabled unless `enabled: true`. |
@@ -34,8 +38,62 @@ Top-level YAML keys accepted by `config.Config`:
 | `dashboard.snapshot_frame_ancestors` | Empty list means CSP `frame-ancestors 'none'`. | Entries must be exact `https://` origins; paths, wildcards, credentials, query, and fragments are rejected. |
 | `dashboard.authorized_users` | Empty means no per-user direct-route allowlist. | Entries can be `user` or `user:role`; roles are `read`, `read-write`, `merger`, `owner`. |
 | `variables.security.*` | Deny by default. | `allow_exec`, `allow_http`, and GitHub prompt-source allowlists are honored only from the trusted seed, not dashboard overlays. |
+| `data.claude_sessions_dir` | `/data/home/.claude/projects` | Where the dashboard reads Claude Code session JSONL for per-agent token/cost accounting. Point it at the agents' real session directory if you relocate `HOME`. |
+| `data.copilot_sessions_dir` | `/data/home/.copilot/session-state` | Same, for the Copilot CLI backend's session state. |
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
+
+## Image provenance for `ghcr.io/kubestellar/hive:v2-latest`
+
+The pre-built Docker image used by `v2/docker-compose.yaml` is built by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml). On the `v2` branch, that workflow publishes a rolling multi-architecture manifest tag:
+
+- `ghcr.io/kubestellar/hive:v2-latest`
+- `ghcr.io/kubestellar/hive:<git-short-sha>`
+
+### What updates the tag
+
+The workflow runs on pushes to every non-dependabot/non-copilot branch and on `workflow_dispatch`. PR and short-lived branch builds still compile the image as a CI gate, but the `gate` job only pushes to GHCR for long-lived branches listed in the workflow (`v2`, `v3`, `mk`, `dd`) or for manual `workflow_dispatch` runs.
+
+For the main Hive image, the build job uses `v2/Dockerfile` and passes these build arguments:
+
+```text
+GIT_HASH=${{ github.sha }}
+GIT_BRANCH=${{ github.ref_name }}
+```
+
+The merge job then combines the per-architecture digests into a manifest list. Before tagging, it verifies that the workflow SHA is still the current HEAD of the branch; stale queued builds skip tagging instead of moving `v2-latest` backward.
+
+### Stability guarantee
+
+`v2-latest` is a rolling branch tag for the current HEAD of `origin/v2` after the Docker workflow succeeds. It is not immutable and is intended for quick starts and continuously updated hives. Pin production deployments to a digest when you need a reproducible image.
+
+### Verify and pin a digest
+
+Inspect the tag digest:
+
+```bash
+docker buildx imagetools inspect ghcr.io/kubestellar/hive:v2-latest
+```
+
+Pull by digest after choosing the manifest digest you want:
+
+```bash
+docker pull ghcr.io/kubestellar/hive@sha256:<digest>
+```
+
+In Compose, replace the tag with the digest form:
+
+```yaml
+services:
+  hive:
+    image: ghcr.io/kubestellar/hive@sha256:<digest>
+```
+
+To relate an image to source, compare the `<git-short-sha>` tag published by the same workflow with commits on the `v2` branch, or inspect the Docker workflow run for the commit SHA that produced the digest.
+
+### Changelog and release notes
+
+The rolling image follows merged changes on the `v2` branch. Use the GitHub commit/PR history for the exact source change set behind a SHA tag, and use repository releases or changelog files only when this repository publishes them for a specific release line.
 
 ## Fleet breaker
 
@@ -102,6 +160,12 @@ installation instead of broadening the PAT.
 | Name | Purpose |
 |---|---|
 | `HIVE_METRICS_ENABLED` | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default because it exposes estimated cost data. |
+
+> **Note on `tokens_24h`:** despite its name, the per-spoke heartbeat field
+> `tokens_24h` (stored on the hub as `totalTokens24h`) is a **cumulative total**,
+> not a rolling 24-hour window. Read it as lifetime token consumption for the
+> spoke. See [token-tracking.md](token-tracking.md) for the full heartbeat and
+> `/api/saas/usage` rollup details.
 
 ### Inference endpoint fallbacks
 

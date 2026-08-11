@@ -348,14 +348,12 @@ func TestHandleGovernorRepos_StripOrgPrefix(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200", w.Code)
 	}
 	repos := srv.deps.Config.Project.Repos
-	for _, r := range repos {
-		if strings.Contains(r, "testorg/") {
-			t.Errorf("repo %q should not contain org prefix", r)
-		}
+	if len(repos) != 1 || repos[0] != "repo1" {
+		t.Errorf("repos = %v, want stripped repo1", repos)
 	}
 }
 

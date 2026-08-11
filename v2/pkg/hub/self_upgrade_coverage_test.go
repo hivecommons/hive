@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,15 +33,25 @@ func withFakeK8sAPI(t *testing.T, srv *httptest.Server) {
 	if err := os.WriteFile(nsPath, []byte("hive-hosted-test"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	oldServer, oldToken, oldCA, oldNS := k8sAPIServer, k8sTokenPath, k8sCACertPath, k8sNamespacePath
 	k8sAPIServer = srv.URL
 	k8sTokenPath = tokenPath
-	k8sCACertPath = filepath.Join(dir, "ca.crt") // absent -> InsecureSkipVerify branch
+	k8sCACertPath = filepath.Join(dir, "ca.crt")
+	writeTestK8sCACert(t, k8sCACertPath)
 	k8sNamespacePath = nsPath
 	t.Cleanup(func() {
 		k8sAPIServer, k8sTokenPath, k8sCACertPath, k8sNamespacePath = oldServer, oldToken, oldCA, oldNS
 	})
+}
+
+func writeTestK8sCACert(t *testing.T, path string) {
+	t.Helper()
+	certSrv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer certSrv.Close()
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certSrv.Certificate().Raw})
+	if err := os.WriteFile(path, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestK8sAPIGetSuccess(t *testing.T) {
@@ -72,6 +83,73 @@ func TestK8sAPIGetNon200(t *testing.T) {
 
 	if _, err := k8sAPIGet("/api/v1/nodes"); err == nil {
 		t.Error("expected error on non-200")
+	}
+}
+
+func TestK8sAPIGetMissingCAFailsClosed(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+	if err := os.Remove(k8sCACertPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := k8sAPIGet("/api/v1/nodes")
+	if err == nil {
+		t.Fatal("expected k8sAPIGet to fail when CA cert cannot be read")
+	}
+	if !strings.Contains(err.Error(), "refusing to connect with TLS verification disabled") {
+		t.Fatalf("error = %v, want fail-closed CA message", err)
+	}
+	if hits != 0 {
+		t.Fatalf("server was contacted %d times despite missing CA", hits)
+	}
+}
+
+func TestK8sAPIGetInvalidCAFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server must not be contacted with invalid CA")
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+	if err := os.WriteFile(k8sCACertPath, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := k8sAPIGet("/api/v1/nodes")
+	if err == nil {
+		t.Fatal("expected k8sAPIGet to fail when CA cert has no PEM certificates")
+	}
+	if !strings.Contains(err.Error(), "empty cert pool") {
+		t.Fatalf("error = %v, want empty cert pool fail-closed message", err)
+	}
+}
+
+func TestK8sAPIPatchMissingCAFailsClosed(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+	if err := os.Remove(k8sCACertPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err := k8sAPIPatch("/x", []byte(`{}`))
+	if err == nil {
+		t.Fatal("expected k8sAPIPatch to fail when CA cert cannot be read")
+	}
+	if !strings.Contains(err.Error(), "refusing to connect with TLS verification disabled") {
+		t.Fatalf("error = %v, want fail-closed CA message", err)
+	}
+	if hits != 0 {
+		t.Fatalf("server was contacted %d times despite missing CA", hits)
 	}
 }
 

@@ -879,7 +879,7 @@ func TestHandleUnpin_NotFound(t *testing.T) {
 
 func TestHandlePause(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/pause/scanner", nil)
+	rec := doOwnerPost(s, "/api/pause/scanner", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1353,7 +1353,7 @@ func TestHandleModelSet_UnknownAgent(t *testing.T) {
 
 func TestHandleResume_UnknownAgent(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/resume/nonexistent", nil)
+	rec := doOwnerPost(s, "/api/resume/nonexistent", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1488,11 +1488,11 @@ func TestHandleGovernorRepos_Success(t *testing.T) {
 func TestHandleGovernorRepos_StripOrg(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/new-repo"}, "primaryRepo": "myorg/new-repo"})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if len(deps.Config.Project.Repos) == 1 && deps.Config.Project.Repos[0] == "new-repo" {
-		t.Errorf("repos mutated to stripped value %v despite rejection", deps.Config.Project.Repos)
+	if len(deps.Config.Project.Repos) != 1 || deps.Config.Project.Repos[0] != "new-repo" {
+		t.Errorf("repos = %v, want stripped new-repo", deps.Config.Project.Repos)
 	}
 }
 

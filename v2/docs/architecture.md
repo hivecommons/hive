@@ -11,9 +11,10 @@ merge-gating, permission enforcement) from **judgment calls** (reading code,
 reasoning about a fix, writing a PR). Deterministic work runs in Go and shell
 before any LLM sees the task; agents only handle the judgment.
 
-> This document describes the `v2` branch. The planning-intelligence subsystem
-> (goal decomposition, plan review, stall-replan) is **v3-only** and is called
-> out where relevant.
+> This document describes the `v2` branch. Automatic goal decomposition, plan
+> review, and stall-triggered re-planning are not implemented in v2 HEAD; treat
+> any mention of those capabilities outside this page as future/design-only
+> material unless the code grows matching planner/replan paths.
 
 ---
 
@@ -144,6 +145,7 @@ Before any agent is kicked, `run-pipeline.sh` runs the `pre-kick` stages defined
 in `hive-project.yaml`, topologically sorted by their declared dependencies. Each
 stage is a shell script that writes a JSON artifact other stages and agents
 consume — so an agent is handed pre-filtered, pre-classified, merge-gated work.
+For a script-by-script index of this layer, see [`../../bin/README.md`](../../bin/README.md).
 
 ```mermaid
 flowchart LR

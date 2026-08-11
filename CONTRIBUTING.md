@@ -2,6 +2,8 @@
 
 Thank you for helping improve KubeStellar Hive. This guide is for contributing code and documentation to this repository. If you want to donate compute to a running hive, see [Contribute to a Hive](README.md#contribute-to-a-hive) instead.
 
+**New here?** Start with the [getting-started guide for first-time contributors](docs/getting-started-contributing.md) — it walks the end-to-end journey (finding an issue, local setup, testing without a cluster, key concepts, and what the review/CI process looks like) and links back into this guide for the mechanics.
+
 ## Where to work
 
 - Open issues and pull requests in this repository. Use the issue templates when they are available, and link related issues from the PR body.
@@ -19,7 +21,10 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
   - `v2/deploy/` and `v2/examples/` — deployment manifests and example configuration.
   - `v2/docs/` — architecture and operator/developer reference material.
   - `v2/test/` — integration and regression tests.
-- `bin/` — shell helpers used by the existing automation and maintainer workflows.
+- `bin/` — deterministic pipeline, supervision, enforcement, deployment, and maintainer helper scripts. See [`bin/README.md`](bin/README.md) for the script-by-script index.
+- `config/hive-project.yaml.example` — project metadata for the top-level
+  deterministic shell pipeline; see [config/README.md](config/README.md). This
+  is separate from the v2 Go runtime config in `v2/hive.yaml.example`.
 - `dashboard/`, `docs/`, `config/`, `systemd/`, `launchd/`, and top-level scripts — supporting assets for hub, dashboard, installation, and operational workflows.
 - `Justfile` — contributor relay recipes; see [Just recipes](docs/development.md#just-recipes).
 
@@ -46,6 +51,24 @@ go test ./...
 
 The Go version is declared in [`v2/go.mod`](v2/go.mod). Install that version or newer compatible tooling before building.
 
+## Contributor `just` recipes
+
+The root [`Justfile`](Justfile) exposes the public contributor relay workflow. Run `just --list` to see the current recipe signatures; private implementation details are intentionally not listed there.
+
+| Recipe | What it does |
+| --- | --- |
+| `just contribute-check <backend>` | Runs the same read-only backend CLI preflight used by setup, then reports whether the machine is ready for `contribute-setup`. |
+| `just contribute-setup <backend>` | Checks the Justfile version, verifies the backend CLI, signs in with GitHub, registers with the configured hub, and writes `${HOME}/.config/hive/contributor.env`. |
+| `just contribute-hive [backend] [mode]` | Starts the contributor relay. The default mode is containerized; pass `local` as the mode to run natively when the local tools are installed. |
+| `just contribute-status` | Queries the configured hub for status and contributor profile information. |
+| `just contribute-browse` | Discovers available public hive projects. |
+| `just contribute-stop` | Stops a background contributor relay if one is running. |
+| `just contribute-k8s [namespace] [outfile] [image_tag]` | Emits Kubernetes manifests for a headless contributor workload. It writes to stdout or the requested file; it does not apply the manifest. |
+| `just hive-api <endpoint>` | Calls a hub API endpoint, defaulting to `/status`, using the configured hive URL. |
+| `just hive-api-docs` | Opens the hub API documentation in a browser. |
+
+See [v2/docs/contributor-relay.md](v2/docs/contributor-relay.md) for the end-to-end contributor relay workflow and Kubernetes workload details.
+
 ## Style and quality
 
 - Format Go changes with `gofmt`.
@@ -63,7 +86,7 @@ The repository includes `githooks/post-checkout`. Install it only if you want th
 git config core.hooksPath githooks
 ```
 
-The hook runs after branch checkouts in the primary worktree. It prevents that worktree from staying on a branch other than `main` by printing guidance and checking `main` back out. It is intended for long-running dashboard checkouts where feature work should happen in separate `git worktree add ...` directories. It does not run for file checkouts. Because `core.hooksPath` can apply beyond the primary checkout, install it only in the checkout you want protected; if it fires somewhere else, remove or override that hooksPath setting there.
+The hook runs after branch checkouts in the primary worktree. It prevents that worktree from staying on a branch other than `main` by printing guidance and checking `main` back out. It is intended for long-running dashboard checkouts where feature work should happen in separate `git worktree add ...` directories. It does not run for file checkouts or linked worktrees, because linked worktrees have a `.git` file instead of a `.git` directory.
 
 If the hook is not installed, normal Git behavior applies. If it blocks a checkout unexpectedly, use a separate worktree from an unprotected checkout or remove the hooksPath setting for repositories where the guard is not desired.
 

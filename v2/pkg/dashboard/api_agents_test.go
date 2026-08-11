@@ -592,13 +592,14 @@ spec:
 		w.Write([]byte(yamlContent))
 	}))
 	defer ts.Close()
+	routeImportFetchesToServer(t, ts)
 
 	s, deps := apiServer(t)
 	deps.Config.Data.AgentsDir = t.TempDir()
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    ts.URL + "/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -615,11 +616,12 @@ func TestHandleAgentImport_URLFetchFails(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer ts.Close()
+	routeImportFetchesToServer(t, ts)
 
 	s, _ := apiServer(t)
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source": "url",
-		"url":    ts.URL + "/agent.yaml",
+		"url":    "https://raw.githubusercontent.com/kubestellar/hive/main/agent.yaml",
 	})
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("expected 502, got %d: %s", rec.Code, rec.Body.String())

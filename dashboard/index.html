@@ -25,6 +25,7 @@
     .git-version .git-dirty { color: var(--yellow); }
     .header-spacer { flex: 1; }
     .widget-dl {
+      display: inline-flex; align-items: center; white-space: nowrap;
       font-size: 0.75rem; color: var(--cyan); text-decoration: none;
       border: 1px solid var(--cyan); border-radius: 6px; padding: 4px 10px;
       transition: background 0.2s, color 0.2s; margin-left: auto; margin-right: auto;
@@ -111,26 +112,31 @@
 
     /* Light top bar */
     .oc-topbar {
-      position: fixed; top: 0; left: var(--sidebar-w); right: 0; height: 48px;
+      position: fixed; top: 0; left: var(--sidebar-w); right: 0; min-height: 48px;
       background: #ffffff; border-bottom: 1px solid #e5e7eb;
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px; z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: #6b7280; }
-    .oc-topbar-center { display: flex; align-items: center; gap: 6px; }
+    .oc-topbar-left { font-size: 0.85rem; color: #6b7280; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    #oc-project-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-topbar-center { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .oc-topbar-center .oc-tb-link {
       font-size: 0.72rem; color: #6b7280; cursor: pointer; padding: 4px 10px;
       border-radius: 6px; border: 1px solid transparent; transition: all 0.15s;
     }
     .oc-topbar-center .oc-tb-link:hover { background: #f3f4f6; color: #111827; border-color: #e5e7eb; }
-    .oc-topbar-right { display: flex; align-items: center; gap: 14px; }
+    .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
     .oc-health-badge {
       font-size: 0.78rem; font-weight: 600; color: #16a34a;
       background: #f0fdf4; border: 1px solid #bbf7d0;
       padding: 4px 12px; border-radius: 20px;
     }
-    .oc-topbar-ts { font-size: 0.75rem; color: #6b7280; }
-    .oc-topbar .git-version { color: #9ca3af; }
+    #oc-hive-id {
+      flex: 0 1 auto; min-width: 0; max-width: 22rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .oc-topbar-ts { font-size: 0.75rem; color: #6b7280; white-space: nowrap; }
+    .oc-topbar .git-version { color: #9ca3af; white-space: nowrap; }
     .oc-topbar .widget-dl {
       font-size: 0.72rem; color: #dc2626; border-color: #dc2626;
       padding: 3px 10px; border-radius: 6px;
