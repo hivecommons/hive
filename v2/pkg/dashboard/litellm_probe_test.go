@@ -70,6 +70,24 @@ func TestProbeLiteLLMModels_LenientShape(t *testing.T) {
 	}
 }
 
+func TestProbeLiteLLMModelsRejectsRedirectToPrivateHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/latest/meta-data/v1/models" {
+			fmt.Fprint(w, `{"data":[{"id":"stolen-token-sink"}]}`)
+			return
+		}
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/v1/models", http.StatusFound)
+	}))
+	defer srv.Close()
+	routeImportFetchesToServer(t, srv)
+
+	if _, err := probeLiteLLMModels("https://gateway.example.invalid", "sk-livekeyvalue"); err == nil {
+		t.Fatal("expected redirect to private host to be blocked")
+	} else if !strings.Contains(err.Error(), "redirect to private/internal host blocked") {
+		t.Fatalf("expected private redirect error, got %v", err)
+	}
+}
+
 // parseModelsResponse is the shared source of truth; verify it returns
 // provider-prefixed ids verbatim and skips id-less entries.
 func TestParseModelsResponse_VerbatimIDs(t *testing.T) {

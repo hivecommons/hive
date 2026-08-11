@@ -23,7 +23,7 @@ func decodeToggleBody(t *testing.T, body []byte) map[string]interface{} {
 
 func TestHandlePause_RealTransitionReportsChangedTrue(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/pause/scanner", nil)
+	rec := doOwnerPost(s, "/api/pause/scanner", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -41,10 +41,10 @@ func TestHandlePause_RealTransitionReportsChangedTrue(t *testing.T) {
 
 func TestHandlePause_NoopReturnsChangedFalse(t *testing.T) {
 	s, _ := apiServer(t)
-	if rec := doPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
+	if rec := doOwnerPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
 		t.Fatalf("first pause status = %d, want 200", rec.Code)
 	}
-	rec := doPost(s, "/api/pause/scanner", nil)
+	rec := doOwnerPost(s, "/api/pause/scanner", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second pause status = %d, want 200 (ok:true is part of the contract)", rec.Code)
 	}
@@ -63,7 +63,7 @@ func TestHandlePause_NoopReturnsChangedFalse(t *testing.T) {
 func TestHandleResume_NoopReturnsChangedFalse(t *testing.T) {
 	s, _ := apiServer(t)
 	// scanner starts un-paused: resuming it is a no-op.
-	rec := doPost(s, "/api/resume/scanner", nil)
+	rec := doOwnerPost(s, "/api/resume/scanner", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (no-op resume must not touch tmux)", rec.Code)
 	}
@@ -81,10 +81,10 @@ func TestHandleResume_NoopReturnsChangedFalse(t *testing.T) {
 
 func TestHandleResume_RealTransitionReportsChangedTrue(t *testing.T) {
 	s, _ := apiServer(t)
-	if rec := doPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
+	if rec := doOwnerPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
 		t.Fatalf("pause status = %d, want 200", rec.Code)
 	}
-	rec := doPost(s, "/api/resume/scanner", nil)
+	rec := doOwnerPost(s, "/api/resume/scanner", nil)
 	// A real resume relaunches the agent session; in environments without a
 	// working tmux this legitimately fails with 400 (same tolerance as
 	// TestHandleResume). The contract under test is: when it DOES succeed,
@@ -115,7 +115,7 @@ func TestHandleAgentState_ReflectsAuthoritativePause(t *testing.T) {
 		t.Errorf("fresh agent: paused = %v, state = %v; want false/running", m["paused"], m["state"])
 	}
 
-	if rec := doPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
+	if rec := doOwnerPost(s, "/api/pause/scanner", nil); rec.Code != http.StatusOK {
 		t.Fatalf("pause status = %d, want 200", rec.Code)
 	}
 

@@ -5,20 +5,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 ## How we maintain this file
 
 - Add entries under `Unreleased` for user-visible features, fixes, security changes, migrations, deprecations, and breaking changes.
-- Move entries into a dated release section when a release is cut.
+- Move entries into a dated release section when a release is cut. If the repository has no release tag for the change, use the merge date rather than inventing a version.
 - Link issues or PRs when useful, but keep entries readable for operators who are not following every PR.
 - Do not include routine refactors, test-only changes, or dependency churn unless they affect users.
 
 ## Unreleased
 
+No notable user-facing changes have been recorded since the dated entries below.
+
+## 2026-08-10
+
 ### Added
 
 - Contributor onboarding, governance, templates, and local development documentation for the `v2` Go codebase.
-
-## Recent v2 notable changes
-
-### Added
-
 - Timezone-aware time-of-day governor cadences so hives can vary agent activity by local operating windows.
 - Merger contributor tier and configurable automerge queue/label behavior for safer merge delegation.
 - ClankeR contributor role claiming and owner-assigned agent-role grants.

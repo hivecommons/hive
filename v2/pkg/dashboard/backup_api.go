@@ -33,7 +33,8 @@ const backupBuildTimeout = spokebackup.BuildTimeout
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	if role == "" {
-		role = "owner"
+		http.Error(w, "X-Hive-Role header required", http.StatusUnauthorized)
+		return
 	}
 	if role != "owner" {
 		jsonError(w, "owner access required", http.StatusForbidden)
@@ -57,7 +58,8 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	if role == "" {
-		role = "owner"
+		http.Error(w, "X-Hive-Role header required", http.StatusUnauthorized)
+		return
 	}
 	if role != "owner" {
 		jsonError(w, "only the owner can back up this hive", http.StatusForbidden)

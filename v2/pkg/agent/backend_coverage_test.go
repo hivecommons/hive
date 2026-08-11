@@ -269,3 +269,77 @@ func TestSetBackendOverride_RejectsUndispatchableBackend(t *testing.T) {
 		t.Errorf("SetBackendOverride on a missing agent = %v, want a 'not found' error", err)
 	}
 }
+
+// TestBackendBinaryName_EverySupportedBackendResolves is the guard for the
+// accept-then-fail class of bug. config.ValidateBackend accepts every member of
+// config.SupportedBackends() at config-set time, so the launcher MUST be able to
+// dispatch every one of them — otherwise a backend is persisted happily and then
+// dies hours later at kick time with "unknown backend".
+//
+// This regression was real: config.CLIBackends listed codex and aider, but
+// backendBinary's hand-written map did not, so `backend: codex` was accepted and
+// then failed at launch. The old test enumerated only the backends that were
+// already in the map, so it could never catch a missing one. This test derives
+// its cases from the canonical list instead, which is what makes it able to.
+//
+// backendBinaryName is used rather than backendBinary so this asserts the
+// mapping is COMPLETE without also requiring every CLI to be installed here.
+func TestBackendBinaryName_EverySupportedBackendResolves(t *testing.T) {
+	supported := config.SupportedBackends()
+	if len(supported) == 0 {
+		t.Fatal("config.SupportedBackends() is empty — this test would vacuously pass")
+	}
+	for _, b := range supported {
+		binary, err := backendBinaryName(b)
+		if err != nil {
+			t.Errorf("config accepts backend %q but the launcher cannot dispatch it: %v", b, err)
+			continue
+		}
+		if binary == "" {
+			t.Errorf("backendBinaryName(%q) returned an empty binary name", b)
+		}
+	}
+}
+
+// TestBackendBinaryName_CodexAndAiderLaunchTheirOwnBinaries pins the specific
+// regression: codex and aider are agentic CLIs of their own, not aliases and not
+// gateway backends, so each must exec a binary of its own name. If either were
+// ever folded into the claude derivation this would catch it.
+func TestBackendBinaryName_CodexAndAiderLaunchTheirOwnBinaries(t *testing.T) {
+	for _, backend := range []string{"codex", "aider"} {
+		if !config.IsCLIBackend(backend) {
+			t.Fatalf("precondition failed: %q is no longer a config.CLIBackends member", backend)
+		}
+		got, err := backendBinaryName(backend)
+		if err != nil {
+			t.Errorf("backendBinaryName(%q) err = %v, want nil", backend, err)
+			continue
+		}
+		if got != backend {
+			t.Errorf("backendBinaryName(%q) = %q, want %q", backend, got, backend)
+		}
+	}
+}
+
+// TestBackendBinaryName_AliasesSurviveDerivation guards the ordering inside
+// backendBinaryName: the identity derivation over config.CLIBackends would map
+// "pi" to a non-existent "pi" binary, so the alias overrides must be applied
+// AFTER it. Swapping those two loops would silently break the pi backend.
+func TestBackendBinaryName_AliasesSurviveDerivation(t *testing.T) {
+	got, err := backendBinaryName("pi")
+	if err != nil {
+		t.Fatalf("backendBinaryName(\"pi\") err = %v, want nil", err)
+	}
+	if got != "goose" {
+		t.Errorf("backendBinaryName(\"pi\") = %q, want \"goose\" (alias applied after identity derivation)", got)
+	}
+}
+
+// TestBackendBinaryName_RejectsUnknown keeps the negative path honest: deriving
+// from the canonical lists must not turn backendBinaryName into a function that
+// accepts anything.
+func TestBackendBinaryName_RejectsUnknown(t *testing.T) {
+	if _, err := backendBinaryName("totally-made-up"); err == nil {
+		t.Fatal("backendBinaryName accepted a backend that is in neither canonical list")
+	}
+}

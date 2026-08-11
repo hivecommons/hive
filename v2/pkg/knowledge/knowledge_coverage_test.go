@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +143,29 @@ func TestSplitAtParagraphs_SingleShort(t *testing.T) {
 	parts := splitAtParagraphs("only one paragraph", 1000)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
+	}
+}
+
+func TestValidateLocalFilePath(t *testing.T) {
+	orig := allowedFilePrefixes
+	t.Cleanup(func() { allowedFilePrefixes = orig })
+
+	base := t.TempDir()
+	allowedFilePrefixes = []string{base + string(filepath.Separator)}
+
+	if err := validateLocalFilePath(filepath.Join(base, "doc.md")); err != nil {
+		t.Fatalf("expected allowed local document path: %v", err)
+	}
+	if err := validateLocalFilePath(filepath.Join(base, "..", "secret.md")); err == nil {
+		t.Fatal("expected path outside allowed prefix to be rejected")
+	}
+
+	ds := &DocumentSource{knowledgeDir: base}
+	if err := ds.validateFilePath(filepath.Join(base, "nested", "doc.md")); err != nil {
+		t.Fatalf("expected DocumentSource path under knowledge dir: %v", err)
+	}
+	if err := ds.validateFilePath(filepath.Join(base, "..", "secret.md")); err == nil {
+		t.Fatal("expected DocumentSource path outside knowledge dir to be rejected")
 	}
 }
 
@@ -391,8 +416,11 @@ func TestDocumentSource_ImportWithGraph(t *testing.T) {
 	baseDir := filepath.Join(tmpDir, "knowledge")
 	gs := newTestGraphStore(t)
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
 	content := "First para about one thing.\n\nSecond para about another thing.\n\nThird para wraps up."
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +774,7 @@ func TestBeadLifecycle_HasOpenDependents(t *testing.T) {
 	}
 }
 
-// --- gitsource: real git via file:// clone ---
+// --- gitsource: real git via HTTP clone ---
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -784,13 +812,85 @@ func makeSourceRepo(t *testing.T) string {
 	return repo
 }
 
-func TestGitSource_InitSyncFullClone(t *testing.T) {
+func makeHTTPSourceRepo(t *testing.T) string {
+	t.Helper()
 	src := makeSourceRepo(t)
+	parent := t.TempDir()
+	bare := filepath.Join(parent, "repo.git")
+	runGit(t, src, "clone", "--bare", src, bare)
+
+	srv := httptest.NewServer(gitHTTPBackend(t, parent))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/repo.git"
+}
+
+func gitHTTPBackend(t *testing.T, projectRoot string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		cmd := exec.Command("git", "http-backend")
+		cmd.Env = append(os.Environ(),
+			"GIT_PROJECT_ROOT="+projectRoot,
+			"GIT_HTTP_EXPORT_ALL=1",
+			"REQUEST_METHOD="+r.Method,
+			"PATH_INFO="+r.URL.Path,
+			"QUERY_STRING="+r.URL.RawQuery,
+			"CONTENT_TYPE="+r.Header.Get("Content-Type"),
+			"CONTENT_LENGTH="+strconv.FormatInt(r.ContentLength, 10),
+		)
+		cmd.Stdin = r.Body
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Logf("git http-backend failed: %v: %s", err, stderr.String())
+			http.Error(w, "git http-backend failed", http.StatusInternalServerError)
+			return
+		}
+
+		headerBlock, body, ok := bytes.Cut(stdout.Bytes(), []byte("\r\n\r\n"))
+		if !ok {
+			headerBlock, body, ok = bytes.Cut(stdout.Bytes(), []byte("\n\n"))
+		}
+		if !ok {
+			http.Error(w, "bad git http-backend response", http.StatusInternalServerError)
+			return
+		}
+
+		status := http.StatusOK
+		for _, line := range strings.Split(string(headerBlock), "\n") {
+			line = strings.TrimRight(line, "\r")
+			if line == "" {
+				continue
+			}
+			key, value, found := strings.Cut(line, ":")
+			if !found {
+				continue
+			}
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if strings.EqualFold(key, "Status") {
+				code, _, _ := strings.Cut(value, " ")
+				if parsed, err := strconv.Atoi(code); err == nil {
+					status = parsed
+				}
+				continue
+			}
+			w.Header().Add(key, value)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	}
+}
+
+func TestGitSource_InitSyncFullClone(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	src := makeHTTPSourceRepo(t)
 	base := t.TempDir()
 
 	gs := NewGitSource(GitSourceConfig{
 		Name:  "docs-src",
-		URL:   "file://" + src,
+		URL:   src,
 		Layer: LayerProject,
 	}, base, covLogger())
 
@@ -808,7 +908,7 @@ func TestGitSource_InitSyncFullClone(t *testing.T) {
 	// Re-init (already cloned path -> ensureCloned pulls).
 	gs2 := NewGitSource(GitSourceConfig{
 		Name:  "docs-src",
-		URL:   "file://" + src,
+		URL:   src,
 		Layer: LayerProject,
 	}, base, covLogger())
 	if err := gs2.Init(ctx); err != nil {
@@ -822,12 +922,13 @@ func TestGitSource_InitSyncFullClone(t *testing.T) {
 }
 
 func TestGitSource_InitSparseSubpath(t *testing.T) {
-	src := makeSourceRepo(t)
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	src := makeHTTPSourceRepo(t)
 	base := t.TempDir()
 
 	gs := NewGitSource(GitSourceConfig{
 		Name:    "docs-only",
-		URL:     "file://" + src,
+		URL:     src,
 		Subpath: "docs",
 		Layer:   LayerProject,
 	}, base, covLogger())
@@ -845,9 +946,11 @@ func TestGitSource_InitSparseSubpath(t *testing.T) {
 
 func TestGitSource_InitCloneFailure(t *testing.T) {
 	base := t.TempDir()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
 	gs := NewGitSource(GitSourceConfig{
 		Name:  "bad",
-		URL:   "file:///nonexistent/repo/path/does/not/exist",
+		URL:   srv.URL + "/repo.git",
 		Layer: LayerProject,
 	}, base, covLogger())
 
@@ -860,7 +963,7 @@ func TestGitSource_SyncNotARepo(t *testing.T) {
 	base := t.TempDir()
 	gs := NewGitSource(GitSourceConfig{
 		Name:  "norepo",
-		URL:   "file:///tmp",
+		URL:   "https://example.com/repo.git",
 		Layer: LayerProject,
 	}, base, covLogger())
 	// cloneDir does not exist / is not a git repo.
@@ -870,11 +973,12 @@ func TestGitSource_SyncNotARepo(t *testing.T) {
 }
 
 func TestGitSource_StartSyncLoop_Cancels(t *testing.T) {
-	src := makeSourceRepo(t)
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	src := makeHTTPSourceRepo(t)
 	base := t.TempDir()
 	gs := NewGitSource(GitSourceConfig{
 		Name:  "loop",
-		URL:   "file://" + src,
+		URL:   src,
 		Layer: LayerProject,
 	}, base, covLogger())
 	if err := gs.Init(context.Background()); err != nil {
@@ -892,6 +996,19 @@ func TestGitSource_StartSyncLoop_Cancels(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("StartSyncLoop did not return after cancel")
+	}
+}
+
+func TestImportDocumentRejectsDuplicateName(t *testing.T) {
+	api := NewKnowledgeAPI(nil, KnowledgeConfig{Enabled: true, Engine: "file"}, covLogger())
+	api.docSources = append(api.docSources, &DocumentSource{slug: "existing-doc"})
+
+	_, err := api.ImportDocument(context.Background(), DocSourceConfig{Name: "Existing Doc"})
+	if err == nil {
+		t.Fatal("expected duplicate document name to be rejected before import")
+	}
+	if !strings.Contains(err.Error(), "already imported") {
+		t.Fatalf("expected duplicate import error, got %v", err)
 	}
 }
 

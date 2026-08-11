@@ -86,14 +86,15 @@ agents:
     display_name: CI Maintainer
     description: Post-merge quality gate — monitors CI health, coverage, GA4 errors
     sort_order: 30
-  tester:
+  quality:
     enabled: true
     backend: claude
     model: claude-sonnet-4-6
-    beads_dir: /data/beads/tester
+    beads_dir: /data/beads/quality
     clear_on_kick: true
-    display_name: Tester
-    description: Runs automated test suites — coverage gates and nightly regression checks
+    display_name: Quality
+    description: Runs automated test suites — coverage gates and regression checks
+    role: quality
     sort_order: 35
   architect:
     enabled: false                        # Disabled by default — enable for design work
@@ -190,7 +191,7 @@ governor:
       threshold: 20                       # Queue depth >= 20 triggers SURGE
       scanner: 15m
       ci-maintainer: pause                # "pause" means don't kick this agent
-      tester: pause                       # coverage isn't urgent during fire-fighting
+      quality: pause                      # coverage isn't urgent during fire-fighting
       architect: pause
       guide: pause
       strategist: pause
@@ -199,7 +200,7 @@ governor:
       threshold: 10
       scanner: 15m
       ci-maintainer: 1h
-      tester: 2h
+      quality: 2h
       architect: pause
       guide: 4h
       strategist: pause
@@ -207,7 +208,7 @@ governor:
       threshold: 2
       scanner: 15m
       ci-maintainer: 45m
-      tester: 45m
+      quality: 45m
       architect: pause
       guide: 4h
       strategist: 4h
@@ -215,7 +216,7 @@ governor:
       threshold: 0
       scanner: 15m
       ci-maintainer: 15m
-      tester: 30m                         # most active when nothing else is happening
+      quality: 30m                        # most active when nothing else is happening
       architect: 30m
       guide: 4h
       strategist: 4h
@@ -283,7 +284,7 @@ github:
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
 
-# Notifications — configure one or more channels
+# Notifications — configure one or more channels. See docs/notifications.md.
 notifications:
   ntfy:
     server: https://ntfy.sh
@@ -292,11 +293,9 @@ notifications:
   #   webhook: ${SLACK_WEBHOOK_URL}
   # discord:
   #   webhook: ${DISCORD_WEBHOOK_URL}
-
-# Discord bot (optional) — responds to !hive commands
-# discord:
-#   bot_token: ${DISCORD_BOT_TOKEN}
-#   channel_id: "1234567890"
+  #   # Optional Discord bot integration; separate from webhook notifications.
+  #   bot_token: ${DISCORD_BOT_TOKEN}
+  #   channel_id: "1234567890"
 
 # Dashboard — embedded web UI with SSE live updates
 # Security headers (CSP, X-Frame-Options, etc.) are always active.

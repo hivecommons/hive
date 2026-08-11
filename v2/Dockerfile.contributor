@@ -73,9 +73,15 @@ RUN ARCH=$(dpkg --print-architecture) \
   && rm -rf /tmp/goose-dl \
   || echo "Goose install skipped"
 
-# Install Pi CLI (pi.dev coding agent)
-RUN curl -fsSL https://pi.dev/install.sh | sh \
-  || echo "Pi install skipped"
+# Install Pi CLI (pi.dev coding agent). Do not use pi.dev's curl-pipe-to-shell
+# installer here: it is mutable and executes remote shell as root. Pi publishes
+# npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
+# disabled and fail the image build if the binary is absent.
+ARG PI_CODING_AGENT_VERSION=0.84.1
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
+  && npm cache clean --force \
+  && which pi
 
 # Install Go (needed for building/testing Go projects)
 ARG GO_VERSION=1.25.12
