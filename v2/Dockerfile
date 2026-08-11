@@ -116,13 +116,15 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || 
 ARG CLAUDE_CODE_VERSION=2.1.226
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
-# --- Layer 8: Goose CLI (aaif-goose/goose — supports custom providers via env vars) ---
-ARG GOOSE_VERSION=1.37.0
+# --- Layer 8: Goose CLI (block/goose — official upstream, matches Dockerfile.contributor) ---
+# Pinned to match Dockerfile.contributor. aaif-goose was an unofficial fork;
+# block/goose is the official repository (Block/Square). sec-check #3417.
+ARG GOOSE_VERSION=1.45.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then GOOSE_ARCH=x86_64; \
     elif [ "$ARCH" = "aarch64" ]; then GOOSE_ARCH=aarch64; \
     else GOOSE_ARCH=x86_64; fi && \
-    curl -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" | \
+    curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" | \
     tar xz -C /usr/local/bin goose && \
     chmod +x /usr/local/bin/goose || \
     echo "WARN: Goose CLI install failed — skipping"
