@@ -113,7 +113,7 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || 
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION=2.1.226
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
 # --- Layer 8: Goose CLI (aaif-goose/goose — supports custom providers via env vars) ---
