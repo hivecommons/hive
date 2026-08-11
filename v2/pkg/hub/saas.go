@@ -9183,7 +9183,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var c = colors[st] || colors.unknown;
       var ic = icons[st] || '?';
       var isUpgrading = _upgradingHives[h.id];
-      var statusLabel = isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1);
+      var isDeleting = _deletingHives[h.id];
+      if (isDeleting) { c = colors.warning; ic = '⏳'; }
+      var statusLabel = isDeleting ? 'Deleting…' : (isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1));
       /* Checks, failures first, so the reason for a bad status reads before the
          wall of passing checks. Stable within each group (spoke report order). */
       var checks = healthChecks(h).slice().sort(function(a, b) {
@@ -13517,6 +13519,10 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _upgradingHives = {};
+    // _deletingHives[id] = true while a hive delete is in flight, so the hub
+    // table shows a "Deleting…" status on that row instead of the row just
+    // silently vanishing (or looking normal) mid-teardown.
+    var _deletingHives = {};
     var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
     var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
 
@@ -16091,16 +16097,24 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function deleteHive(id) {
-      if (!await hiveConfirm('Delete ' + id + '? This removes the namespace, PV, OCI storage, and all data.')) return;
+      // Confirm with the friendly hive NAME the operator sees in the table, not
+      // the raw id / vanity-URL slug. Fall back to the id if the row is gone.
+      var _row = document.querySelector('[data-hive-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      var name = (_row && _row.getAttribute('data-hive-name')) || id;
+      if (!await hiveConfirm('Delete "' + name + '"? This removes the namespace, PV, OCI storage, and all data.')) return;
       var btns = document.querySelectorAll('button[onclick*="deleteHive"]');
       btns.forEach(function(b) { b.disabled = true; b.textContent = 'Deleting...'; b.style.opacity = '0.6'; });
+      // Mark the row as deleting so its status shows "Deleting…" until the next
+      // refresh removes it (or clears the flag on failure).
+      _deletingHives[id] = true;
       try {
         gtag('event','hive_deleted',{hive_id:id});
-        hiveToast('Deleting ' + id + '...', 'info');
+        hiveToast('Deleting "' + name + '"…', 'info');
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id), {method: 'DELETE'});
         if (!resp.ok) {
           var d = await resp.json().catch(function(){ return {}; });
           hiveToast(d.error || 'Delete failed', 'error');
+          delete _deletingHives[id];
           // Refresh regardless: the hub removes the registry entry even when
           // teardown fails, so the listing may already be correct.
           loadHives();
@@ -16114,12 +16128,12 @@ const dashboardHTML = `<!DOCTYPE html>
              storage, so those may survive. Rendering it as an 'error' toast made
              a partial success look like the delete had failed even though the
              row vanished. Show it as an informational notice instead. */
-          hiveToast('Removed ' + id + ' from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
+          hiveToast('Removed "' + name + '" from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
         } else {
-          hiveToast('Deleted ' + id, 'success');
+          hiveToast('Deleted "' + name + '"', 'success');
         }
         loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _deletingHives[id]; }
       finally { btns.forEach(function(b) { b.disabled = false; b.textContent = 'Delete'; b.style.opacity = '1'; }); }
     }
 
