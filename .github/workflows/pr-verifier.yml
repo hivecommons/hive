@@ -32,6 +32,7 @@ jobs:
           docker run --rm \
             -e INPUT_GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             -e GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            -e GITHUB_ACTIONS="true" \
             -e GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             -e GITHUB_EVENT_PATH="/github/event.json" \
             -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
