@@ -1,6 +1,10 @@
 package hub
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // A freshly-approved placeholder still reports its pool org over the heartbeat
 // until the spoke adopts the pushed config. It must NOT be classified as
@@ -71,6 +75,33 @@ func TestIsAvailableRegistryEntry_LockstepWithPlaceholderEntry(t *testing.T) {
 		if got, want := isAvailableRegistryEntry(re), isPlaceholderEntry(mine); got != want {
 			t.Fatalf("org=%q provStatus=%q: isAvailableRegistryEntry=%v isPlaceholderEntry=%v", re.Org, re.ProvStatus, got, want)
 		}
+	}
+}
+
+// The embedded dashboard JS is not executed by Go tests, so pin the ordering
+// that keeps it in lockstep with the Go predicates: statusAvailable wins before
+// assigned/assignedUnclaimed can short-circuit the prefix fallback.
+func TestEmbeddedPlaceholderHiveAvailableWins(t *testing.T) {
+	src, err := os.ReadFile("saas.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyStart := strings.Index(string(src), "function isPlaceholderHive(h) {")
+	if bodyStart < 0 {
+		t.Fatal("isPlaceholderHive not found")
+	}
+	bodyEnd := strings.Index(string(src)[bodyStart:], "function hiveNamespace")
+	if bodyEnd < 0 {
+		t.Fatal("isPlaceholderHive body end not found")
+	}
+	body := string(src)[bodyStart : bodyStart+bodyEnd]
+	availableAt := strings.Index(body, "h.provStatus === 'available'")
+	assignedAt := strings.Index(body, "h.provStatus === 'assigned'")
+	if availableAt < 0 || assignedAt < 0 {
+		t.Fatalf("expected available and assigned checks in isPlaceholderHive, got body:\n%s", body)
+	}
+	if availableAt > assignedAt {
+		t.Fatal("isPlaceholderHive checks assigned before available; statusAvailable must remain authoritative")
 	}
 }
 
