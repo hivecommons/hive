@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -353,6 +354,11 @@ const (
 	// deadline is lifted once established so long-lived relays (git smart
 	// HTTP) are unaffected.
 	upstreamDialTimeout = 15 * time.Second
+
+	// clientTLSHandshakeTimeout bounds the proxy's TLS handshake with the
+	// inbound client. It intentionally matches upstreamDialTimeout: both are
+	// short setup phases, unlike long-lived request/response relays.
+	clientTLSHandshakeTimeout = upstreamDialTimeout
 )
 
 // handleTransparentTLS handles iptables-redirected connections. The agent
@@ -443,8 +449,14 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 	prefixed := &prefixConn{Conn: conn, prefix: fullBuf}
 	tlsClientConn := tls.Server(prefixed, tlsConfig)
-	if err := tlsClientConn.Handshake(); err != nil {
-		p.logger.Warn("transparent proxy TLS handshake failed", "error", err)
+	// Bound the client TLS handshake: a client that connects and then stops
+	// sending handshake bytes would otherwise wedge this connection forever
+	// (empty queues on both sides — the observed egress-hang signature).
+	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	handshakeErr := tlsClientConn.Handshake()
+	conn.SetDeadline(time.Time{})
+	if handshakeErr != nil {
+		p.logger.Warn("transparent proxy TLS handshake failed", "error", handshakeErr)
 		return
 	}
 	defer tlsClientConn.Close()
@@ -741,8 +753,13 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	tlsClientConn := tls.Server(conn, &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	})
-	if err := tlsClientConn.Handshake(); err != nil {
-		p.logger.Warn("proxy client TLS handshake failed", "error", err)
+	// Bound the client TLS handshake (see handleTransparentTLS): a client that
+	// stops mid-handshake must not wedge this connection forever.
+	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	handshakeErr := tlsClientConn.Handshake()
+	conn.SetDeadline(time.Time{})
+	if handshakeErr != nil {
+		p.logger.Warn("proxy client TLS handshake failed", "error", handshakeErr)
 		return
 	}
 	defer tlsClientConn.Close()
@@ -769,13 +786,37 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 
 // proxyHTTP reads HTTP requests from the client, checks them against
 // mode rules, and either forwards or blocks them.
+func isTimeoutError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
+	if !isTimeoutError(err) {
+		return
+	}
+	attrs = append(attrs, "error", err)
+	p.logger.Warn(msg, attrs...)
+}
+
 func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName string, mode agent.AgentMode) {
 	clientBuf := newBufferedConn(client)
 
 	for {
+		// Bound every phase of this request/response exchange. Before this,
+		// the relay had NO deadlines anywhere after the initial CONNECT read:
+		// a client or upstream that stopped mid-exchange (stalled response,
+		// half-written body, frozen keep-alive) blocked forever — the
+		// multi-hour "egress wedge" where the agent's request never reached
+		// GitHub and its session froze. Each phase gets its own deadline;
+		// they are cleared once the phase completes so healthy keep-alive
+		// connections are unaffected.
+		client.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
-			return // client closed or error
+			client.SetReadDeadline(time.Time{})
+			p.logTimeout("proxy client request read timed out", err, "agent", agentName)
+			return
 		}
 
 		blocked := false
@@ -787,6 +828,8 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 				req.Body.Close()
 			}
 			if readErr != nil {
+				client.SetReadDeadline(time.Time{})
+				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
 			allowed, isMutation := GraphQLAllowed(mode, body)
@@ -846,12 +889,21 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			}
 			resp.Header.Set("Content-Type", "text/plain")
 			resp.Header.Set("X-Hive-Proxy-Blocked", "true")
-			resp.Write(client)
+			client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			writeErr := resp.Write(client)
+			client.SetWriteDeadline(time.Time{})
+			if writeErr != nil {
+				p.logTimeout("proxy blocked response write timed out", writeErr, "agent", agentName)
+				return
+			}
 
 			if req.Body != nil {
-				io.Copy(io.Discard, req.Body)
+				if _, drainErr := io.Copy(io.Discard, req.Body); drainErr != nil {
+					p.logTimeout("proxy blocked request body drain timed out", drainErr, "agent", agentName, "path", req.URL.Path)
+				}
 				req.Body.Close()
 			}
+			client.SetReadDeadline(time.Time{})
 			continue
 		}
 
@@ -859,9 +911,15 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 		// can't handle reliably. After the ACMM check passes, forward
 		// the request and switch to raw bidirectional streaming.
 		if isGitPath(req.URL.Path) {
+			upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			if err := req.Write(upstream); err != nil {
+				upstream.SetWriteDeadline(time.Time{})
+				client.SetReadDeadline(time.Time{})
+				p.logTimeout("proxy git request relay timed out", err, "agent", agentName, "path", req.URL.Path)
 				return
 			}
+			upstream.SetWriteDeadline(time.Time{})
+			client.SetReadDeadline(time.Time{})
 			done := make(chan struct{})
 			go func() {
 				io.Copy(upstream, client)
@@ -872,20 +930,35 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			return
 		}
 
-		// Forward to upstream.
+		// Forward to upstream. The client read deadline stays in force until
+		// the body is fully drained (req.Write pipes req.Body from the client),
+		// so a client stalling mid-body cannot hang the relay.
+		upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := req.Write(upstream); err != nil {
+			upstream.SetWriteDeadline(time.Time{})
+			client.SetReadDeadline(time.Time{})
+			p.logTimeout("proxy request relay timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
+		upstream.SetWriteDeadline(time.Time{})
+		client.SetReadDeadline(time.Time{})
 
+		upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		resp, err := http.ReadResponse(newBufferedReader(upstream), req)
+		upstream.SetReadDeadline(time.Time{})
 		if err != nil {
+			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
 
+		client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := resp.Write(client); err != nil {
 			resp.Body.Close()
+			client.SetWriteDeadline(time.Time{})
+			p.logTimeout("proxy response relay timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
+		client.SetWriteDeadline(time.Time{})
 		resp.Body.Close()
 	}
 }
@@ -1562,16 +1635,22 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 	tlsConn := tls.Server(conn, &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	})
-	if err := tlsConn.Handshake(); err != nil {
-		p.logger.Warn("inference reroute: TLS handshake failed", "error", err)
+	conn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	handshakeErr := tlsConn.Handshake()
+	conn.SetDeadline(time.Time{})
+	if handshakeErr != nil {
+		p.logger.Warn("inference reroute: TLS handshake failed", "error", handshakeErr)
 		return
 	}
 	defer tlsConn.Close()
 
 	clientBuf := bufio.NewReader(tlsConn)
 	for {
+		tlsConn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
+		tlsConn.SetReadDeadline(time.Time{})
 		if err != nil {
+			p.logTimeout("inference reroute: client request read timed out", err, "agent", agentName)
 			return
 		}
 
@@ -1582,11 +1661,14 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
+	conn.SetReadDeadline(time.Time{})
 	if req.Body != nil {
 		req.Body.Close()
 	}
 	if err != nil {
+		p.logTimeout("inference reroute: request body read timed out", err, "agent", agentName)
 		p.writeHTTPError(conn, http.StatusBadGateway, "failed to read request body")
 		return
 	}
@@ -1730,8 +1812,11 @@ func (p *GitHubProxy) sniffCopilotOnTLS(clientConn net.Conn, host, agentName str
 	}
 
 	tlsClientConn := tls.Server(clientConn, &tls.Config{Certificates: []tls.Certificate{tlsCert}})
-	if err := tlsClientConn.Handshake(); err != nil {
-		p.logger.Warn("copilot sniff: client TLS handshake failed", "error", err)
+	clientConn.SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))
+	handshakeErr := tlsClientConn.Handshake()
+	clientConn.SetDeadline(time.Time{})
+	if handshakeErr != nil {
+		p.logger.Warn("copilot sniff: client TLS handshake failed", "error", handshakeErr)
 		return
 	}
 	defer tlsClientConn.Close()
@@ -1763,9 +1848,12 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 	upstreamBuf := bufio.NewReader(upstream)
 
 	for {
+		client.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
-			return // client closed
+			client.SetReadDeadline(time.Time{})
+			p.logTimeout("copilot sniff: client request read timed out", err, "agent", agentName, "host", host)
+			return
 		}
 
 		isCompletion := isCopilotCompletionsPath(req.URL.Path)
@@ -1778,6 +1866,8 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, copilotSniffBodyLimit))
 			req.Body.Close()
 			if readErr != nil {
+				client.SetReadDeadline(time.Time{})
+				p.logTimeout("copilot sniff: request body read timed out", readErr, "agent", agentName, "host", host, "path", req.URL.Path)
 				return
 			}
 			var streaming bool
@@ -1790,22 +1880,35 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		}
 
+		upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := req.Write(upstream); err != nil {
+			upstream.SetWriteDeadline(time.Time{})
+			client.SetReadDeadline(time.Time{})
+			p.logTimeout("copilot sniff: request relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 			return
 		}
+		upstream.SetWriteDeadline(time.Time{})
+		client.SetReadDeadline(time.Time{})
 
+		upstream.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		resp, err := http.ReadResponse(upstreamBuf, req)
+		upstream.SetReadDeadline(time.Time{})
 		if err != nil {
+			p.logTimeout("copilot sniff: upstream response read timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 			return
 		}
 
 		if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			p.forwardCopilotResponseWithUsage(client, resp, host, agentName, model)
 		} else {
+			client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			if err := resp.Write(client); err != nil {
 				resp.Body.Close()
+				client.SetWriteDeadline(time.Time{})
+				p.logTimeout("copilot sniff: response relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
 				return
 			}
+			client.SetWriteDeadline(time.Time{})
 			resp.Body.Close()
 		}
 
@@ -1854,9 +1957,11 @@ func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *htt
 	// buffered copy and drop Content-Length ambiguity by setting it explicitly.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = int64(len(body))
+	client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 	if err := resp.Write(client); err != nil {
 		p.logger.Warn("copilot sniff: response write to client failed", "agent", agentName, "error", err)
 	}
+	client.SetWriteDeadline(time.Time{})
 }
 
 func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
