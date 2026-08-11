@@ -233,6 +233,21 @@ func (ds *DocumentSource) Metadata() DocMetadata {
 	return ds.metadata
 }
 
+// docNoRedirectToPrivate is a CheckRedirect policy that prevents the HTTP
+// client from following redirects to private/internal hosts. A public URL that
+// returns a 302 to an internal address (e.g. 169.254.169.254 or 10.x) would
+// otherwise bypass the pre-fetch isPrivateURL guard in the API handler.
+func docNoRedirectToPrivate(req *http.Request, via []*http.Request) error {
+	const maxRedirects = 3
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	if gitSourceHostIsPrivate(req.URL.Hostname()) {
+		return fmt.Errorf("redirect to private/internal host blocked: %s", req.URL.Host)
+	}
+	return nil
+}
+
 func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, docFetchTimeout)
 	defer cancel()
@@ -243,7 +258,8 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 	}
 	req.Header.Set("User-Agent", docUserAgent)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{CheckRedirect: docNoRedirectToPrivate}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("HTTP GET: %w", err)
 	}
