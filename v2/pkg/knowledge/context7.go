@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -64,6 +65,13 @@ func SearchContext7(ctx context.Context, name, apiKey string) ([]Context7SearchR
 // FetchContext7Docs retrieves documentation for a library via its llms.txt
 // endpoint, which returns curated content optimized for LLM consumption.
 func FetchContext7Docs(ctx context.Context, libraryID, query, apiKey string) (*Context7DocsResult, error) {
+	// Validate that libraryID starts with "/" so that concatenating it with
+	// context7BaseURL cannot produce a URL with an attacker-controlled authority
+	// component. For example, a libraryID of "@evil.com/path" would produce
+	// "https://context7.com@evil.com/path/llms.txt" where evil.com is the host.
+	if !strings.HasPrefix(libraryID, "/") {
+		return nil, fmt.Errorf("context7 library ID must start with '/': %q", libraryID)
+	}
 	params := url.Values{
 		"tokens": {fmt.Sprintf("%d", context7DefaultTokens)},
 	}
@@ -84,6 +92,15 @@ func FetchContext7Docs(ctx context.Context, libraryID, query, apiKey string) (*C
 	}, nil
 }
 
+// context7Client is an HTTP client that refuses to follow redirects to
+// private/internal addresses. context7.com requests go to a fixed hardcoded
+// base URL, but an adversary-controlled redirect (or a crafted libraryID)
+// could pivot to cloud metadata or internal services without this guard.
+var context7Client = &http.Client{
+	Timeout:       context7Timeout,
+	CheckRedirect: knowledgeNoRedirectToPrivate,
+}
+
 func context7Get(ctx context.Context, reqURL, apiKey string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, context7Timeout)
 	defer cancel()
@@ -97,7 +114,7 @@ func context7Get(ctx context.Context, reqURL, apiKey string) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", "hive-knowledge/1.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := context7Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
