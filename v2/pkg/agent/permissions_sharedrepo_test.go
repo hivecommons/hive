@@ -61,6 +61,37 @@ func TestSharedRepoClonesFindsOnlyGitTrees(t *testing.T) {
 	}
 }
 
+// TestSharedRepoClonesRejectsSymlinks pins the CWE-59 guard on the discovery
+// path: a symlinked child (even one whose target is a real git repo) must NOT be
+// returned, because the widening walk would otherwise follow it out of the shared
+// HOME. This mirrors the fixEntry symlink guard for the new scan.
+func TestSharedRepoClonesRejectsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	origParent := SharedRepoParent
+	SharedRepoParent = root
+	t.Cleanup(func() { SharedRepoParent = origParent })
+
+	// A real repo OUTSIDE the parent, then a symlink to it inside the parent.
+	outside := t.TempDir()
+	realRepo := mkRepoDir(t, outside, "api-server")
+	link := filepath.Join(root, "api-server")
+	if err := os.Symlink(realRepo, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// Also plant a repo whose .git is itself a symlink — must be skipped too.
+	sneaky := filepath.Join(root, "ui")
+	if err := os.MkdirAll(sneaky, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "api-server", ".git"), filepath.Join(sneaky, ".git")); err != nil {
+		t.Fatalf("symlink .git: %v", err)
+	}
+
+	if got := sharedRepoClones(); len(got) != 0 {
+		t.Errorf("sharedRepoClones() = %v, want empty: symlinked entries must be skipped (CWE-59)", got)
+	}
+}
+
 // TestSharedRepoClonesMissingParentIsSafe verifies the best-effort contract: an
 // absent parent yields nil, never an error or panic (the watcher must never
 // abort a tick).
