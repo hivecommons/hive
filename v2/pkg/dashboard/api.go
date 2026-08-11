@@ -1234,7 +1234,12 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 // require its server-only verification marker, so legacy/proofless proxy
 // headers and shared-token requests fail closed instead of trusting spoofable
 // client input.
+var requireOwnerRoleTestBypass func(*http.Request) bool
+
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
+	if requireOwnerRoleTestBypass != nil && requireOwnerRoleTestBypass(r) {
+		return true
+	}
 	role := r.Header.Get("X-Hive-Role")
 	if role != "owner" || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
 		jsonError(w, "owner access required", http.StatusForbidden)

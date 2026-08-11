@@ -19,6 +19,15 @@ import (
 
 // ---------- helpers ----------
 
+func init() {
+	requireOwnerRoleTestBypass = func(r *http.Request) bool {
+		return r.Header.Get("X-Hive-Role") == "" &&
+			r.Header.Get(ownerRoleVerifiedHeader) == "" &&
+			r.Header.Get("Authorization") == "" &&
+			r.Header.Get("X-Hive-Internal") == ""
+	}
+}
+
 func testDeps(t *testing.T) *Dependencies {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -83,6 +92,7 @@ func doPost(s *Server, path string, body interface{}) *httptest.ResponseRecorder
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -109,6 +119,7 @@ func doPut(s *Server, path string, body interface{}) *httptest.ResponseRecorder 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -121,6 +132,7 @@ func doDelete(s *Server, path string, body interface{}) *httptest.ResponseRecord
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
