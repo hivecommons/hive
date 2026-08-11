@@ -279,6 +279,13 @@ func docRedirectHostIsPrivate(ctx context.Context, host string) bool {
 // returns a 302 to an internal address (e.g. 169.254.169.254 or 10.x) would
 // otherwise bypass the pre-fetch isPrivateURL guard in the API handler.
 func docNoRedirectToPrivate(req *http.Request, via []*http.Request) error {
+	return knowledgeNoRedirectToPrivate(req, via)
+}
+
+// knowledgeNoRedirectToPrivate is a CheckRedirect policy for user-configurable
+// knowledge HTTP endpoints. It keeps redirect validation as strong as the
+// dashboard preflight checks on the original URL.
+func knowledgeNoRedirectToPrivate(req *http.Request, via []*http.Request) error {
 	const maxRedirects = 3
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
