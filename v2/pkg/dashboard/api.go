@@ -7969,6 +7969,9 @@ func maskToken(token string) string {
 }
 
 func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.BeadStores == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
 		return
@@ -8001,6 +8004,9 @@ func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBeadsResetAgent(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	agentName := r.PathValue("agent")
 	if s.deps.BeadStores == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
