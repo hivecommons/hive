@@ -191,6 +191,7 @@ installation instead of broadening the PAT.
 | Name | Purpose |
 |---|---|
 | `HIVE_METRICS_ENABLED` | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default because it exposes estimated cost data. |
+| `HIVE_METRICS_TOKEN` | Optional bearer token for `/metrics`. When set, scrapers must send `Authorization: Bearer <token>` (configure Prometheus `bearer_token`); when empty, `/metrics` stays open. Set it to stop the cost/agent series leaking to anyone on the pod network. |
 
 > **Note on `tokens_24h`:** despite its name, the per-spoke heartbeat field
 > `tokens_24h` (stored on the hub as `totalTokens24h`) is a **cumulative total**,

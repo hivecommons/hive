@@ -43,3 +43,56 @@ func TestHandleMetricsExposition(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/plain exposition", ct)
 	}
 }
+
+// TestHandleMetricsBearerToken covers the optional HIVE_METRICS_TOKEN gate
+// (#3399): open when unset (backward-compatible), and requires a matching
+// Bearer token when set.
+func TestHandleMetricsBearerToken(t *testing.T) {
+	newRec := func(auth string) *httptest.ResponseRecorder {
+		s := covApiServer(t)
+		s.deps.Config.HiveID = "test-hive"
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		s.handleMetrics(rec, req)
+		return rec
+	}
+
+	t.Run("no token configured stays open", func(t *testing.T) {
+		t.Setenv("HIVE_METRICS_TOKEN", "")
+		if rec := newRec(""); rec.Code != http.StatusOK {
+			t.Errorf("unauthenticated /metrics with no token = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("token configured rejects missing bearer", func(t *testing.T) {
+		t.Setenv("HIVE_METRICS_TOKEN", "sk-metrics")
+		rec := newRec("")
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("missing bearer = %d, want 401", rec.Code)
+		}
+		if got := rec.Header().Get("WWW-Authenticate"); !strings.Contains(got, "Bearer") {
+			t.Errorf("WWW-Authenticate = %q, want a Bearer challenge", got)
+		}
+	})
+
+	t.Run("token configured rejects wrong bearer", func(t *testing.T) {
+		t.Setenv("HIVE_METRICS_TOKEN", "sk-metrics")
+		if rec := newRec("Bearer wrong"); rec.Code != http.StatusUnauthorized {
+			t.Errorf("wrong bearer = %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("token configured accepts correct bearer", func(t *testing.T) {
+		t.Setenv("HIVE_METRICS_TOKEN", "sk-metrics")
+		rec := newRec("Bearer sk-metrics")
+		if rec.Code != http.StatusOK {
+			t.Errorf("correct bearer = %d, want 200", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "hive_estimated_cost_usd_total") {
+			t.Error("authenticated /metrics should return the exposition")
+		}
+	})
+}
