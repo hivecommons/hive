@@ -35,7 +35,7 @@ jobs:
         # child. Cached images kept running, which masked it, but any new node /
         # fresh pull broke daily right after this 04:17 UTC prune. Do NOT pin
         # back below v3.1.0.
-        uses: snok/container-retention-policy@v3.1.0
+        uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53
         with:
           account: kubestellar
           token: ${{ secrets.GHCR_PRUNE_TOKEN }}
