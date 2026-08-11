@@ -112,7 +112,7 @@ func TestUpdateMaxContextLen(t *testing.T) {
 // applyInferenceAuth — header injection and security guards
 // ---------------------------------------------------------------------------
 
-func TestApplyInferenceAuth(t *testing.T) {
+func TestApplyInferenceAuthRouteHeaders(t *testing.T) {
 	t.Run("no api key sets no auth header", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "http://localhost:8000/v1/chat/completions", nil)
 		route := &InferenceRoute{Backend: "vllm"}
@@ -256,4 +256,3 @@ func TestDefaultInferenceTools(t *testing.T) {
 		}
 	}
 }
-
