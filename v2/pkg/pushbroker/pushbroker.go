@@ -32,6 +32,18 @@ var DefaultProtectedPaths = []string{
 	".github/OWNERS",
 }
 
+// pushTokenEnvVar carries the minted push token to git out-of-band (audit F5).
+// It is deliberately NOT in credentialEnvPrefixes: that list strips INHERITED
+// credentials from the push environment, whereas this value is supplied by the
+// broker itself after that filter runs.
+const pushTokenEnvVar = "HIVE_PUSH_TOKEN"
+
+// pushCredentialHelper is a git credential helper that echoes the token from
+// the environment. Only the variable NAME appears here, so nothing secret
+// reaches argv (where it would be world-readable via /proc/<pid>/cmdline) or
+// disk. The leading "!" makes git run it through the shell.
+const pushCredentialHelper = `!f() { echo username=x-access-token; echo "password=$` + pushTokenEnvVar + `"; }; f`
+
 var credentialEnvPrefixes = []string{
 	"GITHUB_TOKEN=", "GH_TOKEN=", "HIVE_GITHUB_TOKEN=", "COPILOT_GITHUB_TOKEN=",
 	"GIT_ASKPASS=", "SSH_ASKPASS=",
@@ -142,12 +154,26 @@ func (b *Broker) Run(ctx context.Context) (Result, error) {
 	if strings.TrimSpace(token) == "" {
 		return b.fail(res, errors.New("pushbroker: minter returned empty token"))
 	}
+	// SECURITY (audit F5, CWE-214): the push token must never appear in git's
+	// argv. This used to pass it as `-c http.extraHeader=Authorization: Bearer
+	// <token>`, which lands in /proc/<pid>/cmdline — world-readable, so any
+	// other UID on the box could read a live push credential while the push
+	// ran. Agents run as their own UIDs in this container, so that is a real
+	// cross-tenant read, not a theoretical one.
+	//
+	// Instead pass the token through the environment (visible only to the
+	// process owner via /proc/<pid>/environ) and have a credential helper echo
+	// it back to git. The helper text itself carries only the variable NAME, so
+	// the secret stays out of argv and off disk.
 	args := []string{
 		"-c", "core.hooksPath=/dev/null",
-		"-c", "http.extraHeader=Authorization: Bearer " + token,
+		"-c", "credential.helper=" + pushCredentialHelper,
 		"push", "--no-verify", b.remote(), "HEAD:refs/heads/" + b.Branch,
 	}
-	if _, err := b.runner().Run(ctx, b.Workspace, PushEnv(os.Environ()), "git", args...); err != nil {
+	// Append AFTER PushEnv: it strips inherited credential variables, and this
+	// one is deliberately supplied rather than inherited.
+	env := append(PushEnv(os.Environ()), pushTokenEnvVar+"="+token)
+	if _, err := b.runner().Run(ctx, b.Workspace, env, "git", args...); err != nil {
 		return b.fail(res, fmt.Errorf("git push failed: %w", err))
 	}
 	res.Pushed = true
