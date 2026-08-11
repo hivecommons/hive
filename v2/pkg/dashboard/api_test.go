@@ -19,15 +19,6 @@ import (
 
 // ---------- helpers ----------
 
-func init() {
-	requireOwnerRoleTestBypass = func(r *http.Request) bool {
-		return r.Header.Get("X-Hive-Role") == "" &&
-			r.Header.Get(ownerRoleVerifiedHeader) == "" &&
-			r.Header.Get("Authorization") == "" &&
-			r.Header.Get("X-Hive-Internal") == ""
-	}
-}
-
 func testDeps(t *testing.T) *Dependencies {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
