@@ -7446,6 +7446,16 @@ func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "url, file_path, or context7_id is required", http.StatusBadRequest)
 		return
 	}
+	if req.URL != "" {
+		if !strings.HasPrefix(req.URL, "https://") && !strings.HasPrefix(req.URL, "http://") {
+			jsonError(w, "document url must use http or https scheme", http.StatusBadRequest)
+			return
+		}
+		if isPrivateURL(r.Context(), req.URL) {
+			jsonError(w, "document url must not point to private/internal addresses", http.StatusBadRequest)
+			return
+		}
+	}
 	if req.Layer == "" {
 		req.Layer = knowledge.LayerProject
 	}

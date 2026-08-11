@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -228,6 +229,76 @@ func (ds *DocumentSource) Metadata() DocMetadata {
 	return ds.metadata
 }
 
+// docRedirectResolver resolves a redirect target's hostname to IPs. A package
+// var so tests can point it at a stub instead of real DNS.
+var docRedirectResolver = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
+
+// docRedirectHostIsPrivate reports whether a redirect target points at a
+// private/internal address, RESOLVING DNS to do so.
+//
+// A redirect target is chosen by the remote server at fetch time, is fully
+// attacker-controlled, and has no operator gate. An IP-literal-only check would
+// let a public URL 302 to a hostname that resolves to 169.254.169.254 and reach
+// cloud metadata, which is exactly the bypass the pre-fetch isPrivateURL guard
+// in the API handler (which does resolve) was added to close.
+//
+// Fails closed: an unparseable target or a DNS error is treated as private.
+func docRedirectHostIsPrivate(ctx context.Context, host string) bool {
+	if host == "" {
+		return true
+	}
+	if docRedirectAddressIsPrivate(host) {
+		return true
+	}
+	addrs, err := docRedirectResolver(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return true
+	}
+	for _, addr := range addrs {
+		if docRedirectAddressIsPrivate(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func docRedirectAddressIsPrivate(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "" || host == "localhost" {
+		return host == "localhost"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+// docNoRedirectToPrivate is a CheckRedirect policy that prevents the HTTP
+// client from following redirects to private/internal hosts. A public URL that
+// returns a 302 to an internal address (e.g. 169.254.169.254 or 10.x) would
+// otherwise bypass the pre-fetch isPrivateURL guard in the API handler.
+func docNoRedirectToPrivate(req *http.Request, via []*http.Request) error {
+	const maxRedirects = 3
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	// Only http(s) may be followed: a redirect to file://, gopher:// or similar
+	// is never legitimate for a document fetch and is a classic SSRF pivot.
+	if scheme := strings.ToLower(req.URL.Scheme); scheme != "http" && scheme != "https" {
+		return fmt.Errorf("redirect to non-http(s) scheme blocked: %s", scheme)
+	}
+	if docRedirectHostIsPrivate(req.Context(), req.URL.Hostname()) {
+		return fmt.Errorf("redirect to private/internal host blocked: %s", req.URL.Host)
+	}
+	return nil
+}
+
 func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, docFetchTimeout)
 	defer cancel()
@@ -238,7 +309,8 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 	}
 	req.Header.Set("User-Agent", docUserAgent)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{CheckRedirect: docNoRedirectToPrivate}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("HTTP GET: %w", err)
 	}

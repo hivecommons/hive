@@ -275,6 +275,16 @@ func TestCovC_DocumentsImport(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("no source status = %d, want 400", rec.Code)
 	}
+
+	rec = doPost(s, "/api/knowledge/documents", map[string]any{"name": "doc", "url": "file:///etc/passwd"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("non-http document URL status = %d, want 400", rec.Code)
+	}
+
+	rec = doPost(s, "/api/knowledge/documents", map[string]any{"name": "doc", "url": "http://169.254.169.254/latest/meta-data"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("private document URL status = %d, want 400", rec.Code)
+	}
 }
 
 func TestCovC_DocumentGetNotFound(t *testing.T) {
