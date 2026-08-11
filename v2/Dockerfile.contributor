@@ -101,8 +101,10 @@ RUN ARCH=$(dpkg --print-architecture) \
   && ln -s /usr/local/go/bin/go /usr/local/bin/go \
   && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-# Install ws for contributor-relay
-RUN mkdir -p /opt/hive/node_modules && cd /opt/hive && npm install ws
+# Install ws for contributor-relay — version pinned to prevent supply-chain drift.
+# ws 8.18.0 is the stable LTS release of the WebSocket client library.
+# Bump deliberately after reviewing release notes.
+RUN mkdir -p /opt/hive/node_modules && cd /opt/hive && npm install ws@8.18.0
 
 # Create non-root user
 RUN useradd -m -s /bin/bash -u 1000 dev
