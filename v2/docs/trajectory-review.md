@@ -125,3 +125,73 @@ every governor cycle (no hour-one directive to forget), write only via
 CI-gated PRs, run under per-task GitHub tokens and per-tier rate limits, and
 are already pausable/auditable. Trajectory review adds the missing "what
 outcome is this sequence working toward?" check on top.
+
+## Operator response
+
+A trajectory-review pause asks for human judgment. The lane pauses the
+agent with trigger `trajectory-review`. It deletes nothing. Do not assume
+the reviewer is right.
+
+### Audit entry
+The pause writes an audit entry. The user is `trajectory`. The action is
+`trajectory-pause`. The detail is `confidence=<pct>% reason=<reason>`. The
+entry names the agent in its `agent` field. A system alert accompanies the
+pause with id `trajectory-<agent>` at severity `error`. A high-priority
+notification is sent when a notifier is configured. Read the entry from
+`/data/audit.jsonl`. The dashboard Audit page shows it. The API serves it
+at `GET /api/audit`. The CLI reads it:
+
+```bash
+hivectl observe audit
+```
+
+Alert-only mode (`on_divergence=alert`) writes action `trajectory-alert`
+with severity `warning`. It does not pause the agent.
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `user` | `trajectory` | The lane that wrote the entry. |
+| `action` | `trajectory-pause` | The agent was paused. Alert-only mode writes `trajectory-alert`. |
+| `detail` | `confidence=<pct>% reason=<reason>` | Reviewer confidence and the reason for the verdict. |
+| `agent` | `<name>` | The paused agent. |
+
+### Read the transcript
+The lane reads the last 400 lines of the agent's tmux pane. The reviewer
+sees the configured `transcript_lines` (default 120). Inspect the same
+pane from the dashboard agent view, or read the tail with:
+
+```bash
+hivectl agent logs <name> --lines N
+```
+
+### False positive or genuine divergence
+The reviewer judges direction, not any single line. It defaults to
+non-divergent when unsure. The lane fails open on a reviewer outage. A
+flagged sequence is not proof of drift. Compare it with the agent's
+assigned intent, its last kick.
+
+- A false positive still serves the assigned intent. Resume the agent.
+- Genuine divergence heads where the intent does not authorize. Keep the
+  agent paused and fix its intent before resume.
+
+Checklist:
+- [ ] Read the audit entry: confidence and reason.
+- [ ] Read the transcript tail in the dashboard agent view.
+- [ ] Compare the flagged actions with the agent's last kick.
+- [ ] Resume the agent after a false positive.
+- [ ] Correct the intent before resume after genuine divergence.
+
+### Paused state and resume
+While paused, the governor issues no kicks. The pause sends Ctrl-C to the
+tmux session. The in-flight command stops. Beads and work items are kept.
+Resume from the dashboard pause/resume toggle (`POST /api/resume/<name>`,
+owner role required), or use the CLI:
+
+```bash
+hivectl agent resume <name>
+```
+
+Resume clears the paused flags, persists, and force-relaunches the session.
+Normal cadence kicks resume after relaunch. Start the lane in alert mode
+first. Calibrate on a given hive's agents before you switch to pause.
+See [agent configuration](agent-configuration.md) and [hivectl](hivectl.md).

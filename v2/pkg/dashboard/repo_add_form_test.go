@@ -23,6 +23,7 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -50,6 +51,7 @@ func TestGovernorRepos_GHEHiveHostRules(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(ok))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("same-forge URL add: code = %d, want 400 (body: %s)", w.Code, w.Body.String())
@@ -63,6 +65,7 @@ func TestGovernorRepos_GHEHiveHostRules(t *testing.T) {
 	req = httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(bad))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("cross-forge add on GHE hive: code = %d, want 400", w.Code)
@@ -82,6 +85,7 @@ func TestGovernorRepos_RejectsSaveWithNoDefault(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -109,6 +113,7 @@ func TestGovernorRepos_RejectsRemovingDefault(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 when the default is removed with no replacement", w.Code)
@@ -119,6 +124,7 @@ func TestGovernorRepos_RejectsRemovingDefault(t *testing.T) {
 	req = httptest.NewRequest("PUT", "/api/config/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 once a new default is named (body: %s)", w.Code, w.Body.String())

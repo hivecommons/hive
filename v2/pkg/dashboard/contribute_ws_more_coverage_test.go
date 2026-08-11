@@ -5,8 +5,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func covK2Hub(t *testing.T) (*ContributeWSHub, *Server) {
@@ -255,4 +258,89 @@ func TestCovK2_HandleWSNonWebsocket(t *testing.T) {
 	if rec.Code < 400 {
 		t.Fatalf("expected an error status for a non-websocket upgrade, got %d", rec.Code)
 	}
+}
+
+// Audit F9 (CWE-770). The connection cap counted len(h.connections), but a
+// connection is only added to that map AFTER it authenticates. So the cap
+// bounded exactly the clients that had already proven who they were, and left
+// the pre-auth window — one goroutine, one socket and a read buffer for a full
+// wsAuthTimeout each — completely unbounded.
+//
+// An unauthenticated client could therefore hold arbitrarily many sockets while
+// the only parties actually limited were legitimate contributors. Sockets must
+// occupy a slot from the moment they are upgraded.
+func TestF9_UnauthenticatedConnectionsCountTowardCap(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	srv := httptest.NewServer(http.HandlerFunc(hub.HandleWS))
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	// Open sockets and never authenticate. Each should hold a slot.
+	var open []*websocket.Conn
+	defer func() {
+		for _, c := range open {
+			c.Close()
+		}
+	}()
+	for i := 0; i < maxWSConnections; i++ {
+		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial %d (below the cap) failed: %v", i, err)
+		}
+		open = append(open, c)
+	}
+
+	// Positive control: the pre-auth sockets must actually be tracked. If they
+	// are not, the assertion below would be testing nothing.
+	if got := hub.pendingConns.Load(); got == 0 {
+		t.Fatalf("test is vacuous: %d unauthenticated sockets are open but pendingConns is 0", len(open))
+	}
+	// None of them authenticated, so the authenticated map must still be empty.
+	hub.mu.RLock()
+	authed := len(hub.connections)
+	hub.mu.RUnlock()
+	if authed != 0 {
+		t.Fatalf("no connection authenticated, but h.connections holds %d", authed)
+	}
+
+	// The next dial is over the cap and must be refused.
+	c, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		c.Close()
+		t.Fatal("F9: a connection beyond the cap was accepted — unauthenticated sockets do not count, so the limit only ever restrained authenticated contributors")
+	}
+	if resp != nil && resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("rejected with %d, want 503", resp.StatusCode)
+	}
+}
+
+// A socket that goes away must give its slot back, or the cap ratchets down to
+// zero over time and the endpoint dies on its own.
+func TestF9_ClosedPreAuthConnectionReleasesItsSlot(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	srv := httptest.NewServer(http.HandlerFunc(hub.HandleWS))
+	defer srv.Close()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.pendingConns.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if hub.pendingConns.Load() == 0 {
+		t.Fatal("test is vacuous: the open socket was never counted as pending")
+	}
+	c.Close()
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if hub.pendingConns.Load() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("F9: closed pre-auth connection never released its slot (pendingConns=%d) — the cap would ratchet down permanently", hub.pendingConns.Load())
 }

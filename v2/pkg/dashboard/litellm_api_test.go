@@ -26,6 +26,7 @@ func TestHandleGovernorLiteLLM_Update(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 
 	if w.Code != http.StatusOK {
@@ -54,6 +55,7 @@ func TestHandleGovernorLiteLLM_InvalidEndpointRejected(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -117,6 +119,7 @@ func TestHandleGovernorLiteLLM_EnvNameGuardrail(t *testing.T) {
 			req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
+			markOwnerRequest(req)
 			srv.handleGovernorLiteLLM(w, req)
 			if tc.wantOK && w.Code != http.StatusOK {
 				t.Fatalf("code = %d, want 200 (body: %s)", w.Code, w.Body.String())
@@ -159,6 +162,7 @@ func TestHandleGovernorLiteLLM_APIKeyValueStored(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 
 	if w.Code != http.StatusOK {
@@ -222,6 +226,7 @@ func TestHandleGovernorLiteLLM_ProbeSurfacesGatewayError(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 
 	if w.Code != http.StatusOK {
@@ -308,6 +313,7 @@ func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 for key-like file path", w.Code)
@@ -321,6 +327,7 @@ func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
 	req = httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv2.handleGovernorLiteLLM(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 for absolute path (body: %s)", w.Code, w.Body.String())
@@ -400,6 +407,7 @@ func TestHandleGovernorLiteLLM_StoringKeyScrubsPastedEnvValue(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLiteLLM(w, req)
 
 	if w.Code != http.StatusOK {

@@ -125,3 +125,36 @@ Agents open issues, create PRs, and auto-merge on green CI. No hold label. Outre
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
+
+## Changing a hive's ACMM level
+
+Promoting or demoting a running hive between levels is a single operation — the
+hive reconciles its agent roster and per-agent modes to match the target level.
+
+**From the dashboard:** open the Governor config and set the ACMM level. This is
+the normal path.
+
+**Over the API:** `PUT /api/packs/level` with `{"level": N}` where N is 1–6.
+
+What happens when the level changes (`handlePackSetLevel` → `ApplyPack`):
+
+1. The new level is written to `acmm_level` in `hive.yaml` and persisted.
+2. Per-agent `mode` overrides are cleared so stale modes from the previous level
+   are not re-applied on the next config reload.
+3. `ApplyPack` cascades the target level's pack-defined agent fields (mode,
+   `kick_template`, description, …) into the live config **and reconciles the
+   roster** — adding every agent the level introduces (for example
+   architect/strategist at higher levels) and applying each agent's mode for
+   that level (advisory → measured → holdgated → full).
+
+Notes:
+
+- **Promotion adds agents and capability; demotion narrows it.** Moving up to L6
+  makes agents auto-merge on green CI; moving down returns them to holdgated or
+  advisory. The per-level capability grid is the table at the top of this page.
+- **Operator-created agents are preserved.** `ApplyPack` reconciles pack agents;
+  agents you created yourself are not removed by a level change (deletion is
+  tombstoned separately — see agent configuration).
+- On a hosted hive the level can also be hub/admin-managed; the ConfigMap seed is
+  authoritative for `acmm_level` on those (see the operator reference on config
+  precedence).

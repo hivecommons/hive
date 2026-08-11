@@ -1520,6 +1520,7 @@ func TestHandleGovernorSensing_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/sensing", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -1531,6 +1532,7 @@ func TestHandleGovernorThresholds_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/thresholds", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -1542,6 +1544,7 @@ func TestHandleGovernorLabels_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/labels", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -1553,6 +1556,7 @@ func TestHandleGovernorBudget_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/budget", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -1564,6 +1568,7 @@ func TestHandleGovernorRepos_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/repos", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -1575,6 +1580,7 @@ func TestHandleGovernorHealth_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/health", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2022,6 +2028,7 @@ func TestHandleKnowledgeToggle_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/knowledge/enabled", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2140,6 +2147,7 @@ func TestHandleSidebarSet_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/sidebar", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2153,6 +2161,7 @@ func TestHandleAgentConfigGeneral_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/general", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2166,6 +2175,7 @@ func TestHandleAgentConfigModels_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/models", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2179,6 +2189,7 @@ func TestHandleAgentConfigCadences_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/cadences", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2192,6 +2203,7 @@ func TestHandleAgentConfigPipeline_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/pipeline", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2205,6 +2217,7 @@ func TestHandleAgentConfigHooks_InvalidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/hooks", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2219,6 +2232,7 @@ func TestHandleKnowledgeUpdate_InvalidBody2(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/knowledge/project/fact-1", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2369,6 +2383,7 @@ func TestHandleGovernorNotifications_InvalidBody(t *testing.T) {
 	s, _ := apiServer(t)
 	req := httptest.NewRequest("PUT", "/api/config/governor/notifications", strings.NewReader("not-json"))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2843,6 +2858,7 @@ func TestHandleNousConfigSection_InvalidBody(t *testing.T) {
 	s, _ := apiServerWithNous(t)
 	req := httptest.NewRequest("PUT", "/api/nous/config/goals", strings.NewReader("not-json"))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2855,6 +2871,7 @@ func TestHandleNousGateRespond_InvalidBody(t *testing.T) {
 	s, _ := apiServerWithNous(t)
 	req := httptest.NewRequest("POST", "/api/nous/gate-respond", strings.NewReader("not-json"))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2976,6 +2993,7 @@ func TestHandleSidebarSet_InvalidBody_AltPath(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/sidebar", strings.NewReader("not-json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -2988,6 +3006,7 @@ func TestHandleAgentConfigRestrictions_InvalidBody(t *testing.T) {
 	s, _ := apiServer(t)
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/restrictions", strings.NewReader("not-json"))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -3000,6 +3019,7 @@ func TestHandleAgentConfigStats_InvalidBody(t *testing.T) {
 	s, _ := apiServer(t)
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/stats", strings.NewReader("not-json"))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)

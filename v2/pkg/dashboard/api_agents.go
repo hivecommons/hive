@@ -136,6 +136,9 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	current := s.configSnapshot()
 	if current == nil {

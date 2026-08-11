@@ -91,7 +91,7 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 	if p.copilotDial != nil {
 		return p.copilotDial(host)
 	}
-	return tls.Dial("tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
+	return tls.DialWithDialer(upstreamDialer(), "tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
 }
 
 // SetTokenSink wires the inference token sink so the translator can record
@@ -236,7 +236,17 @@ const (
 	transparentProxyTimeout = 5 * time.Second
 	httpReadTimeout         = 30 * time.Second
 	httpWriteTimeout        = 60 * time.Second
+	// upstreamDialTimeout bounds the proxy's own upstream dial + TLS handshake
+	// to the real GitHub host. A stalled upstream used to block forever and
+	// wedge the agent request waiting for the MITM response. The deadline is
+	// lifted after the TLS connection is established, so long-lived relays are
+	// unaffected.
+	upstreamDialTimeout = 15 * time.Second
 )
+
+func upstreamDialer() *net.Dialer {
+	return &net.Dialer{Timeout: upstreamDialTimeout}
+}
 
 // handleTransparentTLS handles iptables-redirected connections. The agent
 // tried to connect to github.com:443 but iptables sent it here instead.
@@ -327,7 +337,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer tlsClientConn.Close()
 
-	upstreamConn, err := tls.Dial("tcp", host+":443", &tls.Config{ServerName: host})
+	upstreamConn, err := tls.DialWithDialer(upstreamDialer(), "tcp", host+":443", &tls.Config{ServerName: host})
 	if err != nil {
 		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
 		return
@@ -563,7 +573,7 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	defer tlsClientConn.Close()
 
 	// Connect to the real GitHub server.
-	upstreamConn, err := tls.Dial("tcp", r.Host, &tls.Config{
+	upstreamConn, err := tls.DialWithDialer(upstreamDialer(), "tcp", r.Host, &tls.Config{
 		ServerName: host,
 	})
 	if err != nil {

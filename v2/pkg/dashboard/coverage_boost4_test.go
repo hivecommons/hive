@@ -180,6 +180,7 @@ func TestHandlePackApply_ValidLevel(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/packs/1/apply", nil)
 	req.SetPathValue("level", "1")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackApply(w, req)
 
 	if w.Code != http.StatusOK {
@@ -194,6 +195,7 @@ func TestHandlePackSetLevel_WithCadences(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":2}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackSetLevel(w, req)
 
 	if w.Code != http.StatusOK {
@@ -248,6 +250,7 @@ func TestHandleGitSourcesConnect_ValidBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/git-sources/connect", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	// May fail (no git available for clone) but should exercise the handler
@@ -269,6 +272,7 @@ func TestHandleGitSourcesDisconnect_ValidBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/git-sources/disconnect", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesDisconnect(w, req)
 
 	if w.Code == 0 {
@@ -467,6 +471,7 @@ func TestPackApplyAndSetLevel_Sequential(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":2}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackSetLevel(w, req)
 
 	if w.Code != http.StatusOK {
@@ -484,6 +489,7 @@ func TestHandleGovernorRepos_WithEnumerateFunc(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusOK {
@@ -537,6 +543,7 @@ func TestHandleAgentConfigGeneral_SetDisplayName(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("name", "scanner")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleAgentConfigGeneral(w, req)
 
 	if w.Code != http.StatusOK {
@@ -571,6 +578,7 @@ func TestHandleHiveIDSet_TooLong(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/hive-id", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleHiveIDSet(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -584,6 +592,7 @@ func TestHandleHiveIDSet_InvalidChars(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/hive-id", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleHiveIDSet(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -663,6 +672,7 @@ func TestHandleGovernorAddAgent_FullAgent(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	if w.Code != http.StatusOK {
