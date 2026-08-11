@@ -127,6 +127,14 @@ RUN ARCH=$(uname -m) && \
     chmod +x /usr/local/bin/goose || \
     echo "WARN: Goose CLI install failed — skipping"
 
+# --- Layer 8.5: pi CLI (@earendil-works/pi-coding-agent — backend: pi) ---
+# Tolerant of failure like the copilot/codex layers: agents configured for
+# backend: pi simply won't launch if this is absent, same degradation as
+# any other missing backend binary.
+ARG PI_VERSION=latest
+RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
+    echo "WARN: pi CLI install failed — skipping"
+
 # --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
 # bobshell is NOT published to the public npm registry; it is distributed as a
 # tarball from IBM Cloud Object Storage. The vendor's documented host install is

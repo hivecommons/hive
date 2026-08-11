@@ -219,10 +219,12 @@ func TestBackendBinary_GatewayBackendsAllLaunchClaude(t *testing.T) {
 			t.Errorf("backendBinary(%q) = %q, want the claude CLI (gateways share one binary)", b, got)
 		}
 	}
-	// The agentic CLIs must still map to their own binaries.
+	// The agentic CLIs installed in the unit-test image must still map to their own binaries.
+	// Pi is covered by backendBinaryName and Dockerfile tests because the host
+	// unit-test environment does not install the pi CLI.
 	for backend, want := range map[string]string{
 		"claude": "claude", "copilot": "copilot", "gemini": "gemini",
-		"goose": "goose", "pi": "goose", "bob": "bob",
+		"goose": "goose", "bob": "bob",
 	} {
 		got, err := backendBinary(backend)
 		if err != nil || filepath.Base(got) != want {
@@ -321,17 +323,16 @@ func TestBackendBinaryName_CodexAndAiderLaunchTheirOwnBinaries(t *testing.T) {
 	}
 }
 
-// TestBackendBinaryName_AliasesSurviveDerivation guards the ordering inside
-// backendBinaryName: the identity derivation over config.CLIBackends would map
-// "pi" to a non-existent "pi" binary, so the alias overrides must be applied
-// AFTER it. Swapping those two loops would silently break the pi backend.
-func TestBackendBinaryName_AliasesSurviveDerivation(t *testing.T) {
+// TestBackendBinaryName_PiLaunchesPiBinary pins the regression that made
+// backend: pi launch goose. Pi is a first-class CLI backend, so the launcher
+// must exec the pi binary directly rather than reaching an alias.
+func TestBackendBinaryName_PiLaunchesPiBinary(t *testing.T) {
 	got, err := backendBinaryName("pi")
 	if err != nil {
 		t.Fatalf("backendBinaryName(\"pi\") err = %v, want nil", err)
 	}
-	if got != "goose" {
-		t.Errorf("backendBinaryName(\"pi\") = %q, want \"goose\" (alias applied after identity derivation)", got)
+	if got != "pi" {
+		t.Errorf("backendBinaryName(\"pi\") = %q, want \"pi\"", got)
 	}
 }
 
