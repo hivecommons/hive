@@ -111,8 +111,10 @@ COPY config/restrictions/contributor-default.json /etc/hive/restrictions/
 RUN chmod +x /usr/local/bin/contributor-agent.sh /usr/local/bin/contributor-relay.sh \
     /usr/local/bin/agent-launch.sh /usr/local/bin/gh
 
+# Contributor mode is a root-owned marker file, not a caller-controlled env var.
+RUN mkdir -p /etc/hive && touch /etc/hive/contributor-mode
+
 ENV NODE_PATH=/opt/hive/node_modules
-ENV HIVE_CONTRIBUTOR_MODE=true
 USER dev
 WORKDIR /home/dev
 
