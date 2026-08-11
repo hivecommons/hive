@@ -323,6 +323,10 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 }
 
 func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	levelStr := r.PathValue("level")
 	level, err := strconv.Atoi(levelStr)
 	if err != nil {
@@ -356,6 +360,10 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	var body struct {
 		Level int `json:"level"`
 	}

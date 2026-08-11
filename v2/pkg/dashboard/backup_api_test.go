@@ -68,7 +68,7 @@ func TestBackupRefusesWithoutEncryptionKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/backup", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupDownload(rec, req)
 
@@ -87,7 +87,7 @@ func TestBackupStatusReportsUnavailableWithoutKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/backup/status", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupStatus(rec, req)
 
@@ -106,7 +106,7 @@ func TestBackupStatusAvailableWithKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/backup/status", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupStatus(rec, req)
 
@@ -127,7 +127,7 @@ func TestBackupResponseIsNotCacheable(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/backup", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupDownload(rec, req)
 

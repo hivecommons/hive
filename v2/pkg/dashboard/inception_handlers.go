@@ -21,6 +21,10 @@ import (
 const maxInceptionBodyBytes = 64 * 1024
 
 func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -65,6 +69,10 @@ func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInceptionScan(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -119,6 +127,10 @@ func (s *Server) handleInceptionState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInceptionSetQuestions(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -142,6 +154,10 @@ func (s *Server) handleInceptionSetQuestions(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleInceptionAnswer(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -174,6 +190,10 @@ func (s *Server) handleInceptionAnswer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInceptionRecordFacts(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -215,6 +235,10 @@ func (s *Server) handleInceptionScaffold(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -253,6 +277,10 @@ func (s *Server) clearInceptionBeads(store *beads.Store) {
 }
 
 func (s *Server) handleInceptionReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return
@@ -362,6 +390,10 @@ func (s *Server) handleInceptionHasFiles(w http.ResponseWriter, r *http.Request)
 const maxWikiNameLen = 80
 
 func (s *Server) handleInceptionRenameWiki(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -395,6 +427,10 @@ func (s *Server) handleInceptionRenameWiki(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleInceptionImport(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	if s.deps.Inception == nil {
 		jsonError(w, "inception engine not initialized", http.StatusServiceUnavailable)
 		return

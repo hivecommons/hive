@@ -504,7 +504,7 @@ func TestHandleConfigDownloadOwnerRoleAllowed(t *testing.T) {
 	srv := newMinimalServer(t)
 	srv.authToken = "shared-secret-token"
 	req := httptest.NewRequest("GET", "/api/config/download", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleConfigDownload(w, req)
 	if w.Code != http.StatusOK {
@@ -513,8 +513,8 @@ func TestHandleConfigDownloadOwnerRoleAllowed(t *testing.T) {
 }
 
 // TestHandleConfigDownloadMissingRoleOpenSpoke confirms the open/dev spoke (no
-// authToken, no allowlist) still treats a missing role as owner — the documented
-// convenience where there is no security boundary to protect.
+// authToken, no allowlist) still treats a routed missing-role request as owner:
+// authenticate stamps the verified owner marker before the owner-only handler.
 func TestHandleConfigDownloadMissingRoleOpenSpoke(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "hive.yaml")
@@ -524,7 +524,7 @@ func TestHandleConfigDownloadMissingRoleOpenSpoke(t *testing.T) {
 	srv := newMinimalServer(t) // NewServer => authToken=="" and no allowlist
 	req := httptest.NewRequest("GET", "/api/config/download", nil)
 	w := httptest.NewRecorder()
-	srv.handleConfigDownload(w, req)
+	srv.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("open/dev spoke should still serve missing-role as owner; got %d, want 200", w.Code)
 	}

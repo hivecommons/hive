@@ -31,6 +31,10 @@ const backupBuildTimeout = spokebackup.BuildTimeout
 // can show the menu entry in a disabled state with a real reason instead of
 // failing only after the owner clicks.
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	role := r.Header.Get("X-Hive-Role")
 	if role == "" {
 		role = "owner"
@@ -55,6 +59,10 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 // handleBackupDownload builds an encrypted backup of this spoke and streams it
 // to the owner.
 func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	role := r.Header.Get("X-Hive-Role")
 	if role == "" {
 		role = "owner"
