@@ -175,6 +175,7 @@ func TestHandleMyHivesWithSaaSHivesOnly(t *testing.T) {
 	u.Hives["hosted-saas-xyz"] = "owner"
 	saveSaaSUser(u)
 
+	const vanityURL = "https://testorg-testrepo-abcd.hive.example.com"
 	saveSaaSHive(&SaaSHive{
 		ID:          "hosted-saas-xyz",
 		Owner:       "saas-hive-owner",
@@ -182,6 +183,7 @@ func TestHandleMyHivesWithSaaSHivesOnly(t *testing.T) {
 		PrimaryRepo: "testrepo",
 		Status:      "provisioning",
 		ACMMLevel:   2,
+		VanityURL:   vanityURL,
 	})
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
@@ -208,6 +210,9 @@ func TestHandleMyHivesWithSaaSHivesOnly(t *testing.T) {
 			}
 			if hMap["governorMode"] != "PROVISIONING" {
 				t.Errorf("governorMode = %v", hMap["governorMode"])
+			}
+			if hMap["dashboardUrl"] != vanityURL {
+				t.Errorf("dashboardUrl = %v, want vanity URL %s", hMap["dashboardUrl"], vanityURL)
 			}
 		}
 	}
