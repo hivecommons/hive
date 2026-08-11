@@ -1129,6 +1129,14 @@ var cliPaneMarkers = []string{
 	"Copilot",
 	"Gemini",
 	"goose",
+	// pi's marker. pi renders a TUI status bar showing model context usage
+	// (e.g. "↑37k ↓20k R756k CH99.6% $0.013 5.9%/1.0M (auto)") instead of a
+	// "❯"/"goose is ready" prompt, so none of the entries above match a
+	// running pi: waitForCLIReadyForAgent would never see it as ready and the
+	// startup kick would be dropped after cliReadyTimeout even though pi is
+	// healthy. "%/" matches the fixed "%%/1.0M" context-meter suffix pi
+	// renders at every context size.
+	piContextMarker,
 	// bob's markers. NONE of the entries above match a running bob: verified
 	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
 	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
@@ -1176,6 +1184,14 @@ const (
 	// so it is used only for coarse CLI-presence detection (is anything other
 	// than bash in this pane?), never as the input-ready gate.
 	bobProductMarker = "Bob-Shell"
+	// piContextMarker is pi's context-meter suffix ("5.9%/1.0M (auto)" in
+	// its TUI status bar). It is the PRIMARY readiness signal for a running
+	// pi: the status bar renders only when the agent TUI is live and has a
+	// model configured, and it is the only marker pi renders in common with
+	// no other CLI (pi never shows "❯"/"goose is ready"). Matching on "%/"
+	// rather than a context size keeps it valid at any model/context
+	// configuration.
+	piContextMarker = "%/"
 )
 
 // paneHasCLIMarker reports whether the given pane content contains any known
@@ -1456,6 +1472,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
 				binary, model, copilotGitHubWriteDenyFlags)
 		case "gemini":
+			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		case "pi":
+			// pi takes the model as a CLI flag, not a subcommand. Without
+			// this case the launch command never receives the configured
+			// model (previously it also hit the goose binary via the alias).
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		case "goose":
 			launchCmd = fmt.Sprintf("%s run -s", binary)
@@ -2425,7 +2446,8 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
 		strings.Contains(output, bobInputPlaceholderDefault) ||
-		strings.Contains(output, codexInputPromptMarker)
+		strings.Contains(output, codexInputPromptMarker) ||
+		strings.Contains(output, piContextMarker)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
@@ -4276,7 +4298,10 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 // from config.InferenceBackends. Keeping this map to aliases only is what makes
 // the accept-then-fail class of bug structurally impossible — see backendBinary.
 var backendBinaryAliases = map[string]string{
-	"pi": "goose",
+	// pi was previously aliased to "goose", which made every pi-configured
+	// agent exec the goose CLI instead of pi (the backend launch command
+	// switch now has a real pi case). pi is a first-class CLI backend
+	// (config.CLIBackends includes "pi"), so identity mapping applies.
 }
 
 // backendBinaryName maps an agent backend to the NAME of the CLI binary that is
