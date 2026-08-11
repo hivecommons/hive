@@ -216,9 +216,18 @@ func driftEligibleForNorm(h MyHiveEntry) bool {
 // for placeholders that have not reported provStatus yet. Kept in lockstep with
 // the JS so server-computed drift and client-rendered sections can never
 // disagree about what counts as a claimed hive.
+//
+// An assigned slot short-circuits to false before the prefix fallback runs: Org
+// is spoke-reported and still reads "available-<id>" until the spoke adopts the
+// pushed config, so the fallback alone would keep calling a freshly-approved
+// hive inventory for that whole window. ProvStatus and AssignedUnclaimed are
+// both meta-derived and flip the moment the approval is recorded.
 func isPlaceholderEntry(h MyHiveEntry) bool {
 	if h.ProvStatus == statusAvailable {
 		return true
+	}
+	if h.ProvStatus == statusAssigned || h.AssignedUnclaimed {
+		return false
 	}
 	return strings.HasPrefix(h.Org, placeholderOrgPrefix)
 }

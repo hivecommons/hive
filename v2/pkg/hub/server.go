@@ -2513,9 +2513,18 @@ const fleetStatsMaxAge = 6 * time.Hour
 // Keeping this in lockstep with the JS and drift.go is what lets the landing
 // tiles, the dashboard's Assigned/Unassigned split, and server-side drift never
 // disagree about what is claimed.
+//
+// statusAssigned short-circuits BEFORE the org-prefix fallback. Org here is
+// spoke-reported and keeps reading "available-<id>" until the spoke adopts the
+// pushed config on a later heartbeat, so the fallback alone counted a
+// freshly-approved hive as inventory for that whole window — parking it under
+// "Unassigned hives" right after an approval.
 func isAvailableRegistryEntry(h RegistryEntry) bool {
 	if h.ProvStatus == statusAvailable {
 		return true
+	}
+	if h.ProvStatus == statusAssigned {
+		return false
 	}
 	return strings.HasPrefix(h.Org, placeholderOrgPrefix)
 }

@@ -12473,7 +12473,17 @@ const dashboardHTML = `<!DOCTYPE html>
        two can never disagree about what counts as a placeholder. */
     function isPlaceholderHive(h) {
       if (!h) return false;
-      return h.provStatus === 'available' || (!!h.org && h.org.indexOf('available-') === 0);
+      if (h.provStatus === 'available') return true;
+      /* An assigned slot is NOT inventory, even while its org still reads
+         "available-<id>". The assign path writes the real org/repo to meta
+         immediately, but entry.org is spoke-reported and only catches up on the
+         next heartbeat + config adoption. Keying on the org prefix alone parked
+         a freshly-approved hive under "Unassigned hives" for that whole window,
+         which reads as the approval having silently failed. provStatus and
+         assignedUnclaimed both come from meta, so either one settles it the
+         instant the approval lands. */
+      if (h.provStatus === 'assigned' || h.assignedUnclaimed) return false;
+      return !!h.org && h.org.indexOf('available-') === 0;
     }
 
     /* hiveNamespace returns the Kubernetes namespace a hosted hive's spoke
