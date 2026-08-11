@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func testLogger() *slog.Logger {
+func fileStoreTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
@@ -16,7 +16,7 @@ func testLogger() *slog.Logger {
 
 func TestNewFileStore_ValidDir(t *testing.T) {
 	dir := t.TempDir()
-	fs, err := NewFileStore(dir, "test-vault", testLogger())
+	fs, err := NewFileStore(dir, "test-vault", fileStoreTestLogger())
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -29,21 +29,19 @@ func TestNewFileStore_ValidDir(t *testing.T) {
 }
 
 func TestNewFileStore_NonexistentDir(t *testing.T) {
-	_, err := NewFileStore("/nonexistent/path/xyz", "bad", testLogger())
+	_, err := NewFileStore("/nonexistent/path/xyz", "bad", fileStoreTestLogger())
 	if err == nil {
 		t.Fatal("expected error for nonexistent dir")
 	}
 }
 
 func TestNewFileStore_FileNotDir(t *testing.T) {
-	f, err := os.CreateTemp("", "filestore-test")
-	if err != nil {
+	filePath := filepath.Join(t.TempDir(), "filestore-test")
+	if err := os.WriteFile(filePath, []byte("not a directory"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(f.Name())
-	f.Close()
 
-	_, err = NewFileStore(f.Name(), "bad", testLogger())
+	_, err := NewFileStore(filePath, "bad", fileStoreTestLogger())
 	if err == nil {
 		t.Fatal("expected error for file path")
 	}
@@ -137,7 +135,7 @@ func TestParseObsidianFile_FallbackTitle(t *testing.T) {
 
 // --- effectiveConfidence ---
 
-func TestEffectiveConfidence(t *testing.T) {
+func TestFileStoreEffectiveConfidence(t *testing.T) {
 	if got := effectiveConfidence(0.7); got != 0.7 {
 		t.Errorf("effectiveConfidence(0.7) = %f, want 0.7", got)
 	}
@@ -217,7 +215,7 @@ The proxy handles TLS interception and token injection.`)
 	writeMarkdown(t, dir, "knowledge-search.md", `# Knowledge Search
 This document covers search algorithms and ranking.`)
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,11 +245,17 @@ This document covers search algorithms and ranking.`)
 		t.Errorf("expected no results for empty query, got %d", len(empty))
 	}
 
-	// Search with zero limit defaults to 20
-	fs.Search("proxy", 0) // should not panic
+	// Search with zero limit defaults to 20 and should still return matches.
+	defaultLimitResults := fs.Search("proxy", 0)
+	if len(defaultLimitResults) == 0 {
+		t.Fatal("expected default-limit search to return matches")
+	}
+	if len(defaultLimitResults) > 20 {
+		t.Fatalf("default-limit search returned %d results, want at most 20", len(defaultLimitResults))
+	}
 }
 
-func TestFileStore_ReadPage(t *testing.T) {
+func TestFileStore_ReadPageDetailed(t *testing.T) {
 	dir := t.TempDir()
 	writeMarkdown(t, dir, "test-page.md", `---
 title: "Test Page"
@@ -259,7 +263,7 @@ confidence: 0.85
 ---
 Test body content.`)
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +304,7 @@ tags: [security, testing]
 ---
 Gamma body.`)
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +345,7 @@ func TestFileStore_AccessCounts(t *testing.T) {
 	dir := t.TempDir()
 	writeMarkdown(t, dir, "test.md", "# Test\nBody.")
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +367,7 @@ func TestFileStore_AccessCountPersistence(t *testing.T) {
 	dir := t.TempDir()
 	writeMarkdown(t, dir, "page.md", "# Page\nContent.")
 
-	fs1, err := NewFileStore(dir, "test", testLogger())
+	fs1, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +389,7 @@ func TestFileStore_AccessCountPersistence(t *testing.T) {
 	}
 
 	// Create new store — should load persisted counts
-	fs2, err := NewFileStore(dir, "test", testLogger())
+	fs2, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,10 +403,12 @@ func TestFileStore_CorruptedAccessCounts(t *testing.T) {
 	writeMarkdown(t, dir, "page.md", "# Page\nContent.")
 
 	// Write corrupted JSON
-	os.WriteFile(filepath.Join(dir, accessCountsFile), []byte("not-json{{{"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, accessCountsFile), []byte("not-json{{{"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Should not error — just reset to empty
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -415,7 +421,7 @@ func TestFileStore_CorruptedAccessCounts(t *testing.T) {
 
 func TestFileStore_SetName(t *testing.T) {
 	dir := t.TempDir()
-	fs, err := NewFileStore(dir, "original", testLogger())
+	fs, err := NewFileStore(dir, "original", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,16 +438,22 @@ func TestFileStore_SkipsHiddenDirsAndNonMarkdown(t *testing.T) {
 
 	// Hidden directory
 	hiddenDir := filepath.Join(dir, ".obsidian")
-	os.MkdirAll(hiddenDir, 0755)
-	os.WriteFile(filepath.Join(hiddenDir, "config.md"), []byte("# Hidden"), 0644)
+	if err := os.MkdirAll(hiddenDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hiddenDir, "config.md"), []byte("# Hidden"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Non-markdown file
-	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("plain text"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("plain text"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Valid markdown
 	writeMarkdown(t, dir, "valid.md", "# Valid\nContent.")
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,10 +469,12 @@ func TestFileStore_SkipsHiddenDirsAndNonMarkdown(t *testing.T) {
 func TestFileStore_SubdirectorySlugs(t *testing.T) {
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "security")
-	os.MkdirAll(subdir, 0755)
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeMarkdown(t, dir, filepath.Join("security", "ssrf.md"), "# SSRF Guard\nContent about SSRF.")
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,6 +488,37 @@ func TestFileStore_SubdirectorySlugs(t *testing.T) {
 	}
 }
 
+func TestFileStore_SkipsSymlinkedMarkdownOutsideRoot(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.md")
+	if err := os.WriteFile(outsidePath, []byte("# Outside Secret\nshould not be indexed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(dir, "linked-secret.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	writeMarkdown(t, dir, "inside.md", "# Inside\nindexed")
+
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if stats := fs.Stats(); stats.TotalPages != 1 {
+		t.Fatalf("TotalPages = %d, want only the in-root markdown page", stats.TotalPages)
+	}
+	if _, err := fs.ReadPage("linked-secret"); err == nil {
+		t.Fatal("expected symlinked markdown outside root not to be readable")
+	}
+	if results := fs.Search("Outside Secret", 10); len(results) != 0 {
+		t.Fatalf("search returned symlinked outside content: %#v", results)
+	}
+	if _, err := fs.ReadPage("../secret"); err == nil {
+		t.Fatal("expected path-traversal-looking slug not to be readable")
+	}
+}
+
 // --- Body snippet truncation ---
 
 func TestFileStore_ListPagesSnippetTruncation(t *testing.T) {
@@ -484,7 +529,7 @@ func TestFileStore_ListPagesSnippetTruncation(t *testing.T) {
 	}
 	writeMarkdown(t, dir, "long.md", "# Long\n"+longBody)
 
-	fs, err := NewFileStore(dir, "test", testLogger())
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
