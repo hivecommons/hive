@@ -208,6 +208,7 @@ func TestHandleGovernorBobKey(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPut, "/api/config/governor/bob", strings.NewReader(tc.body))
 			rec := httptest.NewRecorder()
+			markOwnerRequest(req)
 			s.handleGovernorBobKey(rec, req)
 
 			if rec.Code != tc.wantStatus {
@@ -255,6 +256,7 @@ func TestHandleGovernorBobKeyClear(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/config/governor/bob", nil)
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.handleGovernorBobKeyClear(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -343,7 +345,7 @@ func TestBobKeyEndpoints_ReadOnlyRoleForbidden(t *testing.T) {
 			wantStatus: http.StatusForbidden},
 		{name: "read role may view presence", method: http.MethodGet, role: "read",
 			wantStatus: http.StatusOK},
-		{name: "admin role may set", method: http.MethodPut, role: "admin",
+		{name: "owner role may set", method: http.MethodPut, role: "owner",
 			body: `{"apiKey":"` + bobTestKey + `"}`, wantStatus: http.StatusOK},
 	}
 
@@ -356,6 +358,9 @@ func TestBobKeyEndpoints_ReadOnlyRoleForbidden(t *testing.T) {
 			var bodyReader *strings.Reader = strings.NewReader(tc.body)
 			req := httptest.NewRequest(tc.method, "/api/config/governor/bob", bodyReader)
 			req.Header.Set("X-Hive-Role", tc.role)
+			if tc.role == "owner" {
+				req.Header.Set(ownerRoleVerifiedHeader, "true")
+			}
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 

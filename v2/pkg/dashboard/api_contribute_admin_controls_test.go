@@ -448,6 +448,7 @@ func TestGovernorHubAcceptsSkipAssigned(t *testing.T) {
 		strings.NewReader(`{"contribute_skip_assigned_to_others":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.handleGovernorHub(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("governor hub update got %d, want 200 (body: %s)", w.Code, w.Body.String())

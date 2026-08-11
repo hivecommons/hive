@@ -128,6 +128,7 @@ func TestHandleGovernorHubNewFields(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/hub", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorHub(w, req)
 
 	if w.Code != http.StatusOK {

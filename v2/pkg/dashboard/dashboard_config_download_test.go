@@ -29,6 +29,7 @@ func TestHandleConfigDownloadSuccess(t *testing.T) {
 	srv.deps = &Dependencies{Config: cfg, Logger: slog.Default()}
 
 	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleConfigDownload(w, req)
 
@@ -60,6 +61,7 @@ func TestHandleConfigDownloadMissingFile(t *testing.T) {
 
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleConfigDownload(w, req)
 
@@ -221,6 +223,7 @@ func TestHandleSelfUpgradeWithHubURL(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleSelfUpgrade(w, req)
 
 	if w.Code != http.StatusOK {
@@ -243,6 +246,7 @@ func TestHandleSelfUpgradeHubUnreachable(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleSelfUpgrade(w, req)
 
 	if w.Code != http.StatusBadGateway {
@@ -306,6 +310,7 @@ func TestHandleGitSourcesConnectMissingName(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -319,6 +324,7 @@ func TestHandleGitSourcesConnectMissingURL(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -332,6 +338,7 @@ func TestHandleGitSourcesConnectBadURLScheme(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -345,6 +352,7 @@ func TestHandleGitSourcesConnectPathTraversal(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -358,6 +366,7 @@ func TestHandleGitSourcesConnectBadBranch(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -371,6 +380,7 @@ func TestHandleGitSourcesConnectBadSubpath(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -384,6 +394,7 @@ func TestHandleGitSourcesConnectSubpathDash(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -397,6 +408,7 @@ func TestHandleGitSourcesConnectNameWithSlash(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -410,6 +422,7 @@ func TestHandleGitSourcesConnectGitAtURL(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -426,6 +439,7 @@ func TestHandleGitSourcesDisconnectMissingURL(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources/disconnect", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesDisconnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -440,6 +454,7 @@ func TestHandleGitSourcesDisconnectBadJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources/disconnect", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesDisconnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -452,6 +467,7 @@ func TestHandleGitSourcesConnectBadJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -523,6 +539,7 @@ func TestHandleConfigDownloadEnvVar(t *testing.T) {
 
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("GET", "/api/config/download", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleConfigDownload(w, req)
 

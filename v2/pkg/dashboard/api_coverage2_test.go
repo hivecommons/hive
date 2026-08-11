@@ -17,6 +17,7 @@ func httpPutRaw(s *Server, path string, rawBody string) *httptest.ResponseRecord
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(rawBody))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }

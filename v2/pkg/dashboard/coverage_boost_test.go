@@ -337,6 +337,7 @@ func TestHandleBeadsReset(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/beads/reset", strings.NewReader(`{"reason":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleBeadsReset(w, req)
 
@@ -353,6 +354,7 @@ func TestHandleBeadsReset(t *testing.T) {
 func TestHandleBeadsReset_NoBody(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/beads/reset", strings.NewReader(""))
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleBeadsReset(w, req)
 	if w.Code != http.StatusOK {
@@ -365,6 +367,7 @@ func TestHandleBeadsReset_NilStores(t *testing.T) {
 	srv.deps.BeadStores = nil
 	req := httptest.NewRequest("POST", "/api/beads/reset", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleBeadsReset(w, req)
 	if w.Code != http.StatusServiceUnavailable {
@@ -376,6 +379,7 @@ func TestHandleBeadsResetAgent(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/beads/scanner/reset", strings.NewReader(`{"reason":"agent test"}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handleBeadsResetAgent(w, req)
@@ -389,6 +393,7 @@ func TestHandleBeadsResetAgent_Unknown(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/beads/unknown/reset", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "unknown")
 	w := httptest.NewRecorder()
 	srv.handleBeadsResetAgent(w, req)
@@ -402,6 +407,7 @@ func TestHandleBeadsResetAgent_NilStores(t *testing.T) {
 	srv.deps.BeadStores = nil
 	req := httptest.NewRequest("POST", "/api/beads/scanner/reset", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	req.SetPathValue("agent", "scanner")
 	w := httptest.NewRecorder()
 	srv.handleBeadsResetAgent(w, req)
@@ -1669,6 +1675,7 @@ func TestHandleInceptionStart_NoInception(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionStart(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
@@ -1682,6 +1689,7 @@ func TestHandleInceptionStart_BadBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionStart(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {

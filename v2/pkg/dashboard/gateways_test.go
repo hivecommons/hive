@@ -55,6 +55,7 @@ func TestGatewaysUpsert_StoresKeyAsFileRef(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -171,6 +172,7 @@ func TestGatewaysUpsert_RejectsInvalidEndpoint(t *testing.T) {
 	body := `{"name":"bad","endpoint":"not-a-url"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", w.Code)
@@ -193,6 +195,7 @@ func TestGatewaysDelete_InUseConflict(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/api/config/governor/gateways/openrouter", nil)
 	req.SetPathValue("name", "openrouter")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysDelete(w, req)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("code = %d, want 409 (body %s)", w.Code, w.Body.String())
@@ -215,6 +218,7 @@ func TestGatewaysDelete_Succeeds(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/api/config/governor/gateways/openrouter", nil)
 	req.SetPathValue("name", "openrouter")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysDelete(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -235,6 +239,7 @@ func TestGatewaysUpsert_PreservesKeyOnEdit(t *testing.T) {
 	body := `{"name":"corp","kind":"litellm","endpoint":"https://new.example.com","default_model":"gpt-4o-mini"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())
