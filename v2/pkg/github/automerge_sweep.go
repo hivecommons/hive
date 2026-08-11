@@ -36,9 +36,22 @@ type AutoMergeSweepResult struct {
 	Skipped int
 }
 
+// hiveQueueApproval separates the two identities an auto-merge approval
+// carries, because they answer different questions and have different trust.
+//
+//   - QueuedBy is the GitHub account that SUBMITTED the review. GitHub
+//     attributes it, a caller cannot choose it, and it is the only one of the
+//     two that may carry merge authority.
+//   - ClaimedBy is the name written in the review BODY. On the hosted path the
+//     hive posts the approval as its App bot on a human's behalf, so this is
+//     the only record of which human asked. It is caller-controlled text and
+//     must never gate anything — it is used solely to keep the self-merge ban
+//     working, where treating it as untrusted is safe: the worst a forged
+//     value can do is ban a merge that would otherwise be allowed.
 type hiveQueueApproval struct {
-	QueuedBy string
-	HeadSHA  string
+	QueuedBy  string
+	ClaimedBy string
+	HeadSHA   string
 }
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
@@ -159,7 +172,14 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, "queue-approval-head-changed", nil
 	}
 	queuedBy := approval.QueuedBy
-	if strings.EqualFold(author, queuedBy) {
+	// The self-merge ban must catch BOTH shapes of approval: a human approving
+	// directly (author == the submitting actor) and the hosted path, where the
+	// hive posts as its App bot on a human's behalf so the only trace of that
+	// human is the claimed name in the body. Checking the actor alone would
+	// silently retire the ban on the hosted path, since a bot login never
+	// equals a human author. ClaimedBy is untrusted input, but only ever
+	// widens the ban — a forged value can block a merge, never permit one.
+	if strings.EqualFold(author, queuedBy) || strings.EqualFold(author, approval.ClaimedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
 	}
 
@@ -210,8 +230,34 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
-			if queuedBy := parseHiveQueueReview(review.GetBody()); queuedBy != "" {
-				latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
+			// SECURITY (audit F3, CWE-863): the merge authority is the actor who
+			// SUBMITTED the review, never a name parsed out of its body.
+			//
+			// This used to read queuedBy from parseHiveQueueReview(review.Body).
+			// Contributor tokens carry pull-request write permission, so any
+			// contributor could approve their own PR with a body reading
+			// "Approved by @trusted-maintainer ..." and merge under that name.
+			// The self-merge ban made it worse rather than better: it compares
+			// the PR author against the CLAIMED name, so naming someone else
+			// both forged the authority and slipped the ban.
+			//
+			// The body marker is still REQUIRED — it is what distinguishes an
+			// ordinary code-review approval from an explicit request to queue
+			// for auto-merge, and an approving reviewer must opt in deliberately.
+			// It just no longer decides WHO did it.
+			if marker := parseHiveQueueReview(review.GetBody()); marker != "" {
+				actor := safeGetLogin(review.GetUser())
+				if actor == "" {
+					// No identifiable actor (deleted account, or an API shape we
+					// do not recognise) — fail closed rather than fall back to
+					// the body, which is exactly the trust we are removing.
+					continue
+				}
+				latest = hiveQueueApproval{
+					QueuedBy:  actor,
+					ClaimedBy: marker,
+					HeadSHA:   review.GetCommitID(),
+				}
 			}
 		}
 		if resp.NextPage == 0 {

@@ -14,9 +14,15 @@ import (
 )
 
 type sweepPR struct {
-	number          int
-	author          string
-	queuedBy        string
+	number   int
+	author   string
+	queuedBy string
+	// reviewAuthor is the GitHub login that actually SUBMITTED the approval.
+	// Distinct from queuedBy, which is only what the review BODY claims (F3):
+	// the fixture previously emitted reviews with no user at all, so no test
+	// could express "an untrusted actor claimed a trusted merger's name".
+	// Defaults to queuedBy when unset, preserving every existing case.
+	reviewAuthor    string
 	headSHA         string
 	reviewCommitID  *string
 	label           bool
@@ -336,7 +342,7 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 					if tt.noReview {
 						json.NewEncoder(w).Encode([]map[string]any{})
 					} else {
-						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]any{"login": tt.pr.queuedBy}}})
 					}
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -380,7 +386,7 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 						"labels":          []map[string]string{{"name": AutoMergeQueuedLabel}},
 					})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]any{"login": "bob"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -415,7 +421,7 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 				"labels": []map[string]string{{"name": AutoMergeQueuedLabel}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]any{"login": "bob"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -440,9 +446,9 @@ func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		json.NewEncoder(w).Encode([]map[string]any{
-			{"state": "APPROVED", "body": "Approved by @old for Hive auto-merge on green CI.", "commit_id": "oldsha"},
+			{"state": "APPROVED", "body": "Approved by @old for Hive auto-merge on green CI.", "commit_id": "oldsha", "user": map[string]any{"login": "old"}},
 			{"state": "COMMENTED", "body": "Approved by @ignored for Hive auto-merge on green CI.", "commit_id": "ignored"},
-			{"state": "APPROVED", "body": "Approved by @new for Hive auto-merge on green CI.", "commit_id": "newsha"},
+			{"state": "APPROVED", "body": "Approved by @new for Hive auto-merge on green CI.", "commit_id": "newsha", "user": map[string]any{"login": "new"}},
 		})
 	}))
 	defer api.Close()
@@ -612,7 +618,14 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			if pr.reviewCommitID != nil {
 				reviewCommitID = *pr.reviewCommitID
 			}
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": body, "commit_id": reviewCommitID}})
+			reviewAuthor := pr.reviewAuthor
+			if reviewAuthor == "" {
+				reviewAuthor = pr.queuedBy
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"state": "APPROVED", "body": body, "commit_id": reviewCommitID,
+				"user": map[string]any{"login": reviewAuthor},
+			}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]
@@ -690,4 +703,105 @@ func shaNumber(t *testing.T, path string) int {
 	}
 	t.Fatalf("sha number not found in %q", path)
 	return 0
+}
+
+// F3 (CWE-863): auto-merge must bind approval to the review's ACTUAL author,
+// not to a name parsed out of the review body.
+//
+// latestHiveQueueApproval took the merger identity from
+// parseHiveQueueReview(review.GetBody()) and never looked at review.User.Login.
+// Contributor tokens carry pull-request write permission, so any contributor
+// could submit an APPROVED review reading "Approved by @trusted-maintainer for
+// Hive auto-merge on green CI." and have their own PR merged under that name.
+//
+// The self-merge ban made it worse rather than better: it compares the PR
+// author against the CLAIMED queuedBy, so naming someone else both forges the
+// authority AND slips the ban.
+func TestF3_AutoMergeRejectsForgedApprovalActor(t *testing.T) {
+	var merged []int
+	// mallory opens the PR and submits the approval herself, but writes
+	// "Approved by @alice" in the body.
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number: 7, author: "mallory", queuedBy: "alice", reviewAuthor: "mallory",
+		label: true, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 0 || len(result.Merged) != 0 {
+		t.Fatalf("F3: merged PR %v on an approval whose BODY claimed @alice but which "+
+			"@mallory actually submitted — merge authority came from review text, not the actor",
+			merged)
+	}
+}
+
+// The self-merge ban must key off the REAL reviewer. Claiming someone else's
+// name must not launder a self-merge.
+func TestF3_SelfMergeBanUsesRealReviewer(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number: 7, author: "mallory", queuedBy: "someone-else", reviewAuthor: "mallory",
+		label: true, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	if _, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 0 {
+		t.Fatal("F3: the self-merge ban was bypassed by claiming another user's name in the body")
+	}
+}
+
+// The hosted path posts approvals as the Hive App bot on a human's behalf, so
+// the submitting actor is the bot and the requesting human survives only as the
+// claimed name in the body. Gating the self-merge ban on the actor alone would
+// silently retire it there: "hive[bot]" never equals a human author, so mallory
+// could queue their own PR through the dashboard and merge it. The ban has to
+// consider the claimed name too — safe, because a forged claim can only ever
+// block a merge, never authorise one.
+func TestF3_SelfMergeBanCatchesBotPostedApproval(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number: 7, author: "mallory", queuedBy: "mallory", reviewAuthor: "kubestellar-hive[bot]",
+		label: true, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	if _, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 0 {
+		t.Fatal("F3: mallory self-merged via a bot-posted approval — the self-merge ban does not survive the hosted path")
+	}
+}
+
+// CONTROL: a legitimate approval — a different, real reviewer whose body names
+// themselves — must still merge. The fix must not break the feature.
+func TestF3_GenuineApprovalStillMerges(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number: 7, author: "mallory", queuedBy: "alice", reviewAuthor: "alice",
+		label: true, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(merged) != 1 || len(result.Merged) != 1 {
+		t.Fatalf("a genuine approval by @alice failed to merge (merged=%v) — the fix is too strict", merged)
+	}
 }
