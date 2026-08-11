@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -171,6 +172,28 @@ func TestWebhookRejectsBadSignatureWhenSecretSet(t *testing.T) {
 	}
 }
 
+func TestWebhookRejectsMissingSecretWithActionableLog(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	rec := &kickRecorder{}
+	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, logger)
+
+	w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), webhookSecretEnvVar) {
+		t.Fatalf("response should tell operators to configure %s, got %s", webhookSecretEnvVar, w.Body.String())
+	}
+	if !strings.Contains(logs.String(), webhookSecretEnvVar) {
+		t.Fatalf("log should name missing %s, got %s", webhookSecretEnvVar, logs.String())
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("a webhook without configured HMAC secret must not kick any agent, got %v", got)
+	}
+}
+
 func TestWebhookAcceptsCorrectSignature(t *testing.T) {
 	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
@@ -198,21 +221,27 @@ func TestWebhookRejectsNonPost(t *testing.T) {
 }
 
 func TestWebhookRequiresEventHeader(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, quietLogger())
 
-	w := postWebhook(t, m.WebhookHandler(), "", map[string]any{"action": "opened"}, "")
+	w := postWebhook(t, m.WebhookHandler(), "", map[string]any{"action": "opened"}, "s3cr3t")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", w.Code)
 	}
 }
 
 func TestWebhookRejectsInvalidJSON(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, quietLogger())
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader("{not json"))
+	raw := []byte("{not json")
+	mac := hmac.New(sha256.New, []byte("s3cr3t"))
+	mac.Write(raw)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(raw)))
 	req.Header.Set(webhookEventHeader, "issues")
+	req.Header.Set(webhookSignatureHeader, "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	w := httptest.NewRecorder()
 	m.WebhookHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -224,10 +253,11 @@ func TestWebhookRejectsInvalidJSON(t *testing.T) {
 
 // A channel subscribed to the bare event type fires for any action.
 func TestWebhookMatchesBareEventType(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, quietLogger())
 
-	w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "")
+	w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "s3cr3t")
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
@@ -243,17 +273,18 @@ func TestWebhookMatchesBareEventType(t *testing.T) {
 // A channel subscribed to "event.action" must fire only for that action, so a
 // scanner watching issues.opened is not woken by every issue comment.
 func TestWebhookMatchesQualifiedEventOnly(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues.opened"}, nil, nil), rec.fn, nil, quietLogger())
 
-	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "closed"}, ""); w.Code != http.StatusOK {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "closed"}, "s3cr3t"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Fatalf("issues.closed must not trigger an issues.opened channel, got %v", got)
 	}
 
-	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, ""); w.Code != http.StatusOK {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "s3cr3t"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if got := rec.waitForKicks(t, 1); len(got) != 1 {
@@ -263,6 +294,7 @@ func TestWebhookMatchesQualifiedEventOnly(t *testing.T) {
 
 // A repo allowlist confines a channel to its own repositories.
 func TestWebhookHonoursRepoAllowlist(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, []string{"allowed-repo"}, nil), rec.fn, nil, quietLogger())
 
@@ -270,7 +302,7 @@ func TestWebhookHonoursRepoAllowlist(t *testing.T) {
 		"action":     "opened",
 		"repository": map[string]any{"name": "other-repo"},
 	}
-	if w := postWebhook(t, m.WebhookHandler(), "issues", body, ""); w.Code != http.StatusOK {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", body, "s3cr3t"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if got := rec.snapshot(); len(got) != 0 {
@@ -278,7 +310,7 @@ func TestWebhookHonoursRepoAllowlist(t *testing.T) {
 	}
 
 	body["repository"] = map[string]any{"name": "allowed-repo"}
-	if w := postWebhook(t, m.WebhookHandler(), "issues", body, ""); w.Code != http.StatusOK {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", body, "s3cr3t"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if got := rec.waitForKicks(t, 1); len(got) != 1 {
@@ -288,10 +320,11 @@ func TestWebhookHonoursRepoAllowlist(t *testing.T) {
 
 // A disabled channel must never fire.
 func TestWebhookSkipsDisabledChannel(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, boolPtr(false)), rec.fn, nil, quietLogger())
 
-	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, ""); w.Code != http.StatusOK {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "s3cr3t"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if got := rec.snapshot(); len(got) != 0 {
@@ -301,10 +334,11 @@ func TestWebhookSkipsDisabledChannel(t *testing.T) {
 
 // An event nobody subscribes to is accepted but triggers nothing.
 func TestWebhookUnmatchedEventTriggersNothing(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, quietLogger())
 
-	w := postWebhook(t, m.WebhookHandler(), "push", map[string]any{}, "")
+	w := postWebhook(t, m.WebhookHandler(), "push", map[string]any{}, "s3cr3t")
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
@@ -316,6 +350,7 @@ func TestWebhookUnmatchedEventTriggersNothing(t *testing.T) {
 // The trigger context handed to buildMsg must carry the event details, since
 // that is what the agent's kick message is built from.
 func TestWebhookTriggerContextCarriesEventDetail(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	var gotCtx TriggerContext
 	var mu sync.Mutex
@@ -331,7 +366,7 @@ func TestWebhookTriggerContextCarriesEventDetail(t *testing.T) {
 		"action":     "opened",
 		"repository": map[string]any{"name": "my-repo"},
 	}
-	postWebhook(t, m.WebhookHandler(), "issues", body, "")
+	postWebhook(t, m.WebhookHandler(), "issues", body, "s3cr3t")
 	kicks := rec.waitForKicks(t, 1)
 	if len(kicks) != 1 {
 		t.Fatalf("want 1 kick, got %v", kicks)

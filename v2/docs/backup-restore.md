@@ -54,5 +54,77 @@ Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, e
 
 `pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It is encrypted with the same `HIVE_BACKUP_KEY` mechanism and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`; it skips bulk/derived data and live dashboard sessions.
 
+## Docker Compose
+
+`v2/docker-compose.yaml` is a standalone deployment. It runs the hive container on a single Docker host, without a Kubernetes cluster.
+
+### Durable state
+
+The compose file persists three things:
+
+- the Docker named volume `hive-data`, mounted at `/data`;
+- the host directory `./secrets`, bind-mounted read-only at `/secrets`;
+- the host file `./hive.yaml`, mounted at `/etc/hive/hive.yaml`.
+
+On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth. It restores `/data/hive.yaml.runtime` over the config path at every boot. `/data/hive.yaml.bak` is the legacy runtime name. `/data/hive.yaml.dashboard` is the dashboard save overlay.
+
+`/data` holds the durable identity and state:
+
+- `hive-id`;
+- `hive-state.json`;
+- `gh-app-key*.pem`, the GitHub App private keys;
+- `beads/`, the agent work ledger.
+
+Hub deployments also keep `hub-registry.json` and `clusters.json` in `/data`. A standalone Compose spoke has neither.
+
+Regenerable bulk state such as `nous/`, `home/`, and `logs/` can be excluded from a backup. `docker compose down -v` deletes the named volume.
+
+### `hive-backup run` does not apply
+
+`hive-backup run` is the Kubernetes hub disaster-recovery path. It cannot run on a Docker Compose deployment. `pkg/hubbackup/run.go` calls `LoadTargets(dataDir)`, which hard-fails when `clusters.json` is absent. `KubectlSecretCollector` collects hub Kubernetes Secrets through in-cluster kubectl. A Compose deployment has no `clusters.json` and no in-cluster kubectl. Use the spoke backup and the host-level pattern below.
+
+### Spoke backup works
+
+The `pkg/spokebackup` path works for a Compose spoke. It reads the data directory from `HIVE_SPOKE_BACKUP_DATA_DIR`, which defaults to `/data`. The dashboard serves it from inside the same hive container.
+
+- `GET /api/backup/status` reports whether a backup can run.
+- `POST /api/backup` builds and streams an encrypted archive.
+
+Both endpoints are owner-only. They require the `X-Hive-Role: owner` header. They require `HIVE_BACKUP_KEY` in the container environment, a 64-character hex AES-256 key. The shipped compose files do not pass `HIVE_BACKUP_KEY`. Add it to `.env` and add `HIVE_BACKUP_KEY=${HIVE_BACKUP_KEY}` to the `environment` block of the `hive` service.
+
+The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, and `beads/`. It is encrypted and sized for browser download, not nightly fleet DR.
+
+### Host-level backup pattern
+
+Back up the named volume and the secrets directory from the host:
+
+```bash
+docker run --rm -v v2_hive-data:/data -v "$(pwd)":/backup alpine tar czf /backup/hive-data-$(date +%F).tar.gz -C /data .
+tar czf secrets-$(date +%F).tar.gz ./secrets
+```
+
+Docker Compose prefixes named volumes with the project name. With `cd v2 && docker compose up -d`, the project is `v2`, so the volume is `v2_hive-data`. `docker volume ls` shows the real name.
+
+To restore:
+
+1. Create a fresh named volume with `docker volume create v2_hive-data`. `docker compose up -d` also creates it when it is missing.
+2. Extract the volume tarball into the volume:
+
+   ```bash
+   docker run --rm -v v2_hive-data:/data -v "$(pwd)":/backup alpine tar xzf /backup/hive-data-$(date +%F).tar.gz -C /data
+   ```
+
+   Use the archive name from the backup step. The example recreates the current-date name.
+
+3. Extract the secrets tarball over the host directory:
+
+   ```bash
+   tar xzf secrets-$(date +%F).tar.gz
+   ```
+
+4. Run `docker compose up -d`.
+
+The entrypoint restores the runtime config at boot. Escrow `HIVE_BACKUP_KEY` outside the host.
+
 Fixes #2986.
 Fixes #2942.

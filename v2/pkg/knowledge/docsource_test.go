@@ -17,8 +17,11 @@ func TestDocumentSource_ImportFile(t *testing.T) {
 	vaultDir := filepath.Join(tmpDir, "vault")
 	baseDir := filepath.Join(tmpDir, "knowledge")
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
 	content := "First paragraph about transformers.\n\nSecond paragraph about attention mechanisms.\n\nThird paragraph about KV cache management."
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +119,10 @@ func TestDocumentSource_Delete(t *testing.T) {
 	vaultDir := filepath.Join(tmpDir, "vault")
 	baseDir := filepath.Join(tmpDir, "knowledge")
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte("Some content to import."), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +165,10 @@ func TestDocumentSource_Reimport(t *testing.T) {
 	vaultDir := filepath.Join(tmpDir, "vault")
 	baseDir := filepath.Join(tmpDir, "knowledge")
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte("Version 1 content."), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -201,3 +201,19 @@ func TestProvenanceRedactsSecrets(t *testing.T) {
 		t.Fatal("response leaked the github token")
 	}
 }
+
+// TestProvenanceRejectsEmptyRole is the regression test for PR #3220: when
+// X-Hive-Role is absent (empty string), the handler must fail CLOSED (403)
+// rather than defaulting to "owner". The prior code granted owner access to
+// any request that simply omitted the header — an authorization bypass.
+func TestProvenanceRejectsEmptyRole(t *testing.T) {
+	writeProvenanceFixture(t, "project:\n  org: acme\nagents:\n  scanner: {}\n", "")
+
+	// getProvenance with "" does NOT set X-Hive-Role — simulating a request
+	// from a caller that omits the header entirely.
+	rec, _ := getProvenance(t, "")
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("empty X-Hive-Role: status = %d, want 403 (fail closed); "+
+			"before #3220 this returned 200 because empty defaulted to owner", rec.Code)
+	}
+}

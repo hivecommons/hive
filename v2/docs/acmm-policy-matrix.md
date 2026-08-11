@@ -113,9 +113,9 @@ Agents open issues, create PRs, and auto-merge on green CI. No hold label. Outre
 | outreach | full | `outreach-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-## Tester lane
+## Example config alignment
 
-`v2/hive.yaml.example` includes a `tester` support agent that runs automated test suites, coverage gates, and nightly regression checks. It is intentionally outside the built-in ACMM policy packs in `v2/pkg/config/packs/`: the packs generate governance lanes, while `tester` is an operator-enabled local lane with cadences in the example config. If enabled, give it an explicit policy/template appropriate for the repository before granting write permissions.
+`v2/hive.yaml.example` uses the built-in `quality` lane for automated test suites, coverage gates, and regression checks. There is no built-in `tester` lane in the ACMM packs, known-agent defaults, or shipped policy templates; operators who want a separate tester must define it as a custom agent with explicit metadata and a policy template.
 
 ## Key Rules
 

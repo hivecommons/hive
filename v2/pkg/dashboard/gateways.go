@@ -93,6 +93,7 @@ const (
 // accepted and treated as custom (the endpoint is what actually routes).
 var validGatewayKinds = map[string]bool{
 	config.GatewayKindOpenRouter: true,
+	config.GatewayKindGroq:       true,
 	config.GatewayKindLiteLLM:    true,
 	config.GatewayKindVLLM:       true,
 	config.GatewayKindLLMD:       true,
@@ -209,6 +210,10 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	}
 	if err := validateGatewayEndpoint(endpoint); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isPrivateURL(r.Context(), endpoint) {
+		jsonError(w, "gateway endpoint must not point to private/internal addresses", http.StatusBadRequest)
 		return
 	}
 
@@ -403,6 +408,10 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	}
 	if err := validateGatewayEndpoint(endpoint); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isPrivateURL(r.Context(), endpoint) {
+		jsonError(w, "gateway endpoint must not point to private/internal addresses", http.StatusBadRequest)
 		return
 	}
 	key := strings.TrimSpace(body.APIKey)

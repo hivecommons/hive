@@ -92,7 +92,7 @@
     .header-spacer { flex: 1; }
     /* .widget-dl / .layout-toggle — ghost buttons (system recipe at end of
        the style block); only placement-specific properties live here. */
-    .widget-dl { display: inline-block; text-decoration: none; margin-left: auto; margin-right: auto; }
+    .widget-dl { display: inline-flex; align-items: center; text-decoration: none; margin-left: auto; margin-right: auto; white-space: nowrap; }
     .layout-toggle { margin-left: 12px; margin-right: 8px; }
     /* Icon-only theme toggle: square-ish, centered glyph, larger for tap target. */
     .layout-toggle { min-width: 34px; padding-left: 8px; padding-right: 8px; font-size: 1rem; line-height: 1; text-align: center; }
@@ -277,14 +277,15 @@
        positioning kept (functionally sticky: content scrolls under it)
        because the sidebar offset layout depends on it. */
     .oc-topbar {
-      position: fixed; top: 0; left: var(--sidebar-w); right: 0; height: 48px;
+      position: fixed; top: 0; left: var(--sidebar-w); right: 0; min-height: 48px;
       background: color-mix(in srgb, var(--bg) 85%, transparent);
       -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
       border-bottom: 1px solid var(--line);
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px; z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+    #oc-project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
        inline-flex. Lives in .oc-topbar-left because that is the shortest
        topbar group — putting it in center/right would risk wrapping the
@@ -311,10 +312,15 @@
     .dashboard-custom-style-note { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 8px; border: 1px solid rgba(128,191,255,0.35); border-radius: 999px; background: rgba(128,191,255,0.10); color: var(--text); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dashboard-custom-style-note.warn { border-color: rgba(210,153,34,0.45); background: rgba(210,153,34,0.12); }
     .dashboard-custom-style-note button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; line-height: 1; padding: 0; }
-    .oc-topbar-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .oc-topbar-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; flex: 0 0 auto; flex-wrap: nowrap; }
     .oc-health-badge { --pill-c: var(--green); font-weight: 600; } /* pill recipe at end of style block */
-    .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); }
+    #oc-hive-id {
+      flex: 0 1 auto; min-width: 0; max-width: 22rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
     .oc-topbar .git-version { color: var(--muted); }
+    .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
 
     /* Fleet breaker — circular play/pause control + status pill in the topbar.
        Mirrors the Ready-work queue's #queue-suspend-btn / .pill pattern from the
@@ -341,7 +347,7 @@
     #fleet-breaker-pill.pill-passed { background: rgba(63,185,80,.12); color: #3fb950; border-color: rgba(63,185,80,.3); }
     #fleet-breaker-pill.pill-blocked { background: rgba(248,81,73,.12); color: #f85149; border-color: rgba(248,81,73,.3); }
 
-    @media (max-width: 1200px) {
+    @media (max-width: 1280px) {
       body { padding-top: 88px; }
       .oc-topbar {
         flex-wrap: wrap; height: auto; min-height: 48px;
@@ -358,12 +364,13 @@
       }
       .oc-topbar-right .widget-dl { margin-left: 0; margin-right: 0; }
       #oc-hive-id {
-        flex: 0 1 auto; min-width: 0; max-width: clamp(9rem, 32vw, 16rem);
+        flex: 0 1 auto; min-width: 0; max-width: 22rem;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
       .oc-topbar-ts { white-space: nowrap; }
     }
     @media (min-width: 769px) and (max-width: 900px) {
+      body { padding-top: 112px; }
       .oc-topbar-ts, #oc-git-version { display: none; }
       #oc-hive-id { max-width: 8rem; }
     }
@@ -14403,7 +14410,7 @@ function burnAreaChart() {
           '<div style="display:flex;gap:8px"><input type="text" id="import-url-input" placeholder="' + rawURL + '" style="flex:1"><button onclick="previewImportFromURL()" style="padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg);white-space:nowrap">Preview</button></div>' +
           '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:0.78rem;cursor:pointer;font-weight:400">' +
             '<input type="checkbox" id="import-keep-linked" style="width:auto;margin:0">' +
-            '<span>Keep linked to repo (live) <span style="color:var(--muted)">— re-fetch this definition on reload so repo edits propagate. Only its presentation/behavior fields are re-applied; security and privilege fields are never changed. The repo must be on the operator\'s allowlist. (URL import only.)</span></span>' +
+            '<span>Keep linked to repo (live) <span style="color:var(--muted)">— re-fetch this definition on reload so repo edits propagate. Keep-linked URL imports support GitHub blob URLs and raw.githubusercontent.com file URLs only; gist URLs are one-shot imports, so uncheck this box for gists. Only presentation/behavior fields are re-applied; security and privilege fields are never changed. The repo must be on the operator\'s allowlist. (URL import only.)</span></span>' +
           '</label>' +
         '</div>' +
         '<div class="config-field" style="margin-bottom:12px">' +
@@ -14987,6 +14994,7 @@ function burnAreaChart() {
     // fills it (self-hosted / custom). OpenRouter has a well-known base URL.
     const GATEWAY_PRESETS = [
       { kind: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1' },
+      { kind: 'groq',       label: 'Groq',       endpoint: 'https://api.groq.com/openai/v1' },
       { kind: 'litellm',    label: 'LiteLLM',    endpoint: '' },
       { kind: 'vllm',       label: 'vLLM',       endpoint: '' },
       { kind: 'llm-d',      label: 'llm-d',      endpoint: '' },
@@ -16227,6 +16235,13 @@ function burnAreaChart() {
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
+      // Model options must come from live discovery for THIS agent's backend, not
+      // the frozen KNOWN_MODELS placeholder (#3319). Resolve the agent's actual
+      // backend from the live agent list; fall back to its pinned backend or an
+      // empty backend (modelsForBackend then yields the safe default list).
+      const _liveAgent = (window._lastAgents || []).find(a => a.name === agentName);
+      const _agentBackend = (_liveAgent && _liveAgent.cli) || g.cliPinValue || '';
+      const _modelOpts = modelsForBackend(_agentBackend) || [];
       let html = '';
       if (isCreate) {
         html += `<div class="config-field">
@@ -16357,7 +16372,8 @@ function burnAreaChart() {
           <label>Model <span class="config-info">i<span class="config-tooltip">Override the LLM model for this agent. Select "(from launch command)" to let the CLI choose its default. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.</span></span></label>
           <select id="cfg-model" onchange="markDirty('general','model',this.value)">
             <option value="">(from launch command)</option>
-            ${KNOWN_MODELS.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
+            ${_modelOpts.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
+            ${(g.model && !_modelOpts.some(m => _modelsEqual(g.model, m.value))) ? `<option value="${esc(g.model)}" selected>${esc(g.model)} (current)</option>` : ''}
           </select>
         </div>
         <div class="config-field">

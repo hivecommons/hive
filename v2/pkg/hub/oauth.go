@@ -287,6 +287,34 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	http.SetCookie(w, cookie)
 
+	// N2 (CWE-321/798): ALSO emit an Ed25519-signed cookie.
+	//
+	// hive_hub_user above stays HMAC because that is the only format v2 spokes
+	// can verify (their proxy checks HMAC and nothing else — see F3/#3243), and
+	// v4 spokes accept either. Minting only Ed25519 would 401 the terminal on
+	// every v2 spoke in the fleet.
+	//
+	// This second cookie is what actually closes N2 for spokes that can read it:
+	// a spoke holding only the PUBLIC key can verify it but cannot mint one, so
+	// it can no longer forge `clubanderson.<sig>` and obtain hub admin. v4's
+	// proxy prefers it; v2's ignores an unknown cookie name.
+	//
+	// Two cookies rather than one hybrid value: each verifier computes its
+	// signature over the whole prefix, so no single concatenation satisfies
+	// both — verified empirically, both orderings fail both verifiers.
+	if v2Value := mintHubUserCookieValueV2(s.sessionSigningSeed(), user.Login); v2Value != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     hubUserCookieV2Name,
+			Value:    v2Value,
+			Path:     "/",
+			Domain:   ".hive.kubestellar.io",
+			MaxAge:   86400 * cookieMaxAgeDays,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+
 	saasUser := ensureSaaSUser(user.Login)
 	// A completed OAuth callback IS a login — count it here and nowhere else.
 	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
@@ -359,6 +387,19 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "hive_hub_user",
+		Value:    "",
+		Path:     "/",
+		Domain:   ".hive.kubestellar.io",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// N2: clear the Ed25519 cookie too, or a logout leaves a still-valid
+	// credential in the browser — the session-invalidation hole in miniature.
+	http.SetCookie(w, &http.Cookie{
+		Name:     hubUserCookieV2Name,
 		Value:    "",
 		Path:     "/",
 		Domain:   ".hive.kubestellar.io",

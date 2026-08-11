@@ -211,6 +211,88 @@ const (
 	importHTTPTimeoutS  = 10
 )
 
+// importAllowedHosts is the set of GitHub hostnames that agent import URLs may
+// target. Gist URLs are supported for one-shot imports only; keep-linked imports
+// require repository file URLs so they can be stored as owner/repo/ref/path.
+// All other hosts (including localhost, RFC-1918 ranges, and cloud metadata
+// endpoints) are rejected to prevent SSRF.
+var importAllowedHosts = map[string]bool{
+	"github.com":                true,
+	"raw.githubusercontent.com": true,
+	"gist.github.com":           true,
+}
+
+const (
+	importURLFormsOneShot = "https://github.com/<owner>/<repo>/blob/<ref>/<path>, https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>, or https://gist.github.com/<user>/<gist-id>/raw[/<file>]"
+	importURLFormsLinked  = "https://github.com/<owner>/<repo>/blob/<ref>/<path> or https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>"
+)
+
+// validateImportURL rejects URLs that could cause SSRF. Only https:// scheme
+// and GitHub-owned hostnames are permitted. An error is returned if the URL
+// fails any check; the caller should surface it as a 400 Bad Request.
+func validateImportURL(rawURL string, keepLinked bool) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("import URL must use https:// scheme (got %q)", u.Scheme)
+	}
+	// Strip port to compare only the hostname.
+	host := strings.ToLower(u.Hostname())
+	if !importAllowedHosts[host] {
+		return fmt.Errorf("import URL host %q is not allowed; supported forms: %s", host, importURLFormsForMode(keepLinked))
+	}
+
+	if host == "gist.github.com" {
+		if keepLinked {
+			return fmt.Errorf("keep linked imports do not support gist URLs; use a GitHub repository file URL (%s), or uncheck Keep linked for a one-shot gist import", importURLFormsLinked)
+		}
+		if !isGistRawURLPath(u.Path) {
+			return fmt.Errorf("gist import URL %q is not a supported raw gist URL; supported forms: %s", rawURL, importURLFormsOneShot)
+		}
+		return nil
+	}
+
+	if host == "raw.githubusercontent.com" {
+		if githubRawURLPattern.FindStringSubmatch(u.Path) == nil {
+			return fmt.Errorf("import URL %q is not a supported raw GitHub file URL; supported forms: %s", rawURL, importURLFormsForMode(keepLinked))
+		}
+		return nil
+	}
+
+	if host == "github.com" && githubBlobURLPattern.FindStringSubmatch(u.Path) != nil {
+		return nil
+	}
+
+	return fmt.Errorf("import URL %q is not a supported GitHub file URL; supported forms: %s", rawURL, importURLFormsForMode(keepLinked))
+}
+
+func importURLFormsForMode(keepLinked bool) string {
+	if keepLinked {
+		return importURLFormsLinked
+	}
+	return importURLFormsOneShot
+}
+
+func isGistRawURLPath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) >= 3 && parts[0] != "" && parts[1] != "" && strings.EqualFold(parts[2], "raw")
+}
+
+func importFetchURL(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+		return rawURL
+	}
+	m := githubBlobURLPattern.FindStringSubmatch(u.Path)
+	if m == nil {
+		return rawURL
+	}
+	u.Path = strings.Replace(u.Path, "/blob/", "/raw/", 1)
+	return u.String()
+}
+
 // agentConfigFromDefinition maps a parsed AgentDefinition to an AgentConfig with
 // the import defaults applied (backend copilot, immediate restart, worker bead
 // role, enabled). It is the single mapping used by both the whole-agent import
@@ -271,8 +353,18 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("url must be at most %d characters", importMaxURLLen), http.StatusBadRequest)
 			return
 		}
-		client := &http.Client{Timeout: importHTTPTimeoutS * 1e9} // nanoseconds
-		resp, err := client.Get(body.URL)
+		// Validate URL scheme and host before fetching to prevent SSRF.
+		// Only https:// to GitHub domains is accepted; file://, http://, and
+		// internal addresses are rejected regardless of keepLinked.
+		if err := validateImportURL(body.URL, body.KeepLinked); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		client := &http.Client{
+			Timeout:       importHTTPTimeoutS * 1e9, // nanoseconds
+			CheckRedirect: noRedirectToPrivate,
+		}
+		resp, err := client.Get(importFetchURL(body.URL))
 		if err != nil {
 			jsonError(w, "failed to fetch URL: "+err.Error(), http.StatusBadGateway)
 			return
@@ -507,13 +599,13 @@ func (s *Server) definitionSourceFromURL(rawURL string) (*config.DefinitionSourc
 		return nil, fmt.Errorf("could not parse URL %q", rawURL)
 	}
 	var m []string
-	if strings.EqualFold(u.Host, "raw.githubusercontent.com") {
+	if strings.EqualFold(u.Hostname(), "raw.githubusercontent.com") {
 		m = githubRawURLPattern.FindStringSubmatch(u.Path)
 	} else {
 		m = githubBlobURLPattern.FindStringSubmatch(u.Path)
 	}
 	if m == nil {
-		return nil, fmt.Errorf("URL %q is not a recognized GitHub file URL (expected .../<owner>/<repo>/blob/<ref>/<path> or a raw.githubusercontent.com file URL)", rawURL)
+		return nil, fmt.Errorf("URL %q is not a recognized GitHub file URL (expected %s)", rawURL, importURLFormsLinked)
 	}
 	return &config.DefinitionSourceConfig{
 		Type:  "github",

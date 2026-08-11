@@ -220,11 +220,14 @@ func TestToolRulesToLaunchCmd_ClaudeInference(t *testing.T) {
 }
 
 func TestToolRulesToLaunchCmd_Copilot(t *testing.T) {
-	// No github deny -> enable-all-github-mcp-tools present.
+	// Authorship fix: copilot must NEVER pass --enable-all-github-mcp-tools —
+	// the built-in github-mcp-server is read-only by default, so GitHub MCP
+	// WRITE tools are never registered and an agent cannot author issues/PRs as
+	// the logged-in user.
 	tools := denyTools("mcp__something__else")
 	cmd := toolRulesToLaunchCmd("copilot", "auto", "copilot", tools, false)
-	if !containsBoot(cmd, "--enable-all-github-mcp-tools") {
-		t.Errorf("copilot without github deny should enable github tools: %q", cmd)
+	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
+		t.Errorf("copilot must NOT enable all github mcp tools (read-only default): %q", cmd)
 	}
 	if !containsBoot(cmd, "--deny-tool=") {
 		t.Errorf("copilot cmd should include deny-tool: %q", cmd)
@@ -237,8 +240,12 @@ func TestToolRulesToLaunchCmd_CopilotGithubDeny(t *testing.T) {
 	if containsBoot(cmd, "--enable-all-github-mcp-tools") {
 		t.Errorf("copilot with github deny should NOT enable all github tools: %q", cmd)
 	}
-	if !containsBoot(cmd, "github(create_pull_request)") {
-		t.Errorf("copilot deny should be translated: %q", cmd)
+	// Deny must use the built-in server's real name, not `github`.
+	if !containsBoot(cmd, "github-mcp-server(create_pull_request)") {
+		t.Errorf("copilot deny should translate to github-mcp-server(tool): %q", cmd)
+	}
+	if containsBoot(cmd, "--deny-tool='github(") {
+		t.Errorf("copilot deny must NOT use the wrong `github(` server name: %q", cmd)
 	}
 }
 

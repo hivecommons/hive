@@ -1,5 +1,11 @@
 # Architecture
 
+> **Legacy v1/systemd documentation.** This root `docs/` page describes the
+> original supervisor, systemd/launchd timers, tmux, and `agent.env` workflow.
+> It is kept for historical context. For the current v2 Docker/Go architecture,
+> start with [`v2/docs/architecture.md`](../v2/docs/architecture.md) and the
+> [`v2/docs/README.md`](../v2/docs/README.md) index.
+
 ## Two scheduling models
 
 hive supports two fundamentally different ways to drive an agent. Choose based on how much control you want to keep.

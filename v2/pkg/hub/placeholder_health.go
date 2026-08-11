@@ -56,6 +56,34 @@ const healthCheckTokens = "tokens"
 // detail on an unassigned row, for the same reason as placeholderAuthNote.
 const placeholderTokensNote = "Unassigned — no workload by design"
 
+// healthCheckRepoTarget is the spoke's repo-target validation check
+// (HealthSummary, pkg/dashboard/server.go). It warns whenever
+// config.ValidateRepoTargets reports an issue. On an unassigned pool slot the
+// issue is always the empty-repo shape — a placeholder is provisioned with
+// repos: [] until a project is claimed — so that shape is designed state,
+// exactly like github_auth being unconfigured. A malformed VALUE (a URL, a
+// slash, a forge host) is a genuine misconfiguration even on a placeholder
+// and keeps its warning.
+const healthCheckRepoTarget = "repo_target"
+
+// placeholderRepoTargetNote replaces the repo_target check's empty-repo
+// warning detail on an unassigned row, for the same reason as
+// placeholderAuthNote.
+const placeholderRepoTargetNote = "Unassigned — repo target set when claimed by design"
+
+// repoTargetEmptyMarker is the substring config.ValidateRepoTargets puts in
+// every empty-shape issue ("org is empty …" / "repo is empty …"). Malformed
+// value shapes (URL / slash / forge host) never carry it.
+const repoTargetEmptyMarker = "is empty"
+
+// repoTargetWarnIsUnassignedEmpty reports whether a repo_target warning is
+// warning ONLY because the slot has no org/repo configured yet — the designed
+// state of an unassigned pool slot — and not because a configured value is
+// malformed.
+func repoTargetWarnIsUnassignedEmpty(detail string) bool {
+	return strings.Contains(detail, repoTargetEmptyMarker)
+}
+
 // healthCheckAgents is the spoke's agent-liveness check (HealthSummary,
 // pkg/dashboard/server.go). It fails with a detail line like
 // "0 running, 1 paused, 4 need login: guide, quality, scanner, supervisor"
@@ -114,6 +142,8 @@ func placeholderDesignedCheckNote(name, detail string) string {
 		return placeholderAuthNote
 	case name == healthCheckTokens:
 		return placeholderTokensNote
+	case name == healthCheckRepoTarget && repoTargetWarnIsUnassignedEmpty(detail):
+		return placeholderRepoTargetNote
 	case name == healthCheckAgents && agentsFailIsLoginPending(detail):
 		return placeholderAgentsNote
 	}
