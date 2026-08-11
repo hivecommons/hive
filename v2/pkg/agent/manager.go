@@ -1289,16 +1289,16 @@ func paneShowsConsentScreen(pane string) bool {
 // readiness-gated delivery sends (see deliverKickLocked). Unknown backends are
 // likewise excluded — they never embed and have no verified readiness signal.
 //
-// bob belongs in this set, not the goose set. It is a long-lived interactive
-// TUI (launched WITHOUT -p, see bobLaunchCmd) that sits at its prompt with no
+// bob and pi belong in this set, not the goose set. Both are long-lived
+// interactive TUIs that sit at their prompts with no
 // prompt argument at all, so it has no goose-style reason to embed — and
 // embedding would expose it to exactly the PS2 race above. Before this it was
 // in NEITHER group: it fell through to the write-a-file branch in launchInTmux,
 // so its bootstrap prompt was serialized to /tmp/.hive-bootstrap-<name>.txt and
-// then never read, leaving bob idle at its prompt after every launch.
+// then never read, leaving the CLI idle at its prompt after every launch.
 func backendDefersStartupKick(backend string) bool {
 	switch backend {
-	case "claude", "copilot", "gemini", bobBackend:
+	case "claude", "copilot", "gemini", "pi", bobBackend:
 		return true
 	default:
 		return false
