@@ -56,33 +56,42 @@ func TestValidateProjectRepoTargets(t *testing.T) {
 			want:  "Repo target misconfigured: repo is empty — expected org/repo. Fix in Governor Config → Repos.",
 		},
 		{
-			name:  "trailing slash shape",
+			name:  "trailing slash shape rejected",
 			org:   "kubestellar",
 			repos: []string{"hive/"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'hive/' contains '/' — expected repo name only (or 'kubestellar/<repo>') so the target resolves to org/repo. Fix in Governor Config → Repos.",
+			want:  "Repo target misconfigured: repo 'hive/' is not a valid target — expected 'repo' or 'owner/repo' (exactly one '/'). Fix in Governor Config → Repos.",
 		},
 		{
-			name:  "repo contains slash for a different org",
+			// A repo in a DIFFERENT org than project.org is valid: the runtime
+			// (Client.splitRepo) uses the repo's own owner. This is the
+			// context-forge/kalantar-msb fleet case that the stricter validator
+			// wrongly flagged.
+			name:  "cross-org owner/repo accepted",
 			org:   "kubestellar",
-			repos: []string{"other/hive"},
+			repos: []string{"other-org/hive"},
 			forge: "github.com",
-			want:  "Repo target misconfigured: repo 'other/hive' contains '/' — expected repo name only (or 'kubestellar/<repo>') so the target resolves to org/repo. Fix in Governor Config → Repos.",
 		},
 		{
-			// #3021: re-adding an existing repo as "<org>/<repo>" where the org
-			// matches project.org is unambiguous and must be accepted.
+			// #3021: re-adding an existing repo as "<org>/<repo>" (org matches).
 			name:  "repo qualified with matching org accepted",
 			org:   "kubestellar",
 			repos: []string{"kubestellar/hive"},
 			forge: "github.com",
 		},
 		{
-			name:    "primary qualified with matching org accepted",
+			name:    "primary owner/repo accepted",
 			org:     "kubestellar",
 			repos:   []string{"hive"},
-			primary: "kubestellar/hive",
+			primary: "some-other-org/hive",
 			forge:   "github.com",
+		},
+		{
+			name:  "multiple slashes rejected",
+			org:   "kubestellar",
+			repos: []string{"a/b/c"},
+			forge: "github.com",
+			want:  "Repo target misconfigured: repo 'a/b/c' is not a valid target — expected 'repo' or 'owner/repo' (exactly one '/'). Fix in Governor Config → Repos.",
 		},
 		{
 			name:  "full url pasted into org",
