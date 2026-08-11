@@ -16,13 +16,19 @@ governor:
     quiet: 2
     idle: 0
   cadences:
+    # SURGE = the queue is overloaded, so the issue/PR-producing agents must
+    # keep RUNNING to drain it — pausing them here was a self-tightening trap: a
+    # hive that tripped the threshold paused every worker, so the queue never
+    # drained and it stayed in SURGE forever (nothing created, e.g. a fresh L4
+    # hive whose first repo scan exceeds threshold=10). Keep the workers on their
+    # busy cadences during surge; only the non-draining/advisory agents pause.
     surge:
-      supervisor: pause
-      scanner: pause
-      ci-maintainer: pause
-      quality: pause
-      guide: pause
-      sec-check: pause
+      supervisor: 5m
+      scanner: 4h
+      ci-maintainer: 4h
+      quality: 2h
+      guide: 4h
+      sec-check: 4h
     busy:
       supervisor: 5m
       scanner: 4h

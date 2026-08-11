@@ -51,10 +51,12 @@ _run_test() {
   shift 2
 
   local output rc=0
+  rm -f "${WORK_DIR}/no-contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -77,10 +79,12 @@ _run_test_spoof() {
   shift 2
 
   local output rc=0
+  rm -f "${WORK_DIR}/no-contributor-marker"
   output="$(env \
     HIVE_AGENT="octocat" \
     HIVE_AGENT_DISPLAY_NAME="octocat" \
     HIVE_AGENT_ID="scanner" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_LOGIN="scanner[bot]" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -103,10 +107,12 @@ _run_test_identity_failure() {
   shift 2
 
   local output rc=0
+  rm -f "${WORK_DIR}/no-contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_FAIL_IDENTITY="true" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -129,10 +135,12 @@ _run_test_cached_env_spoof() {
   shift 2
 
   local output rc=0
+  rm -f "${WORK_DIR}/no-contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     HIVE_AUTH_LOGIN_CACHED="octocat" \
     MOCK_GH_LOGIN="test-bot[bot]" \
     GH_TOKEN="test-token-mock" \
@@ -156,8 +164,10 @@ _run_test_contributor() {
   shift 2
 
   local output rc=0
+  touch "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/contributor-marker" \
     HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
@@ -165,6 +175,65 @@ _run_test_contributor() {
     MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+  rm -f "${WORK_DIR}/contributor-marker"
+
+  if [[ "$rc" != "$expected_rc" ]]; then
+    echo "FAIL: $desc"
+    echo "  expected exit code $expected_rc, got $rc"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+_run_test_env_only() {
+  local expected_rc="$1"
+  local desc="$2"
+  shift 2
+
+  local output rc=0
+  rm -f "${WORK_DIR}/no-contributor-marker"
+  output="$(env \
+    HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
+    HIVE_AGENT="scanner" \
+    HIVE_AGENT_DISPLAY_NAME="scanner" \
+    HIVE_AGENT_ID="scanner" \
+    MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
+    GH_TOKEN="test-token-mock" \
+    bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+
+  if [[ "$rc" != "$expected_rc" ]]; then
+    echo "FAIL: $desc"
+    echo "  expected exit code $expected_rc, got $rc"
+    echo "  output: $output"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+
+  echo "PASS: $desc"
+  PASSED=$((PASSED + 1))
+}
+
+_run_test_marker_only() {
+  local expected_rc="$1"
+  local desc="$2"
+  shift 2
+
+  local output rc=0
+  touch "${WORK_DIR}/contributor-marker"
+  output="$(env \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/contributor-marker" \
+    HIVE_AGENT="scanner" \
+    HIVE_AGENT_DISPLAY_NAME="scanner" \
+    HIVE_AGENT_ID="scanner" \
+    MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
+    GH_TOKEN="test-token-mock" \
+    bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+  rm -f "${WORK_DIR}/contributor-marker"
 
   if [[ "$rc" != "$expected_rc" ]]; then
     echo "FAIL: $desc"
@@ -275,6 +344,15 @@ _run_test_contributor 1 "issue list contributor mode --author unverified contrib
 
 MOCK_GH_LOGIN="test-contributor" _run_test_contributor 0 "issue list contributor mode --author verified contributor token login (allowed)" \
   issue list --repo test/repo --author test-contributor
+
+echo ""
+echo "=== Marker trust boundary regression tests ==="
+
+_run_test_env_only 1 "issue list with HIVE_CONTRIBUTOR_MODE=true but no marker (blocked, env var ignored)" \
+  issue list --repo test/repo
+
+_run_test_marker_only 0 "issue list with marker present and no env var (allowed, marker alone grants contributor mode)" \
+  issue list --repo test/repo
 
 echo ""
 echo "Results: ${PASSED} passed, ${FAILED} failed"

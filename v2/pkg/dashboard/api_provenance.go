@@ -79,9 +79,6 @@ type layerInfo struct {
 // status. Secret values are redacted regardless.
 func (s *Server) handleConfigProvenance(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
 	if role != "owner" {
 		http.Error(w, "owner access required", http.StatusForbidden)
 		return

@@ -1539,8 +1539,8 @@ func TestConfigHasTokens_MissingField(t *testing.T) {
 func TestClearExpiredTokens_Logic(t *testing.T) {
 	// Test the JSON manipulation clearExpiredTokens does
 	input := map[string]interface{}{
-		"copilotTokens":  map[string]interface{}{"user1": "token"},
-		"loggedInUsers":  []interface{}{"user1"},
+		"copilotTokens":    map[string]interface{}{"user1": "token"},
+		"loggedInUsers":    []interface{}{"user1"},
 		"lastLoggedInUser": "user1",
 		"otherSetting":     "keep",
 	}
@@ -1706,13 +1706,13 @@ func TestBackendBinary_InferenceBackends(t *testing.T) {
 	}
 }
 
-func TestBackendBinary_PiMapsToGoose(t *testing.T) {
-	path, err := backendBinary("pi")
+func TestBackendBinaryName_PiMapsToPi(t *testing.T) {
+	name, err := backendBinaryName("pi")
 	if err != nil {
-		t.Fatalf("backendBinary(pi) error: %v", err)
+		t.Fatalf("backendBinaryName(pi) error: %v", err)
 	}
-	if !strings.Contains(path, "goose") {
-		t.Errorf("backendBinary(pi) = %q, should resolve to goose", path)
+	if name != "pi" {
+		t.Errorf("backendBinaryName(pi) = %q, should resolve to pi", name)
 	}
 }
 

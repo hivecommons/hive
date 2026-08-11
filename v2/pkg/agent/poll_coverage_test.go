@@ -33,7 +33,10 @@ func TestPollTmuxOutputForAgent_TLSError(t *testing.T) {
 	m.pollTmuxOutputForAgent(agent, ctx)
 	// The restart goroutine may recreate the session; clean it up.
 	defer cleanupAgent(t, m, "covtls")
-	if agent.LastError == "" {
+	m.mu.RLock()
+	lastError := agent.LastError
+	m.mu.RUnlock()
+	if lastError == "" {
 		t.Log("TLS error not recorded (timing-sensitive)")
 	}
 }

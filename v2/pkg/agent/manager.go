@@ -874,6 +874,11 @@ var cliPaneMarkers = []string{
 	"Copilot",
 	"Gemini",
 	"goose",
+	// pi's marker. pi renders a TUI status bar showing model context usage
+	// (for example, "5.9%/1.0M (auto)") instead of a prompt used by the
+	// other CLIs. Match the fixed context-meter suffix so a running pi is
+	// recognised as live and ready.
+	piContextMarker,
 	// bob's markers. NONE of the entries above match a running bob: verified
 	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
 	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
@@ -915,6 +920,9 @@ const (
 	// perfectly healthy at its prompt. Both strings are present in the 1.0.6
 	// bundle, so match either rather than replacing one with the other.
 	bobInputPlaceholderDefault = "Enter your prompt, / for commands"
+	// piContextMarker is pi's context-meter suffix (for example,
+	// "5.9%/1.0M (auto)") and is the readiness signal for a running pi TUI.
+	piContextMarker = "%/"
 	// bobProductMarker is bob's product name, which appears in its banner and
 	// dialogs. It is a weaker, secondary signal than bobInputPlaceholder — it
 	// also shows on trust/auth/license dialogs, which are NOT ready states —
@@ -1018,16 +1026,16 @@ func paneShowsConsentScreen(pane string) bool {
 // readiness-gated delivery sends (see deliverKickLocked). Unknown backends are
 // likewise excluded — they never embed and have no verified readiness signal.
 //
-// bob belongs in this set, not the goose set. It is a long-lived interactive
-// TUI (launched WITHOUT -p, see bobLaunchCmd) that sits at its prompt with no
+// bob and pi belong in this set, not the goose set. Both are long-lived
+// interactive TUIs that sit at their prompts with no
 // prompt argument at all, so it has no goose-style reason to embed — and
 // embedding would expose it to exactly the PS2 race above. Before this it was
 // in NEITHER group: it fell through to the write-a-file branch in launchInTmux,
 // so its bootstrap prompt was serialized to /tmp/.hive-bootstrap-<name>.txt and
-// then never read, leaving bob idle at its prompt after every launch.
+// then never read, leaving the CLI idle at its prompt after every launch.
 func backendDefersStartupKick(backend string) bool {
 	switch backend {
-	case "claude", "copilot", "gemini", bobBackend:
+	case "claude", "copilot", "gemini", "pi", bobBackend:
 		return true
 	default:
 		return false
@@ -1076,7 +1084,19 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := backendBinary(backend)
+	// A configured model-gateway NAME (e.g. "watsonx-supervisor") is a valid
+	// backend that config.ValidateBackend accepts, but backendBinary only knows
+	// the static CLIBackends/InferenceBackends lists — so a named gateway would
+	// fail here with "unknown backend" even though the test passed (#3302). Every
+	// gateway is OpenAI-compatible and launches the SAME claude CLI pointed at
+	// hive's translator via ANTHROPIC_BASE_URL (identical to InferenceBackends),
+	// so resolve a routable gateway backend to the claude binary directly.
+	resolveBackend := backend
+	if m.routableBackend(backend) {
+		resolveBackend = "claude"
+	}
+
+	binary, err := backendBinary(resolveBackend)
 	if err != nil {
 		agent.State = StateFailed
 		agent.LastError = err.Error()
@@ -1237,6 +1257,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
 				binary, model, copilotGitHubWriteDenyFlags)
 		case "gemini":
+			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		case "pi":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		case "goose":
 			launchCmd = fmt.Sprintf("%s run -s", binary)
@@ -2203,7 +2225,8 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
 		strings.Contains(output, bobInputPlaceholderDefault) ||
-		strings.Contains(output, codexInputPromptMarker)
+		strings.Contains(output, codexInputPromptMarker) ||
+		strings.Contains(output, piContextMarker)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
@@ -2283,6 +2306,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_arrow", strings.Contains(output, "❯"),
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
+				"has_pi_ready", strings.Contains(output, piContextMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			return false
 		case <-ticker.C:
@@ -3863,9 +3887,7 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 // derived from config.CLIBackends by identity, and every model-gateway backend
 // from config.InferenceBackends. Keeping this map to aliases only is what makes
 // the accept-then-fail class of bug structurally impossible — see backendBinary.
-var backendBinaryAliases = map[string]string{
-	"pi": "goose",
-}
+var backendBinaryAliases = map[string]string{}
 
 // backendBinaryName maps an agent backend to the NAME of the CLI binary that is
 // exec'd for it, without touching the filesystem. Split out from backendBinary

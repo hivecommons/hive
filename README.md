@@ -6,6 +6,12 @@ Hive separates decisions into two layers: a **deterministic pipeline** of shell 
 
 ## Quick Start (Docker Compose)
 
+**Prerequisites**
+
+- Docker Engine 24+ with the Compose v2 plugin (`docker compose`, not the legacy `docker-compose`)
+- A Linux, macOS, or Windows (WSL2) host on `amd64` or `arm64` — the pre-built images are multi-arch
+- `git`, and a GitHub token (PAT or App) for the org you want the hive to work on
+
 ```bash
 git clone -b v2 https://github.com/kubestellar/hive.git
 cd hive/v2
