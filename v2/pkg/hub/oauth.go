@@ -1,6 +1,9 @@
 package hub
 
 import (
+	cryptoRand "crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -171,7 +174,39 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 			redirect = "/dashboard"
 		}
 	}
-	state := url.QueryEscape(redirect)
+	// SECURITY (audit F11, CWE-352): bind this login to THIS browser.
+	//
+	// `state` used to be nothing but the redirect target, so it proved only that
+	// the callback carried a URL — never that this browser had actually STARTED
+	// a login. An attacker could complete an OAuth flow against their own GitHub
+	// account and hand the victim the resulting callback URL, logging the victim
+	// into the ATTACKER's account (login CSRF / session fixation); anything the
+	// victim then did landed in the attacker's account.
+	//
+	// Mint an unguessable nonce, set it in a short-lived host-scoped cookie, and
+	// carry it in state. The callback requires the two to match, so a state the
+	// victim's browser did not mint cannot be replayed against them. The
+	// redirect target rides along after the separator and is still validated on
+	// the way out — the open-redirect half was already handled and is unchanged.
+	nonce, err := oauthStateNonce()
+	if err != nil {
+		s.logger.Warn("OAuth: cannot mint login state nonce", "error", err)
+		http.Error(w, "login unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookieName,
+		Value:    nonce,
+		Path:     "/",
+		MaxAge:   int(oauthStateTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		// Lax, not Strict: the callback arrives as a top-level GET redirect
+		// FROM github.com, and Strict would withhold the cookie on exactly that
+		// navigation and break every login.
+		SameSite: http.SameSiteLaxMode,
+	})
+	state := url.QueryEscape(nonce + oauthStateSeparator + redirect)
 	// An EMPTY scope is deliberate, not an omission. The hub only needs to know
 	// WHO is logging in: the callback reads GET /user for the login name and
 	// signs it into the session cookie. GitHub serves /user's public profile —
@@ -198,6 +233,24 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
+
+	// SECURITY (audit F11, CWE-352): verify the login started in THIS browser
+	// BEFORE exchanging the code or minting any session. A callback whose state
+	// does not match this browser's cookie is a login the victim never began —
+	// most likely an attacker replaying their own completed flow to log the
+	// victim into the attacker's account.
+	//
+	// Checked first, so a forged callback never reaches the token exchange:
+	// exchanging burns a real one-time code and touches the SaaS user record,
+	// neither of which should happen for a request we are about to reject.
+	if !s.verifyOAuthStateNonce(r) {
+		s.clearOAuthStateCookie(w)
+		s.logger.Warn("OAuth: rejected callback with missing or mismatched state nonce")
+		http.Error(w, "invalid login state — please start the login again", http.StatusBadRequest)
+		return
+	}
+	// Single-use: clear it now so a captured callback URL cannot be replayed.
+	s.clearOAuthStateCookie(w)
 
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("HIVE_HUB_OAUTH_CLIENT_SECRET")
@@ -304,11 +357,13 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	saveSaaSUser(saasUser)
 
 	redirect := "/dashboard"
-	if state := r.URL.Query().Get("state"); state != "" {
-		if decoded, err := url.QueryUnescape(state); err == nil && decoded != "" {
-			if (strings.HasPrefix(decoded, "/") && !strings.HasPrefix(decoded, "//")) || isTrustedOrigin(decoded) {
-				redirect = decoded
-			}
+	if decoded, err := url.QueryUnescape(r.URL.Query().Get("state")); err == nil && decoded != "" {
+		// The nonce was already verified above; take only the redirect half.
+		if _, target, ok := strings.Cut(decoded, oauthStateSeparator); ok {
+			decoded = target
+		}
+		if decoded != "" && ((strings.HasPrefix(decoded, "/") && !strings.HasPrefix(decoded, "//")) || isTrustedOrigin(decoded)) {
+			redirect = decoded
 		}
 	}
 	http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
@@ -373,4 +428,70 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
+}
+
+const (
+	// oauthStateCookieName holds the per-login nonce that binds an OAuth
+	// callback to the browser that started it (audit F11). Host-scoped
+	// deliberately: unlike hive_hub_user it carries no Domain, so sibling
+	// tenants never receive it.
+	oauthStateCookieName = "hive_oauth_state"
+
+	// oauthStateSeparator splits the nonce from the redirect target inside the
+	// state parameter. ":" cannot appear in a nonce (hex) and any ":" in the
+	// redirect lands in the second half, which strings.Cut keeps intact.
+	oauthStateSeparator = ":"
+
+	// oauthStateTTL bounds how long a started login may sit unfinished. Long
+	// enough to authorize on GitHub (including a fresh GitHub login), short
+	// enough that a captured state is not indefinitely useful.
+	oauthStateTTL = 15 * time.Minute
+
+	// oauthStateNonceBytes is the entropy behind the nonce. 32 bytes is far
+	// beyond guessing and matches the other random values minted in this package.
+	oauthStateNonceBytes = 32
+)
+
+// oauthStateNonce mints an unguessable login nonce.
+func oauthStateNonce() (string, error) {
+	buf := make([]byte, oauthStateNonceBytes)
+	if _, err := io.ReadFull(cryptoRand.Reader, buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// verifyOAuthStateNonce reports whether the callback's state carries the same
+// nonce this browser was issued at login.
+//
+// Fails CLOSED: a missing cookie, a missing or malformed state, or any mismatch
+// is a rejection. Compared in constant time — the nonce is a secret, and a
+// length-or-content leak would let an attacker narrow it by timing.
+func (s *HubServer) verifyOAuthStateNonce(r *http.Request) bool {
+	cookie, err := r.Cookie(oauthStateCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
+	if err != nil || decoded == "" {
+		return false
+	}
+	got, _, ok := strings.Cut(decoded, oauthStateSeparator)
+	if !ok || got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(cookie.Value)) == 1
+}
+
+// clearOAuthStateCookie expires the login nonce, making it single-use.
+func (s *HubServer) clearOAuthStateCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
