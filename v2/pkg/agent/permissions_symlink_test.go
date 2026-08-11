@@ -1,98 +1,163 @@
 package agent
 
 import (
-beads.json "os"
-beads.json "path/filepath"
-beads.json "testing"
+	"os"
+	"path/filepath"
+	"syscall"
+	"testing"
 )
+
+type symlinkFileInfo struct {
+	os.FileInfo
+	mode os.FileMode
+	stat *syscall.Stat_t
+}
+
+func (fi symlinkFileInfo) Mode() os.FileMode { return fi.mode }
+func (fi symlinkFileInfo) Sys() any          { return fi.stat }
+
+func ownedDevNodeSymlinkInfo(t *testing.T, link string, mode os.FileMode) os.FileInfo {
+	t.Helper()
+
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat %s: %v", link, err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("precondition: %s was not reported as a symlink", link)
+	}
+	return symlinkFileInfo{
+		FileInfo: fi,
+		mode:     os.ModeSymlink | mode,
+		stat: &syscall.Stat_t{
+			Uid: uint32(DevUID),
+			Gid: uint32(NodeGID),
+		},
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	if got := statMode(t, path); got != want {
+		t.Fatalf("%s mode = %v, want %v: fixEntry followed a symlink (CWE-59 regression)",
+			filepath.Base(path), got, want)
+	}
+}
 
 // TestFixEntrySkipsSymlinks pins the CWE-59 guard added in PR #3432: a planted
 // symlink in the agent HOME tree must never be followed, because both os.Chmod
 // and os.Chown follow symlinks — following one would redirect the repair loop
 // onto a file outside the watched tree, allowing a local attacker to escalate
 // permissions on an arbitrary path.
-//
-// filepath.Walk reports symlinks via Lstat, so fi.Mode() has ModeSymlink set,
-// and fixEntry must return immediately without acting.
 func TestFixEntrySkipsSymlinks(t *testing.T) {
-beads.json root := t.TempDir()
+	root := t.TempDir()
 
-beads.json // Create a target file with tight permissions that must NOT be widened.
-beads.json target := filepath.Join(root, "outside-target")
-beads.json if err := os.WriteFile(target, []byte("sensitive"), 0o600); err != nil {
-beads.json beads.json t.Fatalf("write target: %v", err)
-beads.json }
-beads.json if err := os.Chmod(target, 0o600); err != nil {
-beads.json beads.json t.Fatalf("chmod target: %v", err)
-beads.json }
+	target := filepath.Join(root, "outside-target")
+	if err := os.WriteFile(target, []byte("sensitive"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Chmod(target, 0o600); err != nil {
+		t.Fatalf("chmod target: %v", err)
+	}
 
-beads.json // Plant a symlink inside the "watched tree" pointing at the target.
-beads.json link := filepath.Join(root, "planted-link")
-beads.json if err := os.Symlink(target, link); err != nil {
-beads.json beads.json t.Fatalf("symlink: %v", err)
-beads.json }
+	link := filepath.Join(root, "planted-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
 
-beads.json // Lstat the link — this is what filepath.Walk provides to its WalkFunc.
-beads.json fi, err := os.Lstat(link)
-beads.json if err != nil {
-beads.json beads.json t.Fatalf("lstat: %v", err)
-beads.json }
-beads.json if fi.Mode()&os.ModeSymlink == 0 {
-beads.json beads.json t.Fatal("precondition: Lstat did not report ModeSymlink")
-beads.json }
+	fixEntry(link, ownedDevNodeSymlinkInfo(t, link, 0o600), quietLogger())
 
-beads.json // Call fixEntry on the symlink — it must be a no-op.
-beads.json fixEntry(link, fi, quietLogger())
-
-beads.json // The TARGET's permissions must be unchanged — proof the link was not followed.
-beads.json after, err := os.Stat(target)
-beads.json if err != nil {
-beads.json beads.json t.Fatalf("stat target after fixEntry: %v", err)
-beads.json }
-beads.json if got := after.Mode().Perm(); got != 0o600 {
-beads.json beads.json t.Errorf("target mode = %v after fixEntry on a symlink — the symlink was followed (CWE-59 regression), want 0600", got)
-beads.json }
+	assertMode(t, target, 0o600)
 }
 
-// TestFixPermissionsDoesNotFollowSymlinksInWalk exercises the full
-// fixPermissions walk with a symlink planted inside a watched root. The
-// symlink's target must not have its permissions altered.
-func TestFixPermissionsDoesNotFollowSymlinksInWalk(t *testing.T) {
-beads.json root := t.TempDir()
-beads.json watched := filepath.Join(root, "watched")
-beads.json if err := os.MkdirAll(watched, 0o755); err != nil {
-beads.json beads.json t.Fatalf("mkdir watched: %v", err)
-beads.json }
+func TestFixEntrySkipsRelativeSymlinkToOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	watched := filepath.Join(root, "watched")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(watched, 0o755); err != nil {
+		t.Fatalf("mkdir watched: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
 
-beads.json // Target outside the watched tree.
-beads.json target := filepath.Join(root, "outside-secret")
-beads.json if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
-beads.json beads.json t.Fatalf("write target: %v", err)
-beads.json }
-beads.json if err := os.Chmod(target, 0o600); err != nil {
-beads.json beads.json t.Fatalf("chmod target: %v", err)
-beads.json }
+	target := filepath.Join(outside, "secret")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Chmod(target, 0o600); err != nil {
+		t.Fatalf("chmod target: %v", err)
+	}
 
-beads.json // Symlink inside the watched tree pointing outside.
-beads.json link := filepath.Join(watched, "evil-link")
-beads.json if err := os.Symlink(target, link); err != nil {
-beads.json beads.json t.Fatalf("symlink: %v", err)
-beads.json }
+	link := filepath.Join(watched, "relative-link")
+	if err := os.Symlink(filepath.Join("..", "outside", "secret"), link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
 
-beads.json // Point the watcher at our temp tree.
-beads.json origWatched, origGoose := WatchedHomeDirs, GooseLogsDir
-beads.json WatchedHomeDirs = []string{watched}
-beads.json GooseLogsDir = filepath.Join(root, "goose-logs")
-beads.json t.Cleanup(func() { WatchedHomeDirs = origWatched; GooseLogsDir = origGoose })
+	fixEntry(link, ownedDevNodeSymlinkInfo(t, link, 0o600), quietLogger())
 
-beads.json fixPermissions(quietLogger())
+	assertMode(t, target, 0o600)
+}
 
-beads.json // Assert the target was not touched.
-beads.json after, err := os.Stat(target)
-beads.json if err != nil {
-beads.json beads.json t.Fatalf("stat target: %v", err)
-beads.json }
-beads.json if got := after.Mode().Perm(); got != 0o600 {
-beads.json beads.json t.Errorf("target mode = %v after walk containing a symlink — CWE-59 regression, want 0600", got)
-beads.json }
+func TestFixEntrySkipsSymlinkToDirectory(t *testing.T) {
+	root := t.TempDir()
+	watched := filepath.Join(root, "watched")
+	targetDir := filepath.Join(root, "outside-dir")
+	if err := os.MkdirAll(watched, 0o755); err != nil {
+		t.Fatalf("mkdir watched: %v", err)
+	}
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	if err := os.Chmod(targetDir, 0o700); err != nil {
+		t.Fatalf("chmod target dir: %v", err)
+	}
+
+	link := filepath.Join(watched, "dir-link")
+	if err := os.Symlink(targetDir, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	fixEntry(link, ownedDevNodeSymlinkInfo(t, link, 0o700), quietLogger())
+
+	assertMode(t, targetDir, 0o700)
+}
+
+// TestFixPermissionsDoesNotFollowSymlinkedParentInWalk exercises the full
+// fixPermissions walk with a symlinked parent directory planted inside a
+// watched root. filepath.Walk must visit the link itself via Lstat, not descend
+// through it to the outside target tree.
+func TestFixPermissionsDoesNotFollowSymlinkedParentInWalk(t *testing.T) {
+	root := t.TempDir()
+	watched := filepath.Join(root, "watched")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(watched, 0o755); err != nil {
+		t.Fatalf("mkdir watched: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+
+	target := filepath.Join(outside, "secret")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Chmod(target, 0o600); err != nil {
+		t.Fatalf("chmod target: %v", err)
+	}
+
+	parentLink := filepath.Join(watched, "symlinked-parent")
+	if err := os.Symlink(outside, parentLink); err != nil {
+		t.Fatalf("symlink parent: %v", err)
+	}
+
+	origWatched, origGoose := WatchedHomeDirs, GooseLogsDir
+	WatchedHomeDirs = []string{watched}
+	GooseLogsDir = filepath.Join(root, "goose-logs")
+	t.Cleanup(func() { WatchedHomeDirs = origWatched; GooseLogsDir = origGoose })
+
+	fixPermissions(quietLogger())
+
+	assertMode(t, target, 0o600)
 }
