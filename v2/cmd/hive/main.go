@@ -444,7 +444,16 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 		// only when a usable per-app-id key exists. Any other path is a genuine
 		// operator override (a hive on a third App with a bespoke key location)
 		// and still wins outright.
-		if v == spokeAppKeyPath {
+		//
+		// BOTH generic paths qualify. /data/gh-app-key.pem is what older builds
+		// wrote on every key delivery; /secrets/gh-app-key.pem is what the
+		// PROVISIONING TEMPLATE hardcodes for every App-using hive
+		// (saas_provision.go). Neither names the App it holds, and neither was
+		// typed by an operator. Until /secrets was included here, a provisioned
+		// hive could never change forges: the hub could correct app_id all it
+		// liked and the spoke kept signing with the provisioned key, which on
+		// the a-ks-wec2 pool was a placeholder matching NEITHER real App.
+		if v == spokeAppKeyPath || v == spokeProvisionedAppKeyPath {
 			if p := perAppIDKeyPath(appID); p != "" {
 				if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
 					return p

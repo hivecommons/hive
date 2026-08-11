@@ -7294,6 +7294,37 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		appDelivered = true
 	}
 
+	// NO CREDS PASTED: derive the identity from the forge we already know.
+	//
+	// The three-way AND above is an ADMIN OVERRIDE, not the normal path — it
+	// fires only when someone hand-carries an app_id, an installation_id and a
+	// PEM into the dialog. Every other assignment fell through it silently and
+	// left the hive on config.PlaceholderAppID, even though h.GitHubHost was
+	// resolved a hundred lines earlier and the hub holds that forge's App key.
+	// Deriving here is what makes "assign knows the forge, so assign sets the
+	// forge identity" true in code rather than only in intent.
+	if !appDelivered {
+		if appCfg := s.assignTimeAppIdentity(h); appCfg != nil {
+			s.storePendingGitHubAppConfig(hiveID, appCfg)
+			appDelivered = true
+			s.logger.Info("assign: derived github app identity from the hive's forge",
+				"hive_id", hiveID,
+				"forge", h.GitHubHost,
+				"app_id", appCfg.AppID,
+				"app_slug", appCfg.AppSlug,
+				"api_url", appCfg.APIURL,
+				"key_delivered", appCfg.PrivateKey != "",
+			)
+		} else {
+			s.logger.Warn("assign: no github app identity for this hive's forge — spoke keeps the placeholder app_id and starts in dashboard-only mode",
+				"hive_id", hiveID,
+				"forge", h.GitHubHost,
+				"cluster", clusterIDForHive(h),
+				"remedy", "name an App for this forge in clusters.json, or supply app_id/installation_id/app_private_key on the assign request",
+			)
+		}
+	}
+
 	// The project config itself is delivered by handleHeartbeat via
 	// projectConfigForHiveID on the next beat — it keeps sending until the spoke
 	// reports the matching project. No hub→spoke push or kubectl is needed, so

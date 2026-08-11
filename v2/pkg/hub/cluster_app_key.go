@@ -258,7 +258,19 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 	}
 	c, ok := s.clusters[clusterID]
 	if !ok {
-		return nil
+		// UNREGISTERED CLUSTER. Returning nil here meant a hive whose cluster is
+		// missing from clusters.json got no answer at all, beat after beat —
+		// the hub logged "cluster names no github app — cannot repair" and
+		// offered a remedy (set github_app_id on the cluster) for a cluster
+		// entry that does not exist. Five a-ks-wec2 spokes stayed on
+		// config.PlaceholderAppID that way.
+		//
+		// A hive's ELECTED forge does not depend on the cluster registry, and
+		// the two build-constant Apps are per-forge facts, so this is the one
+		// answer that is still knowable. It is deliberately narrow: hive
+		// intent only (an unclaimed placeholder elects nothing and still gets
+		// nil), and only forges this build can name.
+		return s.builtinIdentityForForge(electedForgeForHive(h, nil))
 	}
 	resolved := ResolveHiveIdentityInFleet(h, &c, s.forgeAppsAcrossFleet())
 	// A hive that ELECTED a forge no cluster entry names an App on still has a
@@ -315,6 +327,90 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 	}
 	identity.PrivateKey = pem
 	identity.Fingerprint = fp
+	return identity
+}
+
+// assignTimeAppIdentity resolves the COMPLETE forge identity set an assigning
+// hive should be given — app_id, app_slug, base_url and api_url, plus the key
+// when this hub holds one.
+//
+// WHY ASSIGN NEEDS ITS OWN ENTRY POINT
+//
+// Assign already knows the forge: handleAssignHive records h.GitHubHost from
+// the requested org before it reaches the credential step. Yet until now the
+// only way a spoke received an App at assign was an admin pasting app_id,
+// installation_id AND a PEM into the dialog — all three, or nothing was sent.
+// Leave one blank and the hive kept config.PlaceholderAppID, which is how five
+// spokes on a-ks-wec2 sat in dashboard-only mode carrying 999999999 while the
+// hub knew their forge was github.ibm.com and held that App's key the whole
+// time.
+//
+// installation_id is deliberately NOT part of the answer. The spoke discovers
+// it itself once it can authenticate as the App ("github app installation
+// auto-discovered"), so requiring an operator to supply a value the spoke
+// derives is what made the automatic path unreachable. A zero installation in
+// HeartbeatGitHubAppConfig means "not speaking to this field", so omitting it
+// can never blank a working one.
+//
+// Returns nil when the forge is unknown or names no App this hub can identify —
+// "say nothing" rather than guess, so assign never invents an identity.
+func (s *HubServer) assignTimeAppIdentity(h *SaaSHive) *HeartbeatGitHubAppConfig {
+	if s == nil || h == nil {
+		return nil
+	}
+	identity := s.appIdentityForHive(h, clusterIDForHive(h))
+	if identity == nil {
+		// The hive's cluster is absent from clusters.json (or names no App on
+		// the elected forge), so appIdentityForHive returned before any App
+		// logic. The elected forge is still a fact, and the two build-constant
+		// Apps are per-forge constants — positive knowledge, not invention.
+		identity = s.builtinIdentityForForge(electedForgeForHive(h, s.clusterForHive(h)))
+	}
+	if identity == nil || identity.AppID == 0 {
+		return nil
+	}
+	cfg := &HeartbeatGitHubAppConfig{
+		AppID:   identity.AppID,
+		AppSlug: identity.AppSlug,
+		APIURL:  identity.APIURL,
+		BaseURL: identity.BaseURL,
+	}
+	// Only ever ride a key we actually hold: an empty private_key means "leave
+	// the spoke's key alone", and the spoke prefers its own per-app-id file
+	// (/data/gh-app-key-<app_id>.pem) when it already has the right one.
+	if identity.HasKey() {
+		cfg.PrivateKey = identity.PrivateKey
+	}
+	return cfg
+}
+
+// builtinIdentityForForge builds the identity set for a forge whose App is a
+// build constant, filling in the forge URLs that make an app_id usable. An App
+// ID presented to the wrong forge returns "404 Integration not found", so the
+// URLs travel with it rather than being left for a later repair.
+func (s *HubServer) builtinIdentityForForge(forge string) *clusterAppIdentity {
+	if s == nil || forge == "" {
+		return nil
+	}
+	appID, slug := builtinAppOfForge(forge)
+	if appID == 0 {
+		return nil
+	}
+	identity := &clusterAppIdentity{AppID: appID, AppSlug: slug, Forge: forge}
+	// Public github.com is the spoke's default forge, so its URLs stay empty —
+	// writing them would pin a value the spoke already assumes. Enterprise must
+	// be stated explicitly.
+	if !isPublicForgeHost(forge) {
+		identity.BaseURL = config.EnterpriseGitHubBaseURL
+		identity.APIURL = config.EnterpriseGitHubAPIURL
+	}
+	if k, found := s.appKeysByAppID()[appID]; found && k.PrivateKey != "" {
+		identity.PrivateKey = k.PrivateKey
+		identity.Fingerprint = k.Fingerprint
+		if identity.AppSlug == "" {
+			identity.AppSlug = k.AppSlug
+		}
+	}
 	return identity
 }
 
