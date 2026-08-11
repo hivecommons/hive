@@ -93,11 +93,24 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
   && npm cache clean --force \
   && which pi
 
-# Install Go (needed for building/testing Go projects)
+# Install Go (needed for building/testing Go projects).
+# The tarball is downloaded to a file and its SHA-256 verified against the
+# official checksum BEFORE extraction, so a compromised go.dev (or a MITM) cannot
+# inject a tampered toolchain. Bump GO_SHA256_AMD64/ARM64 whenever GO_VERSION
+# changes — the values come from https://go.dev/dl/?mode=json for that version.
 ARG GO_VERSION=1.24.4
+ARG GO_SHA256_AMD64=77e5da33bb72aeaef1ba4418b6fe511bc4d041873cbf82e5aa6318740df98717
+ARG GO_SHA256_ARM64=d5501ee5aca0f258d5fe9bfaed401958445014495dc115f202d43d5210b45241
 RUN ARCH=$(dpkg --print-architecture) \
-  && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
-    | tar -C /usr/local -xzf - \
+  && case "$ARCH" in \
+       amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
+       arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for Go toolchain: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
+  && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+  && tar -C /usr/local -xzf /tmp/go.tar.gz \
+  && rm -f /tmp/go.tar.gz \
   && ln -s /usr/local/go/bin/go /usr/local/bin/go \
   && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
