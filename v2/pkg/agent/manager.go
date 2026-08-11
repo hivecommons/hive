@@ -1076,7 +1076,19 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := backendBinary(backend)
+	// A configured model-gateway NAME (e.g. "watsonx-supervisor") is a valid
+	// backend that config.ValidateBackend accepts, but backendBinary only knows
+	// the static CLIBackends/InferenceBackends lists — so a named gateway would
+	// fail here with "unknown backend" even though the test passed (#3302). Every
+	// gateway is OpenAI-compatible and launches the SAME claude CLI pointed at
+	// hive's translator via ANTHROPIC_BASE_URL (identical to InferenceBackends),
+	// so resolve a routable gateway backend to the claude binary directly.
+	resolveBackend := backend
+	if m.routableBackend(backend) {
+		resolveBackend = "claude"
+	}
+
+	binary, err := backendBinary(resolveBackend)
 	if err != nil {
 		agent.State = StateFailed
 		agent.LastError = err.Error()

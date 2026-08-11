@@ -343,3 +343,32 @@ func TestBackendBinaryName_RejectsUnknown(t *testing.T) {
 		t.Fatal("backendBinaryName accepted a backend that is in neither canonical list")
 	}
 }
+
+// TestNamedGatewayBackendResolvesToClaude covers #3302: an agent whose backend
+// is a configured model-gateway NAME (e.g. "watsonx-supervisor") passed
+// config.ValidateBackend (which accepts gateway names) but died at kick with
+// "unknown backend" because the launch path resolved the binary from the static
+// list only. A routable gateway backend must resolve to the claude CLI, exactly
+// like the built-in inference backends.
+func TestNamedGatewayBackendResolvesToClaude(t *testing.T) {
+	m := &Manager{logger: discardLogger()}
+	// Inject a gateway checker that recognizes a custom gateway name, mirroring
+	// what config injects at runtime from Governor.ResolvedGateways().
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return backend == "watsonx-supervisor"
+	})
+
+	if !m.routableBackend("watsonx-supervisor") {
+		t.Fatal("a configured gateway name must be routable")
+	}
+	// The launch path resolves a routable backend to the claude binary; assert
+	// backendBinary("claude") succeeds so the named gateway can actually start.
+	got, err := backendBinary("claude")
+	if err != nil || filepath.Base(got) != "claude" {
+		t.Fatalf("backendBinary(claude) = (%q, %v), want the claude CLI", got, err)
+	}
+	// An unknown, non-gateway backend stays non-routable (no accidental widening).
+	if m.routableBackend("totally-made-up") {
+		t.Error("an unconfigured name must not be treated as routable")
+	}
+}
