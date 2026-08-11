@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -233,6 +234,46 @@ func (ds *DocumentSource) Metadata() DocMetadata {
 	return ds.metadata
 }
 
+// docRedirectResolver resolves a redirect target's hostname to IPs. A package
+// var so tests can point it at a stub instead of real DNS.
+var docRedirectResolver = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
+
+// docRedirectHostIsPrivate reports whether a redirect target points at a
+// private/internal address, RESOLVING DNS to do so.
+//
+// It deliberately does not reuse gitSourceHostIsPrivate, which by design checks
+// IP literals only: that function guards operator-supplied git sources at
+// config time, where skipping DNS avoids a rebinding TOCTOU and the
+// fail-closed HIVE_ALLOW_PRIVATE_GIT_SOURCE default bounds the exposure.
+// Neither of those conditions holds here. A redirect target is chosen by the
+// remote server at fetch time, is fully attacker-controlled, and has no
+// operator gate — so an IP-literal-only check let a public URL 302 to a
+// hostname that resolves to 169.254.169.254 and reach cloud metadata, which is
+// exactly the bypass the pre-fetch isPrivateURL guard in the API handler
+// (which does resolve) was added to close.
+//
+// Fails closed: an unparseable target or a DNS error is treated as private.
+func docRedirectHostIsPrivate(ctx context.Context, host string) bool {
+	if host == "" {
+		return true
+	}
+	if gitSourceHostIsPrivate(host) {
+		return true
+	}
+	addrs, err := docRedirectResolver(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return true
+	}
+	for _, addr := range addrs {
+		if gitSourceHostIsPrivate(addr) {
+			return true
+		}
+	}
+	return false
+}
+
 // docNoRedirectToPrivate is a CheckRedirect policy that prevents the HTTP
 // client from following redirects to private/internal hosts. A public URL that
 // returns a 302 to an internal address (e.g. 169.254.169.254 or 10.x) would
@@ -242,7 +283,12 @@ func docNoRedirectToPrivate(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
 	}
-	if gitSourceHostIsPrivate(req.URL.Hostname()) {
+	// Only http(s) may be followed: a redirect to file://, gopher:// or similar
+	// is never legitimate for a document fetch and is a classic SSRF pivot.
+	if scheme := strings.ToLower(req.URL.Scheme); scheme != "http" && scheme != "https" {
+		return fmt.Errorf("redirect to non-http(s) scheme blocked: %s", scheme)
+	}
+	if docRedirectHostIsPrivate(req.Context(), req.URL.Hostname()) {
 		return fmt.Errorf("redirect to private/internal host blocked: %s", req.URL.Host)
 	}
 	return nil
