@@ -79,10 +79,11 @@ spec:
 		w.Write([]byte(yamlContent))
 	}))
 	defer ts.Close()
+	routeImportFetchesToServer(t, ts)
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source":     "url",
-		"url":        ts.URL + "/kubestellar/hive/blob/main/plain.yaml",
+		"url":        "https://github.com/kubestellar/hive/blob/main/plain.yaml",
 		"keepLinked": false,
 	})
 	if rec.Code != http.StatusOK {
@@ -115,13 +116,14 @@ spec:
 		w.Write([]byte(yamlContent))
 	}))
 	defer ts.Close()
+	routeImportFetchesToServer(t, ts)
 
 	// The blob path makes the parsed slug "kubestellar/hive"; allowlist it.
 	enableDefinitionAllowlist(deps, "kubestellar/hive")
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source":     "url",
-		"url":        ts.URL + "/kubestellar/hive/blob/main/agents/linked.yaml",
+		"url":        "https://github.com/kubestellar/hive/blob/main/agents/linked.yaml",
 		"keepLinked": true,
 	})
 	if rec.Code != http.StatusOK {
@@ -161,10 +163,11 @@ spec:
 		w.Write([]byte(yamlContent))
 	}))
 	defer ts.Close()
+	routeImportFetchesToServer(t, ts)
 
 	rec := doPost(s, "/api/agents/import", map[string]interface{}{
 		"source":     "url",
-		"url":        ts.URL + "/attacker/evil/blob/main/agent.yaml",
+		"url":        "https://github.com/attacker/evil/blob/main/agent.yaml",
 		"keepLinked": true,
 	})
 	if rec.Code != http.StatusBadRequest {

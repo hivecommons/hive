@@ -257,7 +257,18 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("url must be at most %d characters", importMaxURLLen), http.StatusBadRequest)
 			return
 		}
-		client := &http.Client{Timeout: importHTTPTimeoutS * 1e9} // nanoseconds
+		// Validate before fetching, then re-validate every redirect hop.
+		// Without both, this handler fetched an arbitrary caller-supplied URL
+		// and returned its body — a direct SSRF into cluster-internal services
+		// and the cloud metadata endpoint.
+		if err := validateImportFetchURL(r.Context(), body.URL); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		client := &http.Client{
+			Timeout:       importHTTPTimeoutS * 1e9, // nanoseconds
+			CheckRedirect: noRedirectToPrivate,
+		}
 		resp, err := client.Get(body.URL)
 		if err != nil {
 			jsonError(w, "failed to fetch URL: "+err.Error(), http.StatusBadGateway)
@@ -510,4 +521,34 @@ func (s *Server) reInitSubsystems() {
 	if s.deps != nil && s.deps.ReInitFunc != nil {
 		s.deps.ReInitFunc()
 	}
+}
+
+// validateImportFetchURL is the pre-fetch SSRF guard for agent-definition
+// imports. It deliberately restricts only the TRANSPORT and the DESTINATION,
+// not which sites may be imported from, so it closes the vulnerability without
+// changing what users are allowed to import.
+//
+// Pairs with noRedirectToPrivate on the client: this checks the URL the caller
+// supplied, and that re-checks every hop the remote server redirects to, so a
+// public URL cannot 302 its way to an internal address.
+func validateImportFetchURL(ctx context.Context, rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// file://, gopher:// and friends are never a legitimate import transport
+	// and are the classic pivot for reading local files.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("import URL must use http:// or https:// scheme (got %q)", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("import URL must include a host")
+	}
+	// isPrivateURL resolves DNS and fails closed, so a hostname that resolves
+	// to 169.254.169.254 or an RFC1918 address is rejected too — not just a
+	// literal IP.
+	if isPrivateURL(ctx, rawURL) {
+		return fmt.Errorf("import URL must not point to private/internal addresses")
+	}
+	return nil
 }

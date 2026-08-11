@@ -4641,7 +4641,9 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 			req.Header.Set(k, v)
 		}
 	}
-	client := &http.Client{Timeout: litellmProbeTimeout}
+	// Re-validate every redirect hop: a gateway endpoint is operator-supplied
+	// but the redirect target is chosen by the remote server at request time.
+	client := &http.Client{Timeout: litellmProbeTimeout, CheckRedirect: noRedirectToPrivate}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("cannot reach gateway: %w", err)
