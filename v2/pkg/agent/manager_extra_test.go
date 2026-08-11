@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -326,5 +328,56 @@ func TestDeduplicateBlocks_NearDuplicates(t *testing.T) {
 	if len(result) > 3 {
 		t.Errorf("DeduplicateBlocks should remove near-duplicate block, got %d lines: %v",
 			len(result), result)
+	}
+}
+
+// Audit F12 (CWE-59/CWE-61). ensureWorldWritable repairs an agent's HOME, a
+// tree that is world-writable BY DESIGN — so the agent itself can plant entries
+// in it. os.Chmod follows symlinks, so a link planted there aimed the hive's
+// own chmod at any file the hive user could reach and made it 0666. The agent
+// supplies the link; the hive supplies the privilege.
+//
+// Config, key files and state all live within reach of that user, so this is a
+// privilege-escalation primitive, not a tidiness issue.
+func TestF12_EnsureWorldWritableDoesNotFollowSymlinks(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+
+	victim := filepath.Join(root, "victim.txt")
+	if err := os.WriteFile(victim, []byte("hive-owned secret"), 0o600); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	// The agent plants a link inside its own HOME pointing outside it.
+	if err := os.Symlink(victim, filepath.Join(home, "innocent.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// A real file in the tree, to prove the walk still does its job.
+	realFile := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(realFile, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write real file: %v", err)
+	}
+
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	m.ensureWorldWritable(home)
+
+	info, err := os.Lstat(victim)
+	if err != nil {
+		t.Fatalf("lstat victim: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("F12: a symlink planted in the agent HOME made the hive chmod a file OUTSIDE that tree to %o (want 0600 untouched)", info.Mode().Perm())
+	}
+
+	// Positive control: if the walk did nothing at all, the assertion above
+	// would hold for the wrong reason.
+	rinfo, err := os.Stat(realFile)
+	if err != nil {
+		t.Fatalf("stat real file: %v", err)
+	}
+	if rinfo.Mode().Perm() != 0o666 {
+		t.Fatalf("test is vacuous: the walk did not repair a genuine file (mode %o, want 0666)", rinfo.Mode().Perm())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -5154,16 +5155,37 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 }
 
 // ensureWorldWritable walks the tree and sets dirs to 0o777, files to 0o666.
+//
+// SECURITY (audit F12, CWE-59/CWE-61): this walk must never follow a symlink.
+//
+// The tree it repairs is an agent's own HOME and is world-writable by design,
+// so the agent can plant entries in it. os.Chmod FOLLOWS symlinks, so a link
+// planted here pointed the hive's own chmod at any file the hive user can
+// reach — hive.yaml, key files, state — and turned it 0666. The agent supplies
+// the link; the hive supplies the privilege. Verified: a 0600 file outside the
+// tree became 0666 through a planted link, and stays 0600 with this guard.
+//
+// filepath.WalkDir reports entries via Lstat, so the symlink is visible as a
+// symlink here; the danger is only in acting on it. Non-regular files (fifos,
+// sockets, devices) are skipped for the same reason: chmod on them is never
+// something this repair loop intends.
 func (m *Manager) ensureWorldWritable(root string) {
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		if d.IsDir() {
 			if info.Mode().Perm() != 0o777 {
 				_ = os.Chmod(path, 0o777)
 			}
-		} else {
+		} else if info.Mode().IsRegular() {
 			if info.Mode().Perm() != 0o666 {
 				_ = os.Chmod(path, 0o666)
 			}

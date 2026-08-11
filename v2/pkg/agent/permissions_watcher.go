@@ -170,6 +170,16 @@ func fixPermissions(logger *slog.Logger) {
 // fixEntry checks a single file or directory and corrects ownership/mode
 // if needed.
 func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
+	// SECURITY (audit F12, CWE-59): never act on a symlink. This walks the
+	// agent HOME dirs, which agents can write to, and both os.Chmod and
+	// os.Chown FOLLOW symlinks — so a planted link would redirect this
+	// repair loop onto a file outside the tree. filepath.Walk reports
+	// entries via Lstat, so the link is visible as a link here; the ownership
+	// check below reads the LINK's metadata, not the target's, and so cannot
+	// be relied on to catch this. Same guard as ensureWorldWritable.
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return
+	}
 	stat, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		return
