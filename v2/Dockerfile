@@ -204,11 +204,14 @@ COPY bin/nous-runner.sh bin/nous-sync.py bin/nous-hive-gate.py bin/nous-install.
 RUN chmod +x /tmp/hive/bin/*.sh
 COPY examples/kubestellar/nous-campaign.yaml examples/kubestellar/nous-governor-campaign.yaml examples/kubestellar/nous-repo-campaign.yaml /etc/hive/
 RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/snapshots /opt/nous
-RUN pip3 install --no-cache-dir --break-system-packages pyyaml 2>/dev/null || \
-    pip3 install --no-cache-dir pyyaml 2>/dev/null || \
+# Pin Python packages to prevent supply-chain injection via PyPI (fixes sec-check #3338).
+ARG PYYAML_VERSION=6.0.3
+ARG SPECIFY_CLI_VERSION=0.16.2
+RUN pip3 install --no-cache-dir --break-system-packages "pyyaml==${PYYAML_VERSION}" 2>/dev/null || \
+    pip3 install --no-cache-dir "pyyaml==${PYYAML_VERSION}" 2>/dev/null || \
     echo "WARN: system pyyaml install failed"
-RUN pip3 install --no-cache-dir --break-system-packages specify-cli 2>/dev/null || \
-    pip3 install --no-cache-dir specify-cli 2>/dev/null || \
+RUN pip3 install --no-cache-dir --break-system-packages "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
+    pip3 install --no-cache-dir "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
