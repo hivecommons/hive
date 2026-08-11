@@ -170,7 +170,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// repair loop onto a file outside the tree. filepath.Walk reports
 	// entries via Lstat, so the link is visible as a link here; the ownership
 	// check below reads the LINK's metadata, not the target's, and so cannot
-	// be relied on to catch this. Same guard as ensureWorldWritable.
+	// be relied on to catch this. Mirrors ensureWorldWritable's symlink skip.
 	if fi.Mode()&os.ModeSymlink != 0 {
 		return
 	}

@@ -4699,6 +4699,12 @@ func (m *Manager) ensureWorldWritable(root string) {
 		if err != nil {
 			return nil
 		}
+		// SECURITY (CWE-59): filepath.Walk reports entries via Lstat, so a
+		// planted symlink is visible here. os.Chmod follows symlinks; never let
+		// this agent-writable HOME repair loop chmod a target outside root.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if info.IsDir() {
 			if info.Mode().Perm() != 0o777 {
 				_ = os.Chmod(path, 0o777)
