@@ -41,6 +41,9 @@ func getProvenance(t *testing.T, role string) (*httptest.ResponseRecorder, prove
 	req := httptest.NewRequest(http.MethodGet, "/api/config/provenance", nil)
 	if role != "" {
 		req.Header.Set("X-Hive-Role", role)
+		if role == "owner" {
+			req.Header.Set(ownerRoleVerifiedHeader, "true")
+		}
 	}
 	rec := httptest.NewRecorder()
 	s.handleConfigProvenance(rec, req)
