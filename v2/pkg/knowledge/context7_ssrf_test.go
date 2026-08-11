@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -56,5 +57,43 @@ func TestContext7Client_BlocksRedirectToInternalHostname(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "private/internal host blocked") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestUseContext7TestServerDoesNotWeakenRedirectGuard verifies that the
+// httptest routing seam keeps the same SSRF redirect protection as the
+// production Context7 client.
+func TestUseContext7TestServerDoesNotWeakenRedirectGuard(t *testing.T) {
+	var redirectorHits atomic.Int32
+	var privateHits atomic.Int32
+	privateTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		privateHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer privateTarget.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectorHits.Add(1)
+		http.Redirect(w, r, privateTarget.URL+"/metadata", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	useContext7TestServer(t, redirector.URL)
+	if context7Client.CheckRedirect == nil {
+		t.Fatal("useContext7TestServer installed a client without redirect protection")
+	}
+
+	_, err := FetchContext7Docs(context.Background(), "/safe/lib", "", "")
+	if err == nil {
+		t.Fatal("test Context7 client followed a redirect to a private host")
+	}
+	if !strings.Contains(err.Error(), "private/internal host blocked") {
+		t.Fatalf("expected private-host redirect guard error, got: %v", err)
+	}
+	if redirectorHits.Load() != 1 {
+		t.Fatalf("redirector received %d request(s), want 1", redirectorHits.Load())
+	}
+	if privateHits.Load() != 0 {
+		t.Fatalf("redirect guard allowed %d request(s) to private target, want 0", privateHits.Load())
 	}
 }
