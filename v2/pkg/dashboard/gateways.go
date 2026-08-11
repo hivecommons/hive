@@ -338,8 +338,34 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	// agent 401s later. Uses the just-submitted key when present (the key file
 	// may not reflect it in the same request on some volumes).
 	resp := map[string]interface{}{"ok": true, "status": "updated", "gateway": gatewaySectionResponse(gw)}
-	if probe := s.gatewayProbeResult(gw, submittedKey); probe != nil {
-		resp["probe"] = probe
+	// SECURITY (audit F6, CWE-200): probe with the SUBMITTED key only, never a
+	// stored one.
+	//
+	// This handler preserves a previously-stored api_key_file when the caller
+	// omits a key (intended — see TestGatewaysUpsert_PreservesKeyOnEdit) while
+	// taking the endpoint from the request body. Probing with the resolved key
+	// chained those into an exfiltration primitive: one PUT naming an existing
+	// gateway, supplying only a new endpoint, walked the stored credential to a
+	// server the caller controls. The caller never had to know the key.
+	//
+	// Blanket private-IP denial is the wrong fix — in-cluster gateways are
+	// legitimate and it would break them. The invariant that actually holds is
+	// narrower: a credential the caller did not supply must never be sent to an
+	// endpoint the caller did. When the caller submits the key, they already
+	// possess it, so probing their endpoint discloses nothing new.
+	if submittedKey != "" {
+		if probe := s.gatewayProbeResult(gw, submittedKey); probe != nil {
+			resp["probe"] = probe
+		}
+	} else {
+		// No new key: the endpoint may have changed, so a stored credential is
+		// not ours to send. Verifying it stays possible via the separate
+		// /gateways/{name}/test route, which probes a gateway's own PERSISTED
+		// endpoint rather than one supplied in this request.
+		resp["probe"] = map[string]interface{}{
+			"ok":      false,
+			"skipped": "no key submitted — endpoint not probed with the stored credential; use the gateway test action to verify",
+		}
 	}
 	jsonResponse(w, resp)
 }

