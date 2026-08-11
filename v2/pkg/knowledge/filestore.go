@@ -18,7 +18,7 @@ import (
 const accessCountsFile = "access_counts.json"
 
 const (
-	maxFileSizeBytes = 512 * 1024 // skip files larger than 512KB
+	maxFileSizeBytes     = 512 * 1024 // skip files larger than 512KB
 	indexRefreshInterval = 30 * time.Second
 )
 
@@ -104,6 +104,9 @@ func (s *FileStore) reindex() {
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".md" && ext != ".markdown" {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		info, err := d.Info()

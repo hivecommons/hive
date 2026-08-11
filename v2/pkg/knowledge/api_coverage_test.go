@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -788,6 +789,38 @@ func TestFileStore_HiddenDirSkipped(t *testing.T) {
 		if strings.Contains(f.Slug, ".obsidian") {
 			t.Errorf("hidden dir page included: %s", f.Slug)
 		}
+	}
+}
+
+func TestFileStore_SymlinkedMarkdownOutsideRootSkipped(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.md")
+	if err := os.WriteFile(outsidePath, []byte("# Outside Secret\nshould not be indexed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(dir, "linked-secret.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "inside.md"), []byte("# Inside\nindexed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewFileStore(dir, "test", coverageTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats := store.Stats(); stats.TotalPages != 1 {
+		t.Fatalf("TotalPages = %d, want only the in-root markdown page", stats.TotalPages)
+	}
+	if _, err := store.ReadPage("linked-secret"); err == nil {
+		t.Fatal("expected symlinked markdown outside root not to be readable")
+	}
+	if results := store.Search("Outside Secret", 10); len(results) != 0 {
+		t.Fatalf("search returned symlinked outside content: %#v", results)
+	}
+	if _, err := store.ReadPage("../secret"); err == nil {
+		t.Fatal("expected path-traversal-looking slug not to be readable")
 	}
 }
 
