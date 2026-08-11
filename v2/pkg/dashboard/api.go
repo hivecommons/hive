@@ -4842,6 +4842,9 @@ func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request)
 // roleEnforcement middleware rejects a read-only role with 403 before the
 // handler runs.
 func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		APIKey *string `json:"apiKey"`
 	}
@@ -4952,6 +4955,9 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 // is still supplied by an admin-managed store instead of falsely claiming it
 // was cleared.
 func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	removed, err := clearBobKeyFile()
 	if err != nil {
 		jsonError(w, "failed to clear API key: "+err.Error(), http.StatusInternalServerError)
@@ -5538,6 +5544,9 @@ func newGitHubConfigUpdateError(message string, code int) *githubConfigUpdateErr
 }
 
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		AppID          *int64 `json:"app_id"`
 		InstallationID *int64 `json:"installation_id"`
