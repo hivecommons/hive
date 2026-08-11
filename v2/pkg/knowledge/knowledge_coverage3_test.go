@@ -20,11 +20,11 @@ import (
 func TestKnowledgeAPI_ConnectGitSource_Duplicate(t *testing.T) {
 	api := &KnowledgeAPI{logger: covLogger()}
 	// Pre-seed a git source so the duplicate check fires before any clone.
-	gs := NewGitSource(GitSourceConfig{URL: "file:///x", Subpath: "docs"}, t.TempDir(), covLogger())
+	gs := NewGitSource(GitSourceConfig{URL: "https://example.com/x.git", Subpath: "docs"}, t.TempDir(), covLogger())
 	api.gitSources = append(api.gitSources, gs)
 
 	err := api.ConnectGitSource(context.Background(), GitSourceConfig{
-		URL:     "file:///x",
+		URL:     " https://example.com/x.git ",
 		Subpath: "docs",
 		Layer:   LayerProject,
 	})
@@ -37,11 +37,23 @@ func TestKnowledgeAPI_ConnectGitSource_InitFailure(t *testing.T) {
 	api := &KnowledgeAPI{logger: covLogger()}
 	err := api.ConnectGitSource(context.Background(), GitSourceConfig{
 		Name:  "bad",
-		URL:   "file:///nonexistent/repo/xyz",
+		URL:   "http://127.0.0.1:1/repo.git",
 		Layer: LayerProject,
 	})
 	if err == nil {
 		t.Error("expected init failure")
+	}
+}
+
+func TestKnowledgeAPI_ConnectGitSource_InvalidURL(t *testing.T) {
+	api := &KnowledgeAPI{logger: covLogger()}
+	err := api.ConnectGitSource(context.Background(), GitSourceConfig{
+		Name:  "bad",
+		URL:   "git@github.com:org/repo.git",
+		Layer: LayerProject,
+	})
+	if err == nil {
+		t.Error("expected invalid URL error")
 	}
 }
 

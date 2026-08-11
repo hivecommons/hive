@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -39,13 +38,15 @@ const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 // network. See authenticate() (F2). Must match the hub's constant.
 const proxyAuthHeader = "X-Hive-Proxy-Auth"
 
-// proxyProofRequired controls F2 enforcement strictness. Default false =
-// fail-open rollout: a request with no proof header is still trusted on its
-// identity headers (so hosted hives aren't locked out while the hub half rolls
-// out fleet-wide). Set HIVE_PROXY_PROOF_REQUIRED=true (once every hub is
-// confirmed injecting the header) to fail closed: a missing/incorrect proof
-// header is rejected. A WRONG proof header is ALWAYS rejected regardless.
-var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") == "true"
+// ownerRoleVerifiedHeader is a server-only request marker set by authenticate
+// when the owner role came from a trusted source, not an inbound client header.
+const ownerRoleVerifiedHeader = "X-Hive-Owner-Role-Verified"
+
+// proxyProofRequired controls F2 enforcement strictness. Default true =
+// fail-closed: a request with no X-Hive-Proxy-Auth proof header (or a wrong
+// one) is rejected even if it carries X-Hive-User/X-Hive-Role identity
+// A WRONG proof header is ALWAYS rejected regardless of this setting.
+var proxyProofRequired = true
 
 type Server struct {
 	port       int
@@ -770,19 +771,28 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if sess := s.sessionFromRequest(r); sess != nil {
 				r.Header.Set("X-Hive-User", sess.Username)
 				r.Header.Set("X-Hive-Role", sess.Role)
+				if sess.Role == config.RoleOwner {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
+			} else if r.Header.Get("X-Hive-Role") == "" {
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
+			} else if r.Header.Get("X-Hive-Role") == config.RoleOwner {
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
+		inboundUser := r.Header.Get("X-Hive-User")
+		inboundRole := r.Header.Get("X-Hive-Role")
 
-		// On a direct-route spoke (per-hive allowlist present) we MUST NOT trust
-		// client-supplied X-Hive-User/X-Hive-Role: there is no hub nginx in
-		// front to strip forged identity headers. Strip them here so identity
-		// can only come from a server-side session we minted.
-		if directRouteAuthz {
-			r.Header.Del("X-Hive-User")
-			r.Header.Del("X-Hive-Role")
-		}
+		// Treat identity headers as an internal request attribute. Preserve the
+		// inbound values only in the hub-proxy branch below, after that path has
+		// been authenticated as trusted; all other auth paths must set any role
+		// explicitly so clients cannot spoof owner access with X-Hive-Role.
+		r.Header.Del("X-Hive-User")
+		r.Header.Del("X-Hive-Role")
+		r.Header.Del(ownerRoleVerifiedHeader)
 
 		// Internal automation authenticates with the shared token via the
 		// X-Hive-Internal header; this is a trusted server-to-server path
@@ -791,7 +801,17 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// is TRUE, so without this an absent/empty header would authenticate on
 		// a direct-route spoke that has no token. The shared-token paths are only
 		// valid when a real token is configured.
-		trusted := s.authToken != "" && secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
+		internalTrusted := s.authToken != "" && secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
+		trusted := internalTrusted
+		if internalTrusted {
+			if sess := s.sessionFromRequest(r); sess != nil {
+				r.Header.Set("X-Hive-User", sess.Username)
+				r.Header.Set("X-Hive-Role", sess.Role)
+				if sess.Role == config.RoleOwner {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
+			}
+		}
 
 		// Hub-proxied path: nginx injects the identity headers from the hub's
 		// per-user/per-hive auth-check. Only trust them when this spoke is NOT a
@@ -804,26 +824,39 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// only the trusted proxy can produce. Require it as PROOF the request
 		// transited the hub.
 		//
-		// ROLLOUT SAFETY — fail open until the hub half is everywhere: if the hub
-		// has NOT sent X-Hive-Proxy-Auth (older hub image mid-rollout), fall back
-		// to the pre-F2 behavior (trust the identity headers) so no hosted hive is
-		// locked out. Once the hub half is confirmed deployed fleet-wide, a
-		// follow-up flips proxyProofRequired to make a missing/incorrect proof
-		// header fail closed.
+		// Missing or incorrect proof fails closed. Older hub images that do not
+		// inject X-Hive-Proxy-Auth must be upgraded before their identity headers
+		// are accepted.
+		proxyProofRejectReason := ""
 		if !trusted && !directRouteAuthz &&
-			r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
+			inboundUser != "" && inboundRole != "" {
 			proof := r.Header.Get(proxyAuthHeader)
 			switch {
 			case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
 				// Proof present and valid — definitely came through the hub.
 				trusted = true
+				if inboundRole == config.RoleOwner {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
 			case proof == "" && !proxyProofRequired:
 				// No proof header yet (hub not upgraded) and we're not enforcing
 				// strictly — trust the identity headers as before (rollout window).
+				// Do not mark owner as verified in this legacy path: missing proof
+				// keeps reads/general writes compatible but owner-only mutations
+				// must fail closed.
 				trusted = true
 			default:
 				// Proof header present but WRONG, or strict mode with no proof:
 				// this did not come through the trusted hub proxy — reject.
+				if proof == "" {
+					proxyProofRejectReason = "missing proxy proof header"
+				} else {
+					proxyProofRejectReason = "invalid proxy proof header"
+				}
+			}
+			if trusted {
+				r.Header.Set("X-Hive-User", inboundUser)
+				r.Header.Set("X-Hive-Role", inboundRole)
 			}
 		}
 
@@ -835,6 +868,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if sess := s.sessionFromRequest(r); sess != nil {
 				r.Header.Set("X-Hive-User", sess.Username)
 				r.Header.Set("X-Hive-Role", sess.Role)
+				if sess.Role == config.RoleOwner {
+					r.Header.Set(ownerRoleVerifiedHeader, "true")
+				}
 				trusted = true
 			}
 		}
@@ -860,6 +896,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		if !trusted {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				w.Header().Set("Content-Type", "application/json")
+				if proxyProofRejectReason != "" {
+					http.Error(w, fmt.Sprintf(`{"error":%q}`, proxyProofRejectReason), http.StatusUnauthorized)
+					return
+				}
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			} else {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

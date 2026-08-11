@@ -44,6 +44,14 @@ const (
 	// in the existing master — no new secret, no rotation. Distinct label from the
 	// legacy symmetric infoSSOKey so the two can never derive to the same bytes.
 	infoSSOEd25519Seed = "hive-sso-ed25519-v1"
+
+	// infoSessionEd25519Seed derives the Ed25519 signing SEED for the hub SESSION
+	// cookie (audit N2). Same construction as infoSSOEd25519Seed and for the same
+	// reason: a spoke must be able to VERIFY a hub-minted value without being
+	// able to MINT one. The symmetric infoSessionKey cannot give that — an HMAC
+	// key that verifies also signs, so any spoke holding it could mint an admin
+	// cookie. Distinct label so the two can never collide.
+	infoSessionEd25519Seed = "hive-session-ed25519-v1"
 )
 
 // deriveDomainKey returns a domain-separated sub-key of master for the given
@@ -57,6 +65,51 @@ func deriveDomainKey(master, info string) string {
 	mac := hmac.New(sha256.New, []byte(master))
 	mac.Write([]byte(info))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// derivePerHiveKey returns a sub-key bound to BOTH a trust domain and a single
+// hive: HMAC-SHA256(master, info || 0x00 || hiveID).
+//
+// SECURITY (audit N1/N3, CWE-321/798). deriveDomainKey above takes a FIXED
+// label, so every spoke in the fleet derives byte-identical keys from the one
+// master. Possession therefore proves "some provisioned spoke" and never "this
+// spoke" — which is the whole of the hosted kill chain: spoke A's key verifies
+// on spoke B, so one hostile tenant can forge terminal grants for another and
+// beat heartbeats as any victim.
+//
+// Mixing the hive ID in keeps every property the fleet-wide scheme had:
+// deterministic in the existing master (no new secret to store or rotate),
+// re-derivable by the hub on demand, and stable across re-provisioning.
+//
+// The 0x00 separator matters. Plain concatenation is ambiguous —
+// ("hive-terminal", "a|b") and ("hive-terminal|a", "b") would hash identically —
+// and hive IDs are operator-influenced. A NUL can appear in neither input: info
+// strings are compile-time constants and hive IDs are validated by isValidName.
+//
+// Returns "" for an empty master OR an empty hiveID: a keyless or identity-less
+// caller must fail closed rather than silently sharing one key again.
+func derivePerHiveKey(master, info, hiveID string) string {
+	if master == "" || hiveID == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(master))
+	mac.Write([]byte(info))
+	mac.Write([]byte{0})
+	mac.Write([]byte(hiveID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
+// hiveID (audit N1).
+func (s *HubServer) heartbeatKeyFor(hiveID string) string {
+	return derivePerHiveKey(s.hubSecret, infoHeartbeatKey, hiveID)
+}
+
+// heartbeatBearerIsPerHive reports whether the presented bearer is the modern,
+// identity-bound one. Rollout telemetry only — see issue #3234.
+func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
+	perHive := s.heartbeatKeyFor(hiveID)
+	return perHive != "" && secureCompareHub(presented, perHive)
 }
 
 // heartbeatKey returns the derived heartbeat bearer a v4 spoke presents on
@@ -76,11 +129,33 @@ func (s *HubServer) sessionCookieKey() string {
 	return deriveDomainKey(s.hubSecret, infoSessionKey)
 }
 
+// sessionSigningSeed returns the hex Ed25519 SEED the hub signs session cookies
+// with (audit N2). PRIVATE material: never inject it into a spoke.
+func (s *HubServer) sessionSigningSeed() string {
+	return deriveDomainKey(s.hubSecret, infoSessionEd25519Seed)
+}
+
+// sessionPublicKey returns the hex Ed25519 PUBLIC key a spoke verifies hub
+// session cookies with. Safe to place in a Deployment: it verifies, never signs.
+func (s *HubServer) sessionPublicKey() string {
+	return ssoPublicKeyFromSeed(s.sessionSigningSeed())
+}
+
 // verifyHubUserDual verifies the hive_hub_user cookie against the derived
 // session key (how cookies are minted after the C2 session-key cutover) OR
 // the raw master (legacy cookies still in browsers). Additive: never rejects
 // a value the single-key check would have accepted.
 func (s *HubServer) verifyHubUserDual(value string) (string, bool) {
+	// N2 (CWE-321/798): accept the ASYMMETRIC value first. Only the hub can mint
+	// it — a spoke holding just the public key can verify but not forge — so it
+	// is the strongest of the three and should win when present.
+	if u, ok := verifyHubUserCookieValueV2(s.sessionPublicKey(), value); ok {
+		return u, true
+	}
+	// The two symmetric paths below are ROLLOUT ONLY. Both are forgeable by any
+	// spoke that holds the corresponding key, which on v2 is every spoke (the
+	// raw master is injected into each Deployment). They stay until the fleet is
+	// re-provisioned and existing cookies age out; #3234 tracks the removal.
 	if u, ok := verifyHubUserCookieValue(s.sessionCookieKey(), value); ok {
 		return u, true
 	}

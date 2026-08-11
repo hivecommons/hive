@@ -37,6 +37,8 @@ docker compose up -d
 
 The default `docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:v2-latest`. To build from source instead, run `docker compose build` before `docker compose up -d`.
 
+For tag provenance, digest pinning, and the release/tagging flow, see [docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
+
 ### Troubleshooting
 
 - **Rancher Desktop / Lima**: Volume mounts from `/tmp` may fail silently (file appears as directory inside container). Clone the repo under your home directory instead.
@@ -64,7 +66,7 @@ operations.
 
 See [docs/hivectl.md](docs/hivectl.md) for the full command reference. The architecture overview also calls out `hivectl` as the non-interactive API client for automation. For raw dashboard endpoints, see [docs/api-reference.md](docs/api-reference.md).
 
-See [docs/README.md](docs/README.md) for the full v2 documentation index.
+See [docs/README.md](docs/README.md) for the full v2 documentation index, including [notifications](docs/notifications.md) and image provenance in the operator reference.
 
 ## Kubernetes
 
@@ -86,7 +88,7 @@ hub-fronted URL probing, and alert hysteresis.
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs and token scopes, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs, token scopes, and image provenance, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [AGENT-DEFINITION.md](AGENT-DEFINITION.md) for the portable agent YAML format, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
 
 ```yaml
 project:
@@ -162,6 +164,9 @@ policies:
   path: agents/
   poll_interval: 5m
 ```
+
+
+For portable agent overlays and dashboard imports/exports, see [AGENT-DEFINITION.md](AGENT-DEFINITION.md).
 
 ## ClankeR contributor relay
 
@@ -321,6 +326,7 @@ The `deploy/` directory contains pre-built configurations for common deployment 
 ## Additional references
 
 - [Operator reference](docs/operator-reference.md) — config blocks, server flags/env, GitHub token scopes.
+- [Troubleshooting](docs/troubleshooting.md) — v2 container logs, config validation, agent sessions, dashboard auth, and GitHub credential checks.
 - [Config layering](docs/config-layering.md) — effective config provenance and precedence.
 - [Dashboard API reference](docs/api-reference.md) — generated route index.
 - [apiproxy](docs/apiproxy.md) — model API proxy purpose and deployment notes.

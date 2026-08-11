@@ -1,5 +1,12 @@
 # macOS Support (launchd)
 
+> **Legacy v1/launchd documentation.** This page maps the original
+> systemd-style supervised agent workflow to macOS launchd. It does not describe
+> the current v2 Docker/Go deployment. For v2, start with
+> [`v2/docs/README.md`](../v2/docs/README.md), plus
+> [`v2/docs/operator-reference.md`](../v2/docs/operator-reference.md) and
+> [`v2/docs/deployment-scripts.md`](../v2/docs/deployment-scripts.md).
+
 The hive runtime was built on Linux/systemd, but the same concepts map cleanly to macOS using **launchd** — Apple's equivalent of systemd.
 
 This guide shows how to run a supervised agent on a Mac that stays on (Mac Mini, Mac Studio, always-on laptop, etc.).

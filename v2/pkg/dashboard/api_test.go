@@ -87,6 +87,22 @@ func doPost(s *Server, path string, body interface{}) *httptest.ResponseRecorder
 	return rec
 }
 
+func markOwnerRequest(req *http.Request) {
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+}
+
+func doOwnerPost(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
+	var b bytes.Buffer
+	json.NewEncoder(&b).Encode(body)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, &b)
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func doPut(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(body)
@@ -951,7 +967,7 @@ func TestHandleKick_NoMessage(t *testing.T) {
 
 func TestHandlePause_NotFound(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/pause/nonexistent", map[string]interface{}{})
+	rec := doOwnerPost(s, "/api/pause/nonexistent", map[string]interface{}{})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -1018,7 +1034,7 @@ func TestHandleModelSet_NotFound(t *testing.T) {
 func TestHandleResume(t *testing.T) {
 	s, _ := apiServer(t)
 	// Resume may fail because agent isn't actually running
-	rec := doPost(s, "/api/resume/scanner", nil)
+	rec := doOwnerPost(s, "/api/resume/scanner", nil)
 	// Accept OK or BadRequest (tmux not available)
 	if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d", rec.Code)
@@ -1027,7 +1043,7 @@ func TestHandleResume(t *testing.T) {
 
 func TestHandleResume_NotFound(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPost(s, "/api/resume/nonexistent", nil)
+	rec := doOwnerPost(s, "/api/resume/nonexistent", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}

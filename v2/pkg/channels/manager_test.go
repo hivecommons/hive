@@ -102,11 +102,12 @@ func TestTriggerKickWithoutBuildMsg(t *testing.T) {
 // A hot reload must be visible to subsequent triggers, which is the whole point
 // of reloading without a restart.
 func TestUpdateConfigIsVisibleToReceivers(t *testing.T) {
+	t.Setenv(webhookSecretEnvVar, "s3cr3t")
 	rec := &kickRecorder{}
 	m := NewManager(webhookAgents([]string{"issues"}, nil, nil), rec.fn, nil, quietLogger())
 
 	// Before: scanner subscribes to issues.
-	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, ""); w.Code != 200 {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "s3cr3t"); w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
 	}
 	if got := rec.waitForKicks(t, 1); len(got) != 1 {
@@ -119,7 +120,7 @@ func TestUpdateConfigIsVisibleToReceivers(t *testing.T) {
 	})
 
 	before := len(rec.snapshot())
-	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, ""); w.Code != 200 {
+	if w := postWebhook(t, m.WebhookHandler(), "issues", map[string]any{"action": "opened"}, "s3cr3t"); w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -127,7 +128,7 @@ func TestUpdateConfigIsVisibleToReceivers(t *testing.T) {
 		t.Fatalf("the old subscription still fired after reload: %d -> %d", before, after)
 	}
 
-	if w := postWebhook(t, m.WebhookHandler(), "push", map[string]any{}, ""); w.Code != 200 {
+	if w := postWebhook(t, m.WebhookHandler(), "push", map[string]any{}, "s3cr3t"); w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
 	}
 	if got := rec.waitForKicks(t, before+1); len(got) != before+1 {

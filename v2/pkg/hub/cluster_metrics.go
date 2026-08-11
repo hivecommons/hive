@@ -384,19 +384,29 @@ var (
 	k8sCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
 
+func k8sTLSConfig() (*tls.Config, error) {
+	caCert, err := os.ReadFile(k8sCACertPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read k8s CA cert at %s, refusing to connect with TLS verification disabled: %w", k8sCACertPath, err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("k8s CA cert at %s did not contain any PEM certificates, refusing to connect with an empty cert pool", k8sCACertPath)
+	}
+
+	return &tls.Config{RootCAs: pool}, nil
+}
+
 func k8sAPIGet(path string) ([]byte, error) {
 	token, err := os.ReadFile(k8sTokenPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading service account token: %w", err)
 	}
 
-	tlsConfig := &tls.Config{}
-	if caCert, err := os.ReadFile(k8sCACertPath); err == nil {
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM(caCert)
-		tlsConfig.RootCAs = pool
-	} else {
-		tlsConfig.InsecureSkipVerify = true
+	tlsConfig, err := k8sTLSConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	client := &http.Client{

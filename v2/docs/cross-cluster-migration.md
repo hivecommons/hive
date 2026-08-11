@@ -44,6 +44,103 @@ Two reasons it must not be used here:
 > If a previous attempt died mid-flight, clear the field in the hive's
 > `meta.json` (step 4 below).
 
+## When to use the built-in migrate API
+
+The built-in migrate API is the automatic path. It moves a hive from one
+cluster to another. It works as fresh provision on the target plus
+deprovision of the source. It copies no data. The hive rebuilds its state
+from GitHub on the target.
+
+Use it when all of these hold:
+
+1. **The hub can run `kubectl` against both clusters.** Each cluster needs
+   an entry in `/data/saas/clusters.json` on the hub PVC. The entry carries
+   a `kubeconfig_path` and a `context` for the hub to use. The hub runs
+   plain `kubectl` for the in-cluster entry.
+2. **No hive data must be preserved.** The API does not copy volume data.
+3. **You are the hive owner or the hub admin.** The hub rejects any other
+   caller with a 403.
+
+### The API call
+
+The endpoint is `POST /api/saas/hives/{id}/migrate`. The body is JSON with
+one field, `target_cluster_id`. The body is limited to 1024 bytes. The
+endpoint requires hub auth.
+
+```bash
+curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
+  -H "Content-Type: application/json" \
+  -d '{"target_cluster_id":"<target-cluster-id>"}' \
+  https://hive.kubestellar.io/api/saas/hives/<hive-id>/migrate
+```
+
+The hub answers immediately with HTTP 200:
+
+```json
+{"status":"migrating","from":"<source-cluster-id>","to":"<target-cluster-id>"}
+```
+
+The migration runs in a background goroutine. The response above is not the
+outcome. The dashboard Move-to-cluster modal calls the same endpoint.
+
+### What the hub does
+
+1. **Validates the request.** The hive must exist. The caller must be the
+   owner or the hub admin. The hive must not be migrating already. The
+   target cluster must exist and differ from the current cluster.
+2. **Marks the hive as migrating.** It sets `migration_status` to
+   `"migrating"` and saves the hive record.
+3. **Reads the credentials from the source.** It reads the `hive-secrets`
+   Secret and the `hive-config` ConfigMap in the source namespace. It
+   carries the GitHub token, or the GitHub App private key with `app_id`
+   and `installation_id`.
+4. **Provisions a fresh hive on the target.** The new hive keeps the same
+   org, repos, primary repo, and ACMM level. The subdomain becomes
+   `<hive-id>.<target domain>`.
+5. **On provision failure, marks the migration as failed.** It sets
+   `migration_status` to `"failed"` and records the error in the hive
+   record. It restores `status` to `"running"`.
+6. **On success, deprovisions the source.** It deletes the namespace, the
+   PV and OCI resources for NFS storage, the SCC binding on OpenShift, the
+   on-disk hive directory, and the user quota records.
+7. **Updates the hive record.** It sets `cluster_id` to the target, `status`
+   to `"provisioning"`, and `migration_status` to `"completed"`.
+8. **Updates the registry entry.** It sets the new cluster ID, name, and
+   dashboard URL. A claimed hive keeps its vanity URL.
+9. **The provision watcher finishes the move.** It polls the hive
+   deployment on the target. Once the deployment has 1 available replica,
+   it sets `status` to `"running"` and clears the migration fields.
+
+### Failure signals
+
+A failed migration leaves `migration_status` as `"failed"` in the hive
+record. The `error` field of the record carries the message. The record
+lives at `/data/saas/hives/<hive-id>/meta.json` on the hub PVC.
+
+### Verify success
+
+Check the deployment on the target cluster:
+
+```sh
+kubectl get deployment hive -n hive-hosted-<hive-id> \
+  -o jsonpath={.status.availableReplicas}
+```
+
+A value of `1` means the hive runs on the target. The registry entry shows
+the new cluster. The `migration_status`, `migration_from`, and
+`migration_to` fields in `meta.json` are cleared.
+
+### Gotchas
+
+- A hive with `migration_status` set to `"migrating"` rejects any further
+  migrate call with a 409. If an attempt failed mid-flight, clear the field
+  in `meta.json` before you retry.
+- The API is destructive. It provisions fresh and deprovisions the source.
+  It copies no data. State must be rebuildable from GitHub.
+
+Implementation: `handleMigrateHive` in `pkg/hub/saas.go`, plus `migrateHive`,
+`deprovisionHive`, and `startProvisionWatcher` in `pkg/hub/saas_provision.go`.
+
 ## Manual migration procedure
 
 ### 1. Copy the namespace resources to the target

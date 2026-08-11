@@ -42,5 +42,3 @@ bd close bead-123
 | `bd kb ctx7-search <name>` | Search Context7 library IDs. |
 | `bd kb import-ctx7 <library-id> [--name <n>] [--query <topic>]` | Import Context7 docs into the community layer. |
 | `bd kb list-docs` | List imported documents. |
-
-Fixes #2981.

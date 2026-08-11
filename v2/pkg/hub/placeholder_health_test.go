@@ -213,6 +213,82 @@ func TestPlaceholderRowGreenWhenTokensWarnZeroConsumed(t *testing.T) {
 	}
 }
 
+// An UNASSIGNED placeholder whose only warning is the empty-repo repo_target
+// shape is the pool working as designed — repos are set when the slot is
+// claimed — so the row must ship GREEN with the check reclassified as skip.
+func TestPlaceholderRowGreenWhenRepoTargetEmpty(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "warning",
+		"fails":  0,
+		"warns":  1,
+		"checks": []any{
+			map[string]any{"name": "ready", "status": "pass"},
+			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Governor Config → Repos."},
+		},
+	})
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusOK {
+		t.Fatalf("placeholder with only the empty-repo repo_target warning: status = %q, want %q", st, healthStatusOK)
+	}
+	if warns, _ := got["warns"].(int); warns != 0 {
+		t.Errorf("warns = %v, want 0 — the pill must not render", got["warns"])
+	}
+	st, detail := checkStatusByName(t, got, healthCheckRepoTarget)
+	if st != healthCheckStatusSkip {
+		t.Errorf("repo_target status = %q, want %q", st, healthCheckStatusSkip)
+	}
+	if detail != placeholderRepoTargetNote {
+		t.Errorf("repo_target detail = %q, want the unassigned note %q", detail, placeholderRepoTargetNote)
+	}
+}
+
+// A MALFORMED repo-target value (URL / slash / forge host) is a genuine
+// misconfiguration even on a placeholder — the warning must survive.
+func TestPlaceholderRowKeepsMalformedRepoTargetWarning(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "warning",
+		"checks": []any{
+			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."},
+		},
+	})
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusWarning {
+		t.Fatalf("placeholder with malformed repo target: status = %q, want %q — a bad VALUE is a real fault", st, healthStatusWarning)
+	}
+	if st, _ := checkStatusByName(t, got, healthCheckRepoTarget); st != healthCheckStatusWarn {
+		t.Errorf("repo_target = %q, want warn untouched", st)
+	}
+}
+
+// The SAME empty-repo warning on a CLAIMED hive is a real misconfiguration
+// (a claimed project must have repos) and must pass through untouched.
+func TestClaimedRowKeepsEmptyRepoTargetWarning(t *testing.T) {
+	e := MyHiveEntry{RegistryEntry: RegistryEntry{
+		ID:     "claimed-3",
+		Org:    "acme",
+		Online: true,
+		Health: map[string]any{
+			"status": "warning",
+			"checks": []any{
+				map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Governor Config → Repos."},
+			},
+		},
+	}}
+	e.ProvStatus = "active"
+
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	if st := healthStatusOf(rows[0].Health); st != healthStatusWarning {
+		t.Fatalf("claimed hive status = %q, want %q — the repo_target exemption must not leak", st, healthStatusWarning)
+	}
+}
+
 // The SAME zero-consumed warning on a CLAIMED hive is a real signal (an
 // assigned project spending nothing is worth noticing) and must pass through
 // untouched.

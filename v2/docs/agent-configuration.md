@@ -14,7 +14,7 @@ agents:
 ```
 
 
-For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [v2/examples/agents/customized-agent.yaml](../examples/agents/customized-agent.yaml).
+For the portable agent definition YAML format, see [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md). For a complete portable `AgentDefinition` that exercises advanced display, channel, tool, and connection fields, see [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
 That is a complete, valid agent. Defaults fill in the rest at load time:
 
@@ -113,6 +113,9 @@ agents:
     detect_keywords: [scanner, triage]  # attributes GitHub activity back to this agent
 ```
 
+For prompt file resolution and the complete built-in `${VAR}` reference, see
+[Policy and prompt templates](../policies/README.md).
+
 ### Declarative extensions
 
 Three optional blocks replace hardcoded behavior with declarations:
@@ -152,7 +155,7 @@ Set `replicas: N` on a declared agent to run a small pool with the same prompt, 
 | Type | Required fields | Behavior |
 |---|---|---|
 | `kick` | none | Keep ordinary governor timer kicks. |
-| `webhook` | `events` | `/webhook`/GitHub webhook receiver matches `X-GitHub-Event` or `event.action` strings such as `issues.opened`; optional `repos` filters by repository name. If `HIVE_WEBHOOK_SECRET` is set, GitHub `X-Hub-Signature-256` HMAC is verified. |
+| `webhook` | `events` | `/webhook`/GitHub webhook receiver matches `X-GitHub-Event` or `event.action` strings such as `issues.opened`; optional `repos` filters by repository name. `HIVE_WEBHOOK_SECRET` is required and every request must include a valid GitHub `X-Hub-Signature-256` HMAC. Missing configuration or invalid signatures fail closed with `401`. |
 | `bead` | `match` | The bead watcher polls the agent's `beads_dir` about every 30 seconds and kicks when an individual JSON file has every `key: value` in `match` at the top level. Current watcher matching is not the nested `metadata` map inside the `bd` ledger file. |
 | `schedule` | `schedule` | Cron-style channel trigger independent of governor-mode cadences. |
 | `discord` | `patterns` | Declared shape for Discord-triggered work; patterns are validated by config load. |
@@ -294,7 +297,7 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
-Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard (see [`v2/examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml)).
+Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
 ## When to add what
 
@@ -317,9 +320,11 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 ## What to read next
 
 - **[Supervisor agent](supervisor.md)** — what the supervisor does, how it differs from the governor, when to enable it, `bead_role` semantics, and policy modes.
-- **[Introduction](https://kubestellar.io/docs/hive/overview/introduction)** — what hive is, setup, and the command surface.
-- **[Architecture](https://kubestellar.io/docs/hive/overview/architecture)** — the two scheduling models and how the supervisor drives agents.
-- **[Troubleshooting](https://kubestellar.io/docs/hive/getting-started/troubleshooting)** — stuck sessions, login expiry, restart loops.
+- **[Documentation index](README.md)** — what hive is, setup, and the full topic-guide surface.
+- **[Architecture](architecture.md)** — process model, deterministic pipeline, governor loop, guardrails, and hub/spoke design.
+- **[Portable AgentDefinition format](../AGENT-DEFINITION.md)** — standalone YAML schema for agent imports, exports, and overlays.
+- **[Dashboard route and health checks](health-checks.md)** — listener probes and alert behavior for stuck sessions and restart loops.
+- **[Troubleshooting](../../docs/troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
 - **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
 - **[Cross-cluster migration](cross-cluster-migration.md)** — moving a hive (and its PVC state) between clusters.

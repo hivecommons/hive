@@ -8,12 +8,12 @@ Hive validates backend names in `v2/pkg/config` and launches CLIs in `v2/pkg/age
 | --- | --- | --- | --- |
 | `claude` | `claude` | Install Claude Code and log in once. Hive launches with `--dangerously-skip-permissions`; inference routes add `--bare --settings`. | Advisory/issue modes add disallowed GitHub MCP tools. |
 | `copilot` | `copilot` | Install GitHub Copilot CLI and authenticate with GitHub. Hive also probes Copilot model entitlements live. | Launched with `--no-auto-update --allow-all`; write tools are denied by mode when needed. |
-| `gemini` | `gemini` | Install Gemini CLI and configure its normal auth/API key. | Hive passes `--model`. |
+| `gemini` | `gemini` | Install Gemini CLI and configure its normal auth/API key. | Supported by the server-side manager; Hive launches `gemini` and passes `--model` when a model is configured. |
 | `goose` | `goose` | Install Block Goose and configure provider/model (`GOOSE_PROVIDER`, `GOOSE_MODEL`, or `goose configure`). | Hive launches `goose run -s` and appends `--model` when set. |
-| `pi` | `goose` in the Go manager; `pi` in contributor scripts | In the server-side manager, `pi` is currently a Goose alias because `backendBinary("pi")` maps to `goose`. Configure Goose for pod agents. The contributor relay image/scripts still know a separate `pi` binary. | Do not assume the pod path uses pi.dev until the manager mapping changes. |
+| `pi` | `goose` in the Go manager; `pi` in contributor scripts | In the server-side manager, `backendBinary("pi")` maps to `goose`. Configure Goose for pod agents. The contributor relay image/scripts use a separate `pi` binary. | Server-side pod agents use Goose for `backend: pi`; contributor mode uses the Pi CLI. |
 | `bob` | `bob` | Provide `HIVE_BOB_API_KEY` or `/secrets/bob_api_key` for pods; contributor mode requires `BOBSHELL_API_KEY`. | Hive uses API-key auth headlessly and accepts the Bob license at launch. |
-| `codex` | accepted by config; contributor scripts launch `codex` | Install `@openai/codex` and provide `OPENAI_API_KEY`. Contributor mode sets a per-agent `CODEX_HOME`. | v2 HEAD server-side `backendBinary` does not map `codex`, so use it in contributor mode unless the manager mapping has been updated. |
-| `aider` | accepted by config; contributor scripts launch `aider` | Install Aider and configure its provider/API key normally. | v2 HEAD server-side `backendBinary` does not map `aider`, so use it in contributor mode unless the manager mapping has been updated. |
+| `codex` | contributor scripts launch `codex`; the server-side Go manager does not launch it | Install `@openai/codex` and provide `OPENAI_API_KEY` for contributor mode. Contributor mode sets a per-agent `CODEX_HOME`. | Not supported as a server-side agent backend in this branch: config accepts the name, but `backendBinary("codex")` returns `unknown backend: codex`, so a pod agent will not start. Use contributor mode for Codex. |
+| `aider` | contributor scripts launch `aider`; the server-side Go manager does not launch it | Install Aider and configure its provider/API key normally for contributor mode. | Not supported as a server-side agent backend in this branch: config accepts the name, but `backendBinary("aider")` returns `unknown backend: aider`, so a pod agent will not start. Use contributor mode for Aider. |
 
 ## IBM Bob headless setup
 

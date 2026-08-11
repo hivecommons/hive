@@ -43,7 +43,49 @@ Do not put secrets in policy Markdown. Prompts are shown in logs, dashboard hist
 
 ## Variables
 
-Templates are rendered with runtime context such as `${AGENT_NAME}`, `${PROJECT_ORG}`, `${PROJECT_PRIMARY_REPO}`, `${ISSUE_LIST}`, `${PR_LIST}`, `${KNOWLEDGE}`, and mode/auth fragments. Variables that are not available for a mode render empty; for example advisory/no-GitHub policies do not get write-capable GitHub auth instructions.
+Kick templates reference variables as `${NAME}`. The scheduler replaces the built-in variables below on every scheduled kick; an unknown `${NAME}` is left literal. Operator-defined variables from the top-level `variables:` config block are resolved by the same engine, but built-ins win on name conflicts.
+
+The complete built-in scheduler set in v2 HEAD is:
+
+| Variable | Runtime value | Notes |
+| --- | --- | --- |
+| `${AGENT_NAME}` | Configured agent key receiving the kick, such as `scanner` or `scanner-2`. | Replicas use the materialized name. |
+| `${AGENT_DISPLAY_NAME}` | `agents.<name>.display_name` when set; otherwise the agent key. | Dashboard label. |
+| `${TIMESTAMP}` | Local wall-clock time formatted like `1/2 3:04 PM MST`. | Generated at kick render time. |
+| `${QUEUE_ISSUES}` | Count of actionable issues in the current GitHub scan. | From `ActionableResult.Issues.Count`. |
+| `${QUEUE_PRS}` | Count of actionable pull requests in the current GitHub scan. | From `ActionableResult.PRs.Count`. |
+| `${QUEUE_HOLD}` | Count of hold-gated items. | From `ActionableResult.Hold.Total`. |
+| `${SLA_VIOLATIONS}` | Count of actionable issues past the configured SLA. | From `ActionableResult.Issues.SLAViolations`. |
+| `${ISSUE_LIST}` | Formatted issue list for the agent's lane. | `scanner` sees all passed issues; other agents get lane-filtered issues. |
+| `${PR_LIST}` | Formatted pull-request list. | Empty/none formatting comes from the scheduler formatter. |
+| `${AUTHORIZED_REPOS}` | Repository authorization section for the configured project repos and GitHub host. | Built by the scheduler. |
+| `${GH_AUTH}` | GitHub App/CLI authentication instructions for the agent. | Templates/policies decide whether using GitHub writes is allowed; supervisor no-GitHub policies should not rely on this fragment. |
+| `${PROJECT_ORG}` | `project.org`. | GitHub organization/owner. |
+| `${PROJECT_NAME}` | `project.name`. | May be empty if not configured. |
+| `${PROJECT_PRIMARY_REPO}` | Primary repo as `org/repo`. | Combines `project.org` and `project.primary_repo`. |
+| `${PROJECT_AI_AUTHOR}` | Effective AI author username. | Uses config defaulting from `EffectiveAIAuthor()`. |
+| `${PROJECT_REPOS_LIST}` | Comma-separated `project.repos`. | Plain repo names as configured. |
+| `${PROJECT_HOMEBREW_REPO}` | `<project.org>/homebrew-tap`. | Convenience repo name. |
+| `${HIVE_REPO}` | `<project.org>/hive`. | Convenience repo name. |
+| `${HIVE_ID}` | `hive_id`. | May be empty for standalone configs. |
+| `${AGENT_LIST}` | Formatted enabled-agent list. | Same value as `${ENABLED_AGENTS}`. |
+| `${ENABLED_AGENTS}` | Formatted enabled-agent list. | Alias of `${AGENT_LIST}`. |
+| `${AGENT_ROLES}` | Formatted role/metadata summary for configured agents. | Built from current config. |
+| `${KNOWLEDGE}` | Knowledge priming section for relevant issues. | Populated by configured knowledge layers; otherwise renders the scheduler's empty/none text. |
+| `${INCEPTION_IDEA}` | Current inception idea text. | Empty when no inception run is active. |
+| `${INCEPTION_PHASE}` | Current inception phase. | Empty when inactive. |
+| `${INCEPTION_MODE}` | Current inception mode. | Empty when inactive. |
+| `${INCEPTION_ANSWERS}` | Collected inception answers. | Empty when inactive. |
+| `${INCEPTION_SLUG}` | Inception slug. | Empty when inactive. |
+| `${INCEPTION_REPO_URL}` | Inception repository URL. | Empty when inactive. |
+| `${MERGE_ELIGIBLE}` | Formatted merge-eligible PR list from `/var/run/hive-metrics/merge-eligible.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
+| `${CI_FAILING}` | Formatted failing-CI PR list from `/var/run/hive-metrics/ci-failing.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
+
+Dashboard prompt previews substitute only the config-only subset that does not require a live GitHub scan: `${AGENT_NAME}`, `${AGENT_DISPLAY_NAME}`, `${PROJECT_NAME}`, `${PROJECT_ORG}`, `${PROJECT_PRIMARY_REPO}`, `${PROJECT_AI_AUTHOR}`, `${PROJECT_REPOS_LIST}`, `${HIVE_REPO}`, and `${HIVE_ID}`. Live-only variables such as `${ISSUE_LIST}`, `${PR_LIST}`, `${QUEUE_ISSUES}`, `${KNOWLEDGE}`, `${MERGE_ELIGIBLE}`, and `${CI_FAILING}` are resolved when the scheduler sends an actual kick.
+
+### Custom variables
+
+Custom variables are declared under `variables.defs` in `hive.yaml` and use the same `${NAME}` syntax. Names must match letters/digits/underscore and not start with a digit. `static` and `env` variables can be managed from the dashboard; `script` and `http` variables are seed/GitOps-only and require their corresponding security gates. Scope controls where a custom variable resolves: `template`, `config`, or `both`. Unresolved custom variables remain literal, matching built-in unknown-variable behavior.
 
 ## Operator checklist
 

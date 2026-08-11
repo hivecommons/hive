@@ -412,9 +412,8 @@ func TestHandleGitSourcesConnectGitAtURL(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleGitSourcesConnect(w, req)
 
-	// Valid URL format — will pass validation, then try to connect (may fail or succeed)
-	if w.Code == http.StatusBadRequest {
-		t.Error("git@ URLs should be accepted")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for git@ URL, got %d", w.Code)
 	}
 }
 
