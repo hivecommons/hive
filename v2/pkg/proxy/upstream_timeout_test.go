@@ -1,6 +1,10 @@
 package proxy
 
 import (
+	"errors"
+	"io"
+	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -113,4 +117,28 @@ func TestHTTPRelayDeadlinesAreBoundAndObservable(t *testing.T) {
 			t.Fatalf("deadline failures must be observable; missing log site %s", want)
 		}
 	}
+}
+
+func TestTimeoutHelpersRecognizeAndLogNetworkTimeouts(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	if err := client.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	_, timeoutErr := client.Read(make([]byte, 1))
+	if timeoutErr == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !isTimeoutError(timeoutErr) {
+		t.Fatalf("isTimeoutError(%T) = false, want true", timeoutErr)
+	}
+	if isTimeoutError(errors.New("plain error")) {
+		t.Fatal("plain errors must not be classified as timeouts")
+	}
+
+	proxy := &GitHubProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	proxy.logTimeout("test timeout", timeoutErr, "phase", "unit")
+	proxy.logTimeout("test non-timeout", errors.New("plain error"), "phase", "unit")
 }
