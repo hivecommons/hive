@@ -292,7 +292,15 @@ type ContributeWSHub struct {
 	// h.mu.RLock): a mu-guarded counter would deadlock (RLock-then-Lock on the same
 	// RWMutex). Lock-free is also what the -race coverage job wants — see the standing
 	// "never re-lock m.mu from a path that holds it" rule.
-	taskGen        atomic.Uint64
+	taskGen atomic.Uint64
+	// pendingConns counts sockets that have been upgraded but have not yet
+	// authenticated (audit F9). h.connections only gains an entry AFTER auth
+	// succeeds, so capping on that map alone left the pre-auth window — a full
+	// wsAuthTimeout per socket — completely unbounded. Atomic rather than
+	// mu-guarded to match taskGen's reasoning above: it is touched from the
+	// upgrade path and from deferred cleanup, and must never contend with or
+	// re-enter h.mu.
+	pendingConns atomic.Int64
 	activityMu     sync.RWMutex
 	activity       []ActivityEntry
 	server         *Server
@@ -1858,10 +1866,19 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 const maxWSConnections = 50
 
 func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	// SECURITY (audit F9, CWE-770): the cap must count sockets that are still
+	// authenticating, not just authenticated ones.
+	//
+	// h.connections only gains an entry after auth succeeds, so capping on it
+	// alone bounded exactly the connections that had already proven who they
+	// were, while leaving the pre-auth window unbounded. An unauthenticated
+	// client could hold arbitrarily many sockets — each costing a goroutine, a
+	// file descriptor and a read buffer for a full wsAuthTimeout — and the only
+	// parties actually limited were legitimate contributors.
 	h.mu.RLock()
 	count := len(h.connections)
 	h.mu.RUnlock()
-	if count >= maxWSConnections {
+	if int64(count)+h.pendingConns.Load() >= maxWSConnections {
 		http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
 		return
 	}
@@ -1871,6 +1888,17 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("ws upgrade failed", "error", err)
 		return
 	}
+	// Held for the whole handler: a socket occupies a slot from upgrade until
+	// this function returns, whether it authenticates, times out, or errors.
+	// Released exactly once, here, so no early return can leak a slot and
+	// permanently shrink the cap.
+	h.pendingConns.Add(1)
+	pendingReleased := false
+	defer func() {
+		if !pendingReleased {
+			h.pendingConns.Add(-1)
+		}
+	}()
 	conn.SetReadLimit(wsMaxMessageSize)
 
 	connID := randomHex(8)
@@ -2059,9 +2087,18 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				capabilities: caps,
 			}
 
+			// Hand the slot over from the pending counter to h.connections
+			// under the same lock, so the connection is counted exactly once
+			// and the total never dips (which would briefly let the cap be
+			// exceeded) nor double-counts (which would halve it). The deferred
+			// Add(-1) in HandleWS is disarmed by this flag.
 			h.mu.Lock()
 			h.connections[connID] = contributor
 			h.mu.Unlock()
+			if !pendingReleased {
+				pendingReleased = true
+				h.pendingConns.Add(-1)
+			}
 
 			var perms []string
 			switch profile.TrustTier {
