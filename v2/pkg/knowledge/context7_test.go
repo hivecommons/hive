@@ -36,10 +36,7 @@ func TestSearchContext7_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Temporarily override the base URL.
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	got, err := SearchContext7(context.Background(), "nextjs", "test-key")
 	if err != nil {
@@ -56,9 +53,7 @@ func TestSearchContext7_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	_, err := SearchContext7(context.Background(), "test", "")
 	if err == nil {
@@ -72,9 +67,7 @@ func TestSearchContext7_InvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	_, err := SearchContext7(context.Background(), "test", "")
 	if err == nil {
@@ -95,9 +88,7 @@ func TestSearchContext7_NoAPIKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	_, err := SearchContext7(context.Background(), "test", "")
 	if err != nil {
@@ -121,9 +112,7 @@ func TestFetchContext7Docs_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	got, err := FetchContext7Docs(context.Background(), "/vercel/next.js", "", "")
 	if err != nil {
@@ -146,9 +135,7 @@ func TestFetchContext7Docs_WithTopicQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	got, err := FetchContext7Docs(context.Background(), "/vercel/next.js", "routing", "")
 	if err != nil {
@@ -166,9 +153,7 @@ func TestFetchContext7Docs_RateLimited(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	_, err := FetchContext7Docs(context.Background(), "/test/lib", "", "")
 	if err == nil {
@@ -182,9 +167,7 @@ func TestFetchContext7Docs_CancelledContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(srv.URL)
+	useContext7TestServer(t, srv.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -196,13 +179,7 @@ func TestFetchContext7Docs_CancelledContext(t *testing.T) {
 
 func TestFetchContext7Docs_RejectsAuthorityInjectionLibraryID(t *testing.T) {
 	var hits atomic.Int32
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL("https://context7.com")
-
-	origClient := context7Client
-	defer func() { context7Client = origClient }()
-	context7Client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	useContext7Client(t, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		hits.Add(1)
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -210,7 +187,7 @@ func TestFetchContext7Docs_RejectsAuthorityInjectionLibraryID(t *testing.T) {
 			Header:     make(http.Header),
 			Request:    req,
 		}, nil
-	})}
+	})})
 
 	_, err := FetchContext7Docs(context.Background(), "@evil.com/path", "", "")
 	if err == nil {
@@ -234,9 +211,7 @@ func TestFetchContext7Docs_BlocksRedirectToPrivateHost(t *testing.T) {
 	}))
 	defer redirector.Close()
 
-	origBase := context7BaseURL
-	defer func() { setContext7BaseURL(origBase) }()
-	setContext7BaseURL(redirector.URL)
+	useContext7TestServer(t, redirector.URL)
 
 	_, err := FetchContext7Docs(context.Background(), "/safe/lib", "", "")
 	if err == nil {

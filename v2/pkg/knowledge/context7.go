@@ -11,23 +11,14 @@ import (
 	"time"
 )
 
-// context7BaseURL is a var (not const) so tests can point it at httptest servers.
-var context7BaseURL = "https://context7.com"
-
 const (
-	context7SearchPath     = "/api/v2/libs/search"
-	context7LLMsTxtSuffix  = "/llms.txt"
-	context7Timeout        = 30 * time.Second
-	context7MaxBody        = 10 * 1024 * 1024 // 10 MB
-	context7DefaultTokens  = 10000
+	context7BaseURL       = "https://context7.com"
+	context7SearchPath    = "/api/v2/libs/search"
+	context7LLMsTxtSuffix = "/llms.txt"
+	context7Timeout       = 30 * time.Second
+	context7MaxBody       = 10 * 1024 * 1024 // 10 MB
+	context7DefaultTokens = 10000
 )
-
-// setContext7BaseURL overrides the base URL (for tests). Returns the old value.
-func setContext7BaseURL(u string) string {
-	old := context7BaseURL
-	context7BaseURL = u
-	return old
-}
 
 // Context7SearchResult is a single library match from Context7's search API.
 type Context7SearchResult struct {
