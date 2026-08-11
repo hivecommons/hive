@@ -13,6 +13,7 @@ func doPutRaw(s *Server, path, raw string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, path, bytes.NewBufferString(raw))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -21,6 +22,7 @@ func doPostRaw(s *Server, path, raw string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(raw))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }

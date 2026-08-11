@@ -41,6 +41,7 @@ func getForgeApps(t *testing.T, s *Server) (*httptest.ResponseRecorder, map[stri
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/config/github/forge-apps", nil)
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	var body map[string]any
 	if rec.Code == http.StatusOK {

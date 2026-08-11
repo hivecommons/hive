@@ -93,6 +93,7 @@ func TestQueuePlayPauseSharesGovernorHubPUT(t *testing.T) {
 		strings.NewReader(`{"contribute_suspended":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.handleGovernorHub(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("governor hub update got %d, want 200 (body: %s)", w.Code, w.Body.String())
@@ -113,6 +114,7 @@ func TestQueuePlayPauseSharesGovernorHubPUT(t *testing.T) {
 		strings.NewReader(`{"contribute_suspended":false}`))
 	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
+	markOwnerRequest(req2)
 	s.handleGovernorHub(w2, req2)
 	if w2.Code != http.StatusOK {
 		t.Fatalf("governor hub resume got %d, want 200 (body: %s)", w2.Code, w2.Body.String())

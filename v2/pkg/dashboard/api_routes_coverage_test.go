@@ -12,6 +12,7 @@ func covG2ServeRaw(s *Server, method, path, body string) *httptest.ResponseRecor
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, stringReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }

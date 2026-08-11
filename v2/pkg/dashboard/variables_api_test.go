@@ -27,6 +27,7 @@ func putVar(t *testing.T, srv *Server, name, body string) int {
 	req := httptest.NewRequest("PUT", "/api/config/variables/"+name, strings.NewReader(body))
 	req.SetPathValue("name", name)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleVariableUpsert(w, req)
 	return w.Code
 }
@@ -82,6 +83,7 @@ func TestVariableDelete_GuardsSeedTypes(t *testing.T) {
 	req := httptest.NewRequest("DELETE", "/api/config/variables/SEED_SCRIPT", nil)
 	req.SetPathValue("name", "SEED_SCRIPT")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleVariableDelete(w, req)
 	if w.Code != 403 {
 		t.Errorf("deleting script var should be 403, got %d", w.Code)
@@ -90,6 +92,7 @@ func TestVariableDelete_GuardsSeedTypes(t *testing.T) {
 	req2 := httptest.NewRequest("DELETE", "/api/config/variables/UI_STATIC", nil)
 	req2.SetPathValue("name", "UI_STATIC")
 	w2 := httptest.NewRecorder()
+	markOwnerRequest(req2)
 	srv.handleVariableDelete(w2, req2)
 	if w2.Code != 200 {
 		t.Errorf("deleting static var should be 200, got %d", w2.Code)

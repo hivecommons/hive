@@ -82,6 +82,7 @@ func TestHandlePackApplyResponseBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/packs/1/apply", nil)
 	req.SetPathValue("level", "1")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackApply(w, req)
 
 	if w.Code != 200 {
@@ -114,6 +115,7 @@ func TestHandlePackApplyInvalidLevelZero(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/packs/0/apply", nil)
 	req.SetPathValue("level", "0")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackApply(w, req)
 
 	if w.Code == 200 {
@@ -245,6 +247,7 @@ func TestHandlePackSetLevelZero(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":0}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackSetLevel(w, req)
 
 	if w.Code != 400 {
@@ -258,6 +261,7 @@ func TestHandlePackSetLevelNegative(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":-1}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackSetLevel(w, req)
 
 	if w.Code != 400 {

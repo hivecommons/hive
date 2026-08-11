@@ -153,6 +153,7 @@ func TestCovACfg_Export(t *testing.T) {
 	yrec := httptest.NewRecorder()
 	yreq := httptest.NewRequest(http.MethodGet, "/api/config/agent/scanner/export", nil)
 	yreq.Header.Set("Accept", "text/yaml")
+	markOwnerRequest(yreq)
 	s.mux.ServeHTTP(yrec, yreq)
 	if yrec.Code != http.StatusOK {
 		t.Fatalf("export yaml: %d", yrec.Code)

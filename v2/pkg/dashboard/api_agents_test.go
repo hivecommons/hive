@@ -663,6 +663,7 @@ func TestHandleAgentExport_YAML(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/config/agent/scanner/export", nil)
 	req.Header.Set("Accept", "text/yaml")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

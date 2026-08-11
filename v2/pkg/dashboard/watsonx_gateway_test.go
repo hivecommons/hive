@@ -20,6 +20,7 @@ func TestWatsonxUpsert_RejectsMissingProjectID(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (body %s)", w.Code, w.Body.String())
@@ -39,6 +40,7 @@ func TestWatsonxUpsert_RejectsMissingKey(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (body %s)", w.Code, w.Body.String())
@@ -81,6 +83,7 @@ func TestWatsonxUpsert_StoresGateway(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -233,6 +236,7 @@ func TestWatsonxUpsert_DerivesEndpointFromRegion(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorGatewaysUpsert(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (body %s)", w.Code, w.Body.String())

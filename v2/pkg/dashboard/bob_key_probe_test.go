@@ -349,6 +349,7 @@ func TestHandleGovernorBobKey_InteriorWhitespaceRefused(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/bob",
 		strings.NewReader(`{"apiKey":"bob_prod_abc def"}`))
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.handleGovernorBobKey(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
