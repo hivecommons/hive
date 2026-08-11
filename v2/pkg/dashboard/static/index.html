@@ -16234,6 +16234,13 @@ function burnAreaChart() {
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
+      // Model options must come from live discovery for THIS agent's backend, not
+      // the frozen KNOWN_MODELS placeholder (#3319). Resolve the agent's actual
+      // backend from the live agent list; fall back to its pinned backend or an
+      // empty backend (modelsForBackend then yields the safe default list).
+      const _liveAgent = (window._lastAgents || []).find(a => a.name === agentName);
+      const _agentBackend = (_liveAgent && _liveAgent.cli) || g.cliPinValue || '';
+      const _modelOpts = modelsForBackend(_agentBackend) || [];
       let html = '';
       if (isCreate) {
         html += `<div class="config-field">
@@ -16364,7 +16371,8 @@ function burnAreaChart() {
           <label>Model <span class="config-info">i<span class="config-tooltip">Override the LLM model for this agent. Select "(from launch command)" to let the CLI choose its default. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.</span></span></label>
           <select id="cfg-model" onchange="markDirty('general','model',this.value)">
             <option value="">(from launch command)</option>
-            ${KNOWN_MODELS.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
+            ${_modelOpts.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
+            ${(g.model && !_modelOpts.some(m => _modelsEqual(g.model, m.value))) ? `<option value="${esc(g.model)}" selected>${esc(g.model)} (current)</option>` : ''}
           </select>
         </div>
         <div class="config-field">
