@@ -6200,7 +6200,10 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 // the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
 func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
-	client := &http.Client{Timeout: inferenceModelQueryTimeout}
+	client := &http.Client{
+		Timeout:       inferenceModelQueryTimeout,
+		CheckRedirect: noRedirectToPrivate,
+	}
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
