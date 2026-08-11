@@ -62,16 +62,23 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
 # Install Goose CLI (Block's AI agent)
+ARG GOOSE_VERSION=1.45.0
+ARG GOOSE_SHA256_X86_64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
+ARG GOOSE_SHA256_AARCH64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
 RUN ARCH=$(dpkg --print-architecture) \
-  && GOOSE_ARCH=$([ "$ARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
+  && if [ "$ARCH" = "arm64" ]; then GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_AARCH64"; \
+     else GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_X86_64"; fi \
   && mkdir -p /tmp/goose-dl \
-  && curl -fsSL "https://github.com/block/goose/releases/latest/download/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
-    -o /tmp/goose-dl/goose.tar.gz \
-  && cd /tmp/goose-dl && tar -xzf goose.tar.gz \
-  && find /tmp/goose-dl -name "goose" -type f -exec cp {} /usr/local/bin/goose \; \
-  && chmod +x /usr/local/bin/goose \
-  && rm -rf /tmp/goose-dl \
-  || echo "Goose install skipped"
+  && if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
+       -o /tmp/goose-dl/goose.tar.gz; then \
+       echo "${GOOSE_SHA256}  /tmp/goose-dl/goose.tar.gz" | sha256sum -c - \
+       && cd /tmp/goose-dl && tar -xzf goose.tar.gz \
+       && find /tmp/goose-dl -name "goose" -type f -exec cp {} /usr/local/bin/goose \; \
+       && chmod +x /usr/local/bin/goose \
+       && rm -rf /tmp/goose-dl; \
+     else \
+       echo "Goose install skipped"; \
+     fi
 
 # Install Pi CLI (pi.dev coding agent)
 RUN curl -fsSL https://pi.dev/install.sh | sh \
