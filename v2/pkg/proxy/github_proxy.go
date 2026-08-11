@@ -192,7 +192,7 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 	// SO_MARK the outbound socket so the forced-egress redirect exempts the
 	// proxy's own upstream traffic (see proxyEgressMark). The override hook above
 	// still wins when set, so tests are unaffected.
-	return tls.DialWithDialer(markDialer(0), "tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
+	return tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
 }
 
 // SetTokenSink wires the inference token sink so the translator can record
@@ -344,6 +344,15 @@ const (
 	transparentProxyTimeout = 5 * time.Second
 	httpReadTimeout         = 30 * time.Second
 	httpWriteTimeout        = 60 * time.Second
+	// upstreamDialTimeout bounds the proxy's OWN upstream dial + TLS handshake
+	// to the real GitHub host. Before this, a stalled upstream (DNS, TCP, or
+	// TLS) blocked forever — the agent's curl sat in poll() waiting for the
+	// MITM response that never came, permanently wedging the request and
+	// freezing the agent's session (the multi-hour "egress hang").
+	// tls.DialWithDialer's dialer Timeout covers connect + handshake; the
+	// deadline is lifted once established so long-lived relays (git smart
+	// HTTP) are unaffected.
+	upstreamDialTimeout = 15 * time.Second
 )
 
 // handleTransparentTLS handles iptables-redirected connections. The agent
@@ -440,7 +449,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	}
 	defer tlsClientConn.Close()
 
-	upstreamConn, err := tls.DialWithDialer(markDialer(0), "tcp", host+":443", &tls.Config{ServerName: host})
+	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", host+":443", &tls.Config{ServerName: host})
 	if err != nil {
 		p.logger.Error("transparent proxy upstream dial failed", "host", host, "error", err)
 		return
@@ -740,7 +749,12 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 
 	// Connect to the real GitHub server. SO_MARK the socket so the forced-egress
 	// redirect exempts this proxy-originated dial (see proxyEgressMark).
-	upstreamConn, err := tls.DialWithDialer(markDialer(0), "tcp", r.Host, &tls.Config{
+	// A dialer Timeout bounds both the TCP connect and the TLS handshake —
+	// without it a stalled upstream wedges this CONNECT forever (the agent's
+	// curl sits in poll() waiting for "200 Connection established" that never
+	// comes). The deadline is lifted once established so the relay is not
+	// time-boxed.
+	upstreamConn, err := tls.DialWithDialer(markDialer(upstreamDialTimeout), "tcp", r.Host, &tls.Config{
 		ServerName: host,
 	})
 	if err != nil {
