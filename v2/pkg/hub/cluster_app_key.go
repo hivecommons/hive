@@ -268,9 +268,11 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 	// repair could never deliver — the hub held the right answer (github_host
 	// restored to github.com) and answered nothing, beat after beat, which is
 	// how six restored public hives stayed on the GHE App on 2026-08-05.
-	// Scoped to FromHiveIntent: a cluster-default resolution that names no App
-	// still yields nil, so no cluster gets an identity invented for it.
-	if resolved.AppID == 0 && resolved.FromHiveIntent && resolved.Forge != "" {
+	// Cluster-default identities may use the same constants, but only when the
+	// cluster stated that default forge with positive evidence. This repairs a
+	// GHE-default cluster that omitted github_app_id without treating an empty,
+	// under-backfilled cluster record as proof that it is public github.com.
+	if resolved.AppID == 0 && resolved.Forge != "" && (resolved.FromHiveIntent || clusterDefaultForgeHasPositiveEvidence(&c, resolved.Forge)) {
 		if appID, slug := builtinAppOfForge(resolved.Forge); appID != 0 {
 			resolved.AppID = appID
 			if resolved.AppSlug == "" {
