@@ -7537,16 +7537,25 @@ func (s *Server) handleNousPrinciples(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	s.auditFromRequest(r, "nous_approve", "", "")
 	okResponse(w, map[string]string{"status": "approved"})
 }
 
 func (s *Server) handleNousAbort(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	s.auditFromRequest(r, "nous_abort", "", "")
 	okResponse(w, map[string]string{"status": "aborted"})
 }
 
 func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Mode string `json:"mode"`
 	}
@@ -7570,6 +7579,9 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Scope string `json:"scope"`
 	}
@@ -7601,6 +7613,9 @@ func (s *Server) handleNousPhase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousGateDecision(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
 		return
@@ -7643,6 +7658,9 @@ func (s *Server) handleNousGatePending(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousGateRespond(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body map[string]interface{}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -7705,6 +7723,9 @@ func (s *Server) handleNousConfigPrinciples(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleNousDeletePrinciple(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
@@ -7726,6 +7747,9 @@ func (s *Server) handleNousDeletePrinciple(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleNousConfigSection(w http.ResponseWriter, r *http.Request, section string) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
 		return
