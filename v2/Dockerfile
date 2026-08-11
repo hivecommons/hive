@@ -303,7 +303,7 @@ RUN (which git && \
 # forwards to the remote LiteLLM endpoint via the Go inference translator.
 # All heavy deps ship manylinux aarch64 wheels, so multi-arch builds work
 # without compilation. || echo matches the Nous/Goose optional-layer convention.
-ARG LITELLM_VERSION=1.84.0
+ARG LITELLM_VERSION=1.96.0
 RUN (python3 -m venv /opt/litellm/venv && \
     /opt/litellm/venv/bin/pip install --no-cache-dir "litellm[proxy]==${LITELLM_VERSION}" && \
     ln -s /opt/litellm/venv/bin/litellm /usr/local/bin/litellm) || \
