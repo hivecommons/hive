@@ -6611,7 +6611,11 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	// Owner-only: trust tier changes control which agent roles a contributor
+	// can claim. A read-write user could otherwise elevate any contributor
+	// to "trusted" tier and then grant them privileged agent roles
+	// (sec-check, ci-maintainer, architect). Fixes #3458.
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6643,7 +6647,11 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	// Owner-only: granting privileged agent roles (sec-check, ci-maintainer,
+	// architect) pre-authorises a contributor to claim those roles via the
+	// contribute WebSocket. A read-write user could otherwise pre-grant
+	// themselves or others elevated agent access. Fixes #3458.
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6778,7 +6786,10 @@ func normalizeUniqueAgentRoles(in []string) []string {
 }
 
 func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	// Owner-only: revocation is a permanent status change that blocks a
+	// contributor from the hive. A read-write user could otherwise revoke
+	// any contributor, including other owners. Fixes #3458.
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -6867,7 +6878,9 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	// Owner-only: deletion is permanent and irreversible. A read-write user
+	// could otherwise delete any contributor's profile. Fixes #3458.
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	id := r.PathValue("id")

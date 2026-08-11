@@ -147,6 +147,9 @@ func (s *Server) handleGovernorGatewaysList(w http.ResponseWriter, r *http.Reque
 // is stored — never inlined into hive.yaml. After persisting, the gateway's
 // endpoint is registered for model discovery so routing picks it up.
 func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	// Optional string fields use pointers so an ABSENT key (the form omits it)
 	// is distinguishable from an explicit empty string (clear the field). This
 	// lets the UI PUT only the fields it manages without wiping the others on
@@ -340,6 +343,9 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 // delete a gateway that an agent currently references as its backend, listing
 // the offending agents so the operator can repoint them first.
 func (s *Server) handleGovernorGatewaysDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		jsonError(w, "gateway name is required", http.StatusBadRequest)

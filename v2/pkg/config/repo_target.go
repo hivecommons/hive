@@ -43,19 +43,19 @@ func ValidateProjectRepoTargets(org string, repos []string, primaryRepo, forgeHo
 		return issue("project.repos", "repo is empty — expected org/repo")
 	}
 	for _, repo := range repos {
-		if repoIssue := validateRepoName("project.repos", org, repo); repoIssue != nil {
+		if repoIssue := validateRepoName("project.repos", repo); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	if strings.TrimSpace(primaryRepo) != "" {
-		if repoIssue := validateRepoName("project.primary_repo", org, primaryRepo); repoIssue != nil {
+		if repoIssue := validateRepoName("project.primary_repo", primaryRepo); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	return nil
 }
 
-func validateRepoName(field, org, repo string) *RepoTargetIssue {
+func validateRepoName(field, repo string) *RepoTargetIssue {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
 		return issue(field, "repo is empty — expected org/repo")
@@ -64,20 +64,24 @@ func validateRepoName(field, org, repo string) *RepoTargetIssue {
 		return issue(field, "repo '"+repo+"' is a URL — expected repo name only so the target resolves to org/repo")
 	}
 	if strings.Contains(repo, "/") {
-		// A fully-qualified "<org>/<repo>" is accepted when the org prefix
-		// matches the configured project.org — it is unambiguously the same
-		// target, and the save path strips the prefix down to the bare name.
-		// This is what a user naturally types/pastes when re-adding an existing
-		// repo from the Governor → Repos page (issue #3021). Anything else
-		// (a different org, a trailing slash, or multiple slashes) is still a
-		// misconfiguration.
-		org = strings.TrimSpace(org)
-		prefix := org + "/"
-		bare := strings.TrimPrefix(repo, prefix)
-		if org != "" && strings.HasPrefix(repo, prefix) && bare != "" && !strings.Contains(bare, "/") {
+		// A fully-qualified "<owner>/<repo>" is a VALID target — the runtime
+		// resolves it exactly this way: Client.splitRepo() splits on the single
+		// slash and uses that owner (falling back to project.org only for a bare
+		// name). So a hive can legitimately watch a repo in a DIFFERENT org than
+		// project.org (e.g. project.org=kalantar-msb watching
+		// inference-sim/sim2real). These configs worked for a long time; the
+		// stricter validator added later flagged them as "misconfigured" even
+		// though nothing was wrong — a false positive (see #3021 and the
+		// context-forge/hashicorp/kalantar-msb fleet warnings).
+		//
+		// Accept any well-formed owner/repo (exactly one slash, both parts
+		// non-empty). Only genuinely-broken shapes — a trailing slash, a leading
+		// slash, or multiple slashes — are still rejected.
+		parts := strings.Split(repo, "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			return nil
 		}
-		return issue(field, "repo '"+repo+"' contains '/' — expected repo name only (or '"+org+"/<repo>') so the target resolves to org/repo")
+		return issue(field, "repo '"+repo+"' is not a valid target — expected 'repo' or 'owner/repo' (exactly one '/')")
 	}
 	return nil
 }

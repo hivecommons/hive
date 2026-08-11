@@ -122,7 +122,13 @@ cat > "${PUBLISH_PATH}/api-docs/index.html" <<REDOC_EOF
   <style>body { margin: 0; padding: 0; }</style>
 </head><body>
   <div id="redoc-container"></div>
-  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <!-- Pinned to a specific Redoc version with a Subresource Integrity hash so a
+       compromise of the CDN or a silent 'latest'-tag update cannot execute
+       arbitrary script. crossorigin is required for SRI to be enforced on a
+       cross-origin script. Pin matches v2/proxy/server.js. -->
+  <script src="https://cdn.redoc.ly/redoc/v2.1.5/bundles/redoc.standalone.js"
+          integrity="sha384-0GrsyTQc9Oqd8h+b2dbc4XdR2T/DYpy0tLNNstyx+LBMUyiBbcWPbEs9aRmUcaxD"
+          crossorigin="anonymous"></script>
   <script>
     var spec = ${SPEC_JSON};
     Redoc.init(spec, {}, document.getElementById('redoc-container'));

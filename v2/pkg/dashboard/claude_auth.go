@@ -29,6 +29,17 @@ const (
 	claudeRedirectURI = "https://platform.claude.com/oauth/code/callback"
 )
 
+// Test seams: package-level vars that default to the real implementations.
+// Overridden in unit tests to avoid hitting the real filesystem/network.
+var (
+	claudeCredPath      = claude.CredentialsPath
+	claudeTokenFilePath = claudeTokenPath
+	claudeReadToken     = claude.ReadAccessToken
+	claudeWriteCreds    = claude.WriteCredentials
+	claudeExchange      = claude.ExchangeCode
+	claudeRemoveFile    = os.Remove
+)
+
 // claudeOAuthFlow holds server-side PKCE state for an in-progress login.
 type claudeOAuthFlow struct {
 	mu           sync.Mutex
@@ -47,7 +58,7 @@ func (s *Server) registerClaudeAuthRoutes() {
 
 // handleClaudeAuthStatus returns the current Claude auth state.
 func (s *Server) handleClaudeAuthStatus(w http.ResponseWriter, r *http.Request) {
-	token := claude.ReadAccessToken(claude.CredentialsPath)
+	token := claudeReadToken(claudeCredPath)
 	if token == "" {
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
@@ -134,7 +145,7 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	tokens, err := claude.ExchangeCode(code, verifier, claudeRedirectURI)
+	tokens, err := claudeExchange(code, verifier, claudeRedirectURI)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "invalid_grant") {
@@ -145,15 +156,15 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := claude.WriteCredentials(tokens, claude.CredentialsPath); err != nil {
+	if err := claudeWriteCreds(tokens, claudeCredPath); err != nil {
 		jsonError(w, "Failed to save credentials: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Also write raw token for quick status checks.
-	tmpPath := claudeTokenPath + ".tmp"
+	tmpPath := claudeTokenFilePath + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(tokens.AccessToken), 0o600); err == nil {
-		os.Rename(tmpPath, claudeTokenPath)
+		os.Rename(tmpPath, claudeTokenFilePath)
 	}
 
 	// Tell the agent manager to pick up the new token.
@@ -175,8 +186,8 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 
 // handleClaudeAuthLogout removes the Claude credentials.
 func (s *Server) handleClaudeAuthLogout(w http.ResponseWriter, r *http.Request) {
-	os.Remove(claude.CredentialsPath)
-	os.Remove(claudeTokenPath)
+	claudeRemoveFile(claudeCredPath)
+	claudeRemoveFile(claudeTokenFilePath)
 
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		s.deps.AgentMgr.ReloadClaudeToken()

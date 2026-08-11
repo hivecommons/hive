@@ -635,12 +635,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
-		http.Error(w, "owner access required", http.StatusForbidden)
+	// Owner-only: hive.yaml can contain sensitive references. Use the hardened
+	// requireOwnerRole (which fails closed for an empty/unverified role on a
+	// protected spoke) rather than the old inline check that defaulted an empty
+	// X-Hive-Role to "owner" (#3316).
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	configPath := "/etc/hive/hive.yaml"
@@ -670,12 +669,10 @@ func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
-		jsonError(w, "owner access required", http.StatusForbidden)
+	// Owner-only: self-upgrade replaces the running image. Use the hardened
+	// requireOwnerRole rather than the inline check that defaulted an empty
+	// X-Hive-Role to "owner" (#3316).
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	if s.deps == nil || s.deps.Config == nil {
@@ -1575,6 +1572,9 @@ func (s *Server) handleBudgetIgnoreGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBudgetIgnoreSet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	// The dashboard checkbox sends {"ignored": bool} (global bypass);
 	// {"ignored": [names]} sets the per-agent exemption list.
 	var body struct {
@@ -2564,6 +2564,9 @@ func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Reques
 // rejects them. The change is persisted to the dashboard overlay like any other
 // dashboard config edit.
 func (s *Server) handleVariableUpsert(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config not loaded", http.StatusInternalServerError)
 		return
@@ -2627,6 +2630,9 @@ func (s *Server) handleVariableUpsert(w http.ResponseWriter, r *http.Request) {
 // are dashboard-managed, so this refuses to delete a script/http variable
 // (those are seed-only and must be removed via the seed config).
 func (s *Server) handleVariableDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config not loaded", http.StatusInternalServerError)
 		return
@@ -2711,6 +2717,9 @@ func (s *Server) loadAgentStats(name string) []any {
 }
 
 func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3018,6 +3027,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3071,6 +3083,9 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	var body struct {
 		Backend string `json:"backend"`
@@ -3128,6 +3143,9 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3150,6 +3168,9 @@ func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentConfigHooks(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3172,6 +3193,9 @@ func (s *Server) handleAgentConfigHooks(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigRestrictions(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3214,6 +3238,9 @@ func (s *Server) handleAgentConfigRestrictions(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3247,6 +3274,9 @@ func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -3270,6 +3300,9 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -3291,6 +3324,9 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -3416,6 +3452,9 @@ func (s *Server) loadPromptTemplateRaw(name string) string {
 const promptTemplateSaveDir = "/data/policies"
 
 func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3940,6 +3979,9 @@ func (s *Server) contributeAvailableRepos() []string {
 }
 
 func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		EvalIntervalS      int      `json:"eval_interval_s"`
 		GHRatePatterns     []string `json:"ghRatePatterns"`
@@ -4021,6 +4063,9 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body map[string]int
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -4055,6 +4100,9 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Labels []string `json:"labels"`
 	}
@@ -4099,6 +4147,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	// Pointer fields distinguish "field absent from the JSON" (nil) from
 	// "field explicitly set to 0". The dashboard sends only the inputs the
 	// user actually touched, so editing Total Tokens alone POSTs
@@ -4156,6 +4207,9 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		NtfyServer     string `json:"ntfyServer"`
 		NtfyTopic      string `json:"ntfyTopic"`
@@ -4201,6 +4255,9 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		HealthcheckInterval int   `json:"healthcheckInterval"`
 		RestartCooldown     int   `json:"restartCooldown"`
@@ -4233,6 +4290,9 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		MaxSizeMB  int    `json:"maxSizeMB"`
 		MaxAgeDays int    `json:"maxAgeDays"`
@@ -4284,6 +4344,9 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 // The audit-log entry for every such creation is written unconditionally, so
 // turning the trailer off never loses the invocation record.
 func (s *Server) handleGovernorAttribution(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		AttributionTrailer *bool `json:"attributionTrailer"`
 	}
@@ -4323,6 +4386,11 @@ func normalizeContributeDelegatableRoles(roles []string) []string {
 }
 
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: changes the hub URL, autoupgrade, snapshot, and public-listing
+	// settings — all persisted to hive config (#3400).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled                        *bool                      `json:"enabled"`
 		URL                            string                     `json:"url"`
@@ -4702,6 +4770,9 @@ func (s *Server) handleGovernorLiteLLMTest(w http.ResponseWriter, r *http.Reques
 // and the result returned so a bad endpoint/key fails visibly at save
 // time instead of as agent 401s later.
 func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Endpoint     *string `json:"endpoint"`
 		APIKey       *string `json:"apiKey"`
@@ -4842,6 +4913,9 @@ func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request)
 // roleEnforcement middleware rejects a read-only role with 403 before the
 // handler runs.
 func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		APIKey *string `json:"apiKey"`
 	}
@@ -4952,6 +5026,9 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 // is still supplied by an admin-managed store instead of falsely claiming it
 // was cleared.
 func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	removed, err := clearBobKeyFile()
 	if err != nil {
 		jsonError(w, "failed to clear API key: "+err.Error(), http.StatusInternalServerError)
@@ -4984,6 +5061,9 @@ func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Name    string `json:"name"`
 		Backend string `json:"backend"`
@@ -5050,6 +5130,9 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -5170,6 +5253,9 @@ func agentDeletionResponse(status, name string, packLevels []int) map[string]any
 }
 
 func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Repos       []string `json:"repos"`
 		PrimaryRepo *string  `json:"primaryRepo,omitempty"`
@@ -5538,6 +5624,9 @@ func newGitHubConfigUpdateError(message string, code int) *githubConfigUpdateErr
 }
 
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		AppID          *int64 `json:"app_id"`
 		InstallationID *int64 `json:"installation_id"`
@@ -6200,7 +6289,10 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 // the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
 func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
-	client := &http.Client{Timeout: inferenceModelQueryTimeout}
+	client := &http.Client{
+		Timeout:       inferenceModelQueryTimeout,
+		CheckRedirect: noRedirectToPrivate,
+	}
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -6274,6 +6366,9 @@ func inferenceModelsFromEnv(envVar, defaultModel string) []string {
 // --- Knowledge endpoints ---
 
 func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -6339,6 +6434,9 @@ func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled bool `json:"enabled"`
 	}
@@ -7102,6 +7200,9 @@ func (s *Server) handleGitSourcesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if !s.ensureKnowledge() {
 		jsonError(w, "knowledge not available", http.StatusServiceUnavailable)
 		return
@@ -7180,6 +7281,9 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.Knowledge == nil {
 		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
 		return
@@ -7433,6 +7537,11 @@ func (s *Server) handleHiveIDGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: the hive ID is persisted to disk and identifies the hive to
+	// the hub (#3400).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		ID string `json:"id"`
 	}
@@ -7534,16 +7643,25 @@ func (s *Server) handleNousPrinciples(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	s.auditFromRequest(r, "nous_approve", "", "")
 	okResponse(w, map[string]string{"status": "approved"})
 }
 
 func (s *Server) handleNousAbort(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	s.auditFromRequest(r, "nous_abort", "", "")
 	okResponse(w, map[string]string{"status": "aborted"})
 }
 
 func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Mode string `json:"mode"`
 	}
@@ -7567,6 +7685,9 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Scope string `json:"scope"`
 	}
@@ -7598,6 +7719,9 @@ func (s *Server) handleNousPhase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousGateDecision(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
 		return
@@ -7640,6 +7764,9 @@ func (s *Server) handleNousGatePending(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousGateRespond(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body map[string]interface{}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -7702,6 +7829,9 @@ func (s *Server) handleNousConfigPrinciples(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleNousDeletePrinciple(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
@@ -7723,6 +7853,9 @@ func (s *Server) handleNousDeletePrinciple(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleNousConfigSection(w http.ResponseWriter, r *http.Request, section string) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.Nous == nil {
 		jsonError(w, "nous not configured", http.StatusNotFound)
 		return
@@ -7831,6 +7964,9 @@ func maskToken(token string) string {
 }
 
 func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	if s.deps.BeadStores == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
 		return
@@ -7863,6 +7999,9 @@ func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBeadsResetAgent(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	agentName := r.PathValue("agent")
 	if s.deps.BeadStores == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)

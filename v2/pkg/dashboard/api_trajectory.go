@@ -11,6 +11,9 @@ import (
 // are optional; only those present in the body are changed. Takes effect on
 // the next hive restart, like other governor config changes.
 func (s *Server) handleGovernorTrajectory(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled         *bool   `json:"enabled"`
 		IntervalS       *int    `json:"intervalS"`

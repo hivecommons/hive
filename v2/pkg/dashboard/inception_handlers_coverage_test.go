@@ -178,6 +178,7 @@ func TestCovF_InceptionImport(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/inception/import", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	wrec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(wrec, req)
 	if wrec.Code != http.StatusOK {
 		t.Fatalf("import: expected 200, got %d body=%s", wrec.Code, wrec.Body.String())
@@ -226,6 +227,7 @@ func TestCovF_InceptionBadBodies(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/inception/start", strings.NewReader("{not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("start bad json: expected 400, got %d", rec.Code)

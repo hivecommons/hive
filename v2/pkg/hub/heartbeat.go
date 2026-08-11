@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -1119,13 +1120,35 @@ func inClusterAPIConfig() (*inClusterConfig, error) {
 	}, nil
 }
 
+// inClusterHTTPClient builds the TLS client used to probe the in-cluster
+// Kubernetes API. The serviceaccount CA is REQUIRED: it is the only root that
+// can attest the API server, so a missing or malformed one must be a hard error
+// rather than a silent fall-through to the system pool.
+//
+// The previous version swallowed both the read error and the AppendCertsFromPEM
+// result, leaving a client whose only roots were the public system CAs. That
+// could not verify the cluster-internal API certificate, so the probe failed
+// anyway — but as an opaque x509 error at request time instead of a clear
+// statement of what was actually wrong, and it left the caller unable to tell a
+// misconfigured CA from a genuinely absent route. Every other
+// AppendCertsFromPEM call site in the tree already checks its return value
+// (dashboard/cost.go, dashboard/litellm_key_store.go, github/proxytrust.go,
+// hub/cluster_metrics.go, proxy/inference_route.go); this was the sole outlier.
+//
+// routeExistenceProbe surfaces the returned error as RouteExistenceUnknown, so
+// failing closed here degrades to "cannot determine", never to "route absent"
+// and never to an unverified connection.
 func inClusterHTTPClient(cfg *inClusterConfig) (*http.Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
 		roots = x509.NewCertPool()
 	}
-	if ca, err := os.ReadFile(cfg.CAPath); err == nil {
-		roots.AppendCertsFromPEM(ca)
+	ca, err := os.ReadFile(cfg.CAPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read k8s CA cert at %s, refusing to probe the API server without it: %w", cfg.CAPath, err)
+	}
+	if !roots.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("k8s CA cert at %s contained no PEM certificates, refusing to probe the API server with an unverified root set", cfg.CAPath)
 	}
 	return &http.Client{
 		Timeout: routeExistenceProbeTimeout,

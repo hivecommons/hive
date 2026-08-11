@@ -23,21 +23,11 @@ import (
 // read cannot hold a dashboard connection open indefinitely.
 const backupBuildTimeout = spokebackup.BuildTimeout
 
-// Owner checks below mirror handleConfigDownload and handleSelfUpgrade: an
-// empty role means no per-user identity is in play (an open/dev spoke), which
-// those handlers already treat as owner.
-
 // handleBackupStatus reports whether a self-service backup can run, so the UI
 // can show the menu entry in a disabled state with a real reason instead of
 // failing only after the owner clicks.
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		http.Error(w, "X-Hive-Role header required", http.StatusUnauthorized)
-		return
-	}
-	if role != "owner" {
-		jsonError(w, "owner access required", http.StatusForbidden)
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	_, err := hubbackup.LoadKey()
@@ -56,13 +46,7 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 // handleBackupDownload builds an encrypted backup of this spoke and streams it
 // to the owner.
 func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		http.Error(w, "X-Hive-Role header required", http.StatusUnauthorized)
-		return
-	}
-	if role != "owner" {
-		jsonError(w, "only the owner can back up this hive", http.StatusForbidden)
+	if !requireOwnerRole(w, r) {
 		return
 	}
 

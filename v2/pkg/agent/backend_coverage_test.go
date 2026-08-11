@@ -219,10 +219,12 @@ func TestBackendBinary_GatewayBackendsAllLaunchClaude(t *testing.T) {
 			t.Errorf("backendBinary(%q) = %q, want the claude CLI (gateways share one binary)", b, got)
 		}
 	}
-	// The agentic CLIs must still map to their own binaries.
+	// The agentic CLIs installed in the unit-test image must still map to their own binaries.
+	// Pi is covered by backendBinaryName and Dockerfile tests because the host
+	// unit-test environment does not install the pi CLI.
 	for backend, want := range map[string]string{
 		"claude": "claude", "copilot": "copilot", "gemini": "gemini",
-		"goose": "goose", "pi": "goose", "bob": "bob",
+		"goose": "goose", "bob": "bob",
 	} {
 		got, err := backendBinary(backend)
 		if err != nil || filepath.Base(got) != want {
@@ -321,17 +323,16 @@ func TestBackendBinaryName_CodexAndAiderLaunchTheirOwnBinaries(t *testing.T) {
 	}
 }
 
-// TestBackendBinaryName_AliasesSurviveDerivation guards the ordering inside
-// backendBinaryName: the identity derivation over config.CLIBackends would map
-// "pi" to a non-existent "pi" binary, so the alias overrides must be applied
-// AFTER it. Swapping those two loops would silently break the pi backend.
-func TestBackendBinaryName_AliasesSurviveDerivation(t *testing.T) {
+// TestBackendBinaryName_PiLaunchesPiBinary pins the regression that made
+// backend: pi launch goose. Pi is a first-class CLI backend, so the launcher
+// must exec the pi binary directly rather than reaching an alias.
+func TestBackendBinaryName_PiLaunchesPiBinary(t *testing.T) {
 	got, err := backendBinaryName("pi")
 	if err != nil {
 		t.Fatalf("backendBinaryName(\"pi\") err = %v, want nil", err)
 	}
-	if got != "goose" {
-		t.Errorf("backendBinaryName(\"pi\") = %q, want \"goose\" (alias applied after identity derivation)", got)
+	if got != "pi" {
+		t.Errorf("backendBinaryName(\"pi\") = %q, want \"pi\"", got)
 	}
 }
 
@@ -341,5 +342,34 @@ func TestBackendBinaryName_AliasesSurviveDerivation(t *testing.T) {
 func TestBackendBinaryName_RejectsUnknown(t *testing.T) {
 	if _, err := backendBinaryName("totally-made-up"); err == nil {
 		t.Fatal("backendBinaryName accepted a backend that is in neither canonical list")
+	}
+}
+
+// TestNamedGatewayBackendResolvesToClaude covers #3302: an agent whose backend
+// is a configured model-gateway NAME (e.g. "watsonx-supervisor") passed
+// config.ValidateBackend (which accepts gateway names) but died at kick with
+// "unknown backend" because the launch path resolved the binary from the static
+// list only. A routable gateway backend must resolve to the claude CLI, exactly
+// like the built-in inference backends.
+func TestNamedGatewayBackendResolvesToClaude(t *testing.T) {
+	m := &Manager{logger: discardLogger()}
+	// Inject a gateway checker that recognizes a custom gateway name, mirroring
+	// what config injects at runtime from Governor.ResolvedGateways().
+	m.SetGatewayBackendChecker(func(backend string) bool {
+		return backend == "watsonx-supervisor"
+	})
+
+	if !m.routableBackend("watsonx-supervisor") {
+		t.Fatal("a configured gateway name must be routable")
+	}
+	// The launch path resolves a routable backend to the claude binary; assert
+	// backendBinary("claude") succeeds so the named gateway can actually start.
+	got, err := backendBinary("claude")
+	if err != nil || filepath.Base(got) != "claude" {
+		t.Fatalf("backendBinary(claude) = (%q, %v), want the claude CLI", got, err)
+	}
+	// An unknown, non-gateway backend stays non-routable (no accidental widening).
+	if m.routableBackend("totally-made-up") {
+		t.Error("an unconfigured name must not be treated as routable")
 	}
 }

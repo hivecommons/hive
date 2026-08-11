@@ -20,6 +20,15 @@ func metricsEnabled() bool {
 	return false
 }
 
+// metricsToken returns the optional bearer token that guards /metrics. When set
+// (HIVE_METRICS_TOKEN), the endpoint requires "Authorization: Bearer <token>";
+// when empty, /metrics stays open (backward-compatible — existing scrapers keep
+// working). Configure a token AND point Prometheus at it via bearer_token to
+// stop the endpoint from leaking cost/agent data to anyone on the pod network.
+func metricsToken() string {
+	return strings.TrimSpace(os.Getenv("HIVE_METRICS_TOKEN"))
+}
+
 // Prometheus text-exposition endpoint for hive's ESTIMATED LLM cost.
 //
 // This is deliberately dependency-free (no prometheus/client_golang): it writes
@@ -40,6 +49,18 @@ func metricsEnabled() bool {
 //	hive_model_input_tokens_total{hive_id,model}    — per-model input tokens
 //	hive_model_output_tokens_total{hive_id,model}   — per-model output tokens
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	// Optional bearer auth (#3399): when HIVE_METRICS_TOKEN is set, /metrics
+	// requires "Authorization: Bearer <token>" so the cost/agent series aren't
+	// readable by anyone on the pod network. Empty token = open, as before.
+	if want := metricsToken(); want != "" {
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !secureCompare(got, want) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="hive-metrics"`)
+			http.Error(w, "metrics require a bearer token", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	est := s.estimatedCost()
 
 	hiveID := ""
