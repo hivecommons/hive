@@ -133,7 +133,7 @@ RUN ARCH=$(uname -m) && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=latest
+ARG PI_VERSION=0.84.1
 RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
 
