@@ -130,6 +130,7 @@ func TestSetLevelFailsWhenRosterReconcileFails(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handlePackSetLevel(w, req)
 
 	if w.Code == 200 {

@@ -11,8 +11,8 @@ import (
 // TestBackendDefersStartupKick pins WHICH backends get their bootstrap prompt
 // delivered by deliverStartupKick versus embedded in the launch command.
 //
-// bob is the fix: it was in neither group, so its bootstrap prompt was written
-// to /tmp/.hive-bootstrap-<name>.txt and never read, leaving it idle.
+// bob and pi are the fixes: without deferral, their bootstrap prompts are
+// written to /tmp/.hive-bootstrap-<name>.txt and never read, leaving them idle.
 //
 // The other rows are regression guards. goose in particular MUST stay false —
 // `goose run` needs the embedded --text prompt to stay interactive and exits on
@@ -26,6 +26,8 @@ func TestBackendDefersStartupKick(t *testing.T) {
 	}{
 		{"bob defers (the fix)", bobBackend, true,
 			"bob is an interactive TUI with no embedded-prompt mechanism"},
+		{"pi defers (the fix)", "pi", true,
+			"pi is an interactive TUI with no embedded-prompt mechanism"},
 		{"claude unchanged", "claude", true,
 			"pre-existing deferred backend"},
 		{"copilot unchanged", "copilot", true,

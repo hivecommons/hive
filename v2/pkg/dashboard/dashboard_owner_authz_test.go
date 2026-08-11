@@ -3,6 +3,8 @@ package dashboard
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -121,6 +123,29 @@ func TestOwnerOnlyMutationsAllowOwnerSessionWithInternalAuth(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("owner session with internal auth status = %d, want 200; body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestRequireOwnerRoleHasNoBypassBeforeHeaderCheck(t *testing.T) {
+	src, err := os.ReadFile("api.go")
+	if err != nil {
+		t.Fatalf("read api.go: %v", err)
+	}
+	text := string(src)
+	if strings.Contains(text, "requireOwnerRoleTestBypass") {
+		t.Fatal("requireOwnerRole must not contain a test bypass hook in production source")
+	}
+	fn := strings.Index(text, "func requireOwnerRole(")
+	if fn < 0 {
+		t.Fatal("requireOwnerRole not found")
+	}
+	body := text[fn:]
+	role := strings.Index(body, `role := r.Header.Get("X-Hive-Role")`)
+	if role < 0 {
+		t.Fatal("requireOwnerRole no longer reads X-Hive-Role")
+	}
+	if earlyAllow := strings.Index(body, "return true"); earlyAllow >= 0 && earlyAllow < role {
+		t.Fatalf("requireOwnerRole returns true before checking owner headers at offset %d", earlyAllow)
 	}
 }
 

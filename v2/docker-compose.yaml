@@ -55,7 +55,13 @@ services:
       start_period: 120s
 
   watchtower:
-    image: containrrr/watchtower
+    # Pinned to v1.7.1 to prevent floating-tag supply-chain risk.
+    # The image also mounts the Docker socket, so a compromised :latest tag
+    # would give an attacker full host control. Bump deliberately by
+    # verifying the release at https://github.com/containrrr/watchtower/releases
+    # and updating this tag + the digest comment below.
+    # Digest: sha256:6dd50763bbd632a83cb154d5451700530d1e44200b268a4e9488fefdfcf2b038
+    image: containrrr/watchtower:1.7.1
     container_name: hive-watchtower
     restart: unless-stopped
     volumes:

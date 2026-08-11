@@ -18,6 +18,14 @@ set -euo pipefail
 
 REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
+HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
+
+# Contributor mode comes from a root-owned marker file at the image
+# boundary. The env var HIVE_CONTRIBUTOR_MODE is caller-controlled and
+# must never switch token injection or PR routing.
+_contributor_mode() {
+  [[ -f "$HIVE_CONTRIBUTOR_MODE_MARKER" ]]
+}
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
 if [[ ! -x "$REAL_GH" ]]; then
@@ -35,7 +43,7 @@ fi
 # Contributors keep their personal token — they fork+PR with their own identity.
 GH_APP_TOKEN_CACHE="/var/run/hive-metrics/gh-app-token.cache"
 TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
+if ! _contributor_mode; then
   # Per-agent scoped token (Phase 4) — 0600, owned by agent UID, least-privilege.
   if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
@@ -50,7 +58,7 @@ if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+if _contributor_mode; then
   case "$*" in
     *"auth "*)
       echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
@@ -214,7 +222,7 @@ if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" 
       echo "Use --author @me or your authenticated login to list your own items." >&2
       exit 1
     fi
-  elif [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
   else
     echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
@@ -243,7 +251,7 @@ ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 # SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
 # WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
 # their OWN identity by design, so their gh pr create must pass through unchanged.
-if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   if command -v hive-open-pr >/dev/null 2>&1; then
     # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
     # the same --repo/--head/--base/--title/--body shape and ignores the rest.
@@ -467,7 +475,7 @@ if [ "$subcmd" = "api" ]; then
   # Any mutating gh api (POST/PATCH/PUT/DELETE) stays blocked for contributor
   # agents — the read/write split opens READS only, never writes. Non-contributor
   # hive agents keep their existing write paths (governed by mode/ACMM gates above).
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]] && [ "$api_method" != "GET" ]; then
+  if _contributor_mode && [ "$api_method" != "GET" ]; then
     echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
     exit 1
   fi
@@ -537,7 +545,7 @@ if [[ -n "$AGENT_NAME" ]]; then
   LABELS_CSV="agent/${AGENT_DISPLAY_NAME}"
   [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
   # Contributor labels
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
     [[ -n "${HIVE_CONTRIBUTOR_CLI:-}" ]] && LABELS_CSV="${LABELS_CSV},cli/${HIVE_CONTRIBUTOR_CLI}"
   fi

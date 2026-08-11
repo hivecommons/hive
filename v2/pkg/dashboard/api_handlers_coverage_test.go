@@ -78,6 +78,7 @@ func TestCovI_AgentConfigRestrictions(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/restrictions", stringReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("restrictions bad body: expected 400, got %d", rec.Code)
@@ -103,6 +104,7 @@ func TestCovI_AgentPromptSave(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/config/agent/scanner/prompt", stringReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("prompt bad body: expected 400, got %d", rec.Code)
@@ -175,6 +177,7 @@ func TestCovI_GitSourcesConnect(t *testing.T) {
 	// Bad body → 400.
 	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/git-sources", stringReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

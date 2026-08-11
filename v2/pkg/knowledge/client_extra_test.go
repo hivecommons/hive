@@ -52,6 +52,21 @@ func TestClient_Stats_Error(t *testing.T) {
 	}
 }
 
+func TestClient_BlocksRedirectToInternalHostname(t *testing.T) {
+	stubDocRedirectResolver(t, map[string][]string{
+		"metadata.attacker.example": {"169.254.169.254"},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://metadata.attacker.example/latest/meta-data", http.StatusFound)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, extraTestLogger())
+	if _, err := c.Search(context.Background(), "secret", "", 1); err == nil {
+		t.Fatal("knowledge client followed a redirect to an internal hostname")
+	}
+}
+
 func TestClient_Healthy(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {

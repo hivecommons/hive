@@ -29,7 +29,8 @@ func NewClient(baseURL string, logger *slog.Logger) *Client {
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: defaultTimeout,
+			Timeout:       defaultTimeout,
+			CheckRedirect: knowledgeNoRedirectToPrivate,
 		},
 		logger: logger,
 	}

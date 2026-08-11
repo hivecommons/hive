@@ -27,6 +27,14 @@ func backupTestServer() *Server {
 	}
 }
 
+// setOwnerHeaders sets both the role and the proxy-verified marker on r.
+// requireOwnerRole checks both; tests that simulate a legitimate owner request
+// must set both so they exercise the real auth path rather than the 403 branch.
+func setOwnerHeaders(r *http.Request) {
+	r.Header.Set("X-Hive-Role", "owner")
+	r.Header.Set(ownerRoleVerifiedHeader, "true")
+}
+
 // TestBackupDeniedForNonOwners is the authorization gate: viewers and
 // read-write members must not be able to pull an archive containing this
 // hive's GitHub App private keys.
@@ -61,6 +69,33 @@ func TestBackupDeniedForNonOwners(t *testing.T) {
 	}
 }
 
+// TestBackupDeniedWithoutVerifiedHeader checks that a client sending only
+// X-Hive-Role: owner (without the proxy-set ownerRoleVerifiedHeader) is
+// rejected. This is the header-spoofing attack path the fix addresses.
+func TestBackupDeniedWithoutVerifiedHeader(t *testing.T) {
+	t.Setenv("HIVE_BACKUP_KEY", backupTestKey())
+	s := backupTestServer()
+
+	for _, tc := range []struct {
+		name string
+		fn   func(http.ResponseWriter, *http.Request)
+		verb string
+	}{
+		{"download", s.handleBackupDownload, http.MethodPost},
+		{"status", s.handleBackupStatus, http.MethodGet},
+	} {
+		req := httptest.NewRequest(tc.verb, "/api/backup", nil)
+		req.Header.Set("X-Hive-Role", "owner")
+		// ownerRoleVerifiedHeader intentionally NOT set — simulates a direct
+		// client bypassing the proxy.
+		rec := httptest.NewRecorder()
+		tc.fn(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s without verified header: status = %d, want 403", tc.name, rec.Code)
+		}
+	}
+}
+
 // TestBackupRefusesWithoutEncryptionKey — with no HIVE_BACKUP_KEY the endpoint
 // must refuse rather than stream unencrypted credentials to a browser.
 func TestBackupRefusesWithoutEncryptionKey(t *testing.T) {
@@ -68,7 +103,7 @@ func TestBackupRefusesWithoutEncryptionKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/backup", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	setOwnerHeaders(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupDownload(rec, req)
 
@@ -87,7 +122,7 @@ func TestBackupStatusReportsUnavailableWithoutKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/backup/status", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	setOwnerHeaders(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupStatus(rec, req)
 
@@ -106,7 +141,7 @@ func TestBackupStatusAvailableWithKey(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/backup/status", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	setOwnerHeaders(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupStatus(rec, req)
 
@@ -127,7 +162,7 @@ func TestBackupResponseIsNotCacheable(t *testing.T) {
 	s := backupTestServer()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/backup", nil)
-	req.Header.Set("X-Hive-Role", "owner")
+	setOwnerHeaders(req)
 	rec := httptest.NewRecorder()
 	s.handleBackupDownload(rec, req)
 

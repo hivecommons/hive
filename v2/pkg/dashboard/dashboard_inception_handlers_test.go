@@ -32,6 +32,7 @@ func TestHandleInceptionStartNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionStart(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -42,6 +43,7 @@ func TestHandleInceptionScanNilEngine(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/inception/scan", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionScan(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -63,6 +65,7 @@ func TestHandleInceptionSetQuestionsNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/questions", strings.NewReader(`{"questions":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionSetQuestions(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -74,6 +77,7 @@ func TestHandleInceptionAnswerNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/answer", strings.NewReader(`{"answers":{}}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionAnswer(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -85,6 +89,7 @@ func TestHandleInceptionRecordFactsNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/facts", strings.NewReader(`{"facts":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionRecordFacts(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -105,6 +110,7 @@ func TestHandleInceptionApproveNilEngine(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/inception/approve", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionApprove(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -115,6 +121,7 @@ func TestHandleInceptionResetNilEngine(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/inception/reset", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionReset(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -159,6 +166,7 @@ func TestHandleInceptionRenameWikiNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/rename-wiki", strings.NewReader(`{"name":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionRenameWiki(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -170,6 +178,7 @@ func TestHandleInceptionImportNilEngine(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/inception/import", strings.NewReader(`{"files":[]}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleInceptionImport(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
@@ -250,6 +259,7 @@ func TestHandleSelfUpgradeNoHubURL(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/self-upgrade", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleSelfUpgrade(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -283,6 +293,7 @@ func TestHandleGitSourcesListNilKnowledge(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("GET", "/api/knowledge/git-sources", nil)
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesList(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -295,6 +306,7 @@ func TestHandleGitSourcesConnectNoKnowledge(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesConnect(w, req)
 	// Should get 400 (invalid request body or missing fields) since ensureKnowledge creates a fallback
 	if w.Code != http.StatusBadRequest {
@@ -307,6 +319,7 @@ func TestHandleGitSourcesDisconnectNilKnowledge(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/knowledge/git-sources/disconnect", strings.NewReader(`{"url":"https://example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGitSourcesDisconnect(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Logf("git sources disconnect: got %d", w.Code)

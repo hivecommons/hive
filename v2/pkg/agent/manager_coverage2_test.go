@@ -1754,13 +1754,13 @@ func TestBackendBinary_InferenceBackends(t *testing.T) {
 	}
 }
 
-func TestBackendBinary_PiMapsToGoose(t *testing.T) {
-	path, err := backendBinary("pi")
+func TestBackendBinaryName_PiMapsToPi(t *testing.T) {
+	name, err := backendBinaryName("pi")
 	if err != nil {
-		t.Fatalf("backendBinary(pi) error: %v", err)
+		t.Fatalf("backendBinaryName(pi) error: %v", err)
 	}
-	if !strings.Contains(path, "goose") {
-		t.Errorf("backendBinary(pi) = %q, should resolve to goose", path)
+	if name != "pi" {
+		t.Errorf("backendBinaryName(pi) = %q, should resolve to pi", name)
 	}
 }
 

@@ -67,6 +67,7 @@ func TestHandleGovernorSensingInvalidRegex(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -80,6 +81,7 @@ func TestHandleGovernorSensingInvalidCLIExclude(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -93,6 +95,7 @@ func TestHandleGovernorSensingInvalidLoginPattern(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -106,6 +109,7 @@ func TestHandleGovernorSensingEvalIntervalTooLow(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -119,6 +123,7 @@ func TestHandleGovernorSensingEvalIntervalTooHigh(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -132,6 +137,7 @@ func TestHandleGovernorSensingValidPatterns(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusOK {
@@ -144,6 +150,7 @@ func TestHandleGovernorSensingBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -189,6 +196,7 @@ func TestHandleAgentConfigGeneralBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/general", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -201,6 +209,7 @@ func TestHandleAgentConfigRestrictionsBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/restrictions", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -213,6 +222,7 @@ func TestHandleGovernorReposBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -228,6 +238,7 @@ func TestHandleGovernorReposValid(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusOK {
@@ -313,6 +324,7 @@ func TestHandleGovernorSensingTTLTooHigh(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -326,6 +338,7 @@ func TestHandleAgentConfigGeneralMultiField(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/general", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -339,6 +352,7 @@ func TestHandleAgentConfigGeneralInvalidMode(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/scanner/general", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -355,6 +369,7 @@ func TestHandleAgentConfigGeneralAllModes(t *testing.T) {
 			req := httptest.NewRequest("PUT", "/api/config/agent/scanner/general", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
+			markOwnerRequest(req)
 			srv.mux.ServeHTTP(w, req)
 			if w.Code != http.StatusOK {
 				t.Errorf("mode %s: expected 200, got %d", mode, w.Code)
@@ -369,6 +384,7 @@ func TestHandleAgentConfigGeneralUnknownAgent(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/nonexistent/general", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -382,6 +398,7 @@ func TestHandleAgentConfigRestrictionsUnknownAgent(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/config/agent/nonexistent/restrictions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
@@ -437,6 +454,7 @@ func TestHandleGovernorLoggingBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/logging", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLogging(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -449,6 +467,7 @@ func TestHandleGovernorAddAgentBadJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -462,6 +481,7 @@ func TestHandleGovernorAddAgentMissingName(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -475,6 +495,7 @@ func TestHandleGovernorAddAgentDuplicate(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	// scanner already exists
@@ -489,6 +510,7 @@ func TestHandleGovernorHubUpdate(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/hub", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorHub(w, req)
 
 	if w.Code != http.StatusOK {
@@ -501,6 +523,7 @@ func TestHandleGovernorHubBadJSON(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/hub", strings.NewReader(`{bad`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorHub(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -514,6 +537,7 @@ func TestHandleGovernorHubPartialUpdate(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/hub", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorHub(w, req)
 
 	if w.Code != http.StatusOK {
@@ -530,6 +554,7 @@ func TestHandleGovernorAddAgentNewAgent(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	if w.Code != http.StatusOK && w.Code != http.StatusCreated {
@@ -543,6 +568,7 @@ func TestHandleGovernorLoggingValid(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/logging", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorLogging(w, req)
 
 	if w.Code != http.StatusOK {
@@ -639,6 +665,7 @@ func TestHandleGovernorReposEmpty(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -652,6 +679,7 @@ func TestHandleGovernorReposInvalidName(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -666,6 +694,7 @@ func TestHandleGovernorReposSpecialChars(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -679,6 +708,7 @@ func TestHandleGovernorReposStripOrgPrefix(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
 	if w.Code != http.StatusOK {
@@ -697,6 +727,7 @@ func TestHandleGovernorAddAgentWithRole(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/governor/agents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorAddAgent(w, req)
 
 	if w.Code != http.StatusOK && w.Code != http.StatusCreated {
@@ -936,6 +967,7 @@ func TestHandleGovernorSensingPullbackTooHigh(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/governor/sensing", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	markOwnerRequest(req)
 	srv.handleGovernorSensing(w, req)
 
 	if w.Code != http.StatusBadRequest {

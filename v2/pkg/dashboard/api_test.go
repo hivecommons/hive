@@ -83,6 +83,7 @@ func doPost(s *Server, path string, body interface{}) *httptest.ResponseRecorder
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -109,6 +110,7 @@ func doPut(s *Server, path string, body interface{}) *httptest.ResponseRecorder 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -121,6 +123,7 @@ func doDelete(s *Server, path string, body interface{}) *httptest.ResponseRecord
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, path, &b)
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -304,6 +307,7 @@ func TestHandleBudgetIgnoreSet_InvalidBody(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/budget-ignore", bytes.NewReader([]byte("not-json")))
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)

@@ -132,7 +132,7 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || 
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION=2.1.226
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
 # --- Layer 7b: reviewed native Codex runtime for governed repair children ---
@@ -152,16 +152,26 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force
 ENV PATH="/opt/hive/codex/bin:${PATH}"
 
-# --- Layer 8: Goose CLI (aaif-goose/goose — supports custom providers via env vars) ---
-ARG GOOSE_VERSION=1.37.0
+# --- Layer 8: Goose CLI (block/goose — official upstream, matches Dockerfile.contributor) ---
+# Pinned to match Dockerfile.contributor. aaif-goose was an unofficial fork;
+# block/goose is the official repository (Block/Square). sec-check #3417.
+ARG GOOSE_VERSION=1.45.0
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then GOOSE_ARCH=x86_64; \
     elif [ "$ARCH" = "aarch64" ]; then GOOSE_ARCH=aarch64; \
     else GOOSE_ARCH=x86_64; fi && \
-    curl -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" | \
+    curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" | \
     tar xz -C /usr/local/bin goose && \
     chmod +x /usr/local/bin/goose || \
     echo "WARN: Goose CLI install failed — skipping"
+
+# --- Layer 8.5: pi CLI (@earendil-works/pi-coding-agent — backend: pi) ---
+# Tolerant of failure like the copilot/codex layers: agents configured for
+# backend: pi simply won't launch if this is absent, same degradation as
+# any other missing backend binary.
+ARG PI_VERSION=0.84.1
+RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
+    echo "WARN: pi CLI install failed — skipping"
 
 # --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
 # bobshell is NOT published to the public npm registry; it is distributed as a
@@ -246,11 +256,14 @@ COPY bin/nous-runner.sh bin/nous-sync.py bin/nous-hive-gate.py bin/nous-install.
 RUN chmod +x /tmp/hive/bin/*.sh
 COPY examples/kubestellar/nous-campaign.yaml examples/kubestellar/nous-governor-campaign.yaml examples/kubestellar/nous-repo-campaign.yaml /etc/hive/
 RUN mkdir -p /var/run/nous/governor /var/run/nous/repo /data/nous/snapshots /opt/nous
-RUN pip3 install --no-cache-dir --break-system-packages pyyaml 2>/dev/null || \
-    pip3 install --no-cache-dir pyyaml 2>/dev/null || \
+# Pin Python packages to prevent supply-chain injection via PyPI (fixes sec-check #3338).
+ARG PYYAML_VERSION=6.0.3
+ARG SPECIFY_CLI_VERSION=0.16.2
+RUN pip3 install --no-cache-dir --break-system-packages "pyyaml==${PYYAML_VERSION}" 2>/dev/null || \
+    pip3 install --no-cache-dir "pyyaml==${PYYAML_VERSION}" 2>/dev/null || \
     echo "WARN: system pyyaml install failed"
-RUN pip3 install --no-cache-dir --break-system-packages specify-cli 2>/dev/null || \
-    pip3 install --no-cache-dir specify-cli 2>/dev/null || \
+RUN pip3 install --no-cache-dir --break-system-packages "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
+    pip3 install --no-cache-dir "specify-cli==${SPECIFY_CLI_VERSION}" 2>/dev/null || \
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
@@ -274,7 +287,7 @@ RUN (which git && \
 # forwards to the remote LiteLLM endpoint via the Go inference translator.
 # All heavy deps ship manylinux aarch64 wheels, so multi-arch builds work
 # without compilation. || echo matches the Nous/Goose optional-layer convention.
-ARG LITELLM_VERSION=1.74.3
+ARG LITELLM_VERSION=1.84.0
 RUN (python3 -m venv /opt/litellm/venv && \
     /opt/litellm/venv/bin/pip install --no-cache-dir "litellm[proxy]==${LITELLM_VERSION}" && \
     ln -s /opt/litellm/venv/bin/litellm /usr/local/bin/litellm) || \
