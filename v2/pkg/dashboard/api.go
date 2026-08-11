@@ -3146,6 +3146,9 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3168,6 +3171,9 @@ func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentConfigHooks(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3190,6 +3196,9 @@ func (s *Server) handleAgentConfigHooks(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigRestrictions(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3232,6 +3241,9 @@ func (s *Server) handleAgentConfigRestrictions(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
@@ -3265,6 +3277,9 @@ func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -3288,6 +3303,9 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -3309,6 +3327,9 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -4368,6 +4389,9 @@ func normalizeContributeDelegatableRoles(roles []string) []string {
 }
 
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled                        *bool                      `json:"enabled"`
 		URL                            string                     `json:"url"`
@@ -7514,6 +7538,9 @@ func (s *Server) handleHiveIDGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		ID string `json:"id"`
 	}
