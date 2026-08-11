@@ -635,12 +635,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
-		http.Error(w, "owner access required", http.StatusForbidden)
+	// Owner-only: hive.yaml can contain sensitive references. Use the hardened
+	// requireOwnerRole (which fails closed for an empty/unverified role on a
+	// protected spoke) rather than the old inline check that defaulted an empty
+	// X-Hive-Role to "owner" (#3316).
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	configPath := "/etc/hive/hive.yaml"
@@ -670,12 +669,10 @@ func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
-		jsonError(w, "owner access required", http.StatusForbidden)
+	// Owner-only: self-upgrade replaces the running image. Use the hardened
+	// requireOwnerRole rather than the inline check that defaulted an empty
+	// X-Hive-Role to "owner" (#3316).
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	if s.deps == nil || s.deps.Config == nil {
@@ -4389,6 +4386,11 @@ func normalizeContributeDelegatableRoles(roles []string) []string {
 }
 
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: changes the hub URL, autoupgrade, snapshot, and public-listing
+	// settings — all persisted to hive config (#3400).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Enabled                        *bool                      `json:"enabled"`
 		URL                            string                     `json:"url"`
@@ -7535,6 +7537,11 @@ func (s *Server) handleHiveIDGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
+	// Owner-only: the hive ID is persisted to disk and identifies the hive to
+	// the hub (#3400).
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		ID string `json:"id"`
 	}
