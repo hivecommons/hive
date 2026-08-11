@@ -26,7 +26,7 @@ func TestAssignTimeAppIdentityUnregisteredGHECluster(t *testing.T) {
 		ID:         "hosted-available-akswec2-260810-hvam",
 		Owner:      "clubanderson",
 		Org:        "polaris-staging",
-		Status:     "active",
+		Status:     "assigned",
 		ClusterID:  "a-ks-wec2",
 		GitHubHost: "github.ibm.com",
 	}
@@ -72,7 +72,7 @@ func TestAssignTimeAppIdentityPublicForge(t *testing.T) {
 		ID:         "hosted-public-1",
 		Owner:      "clubanderson",
 		Org:        "kubestellar",
-		Status:     "active",
+		Status:     "assigned",
 		ClusterID:  "not-registered",
 		GitHubHost: "github.com",
 	}
@@ -100,7 +100,7 @@ func TestAssignTimeAppIdentityUnknownForgeSaysNothing(t *testing.T) {
 		ID:         "hosted-thirdparty-1",
 		Owner:      "someone",
 		Org:        "acme",
-		Status:     "active",
+		Status:     "assigned",
 		ClusterID:  "not-registered",
 		GitHubHost: "github.acme.example",
 	}
@@ -131,7 +131,7 @@ func TestAssignTimeAppIdentityRegisteredClusterWins(t *testing.T) {
 		ID:         "hosted-custom-1",
 		Owner:      "clubanderson",
 		Org:        "team",
-		Status:     "active",
+		Status:     "assigned",
 		ClusterID:  "custom",
 		GitHubHost: "github.ibm.com",
 	}
@@ -161,7 +161,7 @@ func TestAppIdentityForHiveUnregisteredClusterRepairs(t *testing.T) {
 		ID:         "hosted-available-akswec2-260810-hvam",
 		Owner:      "clubanderson",
 		Org:        "polaris-staging",
-		Status:     "active",
+		Status:     "assigned",
 		ClusterID:  "a-ks-wec2",
 		GitHubHost: "github.ibm.com",
 	}
