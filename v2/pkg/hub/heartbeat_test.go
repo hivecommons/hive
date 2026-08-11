@@ -15,6 +15,13 @@ func (timeoutProbeError) Error() string   { return "dial tcp 203.0.113.10:443: i
 func (timeoutProbeError) Timeout() bool   { return true }
 func (timeoutProbeError) Temporary() bool { return true }
 
+type deadlineIsProbeError struct{}
+
+func (deadlineIsProbeError) Error() string { return "self probe deadline reached without net.Error" }
+func (deadlineIsProbeError) Is(target error) bool {
+	return target == context.DeadlineExceeded
+}
+
 func TestDashboardHostSupplementalCases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -62,6 +69,7 @@ func TestPublicURLSelfCheckStatusForErrorWrappedAndNetworkErrors(t *testing.T) {
 		want string
 	}{
 		{name: "wrapped context deadline is transient", err: fmt.Errorf("self probe: %w", context.DeadlineExceeded), want: PublicURLSelfCheckUnknown},
+		{name: "deadline identity without net.Error is transient", err: deadlineIsProbeError{}, want: PublicURLSelfCheckUnknown},
 		{name: "net timeout is transient", err: timeoutProbeError{}, want: PublicURLSelfCheckUnknown},
 		{name: "dns port 53 timeout string is transient", err: errors.New("read udp 10.0.0.2:43123->10.0.0.10:53: i/o timeout"), want: PublicURLSelfCheckUnknown},
 		{name: "certificate validation is a real listener failure", err: errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"), want: PublicURLSelfCheckFail},
