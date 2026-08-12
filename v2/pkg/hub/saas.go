@@ -641,7 +641,9 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 		// fails here and is treated as logged out, so the user re-authenticates
 		// through the normal login flow (which re-mints a signed cookie).
 		// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
-		if username, ok := verifyHubUserCookieEither(s.sessionPublicKey(), s.sessionKey(), cookie.Value); ok {
+		// F10: verifyHubUserCookie additionally enforces a v3 cookie's SIGNED
+		// expiry and its revocation state, which MaxAge alone never did.
+		if username, ok := s.verifyHubUserCookie(cookie.Value); ok {
 			if loadSaaSUser(username) != nil {
 				return username
 			}

@@ -964,6 +964,13 @@ type HubServer struct {
 	// alerts.go.
 	alerts *alertState
 
+	// revokedSessions holds session IDs invalidated before their signed expiry
+	// (audit F10 — logout used to only delete the browser's copy). Persisted to
+	// the PVC because the hub restarts often and an in-memory-only set would
+	// un-revoke everything on the next roll. Carries its own leaf mutex and is
+	// never touched while s.mu is held — see hub_session_revocation.go.
+	revokedSessions *revokedSessions
+
 	// urlHealth remembers how many consecutive times each hive's PUBLIC
 	// dashboard URL failed to serve, so a transient blip can be told apart from
 	// a link that has been dead for hours. Populated by the auth-audit loop,
@@ -1105,6 +1112,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),
 		alerts:                  newAlertState(),
+		revokedSessions:         newRevokedSessions(),
 		urlHealth:               newURLHealthState(),
 	}
 
@@ -1121,6 +1129,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Error("failed to load journey nudge state", "error", err)
 	}
 	s.loadAlertAcks()
+	// F10: restore the session revocation set BEFORE the mux starts serving, so
+	// a hub that has just rolled never honours a session revoked before it.
+	s.loadRevokedSessions()
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)

@@ -413,7 +413,8 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	// Trust the carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
 	// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
-	username, ok := verifyHubUserCookieEither(s.sessionPublicKey(), s.sessionKey(), cookie.Value)
+	// F10: also enforces a v3 cookie's signed expiry and revocation state.
+	username, ok := s.verifyHubUserCookie(cookie.Value)
 	if !ok || loadSaaSUser(username) == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))
@@ -450,6 +451,17 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// AUDIT F10: deleting the browser's copy is not logging out. Anyone who
+	// captured the cookie value keeps a working session until its own expiry.
+	// Record the session ID server-side so the verifier rejects it from now on.
+	//
+	// This is a no-op today because minting still emits v2, which carries no
+	// session ID — that is the point of this PR being verifier-only. It becomes
+	// load-bearing the moment minting flips to v3, with no further change to
+	// this handler.
+	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
+		s.revokeHubSessionCookie(c.Value)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "hive_hub_user",
 		Value:    "",

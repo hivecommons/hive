@@ -479,11 +479,80 @@ function verifyHubUserCookieV2(pubHex, value) {
   }
 }
 
-// verifyHubUserCookieEither accepts a v2 (Ed25519) cookie or, during the rollout
-// window only, a legacy HMAC one — mirroring the Go helper of the same name.
-// The legacy branch is the N2 vulnerability (verify-capable implies mint-capable)
-// and is removed once the fleet has rolled and existing cookies have aged out.
+// HUB_COOKIE_V3_MARKER separates the signed claims payload from its Ed25519
+// signature. Must stay byte-identical to hubCookieV3Marker in
+// v2/pkg/hub/hub_cookie.go.
+const HUB_COOKIE_V3_MARKER = '.v3.';
+
+// HUB_COOKIE_CLOCK_SKEW_SECONDS mirrors ssoClockSkew in v2/pkg/hub/sso.go. The
+// hub and this spoke are separate clusters with separate clocks; without a
+// tolerance a freshly minted cookie is rejected by a spoke running seconds
+// ahead of the hub.
+const HUB_COOKIE_CLOCK_SKEW_SECONDS = 30;
+
+// verifyHubUserCookieV3 mirrors verifyHubUserCookieValueV3 in
+// v2/pkg/hub/hub_cookie.go EXACTLY.
+//
+// AUDIT F10: the v2 cookie signs only the username, so its lifetime lives in the
+// browser's MaxAge — which is a hint the browser may ignore and a copied cookie
+// never had in the first place. v3 moves the claims inside the signature:
+//
+//   value = base64url(JSON{u,iat,exp,sid}) + '.v3.' + base64url(Ed25519 sig)
+//
+// so this proxy can enforce the expiry itself rather than trusting the browser.
+//
+// The JSON keys (u/iat/exp/sid) and the base64url alphabet are a FROZEN wire
+// contract with the Go hub. If the two sides disagree by a single byte, every
+// hosted login breaks at deploy — silently, and production-only, because nothing
+// but a real hub-minted cookie exercises the disagreement. session_cookie_v3.test.js
+// pins Go-minted vectors for exactly this reason.
+//
+// Revocation is deliberately NOT checked here: the spoke has no revocation store
+// and asking the hub would put a network dependency on the terminal path. The
+// spoke enforces signature + expiry; the hub additionally enforces revocation.
+//
+// Returns the verified username, or '' on any failure.
+function verifyHubUserCookieV3(pubHex, value, nowSeconds) {
+  if (!pubHex || !value) return '';
+  const idx = value.lastIndexOf(HUB_COOKIE_V3_MARKER);
+  if (idx <= 0) return '';
+  const body = value.slice(0, idx);
+  const sigB64 = value.slice(idx + HUB_COOKIE_V3_MARKER.length);
+  if (!body || !sigB64) return '';
+  try {
+    const raw = Buffer.from(pubHex, 'hex');
+    if (raw.length !== 32) return '';
+    // Wrap the raw 32-byte key in its SPKI header so Node can import it.
+    const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]);
+    const pub = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const sig = Buffer.from(sigB64, 'base64url');
+    // Verify the signature over the ENCODED body BEFORE parsing any payload
+    // byte — never let attacker-controlled JSON reach the parser first.
+    if (!crypto.verify(null, Buffer.from(body), pub, sig)) return '';
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!claims || typeof claims.u !== 'string' || !claims.u) return '';
+    if (typeof claims.sid !== 'string' || !claims.sid) return '';
+    if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return '';
+    const now = Number.isFinite(nowSeconds) ? nowSeconds : Math.floor(Date.now() / 1000);
+    if (claims.iat > now + HUB_COOKIE_CLOCK_SKEW_SECONDS) return ''; // not yet valid
+    if (claims.exp < now - HUB_COOKIE_CLOCK_SKEW_SECONDS) return ''; // expired
+    return claims.u;
+  } catch (_) {
+    return '';
+  }
+}
+
+// verifyHubUserCookieEither accepts a v3 (F10: signed lifetime), a v2 (Ed25519)
+// cookie or, during the rollout window only, a legacy HMAC one — mirroring the Go
+// helper of the same name. Lanes are tried v3 → v2 → legacy.
+//
+// The v2 and legacy branches are STRICTLY additive compatibility paths. Removing
+// either one 401s every part of the fleet that has not rolled. The legacy branch
+// is additionally the N2 vulnerability (verify-capable implies mint-capable) and
+// is removed once the fleet has rolled and existing cookies have aged out.
 function verifyHubUserCookieEither(pubHex, legacySecret, value) {
+  const v3 = verifyHubUserCookieV3(pubHex, value);
+  if (v3) return v3;
   const v2 = verifyHubUserCookieV2(pubHex, value);
   if (v2) return v2;
   return verifyHubUserCookie(legacySecret, value);
