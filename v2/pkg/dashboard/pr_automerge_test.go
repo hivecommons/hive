@@ -65,6 +65,9 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/prs/acme/widget/7/queue-automerge", nil)
 			req.Header.Set("X-Hive-Role", tt.role)
+			if tt.role == config.RoleOwner {
+				req.Header.Set(ownerRoleVerifiedHeader, "true")
+			}
 			req.Header.Set("X-Hive-User", tt.user)
 			req.SetPathValue("owner", "acme")
 			req.SetPathValue("repo", "widget")

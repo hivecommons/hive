@@ -5532,6 +5532,22 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 	return access
 }
 
+// userIsHiveOwner reports whether username may administer hive h: the registry
+// creator, any user holding the granted owner role on that hive, or the hub admin.
+func userIsHiveOwner(username string, h *SaaSHive) bool {
+	if username == "" || h == nil {
+		return false
+	}
+	if username == hubAdminUsername {
+		return true
+	}
+	if strings.EqualFold(h.Owner, username) {
+		return true
+	}
+	u := loadSaaSUser(username)
+	return u != nil && u.Hives != nil && u.Hives[h.ID] == "owner"
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
@@ -5540,7 +5556,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can view access"}`, http.StatusForbidden)
 		return
 	}
@@ -5565,7 +5581,8 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	owns := username == hubAdminUsername
 	if !owns {
 		for _, h := range listSaaSHives() {
-			if h.Owner == username {
+			h := h
+			if userIsHiveOwner(username, &h) {
 				owns = true
 				break
 			}
@@ -5594,7 +5611,7 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can manage access"}`, http.StatusForbidden)
 		return
 	}
@@ -5629,7 +5646,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can manage access"}`, http.StatusForbidden)
 		return
 	}
@@ -7438,6 +7455,37 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 			PrivateKey:     strings.TrimSpace(body.AppPrivateKey),
 		})
 		appDelivered = true
+	}
+
+	// NO CREDS PASTED: derive the identity from the forge we already know.
+	//
+	// The three-way AND above is an ADMIN OVERRIDE, not the normal path — it
+	// fires only when someone hand-carries an app_id, an installation_id and a
+	// PEM into the dialog. Every other assignment fell through it silently and
+	// left the hive on config.PlaceholderAppID, even though h.GitHubHost was
+	// resolved a hundred lines earlier and the hub holds that forge's App key.
+	// Deriving here is what makes "assign knows the forge, so assign sets the
+	// forge identity" true in code rather than only in intent.
+	if !appDelivered {
+		if appCfg := s.assignTimeAppIdentity(h); appCfg != nil {
+			s.storePendingGitHubAppConfig(hiveID, appCfg)
+			appDelivered = true
+			s.logger.Info("assign: derived github app identity from the hive's forge",
+				"hive_id", hiveID,
+				"forge", h.GitHubHost,
+				"app_id", appCfg.AppID,
+				"app_slug", appCfg.AppSlug,
+				"api_url", appCfg.APIURL,
+				"key_delivered", appCfg.PrivateKey != "",
+			)
+		} else {
+			s.logger.Warn("assign: no github app identity for this hive's forge — spoke keeps the placeholder app_id and starts in dashboard-only mode",
+				"hive_id", hiveID,
+				"forge", h.GitHubHost,
+				"cluster", clusterIDForHive(h),
+				"remedy", "name an App for this forge in clusters.json, or supply app_id/installation_id/app_private_key on the assign request",
+			)
+		}
 	}
 
 	// The project config itself is delivered by handleHeartbeat via

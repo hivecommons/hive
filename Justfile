@@ -109,7 +109,16 @@ contribute-check-backend backend="claude":
         ;;
       codex)
         if command -v codex &>/dev/null; then
-          echo "Codex CLI detected — uses OPENAI_API_KEY from environment."
+          CODEX_AUTH_FILE="${CODEX_HOME:-${HOME}/.codex}/auth.json"
+          if [[ -n "${CODEX_API_KEY:-}" || -n "${OPENAI_API_KEY:-}" ]]; then
+            echo "Codex CLI detected — API-key auth is present in the environment."
+          elif [[ -s "$CODEX_AUTH_FILE" ]]; then
+            echo "Codex CLI detected — auth file present at ${CODEX_AUTH_FILE}."
+          else
+            echo "ERROR: Codex CLI detected but ${CODEX_AUTH_FILE} is missing."
+            echo "  Run: codex login --device-auth (or export CODEX_API_KEY for API-key mode)."
+            exit 1
+          fi
         else
           echo "ERROR: Codex CLI not found. Install: npm i -g @openai/codex"
           exit 1
@@ -641,6 +650,7 @@ contribute-hive backend="" mode="docker": check-version
         ${HIVE_LITELLM_ENDPOINT:+-e HIVE_LITELLM_ENDPOINT="${HIVE_LITELLM_ENDPOINT}"} \
         ${HIVE_LITELLM_API_KEY:+-e HIVE_LITELLM_API_KEY="${HIVE_LITELLM_API_KEY}"} \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
+        ${AGENT_REASONING_EFFORT:+-e AGENT_REASONING_EFFORT="${AGENT_REASONING_EFFORT}"} \
         {{hive_image}} > /dev/null
 
       echo "Container: ${CONTAINER_NAME}"

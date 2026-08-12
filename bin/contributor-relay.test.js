@@ -25,7 +25,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null } = {}) {
+function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -102,6 +102,7 @@ function loadRelay({ backend = 'copilot', model = '', cliStates = ['ready'], pro
   process.env.HIVE_REGISTRATION_TOKEN = 'test-token';
   process.env.AGENT_BACKEND = backend;
   process.env.AGENT_MODEL = model;
+  process.env.AGENT_REASONING_EFFORT = reasoningEffort;
   process.env.GOOSE_MODEL = '';
   process.env.HIVE_AGENT_SESSION = 'contributor';
   process.env.CONTRIBUTOR_MODE = mode;
@@ -1058,6 +1059,60 @@ test('goose headless passes the prompt as -t\'s value and skips --model', () => 
       ['run', '--no-session', '-t', "it's a prompt with quotes"],
       'the prompt is -t\'s value, passed verbatim as its own argv element');
   } finally { teardown(relay); }
+});
+
+test('codex headless transports model and reasoning effort without affecting other backends', () => {
+  const relay = loadRelay({
+    backend: 'codex',
+    mode: 'headless',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'low',
+  });
+  try {
+    const a = relay.buildHeadlessArgv('review this');
+    assert.ok(a.args.includes('--model'), `codex must receive --model: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('gpt-5.6-luna'), `codex must receive the configured model: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('-c'), `codex must receive a config override: ${JSON.stringify(a.args)}`);
+    assert.ok(a.args.includes('model_reasoning_effort="low"'), `codex must receive the configured effort: ${JSON.stringify(a.args)}`);
+    assert.deepStrictEqual(a.args.slice(-2), ['exec', 'review this'],
+      'codex one-shot mode and prompt must remain at the tail');
+  } finally { teardown(relay); }
+
+  const goose = loadRelay({
+    backend: 'goose',
+    mode: 'headless',
+    model: 'some-model',
+    reasoningEffort: 'low',
+  });
+  try {
+    const a = goose.buildHeadlessArgv('review this');
+    assert.ok(!a.args.includes('--model'), `goose must still skip --model: ${JSON.stringify(a.args)}`);
+    assert.ok(!a.args.includes('model_reasoning_effort="low"'), `goose must not inherit codex effort: ${JSON.stringify(a.args)}`);
+  } finally { teardown(goose); }
+});
+
+test('codex interactive launch transports reasoning effort only for codex', () => {
+  const codex = loadRelay({
+    backend: 'codex',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'low',
+  });
+  try {
+    const cmd = codex.buildLaunchCommand();
+    assert.match(cmd, /--model gpt-5\.6-luna/);
+    assert.match(cmd, /-c 'model_reasoning_effort="low"'/);
+  } finally { teardown(codex); }
+
+  const copilot = loadRelay({
+    backend: 'copilot',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'low',
+  });
+  try {
+    const cmd = copilot.buildLaunchCommand();
+    assert.match(cmd, /--model gpt-5\.6-luna/);
+    assert.doesNotMatch(cmd, /model_reasoning_effort/);
+  } finally { teardown(copilot); }
 });
 
 test('goose runs headless end-to-end and reports completion on exit 0', () => {

@@ -13,6 +13,15 @@ import (
 
 const DefaultAutoMergeSweepMaxMerges = 3
 
+const (
+	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
+	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
+	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
+	autoMergeWarnNoAppBotLogin                = "automerge sweep disabled: no GitHub App bot login configured"
+	autoMergeWarnUntrustedQueueApproval       = "rejected untrusted Hive auto-merge queue approval"
+	autoMergeNoAppBotLoginOperatorRemediation = "Hive has no usable GitHub App, so App-authorship cannot be verified and auto-merge is disabled"
+)
+
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
 
 type AutoMergeSweepOptions struct {
@@ -36,28 +45,15 @@ type AutoMergeSweepResult struct {
 	Skipped int
 }
 
-// hiveQueueApproval separates the two identities an auto-merge approval
-// carries, because they answer different questions and have different trust.
-//
-//   - QueuedBy is the GitHub account that SUBMITTED the review. GitHub
-//     attributes it, a caller cannot choose it, and it is the only one of the
-//     two that may carry merge authority.
-//   - ClaimedBy is the name written in the review BODY. On the hosted path the
-//     hive posts the approval as its App bot on a human's behalf, so this is
-//     the only record of which human asked. It is caller-controlled text and
-//     must never gate anything — it is used solely to keep the self-merge ban
-//     working, where treating it as untrusted is safe: the worst a forged
-//     value can do is ban a merge that would otherwise be allowed.
 type hiveQueueApproval struct {
-	QueuedBy  string
-	ClaimedBy string
-	HeadSHA   string
+	QueuedBy string
+	HeadSHA  string
 }
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
 // only squashes open, labelled, non-draft PRs in managed repos after GitHub
 // reports them mergeable, commit statuses/check-runs are green, and the latest
-// Hive queue approval body proves the queuer is not the PR author.
+// Hive App-authored queue approval proves the queuer is not the PR author.
 func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -68,6 +64,7 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 	}
 	label := c.AutoMergeLabel()
 	result := &AutoMergeSweepResult{}
+	noAppBotLoginWarned := false
 
 	for _, repo := range c.getRepos() {
 		if len(result.Merged) >= maxMerges {
@@ -89,6 +86,14 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			event, reason, err := c.trySweepQueuedPR(ctx, repo, owner, repoName, issue.GetNumber(), label)
 			if err != nil {
 				c.warn("automerge sweep skipped PR", "repo", repo, "pr", issue.GetNumber(), "reason", reason, "error", err)
+				result.Skipped++
+				continue
+			}
+			if reason == autoMergeReasonNoAppBotLogin {
+				if !noAppBotLoginWarned {
+					c.warn(autoMergeWarnNoAppBotLogin, "repo", repo, "pr", issue.GetNumber(), "reason", reason, "cause", autoMergeNoAppBotLoginOperatorRemediation)
+					noAppBotLoginWarned = true
+				}
 				result.Skipped++
 				continue
 			}
@@ -152,12 +157,18 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if headSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
-	approval, ok, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
+	if strings.TrimSpace(c.appBotLogin) == "" {
+		return AutoMergeSweepEvent{}, autoMergeReasonNoAppBotLogin, nil
+	}
+	approval, ok, reason, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
 	if err != nil {
 		return AutoMergeSweepEvent{}, "queue-approval-check", err
 	}
 	if !ok {
-		return AutoMergeSweepEvent{}, "no-hive-queue-approval", nil
+		if reason != "" {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
+		return AutoMergeSweepEvent{}, autoMergeReasonNoHiveQueueApproval, nil
 	}
 	if approval.HeadSHA == "" {
 		if err := c.invalidateQueuedAutoMerge(ctx, owner, repo, number, label, "Hive auto-merge approval is missing a reviewed head SHA — re-queue required."); err != nil {
@@ -172,14 +183,7 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, "queue-approval-head-changed", nil
 	}
 	queuedBy := approval.QueuedBy
-	// The self-merge ban must catch BOTH shapes of approval: a human approving
-	// directly (author == the submitting actor) and the hosted path, where the
-	// hive posts as its App bot on a human's behalf so the only trace of that
-	// human is the claimed name in the body. Checking the actor alone would
-	// silently retire the ban on the hosted path, since a bot login never
-	// equals a human author. ClaimedBy is untrusted input, but only ever
-	// widens the ban — a forged value can block a merge, never permit one.
-	if strings.EqualFold(author, queuedBy) || strings.EqualFold(author, approval.ClaimedBy) {
+	if strings.EqualFold(author, queuedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
 	}
 
@@ -218,54 +222,49 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	return event, "", nil
 }
 
-func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, error) {
+func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string, number int) (hiveQueueApproval, bool, string, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 	latest := hiveQueueApproval{}
+	untrusted := false
 	for {
 		reviews, resp, err := c.client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			return hiveQueueApproval{}, false, err
+			return hiveQueueApproval{}, false, "", err
 		}
 		for _, review := range reviews {
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
-			// SECURITY (audit F3, CWE-863): the merge authority is the actor who
-			// SUBMITTED the review, never a name parsed out of its body.
-			//
-			// This used to read queuedBy from parseHiveQueueReview(review.Body).
-			// Contributor tokens carry pull-request write permission, so any
-			// contributor could approve their own PR with a body reading
-			// "Approved by @trusted-maintainer ..." and merge under that name.
-			// The self-merge ban made it worse rather than better: it compares
-			// the PR author against the CLAIMED name, so naming someone else
-			// both forged the authority and slipped the ban.
-			//
-			// The body marker is still REQUIRED — it is what distinguishes an
-			// ordinary code-review approval from an explicit request to queue
-			// for auto-merge, and an approving reviewer must opt in deliberately.
-			// It just no longer decides WHO did it.
-			if marker := parseHiveQueueReview(review.GetBody()); marker != "" {
-				actor := safeGetLogin(review.GetUser())
-				if actor == "" {
-					// No identifiable actor (deleted account, or an API shape we
-					// do not recognise) — fail closed rather than fall back to
-					// the body, which is exactly the trust we are removing.
-					continue
-				}
-				latest = hiveQueueApproval{
-					QueuedBy:  actor,
-					ClaimedBy: marker,
-					HeadSHA:   review.GetCommitID(),
-				}
+			queuedBy := parseHiveQueueReview(review.GetBody())
+			if queuedBy == "" {
+				continue
 			}
+			if !c.isHiveAppReviewAuthor(review) {
+				untrusted = true
+				c.warn(autoMergeWarnUntrustedQueueApproval, "owner", owner, "repo", repo, "pr", number, "review_author", safeGetLogin(review.GetUser()), "claimed_queued_by", queuedBy, "expected_app_bot", c.appBotLogin)
+				continue
+			}
+			latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
 		}
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
-	return latest, latest.QueuedBy != "", nil
+	if latest.QueuedBy != "" {
+		return latest, true, "", nil
+	}
+	if untrusted {
+		return latest, false, autoMergeReasonUntrustedQueueApproval, nil
+	}
+	return latest, false, "", nil
+}
+
+func (c *Client) isHiveAppReviewAuthor(review *gh.PullRequestReview) bool {
+	if c == nil || review == nil || strings.TrimSpace(c.appBotLogin) == "" {
+		return false
+	}
+	return strings.EqualFold(safeGetLogin(review.GetUser()), c.appBotLogin)
 }
 
 func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {

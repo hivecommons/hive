@@ -28,7 +28,7 @@ func TestVaultConnectRejectsSensitivePrefixes(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/knowledge/vaults", strings.NewReader(`{"path":"`+path+`"}`))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Hive-Role", "owner")
+			markOwnerRequest(req)
 			w := httptest.NewRecorder()
 
 			s.handleVaultsConnect(w, req)

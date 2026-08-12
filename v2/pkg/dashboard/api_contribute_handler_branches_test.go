@@ -194,6 +194,7 @@ func TestRequireContributorWrite_EmptyRoleForbidden(t *testing.T) {
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
 	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	deps := testDeps(t)
+	deps.Config.Dashboard.HubProxied = false
 	s.RegisterAPI(deps)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -203,6 +204,23 @@ func TestRequireContributorWrite_EmptyRoleForbidden(t *testing.T) {
 	}
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403 for missing role, got %d", rec.Code)
+	}
+}
+
+func TestRequireContributorWrite_EmptyRoleForbiddenOnHubProxied(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	deps := testDeps(t)
+	deps.Config.Dashboard.HubProxied = true
+	s.RegisterAPI(deps)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	if s.requireContributorWrite(rec, req) {
+		t.Fatalf("hub-proxied empty role should fail closed, got true")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
 	}
 }
 

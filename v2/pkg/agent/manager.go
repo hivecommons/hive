@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
-	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -274,6 +274,11 @@ type Manager struct {
 	sandboxPushMinter    pushbroker.TokenMinter
 	sandboxPRClient      PRCreator
 	sandboxAuditCallback atomic.Pointer[func(agent, action, detail string)]
+
+	visiblePaneCapture   func(agent *AgentProcess) string
+	sendKeysForAgent     func(agent *AgentProcess, keys ...string)
+	promptDismissSleep   func(time.Duration)
+	promptDismissTimeout time.Duration
 }
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
@@ -1074,8 +1079,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	// Attach pluk publisher if available — streams structured events
 	// from the agent's tmux output to a JSONL log for subscribers.
 	if plukPath, err := exec.LookPath("pluk"); err == nil {
-		_ = os.MkdirAll("/var/run/pluk/logs", 0o1777)
-		_ = os.MkdirAll("/var/run/pluk/commands", 0o1777)
+		if err := ensurePlukRunDirs(plukRunDir); err != nil {
+			m.logger.Warn("pluk run directory setup failed; pluk publisher may be degraded", "error", err)
+		}
 		backend := agent.Config.Backend
 		if agent.BackendOverride != "" {
 			backend = agent.BackendOverride
@@ -2598,6 +2604,9 @@ func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
 func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
+	if m.visiblePaneCapture != nil {
+		return m.visiblePaneCapture(agent)
+	}
 	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p")
 	out, err := cmd.Output()
 	if err != nil {
@@ -3566,7 +3575,11 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 	)
 
 	start := time.Now()
-	deadline := start.Add(promptDismissTimeout)
+	timeout := promptDismissTimeout
+	if m.promptDismissTimeout > 0 {
+		timeout = m.promptDismissTimeout
+	}
+	deadline := start.Add(timeout)
 	lastPane := ""
 
 	for time.Now().Before(deadline) {
@@ -3574,7 +3587,7 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 		if time.Since(start) < promptFastPollWindow {
 			interval = promptFastPollInterval
 		}
-		time.Sleep(interval)
+		m.sleepDuringPromptDismiss(interval)
 
 		pane := m.captureVisiblePaneForAgent(agent)
 		if pane == "" {
@@ -3639,19 +3652,27 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 			strings.Contains(selectedLower, "exit") {
 			// Try moving down first (most prompts put the positive option below)
 			m.tmuxSendKeysForAgent(agent, "Down")
-			time.Sleep(postKeystrokeDelay)
+			m.sleepDuringPromptDismiss(postKeystrokeDelay)
 		} else if strings.Contains(selectedLower, "fix with") {
 			// Settings error: skip past "Fix with Claude" and "Exit" to "Continue without"
 			m.tmuxSendKeysForAgent(agent, "Down")
-			time.Sleep(postKeystrokeDelay)
+			m.sleepDuringPromptDismiss(postKeystrokeDelay)
 			m.tmuxSendKeysForAgent(agent, "Down")
-			time.Sleep(postKeystrokeDelay)
+			m.sleepDuringPromptDismiss(postKeystrokeDelay)
 		}
 
 		m.tmuxSendKeysForAgent(agent, "Enter")
 	}
 
 	m.logger.Warn("inference prompt dismissal timed out", "agent", agent.Name)
+}
+
+func (m *Manager) sleepDuringPromptDismiss(d time.Duration) {
+	if m.promptDismissSleep != nil {
+		m.promptDismissSleep(d)
+		return
+	}
+	time.Sleep(d)
 }
 
 // selectedMenuOption returns the trimmed text of the "❯"-selected line of an
@@ -3687,11 +3708,11 @@ func (m *Manager) confirmMenuOption(agent *AgentProcess, title, want, navKey str
 		}
 		if strings.Contains(selectedMenuOption(pane), want) {
 			m.tmuxSendKeysForAgent(agent, "Enter")
-			time.Sleep(postKeystrokeDelay)
+			m.sleepDuringPromptDismiss(postKeystrokeDelay)
 			return true
 		}
 		m.tmuxSendKeysForAgent(agent, navKey)
-		time.Sleep(postKeystrokeDelay)
+		m.sleepDuringPromptDismiss(postKeystrokeDelay)
 	}
 	m.logger.Warn("inference menu: wanted option not reached",
 		"agent", agent.Name, "title", title, "want", want)
@@ -3957,6 +3978,10 @@ func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 
 // tmuxSendKeysForAgent sends key sequences (C-c, C-u, etc.) using the agent's tmux socket.
 func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
+	if m.sendKeysForAgent != nil {
+		m.sendKeysForAgent(agent, keys...)
+		return
+	}
 	args := append([]string{"send-keys", "-t", agent.tmuxSession}, keys...)
 	_ = m.tmuxCmd(agent, args...).Run()
 }
@@ -4915,7 +4940,7 @@ func bobLaunchCmd(binary string) string {
 // its own dir so Codex's owner-gated app-server sees a directory the agent UID
 // actually owns (a shared, merely group-writable dir is not sufficient for
 // Codex, unlike claude/copilot). Lives on the persistent /data volume.
-const codexHomePrefix = "/data/home/.codex-"
+var codexHomePrefix = "/data/home/.codex-"
 
 // codexHomePath returns the per-agent CODEX_HOME directory.
 func codexHomePath(agentName string) string {
@@ -4931,7 +4956,7 @@ func codexHomePath(agentName string) string {
 // prompt for sign-in again. setupCodexHome bridges this by symlinking each
 // agent's auth.json to this shared file, so ONE login propagates to every agent
 // and token refreshes are shared.
-const codexSharedAuthFile = "/data/home/.codex/auth.json"
+var codexSharedAuthFile = "/data/home/.codex/auth.json"
 
 // setupCodexHome pre-creates the agent's CODEX_HOME directory AS the agent, so
 // it is owned by the agent UID. Codex 0.144.1 refuses to create CODEX_HOME
@@ -5951,9 +5976,8 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 
 	prevTrigger := agent.PausedTrigger
 	prevReason := agent.PausedReason
-	// Snapshot backend/model while m.mu is still held — the audit call below
-	// runs after the deliberate early Unlock, where touching agent fields
-	// would be an unsynchronized read.
+	// Snapshot backend/model while m.mu is held so audit details stay stable
+	// even when Resume relaunches the agent before returning.
 	resumeBackend := agent.effectiveBackend()
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
@@ -5990,11 +6014,6 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	if needsRelaunch {
 		agent.forceRelaunch = true
 	}
-	// Release the global agents-map lock before slow per-agent tmux
-	// operations (ensureTmuxSession + launchInTmux ~2s each). This allows
-	// concurrent Resume() calls for different agents to run in parallel
-	// instead of serializing on the mutex.
-	m.mu.Unlock()
 
 	m.logger.Info("audit: agent resumed",
 		"name", name,
@@ -6012,10 +6031,14 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	))
 	if needsRelaunch {
 		if err := m.ensureTmuxSession(agent); err != nil {
+			m.mu.Unlock()
 			return err
 		}
-		return m.launchInTmux(ctx, agent)
+		err := m.launchInTmux(ctx, agent)
+		m.mu.Unlock()
+		return err
 	}
+	m.mu.Unlock()
 	return nil
 }
 

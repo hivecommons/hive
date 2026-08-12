@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,7 @@ const (
 	// gitSourceCloneTimeout caps how long the initial clone can take.
 	gitSourceCloneTimeout = 120 * time.Second
 
-	gitAllowedProtocols = "https:http"
+	gitAllowedProtocols = "https"
 
 	// gitSourceSyncInterval is how often we pull updates from the remote.
 	gitSourceSyncInterval = 5 * time.Minute
@@ -78,6 +79,9 @@ func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *
 func (g *GitSource) Init(ctx context.Context) error {
 	if err := ValidateGitSourceURLContext(ctx, g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: invalid url: %w", g.config.Name, err)
+	}
+	if err := ValidateGitSourceBranch(g.config.Branch); err != nil {
+		return fmt.Errorf("git source %s: invalid branch: %w", g.config.Name, err)
 	}
 
 	if err := g.ensureCloned(ctx); err != nil {
@@ -244,6 +248,7 @@ func (g *GitSource) setupSparseCheckout(ctx context.Context) error {
 }
 
 // ValidateGitSourceURL enforces the transports permitted for git-backed knowledge sources.
+// It also blocks private/loopback destinations to prevent SSRF via git clone.
 func ValidateGitSourceURL(raw string) error {
 	return ValidateGitSourceURLContext(context.Background(), raw)
 }
@@ -268,7 +273,7 @@ func ValidateGitSourceURLContext(ctx context.Context, raw string) error {
 		return fmt.Errorf("git URL is invalid")
 	}
 	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "https" && scheme != "http" {
+	if scheme != "https" && !(scheme == "http" && allowPrivateGitSource()) {
 		if scheme == "" {
 			return fmt.Errorf("git URL scheme is required")
 		}
@@ -277,25 +282,21 @@ func ValidateGitSourceURLContext(ctx context.Context, raw string) error {
 	if parsed.Host == "" {
 		return fmt.Errorf("git URL host is required")
 	}
-	if strings.Contains(trimmed, "::") {
+	if gitURLContainsTransportHelperSeparator(trimmed) {
 		return fmt.Errorf("git URL must not contain git transport helper separator")
 	}
 
 	// SSRF: reject private/loopback/link-local hosts so a git knowledge source
 	// can't be pointed at the pod network, internal services, or the cloud
-	// metadata endpoint (169.254.169.254). Operators running a legitimately
-	// internal Git server can opt in explicitly; default is fail-closed.
+	// metadata endpoint (169.254.169.254). Mirrors the document-import guard.
+	// Operators running a legitimately-internal Git server (e.g. an in-cluster
+	// GitLab) set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true to opt in; default is
+	// fail-closed.
 	if !allowPrivateGitSource() && gitSourceHostResolvesPrivate(ctx, parsed.Hostname()) {
 		return fmt.Errorf("git URL host resolves to a private/internal address (set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true for an internal Git server)")
 	}
 
 	return nil
-}
-
-// allowPrivateGitSource reports whether a git knowledge source pointing at a
-// private/internal address is permitted. Default false (fail-closed).
-func allowPrivateGitSource() bool {
-	return os.Getenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE") == "true"
 }
 
 // gitSourceResolver is the DNS lookup used by the SSRF check, replaceable in
@@ -316,17 +317,23 @@ const gitSourceLookupTimeout = 5 * time.Second
 // reasoning is inverted — declining to resolve does not avoid rebinding, it
 // removes the check altogether, so `http://internal.attacker.tld/` resolving to
 // 169.254.169.254 validated cleanly. Resolving narrows the window to a genuine
-// rebind race; not resolving leaves the front door open. The dashboard's
-// isPrivateURL already resolves and fails closed; this brings the git path in
-// line with it.
+// rebind race; not resolving leaves the front door open.
 //
-// Fails CLOSED on lookup error, matching that precedent.
+// Fails CLOSED on lookup error.
 func gitSourceHostResolvesPrivate(ctx context.Context, host string) bool {
 	if gitSourceHostIsPrivate(host) {
 		return true
 	}
-	// An IP literal was fully decided above; no DNS to consult.
+	// An IP literal was fully decided above; no DNS to consult. This must also
+	// recognise the legacy IPv4 encodings (single-integer, octal, hex,
+	// shortened dotted) that gitSourceHostIsPrivate accepts but net.ParseIP
+	// rejects — otherwise a public literal like "010.010.010.010" falls through
+	// to a DNS lookup that cannot resolve, and the fail-closed branch below
+	// misreports it as private.
 	if net.ParseIP(strings.Trim(host, "[]")) != nil {
+		return false
+	}
+	if _, ok := parseGitSourceIPv4Literal(strings.Trim(host, "[]")); ok {
 		return false
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout)
@@ -343,21 +350,121 @@ func gitSourceHostResolvesPrivate(ctx context.Context, host string) bool {
 	return false
 }
 
+// ValidateGitSourceBranch rejects branch values that git could parse as
+// command-line options when passed as the argument to `git clone --branch`.
+func ValidateGitSourceBranch(branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("git branch is required")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("git branch must not start with '-'")
+	}
+	return nil
+}
+
+// allowPrivateGitSource reports whether a git knowledge source pointing at a
+// private/internal address is permitted. Default false (fail-closed).
+func allowPrivateGitSource() bool {
+	return os.Getenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE") == "true"
+}
+
 // gitSourceHostIsPrivate reports whether host is a loopback/private/link-local
-// literal IP or "localhost".
+// literal IP or "localhost". It also recognizes legacy IPv4 encodings accepted
+// by libcurl/git (single-integer, octal, hex, and shortened dotted forms). A DNS
+// name is treated as public here; DNS resolution at validation time cannot
+// prevent a later rebinding before git clone resolves the host.
 func gitSourceHostIsPrivate(host string) bool {
 	host = strings.ToLower(strings.Trim(host, "[]"))
+	if zoneStart := strings.LastIndex(host, "%"); zoneStart > -1 && strings.Contains(host, ":") {
+		host = host[:zoneStart]
+	}
 	if host == "" || host == "localhost" {
 		return host == "localhost"
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return false
+		var ok bool
+		ip, ok = parseGitSourceIPv4Literal(host)
+		if !ok {
+			return false
+		}
 	}
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
+		if v4[0] == 0 {
+			return true
+		}
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+func parseGitSourceIPv4Literal(host string) (net.IP, bool) {
+	if strings.Contains(host, ":") {
+		return nil, false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
+		return nil, false
+	}
+
+	nums := make([]uint64, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return nil, false
+		}
+		n, err := strconv.ParseUint(part, 0, 32)
+		if err != nil {
+			return nil, false
+		}
+		nums[i] = n
+	}
+
+	var value uint64
+	switch len(nums) {
+	case 1:
+		value = nums[0]
+	case 2:
+		if nums[0] > 0xff || nums[1] > 0xffffff {
+			return nil, false
+		}
+		value = nums[0]<<24 | nums[1]
+	case 3:
+		if nums[0] > 0xff || nums[1] > 0xff || nums[2] > 0xffff {
+			return nil, false
+		}
+		value = nums[0]<<24 | nums[1]<<16 | nums[2]
+	case 4:
+		for _, n := range nums {
+			if n > 0xff {
+				return nil, false
+			}
+		}
+		value = nums[0]<<24 | nums[1]<<16 | nums[2]<<8 | nums[3]
+	default:
+		return nil, false
+	}
+	if value > 0xffffffff {
+		return nil, false
+	}
+
+	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true
+}
+
+func gitURLContainsTransportHelperSeparator(raw string) bool {
+	inIPv6Literal := false
+	for i := 0; i < len(raw)-1; i++ {
+		switch raw[i] {
+		case '[':
+			inIPv6Literal = true
+		case ']':
+			inIPv6Literal = false
+		}
+		if !inIPv6Literal && raw[i] == ':' && raw[i+1] == ':' {
+			return true
+		}
+	}
+	return false
 }
 
 func isSCPStyleGitURL(raw string) bool {
@@ -370,9 +477,13 @@ func isSCPStyleGitURL(raw string) bool {
 }
 
 func gitSourceEnv() []string {
+	allowedProtocols := gitAllowedProtocols
+	if allowPrivateGitSource() {
+		allowedProtocols += ":http"
+	}
 	return append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ALLOW_PROTOCOL="+gitAllowedProtocols,
+		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
 	)
 }
 

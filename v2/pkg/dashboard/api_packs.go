@@ -58,7 +58,27 @@ type ApplyPackResult struct {
 // sets governor config (eval interval, cadences, thresholds, stale timeouts),
 // syncs agent visibility, and persists state. Callable from both the HTTP
 // handler and the startup bootstrap path.
+// ApplyPack reconciles the roster and (on first apply / expansion) the governor
+// config for a level. It preserves operator governor customizations on a pure
+// merge — see ApplyPackForce for the explicit-level-change variant that must
+// re-derive the cadences from the new pack.
 func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
+	return s.applyPack(level, false)
+}
+
+// ApplyPackForce is ApplyPack for an EXPLICIT operator level change / pack
+// apply: it re-derives the governor mode cadences and thresholds from the target
+// pack even when the roster does not grow. Without this, switching to a level
+// whose pack has different cadences for already-existing agents kept the OLD
+// level's cadences — including a carried-over SURGE=pause — leaving agents_due
+// empty and nothing kicked (the bug behind "switching ACMM level makes the hive
+// stop creating anything"). Startup uses ApplyPack (preserve customizations);
+// the /api/packs level-change and apply handlers use this.
+func (s *Server) ApplyPackForce(level int) (*ApplyPackResult, error) {
+	return s.applyPack(level, true)
+}
+
+func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, error) {
 	pack, err := config.ACMMPackByLevel(level)
 	if err != nil {
 		return nil, err
@@ -228,10 +248,14 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 		s.logger.Error("failed to save ACMM level to hive.yaml", "error", err)
 	}
 
-	// Only apply governor config (thresholds, cadences, eval interval) when
-	// new agents are being created. On a pure merge (all agents already exist),
-	// preserve user's governor customizations.
-	isFirstApplyOrExpansion := len(created) > 0
+	// Apply governor config (thresholds, cadences, eval interval) when new agents
+	// are being created OR when this is an explicit operator level change / pack
+	// apply (forceGovernor). On a plain startup merge with no roster growth,
+	// preserve the operator's governor customizations. Without the forceGovernor
+	// path, switching between levels whose packs differ only in cadences (no new
+	// agent) kept the previous level's cadences — including a stale SURGE=pause —
+	// so the hive stopped kicking agents after a level switch.
+	isFirstApplyOrExpansion := len(created) > 0 || forceGovernor
 
 	if pack.Governor.EvalIntervalS > 0 && isFirstApplyOrExpansion {
 		s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
@@ -337,7 +361,10 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 	s.levelMu.Lock()
 	defer s.levelMu.Unlock()
 
-	result, err := s.ApplyPack(level)
+	// Explicit operator pack-apply: force the governor cadences to the target
+	// pack (see ApplyPackForce) so a level switch that adds no new agent still
+	// picks up the new level's cadences instead of keeping the old ones.
+	result, err := s.ApplyPackForce(level)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -409,7 +436,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	// 200 here is exactly what left kellyaa at "acmm_level: 5, 8 agents,
 	// strategist missing". Surface the error so the operator sees the drift
 	// and can retry instead of trusting a false success.
-	packResult, packErr := s.ApplyPack(level)
+	packResult, packErr := s.ApplyPackForce(level)
 	if packErr != nil {
 		s.logger.Error("failed to reconcile roster after level change", "level", level, "error", packErr)
 		jsonError(w, "level set but roster reconciliation failed: "+packErr.Error(), http.StatusInternalServerError)

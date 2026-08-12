@@ -1,6 +1,6 @@
 #!/bin/bash
 # hive-panes — show the last N lines of every OTHER agent's tmux pane.
-# Uses pluk JSONL logs (world-readable) so any agent can call it.
+# Uses pluk JSONL logs (readable by the shared node group) so any agent can call it.
 # Automatically skips the calling agent's own session (via HIVE_PROXY_AGENT).
 #
 # Usage:  hive-panes [lines]    (default: 30)

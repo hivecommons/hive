@@ -78,16 +78,7 @@ type layerInfo struct {
 // and effective values, so it is operator information rather than public
 // status. Secret values are redacted regardless.
 func (s *Server) handleConfigProvenance(w http.ResponseWriter, r *http.Request) {
-	// Fail CLOSED on an absent role. This previously defaulted an empty
-	// X-Hive-Role to "owner", so any request that simply omitted the header
-	// read the full config provenance. The header is server-set: the auth
-	// middleware strips every inbound copy and re-stamps it only after
-	// authenticating, and the token-less "open by design" branch stamps
-	// owner explicitly — so an empty value here means the request never
-	// transited a path that established an owner identity.
-	role := r.Header.Get("X-Hive-Role")
-	if role != "owner" {
-		http.Error(w, "owner access required", http.StatusForbidden)
+	if !requireOwnerRole(w, r) {
 		return
 	}
 

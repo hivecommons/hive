@@ -818,6 +818,7 @@ func TestHandleVaultsConnectBadJSON(t *testing.T) {
 	srv.ensureKnowledge()
 	req := httptest.NewRequest("POST", "/api/knowledge/vaults", strings.NewReader(`{bad`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleVaultsConnect(w, req)
 
@@ -832,6 +833,7 @@ func TestHandleVaultsConnectMissingPath(t *testing.T) {
 	body := `{"name":"my-vault"}`
 	req := httptest.NewRequest("POST", "/api/knowledge/vaults", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleVaultsConnect(w, req)
 

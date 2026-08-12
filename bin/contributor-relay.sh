@@ -13,6 +13,7 @@
 //                           the same order as HIVE_HUB
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
 //   AGENT_MODEL            — model override (optional)
+//   AGENT_REASONING_EFFORT — Codex reasoning effort override (optional)
 //   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
 //                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
@@ -39,6 +40,7 @@ if (rawHubList.length > 1 && rawTokenList.length !== rawHubList.length) {
 }
 const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
+const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
@@ -306,7 +308,10 @@ function buildLaunchCommand() {
   if (cachedLaunchCommand) return cachedLaunchCommand;
   const { cmd, perm } = resolveBackend();
   const modelFlag = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag].filter(Boolean).join(' ');
+  const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
+    ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
+    : '';
+  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -368,11 +373,12 @@ function buildHeadlessArgv(prompt) {
   const { cmd, perm } = resolveBackend();
   const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
   const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
+  const reasoningArgs = BACKEND === 'codex' && REASONING_EFFORT ? ['-c', `model_reasoning_effort="${REASONING_EFFORT}"`] : [];
   // spec.flag is a single token for most backends, or an array of leading
   // tokens for backends needing a sub-command plus a flag (goose). Normalize
   // to an array so both shapes spread the same way ahead of the prompt.
   const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
-  const args = [...permArgs, ...modelArgs, ...oneShotArgs, prompt];
+  const args = [...permArgs, ...modelArgs, ...reasoningArgs, ...oneShotArgs, prompt];
   return { bin: cmd, args };
 }
 
@@ -1281,6 +1287,7 @@ function handleMessage(data, hub) {
         registration_token: hub.regToken,
         cli_backend: BACKEND,
         model: MODEL,
+        reasoning_effort: REASONING_EFFORT || undefined,
         role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.
