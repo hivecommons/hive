@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/auth"
 	"github.com/kubestellar/hive/v2/pkg/openrouter"
 )
 
@@ -792,6 +793,13 @@ type HubServer struct {
 	mu       sync.RWMutex
 	logger   *slog.Logger
 	saveCh   chan struct{}
+
+	// authProviders is the enabled human-login provider set (GitHub OAuth plus any
+	// configured OIDC providers — Google/IBMid/Red Hat). Built once in
+	// registerOAuth from the environment; nil until then. The login picker and the
+	// OIDC callback read it. It governs ONLY human dashboard login/access — never
+	// the GitHub App token or agent logins.
+	authProviders *auth.Registry
 	// registryPath is this server's on-disk registry file, captured from the
 	// package-level default at construction and immutable afterwards. It is a
 	// per-instance field (not a use-time read of the global) so the saveLoop
@@ -2837,7 +2845,7 @@ func (s *HubServer) saveRegistryNow() error {
 }
 
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, "admin access required", http.StatusForbidden)
 		return
 	}
@@ -2858,7 +2866,7 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 			s.logger.Error("admin registry removal persist failed", "id", id, "error", err)
 			s.requestSave()
 		}
-		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", hubAdminUsername)
+		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", primaryHubAdmin())
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})

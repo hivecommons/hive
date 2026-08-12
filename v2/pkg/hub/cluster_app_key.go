@@ -334,7 +334,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 // hive should be given — app_id, app_slug, base_url and api_url, plus the key
 // when this hub holds one.
 //
-// WHY ASSIGN NEEDS ITS OWN ENTRY POINT
+// # WHY ASSIGN NEEDS ITS OWN ENTRY POINT
 //
 // Assign already knows the forge: handleAssignHive records h.GitHubHost from
 // the requested org before it reaches the credential step. Yet until now the

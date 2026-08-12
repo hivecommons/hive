@@ -345,7 +345,7 @@ func decodeSlackRequest(w http.ResponseWriter, r *http.Request) (slackSendReques
 // the caller should return.
 func slackPreflight(w http.ResponseWriter, r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -385,7 +385,7 @@ func (s *HubServer) handleSlackMessageUser(w http.ResponseWriter, r *http.Reques
 	}
 	actor := s.getAuthUser(r)
 	username := r.PathValue("username")
-	if actor != hubAdminUsername && !strings.EqualFold(actor, username) {
+	if !isHubAdmin(actor) && !strings.EqualFold(actor, username) {
 		http.Error(w, `{"error":"only an admin can message another user"}`, http.StatusForbidden)
 		return
 	}
@@ -441,7 +441,7 @@ func (s *HubServer) handleSlackMessageHiveOwner(w http.ResponseWriter, r *http.R
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != actor && actor != hubAdminUsername {
+	if !canonicalEqual(h.Owner, actor) && !isHubAdmin(actor) {
 		http.Error(w, `{"error":"only the owner can message this hive's owner"}`, http.StatusForbidden)
 		return
 	}

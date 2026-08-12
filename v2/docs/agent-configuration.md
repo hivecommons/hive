@@ -327,7 +327,7 @@ Portable agents bundle everything — config plus a `promptTemplate` — in a si
 - **[Troubleshooting](../../docs/troubleshooting.md)** — stuck sessions, login expiry, restart loops, and notification checks.
 - **[ACMM policy matrix](acmm-policy-matrix.md)** — the full per-level, per-agent policy table.
 - **[Config layering](config-layering.md)** — precedence for seed, dashboard overlay, agent overlays, and runtime snapshots.
-- **[Cross-cluster migration](cross-cluster-migration.md)** — moving a hive (and its PVC state) between clusters.
+- **[Cross-cluster migration](cross-cluster-migration.md)** — the manual procedure for moving a hive (and its PVC state) between clusters.
 - **[Dashboard OpenAPI spec](../../dashboard/openapi.json)** — REST endpoints used by the dashboard and integrations.
 - **[SQLite state backend example](../../examples/sqlite-state.md)** — single-machine alternative to beads for state queries.
 - **[ACMM policy fragments](../../examples/acmm/README.md)** — per-level ACMM policy reference fragments.

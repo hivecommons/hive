@@ -238,7 +238,7 @@ const forgeSwitchNeedsInstallNote = "installation_id was cleared because it belo
 // channel for this, already implemented on both ends.
 func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -257,7 +257,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can switch forges"}`, http.StatusForbidden)
 		return
 	}

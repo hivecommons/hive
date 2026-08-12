@@ -276,7 +276,8 @@ func TestSlackPreflightDoesNotReflectUntrustedOrigin(t *testing.T) {
 func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 	for _, origin := range []string{
 		"https://hive.kubestellar.io",
-		"https://my-hive.hive.kubestellar.io",
+		// F4: "https://my-hive.hive.kubestellar.io" removed — a sibling tenant
+		// must NOT receive a credentialed CORS reflection.
 		"http://localhost:5174",
 	} {
 		rec := httptest.NewRecorder()
@@ -360,5 +361,20 @@ func TestRequireSlackTokenReturnsTrimmedToken(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("a configured hub must not write an error status, got %d", rec.Code)
+	}
+}
+
+// F4 (CWE-942): a sibling tenant origin must be REFUSED the credentialed CORS
+// reflection. Reflecting it with Allow-Credentials gave a hostile tenant a
+// scripted cross-tenant READ of the hub API.
+func TestF4_SlackPreflightRefusesSiblingOrigin(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Header.Set("Origin", "https://evil.hive.kubestellar.io")
+
+	slackPreflight(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("F4: sibling origin was reflected for credentialed CORS: %q", got)
 	}
 }

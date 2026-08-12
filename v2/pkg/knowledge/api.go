@@ -631,7 +631,7 @@ func (k *KnowledgeAPI) Layers() []LayerType {
 // periodic sync loop. Any layer level can have git sources.
 func (k *KnowledgeAPI) ConnectGitSource(ctx context.Context, config GitSourceConfig) error {
 	config.URL = strings.TrimSpace(config.URL)
-	if err := ValidateGitSourceURL(config.URL); err != nil {
+	if err := ValidateGitSourceURLContext(ctx, config.URL); err != nil {
 		return fmt.Errorf("invalid git source url: %w", err)
 	}
 

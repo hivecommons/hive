@@ -1,0 +1,34 @@
+{
+  "sessionId": "f4e80411-test-session",
+  "projectHash": "6fd8b8b68370c5bf7f1517c591f398656fae83a9ef30bba59cc660419577c1f9",
+  "startTime": "2026-01-31T05:43:29.663Z",
+  "lastUpdated": "2026-01-31T05:47:11.204Z",
+  "messages": [
+    {
+      "id": "23d9ef3f-7e35-40a2-8f25-95461293a629",
+      "timestamp": "2026-01-31T05:43:29.663Z",
+      "type": "user",
+      "content": "fix the bug in main.go"
+    },
+    {
+      "id": "f4e80411-7862-4fd8-aa11-d639eff5d541",
+      "timestamp": "2026-01-31T05:43:35.306Z",
+      "type": "bob-shell",
+      "content": "I will fix the bug.",
+      "thoughts": [],
+      "tokens": {"input": 8200, "output": 285, "cached": 8166, "thoughts": 0},
+      "model": "premium",
+      "toolCalls": [{"id": "tool-1", "name": "list_files", "args": {"dir_path": "."}}]
+    },
+    {
+      "id": "dbc4cfa3-ad8f-454f-8672-039cbc62c0fb",
+      "timestamp": "2026-01-31T05:43:38.212Z",
+      "type": "bob-shell",
+      "content": "Done.",
+      "thoughts": [],
+      "tokens": {"input": 4000, "output": 150, "cached": 3800, "thoughts": 10},
+      "model": "premium",
+      "toolCalls": []
+    }
+  ]
+}

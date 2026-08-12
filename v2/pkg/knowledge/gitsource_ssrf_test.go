@@ -1,6 +1,10 @@
 package knowledge
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestValidateGitSourceURL_RejectsPrivateHosts(t *testing.T) {
 	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
@@ -61,5 +65,60 @@ func TestValidateGitSourceURL_OptInAllowsPrivate(t *testing.T) {
 	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
 	if err := ValidateGitSourceURL("http://10.0.0.5/internal.git"); err != nil {
 		t.Errorf("opt-in must allow a private internal Git server, got %v", err)
+	}
+}
+
+// Audit F8 (CWE-918) — ported from v4 (#3433). The SSRF check inspected the
+// host only as an IP LITERAL, so every rejection test above passes while
+// `http://internal.attacker.tld/` resolving to 169.254.169.254 validated
+// cleanly. An attacker controls their own DNS, so a literal-only check is
+// trivially sidestepped.
+func TestF8_RejectsHostnameResolvingToPrivateAddress(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, host string) ([]string, error) {
+		if host == "internal.attacker.tld" {
+			return []string{"169.254.169.254"}, nil
+		}
+		return []string{"93.184.216.34"}, nil
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+
+	if err := ValidateGitSourceURL("https://internal.attacker.tld/repo.git"); err == nil {
+		t.Fatal("F8: a hostname resolving to the cloud metadata endpoint was accepted — the SSRF check only inspects IP literals")
+	}
+	// Positive control: a hostname resolving to a public address must still be
+	// allowed, or the fix is just a blanket denial of every non-literal host.
+	if err := ValidateGitSourceURL("https://github.com/kubestellar/hive.git"); err != nil {
+		t.Fatalf("a public hostname was rejected, which would break every legitimate git source: %v", err)
+	}
+}
+
+// A resolver failure must fail CLOSED — otherwise an attacker who can make
+// lookups fail turns the error path itself into the bypass.
+func TestF8_FailsClosedWhenResolverErrors(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, _ string) ([]string, error) {
+		return nil, errors.New("dns unavailable")
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+
+	if err := ValidateGitSourceURL("https://unresolvable.example/repo.git"); err == nil {
+		t.Fatal("F8: a host whose DNS lookup failed was accepted — the error path must fail closed")
+	}
+}
+
+// The operator opt-in must still work for a legitimately internal Git server.
+func TestF8_OperatorOptInStillAllowsPrivate(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"10.0.0.5"}, nil
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+
+	if err := ValidateGitSourceURL("https://git.internal.corp/repo.git"); err != nil {
+		t.Fatalf("operator opt-in no longer permits an internal Git server: %v", err)
 	}
 }

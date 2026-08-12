@@ -240,3 +240,35 @@ func TestRoleEnforcement_QueuePRAutoMerge_UnverifiedOwnerRejected(t *testing.T) 
 		})
 	}
 }
+
+// TestRoleEnforcement_QueuePRAutoMerge_EmptyRoleRejectedEvenWhenOwnerVerified
+// pins the #3449 fix at the point where it can actually be observed.
+//
+// TestRoleEnforcement_QueuePRAutoMerge_EmptyRoleRejected above sends no
+// owner-verification header, so it returns 403 whether or not the empty role
+// was defaulted to owner: reinstating `if role == "" { role = RoleOwner }`
+// leaves that test passing, because the unverified-owner branch rejects the
+// request first. It therefore cannot detect the very regression it is named
+// for.
+//
+// Sending the verification header removes that second gate, so the ONLY thing
+// left standing between an empty role and a queued merge is the fail-closed
+// role check itself. If the fail-open default ever comes back, this test
+// fails.
+func TestRoleEnforcement_QueuePRAutoMerge_EmptyRoleRejectedEvenWhenOwnerVerified(t *testing.T) {
+	srv := newMinimalServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/prs/testorg/testrepo/42/queue-automerge", nil)
+	req.SetPathValue("owner", "testorg")
+	req.SetPathValue("repo", "testrepo")
+	req.SetPathValue("number", "42")
+	req.Header.Set("X-Hive-User", "attacker")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+	// X-Hive-Role deliberately absent: an empty role must never be promoted.
+	w := httptest.NewRecorder()
+	srv.handleQueuePRAutoMerge(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("empty role with owner-verification present must still be refused: got status %d, want 403; body=%q", w.Code, w.Body.String())
+	}
+}

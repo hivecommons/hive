@@ -2163,26 +2163,6 @@ func TestHandleDenyAccessNotFound(t *testing.T) {
 }
 
 // ============================================================
-// handleMigrateHive — not found
-// ============================================================
-
-func TestHandleMigrateHiveNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test", "v2")
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/saas/hives/{id}/migrate", srv.handleMigrateHive)
-
-	req := httptest.NewRequest("POST", "/api/saas/hives/nonexistent/migrate", strings.NewReader(`{"target_cluster_id":"cluster1"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", w.Code)
-	}
-}
-
-// ============================================================
 // Heartbeat with health data
 // ============================================================
 

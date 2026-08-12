@@ -168,26 +168,6 @@ func TestHandleDeleteHiveNotOwner_Cov2(t *testing.T) {
 	}
 }
 
-func TestHandleMigrateHiveSuccess(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	installScriptedKubectl(t)
-
-	mkUser(t, "alice")
-	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2, ClusterID: "hive-oke"})
-	s := newHandlerHub2()
-	s.clusters["target"] = ClusterConfig{ID: "target", Name: "Target", InCluster: true, StorageType: storageTypeDynamic, Domain: "t.example.com"}
-	s.registry.Hives = []RegistryEntry{{ID: "h1", ClusterID: "hive-oke"}}
-
-	rec := httptest.NewRecorder()
-	req := setPathValue(reqWithUser(http.MethodPost, "/mig", `{"target_cluster_id":"target"}`, "alice"), "id", "h1")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusOK && rec.Code != http.StatusAccepted {
-		t.Errorf("migrate status = %d, want 200/202 (body=%s)", rec.Code, rec.Body.String())
-	}
-	provisionWG.Wait()
-}
-
 func TestHandleAssignHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

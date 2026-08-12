@@ -1,0 +1,39 @@
+name: SUID Helper Contract
+
+# Static contract check that the hive image never ships a world-executable
+# setuid-root helper (security finding C6, CWE-250/269). The image legitimately
+# needs a SUID su-exec for the non-root dev process to switch to per-agent UIDs
+# at runtime; this guard locks in that it stays pinned-by-SHA + SHA256-verified
+# and chmod 4750 root:hive-launch (launcher-group-only), never the old
+# unpinned world-exec 4755 form. See v2/scripts/check-suid-contract.sh.
+
+on:
+  push:
+    branches:
+      - v2
+      - v4
+    paths:
+      - 'v2/Dockerfile'
+      - 'v2/scripts/check-suid-contract.sh'
+      - '.github/workflows/suid-contract.yml'
+  pull_request:
+    branches:
+      - v2
+      - v4
+    paths:
+      - 'v2/Dockerfile'
+      - 'v2/scripts/check-suid-contract.sh'
+      - '.github/workflows/suid-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run SUID helper static contract check
+        run: bash v2/scripts/check-suid-contract.sh v2/Dockerfile
