@@ -75,6 +75,7 @@ type Collector struct {
 	sessionsDir               string
 	claudeSessionsDir         string
 	copilotSessionsDir        string
+	bobSessionsDir            string
 	copilotLiveCaptureSinceMs int64
 	persistPath               string
 	detector                  func(string) string
@@ -113,6 +114,10 @@ func (c *Collector) SetClaudeSessionsDir(dir string) {
 
 func (c *Collector) SetCopilotSessionsDir(dir string) {
 	c.copilotSessionsDir = dir
+}
+
+func (c *Collector) SetBobSessionsDir(dir string) {
+	c.bobSessionsDir = dir
 }
 
 // SetCopilotLiveCapture tells the collector that the MITM proxy began recording
@@ -176,6 +181,15 @@ func (c *Collector) scan() {
 			c.logger.Warn("copilot session scan failed", "error", err)
 		} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
 			MergeAggregates(agg, copilotAgg)
+		}
+	}
+
+	if c.bobSessionsDir != "" {
+		bobAgg, err := ScanBobSessions(c.bobSessionsDir)
+		if err != nil {
+			c.logger.Warn("bob session scan failed", "error", err)
+		} else if bobAgg != nil && bobAgg.SessionCount > 0 {
+			MergeAggregates(agg, bobAgg)
 		}
 	}
 

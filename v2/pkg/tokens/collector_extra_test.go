@@ -260,3 +260,33 @@ func TestCollectFromDir_NilDetector(t *testing.T) {
 		t.Errorf("agent = %q, want unknown", agg.Sessions[0].Agent)
 	}
 }
+
+func TestCollector_ScanIncludesBob(t *testing.T) {
+	metricsDir := t.TempDir()
+	bobDir := t.TempDir()
+
+	// Create a bob chat session file.
+	chatDir := filepath.Join(bobDir, "tmp", "test-uuid", "chats")
+	if err := os.MkdirAll(chatDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessJSON := `{"id":"s1","model":"granite","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello","usage":{"input_tokens":50,"output_tokens":30}}]}`
+	if err := os.WriteFile(filepath.Join(chatDir, "s.json"), []byte(sessJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewCollector(metricsDir, testLogger())
+	c.SetBobSessionsDir(bobDir)
+	c.scan()
+
+	summary := c.Summary()
+	if summary == nil {
+		t.Fatal("summary is nil after scan")
+	}
+	if summary.TotalTokens != 80 {
+		t.Errorf("TotalTokens = %d, want 80", summary.TotalTokens)
+	}
+	if summary.ByAgent["bob"] != 80 {
+		t.Errorf("ByAgent[bob] = %d, want 80", summary.ByAgent["bob"])
+	}
+}
