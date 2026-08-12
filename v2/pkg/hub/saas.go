@@ -5386,6 +5386,22 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 	return access
 }
 
+// userIsHiveOwner reports whether username may administer hive h: the registry
+// creator, any user holding the granted owner role on that hive, or the hub admin.
+func userIsHiveOwner(username string, h *SaaSHive) bool {
+	if username == "" || h == nil {
+		return false
+	}
+	if username == hubAdminUsername {
+		return true
+	}
+	if strings.EqualFold(h.Owner, username) {
+		return true
+	}
+	u := loadSaaSUser(username)
+	return u != nil && u.Hives != nil && u.Hives[h.ID] == "owner"
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
@@ -5394,7 +5410,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can view access"}`, http.StatusForbidden)
 		return
 	}
@@ -5419,7 +5435,8 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	owns := username == hubAdminUsername
 	if !owns {
 		for _, h := range listSaaSHives() {
-			if h.Owner == username {
+			h := h
+			if userIsHiveOwner(username, &h) {
 				owns = true
 				break
 			}
@@ -5448,7 +5465,7 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can manage access"}`, http.StatusForbidden)
 		return
 	}
@@ -5483,7 +5500,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can manage access"}`, http.StatusForbidden)
 		return
 	}
