@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       arm64) TMUX_SHA256="$TMUX_SHA256_ARM64" ;; \
       *) echo "unsupported arch for tmux: $ARCH" >&2; exit 1 ;; \
     esac \
- && curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors -o /tmp/tmux.tar.gz "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
+ && curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/tmux.tar.gz "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
  && echo "${TMUX_SHA256}  /tmp/tmux.tar.gz" | sha256sum -c - \
  && tar xz -C /tmp -f /tmp/tmux.tar.gz \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
@@ -84,7 +84,7 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 # wiping any SETUID/SETGID grant on live hives.
 ARG SU_EXEC_COMMIT=89c016e6e08749d583efdeda04b9f73e1218e253
 ARG SU_EXEC_SHA256=0c90fe15804f2670037b90e72eb496579fe00d2c15765e5fe2ddec0f5afa35fa
-RUN curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/${SU_EXEC_COMMIT}/su-exec.c" \
+RUN curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/${SU_EXEC_COMMIT}/su-exec.c" \
  && echo "${SU_EXEC_SHA256}  /tmp/su-exec.c" | sha256sum -c - \
  && gcc -Wall -o /usr/local/bin/su-exec /tmp/su-exec.c \
  && rm /tmp/su-exec.c \
@@ -125,7 +125,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64) TTYD_ARCH=aarch64; TTYD_SHA256="$TTYD_SHA256_ARM64" ;; \
       *) echo "unsupported arch for ttyd: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors -o /usr/local/bin/ttyd \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /usr/local/bin/ttyd \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" && \
     echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c - && \
     chmod +x /usr/local/bin/ttyd
@@ -141,7 +141,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       *) echo "unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
     esac && \
     mkdir -p /opt/hive/bin && \
-    curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" && \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" && \
     echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - && \
     tar xz --strip-components=2 -C /opt/hive/bin -f /tmp/gh.tar.gz "gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" && \
     mv /opt/hive/bin/gh /opt/hive/bin/gh-real && \
@@ -204,7 +204,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
     esac && \
-    if curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
+    if curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
       echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c - && \
       tar xz -C /usr/local/bin -f /tmp/goose.tar.gz && \
       chmod +x /usr/local/bin/goose && \
@@ -250,7 +250,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
       *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl -fsSL --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+    curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
     echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - && \
     npm install -g /tmp/bobshell.tgz && \
     npm cache clean --force && \
