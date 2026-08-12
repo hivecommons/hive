@@ -418,6 +418,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	// Daily image-pulls sparkline series (external adoption gauge). requireAuth,
+	// not requireAdmin: any signed-in hub user sees the same public-adoption
+	// number, and the underlying data is scraped from the PUBLIC package page.
+	s.mux.HandleFunc("GET /api/hub/image-pulls", s.requireAuth(s.handleImagePulls))
 	// Token attribution rollups. requireAuth (not requireAdmin) because a
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
@@ -4834,6 +4838,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Record the daily image-pulls snapshot (external-adoption sparkline). The
+	// call is internally guarded to run at most once per pullSnapshotIntervalHours,
+	// so ticking it alongside the frequent SHA poll is cheap — no separate
+	// scheduler. See image_pulls.go.
+	s.maybeSnapshotImagePulls(ctx, time.Now())
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4856,6 +4865,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -8341,6 +8351,14 @@ const dashboardHTML = `<!DOCTYPE html>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
+        <!-- Image-pulls sparkline: 30-day daily-delta of container-image PULLS
+             of the public spoke image (ghcr.io/kubestellar/hive:v2). Gauges
+             external adoption beyond the hosted fleet. Derived from GitHub's
+             cumulative "Total downloads" counter — it is pulls/day, NOT unique
+             downloads (uniqueness is not measurable). Populated by
+             loadImagePulls(). Hidden until there is data to show. -->
+        <div id="image-pulls-spark" style="display:none;margin-top:8px"
+             title="Daily container-image pulls of the public hive image (ghcr.io/kubestellar/hive:v2), derived from GitHub's cumulative download counter. This is pulls/day — not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -12558,6 +12576,7 @@ const dashboardHTML = `<!DOCTYPE html>
         renderAdminProvisionRequests(data.provision_requests || []);
         loadPublicHives(data.hives || []);
         loadUsage();
+        loadImagePulls();
       } catch(e) {
         /* Surface EVERY failure in the load→render path, not just fetch errors.
            The old guard only painted a message when _allDashHives was empty —
@@ -12573,6 +12592,79 @@ const dashboardHTML = `<!DOCTYPE html>
       } finally {
         _hivesLoading = false;
       }
+    }
+
+    /* loadImagePulls fetches the 30-day daily-delta series of container-image
+       PULLS of the public spoke image and paints a self-contained inline-SVG
+       sparkline near the header. Honest labelling: "pulls/day", NOT unique
+       downloads — the series is derived from GitHub's cumulative download
+       counter and uniqueness is not measurable. Cold start (fewer than two
+       snapshots → no delta yet) shows "collecting…" rather than a broken chart. */
+    async function loadImagePulls() {
+      var host = document.getElementById('image-pulls-spark');
+      if (!host) return;
+      var data;
+      try {
+        var resp = await fetch('/api/hub/image-pulls');
+        if (!resp.ok) { host.style.display = 'none'; return; }
+        data = await resp.json();
+      } catch (e) {
+        /* Adoption sparkline is non-critical chrome — never let it break the
+           dashboard. Just leave it hidden on any failure. */
+        host.style.display = 'none';
+        return;
+      }
+      var points = (data && data.points) || [];
+      host.style.display = 'block';
+
+      /* Cold start: one or zero snapshots means no day-over-day delta yet. */
+      if (data && data.collecting || points.length < 1) {
+        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Daily image pulls (v2): <span style="opacity:0.7">collecting… (first full data point appears after ~24h)</span></div>';
+        return;
+      }
+
+      /* Sparkline geometry. Named so there are no bare magic numbers in the
+         path math below. */
+      var SPARK_W = 160;   // px, drawing width
+      var SPARK_H = 28;    // px, drawing height
+      var SPARK_PAD = 2;   // px, top/bottom breathing room so peaks aren't clipped
+
+      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
+      var maxV = Math.max.apply(null, vals);
+      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
+
+      var stepX = points.length > 1 ? (SPARK_W / (points.length - 1)) : 0;
+      var usableH = SPARK_H - (SPARK_PAD * 2);
+      var coords = vals.map(function(v, i) {
+        var x = (i * stepX).toFixed(1);
+        var y = (SPARK_PAD + (usableH - (v / maxV) * usableH)).toFixed(1);
+        return x + ',' + y;
+      });
+      var linePts = coords.join(' ');
+      /* Filled area under the line: close the polyline down to the baseline. */
+      var lastX = points.length > 1 ? SPARK_W : 0;
+      var areaPts = '0,' + SPARK_H + ' ' + linePts + ' ' + lastX + ',' + SPARK_H;
+
+      var latest = (data && Number(data.latest)) || 0;
+      var total = (data && Number(data.total_30d)) || 0;
+
+      var svg =
+        '<svg width="' + SPARK_W + '" height="' + SPARK_H + '" viewBox="0 0 ' + SPARK_W + ' ' + SPARK_H + '" ' +
+        'preserveAspectRatio="none" style="display:block;overflow:visible">' +
+        '<polygon points="' + areaPts + '" fill="rgba(96,165,250,0.15)" stroke="none"></polygon>' +
+        '<polyline points="' + linePts + '" fill="none" stroke="#60a5fa" stroke-width="1.5" ' +
+        'stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+        '</svg>';
+
+      host.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">Daily image pulls (v2)</div>' +
+          svg +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' +
+            '<span style="color:#60a5fa;font-weight:600">' + esc(String(latest)) + '</span> latest' +
+            ' &middot; ' + esc(String(total)) + ' over ' + points.length + 'd' +
+          '</div>' +
+        '</div>';
     }
 
     /* renderHivesError replaces the eternal spinner with an actionable message.
