@@ -810,13 +810,6 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				if sess.Role == config.RoleOwner {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
-			} else {
-				// No session cookie on an internal (X-Hive-Internal) request: this is
-				// a server-to-server call (local proxy, agent automation). Grant owner
-				// so requireOwnerRole gates are satisfied — the shared token already
-				// proves the caller holds the owner credential.
-				r.Header.Set("X-Hive-Role", config.RoleOwner)
-				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -897,12 +890,6 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
-				// Bearer token is the shared owner credential — grant owner role and
-				// mark it verified so requireOwnerRole gates are satisfied without a
-				// session cookie. This is consistent with what authenticate() does for
-				// device-flow and hub-proxied owner sessions.
-				r.Header.Set("X-Hive-Role", config.RoleOwner)
-				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
