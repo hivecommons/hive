@@ -122,3 +122,38 @@ func TestOtherOwnerOnlyHandlersRejectNonOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestNousMutationHandlersRejectMissingRole(t *testing.T) {
+	srv := &Server{}
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{"nous approve", http.MethodPost, "/api/nous/approve", srv.handleNousApprove},
+		{"nous abort", http.MethodPost, "/api/nous/abort", srv.handleNousAbort},
+		{"nous mode", http.MethodPut, "/api/nous/mode", srv.handleNousMode},
+		{"nous scope", http.MethodPut, "/api/nous/scope", srv.handleNousScope},
+		{"nous gate decision", http.MethodPost, "/api/nous/gate/decision", srv.handleNousGateDecision},
+		{"nous gate respond", http.MethodPost, "/api/nous/gate/respond", srv.handleNousGateRespond},
+		{"nous delete principle", http.MethodDelete, "/api/nous/config/principles/0", srv.handleNousDeletePrinciple},
+		{"nous config section", http.MethodPut, "/api/nous/config/section", func(w http.ResponseWriter, r *http.Request) {
+			srv.handleNousConfigSection(w, r, "general")
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.SetPathValue("id", "0")
+			w := httptest.NewRecorder()
+
+			tc.handler(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("missing-role status = %d, want %d", w.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
