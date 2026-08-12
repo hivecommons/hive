@@ -302,6 +302,42 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
 
+# SECURITY (audit F5-egress / refs #2674, #2678): give the hive binary
+# CAP_NET_ADMIN as a FILE capability so the MITM proxy's own upstream dials can
+# be exempted from the forced-egress iptables REDIRECT.
+#
+# WHY THIS IS NEEDED
+# The entrypoint installs `-p tcp --dport 443 -j REDIRECT` so every agent's
+# egress is forced through the proxy, then exempts the proxy's OWN traffic three
+# ways. On OKE the `-m owner --uid-owner` matches work. On OpenShift/OVN xt_owner
+# is ABSENT, so those rules silently fail to load (`|| true`) and the only
+# remaining exemption is the SO_MARK packet mark — but setsockopt(SO_MARK)
+# requires CAP_NET_ADMIN in the calling process's EFFECTIVE set. The entrypoint
+# runs as root only long enough to build the chain; the hive process itself is
+# dropped to `dev` via gosu, so without a file capability it loses NET_ADMIN and
+# the mark silently fails ("operation not permitted").
+#
+# Observed live on vllm-d: with neither exemption active the proxy's own :443
+# dials hit the REDIRECT and looped back into itself, returning 502 for every
+# forge request and cutting a live tenant's agents off from their repository.
+#
+# WHY A FILE CAPABILITY IS SAFE HERE
+# File caps are recomputed AT EXEC from the binary being exec'd. Agents are
+# launched via su-exec into their OWN binaries (claude/goose/bob), which carry
+# no file capability, so NET_ADMIN does NOT propagate to any agent process.
+# Agent UIDs (2001+) also cannot exec su-exec itself — it is 4750
+# root:hive-launch and only `dev` is in that group (audit C6) — so there is no
+# path from an agent to a process holding this capability.
+#
+# +ep = permitted AND effective: the hive process needs the cap live at
+# setsockopt time, not merely inheritable.
+RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+ && setcap cap_net_admin+ep /usr/local/bin/hive \
+ && [ "$(getcap /usr/local/bin/hive)" != "" ] \
+ && getcap /usr/local/bin/hive | grep -q "cap_net_admin" \
+ && apt-get purge -y libcap2-bin \
+ && rm -rf /var/lib/apt/lists/*
+
 # --- Nous framework (strategist experiment engine) ---
 RUN (apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip jq && rm -rf /var/lib/apt/lists/*) || \

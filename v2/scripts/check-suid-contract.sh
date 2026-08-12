@@ -106,6 +106,34 @@ check "hive-launch launcher group is created" \
 check "dev is a member of hive-launch" \
   'useradd.*-G[[:space:]]+hive-launch'
 
+# ── File-capability contract (audit F5-egress, refs #2674/#2678) ──────────────
+#
+# The hive binary carries cap_net_admin+ep so the MITM proxy can stamp SO_MARK
+# on its own upstream dials and be exempted from the forced-egress iptables
+# REDIRECT. Without it, on OpenShift (no xt_owner, so the owner-UID exemptions
+# silently fail to load) the proxy redirects its OWN traffic into itself and
+# every forge request 502s — observed live on vllm-d.
+#
+# The capability is SAFE only because it cannot reach an agent:
+#   - file caps are recomputed at exec, and agents exec their own binaries
+#   - agents cannot exec su-exec (4750 root:hive-launch, asserted above)
+# If either invariant breaks, this capability becomes an escalation path — hence
+# both are asserted in the same contract.
+check "hive binary carries cap_net_admin" \
+  'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'
+check "the capability is verified at build time" \
+  'getcap[[:space:]]+/usr/local/bin/hive'
+
+# No OTHER binary may be given a capability. Agents run their own binaries; a
+# capability on any of them would hand NET_ADMIN straight to an agent process.
+if printf '%s\n' "$CODE" | grep -oE 'setcap[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+' \
+   | grep -qvE 'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'; then
+  echo "  FAIL: a setcap targets something other than /usr/local/bin/hive"
+  fail=1
+else
+  echo "  ok: no capability is granted to any binary except /usr/local/bin/hive"
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   echo ""
   echo "SUID helper contract check FAILED — a world-exec or unpinned setuid-root"
