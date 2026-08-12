@@ -209,6 +209,41 @@ func contributorWriteCases() []contributorWriteCase {
 	}
 }
 
+func contributorWriteRoleGateCases() []contributorWriteCase {
+	return []contributorWriteCase{
+		{"queue_order", (*Server).handleContributeQueueOrder, http.MethodPut, "/api/contribute/queue/order", `{"order":[]}`},
+		{"queue_hold", (*Server).handleContributeQueueHold, http.MethodPost, "/api/contribute/queue/hold", `{"key":"myorg/repo1#1","held":true}`},
+		{"queue_hold_clear", (*Server).handleContributeQueueHoldClear, http.MethodPost, "/api/contribute/queue/hold/clear", ``},
+		{"agent_role", (*Server).handleContributorAgentRole, http.MethodPut, "/api/contributors/alice/agent-role", `{"agent_role":"scanner"}`},
+		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},
+	}
+}
+
+func TestContributorWrite_HubProxiedAnonymousForbidden(t *testing.T) {
+	for _, tc := range contributorWriteRoleGateCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContributeEnv(t)
+			if err := saveContributorProfile(&ContributorProfile{
+				GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "trusted",
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s, deps := apiServer(t)
+			deps.Config.Dashboard.HubProxied = true
+
+			req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.SetPathValue("id", "alice")
+			w := httptest.NewRecorder()
+			tc.invoke(s, w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("hub-proxied anonymous got %d, want 403 (body: %s)", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 // TestContributorWrite_ReadViewerForbidden proves a "read" viewer is rejected with
 // 403 on every contributor mutation endpoint the ops tab surfaces — the boundary
 // the UI hiding merely shadows. roleEnforcement exempts /api/contribute*, so this
