@@ -114,6 +114,79 @@ func TestGatewaysUpsertSyncsLegacyLiteLLMKey(t *testing.T) {
 	}
 }
 
+// When the legacy litellm: endpoint is EMPTY (the most common upgrade path
+// from pre-gateway hives), legacyLiteLLMSectionMatches falls back to matching
+// the gateway name "litellm" (case-insensitive). Upserting that gateway must
+// still sync the legacy key store.
+func TestGatewaysUpsertSyncsLegacyKeyByNameFallback(t *testing.T) {
+	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "litellm.internal")
+
+	oldDir := gatewaySecretsDir
+	gatewaySecretsDir = t.TempDir()
+	defer func() { gatewaySecretsDir = oldDir }()
+
+	oldLegacy := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
+	defer func() { writableLiteLLMKeyFile = oldLegacy }()
+
+	// Legacy endpoint is empty — the default for hives that never configured
+	// an explicit litellm: block and only ever set up a gateway via the UI.
+	s.deps.Config.Governor.LiteLLM.Endpoint = ""
+
+	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
+		"name":     "litellm",
+		"kind":     "litellm",
+		"endpoint": "https://litellm.internal",
+		"api_key":  "sk-name-fallback-KEY",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	data, err := os.ReadFile(writableLiteLLMKeyFile)
+	if err != nil {
+		t.Fatalf("legacy key store not synced via name fallback: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "sk-name-fallback-KEY" {
+		t.Fatalf("legacy key store holds %q, want the rotated key via name-fallback path", got)
+	}
+	if got := s.deps.Config.Governor.LiteLLM.APIKeyFile; got != writableLiteLLMKeyFile {
+		t.Fatalf("legacy api_key_file = %q, want %q", got, writableLiteLLMKeyFile)
+	}
+}
+
+// When the legacy endpoint is empty and the gateway name is NOT "litellm",
+// the name-fallback must NOT match — the legacy store stays untouched.
+func TestGatewaysUpsertNoNameFallbackForNonLiteLLMName(t *testing.T) {
+	s, _ := apiServer(t)
+	allowPrivateURLHostsForTest(t, "openrouter.example")
+
+	oldDir := gatewaySecretsDir
+	gatewaySecretsDir = t.TempDir()
+	defer func() { gatewaySecretsDir = oldDir }()
+
+	oldLegacy := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
+	defer func() { writableLiteLLMKeyFile = oldLegacy }()
+
+	// Legacy endpoint empty, but gateway name is NOT "litellm".
+	s.deps.Config.Governor.LiteLLM.Endpoint = ""
+
+	rec := doPut(s, "/api/config/governor/gateways", map[string]interface{}{
+		"name":     "openrouter",
+		"kind":     "litellm",
+		"endpoint": "https://openrouter.example/v1",
+		"api_key":  "sk-openrouter-key",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert = %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(writableLiteLLMKeyFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy litellm key store written by a non-'litellm'-named gateway when legacy endpoint is empty (err=%v)", err)
+	}
+}
+
 // A non-litellm gateway (different kind) must NOT touch the legacy store.
 func TestGatewaysUpsertLeavesLegacyStoreAloneForOtherKinds(t *testing.T) {
 	s, _ := apiServer(t)
