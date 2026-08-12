@@ -257,7 +257,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can switch forges"}`, http.StatusForbidden)
 		return
 	}

@@ -441,7 +441,7 @@ func (s *HubServer) handleSlackMessageHiveOwner(w http.ResponseWriter, r *http.R
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != actor && !isHubAdmin(actor) {
+	if !canonicalEqual(h.Owner, actor) && !isHubAdmin(actor) {
 		http.Error(w, `{"error":"only the owner can message this hive's owner"}`, http.StatusForbidden)
 		return
 	}

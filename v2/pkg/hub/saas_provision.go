@@ -1594,7 +1594,7 @@ func listSaaSHives() []SaaSHive {
 func countUserHives(username string) int {
 	count := 0
 	for _, h := range listSaaSHives() {
-		if h.Owner == username {
+		if canonicalEqual(h.Owner, username) {
 			count++
 		}
 	}
