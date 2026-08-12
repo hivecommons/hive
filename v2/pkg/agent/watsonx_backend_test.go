@@ -73,7 +73,7 @@ func TestWatsonxNeverRequiresInteractiveAuth(t *testing.T) {
 		}
 	}
 	// The interactive CLIs must still require it, or the badge dies everywhere.
-	for _, b := range []string{"claude", "copilot", "gemini"} {
+	for _, b := range []string{"claude", "copilot", "codex", "gemini"} {
 		if !BackendRequiresInteractiveAuth(b) {
 			t.Errorf("BackendRequiresInteractiveAuth(%q) = false, want true", b)
 		}

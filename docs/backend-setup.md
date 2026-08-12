@@ -12,7 +12,7 @@ Hive validates backend names in `v2/pkg/config` and launches CLIs in `v2/pkg/age
 | `goose` | `goose` | Install Block Goose and configure provider/model (`GOOSE_PROVIDER`, `GOOSE_MODEL`, or `goose configure`). | Hive launches `goose run -s` and appends `--model` when set. |
 | `pi` | `goose` in the Go manager; `pi` in contributor scripts | In the server-side manager, `backendBinary("pi")` maps to `goose`. Configure Goose for pod agents. The contributor relay image/scripts use a separate `pi` binary. | Server-side pod agents use Goose for `backend: pi`; contributor mode uses the Pi CLI. |
 | `bob` | `bob` | Provide `HIVE_BOB_API_KEY` or `/secrets/bob_api_key` for pods; contributor mode requires `BOBSHELL_API_KEY`. | Hive uses API-key auth headlessly and accepts the Bob license at launch. |
-| `codex` | contributor scripts launch `codex`; the server-side Go manager does not launch it | Install `@openai/codex` and provide `OPENAI_API_KEY` for contributor mode. Contributor mode sets a per-agent `CODEX_HOME`. | Not supported as a server-side agent backend in this branch: config accepts the name, but `backendBinary("codex")` returns `unknown backend: codex`, so a pod agent will not start. Use contributor mode for Codex. |
+| `codex` | `codex` | Install `@openai/codex` and run `codex login --device-auth` for subscription/OAuth auth. The CLI stores credentials in `CODEX_HOME/auth.json` (default `${HOME}/.codex/auth.json`); API-key mode can use `CODEX_API_KEY`/`OPENAI_API_KEY` or a populated auth file, but it is not required for subscription users. | Hive gives each agent its own `CODEX_HOME` and probes `auth.json` for OAuth tokens/API-key state (or API-key env presence). Contributor mode defaults to `--ask-for-approval on-request --sandbox workspace-write`; override with `HIVE_CODEX_APPROVAL_POLICY`/`HIVE_CODEX_SANDBOX_MODE`, or set `HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1` only when you intentionally want the old bypass posture. `AGENT_REASONING_EFFORT` is passed to Codex as `-c model_reasoning_effort="..."`. |
 | `aider` | contributor scripts launch `aider`; the server-side Go manager does not launch it | Install Aider and configure its provider/API key normally for contributor mode. | Not supported as a server-side agent backend in this branch: config accepts the name, but `backendBinary("aider")` returns `unknown backend: aider`, so a pod agent will not start. Use contributor mode for Aider. |
 
 ## IBM Bob headless setup
@@ -44,7 +44,7 @@ AGENT_BACKEND=goose GOOSE_PROVIDER=anthropic GOOSE_MODEL=claude-sonnet-4-6 just 
 AGENT_BACKEND=litellm HIVE_LITELLM_ENDPOINT=https://litellm.example.com just contribute-hive
 ```
 
-`AGENT_BACKEND` selects the CLI, `AGENT_MODEL` optionally pins the model, and `CONTRIBUTOR_MODE` defaults to `interactive` (tmux with a TTY). `CONTRIBUTOR_MODE=headless` is reserved for one-shot/no-TTY task delivery.
+`AGENT_BACKEND` selects the CLI, `AGENT_MODEL` optionally pins the model, and `CONTRIBUTOR_MODE` defaults to `interactive` (tmux with a TTY). For Codex, `AGENT_REASONING_EFFORT` optionally pins the reasoning effort. `CONTRIBUTOR_MODE=headless` is reserved for one-shot/no-TTY task delivery.
 
 `just contribute-check <backend>` runs a read-only preflight before registration. It checks that the chosen CLI exists and that obvious auth prerequisites are present.
 

@@ -4453,7 +4453,7 @@ func bobLaunchCmd(binary string) string {
 // its own dir so Codex's owner-gated app-server sees a directory the agent UID
 // actually owns (a shared, merely group-writable dir is not sufficient for
 // Codex, unlike claude/copilot). Lives on the persistent /data volume.
-const codexHomePrefix = "/data/home/.codex-"
+var codexHomePrefix = "/data/home/.codex-"
 
 // codexHomePath returns the per-agent CODEX_HOME directory.
 func codexHomePath(agentName string) string {
@@ -4469,7 +4469,7 @@ func codexHomePath(agentName string) string {
 // prompt for sign-in again. setupCodexHome bridges this by symlinking each
 // agent's auth.json to this shared file, so ONE login propagates to every agent
 // and token refreshes are shared.
-const codexSharedAuthFile = "/data/home/.codex/auth.json"
+var codexSharedAuthFile = "/data/home/.codex/auth.json"
 
 // setupCodexHome pre-creates the agent's CODEX_HOME directory AS the agent, so
 // it is owned by the agent UID. Codex 0.144.1 refuses to create CODEX_HOME
