@@ -57,9 +57,21 @@ RUN npm install -g \
 # build failure too.
 ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
-RUN npm install -g "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+ARG TARGETARCH
+ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
+       arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" \
+  && echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
+  && npm install -g /tmp/bobshell.tgz && \
     npm cache clean --force && \
-    which bob
+    which bob && \
+    rm -f /tmp/bobshell.tgz
 
 # Install gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -74,11 +86,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # the tarball before extraction. Download failures are tolerated because Goose
 # is an optional contributor backend; checksum mismatches are not tolerated.
 ARG GOOSE_VERSION=1.45.0
-ARG GOOSE_SHA256_X86_64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
-ARG GOOSE_SHA256_AARCH64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
-RUN ARCH=$(dpkg --print-architecture) \
-  && if [ "$ARCH" = "arm64" ]; then GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_AARCH64"; \
-     else GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_X86_64"; fi \
+ARG GOOSE_SHA256_AMD64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
+ARG GOOSE_SHA256_ARM64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
+       arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
+     esac \
   && mkdir -p /tmp/goose-dl \
   && if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
        -o /tmp/goose-dl/goose.tar.gz; then \

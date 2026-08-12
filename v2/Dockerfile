@@ -22,12 +22,23 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
 FROM node:26-slim AS tmux-builder
+ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
+ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
+ARG TMUX_SHA256_ARM64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc make pkg-config libevent-dev libncurses-dev bison ca-certificates \
- && curl -sL "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" | tar xz -C /tmp \
+ && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) TMUX_SHA256="$TMUX_SHA256_AMD64" ;; \
+      arm64) TMUX_SHA256="$TMUX_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for tmux: $ARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/tmux.tar.gz "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
+ && echo "${TMUX_SHA256}  /tmp/tmux.tar.gz" | sha256sum -c - \
+ && tar xz -C /tmp -f /tmp/tmux.tar.gz \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
- && rm -rf /tmp/tmux-${TMUX_VERSION}
+ && rm -rf /tmp/tmux-${TMUX_VERSION} /tmp/tmux.tar.gz
 
 FROM node:26-slim
 
@@ -65,25 +76,36 @@ RUN useradd -m -u 1001 -g node -s /bin/bash dev
 
 # --- Layer 2: ttyd (pinned version for reproducible builds) ---
 ARG TTYD_VERSION=1.7.7
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then TTYD_ARCH=x86_64; \
-    elif [ "$ARCH" = "aarch64" ]; then TTYD_ARCH=aarch64; \
-    else TTYD_ARCH=x86_64; fi && \
-    curl -sL -o /usr/local/bin/ttyd \
+ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) TTYD_ARCH=x86_64; TTYD_SHA256="$TTYD_SHA256_AMD64" ;; \
+      arm64) TTYD_ARCH=aarch64; TTYD_SHA256="$TTYD_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for ttyd: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /usr/local/bin/ttyd \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" && \
+    echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c - && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
 ARG GH_VERSION=2.74.0
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then GH_ARCH=amd64; \
-    elif [ "$ARCH" = "aarch64" ]; then GH_ARCH=arm64; \
-    else GH_ARCH=amd64; fi && \
+ARG GH_SHA256_AMD64=e55c9d49dc49c0b0fef0a9acd3510482fd9e27ff52ae80f8a6e838cd25b4cd89
+ARG GH_SHA256_ARM64=221222bd00281ab993f7e2c19b9f3f2482d66fa759baedcd8668785c940c8df7
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
+      arm64) GH_ARCH=arm64; GH_SHA256="$GH_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
+    esac && \
     mkdir -p /opt/hive/bin && \
-    curl -sL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" | \
-    tar xz --strip-components=2 -C /opt/hive/bin "gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" && \
+    curl -fsSL -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" && \
+    echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - && \
+    tar xz --strip-components=2 -C /opt/hive/bin -f /tmp/gh.tar.gz "gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" && \
     mv /opt/hive/bin/gh /opt/hive/bin/gh-real && \
-    chmod +x /opt/hive/bin/gh-real
+    chmod +x /opt/hive/bin/gh-real && \
+    rm -f /tmp/gh.tar.gz
 
 # --- Layer 3: GitHub Copilot CLI (frequent updates) ---
 # Pinned: 1.0.6x drops the Node.js fallback — the CLI becomes native-only,
@@ -137,11 +159,14 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache
 # won't launch, same as other optional backends), but a CHECKSUM MISMATCH is a
 # hard failure — a tampered binary must never be installed.
 ARG GOOSE_VERSION=1.45.0
-ARG GOOSE_SHA256_X86_64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
-ARG GOOSE_SHA256_AARCH64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_AARCH64"; \
-    else GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_X86_64"; fi && \
+ARG GOOSE_SHA256_AMD64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
+ARG GOOSE_SHA256_ARM64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
+      arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
+    esac && \
     if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" -o /tmp/goose.tar.gz; then \
       echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c - && \
       tar xz -C /usr/local/bin -f /tmp/goose.tar.gz && \
@@ -174,15 +199,26 @@ RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache cl
 # invokes (manager.go maps "bob" -> "bob"). No symlink is required.
 ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
+ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
 # Deliberately NOT tolerant of failure, unlike the copilot/goose layers above.
 # A hive configured with backend "bob" passes config validation (validBackends
 # in pkg/config) and then fails at launch with "agent scanner not running" —
 # a silent trap that cost real debugging time. If this download breaks, the
 # build must break loudly rather than ship an image that reproduces that bug.
 # The `which bob` check turns a partial install into a build failure too.
-RUN npm install -g "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    case "$ARCH" in \
+      amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
+      arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+    echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - && \
+    npm install -g /tmp/bobshell.tgz && \
     npm cache clean --force && \
-    which bob
+    which bob && \
+    rm -f /tmp/bobshell.tgz
 
 # --- Application layers ---
 ENV HOME=/home/dev
