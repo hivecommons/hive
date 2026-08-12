@@ -5237,9 +5237,8 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 
 	prevTrigger := agent.PausedTrigger
 	prevReason := agent.PausedReason
-	// Snapshot backend/model while m.mu is still held — the audit call below
-	// runs after the deliberate early Unlock, where touching agent fields
-	// would be an unsynchronized read.
+	// Snapshot backend/model while m.mu is held so audit details stay stable
+	// even when Resume relaunches the agent before returning.
 	resumeBackend := agent.effectiveBackend()
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
@@ -5254,11 +5253,6 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	if needsRelaunch {
 		agent.forceRelaunch = true
 	}
-	// Release the global agents-map lock before slow per-agent tmux
-	// operations (ensureTmuxSession + launchInTmux ~2s each). This allows
-	// concurrent Resume() calls for different agents to run in parallel
-	// instead of serializing on the mutex.
-	m.mu.Unlock()
 
 	m.logger.Info("audit: agent resumed",
 		"name", name,
@@ -5276,10 +5270,14 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	))
 	if needsRelaunch {
 		if err := m.ensureTmuxSession(agent); err != nil {
+			m.mu.Unlock()
 			return err
 		}
-		return m.launchInTmux(ctx, agent)
+		err := m.launchInTmux(ctx, agent)
+		m.mu.Unlock()
+		return err
 	}
+	m.mu.Unlock()
 	return nil
 }
 

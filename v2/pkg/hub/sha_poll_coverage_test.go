@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -17,15 +18,34 @@ import (
 // endpoints and points githubAPIBase/ghcrBase at itself for the test's duration.
 func fakeGitHubGHCR(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
+	waitForCommitOrderResolvers(t)
 	srv := httptest.NewServer(handler)
 	oldGH, oldGHCR := githubAPIBase, ghcrBase
 	githubAPIBase = srv.URL
 	ghcrBase = srv.URL
 	t.Cleanup(func() {
+		waitForCommitOrderResolvers(t)
 		githubAPIBase, ghcrBase = oldGH, oldGHCR
 		srv.Close()
 	})
 	return srv
+}
+
+func waitForCommitOrderResolvers(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		commitOrderMu.Lock()
+		inFlight := len(commitOrderInFlight)
+		commitOrderMu.Unlock()
+		if inFlight == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d commit order resolver(s)", inFlight)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestListRepoBranches(t *testing.T) {
