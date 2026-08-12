@@ -19,7 +19,6 @@ func gapsLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-
 // ── mintClaimVanityURL ──────────────────────────────────────────────────────
 
 func TestMintClaimVanityURLNilHive(t *testing.T) {
@@ -254,4 +253,3 @@ func TestKubectlArgsForClusterRemote(t *testing.T) {
 		t.Errorf("command args not appended correctly: %v", args)
 	}
 }
-

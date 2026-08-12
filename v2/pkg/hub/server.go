@@ -2837,7 +2837,7 @@ func (s *HubServer) saveRegistryNow() error {
 }
 
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, "admin access required", http.StatusForbidden)
 		return
 	}
@@ -2858,7 +2858,7 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 			s.logger.Error("admin registry removal persist failed", "id", id, "error", err)
 			s.requestSave()
 		}
-		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", hubAdminUsername)
+		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", primaryHubAdmin())
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})

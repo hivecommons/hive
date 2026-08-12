@@ -409,7 +409,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 	// Fold impersonation status into the auth payload the dashboard already
 	// fetches, so the "Viewing as … read-only" banner renders without a second
 	// round-trip. When an admin is impersonating, report the effective identity

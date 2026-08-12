@@ -564,7 +564,7 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can view this hive's timeline"}`, http.StatusForbidden)
 		return
 	}

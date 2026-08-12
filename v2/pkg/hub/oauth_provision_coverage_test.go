@@ -1,11 +1,11 @@
 package hub
 
 import (
-	"net/url"
-	"strings"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
