@@ -790,6 +790,12 @@ func (s *Server) registerCoreRoutes() {
 	// second GitHub device-flow login. Public path (see isPublicPath) because
 	// the caller has no session yet — the token IS the credential.
 	s.mux.HandleFunc("GET /sso", s.handleSSO)
+	// Terminal-assertion renewal (audit F4 residual). Re-mints the host-only,
+	// Path=/terminal assertion cookie from the caller's SPOKE-LOCAL session, so a
+	// live session can sustain a live terminal grant without the domain-scoped
+	// hive_hub_user cookie being consulted. NOT a public path: it authenticates
+	// on hive_session and 401s without one.
+	s.mux.HandleFunc("POST "+renewTerminalAssertionPath, s.handleRenewTerminalAssertion)
 	// /terminal → in-container ttyd, so the dashboard's "▶ terminal" links
 	// work even when the cluster route sends the whole host to this server
 	// (see registerTerminalProxy).
