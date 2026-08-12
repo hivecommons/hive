@@ -2625,21 +2625,22 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"hives":                   result,
-		"saas_quota":              user.SaaSQuota,
-		"saas_used":               saasCount,
-		"is_admin":                isAdmin,
-		"latest_sha":              getLatestSHA(),
-		"latest_shas":             getDisplaySHAs(),
-		"latest_sha_messages":     getDisplaySHAMessages(),
-		"latest_sha_image_status": getImageStatuses(),
-		"commit_messages":         getCommitMessages(),
-		"hub_git_hash":            s.hubGitHash,
-		"hub_git_branch":          s.hubGitBranch,
-		"tracked_branches":        s.trackedBranchList(),
-		"hub_auto_upgrade":        isHubAutoUpgrade(),
-		"hub_upgrade_state":       s.hubUpgradeState(),
-		"show_my_hives":           true,
+		"hives":                    result,
+		"saas_quota":               user.SaaSQuota,
+		"saas_used":                saasCount,
+		"is_admin":                 isAdmin,
+		"latest_sha":               getLatestSHA(),
+		"latest_shas":              getDisplaySHAs(),
+		"latest_sha_messages":      getDisplaySHAMessages(),
+		"latest_sha_image_status":  getImageStatuses(),
+		"latest_sha_build_started": getImageBuildStartTimes(),
+		"commit_messages":          getCommitMessages(),
+		"hub_git_hash":             s.hubGitHash,
+		"hub_git_branch":           s.hubGitBranch,
+		"tracked_branches":         s.trackedBranchList(),
+		"hub_auto_upgrade":         isHubAutoUpgrade(),
+		"hub_upgrade_state":        s.hubUpgradeState(),
+		"show_my_hives":            true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
 		// round-trip would make the panel pop in after the list and shift it.
@@ -2731,14 +2732,15 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"authenticated":           true,
-		"show_my_hives":           true,
-		"hives":                   hiveAccess,
-		"latest_sha":              getLatestSHA(),
-		"latest_shas":             getDisplaySHAs(),
-		"latest_sha_messages":     getDisplaySHAMessages(),
-		"latest_sha_image_status": getImageStatuses(),
-		"commit_messages":         getCommitMessages(),
+		"authenticated":            true,
+		"show_my_hives":            true,
+		"hives":                    hiveAccess,
+		"latest_sha":               getLatestSHA(),
+		"latest_shas":              getDisplaySHAs(),
+		"latest_sha_messages":      getDisplaySHAMessages(),
+		"latest_sha_image_status":  getImageStatuses(),
+		"latest_sha_build_started": getImageBuildStartTimes(),
+		"commit_messages":          getCommitMessages(),
 	})
 }
 
@@ -4068,6 +4070,12 @@ type branchHeadInfo struct {
 	SHA         string
 	Message     string
 	ImageStatus string
+	// BuildStartedAt is when THIS SHA first entered the "building" status, so the
+	// dashboard can show an elapsed build timer. It is stamped once on the
+	// ready→building (or new-SHA→building) transition and preserved across polls
+	// while the same SHA keeps building; it is zeroed when the image finishes
+	// (ready/failed) or a new SHA takes over. Zero means "not building / unknown".
+	BuildStartedAt time.Time
 }
 
 // githubAPIBase and ghcrBase are the GitHub/GHCR origins used by the SHA-poll
@@ -4458,10 +4466,24 @@ func getBranchHead(branch string) branchHeadInfo {
 func setBranchHead(branch, sha, msg, status string) {
 	latestSHAMu.Lock()
 	defer latestSHAMu.Unlock()
-	if msg == "" && headSHAByBranch[branch].SHA == sha {
-		msg = headSHAByBranch[branch].Message
+	prev := headSHAByBranch[branch]
+	if msg == "" && prev.SHA == sha {
+		msg = prev.Message
 	}
-	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status}
+	// Stamp the build-start time on the first poll that sees this SHA building,
+	// and carry it forward on every subsequent poll while the same SHA is still
+	// building — so the dashboard's elapsed timer counts from when the build
+	// actually started, not from each 2-minute poll. Clear it once the image is
+	// ready/failed or a different SHA takes over.
+	var buildStartedAt time.Time
+	if status == imageStatusBuilding {
+		if prev.SHA == sha && !prev.BuildStartedAt.IsZero() {
+			buildStartedAt = prev.BuildStartedAt // same build, keep the original start
+		} else {
+			buildStartedAt = time.Now() // newly observed building SHA
+		}
+	}
+	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt}
 	if msg != "" {
 		commitMsgBySHA[sha] = msg
 	}
@@ -4516,6 +4538,22 @@ func getImageStatuses() map[string]string {
 	for k, v := range headSHAByBranch {
 		if v.SHA != "" && v.ImageStatus != "" {
 			cp[k] = v.ImageStatus
+		}
+	}
+	return cp
+}
+
+// getImageBuildStartTimes returns branch→unix-millis of when each currently
+// "building" head first started building, for the dashboard's elapsed build
+// timer. Only branches that are actively building have an entry; ready/failed/
+// unknown branches are omitted. Millis match the JS side (Date.now()).
+func getImageBuildStartTimes() map[string]int64 {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]int64, len(headSHAByBranch))
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" && v.ImageStatus == imageStatusBuilding && !v.BuildStartedAt.IsZero() {
+			cp[k] = v.BuildStartedAt.UnixMilli()
 		}
 	}
 	return cp
@@ -9713,6 +9751,32 @@ const dashboardHTML = `<!DOCTYPE html>
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
+    /* branch -> unix-millis when the currently-building image started building,
+       from the hub (getImageBuildStartTimes). Drives the elapsed build timer. */
+    var _latestBuildStarted = {};
+
+    /* Format elapsed build time from an epoch-ms start as "Mm Ss" (or "Ss" under
+       a minute). Clamps negatives (clock skew) to 0. */
+    function fmtBuildElapsed(startMs) {
+      var s = Math.max(0, Math.floor((Date.now() - Number(startMs)) / 1000));
+      var m = Math.floor(s / 60);
+      var rem = s % 60;
+      return m > 0 ? (m + 'm ' + rem + 's') : (rem + 's');
+    }
+
+    /* Live-update every rendered build timer once a second, in place, so the
+       count climbs without re-rendering the whole image panel or hitting the
+       hub. Runs off a single shared interval started once below. */
+    function _tickBuildTimers() {
+      var els = document.querySelectorAll('.build-timer');
+      for (var i = 0; i < els.length; i++) {
+        var start = els[i].getAttribute('data-build-start');
+        if (start) els[i].textContent = fmtBuildElapsed(start);
+      }
+    }
+    if (typeof window !== 'undefined' && !window._buildTimerInterval) {
+      window._buildTimerInterval = setInterval(_tickBuildTimers, 1000);
+    }
     var _trackedBranchesList = [];
     var _clusterList = [];
     var _commitMessages = {};
@@ -12188,6 +12252,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
+        _latestBuildStarted = data.latest_sha_build_started || {};
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
         var shaEl = document.getElementById('latest-image-sha');
@@ -12201,7 +12266,15 @@ const dashboardHTML = `<!DOCTYPE html>
               var brStatus = _latestImageStatus[br] || 'ready';
               var brStatusHTML = '';
               if (brStatus === 'building') {
-                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>';
+                var _bStart = _latestBuildStarted[br];
+                /* Elapsed build timer: a span the live ticker (_tickBuildTimers)
+                   refreshes each second. data-build-start carries the epoch-ms
+                   start so the ticker can recompute without a server round-trip.
+                   Omitted when the hub hasn't reported a start time yet. */
+                var _timerHTML = _bStart
+                  ? '<span class="build-timer" data-build-start="' + _bStart + '" style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap;font-variant-numeric:tabular-nums">' + fmtBuildElapsed(_bStart) + '</span>'
+                  : '';
+                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>' + _timerHTML;
               } else if (brStatus === 'failed') {
                 brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>';
               }
