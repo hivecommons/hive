@@ -7,32 +7,6 @@ import (
 	"testing"
 )
 
-// realSchemaFixture returns a bobChatSession matching the verified on-disk
-// schema from bobshell recordings (sessionId, type, tokens.{input,output,cached}).
-func realSchemaFixture() bobChatSession {
-	return bobChatSession{
-		SessionID: "f4e80411-test-session",
-		Messages: []bobChatMessage{
-			{
-				Type:    "user",
-				Content: "fix the bug in main.go",
-			},
-			{
-				Type:    "bob-shell",
-				Content: "I will fix the bug.",
-				Model:   "premium",
-				Tokens:  &bobTokens{Input: 8200, Output: 285, Cached: 8166, Thoughts: 0},
-			},
-			{
-				Type:    "bob-shell",
-				Content: "Done.",
-				Model:   "premium",
-				Tokens:  &bobTokens{Input: 4000, Output: 150, Cached: 3800, Thoughts: 10},
-			},
-		},
-	}
-}
-
 func TestScanBobSessions_RealSchema(t *testing.T) {
 	dir := t.TempDir()
 	chatDir := filepath.Join(dir, "tmp", "abc-123", "chats")
@@ -40,8 +14,16 @@ func TestScanBobSessions_RealSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess := realSchemaFixture()
-	data, _ := json.Marshal(sess)
+	// Read a LITERAL JSON fixture captured from a real bobshell recording.
+	// Do NOT marshal a bobChatSession here: that round-trips through the very
+	// struct tags under test, so a wrong tag would serialize and deserialize
+	// symmetrically and the test would pass against an invented schema. That
+	// tautology is exactly how the first version of this scanner shipped
+	// green while returning 0 tokens on real data.
+	data, err := os.ReadFile(filepath.Join("testdata", "bob_session_real.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(chatDir, "session.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
