@@ -6841,6 +6841,25 @@
         .then(r => r.json()).then(d => { budgetIgnored = d.ignored; renderAll(); });
     }
 
+    // Opens a fresh budget window: spend re-anchors at 0, the exhausted gate
+    // reopens, budgeting stays ON. The recovery path when a mis-sized (or
+    // genuinely spent) budget is suppressing kicks — unlike "ignore budget",
+    // which turns enforcement off entirely.
+    async function resetBudgetWindow() {
+      try {
+        const r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
+          return;
+        }
+        showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
+        renderAll();
+      } catch (e) {
+        showToast('Failed to reset budget window: ' + e.message, 'error');
+      }
+    }
+
     function renderBudgetBar(budget) {
       if (!budget || !budget.BUDGET_WEEKLY) return '';
       const PCT_SAFE = 50;
@@ -6863,7 +6882,7 @@
         govAction = '<span style="color:var(--muted)">Budget enforcement disabled by operator</span>';
       } else if (exhausted) {
         const windowEnds = budget.WINDOW_ENDS_AT ? new Date(budget.WINDOW_ENDS_AT).toLocaleString() : 'the next window';
-        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span>`;
+        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span> <button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend restarts at 0 and suspended kicks resume. Budget enforcement stays on — raise Total Tokens in Governor Config first if the limit itself was too small." style="margin-left:8px;padding:1px 8px;font-size:0.66rem;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--fg);cursor:pointer">reset window now</button>`;
       } else if (pctUsed >= PCT_BUDGET_WARN) {
         govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of weekly limit used; kicks suspend at 100%</span>`;
       } else if (projPct > PCT_WARN) {
@@ -6876,7 +6895,7 @@
 
       const ignoreCheck = `<label style="font-size:0.68rem;color:var(--muted);cursor:pointer;margin-left:12px" title="When checked, the governor ignores budget limits entirely. No model downgrading, no kick skipping. Use with caution — spending will be uncapped until unchecked.">
         <input type="checkbox" ${budgetIgnored ? 'checked' : ''} onchange="toggleBudgetIgnore()" style="cursor:pointer;vertical-align:middle"> ignore budget
-      </label>`;
+      </label><button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend re-anchors at 0 and the window timer restarts. Budget enforcement stays on." style="margin-left:8px;padding:0 6px;font-size:0.64rem;background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;vertical-align:middle">reset window</button>`;
 
       return `<div class="budget-bar">
         <div class="budget-bar-label">

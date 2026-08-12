@@ -122,6 +122,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
+	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
@@ -4184,6 +4185,22 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// handleGovernorBudgetReset opens a fresh budget window on demand. The
+// operator's recovery path when the window's spend has (or a mis-sized limit
+// has) closed the kick gate: fix the limit via PUT /budget, then reset the
+// window here so kicks resume immediately — budgeting stays ON, unlike the
+// "ignore budget" bypass. Spend re-anchors at zero and the once-per-window
+// alerts rearm.
+func (s *Server) handleGovernorBudgetReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	s.deps.Governor.ResetBudgetWindow()
+	s.auditFromRequest(r, "governor_budget_window_reset", auditDetail("section", "budget"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "reset"})
 }
 
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {

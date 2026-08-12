@@ -899,6 +899,28 @@ func (g *Governor) SetBudgetLimit(limit int64) {
 	g.budget.WeeklyLimit = limit
 }
 
+// ResetBudgetWindow opens a fresh budget window immediately, without waiting
+// out the configured period. The baseline re-anchors at the current lifetime
+// totals so window spend restarts at zero, the once-per-window warn/exhausted
+// alert latches rearm, and the exhausted flag clears so suppressed kicks
+// resume on the next eval. This is the operator's recovery path when an
+// exhausted (or mis-sized) budget has closed the kick gate: raise the limit,
+// reset the window, keep budgeting on — instead of the all-or-nothing
+// "ignore budget" bypass.
+func (g *Governor) ResetBudgetWindow() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	// CurrentSpend is (lifetime totals − WindowBaseline); folding it into the
+	// baseline zeroes spend now AND keeps the next UpdateBudgetFromTotals
+	// computing only tokens consumed after this reset.
+	g.budget.WindowBaseline += g.budget.CurrentSpend
+	g.budget.CurrentSpend = 0
+	g.budget.ResetAt = g.now()
+	g.budgetWarned = false
+	g.budgetExhaustedAlerted = false
+	g.state.BudgetExhausted = false
+}
+
 // SetBudgetIgnoreAll toggles the global budget-suppression bypass.
 func (g *Governor) SetBudgetIgnoreAll(ignore bool) {
 	g.mu.Lock()
