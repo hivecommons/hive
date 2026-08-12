@@ -13,10 +13,13 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
+const testHiveAppBotLogin = "kubestellar-hive[bot]"
+
 type sweepPR struct {
 	number          int
 	author          string
 	queuedBy        string
+	reviewAuthor    string
 	headSHA         string
 	reviewCommitID  *string
 	label           bool
@@ -42,7 +45,7 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	}}, &merged)
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{
 		Audit: func(event AutoMergeSweepEvent) { audits = append(audits, event) },
 	})
@@ -57,6 +60,31 @@ func TestSweepQueuedAutoMergesMergesLabelledGreenPRAudits(t *testing.T) {
 	}
 	if audits[0].HeadSHA != "sha7" {
 		t.Fatalf("audit head SHA = %q, want sha7", audits[0].HeadSHA)
+	}
+}
+
+func TestSweepQueuedAutoMergesIgnoresForgedNonAppQueueApproval(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{{
+		number:          7,
+		author:          "alice",
+		queuedBy:        "bob",
+		reviewAuthor:    "mallory",
+		label:           true,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 1 {
+		t.Fatalf("result=%+v merge calls=%v, want non-App review ignored and PR skipped", result, merged)
 	}
 }
 
@@ -89,7 +117,7 @@ func TestSweepQueuedAutoMergesDequeuesWhenApprovalHeadChanged(t *testing.T) {
 	})
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -130,7 +158,7 @@ func TestSweepQueuedAutoMergesDequeuesWhenApprovalHeadMissing(t *testing.T) {
 	})
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -152,7 +180,7 @@ func TestSweepQueuedAutoMergesSkipsRedUnlabelledAndDraft(t *testing.T) {
 	}, &merged)
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -173,7 +201,7 @@ func TestSweepQueuedAutoMergesRespectsCap(t *testing.T) {
 	}, &merged)
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{MaxMerges: 1})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -192,7 +220,7 @@ func TestSweepQueuedAutoMergesHonorsConfiguredLabel(t *testing.T) {
 	}}, &merged)
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	c.SetAutoMergeLabel(label)
 	if _, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -210,7 +238,7 @@ func TestSweepQueuedAutoMergesRechecksSelfMergeBan(t *testing.T) {
 	}}, &merged)
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
 	if err != nil {
 		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
@@ -292,7 +320,7 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 				}
 			}))
 			defer api.Close()
-			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			c := newAutoMergeSweepClient(api.URL)
 			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "sha")
 			if err != nil {
 				t.Fatalf("commitGreen returned error: %v", err)
@@ -336,14 +364,14 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 					if tt.noReview {
 						json.NewEncoder(w).Encode([]map[string]any{})
 					} else {
-						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
 					}
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 			}))
 			defer api.Close()
-			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			c := newAutoMergeSweepClient(api.URL)
 			_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
 			if err != nil {
 				t.Fatalf("trySweepQueuedPR returned error: %v", err)
@@ -380,7 +408,7 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 						"labels":          []map[string]string{{"name": AutoMergeQueuedLabel}},
 					})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+					json.NewEncoder(w).Encode([]map[string]any{{"state": "COMMENTED", "body": "noise"}, {"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -392,7 +420,7 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 				}
 			}))
 			defer api.Close()
-			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			c := newAutoMergeSweepClient(api.URL)
 			_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
 			if err != nil {
 				t.Fatalf("trySweepQueuedPR returned error: %v", err)
@@ -415,7 +443,7 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 				"labels": []map[string]string{{"name": AutoMergeQueuedLabel}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7"}})
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
@@ -427,10 +455,34 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 		}
 	}))
 	defer api.Close()
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, AutoMergeQueuedLabel)
 	if err == nil || reason != "merge-failed" {
 		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want merge-failed error", reason, err)
+	}
+}
+
+func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode([]map[string]any{{
+			"state":     "APPROVED",
+			"body":      "Approved by @alice for Hive auto-merge on green CI.",
+			"commit_id": "sha7",
+			"user":      map[string]string{"login": "mallory"},
+		}})
+	}))
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	approval, ok, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
+	if err != nil {
+		t.Fatalf("latestHiveQueueApproval returned error: %v", err)
+	}
+	if ok || approval.QueuedBy != "" {
+		t.Fatalf("approval=(%+v,%v), want forged body ignored", approval, ok)
 	}
 }
 
@@ -440,14 +492,14 @@ func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		json.NewEncoder(w).Encode([]map[string]any{
-			{"state": "APPROVED", "body": "Approved by @old for Hive auto-merge on green CI.", "commit_id": "oldsha"},
-			{"state": "COMMENTED", "body": "Approved by @ignored for Hive auto-merge on green CI.", "commit_id": "ignored"},
-			{"state": "APPROVED", "body": "Approved by @new for Hive auto-merge on green CI.", "commit_id": "newsha"},
+			{"state": "APPROVED", "body": "Approved by @old for Hive auto-merge on green CI.", "commit_id": "oldsha", "user": map[string]string{"login": testHiveAppBotLogin}},
+			{"state": "COMMENTED", "body": "Approved by @ignored for Hive auto-merge on green CI.", "commit_id": "ignored", "user": map[string]string{"login": testHiveAppBotLogin}},
+			{"state": "APPROVED", "body": "Approved by @new for Hive auto-merge on green CI.", "commit_id": "newsha", "user": map[string]string{"login": testHiveAppBotLogin}},
 		})
 	}))
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	approval, ok, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
 	if err != nil {
 		t.Fatalf("latestHiveQueueApproval returned error: %v", err)
@@ -472,7 +524,7 @@ func TestInvalidateQueuedAutoMergeIgnoresMissingLabelAndComments(t *testing.T) {
 	}))
 	defer api.Close()
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	if err := c.invalidateQueuedAutoMerge(context.Background(), "acme", "widget", 7, AutoMergeQueuedLabel, "re-queue required"); err != nil {
 		t.Fatalf("invalidateQueuedAutoMerge returned error: %v", err)
 	}
@@ -508,7 +560,7 @@ func TestInvalidateQueuedAutoMergeReportsAPIErrors(t *testing.T) {
 			}))
 			defer api.Close()
 
-			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			c := newAutoMergeSweepClient(api.URL)
 			if err := c.invalidateQueuedAutoMerge(context.Background(), "acme", "widget", 7, AutoMergeQueuedLabel, "re-queue required"); err == nil {
 				t.Fatal("invalidateQueuedAutoMerge returned nil error")
 			}
@@ -542,7 +594,7 @@ func TestCommitGreenAPIErrors(t *testing.T) {
 				}
 			}))
 			defer api.Close()
-			c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+			c := newAutoMergeSweepClient(api.URL)
 			_, reason, err := c.commitGreen(context.Background(), "acme", "widget", "sha")
 			if err == nil || reason != tt.wantReason {
 				t.Fatalf("commitGreen reason=%q err=%v, want %q error", reason, err, tt.wantReason)
@@ -567,7 +619,7 @@ func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	defer api.Close()
 	base = api.URL
 
-	c := NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	c := newAutoMergeSweepClient(api.URL)
 	issues, err := c.listQueuedPullRequestIssues(context.Background(), "acme", "widget", AutoMergeQueuedLabel)
 	if err != nil {
 		t.Fatalf("listQueuedPullRequestIssues returned error: %v", err)
@@ -575,6 +627,12 @@ func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	if len(issues) != 2 || issues[0].GetNumber() != 1 || issues[1].GetNumber() != 2 {
 		t.Fatalf("issues = %#v, want pages 1 and 2", issues)
 	}
+}
+
+func newAutoMergeSweepClient(apiURL string) *Client {
+	c := NewClient("token", "acme", []string{"widget"}, nil, apiURL)
+	c.SetAppBotLogin(testHiveAppBotLogin)
+	return c
 }
 
 func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
@@ -612,7 +670,16 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			if pr.reviewCommitID != nil {
 				reviewCommitID = *pr.reviewCommitID
 			}
-			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": body, "commit_id": reviewCommitID}})
+			reviewAuthor := pr.reviewAuthor
+			if reviewAuthor == "" {
+				reviewAuthor = testHiveAppBotLogin
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{
+				"state":     "APPROVED",
+				"body":      body,
+				"commit_id": reviewCommitID,
+				"user":      map[string]string{"login": reviewAuthor},
+			}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]

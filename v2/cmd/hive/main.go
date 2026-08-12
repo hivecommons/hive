@@ -602,7 +602,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// the very first token this process mints is scoped to the right org
 		// rather than 403ing on every write until the self-heal tick runs.
 		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
-		out.Client = github.NewClientFromApp(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+		out.Client = github.NewClientFromAppWithBotLogin(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
 		return out
 	}
@@ -1995,7 +1995,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("initializing app auth: %w", err)
 			}
-			newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+			newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
@@ -2398,7 +2398,7 @@ func main() {
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
 				} else {
-					newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
@@ -3487,7 +3487,7 @@ func main() {
 				// easily as a hand-edited config; correct (and persist) it
 				// before building a client that would 403 on every write.
 				healGitHubAppInstallation(ctx, newAppAuth, cfg, logger)
-				newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)

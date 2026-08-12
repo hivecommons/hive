@@ -44,7 +44,7 @@ type hiveQueueApproval struct {
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
 // only squashes open, labelled, non-draft PRs in managed repos after GitHub
 // reports them mergeable, commit statuses/check-runs are green, and the latest
-// Hive queue approval body proves the queuer is not the PR author.
+// Hive App-authored queue approval proves the queuer is not the PR author.
 func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -210,6 +210,9 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
 			}
+			if !c.isHiveAppReviewAuthor(review) {
+				continue
+			}
 			if queuedBy := parseHiveQueueReview(review.GetBody()); queuedBy != "" {
 				latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
 			}
@@ -220,6 +223,13 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 		opts.Page = resp.NextPage
 	}
 	return latest, latest.QueuedBy != "", nil
+}
+
+func (c *Client) isHiveAppReviewAuthor(review *gh.PullRequestReview) bool {
+	if c == nil || review == nil || strings.TrimSpace(c.appBotLogin) == "" {
+		return false
+	}
+	return strings.EqualFold(safeGetLogin(review.GetUser()), c.appBotLogin)
 }
 
 func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {
