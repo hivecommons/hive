@@ -431,7 +431,6 @@ func (s *HubServer) registerSaaSRoutes() {
 	// pool so it can be re-armed. Admin-only, and guarded to the wedged middle
 	// state (assigned && !claim_delivered) inside the handler.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
-	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	// Acknowledging a fleet alert is an operator action on the operator's own
 	// view, so it is admin-only (see alerts.go).
@@ -2235,11 +2234,6 @@ type MyHiveEntry struct {
 	// only alongside AssignedAt (i.e. for an assigned-but-unclaimed row).
 	AssignStuckSeconds int `json:"assignStuckSeconds,omitempty"`
 
-	// Migration tracking (Phase 7).
-	MigrationStatus string `json:"migrationStatus,omitempty"`
-	MigrationFrom   string `json:"migrationFrom,omitempty"`
-	MigrationTo     string `json:"migrationTo,omitempty"`
-
 	// Drift holds config-drift signals computed server-side against the fleet
 	// norm (see drift.go). It rides this payload rather than a per-row API call
 	// so the My Hives table can render the badge and the fleet-exceptions
@@ -2442,9 +2436,6 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			entry.GovernorMode = "ERROR"
 			entry.ProvError = sh.Error
 		}
-		entry.MigrationStatus = sh.MigrationStatus
-		entry.MigrationFrom = sh.MigrationFrom
-		entry.MigrationTo = sh.MigrationTo
 
 		// Assigning transient state: after a placeholder is assigned, the meta
 		// records the real project but the spoke still reports the old placeholder
@@ -3280,115 +3271,6 @@ const (
 	// teardown could not run; cloud resources may need manual cleanup.
 	deleteStatusPartial = "partially_deleted"
 )
-
-// MigrateRequest is the JSON body for POST /api/saas/hives/{id}/migrate.
-type MigrateRequest struct {
-	TargetClusterID string `json:"target_cluster_id"`
-}
-
-// migrateMaxBodyBytes limits the migrate request body size.
-const migrateMaxBodyBytes = 1024
-
-func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
-	username := s.getAuthUser(r)
-	id := r.PathValue("id")
-	if strings.Contains(id, "..") || strings.Contains(id, "/") {
-		http.Error(w, `{"error":"invalid hive id"}`, http.StatusBadRequest)
-		return
-	}
-
-	h := loadSaaSHive(id)
-	if h == nil {
-		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
-		return
-	}
-	if !userIsHiveOwner(username, h) {
-		http.Error(w, `{"error":"only the owner can migrate this hive"}`, http.StatusForbidden)
-		return
-	}
-
-	// Reject if already migrating.
-	if h.MigrationStatus == "migrating" {
-		http.Error(w, `{"error":"migration already in progress"}`, http.StatusConflict)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, migrateMaxBodyBytes)
-	var req MigrateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-
-	if req.TargetClusterID == "" {
-		http.Error(w, `{"error":"target_cluster_id is required"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate target cluster exists.
-	toCluster, ok := s.clusters[req.TargetClusterID]
-	if !ok {
-		http.Error(w, `{"error":"unknown target cluster"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate target is different from current.
-	currentClusterID := clusterIDForSaaSHive(*h)
-	if req.TargetClusterID == currentClusterID {
-		http.Error(w, `{"error":"target cluster is the same as current cluster"}`, http.StatusBadRequest)
-		return
-	}
-
-	fromCluster, ok := s.clusters[currentClusterID]
-	if !ok {
-		http.Error(w, `{"error":"current cluster config not found"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Migration is provision-on-target plus deprovision-of-source, and BOTH
-	// halves are kubectl. A pull-only cluster cannot be reached from the hub
-	// at all, so neither half can run against it. Reject up front: accepting
-	// the call would mark the hive migrating, then fail (or, worse, aim the
-	// kubectl at whatever cluster is reachable) after the state was already
-	// flipped. Hives on a pull-only cluster must be moved by hand.
-	if toCluster.PullOnly {
-		http.Error(w, `{"error":"target cluster is pull-only: the hub cannot kubectl into it, so a hive cannot be migrated there"}`, http.StatusBadRequest)
-		return
-	}
-	if fromCluster.PullOnly {
-		http.Error(w, `{"error":"current cluster is pull-only: the hub cannot kubectl into it, so a hive cannot be migrated off it"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Set migration status and launch background goroutine.
-	h.MigrationStatus = "migrating"
-	h.MigrationFrom = currentClusterID
-	h.MigrationTo = req.TargetClusterID
-	h.MigrationStartedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSaaSHive(h); err != nil {
-		http.Error(w, `{"error":"failed to save migration state"}`, http.StatusInternalServerError)
-		return
-	}
-
-	s.logger.Info("audit: hive migration initiated",
-		"hive_id", id, "from", currentClusterID, "to", req.TargetClusterID, "by", username)
-
-	// Registered with provisionWG so tests can drain this goroutine before
-	// swapping the package-level saas*Dir vars. Without it, migrateHive's
-	// saveSaaSHive call races the next test's temp-dir teardown.
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
-		s.migrateHive(h, &fromCluster, &toCluster)
-	}()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "migrating",
-		"from":   currentClusterID,
-		"to":     req.TargetClusterID,
-	})
-}
 
 var hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
 
@@ -13119,10 +13001,6 @@ const dashboardHTML = `<!DOCTYPE html>
           ? '<span style="color:var(--accent);white-space:nowrap" title="Waiting for the spoke to report the new project via heartbeat"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Assigning to ' + esc(h.assigningTo || '?') + '</span>'
           : h.provStatus === 'provisioning'
           ? '<span style="color:var(--accent);white-space:nowrap">⏳ Provisioning</span>'
-          : h.migrationStatus === 'migrating'
-          ? '<span style="color:var(--accent);white-space:nowrap"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Migrating to ' + esc(h.migrationTo || '?') + '</span>'
-          : h.migrationStatus === 'failed'
-          ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ Migration failed</span>'
           : modeBadge(h.governorMode);
         /* A placeholder wedged at assigned && !claim_delivered gets a subtle
            live-ticking "claim pending · Nm" pill so a stuck assignment is
@@ -13181,7 +13059,6 @@ const dashboardHTML = `<!DOCTYPE html>
            instance while costing the healthy one a single rolling restart. */
         if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
-        if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
         /* Drift folded ONTO Version: config drift is overwhelmingly "this hive's
@@ -13445,7 +13322,7 @@ const dashboardHTML = `<!DOCTYPE html>
            is unique across both the assigned and unassigned sections. */
         return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + '>' +
           bulkCheckboxCell(h, section || 'all') +
-          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
+          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + ('<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(h.github_host, rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the GitHub icon uses (ghRepoURL(h.github_host, rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((h.github_host || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + privatePill + iaPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + privatePill + iaPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
@@ -16458,56 +16335,6 @@ const dashboardHTML = `<!DOCTYPE html>
       openTimelineModal(btn.getAttribute('data-hive-id') || '', btn.getAttribute('data-hive-name') || '');
     });
 
-    function openMigrateModal(hiveId, currentClusterId) {
-      var targets = (_clusterList || []).filter(function(c) { return c.id !== currentClusterId; });
-      if (!targets.length) { hiveToast('No other clusters available', 'error'); return; }
-      var currentName = (_clusterList || []).reduce(function(n, c) { return c.id === currentClusterId ? (c.name || c.id) : n; }, currentClusterId);
-      var options = targets.map(function(c) {
-        var caps = [];
-        if (c.has_gpu) caps.push('GPU');
-        if (c.arch) caps.push(c.arch);
-        var label = c.name || c.id;
-        if (caps.length) label += ' (' + caps.join(', ') + ')';
-        return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
-      }).join('');
-      var content = '<div style="margin-bottom:12px">Move <strong>' + esc(hiveId) + '</strong> from <strong>' + esc(currentName) + '</strong> to:</div>' +
-        '<select id="migrate-target" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:12px">' + options + '</select>' +
-        '<div style="padding:8px 12px;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:6px;font-size:0.8rem;color:#eab308;margin-bottom:12px">The hive will be reprovisioned on the target cluster. This may take a few minutes. The hive will rebuild its state from GitHub.</div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
-        '<button onclick="closeMigrateModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
-        '<button onclick="confirmMigrate(\'' + esc(hiveId) + '\')" style="padding:6px 16px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Move</button>' +
-        '</div>';
-      var overlay = document.createElement('div');
-      overlay.id = 'migrate-overlay';
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
-      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%">' +
-        '<h3 style="margin:0 0 16px 0;font-size:1rem">Move to cluster</h3>' + content + '</div>';
-      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeMigrateModal(); });
-      document.body.appendChild(overlay);
-    }
-    function closeMigrateModal() {
-      var ov = document.getElementById('migrate-overlay');
-      if (ov) ov.remove();
-    }
-    async function confirmMigrate(hiveId) {
-      var sel = document.getElementById('migrate-target');
-      if (!sel) return;
-      var targetId = sel.value;
-      closeMigrateModal();
-      hiveToast('Migrating ' + hiveId + '...', 'info');
-      try {
-        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/migrate', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({target_cluster_id: targetId})
-        });
-        var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Migration failed', 'error'); return; }
-        gtag('event', 'hive_migrate', {hive_id: hiveId, from: data.from, to: data.to});
-        hiveToast('Migration started: ' + hiveId + ' moving to ' + targetId, 'success');
-        loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
-    }
 
     var ASSIGN_DEFAULT_ACMM = 2;
     /* openAssignModal claims one placeholder for a real project.

@@ -38,13 +38,6 @@ func TestGrantedOwnerParityForHiveManagementHandlers(t *testing.T) {
 			handler: (*HubServer).handleDeleteHive,
 		},
 		{
-			name:    "migrate hive",
-			method:  http.MethodPost,
-			target:  "/migrate",
-			body:    `{"target_cluster_id":"hive-oke"}`,
-			handler: (*HubServer).handleMigrateHive,
-		},
-		{
 			name:   "upgrade hive",
 			method: http.MethodPost,
 			target: "/upgrade",

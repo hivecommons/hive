@@ -3,12 +3,9 @@ package hub
 import (
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -177,52 +174,4 @@ func loadClusterConfigsFrom(t *testing.T, path string) map[string]ClusterConfig 
 	clustersConfigPath = path
 	t.Cleanup(func() { clustersConfigPath = orig })
 	return loadClusters(slog.Default())
-}
-
-// migrateHive is provision-on-target plus deprovision-of-source, and both
-// halves are kubectl. A pull-only cluster cannot serve either half, so the
-// handler must refuse BEFORE it flips the hive into the migrating state —
-// otherwise a hive is left marked migrating for work that can never run.
-func TestMigrateRejectsPullOnlyCluster(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		sourcePullOnly bool
-		targetPullOnly bool
-	}{
-		{"target is pull-only", false, true},
-		{"source is pull-only", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Cleanup(helperSetupTempDirs(t))
-			if err := saveSaaSUser(&SaaSUser{GitHubUsername: "po-user"}); err != nil {
-				t.Fatalf("seed user: %v", err)
-			}
-
-			srv := NewHubServer(0, slog.Default(), "test", "v2")
-			srv.clusters = map[string]ClusterConfig{
-				defaultClusterID: {ID: defaultClusterID, KubeconfigPath: "/tmp/kc", PullOnly: tc.sourcePullOnly},
-				"pool-b":         {ID: "pool-b", KubeconfigPath: "/tmp/kc", PullOnly: tc.targetPullOnly},
-			}
-			if err := saveSaaSHive(&SaaSHive{ID: "hosted-po", Owner: "po-user"}); err != nil {
-				t.Fatalf("seed hive: %v", err)
-			}
-
-			mux := http.NewServeMux()
-			mux.HandleFunc("POST /api/saas/hives/{id}/migrate", srv.handleMigrateHive)
-			req := httptest.NewRequest("POST", "/api/saas/hives/hosted-po/migrate",
-				strings.NewReader(`{"target_cluster_id":"pool-b"}`))
-			req.Header.Set("Content-Type", "application/json")
-			req.AddCookie(testAuthCookie("po-user"))
-			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, req)
-
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("migration involving a pull-only cluster must be refused with 400, got %d: %s", w.Code, w.Body.String())
-			}
-			// The refusal must leave no migration state behind.
-			if h := loadSaaSHive("hosted-po"); h != nil && h.MigrationStatus != "" {
-				t.Errorf("hive was flipped into migration state %q despite the migration being refused", h.MigrationStatus)
-			}
-		})
-	}
 }

@@ -35,36 +35,6 @@ func TestHandleSwitchBranchSuccess(t *testing.T) {
 	}
 }
 
-func TestHandleMigrateHiveAlreadyMigrating(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	mkUser(t, "alice")
-	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke", MigrationStatus: "migrating"})
-	s := newHandlerHub2()
-
-	rec := httptest.NewRecorder()
-	req := setPathValue(reqWithUser(http.MethodPost, "/mig", `{"target_cluster_id":"hive-oke"}`, "alice"), "id", "h1")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Errorf("already-migrating status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleMigrateHiveSameCluster(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	mkUser(t, "alice")
-	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
-	s := newHandlerHub2()
-
-	rec := httptest.NewRecorder()
-	req := setPathValue(reqWithUser(http.MethodPost, "/mig", `{"target_cluster_id":"hive-oke"}`, "alice"), "id", "h1")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("same-cluster migrate status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
-	}
-}
-
 func TestDeprovisionHiveWithOCI(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
