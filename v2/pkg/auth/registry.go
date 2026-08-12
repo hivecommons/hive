@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -118,6 +119,15 @@ type oidcProviderSpec struct {
 	// be the key. An env override (<PREFIX>_SUBJECT_CLAIM) lets us retune from a
 	// real token without a code change if IBMid does emit a usable "sub".
 	subjectClaim string
+	// multiTenant marks a provider whose issuer is per-tenant (Microsoft Entra
+	// common/organizations). When set, <PREFIX>_TENANT selects the tenant segment
+	// used for DISCOVERY ("common"/"organizations"/a specific directory GUID),
+	// while token validation uses issuerTemplateFmt with a "{tenantid}" marker so
+	// each token's real tenant is matched + namespaced.
+	multiTenant bool
+	// issuerTemplateFmt is the issuer with a "%s" for the tenant segment, e.g.
+	// "https://login.microsoftonline.com/%s/v2.0".
+	issuerTemplateFmt string
 }
 
 // oidcSpecs is the closed set of OIDC providers the hub can enable. A provider is
@@ -149,6 +159,22 @@ var oidcSpecs = []oidcProviderSpec{
 		defaultIssuer: "https://sso.redhat.com/auth/realms/redhat-external",
 		envPrefix:     "HIVE_HUB_OIDC_REDHAT",
 		scopes:        []string{"openid", "email", "profile"},
+	},
+	{
+		// Microsoft Entra ID (Azure AD). Multi-tenant capable: HIVE_HUB_OIDC_
+		// MICROSOFT_TENANT selects the tenant segment for discovery — a specific
+		// directory GUID for SINGLE-tenant, or "common"/"organizations" for
+		// MULTI-tenant. In multi-tenant mode each token's real tenant is validated
+		// against the issuer template and the subject is namespaced per tenant;
+		// HIVE_HUB_OIDC_MICROSOFT_ALLOWED_TENANTS optionally restricts which tenants
+		// may sign in. Free to set up: any Microsoft 365 / Entra tenant (incl. the
+		// free M365 Developer Program) can register an app at no cost.
+		name:              "microsoft",
+		display:           "Microsoft",
+		envPrefix:         "HIVE_HUB_OIDC_MICROSOFT",
+		scopes:            []string{"openid", "email", "profile"},
+		multiTenant:       true,
+		issuerTemplateFmt: "https://login.microsoftonline.com/%s/v2.0",
 	},
 	{
 		// Generic/BYO OIDC provider. Lets an operator wire ANY standards-compliant
@@ -200,9 +226,30 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 		if clientID == "" {
 			continue // provider not configured → not enabled
 		}
-		issuer := os.Getenv(spec.envPrefix + "_ISSUER")
-		if issuer == "" {
-			issuer = spec.defaultIssuer
+		// Resolve issuer. Multi-tenant providers (Microsoft Entra) derive it from a
+		// tenant segment; everyone else uses _ISSUER or the spec default.
+		var issuer, issuerTemplate string
+		var allowedTenants []string
+		if spec.multiTenant {
+			tenant := strings.TrimSpace(os.Getenv(spec.envPrefix + "_TENANT"))
+			if tenant == "" {
+				tenant = "organizations" // sensible default: any work/school Entra org
+			}
+			issuer = fmt.Sprintf(spec.issuerTemplateFmt, tenant)
+			// A concrete directory GUID is single-tenant (strict issuer); the
+			// well-known multi-tenant segments need the {tenantid} template so each
+			// token's real tenant is validated + namespaced.
+			if tenant == "common" || tenant == "organizations" || tenant == "consumers" {
+				issuerTemplate = fmt.Sprintf(spec.issuerTemplateFmt, "{tenantid}")
+			}
+			if a := strings.TrimSpace(os.Getenv(spec.envPrefix + "_ALLOWED_TENANTS")); a != "" {
+				allowedTenants = splitScopes(a) // reuse comma/space splitter
+			}
+		} else {
+			issuer = os.Getenv(spec.envPrefix + "_ISSUER")
+			if issuer == "" {
+				issuer = spec.defaultIssuer
+			}
 		}
 		if issuer == "" {
 			// Configured client id but no issuer we can use → skip, don't crash.
@@ -226,14 +273,16 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 			subjectClaim = spec.subjectClaim
 		}
 		p := &Provider{
-			Name:         spec.name,
-			DisplayName:  display,
-			IsOIDC:       true,
-			Issuer:       strings.TrimRight(issuer, "/"),
-			ClientID:     clientID,
-			ClientSecret: os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
-			Scopes:       scopes,
-			SubjectClaim: subjectClaim,
+			Name:           spec.name,
+			DisplayName:    display,
+			IsOIDC:         true,
+			Issuer:         strings.TrimRight(issuer, "/"),
+			IssuerTemplate: strings.TrimRight(issuerTemplate, "/"),
+			AllowedTenants: allowedTenants,
+			ClientID:       clientID,
+			ClientSecret:   os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
+			Scopes:         scopes,
+			SubjectClaim:   subjectClaim,
 		}
 		oidc = append(oidc, p)
 	}

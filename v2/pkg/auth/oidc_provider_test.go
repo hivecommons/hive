@@ -24,6 +24,10 @@ type oidcTestServer struct {
 	key    *rsa.PrivateKey
 	kid    string
 	issuer string
+	// discoveryIssuer, when set, is served as the discovery doc's `issuer` instead
+	// of the server URL. Multi-tenant tests set this to the "{tenantid}" template
+	// so ensureDiscovered's template cross-check passes (real Entra does the same).
+	discoveryIssuer string
 	// idToken is what the token endpoint returns for any code.
 	idToken string
 }
@@ -37,8 +41,12 @@ func newOIDCTestServer(t *testing.T) *oidcTestServer {
 	ots := &oidcTestServer{key: key, kid: "test-kid-1"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		iss := ots.issuer
+		if ots.discoveryIssuer != "" {
+			iss = ots.discoveryIssuer
+		}
 		json.NewEncoder(w).Encode(map[string]string{
-			"issuer":                 ots.issuer,
+			"issuer":                 iss,
 			"authorization_endpoint": ots.issuer + "/authorize",
 			"token_endpoint":         ots.issuer + "/token",
 			"jwks_uri":               ots.issuer + "/jwks",
