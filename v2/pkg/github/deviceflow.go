@@ -56,7 +56,12 @@ func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error)
 	codeURL, _, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id": {clientID},
-		"scope":     {deviceScope},
+	}
+	// Only request a scope when one is configured. deviceScope is empty by
+	// default (identity-only login, issue #1927); omitting the field entirely
+	// yields a no-scope token rather than sending scope="".
+	if deviceScope != "" {
+		data.Set("scope", deviceScope)
 	}
 	req, err := http.NewRequest("POST", codeURL, strings.NewReader(data.Encode()))
 	if err != nil {

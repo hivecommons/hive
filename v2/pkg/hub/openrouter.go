@@ -65,11 +65,11 @@ func (s *HubServer) openRouterState() *openrouter.StateStore {
 // read-write grantee, or the hub admin). Funding stores a spend-capable key on
 // the hive, so it is restricted to those who administer the hive.
 func (s *HubServer) ownsHiveForFunding(username, hiveID string) bool {
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		return true
 	}
 	h := loadSaaSHive(hiveID)
-	if h != nil && strings.EqualFold(h.Owner, username) {
+	if h != nil && canonicalEqual(h.Owner, username) {
 		return true
 	}
 	if u := loadSaaSUser(username); u != nil {

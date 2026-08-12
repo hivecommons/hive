@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -23,6 +24,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/claude"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
+	"syscall"
 )
 
 type ProcessState string
@@ -4911,7 +4913,7 @@ func (m *Manager) seedClaudeUserConfig(agentName, path string) {
 // seeded by older hive versions without the truncated key form the CLI
 // actually matches against (see apiKeyApprovalSuffixLen).
 func (m *Manager) mergeApprovedAPIKeys(agentName, path string) {
-	data, err := os.ReadFile(path)
+	data, err := readInferenceConfigFile(path)
 	if err != nil {
 		return
 	}
@@ -4947,7 +4949,7 @@ func (m *Manager) mergeApprovedAPIKeys(agentName, path string) {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(path, out, 0o666); err != nil {
+	if err := writeInferenceConfigFile(path, out); err != nil {
 		m.logger.Warn("failed to write inference config", "agent", agentName, "path", path, "error", err)
 	}
 }
@@ -4966,7 +4968,7 @@ func (m *Manager) seedClaudeSettingsFile(agentName, path string) {
 // parseable file is left untouched.
 func (m *Manager) seedJSONFile(agentName, path string, seed map[string]any) {
 	existing := map[string]any{}
-	if data, err := os.ReadFile(path); err == nil {
+	if data, err := readInferenceConfigFile(path); err == nil {
 		if jsonErr := json.Unmarshal(data, &existing); jsonErr != nil {
 			m.logger.Warn("inference config unparseable, rewriting",
 				"agent", agentName, "path", path, "error", jsonErr)
@@ -4990,7 +4992,7 @@ func (m *Manager) seedJSONFile(agentName, path string, seed map[string]any) {
 		m.logger.Warn("failed to marshal inference config", "agent", agentName, "path", path, "error", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0o666); err != nil {
+	if err := writeInferenceConfigFile(path, data); err != nil {
 		m.logger.Warn("failed to write inference config", "agent", agentName, "path", path, "error", err)
 	}
 }
@@ -5022,6 +5024,58 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	// Pre-populate (or repair) .claude.json so the CLI skips first-run setup.
 	m.seedClaudeUserConfig(agentName, filepath.Join(homePath, ".claude.json"))
 	m.ensureWorldWritable(homePath)
+}
+
+// inferenceConfigFileMode is the mode for a per-agent inference config file.
+//
+// Kept at 0o666 deliberately: these live in a per-agent HOME that the AGENT's
+// own UID must be able to rewrite. The symlink guard below is what closes audit
+// F12 — the exploit was redirection out of the directory, not the mode.
+const inferenceConfigFileMode = 0o666
+
+// readInferenceConfigFile reads a per-agent inference config, refusing to
+// traverse a symlink (audit F12).
+//
+// os.ReadFile follows symlinks, so a planted link let an attacker feed the
+// CONTENTS of any hive-readable file into the merge logic, which then wrote the
+// merged result back out — a read-and-echo primitive on top of the clobber.
+//
+// A missing file is the normal first-run case; callers already treat any error
+// as "start from the seed", so failing closed here costs nothing.
+func readInferenceConfigFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// writeInferenceConfigFile writes a per-agent inference config without following
+// a symlink (audit F12, CWE-59/61).
+//
+// SECURITY: the inference HOME is a predictable path
+// (/tmp/.claude-inference-home-<agent>) inside world-writable /tmp, and the
+// directory is created world-writable so the agent UID can use it. Both writers
+// used a plain os.WriteFile, which opens O_WRONLY|O_CREATE|O_TRUNC with NO
+// O_NOFOLLOW — so another local UID could pre-plant a symlink at the config path
+// and have the hive overwrite any file it can reach.
+//
+// The sibling half of F12 (ensureWorldWritable, which WIDENED a linked file's
+// mode) is already fixed on this branch; this closes the write path, which
+// CLOBBERED its contents.
+func writeInferenceConfigFile(path string, data []byte) error {
+	f, err := os.OpenFile(path,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
+		inferenceConfigFileMode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // ensureWorldWritable walks the tree and sets dirs to 0o777, files to 0o666.

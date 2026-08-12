@@ -58,6 +58,46 @@ const (
 	EnvRetention = "HIVE_BACKUP_RETENTION"
 )
 
+const (
+	// restoreFileMode is the permission mask applied to every file extracted
+	// from a backup archive (audit §8 / prior N18).
+	//
+	// The mode used to come straight from the tar header — os.FileMode(hdr.Mode)
+	// — which is attacker-controlled for any archive the hub did not itself
+	// produce. Verified empirically: with a permissive umask a header carrying
+	// 0777/0666 restores a WORLD-WRITABLE file, so anyone on the box can then
+	// rewrite restored hub state. (setuid/setgid do NOT survive os.WriteFile,
+	// so that half of the original finding is moot — but the world bits are
+	// real, and a umask is a deployment accident, not a security control.)
+	//
+	// Mask to the permission bits, then clear group/other write. An archive can
+	// still ask for a more RESTRICTIVE mode; it can no longer ask for a looser
+	// one.
+	restoreFileMode = 0o777 &^ 0o022
+
+	// restoreMaxFileBytes bounds a single extracted member. io.ReadAll(tr) was
+	// unbounded, so a decompression bomb — a few KB of gzip expanding to
+	// gigabytes — was read wholly into memory and OOM'd the hub. 256 MiB is far
+	// above any real hub artifact while still bounding the blast radius.
+	restoreMaxFileBytes = 256 << 20
+)
+
+// readArchiveMember reads one tar member with a hard size ceiling, so a
+// decompression bomb fails with a clear error instead of exhausting memory.
+//
+// Reads one byte PAST the limit so an over-size member is detected rather than
+// silently truncated — a truncated restore would be worse than a failed one.
+func readArchiveMember(tr io.Reader, name string) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(tr, restoreMaxFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > restoreMaxFileBytes {
+		return nil, fmt.Errorf("archive member %q exceeds the %d-byte restore limit", name, int64(restoreMaxFileBytes))
+	}
+	return content, nil
+}
+
 // Filesystem layout of hub state.
 const (
 	// DefaultDataDir is the hub PVC mount point.
@@ -421,7 +461,7 @@ func Verify(key, sealed []byte) (*Manifest, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
-		content, err := io.ReadAll(tr)
+		content, err := readArchiveMember(tr, hdr.Name)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", hdr.Name, err)
 		}
@@ -480,7 +520,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		content, err := io.ReadAll(tr)
+		content, err := readArchiveMember(tr, hdr.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -493,7 +533,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)); err != nil {
+		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil {
 			return nil, err
 		}
 		if hdr.Name == manifestName {

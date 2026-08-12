@@ -1,5 +1,7 @@
 package hub
+
 import "testing"
+
 // A wedged spoke (invalid repo, claim already delivered) must still get a
 // corrected project pushed — otherwise it crash-loops forever.
 func TestProjectConfigRepairsWedgedSpoke(t *testing.T) {
@@ -13,7 +15,9 @@ func TestProjectConfigRepairsWedgedSpoke(t *testing.T) {
 		Repos: []string{"enricom-ibm/jackrabbit"}, PrimaryRepo: "enricom-ibm/jackrabbit",
 		ACMMLevel: 2, ClaimDelivered: true,
 	}
-	if err := saveSaaSHive(h); err != nil { t.Fatal(err) }
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
+	}
 
 	// Spoke reports the malformed value it is stuck on.
 	bad := "github.ibm.com/enricom-ibm/jackrabbit"
@@ -25,7 +29,9 @@ func TestProjectConfigRepairsWedgedSpoke(t *testing.T) {
 		t.Errorf("pushed primary_repo %q is still invalid", pc.PrimaryRepo)
 	}
 	for _, r := range pc.Repos {
-		if !isValidRepoRef(r) { t.Errorf("pushed repo %q is still invalid", r) }
+		if !isValidRepoRef(r) {
+			t.Errorf("pushed repo %q is still invalid", r)
+		}
 	}
 
 	// A healthy delivered claim must stay quiet (no churn every beat).

@@ -9,7 +9,37 @@ import (
 	"testing"
 )
 
-func TestIsTrustedOrigin(t *testing.T) {
+// SPLIT (audit F4). The old single table asserted that sibling tenants were
+// trusted, which conflated "may AUTHOR a request" with "may we SEND a browser
+// here". The two entries that changed answer are the two sibling hosts.
+func TestIsSameOriginAsHub_Table(t *testing.T) {
+	tests := []struct {
+		origin string
+		want   bool
+	}{
+		{"https://hive.kubestellar.io", true},
+		// F4: siblings may NOT author requests against the hub.
+		{"https://hosted-test.hive.kubestellar.io", false},
+		{"https://my.hosted.hive.kubestellar.io", false},
+		{"http://localhost", true},
+		{"http://127.0.0.1", true},
+		{"https://evil.com", false},
+		{"https://hive.kubestellar.io.evil.com", false},
+		{"https://evil-hive.kubestellar.io", false},
+		{"", false},
+		{"not-a-url", false},
+		{"https://localhost.evil.com", false},
+	}
+	for _, tt := range tests {
+		if got := isSameOriginAsHub(tt.origin); got != tt.want {
+			t.Errorf("isSameOriginAsHub(%q) = %v, want %v", tt.origin, got, tt.want)
+		}
+	}
+}
+
+// Redirect targets keep the original (sibling-accepting) semantics — the fleet's
+// sign-in flow depends on it. Same table, original expectations.
+func TestIsTrustedRedirectTarget_Table(t *testing.T) {
 	tests := []struct {
 		origin string
 		want   bool
@@ -27,9 +57,8 @@ func TestIsTrustedOrigin(t *testing.T) {
 		{"https://localhost.evil.com", false},
 	}
 	for _, tt := range tests {
-		got := isTrustedOrigin(tt.origin)
-		if got != tt.want {
-			t.Errorf("isTrustedOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
+		if got := isTrustedRedirectTarget(tt.origin); got != tt.want {
+			t.Errorf("isTrustedRedirectTarget(%q) = %v, want %v", tt.origin, got, tt.want)
 		}
 	}
 }

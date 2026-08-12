@@ -8802,6 +8802,9 @@ function burnAreaChart() {
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
+    // The automation vault the bead synthesizer owns. It is never a valid user
+    // import target and is filtered out of every channel picker (issue #3581).
+    const RESERVED_KB_CHANNEL = 'bead-synth-wiki';
     const KB_FACT_TYPES = ['pattern', 'gotcha', 'regression', 'decision', 'test_scaffold', 'integration', 'coverage_rule'];
 
     // ── Document Sources ──
@@ -10017,13 +10020,16 @@ function burnAreaChart() {
     }
 
     function kbOpenImport() {
-      const layers = (_kbCache || {}).layers || [];
+      // Writable channels only — exclude the reserved automation vault and
+      // read-only git sources so import never targets a non-writable layer (#3581).
+      const layers = ((_kbCache || {}).layers || []).filter(l =>
+        l && l.type && l.type !== RESERVED_KB_CHANNEL && !String(l.type).startsWith('git_source:'));
       let layerOpts = '';
-      for (const l of layers) {
-        const sel = l.type === 'project' ? ' selected' : '';
+      layers.forEach((l, i) => {
+        const sel = i === 0 ? ' selected' : '';
         layerOpts += `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
-      }
-      if (!layerOpts) layerOpts = '<option value="project">Project</option>';
+      });
+      if (!layerOpts) layerOpts = '<option value="" disabled selected>No channel yet — create one first</option>';
 
       const html = `
         <div class="stack">
@@ -10075,6 +10081,8 @@ function burnAreaChart() {
       const format = document.getElementById('kb-import-format')?.value;
 
       if (!content) { await hiveAlert('Content is required'); return; }
+      if (!layer) { await hiveAlert('Pick a channel to import into, or create one with "+ New channel".'); return; }
+      if (layer === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
 
       try {
         const r = await fetch('/api/knowledge/import', {
@@ -10087,6 +10095,50 @@ function burnAreaChart() {
         await hiveAlert('Imported ' + (data.imported || 0) + ' facts to ' + layer);
         fetchKnowledgeStats();
         kbSearch();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
+    // kbNewChannel reveals an inline text input to name a new knowledge channel
+    // (rather than a blocking window.prompt, which clashes with the dashboard's
+    // modal conventions). This is the path for adding knowledge on channels other
+    // than the reserved automation vault (issue #3581).
+    function kbNewChannel() {
+      const row = document.getElementById('kb-newchannel-row');
+      if (row) { row.style.display = 'flex'; document.getElementById('kb-newchannel-name')?.focus(); }
+    }
+
+    // kbCreateChannel POSTs the new channel, then adds + selects it in the import
+    // dropdown without a full re-render.
+    async function kbCreateChannel() {
+      const input = document.getElementById('kb-newchannel-name');
+      const name = input?.value?.trim();
+      if (!name) { await hiveAlert('Enter a channel name.'); return; }
+      if (name === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation.'); return; }
+      try {
+        const r = await fetch('/api/knowledge/channels', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ name }),
+        });
+        const data = await r.json();
+        if (!r.ok) { await hiveAlert(data.error || 'Failed to create channel'); return; }
+        const created = (data.channel && data.channel.name) || name;
+        await fetchKnowledgeStats();
+        const sel = document.getElementById('kb-import-layer');
+        if (sel) {
+          let opt = Array.from(sel.options).find(o => o.value === created);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = created;
+            opt.textContent = KB_LAYER_LABELS[created] || created;
+            const ph = Array.from(sel.options).find(o => o.disabled);
+            if (ph) ph.remove();
+            sel.appendChild(opt);
+          }
+          sel.value = created;
+        }
+        if (input) input.value = '';
+        const row = document.getElementById('kb-newchannel-row');
+        if (row) row.style.display = 'none';
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
@@ -10265,10 +10317,18 @@ function burnAreaChart() {
         html += '</div>';
 
         // ── Import Facts section ──
-        const layerOpts2 = layers.map(l => {
-          const sel = l.type === 'project' ? ' selected' : '';
+        // Build the import-target list from user-WRITABLE channels only. The
+        // reserved automation vault (RESERVED_KB_CHANNEL) and read-only git-source
+        // pseudo-layers are excluded — offering them caused #3581, where importing
+        // into bead-synth-wiki failed with "has no configured endpoint". Users can
+        // also create a new channel inline; if there is nothing to import into yet,
+        // the select shows a disabled prompt rather than a bad target.
+        const importChannels = (layers || []).filter(l =>
+          l && l.type && l.type !== RESERVED_KB_CHANNEL && !String(l.type).startsWith('git_source:'));
+        const layerOpts2 = importChannels.map((l, i) => {
+          const sel = i === 0 ? ' selected' : '';
           return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
-        }).join('') || '<option value="project">Project</option>';
+        }).join('') || '<option value="" disabled selected>No channel yet — create one below</option>';
 
         html += '<div>';
         html += '<div class="row" style="margin-bottom:8px">';
@@ -10279,7 +10339,14 @@ function burnAreaChart() {
 
         html += '<details open style="margin-top:10px"><summary class="summary-label">Paste Content</summary>';
         html += '<div class="stack" style="margin-top:8px">';
-        html += `<select id="kb-import-layer" class="field-input">${layerOpts2}</select>`;
+        html += `<div style="display:flex;gap:6px;align-items:center">`;
+        html += `<select id="kb-import-layer" class="field-input" style="flex:1">${layerOpts2}</select>`;
+        html += `<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border);padding:6px 12px;font-size:0.78rem;white-space:nowrap" onclick="kbNewChannel()" title="Create a new knowledge channel to import into">+ New channel</button>`;
+        html += `</div>`;
+        html += `<div id="kb-newchannel-row" style="display:none;gap:6px;align-items:center">`;
+        html += `<input id="kb-newchannel-name" type="text" class="kb-search-box" placeholder="New channel name (e.g. Runbooks)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();kbCreateChannel();}">`;
+        html += `<button class="nous-btn btn-blue" style="padding:6px 14px;font-size:0.78rem;white-space:nowrap" onclick="kbCreateChannel()">Create</button>`;
+        html += `</div>`;
         html += `<select id="kb-import-format" class="field-input">
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
@@ -18443,13 +18510,22 @@ function burnAreaChart() {
     // message. 403 means the hub proxied this user in with read-only
     // access — explain that instead of a bare HTTP status.
     async function saveErrorMessage(res) {
-      if (res.status === 403) {
-        return 'your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.';
-      }
+      // Prefer the server's own reason. A 403 is NOT always "you're read-only":
+      // the owner-role gate also 403s when the role is fine but the hub's
+      // owner-verification proof is missing (owner reached the dashboard without
+      // the proxy-proof header). Hard-coding "read-only" for every 403 misleads
+      // an actual owner into thinking they lack permissions. Surface the real
+      // message when the body carries one; fall back to the read-only wording
+      // only for a bare, message-less 403.
+      let serverMsg = '';
       try {
         const d = await res.json();
-        if (d && d.error) return d.error;
+        if (d && d.error) serverMsg = d.error;
       } catch (e) { /* non-JSON body */ }
+      if (serverMsg) return serverMsg;
+      if (res.status === 403) {
+        return 'your permissions on this hive are read-only, so changes are not allowed. If you are the owner, sign out and back in to refresh your access; otherwise contact the owner of this hive to ask for write permissions.';
+      }
       return 'HTTP ' + res.status;
     }
 

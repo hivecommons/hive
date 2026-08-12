@@ -6,7 +6,7 @@ import (
 )
 
 // ============================================================
-// saas_provision.go — provisionHive / deprovisionHive / migrateHive
+// saas_provision.go — provisionHive / deprovisionHive
 //
 // Uses the scripted fake kubectl (returns 0 for every command) and dynamic
 // storage so the OCI/NFS network branches are skipped. This exercises the
@@ -91,38 +91,6 @@ func TestDeprovisionHiveWithSCC(t *testing.T) {
 	// storage so no PV/OCI cleanup.
 	cluster := &ClusterConfig{ID: "ocp", InCluster: true, StorageType: storageTypeDynamic, RequiresSCC: true, SCCName: "anyuid"}
 	deprovisionHive(h, cluster, slog.Default())
-}
-
-func TestMigrateHive(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	installScriptedKubectl(t)
-
-	s := &HubServer{
-		logger: slog.Default(),
-		saveCh: make(chan struct{}, 1),
-		clusters: map[string]ClusterConfig{
-			"hive-oke": *dynamicCluster(),
-			"target":   {ID: "target", Name: "Target", InCluster: true, StorageType: storageTypeDynamic, Domain: "target.example.com"},
-		},
-	}
-	h := &SaaSHive{ID: "hosted-mig", Owner: "alice", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2, ClusterID: "hive-oke"}
-	saveSaaSHive(h)
-	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{"hosted-mig": "owner"}})
-	s.registry.Hives = []RegistryEntry{{ID: "hosted-mig", ClusterID: "hive-oke"}}
-
-	from := s.clusters["hive-oke"]
-	to := s.clusters["target"]
-	s.migrateHive(h, &from, &to)
-
-	// After a successful migration the record points at the target cluster.
-	got := loadSaaSHive("hosted-mig")
-	if got == nil {
-		t.Fatal("hive record missing after migration")
-	}
-	if got.ClusterID != "target" {
-		t.Errorf("migrated cluster = %q, want target (migration_status=%q err=%q)", got.ClusterID, got.MigrationStatus, got.Error)
-	}
 }
 
 func TestExtractYAMLValue_ProvCov(t *testing.T) {

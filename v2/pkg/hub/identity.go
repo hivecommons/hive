@@ -344,7 +344,7 @@ func SpokeIdentityFromPayload(p *HeartbeatPayload) IdentitySet {
 // are untouched, so a reset on a healthy hive costs one re-install rather than
 // an outage.
 func (s *HubServer) handleResetApp(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 		return
 	}
