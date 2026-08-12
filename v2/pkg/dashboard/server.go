@@ -243,6 +243,7 @@ type StatusPayload struct {
 	Hold                FrontendHold           `json:"hold"`
 	IssueToMerge        map[string]any         `json:"issueToMerge"`
 	ACMMLevel           int                    `json:"acmmLevel"`
+	ACMMLevelConfigured bool                   `json:"acmmLevelConfigured"`
 	ACMMPackAgents      []string               `json:"acmmPackAgents"`
 	AdvisoryDigest      any                    `json:"advisoryDigest,omitempty"`
 	ContributorPool     *ContributorPoolStatus `json:"contributorPool,omitempty"`
