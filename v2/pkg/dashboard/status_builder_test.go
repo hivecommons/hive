@@ -491,6 +491,29 @@ func TestBuildFrontendStatus(t *testing.T) {
 	}
 }
 
+func TestBuildFrontendStatusACMMLevelConfigured(t *testing.T) {
+	cfg := &config.Config{}
+	gov := governor.New(cfg.Governor, cfg.Agents, nil)
+
+	payload := BuildFrontendStatus(gov.GetState(), nil, nil, cfg, nil, gov, nil, nil, nil, nil)
+	if payload.ACMMLevel != 1 {
+		t.Fatalf("default acmm level = %d, want 1", payload.ACMMLevel)
+	}
+	if payload.ACMMLevelConfigured {
+		t.Fatal("default acmm level must not be reported as explicitly configured")
+	}
+
+	level := 4
+	cfg.ACMMLevel = &level
+	payload = BuildFrontendStatus(gov.GetState(), nil, nil, cfg, nil, gov, nil, nil, nil, nil)
+	if payload.ACMMLevel != level {
+		t.Fatalf("configured acmm level = %d, want %d", payload.ACMMLevel, level)
+	}
+	if !payload.ACMMLevelConfigured {
+		t.Fatal("explicit acmm level must be reported as configured")
+	}
+}
+
 func TestBuildBudget_WithSpend(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)

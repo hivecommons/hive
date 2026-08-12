@@ -705,6 +705,7 @@ func TestHandleContributorTrust_UserNotFound(t *testing.T) {
 	body := `{"username":"nonexistent","tier":"contributor"}`
 	req := httptest.NewRequest("PUT", "/api/contribute/trust", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleContributorTrust(w, req)
 

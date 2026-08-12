@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kubestellar/hive/v2/pkg/claude"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -52,6 +54,7 @@ import (
 var interactiveAuthBackends = map[string]bool{
 	"claude":  true,
 	"copilot": true,
+	"codex":   true,
 	"gemini":  true,
 }
 
@@ -125,6 +128,54 @@ func agentCopilotConfigPaths(agentName string, uid int, backend string) []string
 	return paths
 }
 
+// agentCodexAuthPaths returns the auth.json locations to try for one Codex
+// agent: the per-agent CODEX_HOME first, then the shared login location.
+func agentCodexAuthPaths(agentName string, uid int, backend string) []string {
+	paths := []string{}
+	if uid > 0 {
+		paths = append(paths, filepath.Join(codexHomePath(agentName), "auth.json"))
+	} else if home := AgentHome(agentName, uid, backend); home != "" {
+		paths = append(paths, filepath.Join(home, ".codex", "auth.json"))
+	}
+	if !containsPath(paths, codexSharedAuthFile) {
+		paths = append(paths, codexSharedAuthFile)
+	}
+	return paths
+}
+
+func codexAuthFileHasCredentials(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var data map[string]any
+	if err := json.Unmarshal(b, &data); err != nil {
+		return false
+	}
+	nonEmpty := func(v any) bool {
+		s, ok := v.(string)
+		return ok && strings.TrimSpace(s) != ""
+	}
+	if tokens, ok := data["tokens"].(map[string]any); ok {
+		for _, key := range []string{"access_token", "refresh_token", "id_token"} {
+			if nonEmpty(tokens[key]) {
+				return true
+			}
+		}
+	}
+	for _, key := range []string{"OPENAI_API_KEY", "api_key", "openai_api_key"} {
+		if nonEmpty(data[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexEnvHasCredentials() bool {
+	return strings.TrimSpace(os.Getenv("CODEX_API_KEY")) != "" ||
+		strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != ""
+}
+
 // AgentAuthState reports the auth state for ONE agent, applying the precedence
 // rule documented at the top of this file. `known == false` means "no opinion"
 // and the dashboard must not render a login badge.
@@ -184,6 +235,16 @@ func (m *Manager) AgentAuthState(agentName string, uid int, backend string, runn
 		}
 		for _, p := range agentCopilotConfigPaths(agentName, uid, backend) {
 			if copilotCredentialFileHasTokens(p) {
+				return true, true
+			}
+		}
+		return false, true
+	case "codex":
+		if codexEnvHasCredentials() {
+			return true, true
+		}
+		for _, p := range agentCodexAuthPaths(agentName, uid, backend) {
+			if codexAuthFileHasCredentials(p) {
 				return true, true
 			}
 		}

@@ -172,6 +172,52 @@ if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_FETCH:-}" == "1" ]]; then
   exit 1
 fi
 
+codex_auth_file() {
+  local codex_home="${CODEX_HOME:-${HOME}/.codex}"
+  echo "${codex_home}/auth.json"
+}
+
+codex_auth_json_has_credentials() {
+  local auth_file="$1"
+  python3 - "$auth_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+except Exception:
+    sys.exit(1)
+
+if not isinstance(data, dict):
+    sys.exit(1)
+
+def nonempty_string(value):
+    return isinstance(value, str) and bool(value.strip())
+
+tokens = data.get("tokens")
+if isinstance(tokens, dict):
+    for key in ("access_token", "refresh_token", "id_token"):
+        if nonempty_string(tokens.get(key)):
+            sys.exit(0)
+
+for key in ("OPENAI_API_KEY", "api_key", "openai_api_key"):
+    if nonempty_string(data.get(key)):
+        sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
+codex_is_authenticated() {
+  local auth_file
+  if [[ -n "${CODEX_API_KEY:-}" || -n "${OPENAI_API_KEY:-}" ]]; then
+    return 0
+  fi
+  auth_file="$(codex_auth_file)"
+  [[ -f "$auth_file" ]] && codex_auth_json_has_credentials "$auth_file"
+}
+
 # Detect CLI authentication
 detect_cli() {
   local backend="$1"
@@ -201,7 +247,13 @@ detect_cli() {
       if goose --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
     codex)
-      if codex --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
+      if ! codex --version &>/dev/null; then
+        echo "BROKEN"
+      elif codex_is_authenticated; then
+        echo "OK"
+      else
+        echo "NOT_AUTHED"
+      fi
       ;;
     pi)
       if pi --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
@@ -214,6 +266,11 @@ detect_cli() {
       ;;
   esac
 }
+
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI:-}" == "1" ]]; then
+  detect_cli "$AGENT_BACKEND"
+  exit 0
+fi
 
 echo "=== Hive Contributor Agent (ClankeR) ==="
 echo "Hub:     $HIVE_HUB"
@@ -229,8 +286,18 @@ case "$STATUS" in
     exit 1
     ;;
   NOT_AUTHED)
-    echo "WARNING: $AGENT_BACKEND CLI may not be authenticated."
-    echo "You may need to log in. The agent will start and prompt if needed."
+    if [[ "$AGENT_BACKEND" == "codex" ]]; then
+      echo "ERROR: codex CLI is installed but not authenticated."
+      echo "Run: CODEX_HOME=\${CODEX_HOME:-\$HOME/.codex} codex login --device-auth"
+      exit 1
+    else
+      echo "WARNING: $AGENT_BACKEND CLI may not be authenticated."
+      echo "You may need to log in. The agent will start and prompt if needed."
+    fi
+    ;;
+  BROKEN)
+    echo "ERROR: $AGENT_BACKEND CLI is installed but did not run successfully."
+    exit 1
     ;;
   OK)
     echo "$AGENT_BACKEND CLI detected and ready."
@@ -413,6 +480,10 @@ if [[ -n "${AGENT_MODEL:-}" ]]; then
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
 fi
+REASONING_FLAG=""
+if [[ "$AGENT_BACKEND" == "codex" && -n "${AGENT_REASONING_EFFORT:-}" ]]; then
+  REASONING_FLAG="-c 'model_reasoning_effort=\"${AGENT_REASONING_EFFORT}\"'"
+fi
 
 # Copy host .claude.json from hive config dir (Colima can't bind-mount files)
 if [[ "$AGENT_BACKEND" == "claude" ]] && [[ -f "${CONFIG_DIR}/claude-config.json" ]]; then
@@ -457,7 +528,7 @@ fi
 # relay launches a one-shot CLI per task, and one-shot invocations do not draw
 # the trust/theme/onboarding dialogs this loop dismisses.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
-  tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG" Enter
+  tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG $REASONING_FLAG" Enter
 
   # Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
   AUTO_DISMISS_ATTEMPTS=10

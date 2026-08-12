@@ -97,6 +97,10 @@ func (s *Server) handleCopilotAuthStatus(w http.ResponseWriter, r *http.Request)
 // returns the one-time code the user must enter at github.com/login/device.
 // A background goroutine polls GitHub until the user approves.
 func (s *Server) handleCopilotAuthStart(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	client := &http.Client{Timeout: copilotHTTPTimeout}
 	req, err := http.NewRequest(http.MethodPost, copilotDeviceCodeURL,
 		strings.NewReader(url.Values{"client_id": {copilotClientID}}.Encode()))
@@ -300,6 +304,10 @@ func (s *Server) saveCopilotToken(token string) error {
 
 // handleCopilotAuthLogout removes the stored Copilot token.
 func (s *Server) handleCopilotAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	os.Remove(copilotUserTokenPath)
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		s.deps.AgentMgr.SetCopilotToken("")

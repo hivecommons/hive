@@ -3411,6 +3411,7 @@ func TestHandleVaultsConnect_InvalidBody(t *testing.T) {
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
 	req := httptest.NewRequest("POST", "/api/knowledge/vaults", strings.NewReader("not-json"))
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

@@ -183,16 +183,34 @@ func TestContributeQueue_NilHub(t *testing.T) {
 
 // --- requireContributorWrite ---
 
-func TestRequireContributorWrite_EmptyRoleDefaultsOwner(t *testing.T) {
+func TestRequireContributorWrite_EmptyRoleDefaultsOwnerOnStandalone(t *testing.T) {
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
 	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	deps := testDeps(t)
+	deps.Config.Dashboard.HubProxied = false
 	s.RegisterAPI(deps)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	if !s.requireContributorWrite(rec, req) {
-		t.Fatalf("empty role should default to owner and pass, got false")
+		t.Fatalf("standalone empty role should default to owner and pass, got false")
+	}
+}
+
+func TestRequireContributorWrite_EmptyRoleForbiddenOnHubProxied(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	s := NewServer(0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	deps := testDeps(t)
+	deps.Config.Dashboard.HubProxied = true
+	s.RegisterAPI(deps)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	if s.requireContributorWrite(rec, req) {
+		t.Fatalf("hub-proxied empty role should fail closed, got true")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
 	}
 }
 

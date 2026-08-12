@@ -32,11 +32,11 @@ jobs:
       # PR that fixed coverage still failed, and a PR that broke it would still
       # have passed. Leaving `ref` empty checks out the PR merge commit, which
       # is the code that is actually about to land.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.ref || 'v2' }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.12'
           cache-dependency-path: v2/go.sum
@@ -163,7 +163,7 @@ jobs:
       issues: write
     steps:
       - name: Create or update coverage issue
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;

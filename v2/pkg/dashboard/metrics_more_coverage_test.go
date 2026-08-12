@@ -162,6 +162,7 @@ func TestCovK2_ClaudeAuthExchangeBranches(t *testing.T) {
 	// Bad JSON body → 400.
 	req := httptest.NewRequest(http.MethodPost, "/api/claude-auth/exchange", stringReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

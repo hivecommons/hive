@@ -39,6 +39,7 @@ type Client struct {
 	autoMergeLabel   string
 	logger           *slog.Logger
 	appAuth          *AppAuth // nil for token-authenticated clients
+	appBotLogin      string   // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
@@ -81,6 +82,15 @@ func (c *Client) AuthenticatedLogin(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("authenticated GitHub identity has no login")
 	}
 	return login, nil
+}
+
+// SetAppBotLogin records the GitHub App bot account that authors App-created
+// artifacts. Empty values fail closed for checks that require App authorship.
+func (c *Client) SetAppBotLogin(login string) {
+	if c == nil {
+		return
+	}
+	c.appBotLogin = strings.TrimSpace(login)
 }
 
 type Issue struct {
