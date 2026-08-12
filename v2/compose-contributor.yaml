@@ -17,6 +17,7 @@ services:
       - HIVE_HUB=${HIVE_HUB:-wss://hive.kubestellar.io:3001/contribute}
       - AGENT_BACKEND=${AGENT_BACKEND:-claude}
       - AGENT_MODEL=${AGENT_MODEL:-}
+      - AGENT_REASONING_EFFORT=${AGENT_REASONING_EFFORT:-}
       # Task-delivery mode (kubestellar/hive#2538): interactive (default, tmux)
       # or headless (one-shot CLI, no TTY). This compose file keeps stdin/tty on
       # for the default interactive path; a headless deployment (a future K8s

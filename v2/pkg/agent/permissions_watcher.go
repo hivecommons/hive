@@ -71,6 +71,28 @@ var WatchedHomeDirs = []string{
 	"/data/agents",
 }
 
+// SharedRepoParent is the shared HOME directory into which agents clone the
+// target project repos (e.g. /data/home/api-server, /data/home/ui). Each agent's
+// per-workspace repo (/data/agents/<agent>/<repo>) is a SYMLINK back to the clone
+// here, so all agents share one working tree per repo.
+//
+// The clone is created dev:node but mode 0755 (setgid `node` gives group `node`,
+// but the default umask leaves the group WITHOUT write). That locks every agent
+// UID out of writing to the tree: they can read and enumerate issues, but any
+// `git checkout -b` / write-a-test-file / `git commit` fails with
+// "Permission denied", so ISSUES_AND_PRS agents can open issues but never PRs.
+//
+// The watcher self-heals this the same way it does .bob: it finds each git-repo
+// directory directly under SharedRepoParent (a real, non-symlink child that
+// holds a .git) and walks it, bringing dirs to >=0770 and files to >=0660 for
+// the shared node group. We scan only repo children — not all of /data/home — to
+// avoid walking the large dotdir tree (.cache, .local, node_modules) every tick;
+// those are already covered by their own WatchedHomeDirs entries.
+//
+// A var (not const) so tests can point the scan at a writable temp tree, matching
+// GooseLogsDir/WatchedHomeDirs. Production value is unchanged.
+var SharedRepoParent = "/data/home"
+
 // GooseLogsDir is the rolling log directory goose 1.37 creates on startup.
 // Goose panics if this directory doesn't exist, so the watcher ensures it
 // is created at startup with correct permissions.
@@ -128,11 +150,59 @@ func ensureWatchedDirs(logger *slog.Logger) {
 	}
 }
 
+// sharedRepoClones returns the git-repo directories directly under
+// SharedRepoParent — a real (non-symlink) child dir whose tree holds a .git.
+// These are the project-repo working trees agents share (and symlink into their
+// workspaces). Non-repo children (dotdirs, node caches) are skipped so we don't
+// walk the whole shared HOME tree on every tick.
+//
+// SECURITY (CWE-59): children are inspected with os.Lstat and any symlink is
+// skipped, so a planted link under /data/home can never redirect the widening
+// walk onto a path outside the shared HOME — mirroring the symlink guard in
+// fixEntry. Only a genuine directory (created by `git clone`) is returned.
+//
+// Never errors: an unreadable parent yields an empty list, matching the
+// watcher's best-effort contract (it must never abort a tick).
+func sharedRepoClones() []string {
+	entries, err := os.ReadDir(SharedRepoParent)
+	if err != nil {
+		return nil
+	}
+	var repos []string
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) > 0 && name[0] == '.' {
+			continue // skip dotdirs — covered by WatchedHomeDirs
+		}
+		repoPath := filepath.Join(SharedRepoParent, name)
+		// Lstat (not Stat) so a symlinked child is seen AS a link and rejected —
+		// we must never follow a link out of the shared HOME (CWE-59).
+		fi, statErr := os.Lstat(repoPath)
+		if statErr != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+			continue
+		}
+		// A real dir that holds a .git is a clone. Lstat the .git too so a
+		// planted ".git" symlink can't be used to smuggle a non-repo dir in.
+		gitFI, gitErr := os.Lstat(filepath.Join(repoPath, ".git"))
+		if gitErr != nil || gitFI.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		repos = append(repos, repoPath)
+	}
+	return repos
+}
+
 // fixPermissions walks each watched directory and fixes ownership/mode
 // on any file or directory that is wrong. It only logs when it actually
 // changes something.
 func fixPermissions(logger *slog.Logger) {
-	for _, root := range WatchedHomeDirs {
+	// Widen the shared project-repo clones so agent UIDs (group node) can
+	// write/commit/push and therefore open PRs. fixEntry already brings each
+	// dir to >=0770 and each file to >=0660 for the node group (and skips
+	// symlinks), which is exactly what the clone (created 0755 dev:node) needs.
+	roots := append([]string{}, WatchedHomeDirs...)
+	roots = append(roots, sharedRepoClones()...)
+	for _, root := range roots {
 		info, err := os.Stat(root)
 		if err != nil {
 			// Directory doesn't exist yet — create it.
@@ -164,6 +234,17 @@ func fixPermissions(logger *slog.Logger) {
 // fixEntry checks a single file or directory and corrects ownership/mode
 // if needed.
 func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
+	// SECURITY (audit F12, CWE-59): never act on a symlink. This walks the
+	// agent HOME dirs, which agents can write to, and both os.Chmod and
+	// os.Chown FOLLOW symlinks — so a planted link would redirect this
+	// repair loop onto a file outside the tree. filepath.Walk reports
+	// entries via Lstat, so the link is visible as a link here; the ownership
+	// check below reads the LINK's metadata, not the target's, and so cannot
+	// be relied on to catch this. Mirrors ensureWorldWritable's symlink skip.
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return
+	}
+
 	stat, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		return

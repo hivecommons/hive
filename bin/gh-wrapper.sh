@@ -16,7 +16,15 @@
 
 set -euo pipefail
 
-REAL_GH="/usr/bin/gh"
+# The real gh binary ships at /opt/hive/bin/gh-real. An earlier image roll moved
+# it there but left this path at /usr/bin/gh (which no longer exists), which
+# made the guard below fire "gh CLI is not available" for every agent gh call —
+# so agents silently created nothing and fabricated success. Resolve gh-real
+# first, falling back to /usr/bin/gh for older images.
+# HIVE_GH_WRAPPER_REAL_GH lets the test harness point the wrapper at a stub so
+# the restriction/label logic can be exercised without the real binary.
+REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
+[[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
 

@@ -57,9 +57,21 @@ RUN npm install -g \
 # build failure too.
 ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
-RUN npm install -g "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+ARG TARGETARCH
+ARG BOBSHELL_SHA256_AMD64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+ARG BOBSHELL_SHA256_ARM64=6ec51abec4251d41ec45709030988b90baa659f535fc8d14dd003023dd163a5b
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) BOBSHELL_SHA256="$BOBSHELL_SHA256_AMD64" ;; \
+       arm64) BOBSHELL_SHA256="$BOBSHELL_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for bobshell: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/bobshell.tgz "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" \
+  && echo "${BOBSHELL_SHA256}  /tmp/bobshell.tgz" | sha256sum -c - \
+  && npm install -g /tmp/bobshell.tgz && \
     npm cache clean --force && \
-    which bob
+    which bob && \
+    rm -f /tmp/bobshell.tgz
 
 # Install gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -70,18 +82,29 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 # Install Goose CLI (Block's AI agent)
 # Version pinned — was fetching releases/latest which resolves to HEAD at
-# build time (sec-check issue #2919). Pin to a specific release tag.
+# build time (sec-check issue #2919). Pin to a specific release tag and verify
+# the tarball before extraction. Download failures are tolerated because Goose
+# is an optional contributor backend; checksum mismatches are not tolerated.
 ARG GOOSE_VERSION=1.45.0
-RUN ARCH=$(dpkg --print-architecture) \
-  && GOOSE_ARCH=$([ "$ARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
+ARG GOOSE_SHA256_AMD64=e0db638ac437ca0a60b0c1622f45322608d228d1a285214c3bf48fd9763346a5
+ARG GOOSE_SHA256_ARM64=c9894106c90e404ac8b8d67c628aea2943dd6a1bc83bfd8e2171d482fa43d72a
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
+       arm64) GOOSE_ARCH=aarch64; GOOSE_SHA256="$GOOSE_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for goose: $ARCH" >&2; exit 1 ;; \
+     esac \
   && mkdir -p /tmp/goose-dl \
-  && curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
-    -o /tmp/goose-dl/goose.tar.gz \
-  && cd /tmp/goose-dl && tar -xzf goose.tar.gz \
-  && find /tmp/goose-dl -name "goose" -type f -exec cp {} /usr/local/bin/goose \; \
-  && chmod +x /usr/local/bin/goose \
-  && rm -rf /tmp/goose-dl \
-  || echo "Goose install skipped"
+  && if curl -fsSL "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}-unknown-linux-gnu.tar.gz" \
+       -o /tmp/goose-dl/goose.tar.gz; then \
+       echo "${GOOSE_SHA256}  /tmp/goose-dl/goose.tar.gz" | sha256sum -c - \
+       && cd /tmp/goose-dl && tar -xzf goose.tar.gz \
+       && find /tmp/goose-dl -name "goose" -type f -exec cp {} /usr/local/bin/goose \; \
+       && chmod +x /usr/local/bin/goose \
+       && rm -rf /tmp/goose-dl; \
+     else \
+       echo "Goose install skipped"; \
+     fi
 
 # Install Pi CLI (pi.dev coding agent). Do not use pi.dev's curl-pipe-to-shell
 # installer here: it is mutable and executes remote shell as root. Pi publishes
@@ -98,10 +121,11 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # official checksum BEFORE extraction, so a compromised go.dev (or a MITM) cannot
 # inject a tampered toolchain. Bump GO_SHA256_AMD64/ARM64 whenever GO_VERSION
 # changes — the values come from https://go.dev/dl/?mode=json for that version.
+ARG TARGETARCH
 ARG GO_VERSION=1.24.4
 ARG GO_SHA256_AMD64=77e5da33bb72aeaef1ba4418b6fe511bc4d041873cbf82e5aa6318740df98717
 ARG GO_SHA256_ARM64=d5501ee5aca0f258d5fe9bfaed401958445014495dc115f202d43d5210b45241
-RUN ARCH=$(dpkg --print-architecture) \
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \
        arm64) GO_SHA256="$GO_SHA256_ARM64" ;; \

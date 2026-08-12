@@ -40,10 +40,16 @@ exit 0
 MOCK
 chmod +x "$MOCK_GH"
 
-sed "s|^REAL_GH=\"/usr/bin/gh\"|REAL_GH=\"${MOCK_GH}\"|" "$WRAPPER" > "$TEST_WRAPPER"
+# Point the wrapper at the mock gh via the HIVE_GH_WRAPPER_REAL_GH override
+# (exported below) rather than rewriting REAL_GH with sed — the override is the
+# supported seam for pointing the wrapper at a stub binary.
+cp "$WRAPPER" "$TEST_WRAPPER"
 chmod +x "$TEST_WRAPPER"
 
 export GH_TOKEN="test-token-mock"
+# All _run_test* invocations inherit this, so the wrapper resolves REAL_GH to the
+# mock instead of the real /opt/hive/bin/gh-real (absent in CI).
+export HIVE_GH_WRAPPER_REAL_GH="${MOCK_GH}"
 
 _run_test() {
   local expected_rc="$1"

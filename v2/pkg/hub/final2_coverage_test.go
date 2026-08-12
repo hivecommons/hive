@@ -38,6 +38,10 @@ func TestTriggerAutoUpgradesRemoteStale(t *testing.T) {
 func TestTriggerAutoUpgradesRemoteNotStale(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
+	resetCommitOrderState(t)
+	stubCommitCompare(func(base, head string, logger *slog.Logger) (string, error) {
+		return "behind", nil
+	})
 
 	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "remote"})

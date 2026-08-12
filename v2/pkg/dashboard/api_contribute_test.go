@@ -993,6 +993,7 @@ func TestContributorTrust(t *testing.T) {
 	body := `{"tier":"contributor"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/contributors/"+cid+"/trust", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -1003,6 +1004,7 @@ func TestContributorTrust(t *testing.T) {
 	body2 := `{"tier":"superadmin"}`
 	req2 := httptest.NewRequest(http.MethodPut, "/api/contributors/"+cid+"/trust", bytes.NewBufferString(body2))
 	req2.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req2)
 	w2 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusBadRequest {
@@ -1018,6 +1020,7 @@ func TestContributorDelete(t *testing.T) {
 	cid, _ := registerTestUser(t, s, "delete-test")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/contributors/"+cid, nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -1041,6 +1044,7 @@ func TestContributorRevoke(t *testing.T) {
 	cid, _ := registerTestUser(t, s, "revoke-test")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/contributors/"+cid+"/revoke", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

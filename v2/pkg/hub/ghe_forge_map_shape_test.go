@@ -832,6 +832,156 @@ func TestWrongForgeRepairTargetsElectedForge(t *testing.T) {
 	})
 }
 
+func TestPlaceholderSentinelRepairsKnownClusterDefaultForgeWithoutConfiguredAppID(t *testing.T) {
+	withTempAppKeyDir(t) // deliberately no stored key: this test is app_id-only repair.
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	t.Run("GHE default cluster with no github_app_id repairs sentinel to builtin GHE App", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				"a-ks-wec2": {ID: "a-ks-wec2", DefaultForge: identGHEHost},
+			},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "ghe-default", Status: statusAssigned, ClusterID: "a-ks-wec2",
+			Org: "z-innersource", GitHubHost: identGHEHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:       "ghe-default",
+			ClusterID:    "a-ks-wec2",
+			GitHubHost:   identGHEHost,
+			GitHubAPIURL: identGHEAPIURL, GitHubBaseURL: identGHEBaseURL,
+			GitHubAppID: config.PlaceholderAppID,
+		})
+		if cfg == nil {
+			t.Fatal("sentinel spoke got no repair; the default-forge builtin App rescue was not applied")
+		}
+		if cfg.AppID != testGHEAppID || cfg.AppSlug != identGHESlug {
+			t.Fatalf("repair app = %d slug %q, want GHE app %d slug %q", cfg.AppID, cfg.AppSlug, testGHEAppID, identGHESlug)
+		}
+		if cfg.PrivateKey != "" {
+			t.Errorf("no cluster key was configured, so repair must be app_id-only; got private key length %d", len(cfg.PrivateKey))
+		}
+		if cfg.APIURL != identGHEAPIURL || cfg.BaseURL != identGHEBaseURL {
+			t.Errorf("repair urls = api=%q base=%q, want GHE urls", cfg.APIURL, cfg.BaseURL)
+		}
+	})
+
+	t.Run("flat URL GHE default evidence also repairs sentinel without github_app_id", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				"legacy-ghe": {ID: "legacy-ghe", GitHubBaseURL: identGHEBaseURL, GitHubAPIURL: identGHEAPIURL},
+			},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "legacy-ghe-default", Status: statusAssigned, ClusterID: "legacy-ghe",
+			Org: "legacy", GitHubHost: identGHEHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:      "legacy-ghe-default",
+			ClusterID:   "legacy-ghe",
+			GitHubHost:  identGHEHost,
+			GitHubAppID: config.PlaceholderAppID,
+		})
+		if cfg == nil || cfg.AppID != testGHEAppID {
+			t.Fatalf("flat URL GHE default repair = %+v, want App %d", cfg, testGHEAppID)
+		}
+	})
+
+	t.Run("claimed public hive on a GHE default cluster is not flipped onto GHE", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				"vllm-d": {ID: "vllm-d", DefaultForge: identGHEHost},
+			},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "alchemy-public", Status: statusAssigned, ClusterID: "vllm-d",
+			Org: "ibm", GitHubHost: publicForgeHost,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:               "alchemy-public",
+			ClusterID:            "vllm-d",
+			GitHubHost:           identGHEHost,
+			GitHubAPIURL:         identGHEAPIURL,
+			GitHubBaseURL:        identGHEBaseURL,
+			GitHubAppID:          testGHEAppID,
+			GitHubInstallationID: 146551814,
+		})
+		if cfg == nil {
+			t.Fatal("public hive on the wrong GHE App must be restored to public, not left broken")
+		}
+		if cfg.AppID == testGHEAppID {
+			t.Fatalf("public hive was flipped/re-delivered onto GHE App %d: %+v", testGHEAppID, cfg)
+		}
+		if cfg.AppID != testPublicAppID || cfg.APIURL != config.DefaultGitHubAPIURL || cfg.BaseURL != config.DefaultGitHubBaseURL {
+			t.Fatalf("public hive repair = %+v, want public App %d and public urls", cfg, testPublicAppID)
+		}
+	})
+
+	t.Run("unknown default forge with no App still invents nothing", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				"third-party": {ID: "third-party", DefaultForge: "git.example.com"},
+			},
+		}
+		if err := saveSaaSHive(&SaaSHive{
+			ID: "unknown-forge", Status: statusAssigned, ClusterID: "third-party",
+			Org: "example", GitHubHost: "git.example.com",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:      "unknown-forge",
+			ClusterID:   "third-party",
+			GitHubHost:  "git.example.com",
+			GitHubAppID: config.PlaceholderAppID,
+		})
+		if cfg != nil {
+			t.Fatalf("unknown forge with no configured App was invented as a repair: %+v", cfg)
+		}
+	})
+
+	t.Run("public pin still blocks a GHE identity when no hive election is available", func(t *testing.T) {
+		s := &HubServer{
+			logger: appKeyTestLogger(),
+			clusters: map[string]ClusterConfig{
+				"vllm-d": {ID: "vllm-d", DefaultForge: identGHEHost, GitHubAppID: testGHEAppID, GitHubAppSlug: identGHESlug},
+			},
+		}
+
+		cfg := s.appKeyConfigForHeartbeat(
+			"legacy-public-pin",
+			"vllm-d",
+			"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			false,
+			true,
+			testPublicAppID,
+			0,
+			appKeyTestLogger(),
+			nil,
+		)
+		if cfg != nil {
+			t.Fatalf("hivePublicPinned path delivered a GHE cluster identity: %+v", cfg)
+		}
+	})
+}
+
 // TestHandRepairDoesNotRevert pins the FULL 2026-08-05 feedback loop closed, as
 // observed on hosted-kalantar-msb-soft-reflect-jsro:
 //
