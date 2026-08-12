@@ -113,11 +113,11 @@ func TestCovD_Audit(t *testing.T) {
 		t.Errorf("auditDetail multi wrong: %q", auditDetail("a", "1", "b", "2"))
 	}
 
-	// handleAuditLog: default owner role → 200; explicit bad role → 403.
+	// handleAuditLog: missing and explicit bad roles fail closed.
 	rec := httptest.NewRecorder()
 	s.handleAuditLog(rec, httptest.NewRequest(http.MethodGet, "/api/audit", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("audit default role = %d, want 200", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("audit missing role = %d, want 403", rec.Code)
 	}
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/audit", nil)
