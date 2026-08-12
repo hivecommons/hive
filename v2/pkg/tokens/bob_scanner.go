@@ -8,39 +8,68 @@ import (
 	"time"
 )
 
-// bobChatSession is the top-level structure of a bobshell 1.0.6 chat recording
-// file. Files live at $HOME/.bob/tmp/<uuid>/chats/<session-id>.json and contain
-// an array of messages with optional per-message token usage.
+// bobChatSession is the top-level structure of a bobshell chat recording file.
+// Files live at $HOME/.bob/tmp/<uuid>/chats/<session-id>.json.
 //
-// Observed format (bobshell 1.0.6, IBM watsonx backend):
+// Verified schema (from live bobshell recordings on disk):
 //
 //	{
-//	  "id": "session-uuid",
-//	  "model": "granite-3.1-8b-instruct",
+//	  "sessionId": "abc-123",
+//	  "projectHash": "...",
+//	  "startTime": "2026-01-31T05:43:35.306Z",
+//	  "lastUpdated": "2026-01-31T05:45:00.000Z",
 //	  "messages": [
-//	    {"role":"user","content":"..."},
-//	    {"role":"assistant","content":"...","usage":{"input_tokens":100,"output_tokens":50}}
+//	    {"id":"...","timestamp":"...","type":"user","content":"..."},
+//	    {"id":"...","timestamp":"...","type":"bob-shell","content":"...",
+//	     "model":"premium",
+//	     "tokens":{"input":8200,"output":285,"cached":8166,"thoughts":0},
+//	     "toolCalls":[...]}
 //	  ]
 //	}
-//
-// When explicit usage is absent (older bobshell versions or recording disabled),
-// the scanner estimates tokens from message content length (~4 chars/token).
 type bobChatSession struct {
-	ID       string           `json:"id"`
-	Model    string           `json:"model"`
-	Messages []bobChatMessage `json:"messages"`
+	SessionID   string           `json:"sessionId"`
+	StartTime   string           `json:"startTime"`
+	LastUpdated string           `json:"lastUpdated"`
+	Messages    []bobChatMessage `json:"messages"`
 }
 
 type bobChatMessage struct {
-	Role    string      `json:"role"`
-	Content string      `json:"content"`
-	Usage   bobMsgUsage `json:"usage,omitempty"`
+	// Type is the role discriminator: "user", "bob-shell", etc.
+	Type    string `json:"type"`
+	Content string `json:"content"`
+	// Model is per-message (e.g. "premium", "standard").
+	Model string `json:"model,omitempty"`
+	// Tokens carries usage for assistant ("bob-shell") messages.
+	// User messages typically omit this field entirely.
+	Tokens *bobTokens `json:"tokens,omitempty"`
+
+	// Legacy/alternative fields from older or future bobshell versions.
+	Role  string          `json:"role,omitempty"`
+	Usage *bobLegacyUsage `json:"usage,omitempty"`
 }
 
-type bobMsgUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	// IBM's watsonx sometimes uses these field names instead.
+// bobTokens is the primary token usage shape in bobshell recordings.
+//
+// Billing note on `cached`: in the observed data, `input` already INCLUDES
+// `cached` tokens (e.g. input=8200, cached=8166 means 34 new input tokens
+// plus 8166 cache-hit tokens, totalling 8200 reported as "input"). Therefore
+// we do NOT add `cached` on top of `input` — doing so would approximately
+// double-count. We record `cached` separately in the AgentModelBucket's
+// CacheRead field for visibility, but the budget-relevant token count is
+// input + output only.
+type bobTokens struct {
+	Input    int64 `json:"input"`
+	Output   int64 `json:"output"`
+	Cached   int64 `json:"cached"`
+	Thoughts int64 `json:"thoughts"`
+}
+
+// bobLegacyUsage is a fallback for hypothetical older bobshell versions that
+// may use OpenAI-style field names. Checked only when the primary `tokens`
+// field is absent.
+type bobLegacyUsage struct {
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
 }
@@ -49,17 +78,15 @@ type bobMsgUsage struct {
 // unavailable: ~4 characters per token for English-heavy code work.
 const charsPerToken = 4
 
-// maxBobChatFileSize limits how large a single chat file we'll parse. Files
-// larger than this are skipped to avoid OOM on runaway recordings.
+// maxBobChatFileSize limits how large a single chat file we'll parse.
 const maxBobChatFileSize = 50 * 1024 * 1024 // 50 MB
 
-// maxBobSessionAge limits how far back to scan. Sessions older than this are
-// skipped (they predate the budget window anyway).
+// maxBobSessionAge limits how far back to scan.
 const maxBobSessionAge = 30 * 24 * time.Hour
 
 // ScanBobSessions reads bobshell's chat recording files from the given
-// directory (typically /data/home/.bob) and returns an AggregateSummary.
-// It walks tmp/*/chats/*.json looking for session recordings.
+// directory (typically /data/home/.bob or ~/.bob) and returns an
+// AggregateSummary. It walks tmp/*/chats/*.json looking for session recordings.
 func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
@@ -97,34 +124,46 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 			continue
 		}
 
-		var inputTokens, outputTokens int64
+		var inputTokens, outputTokens, cachedTokens int64
 		hasExplicitUsage := false
 		messageCount := 0
+		// Per-message model; use last seen as session model.
+		var sessionModel string
 
-		for _, msg := range sess.Messages {
-			in, out := msg.Usage.effectiveTokens()
+		for i := range sess.Messages {
+			msg := &sess.Messages[i]
+			msgType := msg.effectiveType()
+
+			if msg.Model != "" {
+				sessionModel = msg.Model
+			}
+
+			in, out, cached := msg.effectiveTokensReal()
 			if in > 0 || out > 0 {
 				hasExplicitUsage = true
 				inputTokens += in
 				outputTokens += out
+				cachedTokens += cached
 			}
-			if msg.Role == "assistant" || msg.Role == "user" {
+
+			if msgType == "user" || msgType == "bob-shell" || msgType == "assistant" {
 				messageCount++
 			}
 		}
 
 		// Fall back to estimation when no explicit usage is recorded.
 		if !hasExplicitUsage {
-			for _, msg := range sess.Messages {
+			for i := range sess.Messages {
+				msg := &sess.Messages[i]
 				chars := int64(len(msg.Content))
 				estimated := chars / charsPerToken
 				if estimated < 1 && chars > 0 {
 					estimated = 1
 				}
-				switch msg.Role {
+				switch msg.effectiveType() {
 				case "user":
 					inputTokens += estimated
-				case "assistant":
+				case "bob-shell", "assistant":
 					outputTokens += estimated
 				}
 			}
@@ -135,7 +174,7 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 			continue
 		}
 
-		model := sess.Model
+		model := sessionModel
 		if model == "" {
 			model = "bob-unknown"
 		}
@@ -152,6 +191,7 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 		}
 		agg.ByAgentDetail[agentName].Input += inputTokens
 		agg.ByAgentDetail[agentName].Output += outputTokens
+		agg.ByAgentDetail[agentName].CacheRead += cachedTokens
 		agg.ByAgentDetail[agentName].Messages += messageCount
 		agg.ByAgentDetail[agentName].Sessions++
 
@@ -160,17 +200,21 @@ func ScanBobSessions(bobHomeDir string) (*AggregateSummary, error) {
 		}
 		agg.ByModelDetail[model].Input += inputTokens
 		agg.ByModelDetail[model].Output += outputTokens
+		agg.ByModelDetail[model].CacheRead += cachedTokens
 		agg.ByModelDetail[model].Messages += messageCount
 		agg.ByModelDetail[model].Sessions++
 
-		// Use the file path's UUID component as session ID.
-		sessionID := extractBobSessionID(path)
+		sessionID := sess.SessionID
+		if sessionID == "" {
+			sessionID = extractBobSessionID(path)
+		}
 		agg.Sessions = append(agg.Sessions, SessionSummary{
 			SessionID:    sessionID,
 			Agent:        agentName,
 			Model:        model,
 			InputTokens:  inputTokens,
 			OutputTokens: outputTokens,
+			CacheRead:    cachedTokens,
 			TotalTokens:  total,
 			Messages:     messageCount,
 		})
@@ -198,18 +242,37 @@ func parseBobChatFile(path string) (*bobChatSession, error) {
 	return &sess, nil
 }
 
-// effectiveTokens returns the best available token counts, preferring
-// input_tokens/output_tokens over prompt_tokens/completion_tokens.
-func (u bobMsgUsage) effectiveTokens() (input, output int64) {
-	input = u.InputTokens
-	output = u.OutputTokens
-	if input == 0 && u.PromptTokens > 0 {
-		input = u.PromptTokens
+// effectiveType normalizes the message type/role. Bobshell uses "type" as the
+// discriminator; legacy formats may use "role" instead.
+func (m *bobChatMessage) effectiveType() string {
+	if m.Type != "" {
+		return m.Type
 	}
-	if output == 0 && u.CompletionTokens > 0 {
-		output = u.CompletionTokens
+	return m.Role
+}
+
+// effectiveTokensReal returns the best available token counts from a message.
+// Primary path: tokens.{input, output, cached}.
+// Fallback: usage.{input_tokens, output_tokens} or usage.{prompt_tokens, completion_tokens}.
+func (m *bobChatMessage) effectiveTokensReal() (input, output, cached int64) {
+	if m.Tokens != nil {
+		// Primary bobshell format. `input` already includes `cached` —
+		// see the billing note on bobTokens. We report cached separately
+		// for visibility only.
+		return m.Tokens.Input, m.Tokens.Output, m.Tokens.Cached
 	}
-	return
+	if m.Usage != nil {
+		in := m.Usage.InputTokens
+		out := m.Usage.OutputTokens
+		if in == 0 && m.Usage.PromptTokens > 0 {
+			in = m.Usage.PromptTokens
+		}
+		if out == 0 && m.Usage.CompletionTokens > 0 {
+			out = m.Usage.CompletionTokens
+		}
+		return in, out, 0
+	}
+	return 0, 0, 0
 }
 
 // extractBobSessionID pulls the UUID directory component from a path like
@@ -219,7 +282,6 @@ func extractBobSessionID(path string) string {
 	dir = filepath.Dir(dir)   // .../<uuid>
 	base := filepath.Base(dir)
 	if base == "." || base == "/" || base == "tmp" {
-		// Fallback: use the filename without extension.
 		return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	return base

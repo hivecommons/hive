@@ -265,12 +265,12 @@ func TestCollector_ScanIncludesBob(t *testing.T) {
 	metricsDir := t.TempDir()
 	bobDir := t.TempDir()
 
-	// Create a bob chat session file.
+	// Create a bob chat session file using the real bobshell schema.
 	chatDir := filepath.Join(bobDir, "tmp", "test-uuid", "chats")
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sessJSON := `{"id":"s1","model":"granite","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello","usage":{"input_tokens":50,"output_tokens":30}}]}`
+	sessJSON := `{"sessionId":"s1","messages":[{"type":"user","content":"hi"},{"type":"bob-shell","content":"hello","model":"premium","tokens":{"input":50,"output":30,"cached":40,"thoughts":0}}]}`
 	if err := os.WriteFile(filepath.Join(chatDir, "s.json"), []byte(sessJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}

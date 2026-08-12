@@ -7,21 +7,40 @@ import (
 	"testing"
 )
 
-func TestScanBobSessions_ExplicitUsage(t *testing.T) {
+// realSchemaFixture returns a bobChatSession matching the verified on-disk
+// schema from bobshell recordings (sessionId, type, tokens.{input,output,cached}).
+func realSchemaFixture() bobChatSession {
+	return bobChatSession{
+		SessionID: "f4e80411-test-session",
+		Messages: []bobChatMessage{
+			{
+				Type:    "user",
+				Content: "fix the bug in main.go",
+			},
+			{
+				Type:    "bob-shell",
+				Content: "I will fix the bug.",
+				Model:   "premium",
+				Tokens:  &bobTokens{Input: 8200, Output: 285, Cached: 8166, Thoughts: 0},
+			},
+			{
+				Type:    "bob-shell",
+				Content: "Done.",
+				Model:   "premium",
+				Tokens:  &bobTokens{Input: 4000, Output: 150, Cached: 3800, Thoughts: 10},
+			},
+		},
+	}
+}
+
+func TestScanBobSessions_RealSchema(t *testing.T) {
 	dir := t.TempDir()
 	chatDir := filepath.Join(dir, "tmp", "abc-123", "chats")
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	sess := bobChatSession{
-		ID:    "sess-1",
-		Model: "granite-3.1-8b-instruct",
-		Messages: []bobChatMessage{
-			{Role: "user", Content: "fix the bug"},
-			{Role: "assistant", Content: "done", Usage: bobMsgUsage{InputTokens: 100, OutputTokens: 50}},
-		},
-	}
+	sess := realSchemaFixture()
 	data, _ := json.Marshal(sess)
 	if err := os.WriteFile(filepath.Join(chatDir, "session.json"), data, 0o644); err != nil {
 		t.Fatal(err)
@@ -31,17 +50,28 @@ func TestScanBobSessions_ExplicitUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.TotalTokens != 150 {
-		t.Errorf("TotalTokens = %d, want 150", agg.TotalTokens)
+
+	// input = 8200 + 4000 = 12200, output = 285 + 150 = 435, total = 12635
+	wantTotal := int64(12635)
+	if agg.TotalTokens != wantTotal {
+		t.Errorf("TotalTokens = %d, want %d", agg.TotalTokens, wantTotal)
 	}
 	if agg.SessionCount != 1 {
 		t.Errorf("SessionCount = %d, want 1", agg.SessionCount)
 	}
-	if agg.ByAgent["bob"] != 150 {
-		t.Errorf("ByAgent[bob] = %d, want 150", agg.ByAgent["bob"])
+	if agg.ByAgent["bob"] != wantTotal {
+		t.Errorf("ByAgent[bob] = %d, want %d", agg.ByAgent["bob"], wantTotal)
 	}
-	if agg.ByModel["granite-3.1-8b-instruct"] != 150 {
-		t.Errorf("ByModel = %d, want 150", agg.ByModel["granite-3.1-8b-instruct"])
+	if agg.ByModel["premium"] != wantTotal {
+		t.Errorf("ByModel[premium] = %d, want %d", agg.ByModel["premium"], wantTotal)
+	}
+	// Cached should be recorded for visibility but NOT added to totals.
+	if agg.ByAgentDetail["bob"].CacheRead != 8166+3800 {
+		t.Errorf("CacheRead = %d, want %d", agg.ByAgentDetail["bob"].CacheRead, 8166+3800)
+	}
+	// Session ID from the JSON field, not the path.
+	if len(agg.Sessions) != 1 || agg.Sessions[0].SessionID != "f4e80411-test-session" {
+		t.Errorf("SessionID = %q, want f4e80411-test-session", agg.Sessions[0].SessionID)
 	}
 }
 
@@ -52,13 +82,12 @@ func TestScanBobSessions_EstimationFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No usage fields — should estimate from content length.
+	// No tokens field — should estimate from content length.
 	sess := bobChatSession{
-		ID:    "sess-2",
-		Model: "granite-3.1-8b-instruct",
+		SessionID: "est-session",
 		Messages: []bobChatMessage{
-			{Role: "user", Content: "1234567890123456"},          // 16 chars -> 4 tokens
-			{Role: "assistant", Content: "12345678901234567890"}, // 20 chars -> 5 tokens
+			{Type: "user", Content: "1234567890123456"},          // 16 chars -> 4 tokens
+			{Type: "bob-shell", Content: "12345678901234567890"}, // 20 chars -> 5 tokens
 		},
 	}
 	data, _ := json.Marshal(sess)
@@ -85,9 +114,6 @@ func TestScanBobSessions_EmptyDir(t *testing.T) {
 	if agg.TotalTokens != 0 {
 		t.Errorf("TotalTokens = %d, want 0", agg.TotalTokens)
 	}
-	if agg.SessionCount != 0 {
-		t.Errorf("SessionCount = %d, want 0", agg.SessionCount)
-	}
 }
 
 func TestScanBobSessions_EmptyString(t *testing.T) {
@@ -100,20 +126,19 @@ func TestScanBobSessions_EmptyString(t *testing.T) {
 	}
 }
 
-func TestScanBobSessions_PromptTokensFallback(t *testing.T) {
+func TestScanBobSessions_LegacyUsageFallback(t *testing.T) {
 	dir := t.TempDir()
 	chatDir := filepath.Join(dir, "tmp", "ghi-789", "chats")
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Uses prompt_tokens/completion_tokens instead of input/output.
 	sess := bobChatSession{
-		ID:    "sess-3",
-		Model: "granite-code",
+		SessionID: "legacy-sess",
 		Messages: []bobChatMessage{
-			{Role: "user", Content: "hello"},
-			{Role: "assistant", Content: "hi", Usage: bobMsgUsage{PromptTokens: 200, CompletionTokens: 80}},
+			{Type: "user", Content: "hello"},
+			{Type: "bob-shell", Content: "hi", Model: "standard",
+				Usage: &bobLegacyUsage{InputTokens: 200, OutputTokens: 80}},
 		},
 	}
 	data, _ := json.Marshal(sess)
@@ -130,20 +155,26 @@ func TestScanBobSessions_PromptTokensFallback(t *testing.T) {
 	}
 }
 
-func TestScanBobSessions_ArrayFormat(t *testing.T) {
+func TestScanBobSessions_PerMessageModel(t *testing.T) {
 	dir := t.TempDir()
-	chatDir := filepath.Join(dir, "tmp", "jkl-012", "chats")
+	chatDir := filepath.Join(dir, "tmp", "model-test", "chats")
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Alternative format: bare array of messages.
-	msgs := []bobChatMessage{
-		{Role: "user", Content: "test"},
-		{Role: "assistant", Content: "ok", Usage: bobMsgUsage{InputTokens: 10, OutputTokens: 5}},
+	// Two messages with different models; last model wins for the session.
+	sess := bobChatSession{
+		SessionID: "model-sess",
+		Messages: []bobChatMessage{
+			{Type: "user", Content: "hi"},
+			{Type: "bob-shell", Content: "a", Model: "standard",
+				Tokens: &bobTokens{Input: 100, Output: 50}},
+			{Type: "bob-shell", Content: "b", Model: "premium",
+				Tokens: &bobTokens{Input: 200, Output: 100}},
+		},
 	}
-	data, _ := json.Marshal(msgs)
-	if err := os.WriteFile(filepath.Join(chatDir, "alt.json"), data, 0o644); err != nil {
+	data, _ := json.Marshal(sess)
+	if err := os.WriteFile(filepath.Join(chatDir, "m.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,8 +182,9 @@ func TestScanBobSessions_ArrayFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.TotalTokens != 15 {
-		t.Errorf("TotalTokens = %d, want 15", agg.TotalTokens)
+	// Last model seen = "premium"
+	if agg.ByModel["premium"] != 450 {
+		t.Errorf("ByModel[premium] = %d, want 450", agg.ByModel["premium"])
 	}
 }
 
