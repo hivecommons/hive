@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1479,7 +1480,11 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		select {
 		case res := <-query.ch:
 			if res.err != nil {
-				s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				if errors.Is(res.err, errClusterPullOnly) {
+					s.logger.Info("cluster health: pull-only cluster, using the health its spokes report over the heartbeat", "cluster", cID)
+				} else {
+					s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				}
 				// Fall back to heartbeat-reported health if available.
 				if hbHealth := s.getHeartbeatHealthForCluster(cID); hbHealth != nil {
 					pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), hbHealth, hiveCounts[cID])
@@ -1615,7 +1620,20 @@ func clusterHealthQueryTimeoutFor(cluster *ClusterConfig) time.Duration {
 }
 
 // buildSingleClusterHealth queries a single cluster for node health data.
+// errClusterPullOnly marks a health query skipped because the hub cannot reach
+// the cluster at all. It is an EXPECTED outcome, not a fault, so callers report
+// it as such and use the spokes' own heartbeat-reported health instead.
+var errClusterPullOnly = errors.New("cluster is pull-only: not reachable from the hub")
+
 func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slog.Logger) (PerClusterHealth, error) {
+	if cluster.PullOnly {
+		// Node-level health comes from kubectl, which cannot run here. This is
+		// not a new failure mode: the caller already falls back to the health
+		// the spokes THEMSELVES report over the heartbeat, which is exactly the
+		// right source for a pull-only pool. Returning the sentinel routes into
+		// that path and keeps it out of the "query failed" warning.
+		return PerClusterHealth{}, fmt.Errorf("%w: %s", errClusterPullOnly, cluster.ID)
+	}
 	timeout := clusterHealthQueryTimeoutFor(cluster)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -4739,6 +4757,16 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 func (s *HubServer) clusterRecentlyUnreachable(clusterID string) bool {
 	if clusterID == "" {
 		return false
+	}
+	// A pull-only cluster is unreachable BY DECLARATION and permanently, so it
+	// never has to be learned the expensive way. This breaker exists because
+	// discovering unreachability costs a full dial timeout per hive per cycle —
+	// ~90s a call, 15 vllm-d hives serialising into ~30 minutes of blocking.
+	// Saying so in clusters.json means that price is never paid even once, and
+	// every caller that already consults this breaker is covered without
+	// needing its own pull-only check.
+	if c, ok := s.clusters[clusterID]; ok && c.PullOnly {
+		return true
 	}
 	s.clusterUnreachableMu.Lock()
 	defer s.clusterUnreachableMu.Unlock()

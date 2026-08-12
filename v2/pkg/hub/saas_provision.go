@@ -194,7 +194,25 @@ type ClusterConfig struct {
 	//
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
-	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	GitHubAppID int64 `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	// PullOnly marks a cluster the hub CANNOT reach: its spokes connect
+	// outbound over the heartbeat and nothing here can kubectl into them.
+	//
+	// WHY THIS FIELD EXISTS. Registration used to require a kubeconfig_path,
+	// so a pull-only pool could not be registered AT ALL — the loader dropped
+	// the entry ("skipping remote cluster with no kubeconfig_path"). Everything
+	// keyed off the cluster registry then silently misfired for its hives:
+	// appIdentityForHive returned nil, so five a-ks-wec2 spokes sat on the
+	// placeholder app_id logging "cluster names no github app — cannot repair",
+	// naming a remedy for a cluster entry that could not exist; and
+	// clusterForHive fell back to the DEFAULT cluster, so vanity repair ran
+	// kubectl against hive-oke looking for a namespace that lives elsewhere.
+	//
+	// Registering such a cluster makes its identity (App, forge URLs, domain)
+	// available to the heartbeat paths that do work, while every kubectl path
+	// must first ask KubectlReachable and skip rather than aim at the wrong
+	// cluster.
+	PullOnly      bool   `json:"pull_only,omitempty" yaml:"pull_only,omitempty"`
 	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	// Forges carries App identity for EVERY forge this cluster can serve, keyed
 	// by bare forge host ("github.com", "github.ibm.com").
@@ -323,10 +341,42 @@ func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args 
 	return exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...)
 }
 
+// unreachableKubeconfigSentinel is aimed at instead of a real kubeconfig when a
+// caller builds a kubectl command for a cluster the hub cannot reach.
+//
+// It must never exist. An empty --kubeconfig makes kubectl fall back to its
+// AMBIENT configuration, which inside the hub pod is the hub's OWN cluster — so
+// a command meant for a pull-only pool would quietly execute against hive-oke
+// and report success for work that never happened there. Naming a path that
+// cannot resolve turns that silent misfire into a loud failure.
+const unreachableKubeconfigSentinel = "/nonexistent/pull-only-cluster-is-not-reachable-from-the-hub"
+
+// KubectlReachable reports whether the hub can run kubectl against this cluster.
+//
+// Callers that are about to touch a cluster with kubectl must check this and
+// skip with a clear message: a pull-only cluster's spokes are reached ONLY by
+// answering their outbound heartbeat.
+func (c *ClusterConfig) KubectlReachable() bool {
+	if c == nil {
+		return false
+	}
+	if c.PullOnly {
+		return false
+	}
+	return c.InCluster || c.KubeconfigPath != ""
+}
+
 func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 	fullArgs := []string{}
 	if !cluster.InCluster {
-		fullArgs = append(fullArgs, "--kubeconfig", cluster.KubeconfigPath, "--context", cluster.Context)
+		kubeconfig := cluster.KubeconfigPath
+		if !cluster.KubectlReachable() || kubeconfig == "" {
+			// Defence in depth: the call sites guard on KubectlReachable, and
+			// this makes a missed guard fail loudly rather than execute against
+			// whatever ambient cluster kubectl would otherwise choose.
+			kubeconfig = unreachableKubeconfigSentinel
+		}
+		fullArgs = append(fullArgs, "--kubeconfig", kubeconfig, "--context", cluster.Context)
 	} else {
 		// Explicitly pass in-cluster credentials so kubectl does not fall back
 		// to localhost:8080 when exec.Command inherits an empty KUBECONFIG path.
@@ -388,8 +438,10 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 			logger.Warn("skipping cluster config with empty ID")
 			continue
 		}
-		if !c.InCluster && c.KubeconfigPath == "" {
-			logger.Warn("skipping remote cluster with no kubeconfig_path", "cluster", c.ID)
+		if !c.InCluster && c.KubeconfigPath == "" && !c.PullOnly {
+			logger.Warn("skipping remote cluster with no kubeconfig_path",
+				"cluster", c.ID,
+				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes connect outbound over the heartbeat")
 			continue
 		}
 		if c.Domain == "" {
@@ -1360,6 +1412,14 @@ func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) st
 // tests substitute it to exercise the adopt path without a live cluster (kubectl
 // is unavailable under test, so the real call always fails there).
 func (s *HubServer) makeVanityHostServable(hiveID, vanityHost string, cluster *ClusterConfig) error {
+	if cluster != nil && cluster.PullOnly {
+		// The spoke's ingress lives on a cluster the hub cannot touch, so the
+		// host cannot be added here. Returning an explicit error keeps the
+		// caller's "vanity host is not served" reporting truthful instead of
+		// letting kubectl aim at the hub's own cluster and report a missing
+		// ingress for a namespace that was never there.
+		return fmt.Errorf("cluster %s is pull-only: the hub cannot add %s to the spoke's ingress", cluster.ID, vanityHost)
+	}
 	if s.vanityHostServable != nil {
 		return s.vanityHostServable(hiveID, vanityHost, cluster)
 	}
