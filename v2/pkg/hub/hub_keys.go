@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"time"
 )
 
 // Domain-separated key derivation for the hub master secret — v2 hub-side
@@ -149,6 +150,16 @@ func (s *HubServer) verifyHubUserDual(value string) (string, bool) {
 	// N2 (CWE-321/798): accept the ASYMMETRIC value first. Only the hub can mint
 	// it — a spoke holding just the public key can verify but not forge — so it
 	// is the strongest of the three and should win when present.
+	// F10: a v3 cookie is the strongest form — same Ed25519 asymmetry as v2, PLUS
+	// a signed expiry and a revocable session ID. Try it first so a v3 value is
+	// never silently downgraded to a weaker lane.
+	//
+	// revoked is nil here: this branch has no revocation store yet, and nil means
+	// "nothing is revoked", which is the correct behaviour while nothing mints v3.
+	// Wiring a real store is part of the mint flip, not of shipping the verifier.
+	if u, ok := verifyHubUserCookieValueV3(s.sessionPublicKey(), value, time.Now(), nil); ok {
+		return u, true
+	}
 	if u, ok := verifyHubUserCookieValueV2(s.sessionPublicKey(), value); ok {
 		return u, true
 	}
