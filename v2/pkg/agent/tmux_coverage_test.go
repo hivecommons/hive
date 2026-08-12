@@ -542,29 +542,8 @@ func TestConfirmMenuOption_SelectsOption(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDismissInferencePrompts_ReadyReturnsFast(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covdismiss"
-	newRawTmuxSession(t, session)
-	m := NewManager(map[string]config.AgentConfig{"covdismiss": {Backend: "litellm"}}, discardLogger(), ProjectContext{})
-	m.mu.RLock()
-	agent := m.agents["covdismiss"]
-	m.mu.RUnlock()
-	agent.tmuxSession = session
-	// "esc to interrupt" is the ready marker -> function returns quickly.
-	paneInject(t, session, "bypass permissions on")
-
-	done := make(chan struct{})
-	go func() {
-		m.dismissInferencePrompts(agent)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Error("dismissInferencePrompts should return promptly when ready")
-	}
+	m, agent, script := newDismissPromptHarness(t, "covdismiss", "bypass permissions on", 0)
+	runDismissPromptScript(t, m, agent, script, nil)
 }
 
 // ---------------------------------------------------------------------------
