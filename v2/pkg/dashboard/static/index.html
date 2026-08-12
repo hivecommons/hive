@@ -18443,13 +18443,22 @@ function burnAreaChart() {
     // message. 403 means the hub proxied this user in with read-only
     // access — explain that instead of a bare HTTP status.
     async function saveErrorMessage(res) {
-      if (res.status === 403) {
-        return 'your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.';
-      }
+      // Prefer the server's own reason. A 403 is NOT always "you're read-only":
+      // the owner-role gate also 403s when the role is fine but the hub's
+      // owner-verification proof is missing (owner reached the dashboard without
+      // the proxy-proof header). Hard-coding "read-only" for every 403 misleads
+      // an actual owner into thinking they lack permissions. Surface the real
+      // message when the body carries one; fall back to the read-only wording
+      // only for a bare, message-less 403.
+      let serverMsg = '';
       try {
         const d = await res.json();
-        if (d && d.error) return d.error;
+        if (d && d.error) serverMsg = d.error;
       } catch (e) { /* non-JSON body */ }
+      if (serverMsg) return serverMsg;
+      if (res.status === 403) {
+        return 'your permissions on this hive are read-only, so changes are not allowed. If you are the owner, sign out and back in to refresh your access; otherwise contact the owner of this hive to ask for write permissions.';
+      }
       return 'HTTP ' + res.status;
     }
 

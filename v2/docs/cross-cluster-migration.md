@@ -5,9 +5,14 @@ cluster to another, using a real migration as the reference: the `kellyaa`
 hive, moved from **hive-oke** (vanilla Kubernetes, OKE) to **vllm-d**
 (OpenShift). Every gotcha below was hit during that migration.
 
-Use this procedure whenever the hub's built-in migrate API cannot do the job —
-in particular when the target cluster is **heartbeat-only** (the hub has no
-`kubectl` path to it), which is exactly the vllm-d situation.
+Moving a hive between clusters is a **manual procedure**. The hub used to
+expose a `POST /api/saas/hives/{id}/migrate` endpoint that automated it as
+"fresh provision on the target + deprovision of the source"; it was removed
+because the automation was not worth the maintenance it demanded — it could
+not work at all when the hub had no `kubectl` path to the target (the vllm-d
+case), and it was actively destructive when run after a manual move, since it
+found no source secrets to copy and provisioned a credential-less hive over a
+working deployment.
 
 ## Background: how the two clusters differ
 
@@ -22,124 +27,6 @@ spoke reports in via heartbeats only. Dashboards are therefore exposed
 directly via OpenShift Routes on `*.apps.fmaas-vllm-d.fmaas.res.ibm.com`, and
 each spoke must run its **own GitHub device-flow login** — there is no hub
 auth proxy in front of it.
-
-## Warning: do NOT use the built-in migrate API for this
-
-The hub exposes `POST /api/saas/hives/{id}/migrate`, which implements
-migration as **fresh provision on the target + deprovision of the source**.
-Mid-flight it reads the `hive-secrets` secret and `hive-config` ConfigMap
-**from the source cluster** to carry credentials over.
-
-Two reasons it must not be used here:
-
-1. **It cannot work when the hub can't `kubectl` to the target.** vllm-d is
-   heartbeat-only, so the hub has no way to provision anything there.
-2. **It is destructive after a manual migration.** If the source namespace
-   was already deleted (because you migrated by hand), calling the API will
-   find no secrets to read and will provision a **credential-less** hive on
-   top of your working target deployment.
-
-> **Gotcha — a stuck `migration_status` blocks future migrate calls.** The
-> API rejects any hive whose `migration_status` is `"migrating"` with a 409.
-> If a previous attempt died mid-flight, clear the field in the hive's
-> `meta.json` (step 4 below).
-
-## When to use the built-in migrate API
-
-The built-in migrate API is the automatic path. It moves a hive from one
-cluster to another. It works as fresh provision on the target plus
-deprovision of the source. It copies no data. The hive rebuilds its state
-from GitHub on the target.
-
-Use it when all of these hold:
-
-1. **The hub can run `kubectl` against both clusters.** Each cluster needs
-   an entry in `/data/saas/clusters.json` on the hub PVC. The entry carries
-   a `kubeconfig_path` and a `context` for the hub to use. The hub runs
-   plain `kubectl` for the in-cluster entry.
-2. **No hive data must be preserved.** The API does not copy volume data.
-3. **You are the hive owner or the hub admin.** The hub rejects any other
-   caller with a 403.
-
-### The API call
-
-The endpoint is `POST /api/saas/hives/{id}/migrate`. The body is JSON with
-one field, `target_cluster_id`. The body is limited to 1024 bytes. The
-endpoint requires hub auth.
-
-```bash
-curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
-  -H "Content-Type: application/json" \
-  -d '{"target_cluster_id":"<target-cluster-id>"}' \
-  https://hive.kubestellar.io/api/saas/hives/<hive-id>/migrate
-```
-
-The hub answers immediately with HTTP 200:
-
-```json
-{"status":"migrating","from":"<source-cluster-id>","to":"<target-cluster-id>"}
-```
-
-The migration runs in a background goroutine. The response above is not the
-outcome. The dashboard Move-to-cluster modal calls the same endpoint.
-
-### What the hub does
-
-1. **Validates the request.** The hive must exist. The caller must be the
-   owner or the hub admin. The hive must not be migrating already. The
-   target cluster must exist and differ from the current cluster.
-2. **Marks the hive as migrating.** It sets `migration_status` to
-   `"migrating"` and saves the hive record.
-3. **Reads the credentials from the source.** It reads the `hive-secrets`
-   Secret and the `hive-config` ConfigMap in the source namespace. It
-   carries the GitHub token, or the GitHub App private key with `app_id`
-   and `installation_id`.
-4. **Provisions a fresh hive on the target.** The new hive keeps the same
-   org, repos, primary repo, and ACMM level. The subdomain becomes
-   `<hive-id>.<target domain>`.
-5. **On provision failure, marks the migration as failed.** It sets
-   `migration_status` to `"failed"` and records the error in the hive
-   record. It restores `status` to `"running"`.
-6. **On success, deprovisions the source.** It deletes the namespace, the
-   PV and OCI resources for NFS storage, the SCC binding on OpenShift, the
-   on-disk hive directory, and the user quota records.
-7. **Updates the hive record.** It sets `cluster_id` to the target, `status`
-   to `"provisioning"`, and `migration_status` to `"completed"`.
-8. **Updates the registry entry.** It sets the new cluster ID, name, and
-   dashboard URL. A claimed hive keeps its vanity URL.
-9. **The provision watcher finishes the move.** It polls the hive
-   deployment on the target. Once the deployment has 1 available replica,
-   it sets `status` to `"running"` and clears the migration fields.
-
-### Failure signals
-
-A failed migration leaves `migration_status` as `"failed"` in the hive
-record. The `error` field of the record carries the message. The record
-lives at `/data/saas/hives/<hive-id>/meta.json` on the hub PVC.
-
-### Verify success
-
-Check the deployment on the target cluster:
-
-```sh
-kubectl get deployment hive -n hive-hosted-<hive-id> \
-  -o jsonpath={.status.availableReplicas}
-```
-
-A value of `1` means the hive runs on the target. The registry entry shows
-the new cluster. The `migration_status`, `migration_from`, and
-`migration_to` fields in `meta.json` are cleared.
-
-### Gotchas
-
-- A hive with `migration_status` set to `"migrating"` rejects any further
-  migrate call with a 409. If an attempt failed mid-flight, clear the field
-  in `meta.json` before you retry.
-- The API is destructive. It provisions fresh and deprovisions the source.
-  It copies no data. State must be rebuildable from GitHub.
-
-Implementation: `handleMigrateHive` in `pkg/hub/saas.go`, plus `migrateHive`,
-`deprovisionHive`, and `startProvisionWatcher` in `pkg/hub/saas_provision.go`.
 
 ## Manual migration procedure
 
@@ -278,8 +165,6 @@ These live on the hub pod's PVC — **back them up first** (`kubectl cp` or a
 
 - `cluster_id` → `vllm-d`
 - `subdomain` → `<hive-id>.apps.fmaas-vllm-d.fmaas.res.ibm.com`
-- `migration_status` → clear it (or set to `"completed"`). A leftover
-  `"migrating"` value blocks any future migrate call with a 409.
 
 **`/data/hub-registry.json`:** update the hive's entry — `clusterId` /
 `clusterName`. You can leave `dashboardUrl` alone: once step 3 is done, the
@@ -312,9 +197,8 @@ kubectl --context hive-oke delete namespace hive-hosted-<hive-id>
 
 ## Future work
 
-The migrate API should gain an **"adopt existing deployment"** mode: instead
-of provision-and-deprovision, it would accept a hive that was moved manually
-(or lives on a cluster the hub cannot reach) and simply update the hub-side
-records (`meta.json`, registry entry) to point at it. That would eliminate
-both failure modes above — the destructive re-provision over a working
-target, and the hard requirement that the hub can `kubectl` to both clusters.
+Worth considering: a hub-side **"adopt existing deployment"** action that
+takes a hive moved by hand (or living on a cluster the hub cannot reach) and
+simply updates the hub-side records — `meta.json` and the registry entry — to
+point at it. That is the genuinely useful half of what the removed migrate API
+did, without the provision-and-deprovision machinery that made it fragile.

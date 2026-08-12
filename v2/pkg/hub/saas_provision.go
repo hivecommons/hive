@@ -194,7 +194,25 @@ type ClusterConfig struct {
 	//
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
-	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	GitHubAppID int64 `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	// PullOnly marks a cluster the hub CANNOT reach: its spokes connect
+	// outbound over the heartbeat and nothing here can kubectl into them.
+	//
+	// WHY THIS FIELD EXISTS. Registration used to require a kubeconfig_path,
+	// so a pull-only pool could not be registered AT ALL — the loader dropped
+	// the entry ("skipping remote cluster with no kubeconfig_path"). Everything
+	// keyed off the cluster registry then silently misfired for its hives:
+	// appIdentityForHive returned nil, so five a-ks-wec2 spokes sat on the
+	// placeholder app_id logging "cluster names no github app — cannot repair",
+	// naming a remedy for a cluster entry that could not exist; and
+	// clusterForHive fell back to the DEFAULT cluster, so vanity repair ran
+	// kubectl against hive-oke looking for a namespace that lives elsewhere.
+	//
+	// Registering such a cluster makes its identity (App, forge URLs, domain)
+	// available to the heartbeat paths that do work, while every kubectl path
+	// must first ask KubectlReachable and skip rather than aim at the wrong
+	// cluster.
+	PullOnly      bool   `json:"pull_only,omitempty" yaml:"pull_only,omitempty"`
 	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	// Forges carries App identity for EVERY forge this cluster can serve, keyed
 	// by bare forge host ("github.com", "github.ibm.com").
@@ -323,10 +341,42 @@ func kubectlForClusterContext(ctx context.Context, cluster *ClusterConfig, args 
 	return exec.CommandContext(ctx, "kubectl", kubectlArgsForCluster(cluster, args...)...)
 }
 
+// unreachableKubeconfigSentinel is aimed at instead of a real kubeconfig when a
+// caller builds a kubectl command for a cluster the hub cannot reach.
+//
+// It must never exist. An empty --kubeconfig makes kubectl fall back to its
+// AMBIENT configuration, which inside the hub pod is the hub's OWN cluster — so
+// a command meant for a pull-only pool would quietly execute against hive-oke
+// and report success for work that never happened there. Naming a path that
+// cannot resolve turns that silent misfire into a loud failure.
+const unreachableKubeconfigSentinel = "/nonexistent/pull-only-cluster-is-not-reachable-from-the-hub"
+
+// KubectlReachable reports whether the hub can run kubectl against this cluster.
+//
+// Callers that are about to touch a cluster with kubectl must check this and
+// skip with a clear message: a pull-only cluster's spokes are reached ONLY by
+// answering their outbound heartbeat.
+func (c *ClusterConfig) KubectlReachable() bool {
+	if c == nil {
+		return false
+	}
+	if c.PullOnly {
+		return false
+	}
+	return c.InCluster || c.KubeconfigPath != ""
+}
+
 func kubectlArgsForCluster(cluster *ClusterConfig, args ...string) []string {
 	fullArgs := []string{}
 	if !cluster.InCluster {
-		fullArgs = append(fullArgs, "--kubeconfig", cluster.KubeconfigPath, "--context", cluster.Context)
+		kubeconfig := cluster.KubeconfigPath
+		if !cluster.KubectlReachable() || kubeconfig == "" {
+			// Defence in depth: the call sites guard on KubectlReachable, and
+			// this makes a missed guard fail loudly rather than execute against
+			// whatever ambient cluster kubectl would otherwise choose.
+			kubeconfig = unreachableKubeconfigSentinel
+		}
+		fullArgs = append(fullArgs, "--kubeconfig", kubeconfig, "--context", cluster.Context)
 	} else {
 		// Explicitly pass in-cluster credentials so kubectl does not fall back
 		// to localhost:8080 when exec.Command inherits an empty KUBECONFIG path.
@@ -388,8 +438,10 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 			logger.Warn("skipping cluster config with empty ID")
 			continue
 		}
-		if !c.InCluster && c.KubeconfigPath == "" {
-			logger.Warn("skipping remote cluster with no kubeconfig_path", "cluster", c.ID)
+		if !c.InCluster && c.KubeconfigPath == "" && !c.PullOnly {
+			logger.Warn("skipping remote cluster with no kubeconfig_path",
+				"cluster", c.ID,
+				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes connect outbound over the heartbeat")
 			continue
 		}
 		if c.Domain == "" {
@@ -588,12 +640,6 @@ type SaaSHive struct {
 	// backward compatibility.
 	GitHubBaseURL string `json:"github_base_url,omitempty"`
 	GitHubAPIURL  string `json:"github_api_url,omitempty"`
-
-	// Migration tracking fields (Phase 7).
-	MigrationStatus    string `json:"migration_status,omitempty"`     // "migrating", "completed", "failed"
-	MigrationFrom      string `json:"migration_from,omitempty"`       // source cluster ID
-	MigrationTo        string `json:"migration_to,omitempty"`         // target cluster ID
-	MigrationStartedAt string `json:"migration_started_at,omitempty"` // RFC3339 timestamp
 
 	// AssignedAt (RFC3339) records WHEN this placeholder was last claimed — set by
 	// both claim paths (handleApproveProvision, handleAssignHive) the moment they
@@ -1064,7 +1110,7 @@ const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying 
 //
 // h.VanityURL is written in exactly ONE place — handleAssignHive, at claim time.
 // Every read path (claimedVanityURL, and through it My Hives, the SSO /open
-// handoff, and migrateHive) treats an empty VanityURL as "no validated host, keep
+// handoff) treats an empty VanityURL as "no validated host, keep
 // the placeholder". So a hive claimed before that code shipped keeps
 // VanityURL == "" forever and displays/opens its raw placeholder host no matter
 // how many times it heartbeats — nothing else ever fills it in. That is the
@@ -1360,6 +1406,14 @@ func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) st
 // tests substitute it to exercise the adopt path without a live cluster (kubectl
 // is unavailable under test, so the real call always fails there).
 func (s *HubServer) makeVanityHostServable(hiveID, vanityHost string, cluster *ClusterConfig) error {
+	if cluster != nil && cluster.PullOnly {
+		// The spoke's ingress lives on a cluster the hub cannot touch, so the
+		// host cannot be added here. Returning an explicit error keeps the
+		// caller's "vanity host is not served" reporting truthful instead of
+		// letting kubectl aim at the hub's own cluster and report a missing
+		// ingress for a namespace that was never there.
+		return fmt.Errorf("cluster %s is pull-only: the hub cannot add %s to the spoke's ingress", cluster.ID, vanityHost)
+	}
 	if s.vanityHostServable != nil {
 		return s.vanityHostServable(hiveID, vanityHost, cluster)
 	}
@@ -1479,6 +1533,40 @@ func saveSaaSHive(h *SaaSHive) error {
 	return os.Rename(tmpPath, path)
 }
 
+// removeHiveRecord durably purges the hub-side, on-disk record for a deleted
+// hive: the per-hive directory under saasHivesDir/<id>/ (meta.json + manifests +
+// requests.json) and the hive's timeline file under timelineDir/<id>.json.
+//
+// This is the counterpart to saveSaaSHive and closes the "resurrection" bug:
+// deprovisionHive removes the hive directory only when a cluster config is
+// available, and NOTHING removed the timeline file. A delete that could not run
+// deprovision (no cluster config) therefore left the hive/<id>/ directory —
+// with status:"available" — on disk, so the hive reappeared in the
+// unassigned/available listing forever, pointing at a namespace that no longer
+// existed. Removing the record here makes the delete stick across a hub restart.
+//
+// Best-effort by design: a delete must never be blocked by a leftover file, and
+// the registry entry is the row the user actually sees. Failures are logged, not
+// returned. The path-traversal guard mirrors loadSaaSHive/saveSaaSHive so a
+// hostile id can never escape the record dirs.
+func removeHiveRecord(id string, logger *slog.Logger) {
+	if strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
+		logger.Warn("removeHiveRecord: refusing unsafe hive id", "hive_id", id)
+		return
+	}
+	hiveDir := filepath.Join(saasHivesDir, id)
+	if err := os.RemoveAll(hiveDir); err != nil {
+		logger.Warn("removeHiveRecord: failed to remove hive directory", "path", hiveDir, "error", err)
+	}
+	// timelinePath applies its own traversal guard and returns "" if the id is
+	// not a safe filename; skip the removal in that case.
+	if tp := timelinePath(id); tp != "" {
+		if err := os.Remove(tp); err != nil && !os.IsNotExist(err) {
+			logger.Warn("removeHiveRecord: failed to remove timeline file", "path", tp, "error", err)
+		}
+	}
+}
+
 func listSaaSHives() []SaaSHive {
 	entries, err := os.ReadDir(saasHivesDir)
 	if err != nil {
@@ -1500,7 +1588,7 @@ func listSaaSHives() []SaaSHive {
 func countUserHives(username string) int {
 	count := 0
 	for _, h := range listSaaSHives() {
-		if h.Owner == username {
+		if canonicalEqual(h.Owner, username) {
 			count++
 		}
 	}
@@ -1904,120 +1992,6 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 	logger.Info("audit: hive deprovisioned", "hive_id", hiveID, "owner", h.Owner, "cluster", cluster.ID)
 }
 
-// migrateHive moves a hive from one cluster to another. For v1 this is a
-// "fresh provision on target, deprovision on source" approach — no data copy.
-// The hive rebuilds its state from GitHub on the new cluster.
-func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConfig) {
-	logger := s.logger.With("hive_id", h.ID, "from", fromCluster.ID, "to", toCluster.ID)
-	logger.Info("audit: migration started")
-
-	// Step 1: Build a synthetic CreateHiveRequest from the existing hive metadata
-	// so we can reuse the standard provisioning path.
-	req := &CreateHiveRequest{
-		Org:         h.Org,
-		Repos:       strings.Join(h.Repos, ","),
-		PrimaryRepo: h.PrimaryRepo,
-		ACMMLevel:   h.ACMMLevel,
-		ClusterID:   toCluster.ID,
-	}
-
-	// Read the existing secret from the source cluster to pass credentials through.
-	ns := "hive-hosted-" + h.ID
-	tokenOut, err := kubectlForCluster(fromCluster, "get", "secret", "hive-secrets", "-n", ns,
-		"-o", "jsonpath={.data.github-token}").Output()
-	if err == nil && len(tokenOut) > 0 {
-		// Token is base64-encoded in the secret; kubectl jsonpath returns raw base64.
-		decoded, decErr := base64Decode(string(tokenOut))
-		if decErr == nil {
-			req.GitHubToken = decoded
-		}
-	}
-
-	// Check for GitHub App credentials.
-	appKeyOut, err := kubectlForCluster(fromCluster, "get", "secret", "hive-secrets", "-n", ns,
-		"-o", "jsonpath={.data.gh-app-key\\.pem}").Output()
-	if err == nil && len(appKeyOut) > 0 {
-		decoded, decErr := base64Decode(string(appKeyOut))
-		if decErr == nil && strings.HasPrefix(strings.TrimSpace(decoded), "-----BEGIN") {
-			req.AppPrivateKey = decoded
-			req.AuthMethod = "app"
-			// Read app_id and installation_id from the ConfigMap.
-			appIDOut, _ := kubectlForCluster(fromCluster, "get", "configmap", "hive-config", "-n", ns,
-				"-o", "jsonpath={.data.hive\\.yaml}").Output()
-			if len(appIDOut) > 0 {
-				configStr := string(appIDOut)
-				req.AppID = extractYAMLValue(configStr, "app_id")
-				req.InstallationID = extractYAMLValue(configStr, "installation_id")
-			}
-		}
-	}
-
-	// Determine visibility from the source (is_public). The registry may
-	// know the hive is public even when the SaaS record predates the
-	// IsPublic field (pre-#1604 provisions), so only ever upgrade to
-	// public here — never downgrade a record the owner toggled public.
-	s.mu.RLock()
-	for _, re := range s.registry.Hives {
-		if re.ID == h.ID {
-			h.IsPublic = h.IsPublic || re.IsPublic
-			break
-		}
-	}
-	s.mu.RUnlock()
-
-	// Update the hive subdomain and dashboard URL for the new cluster.
-	h.Subdomain = h.ID + "." + toCluster.Domain
-
-	// Step 2: Provision on target cluster.
-	logger.Info("migration: provisioning on target cluster")
-	if provErr := provisionHive(h, req, toCluster, s.appKeysByAppID(), logger); provErr != nil {
-		logger.Error("migration: provisioning on target failed", "error", provErr)
-		h.MigrationStatus = "failed"
-		h.Error = fmt.Sprintf("migration failed during provisioning on %s: %s", toCluster.ID, provErr.Error())
-		h.Status = "running" // restore previous status
-		saveSaaSHive(h)
-		return
-	}
-
-	// Step 3: Deprovision on source cluster (best-effort cleanup).
-	logger.Info("migration: deprovisioning source cluster")
-	deprovisionHive(h, fromCluster, logger)
-
-	// Step 4: Update hive records to point to the new cluster.
-	h.ClusterID = toCluster.ID
-	h.Status = "provisioning" // will flip to "running" via the provision watcher
-	h.MigrationStatus = "completed"
-	h.Error = ""
-	if saveErr := saveSaaSHive(h); saveErr != nil {
-		logger.Error("migration: failed to save updated hive record", "error", saveErr)
-	}
-
-	// Update the registry entry's ClusterID and ClusterName in-memory.
-	// A migration re-provisions the hive under a fresh placeholder Subdomain on
-	// the target cluster, but a CLAIMED hive must keep showing its vanity host —
-	// resetting DashboardURL to the placeholder subdomain here is exactly what
-	// left claimed, migrated hives back on the placeholder URL in the hub. Prefer
-	// the validated meta vanity_url for a claimed hive; only an unclaimed
-	// placeholder falls back to its new placeholder subdomain.
-	migratedURL := "https://" + h.Subdomain
-	if v := claimedVanityURL(h); v != "" {
-		migratedURL = v
-	}
-	s.mu.Lock()
-	for i := range s.registry.Hives {
-		if s.registry.Hives[i].ID == h.ID {
-			s.registry.Hives[i].ClusterID = toCluster.ID
-			s.registry.Hives[i].ClusterName = toCluster.Name
-			s.registry.Hives[i].DashboardURL = migratedURL
-			break
-		}
-	}
-	s.mu.Unlock()
-	s.requestSave()
-
-	logger.Info("audit: migration completed", "new_cluster", toCluster.ID, "subdomain", h.Subdomain)
-}
-
 // base64Decode decodes a standard base64 string. Returns empty string on error.
 func base64Decode(s string) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
@@ -2085,14 +2059,6 @@ func (s *HubServer) startProvisionWatcher(ctx context.Context) {
 			}
 			if strings.TrimSpace(string(out)) == "1" {
 				h.Status = "running"
-				// Clear migration tracking once the hive is running on the new cluster.
-				if h.MigrationStatus == "completed" || h.MigrationStatus == "migrating" {
-					s.logger.Info("audit: post-migration hive running", "hive_id", h.ID, "cluster", cluster.ID)
-					h.MigrationStatus = ""
-					h.MigrationFrom = ""
-					h.MigrationTo = ""
-					h.MigrationStartedAt = ""
-				}
 				saveSaaSHive(&h)
 				s.logger.Info("audit: saas hive running", "hive_id", h.ID, "cluster", cluster.ID)
 			}

@@ -11,7 +11,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
 - [Troubleshooting](troubleshooting.md) — v2 container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
 - [Notifications](notifications.md) — ntfy, Slack, and Discord webhook setup, trigger events, and test commands.
-- [Cross-cluster migration](cross-cluster-migration.md) — moving a hive between clusters without losing state.
+- [Cross-cluster migration](cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
 - [Dashboard route and health checks](health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.

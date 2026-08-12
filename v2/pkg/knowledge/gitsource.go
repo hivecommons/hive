@@ -77,7 +77,7 @@ func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *
 
 // Init clones the repo (or reuses an existing clone) and creates the FileStore.
 func (g *GitSource) Init(ctx context.Context) error {
-	if err := ValidateGitSourceURL(g.config.URL); err != nil {
+	if err := ValidateGitSourceURLContext(ctx, g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: invalid url: %w", g.config.Name, err)
 	}
 	if err := ValidateGitSourceBranch(g.config.Branch); err != nil {
@@ -250,6 +250,13 @@ func (g *GitSource) setupSparseCheckout(ctx context.Context) error {
 // ValidateGitSourceURL enforces the transports permitted for git-backed knowledge sources.
 // It also blocks private/loopback destinations to prevent SSRF via git clone.
 func ValidateGitSourceURL(raw string) error {
+	return ValidateGitSourceURLContext(context.Background(), raw)
+}
+
+// ValidateGitSourceURLContext is ValidateGitSourceURL with a caller-supplied
+// context, so the SSRF DNS lookup inherits the request's deadline and
+// cancellation instead of running unbounded on a background context.
+func ValidateGitSourceURLContext(ctx context.Context, raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return fmt.Errorf("git URL is required")
@@ -285,7 +292,7 @@ func ValidateGitSourceURL(raw string) error {
 	// Operators running a legitimately-internal Git server (e.g. an in-cluster
 	// GitLab) set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true to opt in; default is
 	// fail-closed.
-	if !allowPrivateGitSource() && gitSourceHostIsPrivate(parsed.Hostname()) {
+	if !allowPrivateGitSource() && gitSourceHostResolvesPrivate(ctx, parsed.Hostname()) {
 		return fmt.Errorf("git URL host resolves to a private/internal address (set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true for an internal Git server)")
 	}
 
@@ -309,6 +316,49 @@ func ValidateGitSourceBranch(branch string) error {
 // private/internal address is permitted. Default false (fail-closed).
 func allowPrivateGitSource() bool {
 	return os.Getenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE") == "true"
+}
+
+// gitSourceResolver is the DNS lookup used by the SSRF check, replaceable in
+// tests. Mirrors the dashboard's privateURLResolver seam.
+var gitSourceResolver = func(ctx context.Context, host string) ([]string, error) {
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
+
+// gitSourceLookupTimeout bounds the SSRF DNS lookup so a slow or hostile
+// resolver cannot stall the request that triggered validation.
+const gitSourceLookupTimeout = 5 * time.Second
+
+// gitSourceHostResolvesPrivate reports whether host is private either as an IP
+// literal or by DNS resolution.
+//
+// SECURITY (audit F8, CWE-918): the literal check alone was the whole defense,
+// so `http://internal.attacker.tld/` resolving to 169.254.169.254 validated
+// cleanly — an attacker controls their own DNS. Resolving narrows the window to
+// a genuine rebind race; NOT resolving removes the check altogether. The
+// dashboard's isPrivateURL already resolves and fails closed; this brings the
+// git path in line with it.
+//
+// Fails CLOSED on lookup error, matching that precedent.
+func gitSourceHostResolvesPrivate(ctx context.Context, host string) bool {
+	if gitSourceHostIsPrivate(host) {
+		return true
+	}
+	// An IP literal was fully decided above; no DNS to consult.
+	if net.ParseIP(strings.Trim(host, "[]")) != nil {
+		return false
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout)
+	defer cancel()
+	addrs, err := gitSourceResolver(lookupCtx, host)
+	if err != nil {
+		return true
+	}
+	for _, addr := range addrs {
+		if gitSourceHostIsPrivate(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // gitSourceHostIsPrivate reports whether host is a loopback/private/link-local

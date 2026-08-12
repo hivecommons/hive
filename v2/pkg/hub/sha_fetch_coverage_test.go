@@ -200,6 +200,45 @@ func TestGetBranchHead(t *testing.T) {
 	}
 }
 
+// TestBuildStartedAtLifecycle pins the elapsed-build-timer backend: the start
+// time is stamped when a SHA first enters "building", preserved while the same
+// SHA keeps building across polls, and cleared on ready/failed or a new SHA.
+func TestBuildStartedAtLifecycle(t *testing.T) {
+	resetSHACaches(t)
+
+	// First poll sees the head building → start time stamped, exposed.
+	setBranchHead("v2", "sha1", "msg", imageStatusBuilding)
+	h := getBranchHead("v2")
+	if h.BuildStartedAt.IsZero() {
+		t.Fatal("building head should have a BuildStartedAt")
+	}
+	first := h.BuildStartedAt
+	if starts := getImageBuildStartTimes(); starts["v2"] != first.UnixMilli() {
+		t.Errorf("getImageBuildStartTimes[v2] = %d, want %d", starts["v2"], first.UnixMilli())
+	}
+
+	// Second poll, SAME SHA still building → start time is preserved, not reset.
+	setBranchHead("v2", "sha1", "msg", imageStatusBuilding)
+	if got := getBranchHead("v2").BuildStartedAt; !got.Equal(first) {
+		t.Errorf("BuildStartedAt reset on same-SHA re-poll: got %v want %v", got, first)
+	}
+
+	// Image finishes → start time cleared, dropped from the exposed map.
+	setBranchHead("v2", "sha1", "msg", imageStatusReady)
+	if got := getBranchHead("v2").BuildStartedAt; !got.IsZero() {
+		t.Errorf("BuildStartedAt should clear when ready, got %v", got)
+	}
+	if _, ok := getImageBuildStartTimes()["v2"]; ok {
+		t.Error("a ready branch must not appear in getImageBuildStartTimes")
+	}
+
+	// A brand-new SHA building → a fresh start time, not the old one.
+	setBranchHead("v2", "sha2", "msg", imageStatusBuilding)
+	if got := getBranchHead("v2").BuildStartedAt; got.IsZero() || got.Equal(first) {
+		t.Errorf("new building SHA should get a fresh start time, got %v (first was %v)", got, first)
+	}
+}
+
 func mustURL(t *testing.T, raw string) *url.URL {
 	t.Helper()
 	u, err := url.Parse(raw)

@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -326,5 +329,107 @@ func TestDeduplicateBlocks_NearDuplicates(t *testing.T) {
 	if len(result) > 3 {
 		t.Errorf("DeduplicateBlocks should remove near-duplicate block, got %d lines: %v",
 			len(result), result)
+	}
+}
+
+// Audit F12 (CWE-59/61), the WRITE half — ported from v4 (#3500).
+//
+// The sibling half (ensureWorldWritable, which WIDENED a symlinked file's mode)
+// is already fixed on this branch. These cover the two WRITERS, which used a
+// plain os.WriteFile — it follows symlinks, so an attacker who could plant a
+// link at the predictable inference-home path had the hive overwrite the
+// CONTENTS of any file it could reach.
+//
+// The inference HOME is /tmp/.claude-inference-home-<agent>: a guessable path
+// inside world-writable /tmp, in a directory deliberately made world-writable so
+// the agent UID can use it. Planting the link needs no privilege.
+func TestF12_SeedJSONFileDoesNotFollowSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const victimContent = "hive-owned secret, must survive"
+	victim := filepath.Join(root, "victim.json")
+	if err := os.WriteFile(victim, []byte(victimContent), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	target := filepath.Join(home, ".claude.json")
+	if err := os.Symlink(victim, target); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	m.seedJSONFile("victim-agent", target, map[string]any{"hasCompletedOnboarding": true})
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Fatalf("F12: the hive wrote THROUGH a planted symlink and clobbered a file outside the agent home.\n victim now: %s", got)
+	}
+}
+
+// mergeApprovedAPIKeys is the second writer. It reads the file first, so without
+// the guard it is also a read-and-echo primitive.
+func TestF12_MergeApprovedAPIKeysDoesNotFollowSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const victimContent = `{"customApiKeyResponses":{"approved":[]}}`
+	victim := filepath.Join(root, "victim.json")
+	if err := os.WriteFile(victim, []byte(victimContent), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	target := filepath.Join(home, ".claude.json")
+	if err := os.Symlink(victim, target); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	m.mergeApprovedAPIKeys("victim-agent", target)
+
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Fatalf("F12: mergeApprovedAPIKeys wrote through a planted symlink.\n victim now: %s", got)
+	}
+}
+
+// POSITIVE CONTROL. The guards must not break the feature: a real (non-symlink)
+// config still has to be seeded and merged, or both tests above would pass
+// against a build that simply never writes anything.
+func TestF12_RealInferenceConfigStillSeeded(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude.json")
+
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	m.seedJSONFile("real-agent", path, map[string]any{"hasCompletedOnboarding": true})
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("test is vacuous: the seed never wrote a real file: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("seeded file is not valid JSON: %v", err)
+	}
+	if parsed["hasCompletedOnboarding"] != true {
+		t.Fatalf("seeded key missing — the guard broke normal seeding: %v", parsed)
+	}
+
+	m.seedJSONFile("real-agent", path, map[string]any{"anotherKey": "v"})
+	data2, _ := os.ReadFile(path)
+	var parsed2 map[string]any
+	if err := json.Unmarshal(data2, &parsed2); err != nil {
+		t.Fatalf("merged file is not valid JSON: %v", err)
+	}
+	if parsed2["anotherKey"] != "v" || parsed2["hasCompletedOnboarding"] != true {
+		t.Fatalf("merge lost keys: %v", parsed2)
 	}
 }

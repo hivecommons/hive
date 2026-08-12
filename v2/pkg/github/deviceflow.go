@@ -21,7 +21,16 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	deviceScope    = "repo"
+	// deviceScope is empty: dashboard login only proves the user's identity
+	// (ValidateToken → GET /user, which works with a no-scope token). It never
+	// needs repository access, because ALL GitHub writes — issues, PRs,
+	// comments, merges, the advisory digest — go through the hive's App
+	// installation token (kubestellar-hive[bot]), not the user token. Requesting
+	// "repo" here forced every viewer/owner through GitHub's "read and write all
+	// public and private repository data" authorization just to look at a
+	// dashboard (issue #1927). This mirrors the hub browser-OAuth path, which
+	// has used an empty scope for the same reason.
+	deviceScope = ""
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.
@@ -56,7 +65,12 @@ func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error)
 	codeURL, _, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id": {clientID},
-		"scope":     {deviceScope},
+	}
+	// Only request a scope when one is configured. deviceScope is empty by
+	// default (identity-only login, issue #1927); omitting the field entirely
+	// yields a no-scope token rather than sending scope="".
+	if deviceScope != "" {
+		data.Set("scope", deviceScope)
 	}
 	req, err := http.NewRequest("POST", codeURL, strings.NewReader(data.Encode()))
 	if err != nil {
