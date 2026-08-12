@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/auth"
 	"github.com/kubestellar/hive/v2/pkg/openrouter"
 )
 
@@ -792,6 +793,13 @@ type HubServer struct {
 	mu       sync.RWMutex
 	logger   *slog.Logger
 	saveCh   chan struct{}
+
+	// authProviders is the enabled human-login provider set (GitHub OAuth plus any
+	// configured OIDC providers — Google/IBMid/Red Hat). Built once in
+	// registerOAuth from the environment; nil until then. The login picker and the
+	// OIDC callback read it. It governs ONLY human dashboard login/access — never
+	// the GitHub App token or agent logins.
+	authProviders *auth.Registry
 	// registryPath is this server's on-disk registry file, captured from the
 	// package-level default at construction and immutable afterwards. It is a
 	// per-instance field (not a use-time read of the global) so the saveLoop

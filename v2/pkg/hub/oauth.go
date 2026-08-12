@@ -6,17 +6,29 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/auth"
 )
 
 const (
 	oauthTimeout     = 10 * time.Second
 	cookieMaxAgeDays = 7 // login session cookie lifetime
+
+	// oauthRedirectURI is the single OAuth/OIDC callback registered on every
+	// provider's side. All providers share one callback path; the state parameter
+	// carries which provider to complete against.
+	oauthRedirectURI = "https://hive.kubestellar.io/api/auth/callback"
+
+	// oidcNonceCookieName holds the per-login OIDC replay nonce. Host-scoped like
+	// the CSRF state cookie; the id_token must echo it back or the callback fails.
+	oidcNonceCookieName = "hive_oidc_nonce"
 )
 
 // These GitHub.com OAuth/API endpoints are vars (not consts) so tests can point
@@ -33,15 +45,33 @@ var (
 
 func (s *HubServer) registerOAuth() {
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
-	if clientID == "" {
-		s.logger.Info("hub OAuth disabled (no HIVE_HUB_OAUTH_CLIENT_ID)")
+
+	// Build the human-login provider set: GitHub (when its client id is set) plus
+	// any configured OIDC providers (Google/IBMid/Red Hat — enabled iff their
+	// <PREFIX>_CLIENT_ID env is present). The GitHub endpoints come from the
+	// existing test-overridable vars so the auth registry shares the hub's seam.
+	s.authProviders = auth.BuildRegistry(clientID, defaultGHAuthorizeURL, defaultGHTokenURL)
+
+	// Nothing to serve if no provider at all is configured. Historically the hub
+	// keyed entirely on GitHub; now it stays "OAuth disabled" only when NEITHER
+	// GitHub nor any OIDC provider is set.
+	if s.authProviders.Count() == 0 {
+		s.logger.Info("hub OAuth disabled (no login provider configured)")
 		return
 	}
 	s.mux.HandleFunc("GET /login", s.handleLogin)
+	// Per-provider entry point. GitHub keeps its existing behavior; an OIDC
+	// provider ("google"/"ibmid"/"redhat") starts the OIDC authorize.
+	s.mux.HandleFunc("GET /login/{provider}", s.handleProviderLogin)
 	s.mux.HandleFunc("GET /api/auth/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("GET /api/auth/user", s.handleAuthUser)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
-	s.logger.Info("hub OAuth enabled", "client_id", clientID)
+
+	names := make([]string, 0, s.authProviders.Count())
+	for _, p := range s.authProviders.Providers() {
+		names = append(names, p.Name)
+	}
+	s.logger.Info("hub login enabled", "providers", strings.Join(names, ","), "github_client_id", clientID)
 }
 
 // linkPreviewUserAgents are the crawlers that fetch a URL purely to build a
@@ -157,14 +187,57 @@ func (s *HubServer) handleOGCard(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// handleLogin is the login entry point. With exactly one provider enabled
+// (today: GitHub) it redirects straight into that provider, preserving the
+// pre-multi-provider UX byte-for-byte. With more than one enabled it renders a
+// small provider picker; each button links to /login/{provider} carrying the
+// redirect target through.
 func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Serve Hive's own card to preview crawlers instead of redirecting them into
-	// GitHub's OAuth page, whose Open Graph tags they would otherwise scrape.
+	// a provider's OAuth page, whose Open Graph tags they would otherwise scrape.
 	if isLinkPreviewCrawler(r) {
 		writeLinkPreview(w)
 		return
 	}
-	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
+	redirect := s.loginRedirectTarget(r)
+	providers := s.authProviders.Providers()
+	if len(providers) == 0 {
+		// Registry not built (a HubServer constructed without registerOAuth — the
+		// unit-test path) but GitHub is configured: behave as single-GitHub so the
+		// pre-multi-provider UX is preserved with no registry.
+		if gh := s.resolveProvider(legacyProvider); gh != nil {
+			s.startProviderLogin(w, r, gh, redirect)
+			return
+		}
+		http.Error(w, "login unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if len(providers) == 1 {
+		// Single provider: go straight in — no picker, unchanged UX.
+		s.startProviderLogin(w, r, providers[0], redirect)
+		return
+	}
+	s.writeProviderPicker(w, providers, redirect)
+}
+
+// handleProviderLogin starts login for a specific provider named in the path.
+func (s *HubServer) handleProviderLogin(w http.ResponseWriter, r *http.Request) {
+	if isLinkPreviewCrawler(r) {
+		writeLinkPreview(w)
+		return
+	}
+	name := r.PathValue("provider")
+	p := s.authProviders.Get(name)
+	if p == nil {
+		http.Error(w, "unknown login provider", http.StatusNotFound)
+		return
+	}
+	s.startProviderLogin(w, r, p, s.loginRedirectTarget(r))
+}
+
+// loginRedirectTarget extracts and validates the post-login redirect from the
+// request (?redirect= / ?rd=), defaulting to /dashboard for anything untrusted.
+func (s *HubServer) loginRedirectTarget(r *http.Request) string {
 	redirect := r.URL.Query().Get("redirect")
 	if redirect == "" {
 		redirect = r.URL.Query().Get("rd")
@@ -174,20 +247,26 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 			redirect = "/dashboard"
 		}
 	}
+	return redirect
+}
+
+// startProviderLogin mints the CSRF state nonce (and, for OIDC, the replay nonce)
+// and redirects the browser into the provider's authorize endpoint. GitHub keeps
+// its exact original request shape; OIDC providers get an OIDC nonce too.
+func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p *auth.Provider, redirect string) {
 	// SECURITY (audit F11, CWE-352): bind this login to THIS browser.
 	//
 	// `state` used to be nothing but the redirect target, so it proved only that
 	// the callback carried a URL — never that this browser had actually STARTED
-	// a login. An attacker could complete an OAuth flow against their own GitHub
-	// account and hand the victim the resulting callback URL, logging the victim
-	// into the ATTACKER's account (login CSRF / session fixation); anything the
-	// victim then did landed in the attacker's account.
+	// a login. An attacker could complete an OAuth flow against their own account
+	// and hand the victim the resulting callback URL, logging the victim into the
+	// ATTACKER's account (login CSRF / session fixation).
 	//
 	// Mint an unguessable nonce, set it in a short-lived host-scoped cookie, and
 	// carry it in state. The callback requires the two to match, so a state the
-	// victim's browser did not mint cannot be replayed against them. The
-	// redirect target rides along after the separator and is still validated on
-	// the way out — the open-redirect half was already handled and is unchanged.
+	// victim's browser did not mint cannot be replayed against them. The provider
+	// name and redirect target ride along after the separators and are validated
+	// on the way out.
 	nonce, err := oauthStateNonce()
 	if err != nil {
 		s.logger.Warn("OAuth: cannot mint login state nonce", "error", err)
@@ -201,30 +280,115 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(oauthStateTTL.Seconds()),
 		HttpOnly: true,
 		Secure:   true,
-		// Lax, not Strict: the callback arrives as a top-level GET redirect
-		// FROM github.com, and Strict would withhold the cookie on exactly that
+		// Lax, not Strict: the callback arrives as a top-level GET redirect FROM
+		// the provider, and Strict would withhold the cookie on exactly that
 		// navigation and break every login.
 		SameSite: http.SameSiteLaxMode,
 	})
-	state := url.QueryEscape(nonce + oauthStateSeparator + redirect)
-	// An EMPTY scope is deliberate, not an omission. The hub only needs to know
-	// WHO is logging in: the callback reads GET /user for the login name and
-	// signs it into the session cookie. GitHub serves /user's public profile —
-	// including "login" — for a token with no scopes at all, so identity works
-	// unscoped.
-	//
-	// The hub used to ask for read:user because the request wizard listed the
-	// user's repositories for them to pick from. That listing is gone: it could
-	// only ever see public github.com, and it could never generalize to GitLab
-	// or Gitea. Requesters now type a repository URL instead, which needs no
-	// permission on the requester's account whatsoever.
-	//
-	// Do NOT restore a scope here without also restoring a feature that needs
-	// it — asking for access the product does not use is a consent prompt users
-	// are right to refuse.
-	authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s",
-		defaultGHAuthorizeURL, clientID, "https://hive.kubestellar.io/api/auth/callback", state)
+
+	// state = nonce : provider : redirect. The provider name is carried so the
+	// callback knows which provider to complete against without a second cookie.
+	state := url.QueryEscape(nonce + oauthStateSeparator + p.Name + oauthStateSeparator + redirect)
+
+	if !p.IsOIDC {
+		// GitHub: identical request shape to the pre-multi-provider hub. An EMPTY
+		// scope is deliberate — the hub only needs WHO is logging in, and GitHub
+		// serves /user's public profile (including "login") unscoped. Do NOT add a
+		// scope without a feature that needs it.
+		authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s",
+			p.AuthorizeURL, p.ClientID, oauthRedirectURI, state)
+		http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+		return
+	}
+
+	// OIDC: mint a replay nonce, cookie it, and pass it in the authorize request;
+	// the callback requires the id_token to echo it back.
+	oidcNonce, err := oauthStateNonce()
+	if err != nil {
+		s.logger.Warn("OIDC: cannot mint nonce", "provider", p.Name, "error", err)
+		http.Error(w, "login unavailable", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcNonceCookieName,
+		Value:    oidcNonce,
+		Path:     "/",
+		MaxAge:   int(oauthStateTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	authURL, err := p.AuthCodeURL(oauthRedirectURI, state, oidcNonce)
+	if err != nil {
+		s.logger.Warn("OIDC: cannot build authorize URL", "provider", p.Name, "error", err)
+		http.Error(w, "login unavailable — provider not reachable", http.StatusBadGateway)
+		return
+	}
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// providerGlyph returns a tiny inline SVG/emoji-free label mark per provider for
+// the picker. Kept as plain text marks (no remote assets) so the picker page is
+// fully self-contained and needs no external fetch.
+func providerGlyph(name string) string {
+	switch name {
+	case "github":
+		return "&#xf09b;" // rendered as text fallback; see picker CSS note
+	case "google":
+		return "G"
+	case "ibmid":
+		return "IBM"
+	case "redhat":
+		return "&#x1f452;"
+	default:
+		return "&#x2022;"
+	}
+}
+
+// writeProviderPicker renders the multi-provider sign-in page. Shown only when
+// more than one provider is enabled; a single-provider hub never reaches here.
+// The redirect target is preserved by threading it through each button's link.
+func (s *HubServer) writeProviderPicker(w http.ResponseWriter, providers []*auth.Provider, redirect string) {
+	rd := ""
+	if redirect != "" {
+		rd = "?redirect=" + url.QueryEscape(redirect)
+	}
+	var buttons strings.Builder
+	for _, p := range providers {
+		// Each button is a plain link to /login/{provider}; startProviderLogin
+		// mints the nonces there. Provider name/display are from our closed set,
+		// not user input, so they are safe to embed.
+		buttons.WriteString(fmt.Sprintf(
+			`<a class="prov prov-%s" href="/login/%s%s"><span class="glyph">%s</span><span>Continue with %s</span></a>`+"\n",
+			html.EscapeString(p.Name), html.EscapeString(p.Name), rd, providerGlyph(p.Name), html.EscapeString(p.DisplayName)))
+	}
+	page := `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Hive</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
+.card{width:min(360px,92vw);padding:32px 28px;border:1px solid #30363d;border-radius:14px;background:#161b22;text-align:center}
+h1{font-size:20px;margin:0 0 4px}
+p.sub{color:#8b949e;font-size:13px;margin:0 0 24px}
+.prov{display:flex;align-items:center;gap:12px;justify-content:center;width:100%;box-sizing:border-box;
+padding:11px 14px;margin:8px 0;border:1px solid #30363d;border-radius:9px;background:#21262d;color:#e6edf3;
+text-decoration:none;font-size:14px;font-weight:600;transition:background .12s,border-color .12s}
+.prov:hover{background:#30363d;border-color:#8b949e}
+.glyph{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+border-radius:5px;background:#0d1117;font-size:11px;font-weight:700}
+.foot{margin-top:20px;color:#6e7681;font-size:11px}
+</style></head><body>
+<div class="card">
+<h1>Sign in to Hive</h1>
+<p class="sub">Choose how you'd like to continue.</p>
+` + buttons.String() + `<div class="foot">Your login provider controls access only. Hive's GitHub work runs through its own app.</div>
+</div></body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(page))
 }
 
 func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +416,157 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// Single-use: clear it now so a captured callback URL cannot be replayed.
 	s.clearOAuthStateCookie(w)
 
+	// state = nonce : provider : redirect. The provider name tells us which flow
+	// to complete; it defaults to github so a stale two-part state (from a login
+	// begun on the pre-multi-provider hub, mid-deploy) still completes as GitHub.
+	providerName, redirect := s.parseCallbackState(r)
+	p := s.resolveProvider(providerName)
+	if p == nil {
+		s.logger.Warn("OAuth: callback for unconfigured provider", "provider", providerName)
+		http.Error(w, "unknown login provider", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the login into a canonical identity (+ optional avatar/email and, for
+	// GitHub, the user access token to store). Each branch fully validates its own
+	// response; a failure returns an HTTP error and no session is minted.
+	var (
+		canonicalID string
+		avatarURL   string
+		email       string
+		ghToken     string // GitHub user access token, if any (stored encrypted)
+	)
+	if p.IsOIDC {
+		claims, err := p.Exchange(r.Context(), code, oauthRedirectURI, s.oidcNonceFromCookie(r))
+		s.clearOIDCNonceCookie(w)
+		if err != nil {
+			s.logger.Warn("OIDC: callback verification failed", "provider", p.Name, "error", err)
+			http.Error(w, "login failed — could not verify your identity", http.StatusBadGateway)
+			return
+		}
+		id, err := makeCanonical(p.Name, claims.Subject)
+		if err != nil {
+			s.logger.Warn("OIDC: subject not usable as identity", "provider", p.Name, "error", err)
+			http.Error(w, "login failed — invalid identity", http.StatusBadGateway)
+			return
+		}
+		canonicalID = id
+		avatarURL = claims.AvatarURL
+		email = claims.Email
+		s.logger.Info("audit: hub OIDC login", "provider", p.Name, "user", canonicalID)
+	} else {
+		login, avatar, token, ok := s.exchangeGitHubLogin(w, code)
+		if !ok {
+			return // exchangeGitHubLogin already wrote the error
+		}
+		// GitHub primary identity is the bare login (the shim reads it as
+		// github:<login>); keep it bare so legacy files/grants/cookies are
+		// byte-identical to the pre-multi-provider hub.
+		canonicalID = login
+		avatarURL = avatar
+		ghToken = token
+		s.logger.Info("audit: hub OAuth login", "user", login)
+	}
+
+	// From here the two paths converge: mint the session cookies over the
+	// canonical id (the signing machinery signs an opaque string, so this is
+	// provider-agnostic) and persist the user record.
+	if !s.mintSessionCookies(w, canonicalID) {
+		return // mintSessionCookies wrote the error
+	}
+
+	saasUser := ensureSaaSUser(canonicalID)
+	// Stamp the provider fields so the Users-table badge and dual-read storage
+	// have an explicit canonical identity (Phase 1d fields). For a legacy GitHub
+	// user these are derivable, but writing them makes the record self-describing.
+	provider, _, _ := parseCanonical(canonicalizeLegacy(canonicalID))
+	saasUser.CanonicalID = canonicalizeLegacy(canonicalID)
+	saasUser.Provider = provider
+	if avatarURL != "" {
+		saasUser.AvatarURL = avatarURL
+	}
+	if email != "" {
+		saasUser.Email = email
+	}
+	// A completed callback IS a login — count it here and nowhere else.
+	saasUser.LoginCount++
+	if ghToken != "" {
+		if encrypted, err := encryptToken(ghToken); err == nil {
+			saasUser.EncryptedToken = encrypted
+		}
+	}
+	saveSaaSUser(saasUser)
+
+	if redirect == "" {
+		redirect = "/dashboard"
+	}
+	http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
+}
+
+// resolveProvider returns the auth.Provider to complete a callback against. It
+// reads the built registry, but falls back to synthesizing a GitHub provider
+// from the current env/endpoint vars when the registry is absent (a HubServer
+// constructed without registerOAuth — the unit-test path) or does not carry
+// GitHub. This keeps the GitHub callback working exactly as before regardless of
+// whether the registry was built, while OIDC always requires the registry.
+func (s *HubServer) resolveProvider(name string) *auth.Provider {
+	if p := s.authProviders.Get(name); p != nil {
+		return p
+	}
+	// GitHub is always resolvable by synthesizing it from the current env/endpoint
+	// vars: the registry may not carry it (a HubServer built without registerOAuth
+	// — the unit-test path — or one where the GitHub client id was unset). An empty
+	// client id is a production-config concern, not a handler concern; the pre-
+	// multi-provider hub also redirected to GitHub's authorize with whatever client
+	// id was in env. OIDC providers, by contrast, MUST come from the built registry.
+	if name == legacyProvider || name == "" {
+		return &auth.Provider{
+			Name:         "github",
+			DisplayName:  "GitHub",
+			IsOIDC:       false,
+			AuthorizeURL: defaultGHAuthorizeURL,
+			TokenURL:     defaultGHTokenURL,
+			ClientID:     os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID"),
+			Scopes:       []string{""},
+		}
+	}
+	return nil
+}
+
+// parseCallbackState extracts the provider name and validated redirect target
+// from the (already nonce-verified) state parameter. State is
+// "nonce:provider:redirect". A two-part legacy state (nonce:redirect, from a
+// login begun before this deploy) yields provider "github" and treats the second
+// half as the redirect.
+func (s *HubServer) parseCallbackState(r *http.Request) (provider, redirect string) {
+	provider = "github"
+	redirect = "/dashboard"
+	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
+	if err != nil || decoded == "" {
+		return provider, redirect
+	}
+	// Strip the already-verified nonce.
+	_, rest, ok := strings.Cut(decoded, oauthStateSeparator)
+	if !ok {
+		return provider, redirect
+	}
+	// rest is "provider:redirect" (new) or just "redirect" (legacy two-part).
+	maybeProvider, maybeRedirect, ok := strings.Cut(rest, oauthStateSeparator)
+	if ok && s.authProviders.Get(maybeProvider) != nil {
+		provider = maybeProvider
+		rest = maybeRedirect
+	}
+	if rest != "" && ((strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, "//")) || isTrustedRedirectTarget(rest)) {
+		redirect = rest
+	}
+	return provider, redirect
+}
+
+// exchangeGitHubLogin runs the GitHub OAuth code→token→/user flow and returns the
+// login, avatar, and user access token. On any failure it writes the HTTP error
+// and returns ok=false. This is the original callback logic, factored out so the
+// dispatcher can share the surrounding cookie/persistence code with OIDC.
+func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (login, avatar, token string, ok bool) {
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("HIVE_HUB_OAUTH_CLIENT_SECRET")
 
@@ -268,7 +583,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		s.logger.Warn("OAuth token exchange failed", "error", err)
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
 	defer resp.Body.Close()
 
@@ -282,13 +597,12 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		s.logger.Warn("OAuth: failed to parse token response", "error", err)
 		http.Error(w, "invalid token response", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
-
 	if tokenResp.AccessToken == "" {
 		s.logger.Warn("OAuth: no access token in response")
 		http.Error(w, "no access token", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
 
 	userReq, _ := http.NewRequest("GET", defaultGHUserURL, nil)
@@ -296,7 +610,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	userResp, err := client.Do(userReq)
 	if err != nil {
 		http.Error(w, "user fetch failed", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
 	defer userResp.Body.Close()
 
@@ -308,27 +622,28 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if err := json.Unmarshal(userBody, &user); err != nil {
 		s.logger.Warn("OAuth: failed to parse user response", "error", err)
 		http.Error(w, "invalid user response", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
-
 	if user.Login == "" || !isValidName(user.Login) {
 		s.logger.Warn("OAuth: invalid or empty login", "login", user.Login)
 		http.Error(w, "invalid user login", http.StatusBadGateway)
-		return
+		return "", "", "", false
 	}
+	return user.Login, user.AvatarURL, tokenResp.AccessToken, true
+}
 
-	s.logger.Info("audit: hub OAuth login", "user", user.Login)
-
-	// Set the session cookie to a signed, tamper-evident value so it cannot be
-	// forged. If the hub has no secret to sign with, fail the login rather than
-	// emit an unsigned (trusted-by-default) cookie.
-	cookieValue := mintHubUserCookieValue(s.sessionCookieKey(), user.Login)
+// mintSessionCookies sets both the HMAC (hive_hub_user) and Ed25519
+// (hive_hub_user_v2) session cookies over the given canonical identity. Returns
+// false (after writing an HTTP error) if the hub has no secret to sign with — an
+// unsigned cookie would be trusted by default and must never be emitted.
+func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string) bool {
+	cookieValue := mintHubUserCookieValue(s.sessionCookieKey(), canonicalID)
 	if cookieValue == "" {
-		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", user.Login)
+		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", canonicalID)
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
-		return
+		return false
 	}
-	cookie := &http.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "hive_hub_user",
 		Value:    cookieValue,
 		Path:     "/",
@@ -337,25 +652,16 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
-	}
-	http.SetCookie(w, cookie)
+	})
 
-	// N2 (CWE-321/798): ALSO emit an Ed25519-signed cookie.
-	//
-	// hive_hub_user above stays HMAC because that is the only format v2 spokes
-	// can verify (their proxy checks HMAC and nothing else — see F3/#3243), and
-	// v4 spokes accept either. Minting only Ed25519 would 401 the terminal on
-	// every v2 spoke in the fleet.
-	//
-	// This second cookie is what actually closes N2 for spokes that can read it:
-	// a spoke holding only the PUBLIC key can verify it but cannot mint one, so
-	// it can no longer forge `clubanderson.<sig>` and obtain hub admin. v4's
-	// proxy prefers it; v2's ignores an unknown cookie name.
-	//
-	// Two cookies rather than one hybrid value: each verifier computes its
-	// signature over the whole prefix, so no single concatenation satisfies
-	// both — verified empirically, both orderings fail both verifiers.
-	if v2Value := mintHubUserCookieValueV2(s.sessionSigningSeed(), user.Login); v2Value != "" {
+	// N2 (CWE-321/798): ALSO emit an Ed25519-signed cookie. hive_hub_user stays
+	// HMAC because that is the only format v2 spokes verify; v4 accepts either.
+	// This second cookie is what actually closes N2 for spokes that can read it: a
+	// spoke holding only the PUBLIC key can verify but not mint one, so it can no
+	// longer forge a hub-admin cookie. Two cookies rather than one hybrid value:
+	// each verifier signs the whole prefix, so no single concatenation satisfies
+	// both.
+	if v2Value := mintHubUserCookieValueV2(s.sessionSigningSeed(), canonicalID); v2Value != "" {
 		http.SetCookie(w, &http.Cookie{
 			Name:     hubUserCookieV2Name,
 			Value:    v2Value,
@@ -367,31 +673,56 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 			SameSite: http.SameSiteLaxMode,
 		})
 	}
+	return true
+}
 
-	saasUser := ensureSaaSUser(user.Login)
-	// A completed OAuth callback IS a login — count it here and nowhere else.
-	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
-	// signal the admin Users card reads. Persist unconditionally below so a login
-	// is recorded even when there is no token to encrypt (the token branch used to
-	// be the only save path, so a token-encrypt failure silently dropped the whole
-	// record update).
-	saasUser.LoginCount++
-	if encrypted, err := encryptToken(tokenResp.AccessToken); err == nil {
-		saasUser.EncryptedToken = encrypted
+// oidcNonceFromCookie returns the OIDC replay nonce this browser was issued at
+// login start, or "" if absent. The id_token must echo it back.
+func (s *HubServer) oidcNonceFromCookie(r *http.Request) string {
+	c, err := r.Cookie(oidcNonceCookieName)
+	if err != nil || c.Value == "" {
+		return ""
 	}
-	saveSaaSUser(saasUser)
+	return c.Value
+}
 
-	redirect := "/dashboard"
-	if decoded, err := url.QueryUnescape(r.URL.Query().Get("state")); err == nil && decoded != "" {
-		// The nonce was already verified above; take only the redirect half.
-		if _, target, ok := strings.Cut(decoded, oauthStateSeparator); ok {
-			decoded = target
-		}
-		if decoded != "" && ((strings.HasPrefix(decoded, "/") && !strings.HasPrefix(decoded, "//")) || isTrustedRedirectTarget(decoded)) {
-			redirect = decoded
-		}
+// clearOIDCNonceCookie expires the OIDC nonce, making it single-use.
+func (s *HubServer) clearOIDCNonceCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcNonceCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// displayIdentity returns the human-facing login label and avatar URL for a
+// canonical (or legacy bare) identity. For a GitHub user this is the bare login
+// and the derived github.com/<login>.png avatar — byte-identical to the
+// pre-multi-provider behavior. For an OIDC user it prefers the STORED avatar
+// (Google/IBMid provide a picture) and a friendly display label (email, else
+// display name, else the canonical id), never the opaque provider:sub.
+func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
+	provider, subject, ok := parseCanonical(canonicalizeLegacy(identity))
+	if !ok {
+		return identity, ""
 	}
-	http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
+	if provider == legacyProvider {
+		// GitHub: unchanged. subject is the bare login.
+		return subject, fmt.Sprintf("https://github.com/%s.png", subject)
+	}
+	// Non-GitHub: use the stored record for a good label + avatar.
+	login = identity
+	if u := loadSaaSUser(canonicalizeLegacy(identity)); u != nil {
+		if u.Email != "" {
+			login = u.Email
+		}
+		avatarURL = u.AvatarURL
+	}
+	return login, avatarURL
 }
 
 func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
@@ -410,6 +741,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin := isHubAdmin(username)
+	displayLogin, avatar := s.displayIdentity(username)
 	// Fold impersonation status into the auth payload the dashboard already
 	// fetches, so the "Viewing as … read-only" banner renders without a second
 	// round-trip. When an admin is impersonating, report the effective identity
@@ -418,17 +750,18 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	// user, so admin-only affordances hide via the existing role checks.
 	payload := map[string]any{
 		"authenticated": true,
-		"login":         username,
-		"avatar_url":    fmt.Sprintf("https://github.com/%s.png", username),
+		"login":         displayLogin,
+		"avatar_url":    avatar,
 		"hub_admin":     isAdmin,
 	}
 	if grant, ok := s.activeImpersonationGrant(r); ok {
-		payload["login"] = grant.Target
-		payload["avatar_url"] = fmt.Sprintf("https://github.com/%s.png", grant.Target)
+		targetLogin, targetAvatar := s.displayIdentity(grant.Target)
+		payload["login"] = targetLogin
+		payload["avatar_url"] = targetAvatar
 		payload["hub_admin"] = false
 		payload["impersonating"] = true
-		payload["viewing_as"] = grant.Target
-		payload["real_user"] = username
+		payload["viewing_as"] = targetLogin
+		payload["real_user"] = displayLogin
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
