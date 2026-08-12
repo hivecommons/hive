@@ -9958,6 +9958,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var HIVE_GROUP_OWNER = 'owner';
     var HIVE_GROUP_ACMM = 'acmm';
     var HIVE_GROUP_BRANCH = 'branch';
+    var HIVE_GROUP_UPGRADE = 'upgrade';
 
     /* Label shown for a hive whose grouping field is empty/unreported. Kept as
        one constant so every dimension buckets blanks identically. */
@@ -10030,7 +10031,20 @@ const dashboardHTML = `<!DOCTYPE html>
         var na = _acmmGroupOrder(a), nb = _acmmGroupOrder(b);
         return na - nb;
       }},
-      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }}
+      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }},
+      {key: HIVE_GROUP_UPGRADE, label: 'Upgrade', of: function(h) {
+        /* Group by the EFFECTIVE auto-upgrade mode, computed exactly as the
+           Version column's select does (see AUTO_UPGRADE_* around the render):
+           autoUpgrade:false is 'off' regardless of the stored mode; otherwise
+           the normalized mode 'daily' shows as '1p' and everything else as
+           'instant'. Labels are the bare mode words used by AUTO_UPGRADE_OPTIONS
+           ('off' / 'instant' / '1p'), not the glyph-prefixed control labels, so
+           the group header reads as plain text. Absent flags fall through to
+           HIVE_GROUP_UNKNOWN_LABEL like every other dimension. */
+        if (!h) return '';
+        if (!h.autoUpgrade) return 'off';
+        return h.autoUpgradeMode === AUTO_UPGRADE_DAILY ? '1p' : 'instant';
+      }}
     ];
 
     /* Sort weight for an ACMM group label. "Level N" → N; anything else (the
