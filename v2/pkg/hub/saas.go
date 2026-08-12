@@ -3290,6 +3290,21 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Migration is provision-on-target plus deprovision-of-source, and BOTH
+	// halves are kubectl. A pull-only cluster cannot be reached from the hub
+	// at all, so neither half can run against it. Reject up front: accepting
+	// the call would mark the hive migrating, then fail (or, worse, aim the
+	// kubectl at whatever cluster is reachable) after the state was already
+	// flipped. Hives on a pull-only cluster must be moved by hand.
+	if toCluster.PullOnly {
+		http.Error(w, `{"error":"target cluster is pull-only: the hub cannot kubectl into it, so a hive cannot be migrated there"}`, http.StatusBadRequest)
+		return
+	}
+	if fromCluster.PullOnly {
+		http.Error(w, `{"error":"current cluster is pull-only: the hub cannot kubectl into it, so a hive cannot be migrated off it"}`, http.StatusBadRequest)
+		return
+	}
+
 	// Set migration status and launch background goroutine.
 	h.MigrationStatus = "migrating"
 	h.MigrationFrom = currentClusterID
