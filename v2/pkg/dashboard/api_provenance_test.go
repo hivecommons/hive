@@ -186,9 +186,11 @@ func TestProvenanceAbsentOverlayIsNotAnError(t *testing.T) {
 func TestProvenanceRequiresOwner(t *testing.T) {
 	writeProvenanceFixture(t, "project:\n  org: acme\nagents:\n  scanner: {}\n", "")
 
-	rec, _ := getProvenance(t, "viewer")
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d for a non-owner, want 403", rec.Code)
+	for _, role := range []string{"viewer", "read-write"} {
+		rec, _ := getProvenance(t, role)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d for role %q, want 403", rec.Code, role)
+		}
 	}
 }
 
