@@ -33,6 +33,9 @@ const (
 	ReasonTier2NeedsPlan      = "tier 2 requires approved plan or human approval"
 	ReasonTier1NeedsIssue     = "tier 1 requires linked issue"
 	ReasonAlignmentMisaligned = "intent alignment check reported misalignment"
+	// ReasonAppSelfMergeAuthorized is the Evaluate reason substituted ONLY by
+	// EvaluateForAppSelfMerge (see below) — never by Evaluate itself.
+	ReasonAppSelfMergeAuthorized = "app self-merge: human approval not required for the App's own PR"
 )
 
 const (
@@ -187,6 +190,40 @@ func Evaluate(class Classification, evidence Evidence) Verdict {
 		return Verdict{Tier: class.Tier, Authorized: false, Reason: ReasonTier3NeedsApproval, Evidence: evidence, AgentPR: true}
 	default:
 		return Verdict{Tier: class.Tier, Authorized: false, Reason: fmt.Sprintf("unknown tier %d", class.Tier), Evidence: evidence, AgentPR: true}
+	}
+}
+
+// EvaluateForAppSelfMerge is Evaluate's counterpart for the App-self-merge
+// path (github.SweepSelfAuthoredAutoMerges) ONLY. It exists because Prow
+// structurally forbids self-approval: tide's lgtm+approved labels must come
+// from a reviewer distinct from the PR author, and on the App's own PR the
+// author is always the App itself, so evidence.HumanApproval can never be
+// honestly true for these PRs — Evaluate's Tier3 (and, for Tier2, its
+// HumanApproval fallback) would permanently deadlock them. This function
+// drops ONLY the human-approval requirement, and ONLY for a PR the caller has
+// independently confirmed is the App's own (callAllowed=true) — every other
+// tier gate is unchanged: Tier0 is still additive-only, Tier1 still needs a
+// linked issue, and Tier2 still needs either an approved plan OR this
+// self-merge authorization. A human-authored PR, or an App PR the caller has
+// not confirmed is self-merge-eligible, MUST keep calling Evaluate — never
+// this function — so tier gating for every other flow is untouched.
+//
+// Signed-head-SHA / head-unchanged-since-eval verification remains entirely
+// the caller's responsibility (github.trySweepSelfAuthoredPR re-fetches and
+// compares the head SHA immediately before merging); this function only
+// answers the tier-authorization question, same as Evaluate.
+func EvaluateForAppSelfMerge(class Classification, evidence Evidence, callAllowed bool) Verdict {
+	if !callAllowed {
+		return Evaluate(class, evidence)
+	}
+	switch class.Tier {
+	case Tier2, Tier3:
+		if evidence.HumanApproval || evidence.ApprovedPlan {
+			return Evaluate(class, evidence)
+		}
+		return Verdict{Tier: class.Tier, Authorized: true, Reason: ReasonAppSelfMergeAuthorized, Evidence: evidence, AgentPR: class.AgentPR}
+	default:
+		return Evaluate(class, evidence)
 	}
 }
 
