@@ -675,6 +675,16 @@ type GatewayConfig struct {
 	// preset uses to build the endpoint template. Purely a convenience for the
 	// preset; Endpoint is authoritative. Only meaningful for Kind == watsonx.
 	Region string `yaml:"region,omitempty" json:"region,omitempty"`
+	// KeyName is an optional, human-chosen LABEL for this gateway's configured
+	// key ("Team inference key", "andy personal", …). It is safe-to-show
+	// metadata, NOT a secret — it records WHICH key a gateway is set to use so
+	// managers can tell keys apart without ever seeing the value. Mirrors the
+	// bob key's KeyName (#3596/#3598), now generalized to every gateway kind
+	// (litellm / openrouter / watsonx / vllm). omitempty keeps hive.yaml on
+	// existing gateways (which never recorded a name) byte-identical on
+	// round-trip; an absent name is a normal, backwards-compatible state the
+	// dashboard renders as "(unnamed)" rather than an error.
+	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
 }
 
 // gatewayKind values.

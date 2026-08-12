@@ -15581,8 +15581,12 @@ function burnAreaChart() {
       }
       host.innerHTML = _gateways.map(function(gw) {
         const meta = gatewayKindMeta(gw.kind);
+        // keyName is the operator-chosen LABEL for the key (safe to show, never
+        // the secret). When a key is set we surface it — a recorded name, or
+        // "(unnamed)" for gateways that never recorded one — so a manager can
+        // tell WHICH key each gateway uses without seeing the value.
         const keyLine = gw.hasKey
-          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''}`
+          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''} · Using key: ${esc(gw.keyName || '(unnamed)')}`
           : 'no key';
         return `
         <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
@@ -15723,7 +15727,7 @@ function burnAreaChart() {
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
-      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false, project_id: '' };
+      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false, project_id: '', keyName: '' };
       const presetButtons = GATEWAY_PRESETS.map(function(p) {
         const active = gw.kind === p.kind;
         return `<button type="button" onclick="applyGatewayPreset('${p.kind}')" data-gw-preset="${p.kind}" style="padding:5px 12px;border:1px solid ${active ? 'var(--cyan)' : 'var(--border)'};border-radius:6px;background:${active ? 'var(--cyan)' : 'var(--bg)'};color:${active ? 'var(--bg)' : 'var(--fg)'};cursor:pointer;font-size:0.74rem;font-weight:600">${esc(p.label)}</button>`;
@@ -15753,6 +15757,11 @@ function burnAreaChart() {
             <label>API Key</label>
             <input type="password" id="gw-apikey" value="" autocomplete="new-password" placeholder="${gw.hasKey ? '(key is set — enter a new key to replace it)' : 'sk-…'}" onchange="onGatewayEndpointOrKeyChange()">
             <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Stored as a secret on this hive (owner-only file), never in config.</div>
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>Key name <span style="color:var(--muted);font-weight:400">(optional label, not the secret)</span></label>
+            <input type="text" id="gw-key-name" value="${esc(gw.keyName || '')}" autocomplete="off" spellcheck="false" maxlength="128" placeholder="e.g. Team inference key">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">A plaintext label that records WHICH key this is so you can tell keys apart later — never the value. Leave blank for "(unnamed)".</div>
           </div>
           <div class="config-field" style="margin-bottom:10px">
             <label>Default Model</label>
@@ -15920,6 +15929,7 @@ function burnAreaChart() {
       const endpoint = (document.getElementById('gw-endpoint') || {}).value || '';
       const apiKey = (document.getElementById('gw-apikey') || {}).value || '';
       const projectId = (document.getElementById('gw-project-id') || {}).value || '';
+      const keyName = (document.getElementById('gw-key-name') || {}).value || '';
       const defaultModel = gatewayCurrentDefaultModel();
       const resultEl = document.getElementById('gw-form-result');
       if (!name.trim()) { showToast('Gateway name is required', 'error'); return; }
@@ -15933,6 +15943,11 @@ function burnAreaChart() {
         // Always sent so clearing the field on a non-watsonx gateway persists;
         // omitempty on the server keeps it out of hive.yaml when blank.
         project_id: projectId.trim(),
+        // The optional plaintext LABEL for the key (never the value). Always
+        // sent (even empty) so blanking the field clears a stale name; the
+        // server trims and length-bounds it, and omitempty keeps it out of
+        // hive.yaml when blank.
+        key_name: keyName.trim(),
       };
       // Persist the watsonx region (the preset derives the endpoint from it and
       // the server can too when the endpoint is blank).
