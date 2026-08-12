@@ -10142,6 +10142,40 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
+    // kbRemoveChannel disconnects the currently-selected channel: it stops feeding
+    // agents (un-indexed), leaving its files on disk. Resolves the channel's
+    // on-disk path from the channels list, since disconnect keys on path.
+    async function kbRemoveChannel() {
+      const sel = document.getElementById('kb-import-layer');
+      const name = sel?.value;
+      if (!name) { await hiveAlert('No channel selected.'); return; }
+      if (name === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved and cannot be removed.'); return; }
+      // Only user-created channels (vaults) are removable; the static writable
+      // layers (project/org/community/personal) are not channels we can disconnect.
+      if (['project', 'org', 'community', 'personal'].includes(name)) {
+        await hiveAlert('"' + name + '" is a built-in layer, not a removable channel.');
+        return;
+      }
+      if (!await hiveConfirm('Remove channel "' + name + '"? It stops feeding agents; the imported files stay on disk.', 'Remove channel')) return;
+      try {
+        // Resolve the channel name → on-disk path from the channels list.
+        const listR = await fetch('/api/knowledge/channels');
+        const channels = listR.ok ? await listR.json() : [];
+        const match = (channels || []).find(c => c.name === name);
+        if (!match || !match.root_dir) { await hiveAlert('Could not resolve the channel path to remove.'); return; }
+        const r = await fetch('/api/knowledge/vaults', {
+          method: 'DELETE', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ path: match.root_dir }),
+        });
+        const data = await r.json();
+        if (!r.ok) { await hiveAlert(data.error || 'Failed to remove channel'); return; }
+        // Drop it from the dropdown and refresh stats.
+        const opt = Array.from(sel.options).find(o => o.value === name);
+        if (opt) opt.remove();
+        await fetchKnowledgeStats();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
     function kbOpenSubscriptions() {
       kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content" style="height:70vh;overflow-y:auto"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
       kbLoadSubscriptions();
@@ -10339,13 +10373,14 @@ function burnAreaChart() {
 
         html += '<details open style="margin-top:10px"><summary class="summary-label">Paste Content</summary>';
         html += '<div class="stack" style="margin-top:8px">';
-        html += `<div style="display:flex;gap:6px;align-items:center">`;
+        html += `<div style="display:flex;gap:8px;align-items:center">`;
         html += `<select id="kb-import-layer" class="field-input" style="flex:1">${layerOpts2}</select>`;
-        html += `<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border);padding:6px 12px;font-size:0.78rem;white-space:nowrap" onclick="kbNewChannel()" title="Create a new knowledge channel to import into">+ New channel</button>`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbNewChannel()" title="Create a new knowledge channel to import into">+ New channel</button>`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbRemoveChannel()" title="Remove the selected channel (stops it feeding agents; files remain on disk)">Remove</button>`;
         html += `</div>`;
-        html += `<div id="kb-newchannel-row" style="display:none;gap:6px;align-items:center">`;
+        html += `<div id="kb-newchannel-row" style="display:none;gap:8px;align-items:center">`;
         html += `<input id="kb-newchannel-name" type="text" class="kb-search-box" placeholder="New channel name (e.g. Runbooks)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();kbCreateChannel();}">`;
-        html += `<button class="nous-btn btn-blue" style="padding:6px 14px;font-size:0.78rem;white-space:nowrap" onclick="kbCreateChannel()">Create</button>`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbCreateChannel()">Create</button>`;
         html += `</div>`;
         html += `<select id="kb-import-format" class="field-input">
           <option value="markdown" selected>Markdown</option>
