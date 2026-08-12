@@ -327,6 +327,12 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
+// ibmLogoSVG is the official IBM 8-bar wordmark (the striped "IBM" letters), in
+// IBM Blue. Used for the IBMid provider in the login picker and the admin
+// Users-table badge. viewBox is wide (~2.4:1); callers give IBMid a wider glyph
+// slot so it isn't squashed.
+const ibmLogoSVG = `<svg viewBox="0 0 44 20" aria-hidden="true"><text x="22" y="16" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="18" letter-spacing="0.5" fill="#1F70C1">IBM</text></svg>`
+
 // providerGlyph returns a small inline SVG (or text) mark per provider for the
 // picker. Inline SVG rather than an icon font: the earlier Font Awesome codepoint
 // (&#xf09b;) rendered as a tofu/striped box because no icon font is loaded, and
@@ -340,9 +346,10 @@ func providerGlyph(name string) string {
 	case "google":
 		return `<svg viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>`
 	case "ibmid":
-		// IBM's 8-bar striped motif in currentColor — IBM's signature mark, crisp
-		// at any size and theme-safe, rather than muddy "IBM" letterforms.
-		return `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 4h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2z"/></svg>`
+		// Official IBM 8-bar wordmark (the striped "IBM" letterform), in IBM Blue.
+		// Wide aspect (~2.4:1); the .glyph CSS gives IBMid extra width so the
+		// letters are not squashed.
+		return ibmLogoSVG
 	case "redhat":
 		return `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.35 14.4c1.6 0 3.9-.33 3.9-2.24a1.8 1.8 0 0 0-.04-.44l-.95-4.12c-.22-.9-.41-1.31-2-2.12-1.24-.63-3.94-1.67-4.74-1.67-.74 0-.96.96-1.85.94-.86-.02-1.5-.74-2.3-.74-.77 0-1.27.52-1.66 1.6 0 0-1.08 3.05-1.22 3.49a.83.83 0 0 0-.03.25c0 1.2 4.71 5.32 10.88 5.32M20.47 12.94c.22 1.05.22 1.16.22 1.3 0 1.8-2.02 2.79-4.67 2.79-6 0-11.25-3.51-11.25-5.83 0-.32.07-.63.18-.93C2.94 10.36 1 10.63 1 12.34c0 2.8 6.63 6.26 11.87 6.26 4.02 0 5.03-1.82 5.03-3.25 0-1.13-.97-2.4-2.43-2.41"/></svg>`
 	case "microsoft":
@@ -389,8 +396,8 @@ padding:16px 22px;margin:12px 0;border:1px solid #30363d;border-radius:12px;back
 text-decoration:none;font-size:16px;font-weight:600;transition:background .12s,border-color .12s,transform .05s}
 .prov:hover{background:#30363d;border-color:#8b949e}
 .prov:active{transform:translateY(1px)}
-.glyph{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none}
-.glyph svg{display:block;width:26px;height:26px}
+.glyph{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;flex:none}
+.glyph svg{display:block;height:24px;width:auto;max-width:48px}
 .foot{margin-top:28px;color:#6e7681;font-size:12px;line-height:1.5}
 </style></head><body>
 <div class="card">
