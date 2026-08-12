@@ -482,7 +482,7 @@ func TestHandlePromptHistoryRoleGating(t *testing.T) {
 	}{
 		{name: "owner allowed", role: "owner", wantCode: http.StatusOK},
 		{name: "read-write allowed", role: "read-write", wantCode: http.StatusOK},
-		{name: "empty role defaults to owner", role: "", wantCode: http.StatusOK},
+		{name: "missing role fails closed", role: "", wantCode: http.StatusForbidden},
 		{name: "read-only forbidden", role: "read-only", wantCode: http.StatusForbidden},
 		{name: "unknown role forbidden", role: "guest", wantCode: http.StatusForbidden},
 	}
