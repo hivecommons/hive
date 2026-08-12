@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"hash/fnv"
 	"log/slog"
@@ -5041,7 +5042,7 @@ func (m *Manager) seedClaudeUserConfig(agentName, path string) {
 // seeded by older hive versions without the truncated key form the CLI
 // actually matches against (see apiKeyApprovalSuffixLen).
 func (m *Manager) mergeApprovedAPIKeys(agentName, path string) {
-	data, err := os.ReadFile(path)
+	data, err := readInferenceConfigFile(path)
 	if err != nil {
 		return
 	}
@@ -5077,7 +5078,7 @@ func (m *Manager) mergeApprovedAPIKeys(agentName, path string) {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(path, out, 0o666); err != nil {
+	if err := writeInferenceConfigFile(path, out); err != nil {
 		m.logger.Warn("failed to write inference config", "agent", agentName, "path", path, "error", err)
 	}
 }
@@ -5096,7 +5097,7 @@ func (m *Manager) seedClaudeSettingsFile(agentName, path string) {
 // parseable file is left untouched.
 func (m *Manager) seedJSONFile(agentName, path string, seed map[string]any) {
 	existing := map[string]any{}
-	if data, err := os.ReadFile(path); err == nil {
+	if data, err := readInferenceConfigFile(path); err == nil {
 		if jsonErr := json.Unmarshal(data, &existing); jsonErr != nil {
 			m.logger.Warn("inference config unparseable, rewriting",
 				"agent", agentName, "path", path, "error", jsonErr)
@@ -5120,7 +5121,7 @@ func (m *Manager) seedJSONFile(agentName, path string, seed map[string]any) {
 		m.logger.Warn("failed to marshal inference config", "agent", agentName, "path", path, "error", err)
 		return
 	}
-	if err := os.WriteFile(path, data, 0o666); err != nil {
+	if err := writeInferenceConfigFile(path, data); err != nil {
 		m.logger.Warn("failed to write inference config", "agent", agentName, "path", path, "error", err)
 	}
 }
@@ -5140,10 +5141,23 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	settingsDir := filepath.Join(homePath, ".claude")
 	settingsFile := filepath.Join(settingsDir, "settings.json")
 
-	if err := os.MkdirAll(settingsDir, 0o777); err != nil {
+	if err := os.MkdirAll(settingsDir, inferenceHomeDirMode); err != nil {
 		m.logger.Warn("failed to create claude inference home", "agent", agentName, "error", err)
 		return
 	}
+	// SECURITY (audit F12): prefer an agent-OWNED 0700 home over a world-writable
+	// one. The audit's fix is "UID-owned 0700 homes"; the surrounding code
+	// assumed that was impossible ("hive runs as dev, not root, so chown is not
+	// available"), but the hosted container runs as root and chown succeeds
+	// there — verified live. Where it does succeed, no other UID can enter the
+	// directory and the symlink cannot be planted in the first place.
+	//
+	// Falls back to the historical world-writable mode when chown is refused
+	// (a genuinely unprivileged deployment), because a home the agent's own UID
+	// cannot write is a hard launch failure. The O_NOFOLLOW guards on the
+	// writers hold in BOTH cases — this narrows who can reach the path, it is
+	// not what closes the finding.
+	m.tightenInferenceHome(agentName, homePath, settingsDir, uid)
 	// Write (or repair) both settings files: the HOME userSettings file and
 	// the standalone file passed via --settings. The CLI honors
 	// skipDangerousModePermissionPrompt from either source.
@@ -5151,7 +5165,13 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	m.seedClaudeSettingsFile(agentName, claudeInferenceSettingsPath)
 	// Pre-populate (or repair) .claude.json so the CLI skips first-run setup.
 	m.seedClaudeUserConfig(agentName, filepath.Join(homePath, ".claude.json"))
-	m.ensureWorldWritable(homePath)
+	// Only widen when the home is NOT agent-owned. tightenInferenceHome may have
+	// just established a 0700 home owned by the agent UID; running the widening
+	// walk unconditionally would chmod it straight back to 0777 and silently
+	// undo the hardening (audit F12).
+	if !m.inferenceHomeIsOwnedBy(homePath, uid) {
+		m.ensureWorldWritable(homePath)
+	}
 }
 
 // ensureWorldWritable walks the tree and sets dirs to 0o777, files to 0o666.
@@ -5277,6 +5297,133 @@ const agentStateFileMode = 0o600
 // write. The file is deliberately NOT O_EXCL: these are rewritten on every
 // mode change and every relaunch, so failing when the file already exists would
 // break the normal path.
+// inferenceHomeDirMode / inferenceHomeSharedDirMode are the two shapes a
+// per-agent inference HOME can take (audit F12).
+//
+// The 0700 form is preferred and is what tightenInferenceHome establishes once
+// the directory is chowned to the agent UID: nobody else can even enter it, so
+// the predictable path stops being reachable. The 0777 form is the historical
+// fallback for a deployment where chown is refused — the agent must be able to
+// write its own HOME, and a home it cannot write is a hard launch failure.
+const (
+	inferenceHomeDirMode       = 0o700
+	inferenceHomeSharedDirMode = 0o777
+)
+
+// tightenInferenceHome tries to give the agent UID sole ownership of its
+// inference HOME, falling back to the historical world-writable mode when the
+// hive lacks the privilege to chown. Best-effort by design: every failure path
+// leaves a WORKING home, because the O_NOFOLLOW writers — not this — are what
+// close audit F12.
+func (m *Manager) tightenInferenceHome(agentName, homePath, settingsDir string, uid int) {
+	if uid <= 0 {
+		// No per-agent UID: the hive itself is the only writer, so 0700 owned
+		// by the hive is already correct.
+		return
+	}
+	for _, dir := range []string{homePath, settingsDir} {
+		if err := os.Chown(dir, uid, -1); err != nil {
+			// Unprivileged deployment. Restore the shared mode so the agent can
+			// still use its HOME, and say so once at debug level rather than
+			// warning on every launch.
+			m.logger.Debug("inference home left world-writable (chown unavailable)",
+				"agent", agentName, "dir", dir, "error", err)
+			if cerr := os.Chmod(dir, inferenceHomeSharedDirMode); cerr != nil {
+				m.logger.Warn("failed to restore inference home mode",
+					"agent", agentName, "dir", dir, "error", cerr)
+			}
+			continue
+		}
+		if err := os.Chmod(dir, inferenceHomeDirMode); err != nil {
+			m.logger.Warn("failed to tighten inference home mode",
+				"agent", agentName, "dir", dir, "error", err)
+		}
+	}
+}
+
+// inferenceHomeIsOwnedBy reports whether homePath is already owned by uid, i.e.
+// tightenInferenceHome succeeded and the widening walk must be skipped.
+//
+// Fails SAFE for availability rather than for security: on any doubt (uid<=0,
+// stat error, or a platform without Stat_t) it returns false, so the caller
+// widens and the agent keeps a usable HOME. The O_NOFOLLOW writers are what
+// close F12 in that case.
+func (m *Manager) inferenceHomeIsOwnedBy(homePath string, uid int) bool {
+	if uid <= 0 {
+		return false
+	}
+	info, err := os.Stat(homePath)
+	if err != nil {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return int(st.Uid) == uid
+}
+
+// inferenceConfigFileMode is the mode for a per-agent inference config file.
+//
+// NOT 0600 like agentStateFileMode: these live in a per-agent HOME that the
+// AGENT's own UID must be able to rewrite (the CLI updates its own config), and
+// the hive cannot chown them to that UID on every deployment shape. 0666 in a
+// directory only that agent can enter is the trade-off the surrounding code
+// already makes; the symlink guard below is what actually closes audit F12,
+// because the exploit was redirection out of the directory, not the mode.
+const inferenceConfigFileMode = 0o666
+
+// readInferenceConfigFile reads a per-agent inference config, refusing to
+// traverse a symlink (audit F12).
+//
+// os.ReadFile follows symlinks, so a planted link let an attacker feed the
+// CONTENTS of any hive-readable file into the merge logic below, which then
+// wrote the merged result back out — a read-and-echo primitive on top of the
+// clobber. O_NOFOLLOW makes that fail loudly instead.
+//
+// A missing file is the normal first-run case; callers already treat any error
+// as "start from the seed", so failing closed here costs nothing.
+func readInferenceConfigFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// writeInferenceConfigFile writes a per-agent inference config without
+// following a symlink (audit F12, CWE-59/61).
+//
+// SECURITY: the inference HOME is a predictable path
+// (/tmp/.claude-inference-home-<agent>) inside world-writable /tmp, and the
+// directory itself is created world-writable so the agent UID can use it. Both
+// writers here used a plain os.WriteFile, which opens O_WRONLY|O_CREATE|O_TRUNC
+// with NO O_NOFOLLOW — so another local UID could pre-plant a symlink at the
+// config path and have the hive overwrite any file it can reach.
+//
+// Verified before and after: a planted link at <home>/.claude.json had the
+// VICTIM file's contents replaced with the seeded JSON; with this guard the
+// write fails with ELOOP and the victim file is untouched.
+//
+// Note #3432 fixed only the sibling half of F12 — the chmod walk in
+// ensureWorldWritable, which WIDENED a linked file's mode. This closes the
+// write path, which CLOBBERED its contents. The audit named three sinks; all
+// three are now covered.
+func writeInferenceConfigFile(path string, data []byte) error {
+	f, err := os.OpenFile(path,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
+		inferenceConfigFileMode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 func writeAgentStateFile(path string, data []byte) error {
 	f, err := os.OpenFile(path,
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
