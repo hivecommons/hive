@@ -25,6 +25,9 @@ import (
 func TestInferenceAPIKeyPrefersGatewayKey(t *testing.T) {
 	s, _ := apiServer(t)
 	dir := t.TempDir()
+	// v4's audit-N8 gate confines api_key_file reads to the managed secrets
+	// dirs; admit the test dir so the temp key files resolve.
+	defer config.SetSecretFileRootsForTest(dir)()
 	gwKey := filepath.Join(dir, "gateway_litellm_api_key")
 	if err := os.WriteFile(gwKey, []byte("sk-gateway-FRESH\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -56,6 +59,9 @@ func TestInferenceAPIKeyPrefersGatewayKey(t *testing.T) {
 func TestInferenceAPIKeyKeylessGatewayFallsBackToLegacy(t *testing.T) {
 	s, _ := apiServer(t)
 	dir := t.TempDir()
+	// v4's audit-N8 gate confines api_key_file reads to the managed secrets
+	// dirs; admit the test dir so the temp key file resolves.
+	defer config.SetSecretFileRootsForTest(dir)()
 	legacyKey := filepath.Join(dir, "litellm_api_key")
 	if err := os.WriteFile(legacyKey, []byte("sk-legacy-ONLY\n"), 0o600); err != nil {
 		t.Fatal(err)
