@@ -53,6 +53,10 @@ type Client struct {
 	// issueAuthz is the equivalent fail-closed gate for mediated agent issue
 	// requests. Direct agent issue creation is denied by the proxy.
 	issueAuthz IssueRequestAuthorizer
+	// issueCreateMu serializes the list-before-create transaction used by the
+	// mediated issue watcher. Without it, concurrent controller/watcher passes
+	// can both observe an absent marker and create duplicate GitHub issues.
+	issueCreateMu sync.Mutex
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
 	// carry the "hold" label (F6). It is consulted server-side from authoritative
 	// hive config (the ACMM level), NOT trusted from a client flag — the

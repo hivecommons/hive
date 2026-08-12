@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -183,6 +184,93 @@ func TestIssueRequestWatcherDoesNotCollapseDistinctSameFileBug(t *testing.T) {
 	result := readIssueResponse(t, path)
 	if !result.OK || result.AlreadyExisted || result.Number != 42 {
 		t.Fatalf("distinct same-file defect was collapsed: %+v", result)
+	}
+}
+
+func TestIssueRequestWatcherDoesNotCollapseDistinctSameFileBugWithOverlappingTerms(t *testing.T) {
+	created := 0
+	client, server := newIssueRequestTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			_, _ = io.WriteString(w, `[{"number":12,"title":"[Visual Hive] Button accessible name is missing in src/App.tsx","body":"The primary button in src/App.tsx has an accessible name missing after loading.","labels":[{"name":"hive/managed"},{"name":"visual-hive"}]}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"number":42,"html_url":"https://github.com/o/r/issues/42"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+	dir := withIssueRequestDir(t)
+	path, _ := WriteIssueRequest(dir, IssueRequest{
+		Repo: "o/r", Agent: "scanner",
+		Title: "Button accessible name is duplicated in src/App.tsx",
+		Body:  "The primary button in `src/App.tsx` has a duplicated accessible name after loading.",
+	})
+	client.ProcessIssueRequestsOnce(context.Background())
+	result := readIssueResponse(t, path)
+	if !result.OK || result.AlreadyExisted || result.Number != 42 || created != 1 {
+		t.Fatalf("distinct same-file defect with overlapping terms was collapsed: result=%+v created=%d", result, created)
+	}
+}
+
+func TestCreateOrReuseAgentIssueConcurrentExactRequestsCreateAtMostOnce(t *testing.T) {
+	var mu sync.Mutex
+	created := 0
+	persistedBody := ""
+	client, server := newIssueRequestTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			if persistedBody == "" {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			encoded, _ := json.Marshal(persistedBody)
+			_, _ = io.WriteString(w, `[{"number":41,"html_url":"https://github.com/o/r/issues/41","title":"novel","body":`+string(encoded)+`}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			created++
+			var request struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			persistedBody = request.Body
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"number":41,"html_url":"https://github.com/o/r/issues/41"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer server.Close()
+
+	req := IssueRequest{Repo: "o/r", Agent: "scanner", Title: "novel", Body: "A new failure in `src/new.ts`."}
+	marker := agentFindingMarker(req)
+	body := marker + "\n\n" + req.Body
+	results := make(chan bool, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, reused, _, err := client.createOrReuseAgentIssue(context.Background(), req, body, marker)
+			results <- err == nil && reused
+		}()
+	}
+	wg.Wait()
+	close(results)
+	reused := 0
+	for wasReused := range results {
+		if wasReused {
+			reused++
+		}
+	}
+	if created != 1 || reused != 1 {
+		t.Fatalf("concurrent exact requests created=%d reused=%d, want one each", created, reused)
 	}
 }
 

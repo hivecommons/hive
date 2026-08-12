@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -186,6 +185,9 @@ func (c *Client) managesRepository(requested string) bool {
 }
 
 func (c *Client) createOrReuseAgentIssue(ctx context.Context, req IssueRequest, body, marker string) (int, string, bool, bool, error) {
+	c.issueCreateMu.Lock()
+	defer c.issueCreateMu.Unlock()
+
 	owner, repo, err := splitFullRepository(req.Repo)
 	if err != nil {
 		return 0, "", false, false, err
@@ -252,7 +254,6 @@ func isManagedVisualIssue(issue *gh.Issue) bool {
 }
 
 var repoPathPattern = regexp.MustCompile("(?:^|[\\s\\\"'=:(`])((?:\\.\\.?/)?[A-Za-z0-9_.@*()-]+(?:/[A-Za-z0-9_.@*()-]+)+\\.[A-Za-z0-9]+)")
-var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 
 func findingPaths(text string) map[string]bool {
 	out := map[string]bool{}
@@ -268,28 +269,10 @@ func findingPaths(text string) map[string]bool {
 	return out
 }
 
-var findingStopWords = map[string]bool{
-	"a": true, "an": true, "and": true, "bug": true, "defect": true, "finding": true,
-	"for": true, "from": true, "hive": true, "in": true, "issue": true, "map": true,
-	"of": true, "on": true, "repo": true, "scanner": true, "story": true, "storybook": true,
-	"the": true, "to": true, "tsx": true, "ts": true, "visual": true,
-}
-
-func findingTerms(text string) map[string]bool {
-	text = camelBoundary.ReplaceAllString(text, `${1} ${2}`)
-	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
-	out := map[string]bool{}
-	for _, field := range fields {
-		if len(field) >= 4 && !findingStopWords[field] {
-			out[field] = true
-		}
-	}
-	return out
-}
-
-// sameManagedFinding is deliberately conservative: an exact repository path
-// must overlap, plus either a second path or two meaningful terms. A mere
-// reference to the same source file is not enough to collapse distinct bugs.
+// sameManagedFinding is deliberately conservative: at least two exact
+// repository paths must overlap. One shared source file plus generic terms is
+// not enough to collapse distinct bugs in that file. Exact agent retries use
+// the stable marker above and do not depend on this legacy managed-issue bridge.
 func sameManagedFinding(requested, managed string) bool {
 	reqPaths, managedPaths := findingPaths(requested), findingPaths(managed)
 	overlap := 0
@@ -298,20 +281,7 @@ func sameManagedFinding(requested, managed string) bool {
 			overlap++
 		}
 	}
-	if overlap == 0 {
-		return false
-	}
-	if overlap >= 2 {
-		return true
-	}
-	reqTerms, managedTerms := findingTerms(requested), findingTerms(managed)
-	shared := 0
-	for term := range reqTerms {
-		if managedTerms[term] {
-			shared++
-		}
-	}
-	return shared >= 2
+	return overlap >= 2
 }
 
 func (c *Client) denyIssueRequest(path string, req IssueRequest, reason string, nowFn func() time.Time) {
