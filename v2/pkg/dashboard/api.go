@@ -7122,6 +7122,9 @@ func (s *Server) handleVaultsDisconnect(w http.ResponseWriter, r *http.Request) 
 
 	var req struct {
 		Path string `json:"path"`
+		// Purge=true deletes the channel's files from disk (destructive), not just
+		// un-indexing it. Defaults false so a plain remove stays non-destructive.
+		Purge bool `json:"purge"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -7140,6 +7143,15 @@ func (s *Server) handleVaultsDisconnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if req.Purge {
+		if err := s.deps.Knowledge.PurgeVault(req.Path); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.auditFromRequest(r, "vault_purge", auditDetail("path", req.Path), "")
+		jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.Path, "purged": true})
+		return
+	}
 	if err := s.deps.Knowledge.DisconnectVault(req.Path); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return

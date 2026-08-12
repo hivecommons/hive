@@ -10156,7 +10156,9 @@ function burnAreaChart() {
         await hiveAlert('"' + name + '" is a built-in layer, not a removable channel.');
         return;
       }
-      if (!await hiveConfirm('Remove channel "' + name + '"? It stops feeding agents; the imported files stay on disk.', 'Remove channel')) return;
+      if (!await hiveConfirm('Remove channel "' + name + '"? It stops feeding agents. By default the imported files stay on disk (you can re-add the channel later).', 'Remove channel')) return;
+      // Offer the destructive option separately, defaulting to keep-files.
+      const purge = await hiveConfirm('Also DELETE the imported files permanently? This cannot be undone.\n\nOK = delete files · Cancel = keep files on disk', 'Delete files?');
       try {
         // Resolve the channel name → on-disk path from the channels list.
         const listR = await fetch('/api/knowledge/channels');
@@ -10165,7 +10167,7 @@ function burnAreaChart() {
         if (!match || !match.root_dir) { await hiveAlert('Could not resolve the channel path to remove.'); return; }
         const r = await fetch('/api/knowledge/vaults', {
           method: 'DELETE', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ path: match.root_dir }),
+          body: JSON.stringify({ path: match.root_dir, purge }),
         });
         const data = await r.json();
         if (!r.ok) { await hiveAlert(data.error || 'Failed to remove channel'); return; }

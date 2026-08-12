@@ -16,8 +16,9 @@ const localKnowledgeDir = "/data/knowledge"
 
 // vaultsBaseDir is where user-created knowledge channels (vaults) are stored on
 // the spoke's data volume, one directory per channel. It mirrors the location the
-// bead synthesizer uses for its own vault.
-const vaultsBaseDir = "/data/vaults"
+// bead synthesizer uses for its own vault. A var (not const) only so purge/create
+// tests can point it at a temp dir; production never reassigns it.
+var vaultsBaseDir = "/data/vaults"
 
 // reservedVaultName is the automation vault the bead synthesizer writes into. It
 // must never be offered to users as an import target nor be creatable/writable by
@@ -601,6 +602,34 @@ func (k *KnowledgeAPI) DisconnectVault(rootDir string) error {
 	}
 	k.vaults = newVaults
 	k.logger.Info("vault disconnected", "dir", rootDir)
+	return nil
+}
+
+// PurgeVault disconnects a vault AND deletes its files from disk. This is the
+// destructive "delete channel" path (vs DisconnectVault, which only un-indexes
+// and leaves files in place). It is guarded hard: the directory MUST live under
+// vaultsBaseDir and MUST NOT be the reserved automation vault — a purge outside
+// the vaults tree, or of bead-synth-wiki, is refused. The disconnect happens
+// first so agents stop reading it before the files vanish.
+func (k *KnowledgeAPI) PurgeVault(rootDir string) error {
+	clean := filepath.Clean(rootDir)
+	base := filepath.Clean(vaultsBaseDir)
+	// Must be strictly inside vaultsBaseDir (not the base itself, not a sibling).
+	if clean == base || !strings.HasPrefix(clean, base+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to purge %q: not inside %s", rootDir, base)
+	}
+	if filepath.Base(clean) == reservedVaultName {
+		return fmt.Errorf("%q is reserved for automation and cannot be purged", reservedVaultName)
+	}
+	// Disconnect first (best effort — a vault may be purged even if it was never
+	// indexed as a connected vault, e.g. a leftover dir), then remove the files.
+	if err := k.DisconnectVault(rootDir); err != nil {
+		k.logger.Info("purge: vault not connected, removing files anyway", "dir", clean, "err", err)
+	}
+	if err := os.RemoveAll(clean); err != nil {
+		return fmt.Errorf("deleting channel files: %w", err)
+	}
+	k.logger.Info("vault purged", "dir", clean)
 	return nil
 }
 
