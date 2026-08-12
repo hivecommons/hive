@@ -298,6 +298,49 @@ function verifyTerminalAssertion(key, token, expectedHiveID, nowSec) {
 // cookieUser is the hub-wide-authenticated user from the verified hive_hub_user
 // cookie (already checked by the caller); assertionCookie is the raw
 // hive_terminal_assertion value (may be undefined).
+// resolveTerminalIdentity decides WHO is asking, from either credential.
+//
+// SECURITY (audit F4, final step). Both /terminal gates used to require a valid
+// hive_hub_user cookie before authorization ran at all, so the hub-wide cookie
+// was load-bearing for every terminal request — and that is precisely the cookie
+// that must stop being delivered to sibling tenants (Domain=.hive.kubestellar.io).
+// Dropping the Domain while the gates still demanded it would have locked every
+// hosted tenant out of /terminal.
+//
+// A verified terminal assertion is a STRICTLY STRONGER credential than the hub
+// cookie for this purpose:
+//
+//   hub cookie   — proves "some real hub user", hub-wide, delivered to EVERY
+//                  sibling tenant, and says nothing about THIS hive.
+//   assertion    — signed with THIS spoke's per-hive key, carries {user, role,
+//                  hive_id, exp}, is host-only + Path=/terminal, and is checked
+//                  against this hive's own ID and a fresh expiry.
+//
+// So accepting a valid assertion on its own is not a relaxation: it removes a
+// weaker requirement that sat in front of a stronger one. The assertion is still
+// fully verified (signature, this-hive binding, expiry, role) inside
+// authorizeTerminal — this only changes whether the hub cookie must ALSO be
+// present.
+//
+// Returns the identity to authorize as, or null if neither credential is usable.
+// Fails closed: an absent, expired, wrong-hive or badly-signed assertion with no
+// valid hub cookie yields null and the caller denies.
+function resolveTerminalIdentity(cookies) {
+  const hubUser = verifyHubUserCookieEither(
+    SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
+  if (hubUser) return hubUser;
+
+  const claim = verifyTerminalAssertion(
+    TERMINAL_SIGNING_KEY, cookies[TERMINAL_ASSERTION_COOKIE], HIVE_ID,
+    Math.floor(Date.now() / 1000));
+  // Only the assertion's OWN username may stand in for the hub cookie. Returning
+  // it here keeps authorizeTerminal's user-binding check meaningful rather than
+  // silently disabling it: the comparison becomes claim.username === itself,
+  // which is exactly the "this assertion authenticates this user" statement, and
+  // the role and expiry checks there still decide the outcome.
+  return claim && claim.username ? claim.username : null;
+}
+
 function authorizeTerminal(cookieUser, assertionCookie) {
   const nowSec = Math.floor(Date.now() / 1000);
   const claim = verifyTerminalAssertion(TERMINAL_SIGNING_KEY, assertionCookie, HIVE_ID, nowSec);
@@ -618,7 +661,7 @@ app.use('/terminal', (req, res, next) => {
     }, {});
     // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
     // signature — a non-empty value is NOT proof of authentication.
-    const user = verifyHubUserCookieEither(SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
+    const user = resolveTerminalIdentity(cookies);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -720,7 +763,7 @@ server.on('upgrade', (req, socket, head) => {
         return acc;
       }, {});
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
-      const wsUser = verifyHubUserCookieEither(SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
+      const wsUser = resolveTerminalIdentity(cookies);
       if (!wsUser) {
         socket.destroy();
         return;

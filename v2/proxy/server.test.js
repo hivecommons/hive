@@ -590,6 +590,73 @@ async function testC3F_WrongVersionDenied() {
 // USER MISMATCH: a valid assertion for alice presented alongside bob's hub
 // cookie must NOT admit bob — the assertion user must equal the authenticated
 // cookie user. (bob is also not on the static allowlist, so it falls through.)
+// ── audit F4, final step: the assertion alone must authenticate ──────────────
+//
+// Both /terminal gates used to require a valid hive_hub_user cookie BEFORE
+// authorization ran, so the hub-wide cookie was load-bearing for every terminal
+// request — and that is exactly the cookie that must stop being delivered to
+// sibling tenants. Dropping its Domain while the gates still demanded it would
+// have locked every hosted tenant out of /terminal.
+//
+// A verified assertion is STRICTLY STRONGER than the hub cookie here: it is
+// signed with THIS spoke's per-hive key and carries {user, role, hive_id, exp},
+// whereas the hub cookie only proves "some hub user" and is handed to every
+// sibling. These tests pin that the assertion alone opens a terminal, and that
+// dropping the hub-cookie requirement did NOT weaken any existing denial.
+async function testF4_AssertionAloneAdmits() {
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.equal(resp.status, 200, `valid owner assertion with NO hub cookie should reach terminal, got ${resp.status}`);
+  const { opened } = await terminalWS(null, HOSTED_HOST, assertion);
+  assert.ok(opened, 'valid owner assertion with NO hub cookie should open WS');
+  console.log('  ✓ F4: assertion alone (no hub cookie) → terminal opens, HTTP + WS');
+}
+
+// NEGATIVE CONTROLS. Removing the hub-cookie precondition must not turn the
+// gate into a rubber stamp: every property the assertion itself asserts has to
+// still be enforced when it is the ONLY credential presented.
+async function testF4_NoCredentialsStillDenied() {
+  const resp = await terminalHTTP(null, HOSTED_HOST, null);
+  assert.equal(resp.status, 401, `no cookie and no assertion must be 401, got ${resp.status}`);
+  const { opened } = await terminalWS(null, HOSTED_HOST, null);
+  assert.ok(!opened, 'no credentials at all must not open a WS');
+  console.log('  ✓ F4: no credentials → 401 / WS refused');
+}
+
+async function testF4_ExpiredAssertionAloneDenied() {
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: HIVE_B_ID, ttlSec: -60 });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.notEqual(resp.status, 200, 'an EXPIRED assertion must not authenticate on its own');
+  console.log('  ✓ F4: expired assertion alone → denied');
+}
+
+async function testF4_WrongHiveAssertionAloneDenied() {
+  // Signed by hive B's key but claiming a different hive id.
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'hosted-some-other-hive' });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.notEqual(resp.status, 200, 'an assertion for ANOTHER hive must not authenticate here');
+  console.log('  ✓ F4: wrong-hive assertion alone → denied');
+}
+
+async function testF4_ForgedAssertionAloneDenied() {
+  // Correct shape, wrong signing key — the cross-tenant forgery N3 closed.
+  const assertion = mintTerminalAssertion('not-the-right-key', { username: 'dave', role: 'owner', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.notEqual(resp.status, 200, 'a forged assertion must not authenticate on its own');
+  const { opened } = await terminalWS(null, HOSTED_HOST, assertion);
+  assert.ok(!opened, 'a forged assertion must not open a WS');
+  console.log('  ✓ F4: forged-signature assertion alone → denied, HTTP + WS');
+}
+
+async function testF4_InsufficientRoleAloneDenied() {
+  // carol:read — a VALID assertion that says "no". Must stay denied, and must
+  // NOT fall through to the static allowlist (audit N4).
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'carol', role: 'read', hiveID: HIVE_B_ID });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.notEqual(resp.status, 200, 'a read-only assertion must not open a terminal, even as sole credential');
+  console.log('  ✓ F4: read-only assertion alone → denied (N4 stays closed)');
+}
+
 async function testC3F_UserMismatchDenied() {
   const cookie = mintCookie(HIVE_B_SECRET, 'bob');
   const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'alice', role: 'owner', hiveID: HIVE_B_ID });
@@ -791,6 +858,12 @@ try {
   await testC3F_ForgedAssertionDenied();
   await testC3F_WrongVersionDenied();
   await testC3F_UserMismatchDenied();
+  await testF4_AssertionAloneAdmits();
+  await testF4_NoCredentialsStillDenied();
+  await testF4_ExpiredAssertionAloneDenied();
+  await testF4_WrongHiveAssertionAloneDenied();
+  await testF4_ForgedAssertionAloneDenied();
+  await testF4_InsufficientRoleAloneDenied();
   await testC3F_StaticAllowlistFallbackPreserved();
 
   console.log('\n✓ C3 tests passed\n');
