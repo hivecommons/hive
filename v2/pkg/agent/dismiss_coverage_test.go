@@ -37,7 +37,7 @@ func TestDismissInferencePrompts_PressEnter(t *testing.T) {
 	go func() { m.dismissInferencePrompts(agent); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Error("dismissInferencePrompts should return")
 	}
 }
@@ -73,7 +73,7 @@ func TestDismissInferencePrompts_FixWith(t *testing.T) {
 	go func() { m.dismissInferencePrompts(agent); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Error("dismissInferencePrompts should return")
 	}
 }

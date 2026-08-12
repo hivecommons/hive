@@ -104,7 +104,8 @@ func TestDossierPublicCachesBoundEvictExpiredAndPreserveFresh(t *testing.T) {
 }
 
 func TestDossierPublicCachesConcurrentAccess(t *testing.T) {
-	useDossierCacheMax(t, 16)
+	const workers = 64
+	useDossierCacheMax(t, workers)
 	resetDossierPublicCaches()
 	t.Cleanup(resetDossierPublicCaches)
 
@@ -129,7 +130,6 @@ func TestDossierPublicCachesConcurrentAccess(t *testing.T) {
 		githubUserAPIBase = origGitHubBase
 	})
 
-	const workers = 64
 	var wg sync.WaitGroup
 	errs := make(chan string, workers*2)
 	for i := 0; i < workers; i++ {

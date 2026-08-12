@@ -42,6 +42,10 @@ const proxyAuthHeader = "X-Hive-Proxy-Auth"
 // when the owner role came from a trusted source, not an inbound client header.
 const ownerRoleVerifiedHeader = "X-Hive-Owner-Role-Verified"
 
+func isOwnerRole(role string) bool {
+	return strings.EqualFold(strings.TrimSpace(role), config.RoleOwner)
+}
+
 // proxyProofRequired controls F2 enforcement strictness. Default true =
 // fail-closed: a request with no X-Hive-Proxy-Auth proof header (or a wrong
 // one) is rejected even if it carries X-Hive-User/X-Hive-Role identity
@@ -772,13 +776,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if sess := s.sessionFromRequest(r); sess != nil {
 				r.Header.Set("X-Hive-User", sess.Username)
 				r.Header.Set("X-Hive-Role", sess.Role)
-				if sess.Role == config.RoleOwner {
+				if isOwnerRole(sess.Role) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
 			} else if r.Header.Get("X-Hive-Role") == "" {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
-			} else if r.Header.Get("X-Hive-Role") == config.RoleOwner {
+			} else if isOwnerRole(r.Header.Get("X-Hive-Role")) {
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 			next.ServeHTTP(w, r)
@@ -808,7 +812,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if sess := s.sessionFromRequest(r); sess != nil {
 				r.Header.Set("X-Hive-User", sess.Username)
 				r.Header.Set("X-Hive-Role", sess.Role)
-				if sess.Role == config.RoleOwner {
+				if isOwnerRole(sess.Role) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
 			}
@@ -836,7 +840,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
 				// Proof present and valid — definitely came through the hub.
 				trusted = true
-				if inboundRole == config.RoleOwner {
+				if isOwnerRole(inboundRole) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
 			case proof == "" && !proxyProofRequired:
@@ -869,7 +873,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			if sess := s.sessionFromRequest(r); sess != nil {
 				r.Header.Set("X-Hive-User", sess.Username)
 				r.Header.Set("X-Hive-Role", sess.Role)
-				if sess.Role == config.RoleOwner {
+				if isOwnerRole(sess.Role) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
 				trusted = true

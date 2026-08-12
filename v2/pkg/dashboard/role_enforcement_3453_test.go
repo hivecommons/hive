@@ -218,3 +218,25 @@ func TestRoleEnforcement_QueuePRAutoMerge_EmptyRoleRejected(t *testing.T) {
 		t.Fatalf("empty role on queue-automerge: got status %d, want 403; body=%q", w.Code, w.Body.String())
 	}
 }
+
+func TestRoleEnforcement_QueuePRAutoMerge_UnverifiedOwnerRejected(t *testing.T) {
+	srv := newMinimalServer(t)
+
+	for _, role := range []string{"owner", " OWNER "} {
+		t.Run(role, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/prs/testorg/testrepo/42/queue-automerge", nil)
+			req.SetPathValue("owner", "testorg")
+			req.SetPathValue("repo", "testrepo")
+			req.SetPathValue("number", "42")
+			req.Header.Set("X-Hive-User", "attacker")
+			req.Header.Set("X-Hive-Role", role)
+			// ownerRoleVerifiedHeader intentionally NOT set.
+			w := httptest.NewRecorder()
+			srv.handleQueuePRAutoMerge(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("unverified owner role %q on queue-automerge: got status %d, want 403; body=%q", role, w.Code, w.Body.String())
+			}
+		})
+	}
+}
