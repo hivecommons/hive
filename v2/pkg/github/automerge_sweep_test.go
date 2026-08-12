@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -85,6 +86,32 @@ func TestSweepQueuedAutoMergesIgnoresForgedNonAppQueueApproval(t *testing.T) {
 	}
 	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 1 {
 		t.Fatalf("result=%+v merge calls=%v, want non-App review ignored and PR skipped", result, merged)
+	}
+}
+
+func TestSweepQueuedAutoMergesReportsMissingAppBotLoginOnce(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	api := newAutoMergeSweepAPI(t, AutoMergeQueuedLabel, []sweepPR{
+		{number: 7, author: "alice", queuedBy: "bob", label: true, mergeableState: "clean"},
+		{number: 8, author: "carol", queuedBy: "dave", label: true, mergeableState: "clean"},
+	}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepQueuedAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Skipped != 2 {
+		t.Fatalf("result=%+v merge calls=%v, want both PRs skipped without merging", result, merged)
+	}
+	logText := logs.String()
+	if count := strings.Count(logText, autoMergeWarnNoAppBotLogin); count != 1 {
+		t.Fatalf("missing app bot login warnings = %d in %q, want exactly one", count, logText)
+	}
+	if !strings.Contains(logText, autoMergeReasonNoAppBotLogin) || !strings.Contains(logText, "App-authorship cannot be verified") {
+		t.Fatalf("missing app bot login log = %q, want reason and cause", logText)
 	}
 }
 
@@ -344,6 +371,7 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 		{name: "closed", pr: sweepPR{number: 7, author: "alice", queuedBy: "bob", label: true}, state: "closed", want: "closed"},
 		{name: "label removed", pr: sweepPR{number: 7, author: "alice", queuedBy: "bob", label: true}, state: "open", labels: nil, want: "label-removed"},
 		{name: "missing queue approval", pr: sweepPR{number: 7, author: "alice", queuedBy: "bob", label: true, mergeableState: "clean"}, state: "open", labels: []map[string]string{{"name": AutoMergeQueuedLabel}}, noReview: true, want: "no-hive-queue-approval"},
+		{name: "untrusted queue approval", pr: sweepPR{number: 7, author: "alice", queuedBy: "bob", reviewAuthor: "mallory", label: true, mergeableState: "clean"}, state: "open", labels: []map[string]string{{"name": AutoMergeQueuedLabel}}, want: autoMergeReasonUntrustedQueueApproval},
 		{name: "not mergeable", pr: sweepPR{number: 7, author: "alice", queuedBy: "bob", label: true, mergeableState: "dirty"}, state: "open", labels: []map[string]string{{"name": AutoMergeQueuedLabel}}, want: "not-mergeable"},
 	}
 	for _, tt := range tests {
@@ -364,7 +392,11 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 					if tt.noReview {
 						json.NewEncoder(w).Encode([]map[string]any{})
 					} else {
-						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
+						reviewAuthor := tt.pr.reviewAuthor
+						if reviewAuthor == "" {
+							reviewAuthor = testHiveAppBotLogin
+						}
+						json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @" + tt.pr.queuedBy + " for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": reviewAuthor}}})
 					}
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -463,6 +495,7 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 }
 
 func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.T) {
+	var logs bytes.Buffer
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -477,12 +510,17 @@ func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
-	approval, ok, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	approval, ok, reason, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
 	if err != nil {
 		t.Fatalf("latestHiveQueueApproval returned error: %v", err)
 	}
-	if ok || approval.QueuedBy != "" {
-		t.Fatalf("approval=(%+v,%v), want forged body ignored", approval, ok)
+	if ok || approval.QueuedBy != "" || reason != autoMergeReasonUntrustedQueueApproval {
+		t.Fatalf("approval=(%+v,%v,%q), want forged body ignored with untrusted reason", approval, ok, reason)
+	}
+	logText := logs.String()
+	if !strings.Contains(logText, autoMergeWarnUntrustedQueueApproval) || !strings.Contains(logText, "mallory") || !strings.Contains(logText, "alice") {
+		t.Fatalf("untrusted approval log = %q, want warning with review author and claimed user", logText)
 	}
 }
 
@@ -500,12 +538,12 @@ func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
 	defer api.Close()
 
 	c := newAutoMergeSweepClient(api.URL)
-	approval, ok, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
+	approval, ok, reason, err := c.latestHiveQueueApproval(context.Background(), "acme", "widget", 7)
 	if err != nil {
 		t.Fatalf("latestHiveQueueApproval returned error: %v", err)
 	}
-	if !ok || approval.QueuedBy != "new" || approval.HeadSHA != "newsha" {
-		t.Fatalf("approval=(%+v,%v), want new/newsha", approval, ok)
+	if !ok || reason != "" || approval.QueuedBy != "new" || approval.HeadSHA != "newsha" {
+		t.Fatalf("approval=(%+v,%v,%q), want new/newsha", approval, ok, reason)
 	}
 }
 
