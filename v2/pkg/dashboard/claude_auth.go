@@ -71,6 +71,10 @@ func (s *Server) handleClaudeAuthStatus(w http.ResponseWriter, r *http.Request) 
 // After the user authorizes, they paste the resulting URL back to the dashboard,
 // which POSTs the code to /api/claude-auth/exchange.
 func (s *Server) handleClaudeAuthStart(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	verifier, challenge, err := claude.GeneratePKCE()
 	if err != nil {
 		jsonError(w, "PKCE generation failed: "+err.Error(), http.StatusInternalServerError)
@@ -101,6 +105,10 @@ func (s *Server) handleClaudeAuthStart(w http.ResponseWriter, r *http.Request) {
 // handleClaudeAuthExchange receives the authorization code (either extracted
 // from the pasted callback URL or sent directly) and exchanges it for tokens.
 func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		jsonError(w, "failed to read request body", http.StatusBadRequest)
@@ -186,6 +194,10 @@ func (s *Server) handleClaudeAuthExchange(w http.ResponseWriter, r *http.Request
 
 // handleClaudeAuthLogout removes the Claude credentials.
 func (s *Server) handleClaudeAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	claudeRemoveFile(claudeCredPath)
 	claudeRemoveFile(claudeTokenFilePath)
 

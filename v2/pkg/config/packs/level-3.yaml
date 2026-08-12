@@ -15,12 +15,15 @@ governor:
     quiet: 3
     idle: 0
   cadences:
+    # SURGE = queue overloaded, so the workers must keep RUNNING to drain it.
+    # Pausing them was a self-tightening trap (queue never drains → stuck in
+    # SURGE forever → nothing created). Keep workers on their busy cadences.
     surge:
-      supervisor: pause
-      scanner: pause
-      ci-maintainer: pause
-      quality: pause
-      guide: pause
+      supervisor: 5m
+      scanner: 4h
+      ci-maintainer: 4h
+      quality: 2h
+      guide: 4h
     busy:
       supervisor: 5m
       scanner: 4h

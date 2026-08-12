@@ -447,7 +447,16 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 		// only when a usable per-app-id key exists. Any other path is a genuine
 		// operator override (a hive on a third App with a bespoke key location)
 		// and still wins outright.
-		if v == spokeAppKeyPath {
+		//
+		// BOTH generic paths qualify. /data/gh-app-key.pem is what older builds
+		// wrote on every key delivery; /secrets/gh-app-key.pem is what the
+		// PROVISIONING TEMPLATE hardcodes for every App-using hive
+		// (saas_provision.go). Neither names the App it holds, and neither was
+		// typed by an operator. Until /secrets was included here, a provisioned
+		// hive could never change forges: the hub could correct app_id all it
+		// liked and the spoke kept signing with the provisioned key, which on
+		// the a-ks-wec2 pool was a placeholder matching NEITHER real App.
+		if v == spokeAppKeyPath || v == spokeProvisionedAppKeyPath {
 			if p := perAppIDKeyPath(appID); p != "" {
 				if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
 					return p
@@ -596,7 +605,7 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// the very first token this process mints is scoped to the right org
 		// rather than 403ing on every write until the self-heal tick runs.
 		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
-		out.Client = github.NewClientFromApp(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+		out.Client = github.NewClientFromAppWithBotLogin(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
 		return out
 	}
@@ -2053,7 +2062,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("initializing app auth: %w", err)
 			}
-			newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+			newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
@@ -2453,7 +2462,7 @@ func main() {
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
 				} else {
-					newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
@@ -3578,7 +3587,7 @@ func main() {
 				// updates the live cfg (which the coordinator keeps in sync) and
 				// persists via cfg.Save().
 				healGitHubAppInstallation(ctx, newAppAuth, committed, logger)
-				newClient := github.NewClientFromApp(newAppAuth, committed.Project.Org, committed.Project.Repos, logger)
+				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, committed.Project.Org, committed.Project.Repos, logger, committed.GitHub.BotLogin())
 				if len(committed.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(committed.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(committed.Governor.Labels.AutoMerge)

@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -196,6 +198,27 @@ const (
 	heraldryMaxBadges    = 24
 )
 
+const (
+	dossierCacheMaxEntriesEnv = "HIVE_DOSSIER_CACHE_MAX_ENTRIES"
+	// dossierCacheMaxEntriesDefault caps each public dossier cache. 512 entries
+	// keeps normal contributor reuse hot while bounding username-spray memory.
+	dossierCacheMaxEntriesDefault = 512
+)
+
+var dossierCacheMaxEntries = configuredDossierCacheMaxEntries()
+
+func configuredDossierCacheMaxEntries() int {
+	raw := strings.TrimSpace(os.Getenv(dossierCacheMaxEntriesEnv))
+	if raw == "" {
+		return dossierCacheMaxEntriesDefault
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return dossierCacheMaxEntriesDefault
+	}
+	return n
+}
+
 // heraldryBaseURL is a var so tests can point the fetch at a local stub.
 var heraldryBaseURL = "https://www.credly.com"
 
@@ -326,6 +349,52 @@ func fetchCredlyBadges(credlyName string) ([]HeraldryBadge, error) {
 	return out, nil
 }
 
+func effectiveDossierCacheMaxEntries() int {
+	if dossierCacheMaxEntries <= 0 {
+		return dossierCacheMaxEntriesDefault
+	}
+	return dossierCacheMaxEntries
+}
+
+func heraldryEntryExpired(e heraldryCacheEntry, now time.Time) bool {
+	ttl := heraldryCacheTTL
+	if !e.linked {
+		ttl = heraldryNegativeTTL
+	}
+	return now.Sub(e.fetchedAt) >= ttl
+}
+
+func pruneHeraldryCacheLocked(now time.Time) {
+	for k, e := range heraldryCache {
+		if heraldryEntryExpired(e, now) {
+			delete(heraldryCache, k)
+		}
+	}
+}
+
+func enforceHeraldryCacheBoundLocked() {
+	maxEntries := effectiveDossierCacheMaxEntries()
+	for len(heraldryCache) > maxEntries {
+		var oldestKey string
+		var oldestFetchedAt time.Time
+		for k, e := range heraldryCache {
+			if oldestKey == "" || e.fetchedAt.Before(oldestFetchedAt) {
+				oldestKey = k
+				oldestFetchedAt = e.fetchedAt
+			}
+		}
+		delete(heraldryCache, oldestKey)
+	}
+}
+
+func storeHeraldryCache(credlyName string, entry heraldryCacheEntry) {
+	heraldryCacheMu.Lock()
+	defer heraldryCacheMu.Unlock()
+	heraldryCache[credlyName] = entry
+	pruneHeraldryCacheLocked(time.Now())
+	enforceHeraldryCacheBoundLocked()
+}
+
 // heraldryCached returns a live cache entry for credlyName, if one exists and
 // has not aged out.
 func heraldryCached(credlyName string) ([]HeraldryBadge, bool, bool) {
@@ -335,11 +404,8 @@ func heraldryCached(credlyName string) ([]HeraldryBadge, bool, bool) {
 	if !ok {
 		return nil, false, false
 	}
-	ttl := heraldryCacheTTL
-	if !e.linked {
-		ttl = heraldryNegativeTTL
-	}
-	if time.Since(e.fetchedAt) >= ttl {
+	if heraldryEntryExpired(e, time.Now()) {
+		delete(heraldryCache, credlyName)
 		return nil, false, false
 	}
 	return e.badges, e.linked, true
@@ -360,9 +426,7 @@ func heraldryFor(credlyName string) ([]HeraldryBadge, bool) {
 		if badges == nil {
 			badges = []HeraldryBadge{}
 		}
-		heraldryCacheMu.Lock()
-		heraldryCache[credlyName] = heraldryCacheEntry{badges: badges, linked: err == nil, fetchedAt: time.Now()}
-		heraldryCacheMu.Unlock()
+		storeHeraldryCache(credlyName, heraldryCacheEntry{badges: badges, linked: err == nil, fetchedAt: time.Now()})
 	})
 
 	if badges, linked, ok := heraldryCached(credlyName); ok {
@@ -442,6 +506,46 @@ func fetchGitHubPublicUser(username string) (serviceYears, followers int, err er
 	return years, payload.Followers, nil
 }
 
+func githubUserEntryExpired(e githubUserCacheEntry, now time.Time) bool {
+	ttl := githubUserCacheTTL
+	if !e.ok {
+		// A transient failure must not hide service-years/renown for hours.
+		ttl = heraldryNegativeTTL
+	}
+	return now.Sub(e.fetchedAt) >= ttl
+}
+
+func pruneGitHubUserCacheLocked(now time.Time) {
+	for k, e := range githubUserCache {
+		if githubUserEntryExpired(e, now) {
+			delete(githubUserCache, k)
+		}
+	}
+}
+
+func enforceGitHubUserCacheBoundLocked() {
+	maxEntries := effectiveDossierCacheMaxEntries()
+	for len(githubUserCache) > maxEntries {
+		var oldestKey string
+		var oldestFetchedAt time.Time
+		for k, e := range githubUserCache {
+			if oldestKey == "" || e.fetchedAt.Before(oldestFetchedAt) {
+				oldestKey = k
+				oldestFetchedAt = e.fetchedAt
+			}
+		}
+		delete(githubUserCache, oldestKey)
+	}
+}
+
+func storeGitHubUserCache(username string, entry githubUserCacheEntry) {
+	githubUserCacheMu.Lock()
+	defer githubUserCacheMu.Unlock()
+	githubUserCache[username] = entry
+	pruneGitHubUserCacheLocked(time.Now())
+	enforceGitHubUserCacheBoundLocked()
+}
+
 // githubUserCached returns a live cache entry for username, if one exists and
 // has not aged out.
 func githubUserCached(username string) (int, int, bool, bool) {
@@ -451,12 +555,8 @@ func githubUserCached(username string) (int, int, bool, bool) {
 	if !ok {
 		return 0, 0, false, false
 	}
-	ttl := githubUserCacheTTL
-	if !e.ok {
-		// A transient failure must not hide service-years/renown for hours.
-		ttl = heraldryNegativeTTL
-	}
-	if time.Since(e.fetchedAt) >= ttl {
+	if githubUserEntryExpired(e, time.Now()) {
+		delete(githubUserCache, username)
 		return 0, 0, false, false
 	}
 	return e.serviceYears, e.followers, e.ok, true
@@ -476,11 +576,9 @@ func githubPublicFor(username string) (int, int, bool) {
 			return
 		}
 		years, followers, err := fetchGitHubPublicUser(username)
-		githubUserCacheMu.Lock()
-		githubUserCache[username] = githubUserCacheEntry{
+		storeGitHubUserCache(username, githubUserCacheEntry{
 			serviceYears: years, followers: followers, ok: err == nil, fetchedAt: time.Now(),
-		}
-		githubUserCacheMu.Unlock()
+		})
 	})
 
 	years, followers, ok, _ := githubUserCached(username)

@@ -448,6 +448,26 @@ func clusterForgeHost(c *ClusterConfig) string {
 	return clusterDefaultForge(c)
 }
 
+// clusterDefaultForgeHasPositiveEvidence reports whether a cluster named its
+// default forge explicitly, rather than falling through the empty-record default
+// to public github.com. Public-by-silence is not evidence: those records may be
+// GHE clusters that have not backfilled URLs yet.
+func clusterDefaultForgeHasPositiveEvidence(c *ClusterConfig, forge string) bool {
+	if c == nil || strings.TrimSpace(forge) == "" {
+		return false
+	}
+	if f := strings.TrimSpace(c.DefaultForge); f != "" {
+		return sameGitHubHost(forgeHostLabel(f), forge)
+	}
+	if f := strings.TrimSpace(c.GitHubBaseURL); f != "" {
+		return sameGitHubHost(forgeHostLabel(f), forge)
+	}
+	if f := strings.TrimSpace(c.GitHubAPIURL); f != "" {
+		return sameGitHubHost(forgeHostLabel(f), forge)
+	}
+	return false
+}
+
 // defaultForgeIdentity returns the App identity (id, slug, urls) a cluster
 // declares for its DEFAULT forge, from whichever shape the cluster is written
 // in.

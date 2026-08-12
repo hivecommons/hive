@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -389,5 +390,101 @@ func TestBobKeyTest_BadStatusSurfacesBackendMessage(t *testing.T) {
 	detail, _ := out["detail"].(string)
 	if !strings.Contains(detail, "HTTP 500") || !strings.Contains(detail, "bob backend melted") {
 		t.Errorf("detail %q missing status or backend message", detail)
+	}
+}
+
+// bobProbeBaseURL uses the default URL when the env override is not set.
+func TestBobProbeBaseURL_DefaultWhenNoEnv(t *testing.T) {
+	t.Setenv(bobAPIBaseURLEnv, "")
+	got := bobProbeBaseURL()
+	if got != defaultBobAPIBaseURL {
+		t.Errorf("bobProbeBaseURL() = %q, want default %q", got, defaultBobAPIBaseURL)
+	}
+}
+
+// A non-HTML 403 from the backend (JSON auth rejection) maps to unauthorized,
+// not unreachable — only HTML edge pages get the "network edge" classification.
+func TestBobKeyTest_JSON403IsUnauthorized(t *testing.T) {
+	isolateBobKeySources(t)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"access denied","reason":"key revoked"}`))
+	}))
+	defer backend.Close()
+	t.Setenv(bobAPIBaseURLEnv, backend.URL)
+
+	s, _ := newBobProbeServer(t)
+	_, out := postBobKeyTest(t, s, `{"apiKey":"`+bobTestKey+`"}`)
+	if out["reason"] != bobTestReasonUnauthorized {
+		t.Fatalf("reason = %v, want unauthorized for a JSON 403", out["reason"])
+	}
+	detail, _ := out["detail"].(string)
+	if !strings.Contains(detail, "key revoked") {
+		t.Errorf("detail %q missing backend message", detail)
+	}
+}
+
+// bobLooksLikeEdgeHTML detects an HTML body prefix even without Content-Type.
+func TestBobLooksLikeEdgeHTML_BodyPrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		ct   string
+		body string
+		want bool
+	}{
+		{"DOCTYPE prefix", "", "<!DOCTYPE html><html>block</html>", true},
+		{"html tag prefix", "", "<html><body>blocked</body></html>", true},
+		{"JSON body not HTML", "application/json", `{"error":"forbidden"}`, false},
+		{"empty body not HTML", "", "", false},
+		{"text/html content-type", "text/html", "anything", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{Header: http.Header{}}
+			if tt.ct != "" {
+				resp.Header.Set("Content-Type", tt.ct)
+			}
+			got := bobLooksLikeEdgeHTML(resp, tt.body)
+			if got != tt.want {
+				t.Errorf("bobLooksLikeEdgeHTML(ct=%q, body=%q) = %v, want %v", tt.ct, tt.body, got, tt.want)
+			}
+		})
+	}
+}
+
+// A timeout from the backend maps to reason "timeout" with a duration hint.
+// This test uses a TCP listener that accepts but never writes — forcing the
+// HTTP client to hit its deadline.
+func TestBobKeyTest_Timeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timeout test requires 10s+ wait; skipped in -short mode")
+	}
+	isolateBobKeySources(t)
+	// Create a raw TCP listener that accepts connections but never responds,
+	// forcing the HTTP client's Timeout to fire.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Hold connection open, never write — triggers client timeout.
+			defer conn.Close()
+		}
+	}()
+	t.Setenv(bobAPIBaseURLEnv, "http://"+ln.Addr().String())
+
+	reason, detail := probeBobAPIKey(bobTestKey)
+	if reason != bobTestReasonTimeout {
+		t.Fatalf("reason = %q, want timeout", reason)
+	}
+	if !strings.Contains(detail, "did not respond within") {
+		t.Errorf("detail %q missing timeout explanation", detail)
 	}
 }

@@ -36,6 +36,16 @@ func writeClaudeCreds(t *testing.T, path string) {
 	}
 }
 
+func writeCodexAuth(t *testing.T, path string, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir codex auth dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write codex auth: %v", err)
+	}
+}
+
 // emptySharedPaths redirects the shared/legacy credential locations to a
 // nonexistent temp dir — the exact condition observed on a per-agent-UID spoke,
 // where /data/home/.claude/.credentials.json is absent and
@@ -49,6 +59,25 @@ func emptySharedPaths(t *testing.T) {
 	t.Cleanup(func() {
 		sharedClaudeCredentialPath = origClaude
 		sharedCopilotConfigPath = origCopilot
+	})
+}
+
+func emptyCodexSharedPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	orig := codexSharedAuthFile
+	codexSharedAuthFile = filepath.Join(dir, "absent-codex-auth.json")
+	t.Cleanup(func() {
+		codexSharedAuthFile = orig
+	})
+}
+
+func overrideCodexHomePrefix(t *testing.T, prefix string) {
+	t.Helper()
+	orig := codexHomePrefix
+	codexHomePrefix = prefix
+	t.Cleanup(func() {
+		codexHomePrefix = orig
 	})
 }
 
@@ -130,6 +159,74 @@ func TestAgentAuthState_RunningAgentNoBadgeOnMissingFile(t *testing.T) {
 	}
 }
 
+func TestAgentAuthState_ClaudeCredentialFileMissingThenPresent(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	shared := filepath.Join(dir, "shared", ".claude", ".credentials.json")
+	t.Setenv("HOME", home)
+
+	origClaude, origCopilot := sharedClaudeCredentialPath, sharedCopilotConfigPath
+	sharedClaudeCredentialPath = shared
+	sharedCopilotConfigPath = filepath.Join(dir, "shared", ".copilot", "config.json")
+	t.Cleanup(func() {
+		sharedClaudeCredentialPath = origClaude
+		sharedCopilotConfigPath = origCopilot
+	})
+
+	m := &Manager{}
+	if avail, known := m.AgentAuthState("writer", 0, "claude", false, false); !known || avail {
+		t.Fatalf("missing claude credentials: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	}
+
+	writeClaudeCreds(t, shared)
+	if avail, known := m.AgentAuthState("writer", 0, "claude", false, false); !known || !avail {
+		t.Fatalf("shared claude credentials present: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+}
+
+func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
+	emptySharedPaths(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	prefix := filepath.Join(t.TempDir(), "agent-home-")
+	claudeInferenceHomePrefixForTest(t, prefix)
+
+	if got := AgentHome("writer", 0, "claude"); got != home {
+		t.Fatalf("uid 0 AgentHome = %q, want HOME %q", got, home)
+	}
+	if got := AgentHome("writer", 2001, "claude"); got != bobSharedHome {
+		t.Fatalf("claude agent home = %q, want shared home %q", got, bobSharedHome)
+	}
+	if got := AgentHome("writer", 2001, "litellm"); got != prefix+"writer" {
+		t.Fatalf("inference agent home = %q, want %q", got, prefix+"writer")
+	}
+
+	claudePaths := agentClaudeCredentialPaths("writer", 0, "claude")
+	wantClaude := filepath.Join(home, ".claude", ".credentials.json")
+	if len(claudePaths) < 2 || claudePaths[0] != wantClaude || claudePaths[len(claudePaths)-1] != sharedClaudeCredentialPath {
+		t.Fatalf("claude credential paths = %v, want first %q and last shared %q",
+			claudePaths, wantClaude, sharedClaudeCredentialPath)
+	}
+
+	copilotPaths := agentCopilotConfigPaths("writer", 0, "copilot")
+	wantCopilot := []string{
+		filepath.Join(home, ".copilot", "config.json"),
+		filepath.Join(home, ".config", "github-copilot", "apps.json"),
+		filepath.Join(home, ".config", "github-copilot", "hosts.json"),
+	}
+	if len(copilotPaths) < len(wantCopilot)+1 {
+		t.Fatalf("copilot credential paths = %v, want home paths plus shared fallback", copilotPaths)
+	}
+	for i, want := range wantCopilot {
+		if copilotPaths[i] != want {
+			t.Fatalf("copilotPaths[%d] = %q, want %q (all paths %v)", i, copilotPaths[i], want, copilotPaths)
+		}
+	}
+	if copilotPaths[len(copilotPaths)-1] != sharedCopilotConfigPath {
+		t.Fatalf("copilot credential paths = %v, want shared fallback last %q", copilotPaths, sharedCopilotConfigPath)
+	}
+}
+
 // TestAgentAuthState_TruePositivePreserved: an interactive backend with no
 // credentials anywhere and an agent that is NOT running must still report
 // "needs login" — the signal has to keep working.
@@ -196,6 +293,44 @@ func TestAgentAuthState_CopilotCredentials(t *testing.T) {
 	emptySharedPaths(t)
 	if avail, known := m.AgentAuthState("planner", 0, "copilot", false, false); !known || avail {
 		t.Fatalf("copilot without tokens: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	}
+}
+
+func TestAgentAuthState_CodexCredentials(t *testing.T) {
+	emptyCodexSharedPath(t)
+	t.Setenv("HOME", t.TempDir())
+	m := &Manager{}
+
+	if !BackendRequiresInteractiveAuth("codex") {
+		t.Fatal("codex must be classified as an interactive OAuth/device-login backend")
+	}
+	if avail, known := m.AgentAuthState("coder", 0, "codex", false, false); !known || avail {
+		t.Fatalf("codex without auth.json: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	}
+
+	t.Setenv("CODEX_API_KEY", "env-api-key")
+	if avail, known := m.AgentAuthState("coder", 0, "codex", false, false); !known || !avail {
+		t.Fatalf("codex CODEX_API_KEY: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+	t.Setenv("CODEX_API_KEY", "")
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeCodexAuth(t, filepath.Join(home, ".codex", "auth.json"), `{"tokens":{"access_token":"oauth-token"}}`)
+	if avail, known := m.AgentAuthState("coder", 0, "codex", false, false); !known || !avail {
+		t.Fatalf("codex OAuth auth.json: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+
+	emptyCodexSharedPath(t)
+	overrideCodexHomePrefix(t, filepath.Join(t.TempDir(), ".codex-"))
+	writeCodexAuth(t, filepath.Join(codexHomePath("coder"), "auth.json"), `{"OPENAI_API_KEY":"api-key-login"}`)
+	if avail, known := m.AgentAuthState("coder", 2007, "codex", false, false); !known || !avail {
+		t.Fatalf("codex per-agent CODEX_HOME auth.json: got (avail=%v, known=%v), want authenticated", avail, known)
+	}
+
+	paths := agentCodexAuthPaths("coder", 2007, "codex")
+	if len(paths) < 2 || paths[0] != filepath.Join(codexHomePath("coder"), "auth.json") {
+		t.Fatalf("agentCodexAuthPaths should prefer CODEX_HOME auth.json; got %v", paths)
 	}
 }
 

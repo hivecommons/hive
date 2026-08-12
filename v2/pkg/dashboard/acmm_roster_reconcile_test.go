@@ -306,3 +306,55 @@ func TestApplyPackPreservesOperatorThreshold(t *testing.T) {
 		break
 	}
 }
+
+// TestApplyPackForceRederivesCadencesOnLevelSwitch guards the level-switch bug:
+// switching to a level whose pack differs only in governor cadences (no NEW
+// agent added) must adopt the target level's cadences. Plain ApplyPack preserves
+// operator customizations on a no-growth merge, which silently kept the previous
+// level's cadences after a switch (e.g. a stale SURGE=pause), leaving agents_due
+// empty. ApplyPackForce (used by the /api/packs level-change + apply handlers)
+// re-derives them.
+func TestApplyPackForceRederivesCadencesOnLevelSwitch(t *testing.T) {
+	srv := newFullServer(t)
+
+	// Bring the roster up to L5 first (adds agents; cadences from L5).
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5): %v", err)
+	}
+
+	// Corrupt a governor cadence to simulate a stale/customized value that a
+	// plain merge would preserve — here, pause scanner in surge.
+	if m, ok := srv.deps.Config.Governor.Modes["surge"]; ok {
+		if m.Cadences == nil {
+			m.Cadences = map[string]config.Cadence{}
+		}
+		m.Cadences["scanner"] = config.Cadence("pause")
+		srv.deps.Config.Governor.Modes["surge"] = m
+	}
+
+	// A PLAIN re-apply of the SAME level adds no agents, so it must NOT overwrite
+	// the (now stale) cadence — this is the preserve-customizations path.
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5) re-apply: %v", err)
+	}
+	if got := srv.deps.Config.Governor.Modes["surge"].Cadences["scanner"]; got != "pause" {
+		t.Fatalf("plain ApplyPack should preserve the customized surge scanner cadence, got %q", got)
+	}
+
+	// ApplyPackForce (an explicit operator apply) MUST re-derive from the pack,
+	// replacing the stale "pause" with the pack's L5 surge scanner cadence.
+	pack, err := config.ACMMPackByLevel(5)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(5): %v", err)
+	}
+	want := pack.Governor.Cadences["surge"]["scanner"]
+	if want == "" || want == "pause" {
+		t.Skip("L5 surge scanner cadence not a distinguishing non-pause value; test assumption changed")
+	}
+	if _, err := srv.ApplyPackForce(5); err != nil {
+		t.Fatalf("ApplyPackForce(5): %v", err)
+	}
+	if got := string(srv.deps.Config.Governor.Modes["surge"].Cadences["scanner"]); got != want {
+		t.Errorf("ApplyPackForce must re-derive surge scanner cadence from the pack: got %q, want %q", got, want)
+	}
+}

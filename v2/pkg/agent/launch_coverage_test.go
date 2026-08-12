@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
 	"testing"
 	"time"
@@ -111,98 +110,14 @@ func TestStart_CopilotAdoptsRunning(t *testing.T) {
 // ("No, exit") so the function presses Down then Enter, then the pane flips to
 // a ready marker so it returns.
 func TestDismissInferencePrompts_NavigatesNegative(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covdismiss2"
-	newRawTmuxSession(t, session)
-	m := NewManager(map[string]config.AgentConfig{"covdismiss2": {Backend: "litellm"}}, discardLogger(), ProjectContext{})
-	m.mu.RLock()
-	agent := m.agents["covdismiss2"]
-	m.mu.RUnlock()
-	agent.tmuxSession = session
-
-	// Render a selection prompt with a negative selected option.
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Enter to confirm").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 1. No, exit").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	time.Sleep(400 * time.Millisecond)
-
-	done := make(chan struct{})
-	go func() {
-		m.dismissInferencePrompts(agent)
-		close(done)
-	}()
-
-	// Flip the pane to the ready marker and keep re-asserting it until
-	// dismissInferencePrompts returns. A single send-keys/capture-pane can race
-	// with the poll loop under load, and the loop only acts on a *changed* pane
-	// (it skips a capture equal to the previous one), so re-emit a line that
-	// contains the ready marker AND a changing counter each interval. That
-	// guarantees at least one poll sees a changed pane carrying the marker,
-	// rather than depending on one perfectly-timed write.
-	stop := make(chan struct{})
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-		n := 0
-		for {
-			n++
-			exec.Command("tmux", "send-keys", "-t", session, "-l",
-				fmt.Sprintf(": esc to interrupt [%d]", n)).Run()
-			exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Error("dismissInferencePrompts should return after pane becomes ready")
-	}
-	close(stop)
+	m, agent, script := newDismissPromptHarness(t, "covdismiss2", ": Enter to confirm\n❯ 1. No, exit", 2)
+	runDismissPromptScript(t, m, agent, script, []string{"Down", "Enter"})
 }
 
 // TestDismissInferencePrompts_BypassConsent covers the explicit bypass-consent
 // handling branch (confirmMenuOption with Down navigation).
 func TestDismissInferencePrompts_BypassConsent(t *testing.T) {
-	if !tmuxAvailable() {
-		t.Skip("tmux not available")
-	}
-	session := "hive-covdismiss3"
-	newRawTmuxSession(t, session)
-	m := NewManager(map[string]config.AgentConfig{"covdismiss3": {Backend: "vllm"}}, discardLogger(), ProjectContext{})
-	m.mu.RLock()
-	agent := m.agents["covdismiss3"]
-	m.mu.RUnlock()
-	agent.tmuxSession = session
-
-	exec.Command("tmux", "send-keys", "-t", session, "-l", ": Bypass Permissions mode").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "-l", "❯ 2. Yes, I accept").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	time.Sleep(400 * time.Millisecond)
-
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		exec.Command("tmux", "send-keys", "-t", session, "-l", ": esc to interrupt").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "Enter").Run()
-	}()
-
-	done := make(chan struct{})
-	go func() {
-		m.dismissInferencePrompts(agent)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Error("dismissInferencePrompts should return")
-	}
+	m, agent, script := newDismissPromptHarness(t, "covdismiss3", ": Bypass Permissions mode\n❯ 1. No, exit", 2)
+	script.afterDownPane = ": Bypass Permissions mode\n❯ 2. Yes, I accept"
+	runDismissPromptScript(t, m, agent, script, []string{"Down", "Enter"})
 }

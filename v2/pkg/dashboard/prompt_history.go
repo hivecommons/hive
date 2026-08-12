@@ -335,14 +335,11 @@ func (p *PromptHistory) Query(agent string, windowHours int, now time.Time) []Pr
 
 // handlePromptHistory serves GET /api/prompt-history.
 //
-// Access is gated exactly like GET /api/audit (handleAuditLog): prompt bodies
-// embed repo names, issue titles and knowledge-base content, so this must not
-// be readable by anyone who cannot already read the audit log.
+// Access fails closed exactly like GET /api/audit (handleAuditLog): prompt
+// bodies embed repo names, issue titles and knowledge-base content, so this
+// must not be readable by anyone who cannot already read the audit log.
 func (s *Server) handlePromptHistory(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
 		http.Error(w, "insufficient access", http.StatusForbidden)
 		return

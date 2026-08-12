@@ -265,9 +265,6 @@ func (a *AuditLog) Recent(n int) []AuditEntry {
 
 func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {
 		http.Error(w, "insufficient access", http.StatusForbidden)
 		return

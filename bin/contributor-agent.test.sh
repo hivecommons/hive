@@ -190,3 +190,138 @@ done
 
 echo "contributor-agent hook override tests passed"
 echo "contributor-agent knowledge fetch tests passed"
+
+codex_flags_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$codex_flags_output" in
+  *"backend_perm_flag=--ask-for-approval on-request --sandbox workspace-write"* ) ;;
+  *)
+    echo "expected codex default posture to be explicit and non-bypass; got:" >&2
+    echo "$codex_flags_output" >&2
+    exit 1
+    ;;
+esac
+
+codex_bypass_output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_ENTRYPOINT_HOOK_DIR="${WORK_DIR}/empty-entrypoint.d" \
+    HIVE_CODEX_DANGEROUSLY_BYPASS_APPROVALS_AND_SANDBOX=1 \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RESOLVE_BACKEND=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"
+case "$codex_bypass_output" in
+  *"backend_perm_flag=--dangerously-bypass-approvals-and-sandbox"* ) ;;
+  *)
+    echo "expected codex dangerous bypass to be opt-in; got:" >&2
+    echo "$codex_bypass_output" >&2
+    exit 1
+    ;;
+esac
+
+FAKE_BIN="${WORK_DIR}/bin"
+mkdir -p "$FAKE_BIN"
+cat >"${FAKE_BIN}/codex" <<'CODEX'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  if [[ "${FAKE_CODEX_VERSION_FAIL:-}" == "1" ]]; then
+    exit 42
+  fi
+  echo "codex 0.146.0"
+fi
+CODEX
+chmod +x "${FAKE_BIN}/codex"
+CODEX_HOME_DIR="${WORK_DIR}/codex-home"
+mkdir -p "$CODEX_HOME_DIR"
+
+run_codex_detect() {
+  env -i \
+    PATH="${FAKE_BIN}:${PATH}" \
+    HOME="$HOME_DIR" \
+    CODEX_HOME="$CODEX_HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+}
+
+rm -f "${CODEX_HOME_DIR}/auth.json"
+if output="$(run_codex_detect)"; [[ "$output" != "NOT_AUTHED" ]]; then
+  echo "expected codex without CODEX_HOME/auth.json to be NOT_AUTHED; got: $output" >&2
+  exit 1
+fi
+
+cat >"${CODEX_HOME_DIR}/auth.json" <<'JSON'
+{"tokens":{"access_token":"oauth-access-token"}}
+JSON
+if output="$(run_codex_detect)"; [[ "$output" != "OK" ]]; then
+  echo "expected codex OAuth auth.json to be OK; got: $output" >&2
+  exit 1
+fi
+
+cat >"${CODEX_HOME_DIR}/auth.json" <<'JSON'
+{"OPENAI_API_KEY":"api-key-login"}
+JSON
+if output="$(run_codex_detect)"; [[ "$output" != "OK" ]]; then
+  echo "expected codex API-key auth.json to be OK; got: $output" >&2
+  exit 1
+fi
+
+rm -f "${CODEX_HOME_DIR}/auth.json"
+if output="$(
+  env -i \
+    PATH="${FAKE_BIN}:${PATH}" \
+    HOME="$HOME_DIR" \
+    CODEX_HOME="$CODEX_HOME_DIR" \
+    CODEX_API_KEY="api-key-env" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"; [[ "$output" != "OK" ]]; then
+  echo "expected codex CODEX_API_KEY environment auth to be OK; got: $output" >&2
+  exit 1
+fi
+
+if output="$(
+  env -i \
+    PATH="${FAKE_BIN}:${PATH}" \
+    HOME="$HOME_DIR" \
+    CODEX_HOME="$CODEX_HOME_DIR" \
+    CODEX_API_KEY="api-key-env" \
+    FAKE_CODEX_VERSION_FAIL=1 \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"; [[ "$output" != "BROKEN" ]]; then
+  echo "expected codex version failure to be BROKEN; got: $output" >&2
+  exit 1
+fi
+
+if output="$(
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    CODEX_HOME="$CODEX_HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_DETECT_CLI=1 \
+    AGENT_BACKEND=codex \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh"
+)"; [[ "$output" != "NOT_INSTALLED" ]]; then
+  echo "expected missing codex binary to be NOT_INSTALLED; got: $output" >&2
+  exit 1
+fi
+
+echo "contributor-agent codex contract tests passed"

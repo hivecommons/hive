@@ -23,7 +23,7 @@ func putAssignedRole(t *testing.T, s *Server, id, role string) *httptest.Respons
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPut, "/api/contributors/"+id+"/agent-role", strings.NewReader(`{"agent_role":"`+role+`"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	return rec
@@ -74,7 +74,7 @@ func TestContributorAgentRoleAssignmentValidationAndPersistence(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":[]}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec = httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -194,7 +194,7 @@ func TestAgentRoleGrantUpdateSyncsLiveConnection(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":[]}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
