@@ -24,6 +24,9 @@ var reviewedCodexVersions = map[string]map[string]string{
 		).Replace(codexReviewedFeatureInventoryV0144),
 		"windows": codexReviewedFeatureInventoryV0144,
 	},
+	"codex-cli 0.146.0": {
+		"linux": codexReviewedFeatureInventoryV0146Linux,
+	},
 }
 
 func reviewedCodexFeatureInventory(version, platform string) (string, bool) {
@@ -119,6 +122,111 @@ tui_app_server                       removed            true
 unavailable_dummy_tools              removed            false
 undo                                 removed            false
 unified_exec                         stable             false
+unified_exec_zsh_fork                under development  false
+use_agent_identity                   under development  false
+use_legacy_landlock                  deprecated         false
+use_linux_sandbox_bwrap              removed            false
+web_search_cached                    deprecated         false
+web_search_request                   deprecated         false
+workspace_dependencies               stable             true
+workspace_owner_usage_nudge          removed            false`
+
+// codexReviewedFeatureInventoryV0146Linux is the exact feature inventory of
+// the native Linux Codex binary packaged by the Hive image. Keep it explicit:
+// adding a version to the allowlist without reviewing every capability would
+// turn the version check into a bypass rather than a security boundary.
+const codexReviewedFeatureInventoryV0146Linux = `apply_patch_freeform                 removed            false
+apply_patch_streaming_events         under development  false
+apps                                 stable             true
+apps_mcp_path_override               removed            false
+artifact                             under development  false
+auth_elicitation                     stable             true
+browser_use                          stable             true
+browser_use_external                 stable             true
+browser_use_full_cdp_access          stable             true
+chronicle                            under development  false
+code_mode                            under development  false
+code_mode_buffered_exec              under development  false
+code_mode_host                       stable             true
+code_mode_only                       under development  false
+codex_git_commit                     removed            false
+collaboration_modes                  removed            true
+computer_use                         stable             true
+concurrent_reasoning_summaries       under development  false
+current_time_reminder                under development  false
+default_mode_request_user_input      under development  false
+deferred_executor                    under development  false
+deferred_tool_world_state            under development  false
+elevated_windows_sandbox             removed            false
+enable_fanout                        removed            false
+enable_mcp_apps                      under development  false
+enable_request_compression           stable             true
+exec_permission_approvals            under development  false
+executor_capability_discovery        under development  false
+experimental_windows_sandbox         removed            false
+external_agent_memory_import         under development  false
+external_migration                   removed            false
+fast_mode                            stable             true
+goals                                stable             true
+guardian_approval                    stable             true
+guardianv2                           under development  false
+hooks                                stable             true
+image_detail_original                removed            false
+image_generation                     stable             true
+in_app_browser                       stable             true
+in_app_updates                       stable             true
+item_ids                             removed            true
+js_repl                              removed            false
+js_repl_tools_only                   removed            false
+local_thread_store_compression       under development  false
+mcp_2026_07_28                       under development  false
+memories                             stable             false
+mentions_v2                          stable             true
+multi_agent                          stable             true
+multi_agent_mode                     removed            false
+multi_agent_v2                       stable             false
+network_proxy                        experimental       false
+non_prefixed_mcp_tool_names          under development  false
+personality                          stable             true
+plugin_hooks                         removed            false
+plugin_sharing                       stable             true
+plugins                              stable             true
+prevent_idle_sleep                   experimental       false
+realtime_conversation                under development  false
+remote_compaction_v2                 stable             true
+remote_control                       removed            false
+remote_models                        removed            false
+remote_plugin                        stable             true
+request_permissions_tool             under development  false
+request_rule                         removed            false
+resize_all_images                    removed            true
+respect_system_proxy                 under development  false
+responses_websockets                 removed            false
+responses_websockets_v2              removed            false
+rollout_budget                       under development  false
+runtime_metrics                      under development  false
+search_tool                          removed            false
+secret_auth_storage                  stable             false
+shell_snapshot                       stable             true
+shell_tool                           stable             true
+shell_zsh_fork                       under development  false
+skill_env_var_dependency_prompt      removed            false
+skill_mcp_dependency_install         stable             true
+skill_search                         stable             true
+sqlite                               removed            true
+standalone_web_search                under development  false
+steer                                removed            true
+terminal_resize_reflow               removed            true
+terminal_visualization_instructions  under development  false
+token_budget                         under development  false
+tool_call_mcp_elicitation            stable             true
+tool_search                          removed            false
+tool_search_always_defer_mcp_tools   removed            true
+tool_suggest                         stable             true
+tui_app_server                       removed            true
+unavailable_dummy_tools              removed            false
+undo                                 removed            false
+unified_exec                         stable             true
 unified_exec_zsh_fork                under development  false
 use_agent_identity                   under development  false
 use_legacy_landlock                  deprecated         false

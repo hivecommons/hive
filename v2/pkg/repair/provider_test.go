@@ -388,6 +388,19 @@ func TestCodexProviderRejectsUnsupportedVersionBeforeSecurityPreflight(t *testin
 	}
 }
 
+func TestCodexProviderAcceptsPackagedV0146CapabilityInventory(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the packaged 0.146.0 runtime is Linux-only")
+	}
+	t.Setenv("GO_WANT_CODEX_PROVIDER_HELPER", "1")
+	t.Setenv("HIVE_TEST_CODEX_VERSION_OUTPUT", "codex-cli 0.146.0")
+	t.Setenv("HIVE_TEST_CODEX_FEATURES_OUTPUT", codexReviewedFeatureInventoryV0146Linux)
+	provider := CodexProvider{Command: os.Args[0]}
+	if err := provider.Health(context.Background()); err != nil {
+		t.Fatalf("packaged Codex capability contract was rejected: %v", err)
+	}
+}
+
 func TestCodexProviderRejectsFeatureInventoryDrift(t *testing.T) {
 	reviewedInventory, reviewed := reviewedCodexFeatureInventory("codex-cli 0.144.1", runtime.GOOS)
 	if !reviewed {
@@ -440,6 +453,10 @@ func TestCodexReviewedFeatureInventoryBindsPlatformDefaults(t *testing.T) {
 	desktopPlatforms := reviewedCodexVersions["codex-cli 0.144.0-alpha.4"]
 	if len(desktopPlatforms) != 1 || desktopPlatforms["windows"] != codexReviewedFeatureInventoryV0144 {
 		t.Fatalf("reviewed Windows desktop runtime is not exact-platform bound: %v", desktopPlatforms)
+	}
+	packagedPlatforms := reviewedCodexVersions["codex-cli 0.146.0"]
+	if len(packagedPlatforms) != 1 || packagedPlatforms["linux"] != codexReviewedFeatureInventoryV0146Linux {
+		t.Fatalf("reviewed packaged Linux runtime is not exact-platform bound: %v", packagedPlatforms)
 	}
 }
 
