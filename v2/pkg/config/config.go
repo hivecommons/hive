@@ -30,19 +30,22 @@ import (
 var saveMu sync.Mutex
 
 type Config struct {
-	Project       ProjectConfig          `yaml:"project"`
-	Policies      PoliciesConfig         `yaml:"policies"`
-	Agents        map[string]AgentConfig `yaml:"agents"`
-	Governor      GovernorConfig         `yaml:"governor"`
-	GitHub        GitHubConfig           `yaml:"github"`
-	Notifications NotificationsConfig    `yaml:"notifications"`
-	Dashboard     DashboardConfig        `yaml:"dashboard"`
-	Data          DataConfig             `yaml:"data"`
-	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
-	Hub           HubConfig              `yaml:"hub"`
-	HiveID        string                 `yaml:"hive_id"`
-	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
-	Variables     VariablesConfig        `yaml:"variables,omitempty"`
+	Project  ProjectConfig          `yaml:"project"`
+	Policies PoliciesConfig         `yaml:"policies"`
+	Agents   map[string]AgentConfig `yaml:"agents"`
+	Governor GovernorConfig         `yaml:"governor"`
+	// Triggers is an additive list of CEL-based declarative agent triggers.
+	// An empty list preserves existing label/governor triggering exactly.
+	Triggers      []TriggerRule       `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	GitHub        GitHubConfig        `yaml:"github"`
+	Notifications NotificationsConfig `yaml:"notifications"`
+	Dashboard     DashboardConfig     `yaml:"dashboard"`
+	Data          DataConfig          `yaml:"data"`
+	Knowledge     KnowledgeConfig     `yaml:"knowledge"`
+	Hub           HubConfig           `yaml:"hub"`
+	HiveID        string              `yaml:"hive_id"`
+	ACMMLevel     *int                `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables     VariablesConfig     `yaml:"variables,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -3868,4 +3871,17 @@ func LabelsFilterPasses(labels []string, list []string, mode string) bool {
 		}
 		return true
 	}
+}
+
+// TriggerRule is one CEL-based declarative agent trigger. When Expr (a CEL
+// expression over the normalized event, exposed as `event`) evaluates true for
+// an incoming event, Agent is kicked. Priority orders competing rules (higher
+// first). This is additive: an empty Triggers list preserves the existing
+// label/governor triggering behavior. Evaluation is handled by pkg/celtrigger,
+// which fails closed on malformed expressions.
+type TriggerRule struct {
+	Name     string `yaml:"name" json:"name"`
+	Expr     string `yaml:"expr" json:"expr"`
+	Agent    string `yaml:"agent" json:"agent"`
+	Priority int    `yaml:"priority,omitempty" json:"priority,omitempty"`
 }
