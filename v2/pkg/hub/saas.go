@@ -85,6 +85,37 @@ func primaryHubAdmin() string {
 	return canonicalizeLegacy(hubAdminUsername)
 }
 
+// userCanonicalID returns a user's canonical wire-form identity: the explicit
+// CanonicalID when present, else the legacy-shimmed GitHubUsername (a bare login
+// becomes github:<login>). This is the single source of truth for "who is this
+// record" across the dual-read storage path and the provider badge.
+func userCanonicalID(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.CanonicalID != "" {
+		return canonicalizeLegacy(u.CanonicalID)
+	}
+	return canonicalizeLegacy(u.GitHubUsername)
+}
+
+// userProvider returns a user's login provider ("github"/"google"/"ibmid"/
+// "redhat"), from the stored Provider field when set, else parsed from the
+// canonical identity. Legacy records with neither resolve to "github" via the
+// shim. Drives the admin Users-table auth-method badge.
+func userProvider(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.Provider != "" {
+		return strings.ToLower(u.Provider)
+	}
+	if p, _, ok := parseCanonical(userCanonicalID(u)); ok {
+		return p
+	}
+	return legacyProvider
+}
+
 func splitCSV(s string) []string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
@@ -206,6 +237,33 @@ type SaaSUser struct {
 	SaaSQuota      int               `json:"saas_quota"`
 	Blocked        bool              `json:"blocked"`
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
+
+	// Multi-provider identity (phase 1d). All omitempty so the thousands of
+	// existing GitHub-only records on the PVC round-trip byte-identical until a
+	// user first logs in / links after this ships.
+	//
+	//   CanonicalID  the wire-form primary identity ("google:1078", "github:foo").
+	//                Empty on a legacy record → the shim treats GitHubUsername as
+	//                the (github:) primary. saveSaaSUser/loadSaaSUser already dual-
+	//                read on GitHubUsername; CanonicalID is the explicit form used
+	//                by the badge and by Phase 2's OIDC callback when it creates a
+	//                non-GitHub user.
+	//   Provider     "github" | "google" | "ibmid" | "redhat" — drives the admin
+	//                Users-table auth-method badge. Derivable from CanonicalID but
+	//                stored so the badge needs no parse per render.
+	//   AvatarURL    stored avatar (Google/IBMid give a picture claim); replaces
+	//                the derived github.com/<login>.png where present.
+	//   Email        the provider email claim (display only; NEVER the key — subs
+	//                are stable, emails are reassignable).
+	//   LinkedGitHubLogin  an OPTIONAL attached GitHub identity for a non-GitHub
+	//                primary who needs user-scoped GitHub calls (contributor
+	//                reissue). Never required to own a hive — the App does the
+	//                GitHub work.
+	CanonicalID       string `json:"canonical_id,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	AvatarURL         string `json:"avatar_url,omitempty"`
+	Email             string `json:"email,omitempty"`
+	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
 
 	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
 	// outside GitHub (and to remember what was said last time). All three are
@@ -824,9 +882,10 @@ func readSaaSUserFile(username string) ([]byte, error) {
 // are updated in place with no rename; a non-GitHub primary writes the canonical
 // "<provider>.<subject>.json".
 func saveSaaSUserPath(u *SaaSUser) (string, error) {
-	// The record's primary identity. Today this is GitHubUsername (a bare login
-	// for GitHub users, or a canonical id once non-GitHub records exist in 1d+).
-	id := u.GitHubUsername
+	// The record's primary identity: the explicit CanonicalID when set (a
+	// non-GitHub or newly-created user), else GitHubUsername (a bare login for
+	// legacy GitHub users). Either resolves through parseCanonical + the shim.
+	id := userCanonicalID(u)
 	provider, subject, ok := parseCanonical(id)
 	if !ok {
 		return "", fmt.Errorf("invalid identity for save: %q", id)
@@ -1015,6 +1074,11 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	type adminUserView struct {
 		SaaSUser
 		StatusTier string `json:"status_tier"`
+		// Provider is always populated (derived via userProvider) so the Users
+		// table's auth-method badge never has to parse — a legacy github-only
+		// record resolves to "github". This shadows SaaSUser.Provider's
+		// omitempty, so the field is present on every row.
+		Provider string `json:"provider"`
 	}
 	views := make([]adminUserView, 0, len(users))
 	for i := range users {
@@ -1023,6 +1087,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		views = append(views, adminUserView{
 			SaaSUser:   users[i],
 			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+			Provider:   userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -15706,6 +15771,26 @@ const dashboardHTML = `<!DOCTYPE html>
       return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
+    /* providerBadge renders the user's login method (auth provider) as a small
+       chip next to their name in the admin Users table, so an admin can see at a
+       glance who signed in with GitHub vs Google vs IBMid vs Red Hat. The
+       provider rides the users payload as u.provider (derived server-side via
+       userProvider). A legacy record with no provider resolves to github, so
+       every existing row shows the GitHub chip — no blank. */
+    function providerBadge(u) {
+      var p = String((u && u.provider) || 'github').toLowerCase();
+      var meta = {
+        github: {label: 'GitHub', glyph: '', color: '#c9d1d9', bg: 'rgba(110,118,129,0.25)'},
+        google: {label: 'Google', glyph: 'G',      color: '#e8eaed', bg: 'rgba(66,133,244,0.22)'},
+        ibmid:  {label: 'IBMid',  glyph: 'IBM',    color: '#e8eaed', bg: 'rgba(15,98,254,0.22)'},
+        redhat: {label: 'Red Hat',glyph: '●', color: '#f5c2c7', bg: 'rgba(238,0,0,0.22)'}
+      }[p] || {label: p || 'unknown', glyph: '', color: 'var(--muted)', bg: 'rgba(110,118,129,0.25)'};
+      return '<span title="Signed in with ' + escAttr(meta.label) + '"' +
+        ' style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:9999px;' +
+        'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
+        (meta.glyph ? esc(meta.glyph) + ' ' : '') + esc(meta.label) + '</span>';
+    }
+
     // renderContactCell is the collapsed summary shown in the main user row.
     function renderContactCell(u) {
       var bits = [];
@@ -16358,6 +16443,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var nameCell = avatar +
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
             '<span style="color:var(--text);font-weight:600">' + esc(u.github_username) + '</span>' +
+            providerBadge(u) +
             (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
