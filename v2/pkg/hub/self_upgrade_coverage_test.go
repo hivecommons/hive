@@ -354,6 +354,200 @@ func TestUpgradeSelfMutableTagPatchFailureIsReported(t *testing.T) {
 	}
 }
 
+// TestUpgradeSelfToSHA_ImageReadError verifies that when selfDeploymentImage
+// cannot determine the current image (GET fails), UpgradeSelfToSHA defaults to
+// needsRestart=true (fail-safe: a restart is always safe, worst case redundant).
+func TestUpgradeSelfToSHA_ImageReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`internal error`))
+			return
+		}
+		t.Error("no PATCH expected when image read fails")
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !needsRestart {
+		t.Error("when selfDeploymentImage fails, needsRestart must be true (fail-safe default)")
+	}
+}
+
+// TestUpgradeSelfToSHA_PinnedAlreadyAtTarget verifies that when the deployment
+// is already running the target SHA, needsRestart=false and no patch is issued.
+func TestUpgradeSelfToSHA_PinnedAlreadyAtTarget(t *testing.T) {
+	const targetSHA = "c11643a"
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patched = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:c11643a"}]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), targetSHA)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if needsRestart {
+		t.Error("already at target SHA — needsRestart must be false")
+	}
+	if patched {
+		t.Error("already at target SHA — no PATCH should be issued")
+	}
+}
+
+// TestUpgradeSelfToSHA_NoColonInImage verifies that an image with no colon
+// (no tag separator) falls back to needsRestart=true gracefully.
+func TestUpgradeSelfToSHA_NoColonInImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive"}]}}}}`))
+			return
+		}
+		t.Error("no PATCH expected for untagged image")
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !needsRestart {
+		t.Error("image with no colon must fall back to needsRestart=true")
+	}
+}
+
+// TestUpgradeSelfToSHA_PinnedPatchFails verifies that when the PATCH to rewrite
+// a pinned image fails, the error is surfaced (fail CLOSED — no false success).
+func TestUpgradeSelfToSHA_PinnedPatchFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:oldsha"}]}}}}`))
+			return
+		}
+		// SwitchImageSelf does a GET for container names, then a PATCH.
+		// Make the second GET succeed but the PATCH fail.
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`forbidden`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive"}],"initContainers":[]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	_, err := UpgradeSelfToSHA(slog.Default(), "newsha1")
+	if err == nil {
+		t.Fatal("a failed PATCH on pinned image must return an error (fail closed)")
+	}
+	if !strings.Contains(err.Error(), "patching pinned image") {
+		t.Errorf("error should mention pinned image patching, got: %v", err)
+	}
+}
+
+// TestUpgradeSelfMutableToSHA_EmptyTarget verifies that an empty targetSHA
+// falls back to needsRestart=true (historical behavior before annotation fix).
+func TestUpgradeSelfMutableToSHA_EmptyTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no API call expected for empty target")
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !needsRestart {
+		t.Error("empty target must fall back to needsRestart=true")
+	}
+}
+
+// TestUpgradeSelfMutableToSHA_NamespaceReadFails verifies fallback to restart
+// when namespace file is unreadable (not in-cluster).
+func TestUpgradeSelfMutableToSHA_NamespaceReadFails(t *testing.T) {
+	oldNS := k8sNamespacePath
+	k8sNamespacePath = filepath.Join(t.TempDir(), "missing")
+	defer func() { k8sNamespacePath = oldNS }()
+
+	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !needsRestart {
+		t.Error("missing namespace must fall back to needsRestart=true")
+	}
+}
+
+// TestUpgradeSelfMutableToSHA_EmptyNamespace verifies fallback to restart
+// when namespace file exists but contains only whitespace.
+func TestUpgradeSelfMutableToSHA_EmptyNamespace(t *testing.T) {
+	dir := t.TempDir()
+	nsPath := filepath.Join(dir, "namespace")
+	if err := os.WriteFile(nsPath, []byte("   \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldNS := k8sNamespacePath
+	k8sNamespacePath = nsPath
+	defer func() { k8sNamespacePath = oldNS }()
+
+	needsRestart, err := upgradeSelfMutableToSHA(slog.Default(), "ghcr.io/kubestellar/hive:v2-latest", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !needsRestart {
+		t.Error("empty namespace must fall back to needsRestart=true")
+	}
+}
+
+// TestRolloutRestartSelfEmptyNamespace verifies that an empty namespace file
+// returns an error (fail closed).
+func TestRolloutRestartSelfEmptyNamespace(t *testing.T) {
+	dir := t.TempDir()
+	nsPath := filepath.Join(dir, "namespace")
+	if err := os.WriteFile(nsPath, []byte("  "), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldNS := k8sNamespacePath
+	k8sNamespacePath = nsPath
+	defer func() { k8sNamespacePath = oldNS }()
+
+	if err := RolloutRestartSelf(slog.Default()); err == nil {
+		t.Error("expected error for empty namespace")
+	}
+}
+
+// TestRolloutRestartSelfPatchFails verifies that a failed PATCH surfaces
+// the error (fail closed — no silent success).
+func TestRolloutRestartSelfPatchFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`forbidden`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	err := RolloutRestartSelf(slog.Default())
+	if err == nil {
+		t.Fatal("a failed PATCH must return an error (fail closed)")
+	}
+	if !strings.Contains(err.Error(), "patching deployment") {
+		t.Errorf("error should mention patching deployment, got: %v", err)
+	}
+}
+
 // TestUpgradeSelfPinnedStillPatchesImage guards that the pinned path (#2308) is
 // unchanged by the mutable-tag fix: a SHA-pinned deployment must still have its
 // image rewritten, since no annotation can move it onto new code.
