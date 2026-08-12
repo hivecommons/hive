@@ -32,7 +32,6 @@ import (
 func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.deps = deps
 	s.loadSidebarFromDisk()
-	s.restoreGHUserSession()
 	s.registerContributeRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -1236,8 +1235,17 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 // client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
-	if !isOwnerRole(role) || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
-		jsonError(w, "owner access required", http.StatusForbidden)
+	if !isOwnerRole(role) {
+		// Genuine viewer — role is not owner.
+		jsonError(w, "your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.", http.StatusForbidden)
+		return false
+	}
+	if r.Header.Get(ownerRoleVerifiedHeader) != "true" {
+		// Role IS owner, but the hub did not send the owner-verification proof
+		// (e.g. the request reached the dashboard without the X-Hive-Proxy-Auth
+		// header). This is NOT a read-only viewer — telling them so misleads.
+		// Signing out and back in through the hub re-establishes the proof.
+		jsonError(w, "owner verification is missing for this session — sign out and back in through the hub to re-establish it. (Your role IS owner; this is a session/proxy issue, not a read-only restriction.)", http.StatusForbidden)
 		return false
 	}
 	return true
@@ -1765,25 +1773,13 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		role = resolvedRole
 	}
 
-	// The persisted token and the hive's shared user GitHub client represent the
-	// hive's WRITE identity (advisory posting, autonomous actions). Only the
-	// owner (read-write) may set them; a read-only viewer logging in must never
-	// clobber the owner's token/client with their own identity. Viewers still
-	// get a per-user session below, they just don't become the hive's actor.
-	if role == config.RoleOwner {
-		tmpTokenPath := userTokenPath + ".tmp"
-		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to save token: " + err.Error()})
-			return
-		}
-		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to persist token: " + err.Error()})
-			return
-		}
-		if s.deps.SetUserClient != nil {
-			s.deps.SetUserClient(token)
-		}
-	}
+	// The login token is used ONLY to prove identity (username + role, above).
+	// It is deliberately NOT persisted and NOT installed as a hive write
+	// identity: every GitHub write goes through the App installation token, so
+	// there is nothing for a user token to do. This is what lets the device flow
+	// request no scope at all (issue #1927) — an owner logging in no longer has
+	// to grant "read and write all repositories" just to administer their hive.
+	// Both owners and viewers get an identity-only per-user session below.
 
 	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username, "role", role)
 
@@ -2025,35 +2021,6 @@ func (s *Server) handleGHUserAuthSession(w http.ResponseWriter, r *http.Request)
 	// handler; we never mint a session here (doing so from a shared secret or a
 	// disk token file would grant any caller a valid session).
 	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-// restoreGHUserSession loads a previously-saved GitHub user OAuth token from
-// disk and calls SetUserClient so that advisory posting works immediately
-// after a container restart, without requiring re-login via Device Flow.
-func (s *Server) restoreGHUserSession() {
-	if s.deps == nil || s.deps.SetUserClient == nil {
-		return
-	}
-
-	tokenData, err := os.ReadFile(userTokenPath)
-	if err != nil {
-		return // no saved token — nothing to restore
-	}
-
-	token := strings.TrimSpace(string(tokenData))
-	if token == "" {
-		return
-	}
-
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
-	if err != nil {
-		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
-		os.Remove(userTokenPath)
-		return
-	}
-
-	s.deps.SetUserClient(token)
-	s.deps.Logger.Info("restored GitHub user session from disk", "username", user.Login)
 }
 
 func (s *Server) handleGHRateLimits(w http.ResponseWriter, r *http.Request) {
