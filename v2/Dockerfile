@@ -42,7 +42,18 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)
 # for the manager's dev→agent UID switches.
-RUN curl -sL -o /tmp/su-exec.c https://raw.githubusercontent.com/ncopa/su-exec/master/su-exec.c \
+ARG TARGETARCH
+ARG SU_EXEC_VERSION=0.3
+ARG SU_EXEC_SHA256_AMD64=0c90fe15804f2670037b90e72eb496579fe00d2c15765e5fe2ddec0f5afa35fa
+ARG SU_EXEC_SHA256_ARM64=0c90fe15804f2670037b90e72eb496579fe00d2c15765e5fe2ddec0f5afa35fa
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+ && case "$ARCH" in \
+      amd64) SU_EXEC_SHA256="$SU_EXEC_SHA256_AMD64" ;; \
+      arm64) SU_EXEC_SHA256="$SU_EXEC_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for su-exec: $ARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/v${SU_EXEC_VERSION}/su-exec.c" \
+ && echo "${SU_EXEC_SHA256}  /tmp/su-exec.c" | sha256sum -c - \
  && gcc -Wall -o /usr/local/bin/su-exec /tmp/su-exec.c \
  && chmod u+s /usr/local/bin/su-exec \
  && rm /tmp/su-exec.c \
