@@ -358,14 +358,63 @@ func TestBuildRegistry_EnabledByClientID(t *testing.T) {
 
 func TestBuildRegistry_IBMidWithIssuerEnabled(t *testing.T) {
 	t.Setenv("HIVE_HUB_OIDC_IBMID_CLIENT_ID", "ibm-client")
-	t.Setenv("HIVE_HUB_OIDC_IBMID_ISSUER", "https://us-south.appid.cloud.ibm.com/oauth/v4/tenant123")
+	t.Setenv("HIVE_HUB_OIDC_IBMID_ISSUER", "https://login.ibm.com/oidc/endpoint/default")
 	reg := BuildRegistry("", "", "")
 	p := reg.Get("ibmid")
 	if p == nil {
 		t.Fatal("ibmid should be enabled with an explicit issuer")
 	}
-	if p.Issuer != "https://us-south.appid.cloud.ibm.com/oauth/v4/tenant123" {
+	if p.Issuer != "https://login.ibm.com/oidc/endpoint/default" {
 		t.Errorf("issuer = %q", p.Issuer)
+	}
+	// IBMid keys on "uid", not the OIDC-standard "sub" (which it doesn't advertise).
+	if p.SubjectClaim != "uid" {
+		t.Errorf("ibmid SubjectClaim = %q, want uid", p.SubjectClaim)
+	}
+}
+
+func TestBuildRegistry_SubjectClaimEnvOverride(t *testing.T) {
+	// If a real IBMid token turns out to carry "sub", an operator can override the
+	// default "uid" via env without a code change.
+	t.Setenv("HIVE_HUB_OIDC_IBMID_CLIENT_ID", "ibm-client")
+	t.Setenv("HIVE_HUB_OIDC_IBMID_ISSUER", "https://login.ibm.com/oidc/endpoint/default")
+	t.Setenv("HIVE_HUB_OIDC_IBMID_SUBJECT_CLAIM", "sub")
+	p := BuildRegistry("", "", "").Get("ibmid")
+	if p == nil || p.SubjectClaim != "sub" {
+		t.Fatalf("env override not applied: %+v", p)
+	}
+	// Google keeps the default (empty → sub).
+	t.Setenv("HIVE_HUB_OIDC_GOOGLE_CLIENT_ID", "g")
+	g := BuildRegistry("", "", "").Get("google")
+	if g == nil || g.SubjectClaim != "" {
+		t.Errorf("google SubjectClaim = %q, want empty (defaults to sub)", g.SubjectClaim)
+	}
+}
+
+func TestVerify_IBMidUidSubject(t *testing.T) {
+	// An IBMid-shaped id_token carries the stable id in "uid" and NO "sub".
+	// Verification with SubjectClaim="uid" must extract the uid as the subject.
+	o := newOIDCTestServer(t)
+	defer o.close()
+	const clientID = "ibm-client"
+	const nonce = "n-ibm"
+	o.idToken = o.signToken(t, jwt.MapClaims{
+		"iss": o.issuer, "aud": clientID,
+		"uid": "2700ABC123", // stable IBMid serial, no "sub"
+		"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+		"nonce": nonce, "preferred_username": "someone@ibm.com", "email": "someone@ibm.com",
+	})
+	p := &Provider{
+		Name: "ibmid", DisplayName: "IBMid", IsOIDC: true,
+		Issuer: o.issuer, ClientID: clientID, Scopes: []string{"openid"},
+		SubjectClaim: "uid",
+	}
+	claims, err := p.Exchange(context.Background(), "code", o.issuer+"/cb", nonce)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if claims.Subject != "2700ABC123" {
+		t.Errorf("subject = %q, want the uid 2700ABC123", claims.Subject)
 	}
 }
 

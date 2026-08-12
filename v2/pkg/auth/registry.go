@@ -95,6 +95,13 @@ type oidcProviderSpec struct {
 	defaultIssuer string // "" means the issuer MUST come from env
 	envPrefix     string // e.g. "HIVE_HUB_OIDC_GOOGLE"
 	scopes        []string
+	// subjectClaim overrides which id_token claim carries the STABLE per-user
+	// identifier. Empty means the OIDC-standard "sub". IBMid does not advertise
+	// "sub" in its discovery claims_supported — its stable identifier is "uid"
+	// (an IBMid serial); preferred_username/email are reassignable and must NOT
+	// be the key. An env override (<PREFIX>_SUBJECT_CLAIM) lets us retune from a
+	// real token without a code change if IBMid does emit a usable "sub".
+	subjectClaim string
 }
 
 // oidcSpecs is the closed set of OIDC providers the hub can enable. A provider is
@@ -112,9 +119,13 @@ var oidcSpecs = []oidcProviderSpec{
 	{
 		name:          "ibmid",
 		display:       "IBMid",
-		defaultIssuer: "", // tenant-specific (IBM App ID): must set _ISSUER
+		defaultIssuer: "", // tenant-specific (IBM App ID / w3id): must set _ISSUER
 		envPrefix:     "HIVE_HUB_OIDC_IBMID",
 		scopes:        []string{"openid", "email", "profile"},
+		// IBMid's discovery does not list "sub"; "uid" is the stable IBMid serial.
+		// Confirmed against the live IBMid discovery claims_supported (uid present,
+		// sub absent). Overridable via HIVE_HUB_OIDC_IBMID_SUBJECT_CLAIM.
+		subjectClaim: "uid",
 	},
 	{
 		name:          "redhat",
@@ -168,6 +179,11 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 			// Configured client id but no issuer we can use → skip, don't crash.
 			continue
 		}
+		// Subject claim: env override wins, else the spec default, else "sub".
+		subjectClaim := os.Getenv(spec.envPrefix + "_SUBJECT_CLAIM")
+		if subjectClaim == "" {
+			subjectClaim = spec.subjectClaim
+		}
 		p := &Provider{
 			Name:         spec.name,
 			DisplayName:  spec.display,
@@ -176,6 +192,7 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 			ClientID:     clientID,
 			ClientSecret: os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
 			Scopes:       spec.scopes,
+			SubjectClaim: subjectClaim,
 		}
 		oidc = append(oidc, p)
 	}
