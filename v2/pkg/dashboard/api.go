@@ -2087,6 +2087,10 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "merger or owner access required", http.StatusForbidden)
 		return
 	}
+	if role == config.RoleOwner && r.Header.Get(ownerRoleVerifiedHeader) != "true" {
+		jsonError(w, "owner access required", http.StatusForbidden)
+		return
+	}
 	if user == "" {
 		jsonError(w, "authenticated GitHub user required", http.StatusForbidden)
 		return
