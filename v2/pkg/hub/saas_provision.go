@@ -1479,6 +1479,40 @@ func saveSaaSHive(h *SaaSHive) error {
 	return os.Rename(tmpPath, path)
 }
 
+// removeHiveRecord durably purges the hub-side, on-disk record for a deleted
+// hive: the per-hive directory under saasHivesDir/<id>/ (meta.json + manifests +
+// requests.json) and the hive's timeline file under timelineDir/<id>.json.
+//
+// This is the counterpart to saveSaaSHive and closes the "resurrection" bug:
+// deprovisionHive removes the hive directory only when a cluster config is
+// available, and NOTHING removed the timeline file. A delete that could not run
+// deprovision (no cluster config) therefore left the hive/<id>/ directory —
+// with status:"available" — on disk, so the hive reappeared in the
+// unassigned/available listing forever, pointing at a namespace that no longer
+// existed. Removing the record here makes the delete stick across a hub restart.
+//
+// Best-effort by design: a delete must never be blocked by a leftover file, and
+// the registry entry is the row the user actually sees. Failures are logged, not
+// returned. The path-traversal guard mirrors loadSaaSHive/saveSaaSHive so a
+// hostile id can never escape the record dirs.
+func removeHiveRecord(id string, logger *slog.Logger) {
+	if strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
+		logger.Warn("removeHiveRecord: refusing unsafe hive id", "hive_id", id)
+		return
+	}
+	hiveDir := filepath.Join(saasHivesDir, id)
+	if err := os.RemoveAll(hiveDir); err != nil {
+		logger.Warn("removeHiveRecord: failed to remove hive directory", "path", hiveDir, "error", err)
+	}
+	// timelinePath applies its own traversal guard and returns "" if the id is
+	// not a safe filename; skip the removal in that case.
+	if tp := timelinePath(id); tp != "" {
+		if err := os.Remove(tp); err != nil && !os.IsNotExist(err) {
+			logger.Warn("removeHiveRecord: failed to remove timeline file", "path", tp, "error", err)
+		}
+	}
+}
+
 func listSaaSHives() []SaaSHive {
 	entries, err := os.ReadDir(saasHivesDir)
 	if err != nil {
