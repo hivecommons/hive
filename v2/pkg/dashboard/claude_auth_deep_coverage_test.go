@@ -137,6 +137,7 @@ func TestClaudeDeep_Start_ReturnsAuthorizeURL(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/start", nil)
+	markOwnerRequest(req)
 	s.handleClaudeAuthStart(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -164,6 +165,7 @@ func TestClaudeDeep_Start_StoresPKCEState(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/start", nil)
+	markOwnerRequest(req)
 	s.handleClaudeAuthStart(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -193,12 +195,14 @@ func TestClaudeDeep_Start_UniqueState(t *testing.T) {
 
 	// Call start twice, states should differ.
 	req1 := httptest.NewRequest("POST", "/api/claude-auth/start", nil)
+	markOwnerRequest(req1)
 	s.handleClaudeAuthStart(httptest.NewRecorder(), req1)
 	s.claudeOAuthFlow.mu.Lock()
 	state1 := s.claudeOAuthFlow.state
 	s.claudeOAuthFlow.mu.Unlock()
 
 	req2 := httptest.NewRequest("POST", "/api/claude-auth/start", nil)
+	markOwnerRequest(req2)
 	s.handleClaudeAuthStart(httptest.NewRecorder(), req2)
 	s.claudeOAuthFlow.mu.Lock()
 	state2 := s.claudeOAuthFlow.state
@@ -219,6 +223,7 @@ func TestClaudeDeep_Exchange_InvalidJSON(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange", strings.NewReader("not json"))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -236,6 +241,7 @@ func TestClaudeDeep_Exchange_NoCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -257,6 +263,7 @@ func TestClaudeDeep_Exchange_ExpiredFlow(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"auth-code-123"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -274,6 +281,7 @@ func TestClaudeDeep_Exchange_EmptyVerifier(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"auth-code-123"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -291,6 +299,7 @@ func TestClaudeDeep_Exchange_CallbackURLWithError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"callback_url":"https://example.com/cb?error=access_denied&error_description=user+denied"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -324,6 +333,7 @@ func TestClaudeDeep_Exchange_CallbackURLExtractsCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"callback_url":"https://example.com/cb?code=extracted-456"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -349,6 +359,7 @@ func TestClaudeDeep_Exchange_InvalidGrant(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"used-code"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -374,6 +385,7 @@ func TestClaudeDeep_Exchange_GenericError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"some-code"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -402,6 +414,7 @@ func TestClaudeDeep_Exchange_WriteCredsError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"some-code"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -451,6 +464,7 @@ func TestClaudeDeep_Exchange_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"good-code"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -509,6 +523,7 @@ func TestClaudeDeep_Exchange_DirectCodePreferred(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/exchange",
 		strings.NewReader(`{"code":"direct-code","callback_url":"https://x/cb?code=from-url"}`))
+	markOwnerRequest(req)
 	s.handleClaudeAuthExchange(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -542,6 +557,7 @@ func TestClaudeDeep_Logout_RemovesFiles(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/logout", nil)
+	markOwnerRequest(req)
 	s.handleClaudeAuthLogout(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -573,6 +589,7 @@ func TestClaudeDeep_Logout_NilAgentMgr(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/claude-auth/logout", nil)
+	markOwnerRequest(req)
 	s.handleClaudeAuthLogout(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -603,7 +620,12 @@ func TestClaudeDeep_Routes_Smoke(t *testing.T) {
 	}
 
 	// POST start endpoint.
-	resp, err = http.Post(ts.URL+"/api/claude-auth/start", "application/json", nil)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/claude-auth/start", nil)
+	if err != nil {
+		t.Fatalf("build POST /api/claude-auth/start: %v", err)
+	}
+	markOwnerRequest(req)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /api/claude-auth/start: %v", err)
 	}
