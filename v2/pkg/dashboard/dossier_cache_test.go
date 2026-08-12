@@ -2,8 +2,6 @@ package dashboard
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -105,45 +103,42 @@ func TestDossierPublicCachesBoundEvictExpiredAndPreserveFresh(t *testing.T) {
 
 func TestDossierPublicCachesConcurrentAccess(t *testing.T) {
 	const workers = 64
-	useDossierCacheMax(t, workers)
+	useDossierCacheMax(t, workers*2)
 	resetDossierPublicCaches()
 	t.Cleanup(resetDossierPublicCaches)
 
-	heraldryStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"abc","issued_at":"2021-01-01T00:00:00Z","image_url":"https://example.invalid/badge.png","public":true,"badge_template":{"name":"Concurrent Badge"},"issuer":{"summary":"issuer"}}]}`))
-	}))
-	defer heraldryStub.Close()
-
-	githubStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"created_at":"2018-01-01T00:00:00Z","followers":9}`))
-	}))
-	defer githubStub.Close()
-
-	origHeraldryBase := heraldryBaseURL
-	origGitHubBase := githubUserAPIBase
-	heraldryBaseURL = heraldryStub.URL
-	githubUserAPIBase = githubStub.URL
-	t.Cleanup(func() {
-		heraldryBaseURL = origHeraldryBase
-		githubUserAPIBase = origGitHubBase
-	})
-
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	errs := make(chan string, workers*2)
+	now := time.Now()
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if badges, linked := heraldryFor(fmt.Sprintf("credly-%02d", i)); !linked || len(badges) != 1 {
-				errs <- fmt.Sprintf("heraldry worker %d got linked=%v badges=%d", i, linked, len(badges))
+			<-start
+			credlyName := fmt.Sprintf("credly-%02d", i)
+			storeHeraldryCache(credlyName, heraldryCacheEntry{
+				badges:    []HeraldryBadge{{Name: fmt.Sprintf("Concurrent Badge %02d", i)}},
+				linked:    true,
+				fetchedAt: now.Add(time.Duration(i) * time.Millisecond),
+			})
+			if badges, linked, ok := heraldryCached(credlyName); !ok || !linked || len(badges) != 1 || badges[0].Name != fmt.Sprintf("Concurrent Badge %02d", i) {
+				errs <- fmt.Sprintf("heraldry worker %d got ok=%v linked=%v badges=%d", i, ok, linked, len(badges))
 			}
-			if _, followers, ok := githubPublicFor(fmt.Sprintf("spray-%02d", i)); !ok || followers != 9 {
-				errs <- fmt.Sprintf("github worker %d got ok=%v followers=%d", i, ok, followers)
+
+			githubName := fmt.Sprintf("spray-%02d", i)
+			storeGitHubUserCache(githubName, githubUserCacheEntry{
+				serviceYears: i,
+				followers:    9,
+				ok:           true,
+				fetchedAt:    now.Add(time.Duration(i) * time.Millisecond),
+			})
+			if years, followers, ok, fresh := githubUserCached(githubName); !fresh || !ok || years != i || followers != 9 {
+				errs <- fmt.Sprintf("github worker %d got fresh=%v ok=%v years=%d followers=%d", i, fresh, ok, years, followers)
 			}
 		}(i)
 	}
+	close(start)
 	wg.Wait()
 	close(errs)
 	for err := range errs {
@@ -158,5 +153,62 @@ func TestDossierPublicCachesConcurrentAccess(t *testing.T) {
 	githubUserCacheMu.Unlock()
 	if max := effectiveDossierCacheMaxEntries(); heraldryLen > max || githubLen > max {
 		t.Fatalf("cache bounds after concurrent spray: heraldry=%d github=%d max=%d", heraldryLen, githubLen, max)
+	}
+}
+
+func TestDossierPublicCachesConcurrentBound(t *testing.T) {
+	const (
+		workers = 64
+		max     = 8
+	)
+	useDossierCacheMax(t, max)
+	resetDossierPublicCaches()
+	t.Cleanup(resetDossierPublicCaches)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	now := time.Now()
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			fetchedAt := now.Add(time.Duration(i) * time.Millisecond)
+			storeHeraldryCache(fmt.Sprintf("heraldry-%02d", i), heraldryCacheEntry{
+				badges:    []HeraldryBadge{{Name: fmt.Sprintf("Badge %02d", i)}},
+				linked:    true,
+				fetchedAt: fetchedAt,
+			})
+			storeGitHubUserCache(fmt.Sprintf("github-%02d", i), githubUserCacheEntry{
+				serviceYears: i,
+				followers:    i + 1,
+				ok:           true,
+				fetchedAt:    fetchedAt,
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	heraldryCacheMu.Lock()
+	heraldryLen := len(heraldryCache)
+	for i := workers - max; i < workers; i++ {
+		if _, ok := heraldryCache[fmt.Sprintf("heraldry-%02d", i)]; !ok {
+			t.Errorf("newest heraldry entry %02d was evicted", i)
+		}
+	}
+	heraldryCacheMu.Unlock()
+
+	githubUserCacheMu.Lock()
+	githubLen := len(githubUserCache)
+	for i := workers - max; i < workers; i++ {
+		if _, ok := githubUserCache[fmt.Sprintf("github-%02d", i)]; !ok {
+			t.Errorf("newest github entry %02d was evicted", i)
+		}
+	}
+	githubUserCacheMu.Unlock()
+
+	if heraldryLen > max || githubLen > max {
+		t.Fatalf("cache bounds after concurrent overflow: heraldry=%d github=%d max=%d", heraldryLen, githubLen, max)
 	}
 }
