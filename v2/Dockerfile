@@ -285,7 +285,8 @@ RUN pip3 install --no-cache-dir --break-system-packages "specify-cli==${SPECIFY_
 ARG PLUK_VERSION=0.8.0
 RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
-    chmod 1777 /var/run/pluk/logs /var/run/pluk/commands
+    chown dev:node /var/run/pluk/logs /var/run/pluk/commands && \
+    chmod 2770 /var/run/pluk/logs /var/run/pluk/commands
 # Nous framework: pinned to a specific commit SHA to prevent supply-chain
 # injection via a push to the mutable branch ref. Update NOUS_COMMIT
 # deliberately when pulling upstream changes, after reviewing the diff at

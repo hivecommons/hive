@@ -817,8 +817,9 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	// Attach pluk publisher if available — streams structured events
 	// from the agent's tmux output to a JSONL log for subscribers.
 	if plukPath, err := exec.LookPath("pluk"); err == nil {
-		_ = os.MkdirAll("/var/run/pluk/logs", 0o1777)
-		_ = os.MkdirAll("/var/run/pluk/commands", 0o1777)
+		if err := ensurePlukRunDirs(plukRunDir); err != nil {
+			m.logger.Warn("pluk run directory setup failed; pluk publisher may be degraded", "error", err)
+		}
 		backend := agent.Config.Backend
 		if agent.BackendOverride != "" {
 			backend = agent.BackendOverride
