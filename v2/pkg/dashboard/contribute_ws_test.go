@@ -154,6 +154,7 @@ func TestWSAuthRevoked(t *testing.T) {
 
 	// Revoke
 	revokeReq := httptest.NewRequest(http.MethodPost, "/api/contributors/"+reg["contributor_id"]+"/revoke", nil)
+	markOwnerRequest(revokeReq)
 	revokeW := httptest.NewRecorder()
 	s.mux.ServeHTTP(revokeW, revokeReq)
 

@@ -435,6 +435,10 @@ func (t *appTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Logger) *Client {
+	return NewClientFromAppWithBotLogin(auth, org, repos, logger, "")
+}
+
+func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, logger *slog.Logger, appBotLogin string) *Client {
 	transport := &appTransport{
 		auth: auth,
 		base: http.DefaultTransport,
@@ -445,10 +449,11 @@ func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Lo
 	setBaseURL(client, auth.apiURL)
 
 	return &Client{
-		client:  client,
-		org:     org,
-		repos:   repos,
-		logger:  logger,
-		appAuth: auth,
+		client:      client,
+		org:         org,
+		repos:       repos,
+		logger:      logger,
+		appAuth:     auth,
+		appBotLogin: appBotLogin,
 	}
 }

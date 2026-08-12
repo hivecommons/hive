@@ -6564,12 +6564,19 @@ func pruneQueueHoldReasons(src map[string]string, keep []string) map[string]stri
 // contributor can still register/onboard themselves. As a result the middleware
 // does NOT stop a "read" viewer from calling these mutation endpoints, so each
 // mutation handler must enforce the boundary itself. This mirrors the in-handler
-// role check used by handleConfigDownload / handleSelfUpgrade: read X-Hive-Role,
-// treat an absent header as owner (local/dev, no hub nginx), and reject "read".
-// UI hiding on the ops tab is UX; this is the security boundary.
+// role check used by the operator controls: read X-Hive-Role and reject "read".
+// On hub-proxied hosted spokes, an absent role means the public hub auth-check
+// path admitted an anonymous caller without identity headers, so fail closed.
+// On standalone/local-dev hives, keep the historical permissive default because
+// there is no hub nginx to inject X-Hive-Role. UI hiding on the ops tab is UX;
+// this is the security boundary.
 func (s *Server) requireContributorWrite(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
 	if role == "" {
+		if s != nil && s.deps != nil && s.deps.Config != nil && s.deps.Config.Dashboard.HubProxied {
+			jsonError(w, "your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.", http.StatusForbidden)
+			return false
+		}
 		role = "owner"
 	}
 	if role == "read" {

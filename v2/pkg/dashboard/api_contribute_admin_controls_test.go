@@ -209,6 +209,41 @@ func contributorWriteCases() []contributorWriteCase {
 	}
 }
 
+func contributorWriteRoleGateCases() []contributorWriteCase {
+	return []contributorWriteCase{
+		{"queue_order", (*Server).handleContributeQueueOrder, http.MethodPut, "/api/contribute/queue/order", `{"order":[]}`},
+		{"queue_hold", (*Server).handleContributeQueueHold, http.MethodPost, "/api/contribute/queue/hold", `{"key":"myorg/repo1#1","held":true}`},
+		{"queue_hold_clear", (*Server).handleContributeQueueHoldClear, http.MethodPost, "/api/contribute/queue/hold/clear", ``},
+		{"agent_role", (*Server).handleContributorAgentRole, http.MethodPut, "/api/contributors/alice/agent-role", `{"agent_role":"scanner"}`},
+		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},
+	}
+}
+
+func TestContributorWrite_HubProxiedAnonymousForbidden(t *testing.T) {
+	for _, tc := range contributorWriteRoleGateCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContributeEnv(t)
+			if err := saveContributorProfile(&ContributorProfile{
+				GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "trusted",
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s, deps := apiServer(t)
+			deps.Config.Dashboard.HubProxied = true
+
+			req := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.SetPathValue("id", "alice")
+			w := httptest.NewRecorder()
+			tc.invoke(s, w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("hub-proxied anonymous got %d, want 403 (body: %s)", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 // TestContributorWrite_ReadViewerForbidden proves a "read" viewer is rejected with
 // 403 on every contributor mutation endpoint the ops tab surfaces — the boundary
 // the UI hiding merely shadows. roleEnforcement exempts /api/contribute*, so this
@@ -248,9 +283,10 @@ func TestContributorWrite_ReadViewerForbidden(t *testing.T) {
 	}
 }
 
-// TestContributorWrite_OwnerAndRWAllowed proves owner and read-write pass the gate
-// (they are not blocked), and that an absent header falls back to owner (local/dev).
-func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
+// TestContributorWrite_OnlyVerifiedOwnerAllowed proves contributor mutations
+// require the proxy-verified owner role; read-write and absent headers fail
+// closed.
+func TestContributorWrite_OnlyVerifiedOwnerAllowed(t *testing.T) {
 	for _, role := range []string{"owner", "read-write", ""} {
 		t.Run("trust_"+role, func(t *testing.T) {
 			setupContributeEnv(t)
@@ -264,17 +300,27 @@ func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPut, "/api/contributors/alice/trust", strings.NewReader(`{"tier":"trusted"}`))
 			req.SetPathValue("id", "alice")
-			if role != "" {
+			if role == "owner" {
+				markOwnerRequest(req)
+			} else if role != "" {
 				req.Header.Set("X-Hive-Role", role)
 			}
 			w := httptest.NewRecorder()
 			s.handleContributorTrust(w, req)
 
-			if w.Code != http.StatusOK {
-				t.Fatalf("role %q got %d, want 200 (body: %s)", role, w.Code, w.Body.String())
+			want := http.StatusForbidden
+			if role == "owner" {
+				want = http.StatusOK
 			}
-			if p := findContributor("alice"); p == nil || p.TrustTier != "trusted" {
-				t.Errorf("role %q: tier not promoted: %+v", role, p)
+			if w.Code != want {
+				t.Fatalf("role %q got %d, want %d (body: %s)", role, w.Code, want, w.Body.String())
+			}
+			wantTier := "newcomer"
+			if role == "owner" {
+				wantTier = "trusted"
+			}
+			if p := findContributor("alice"); p == nil || p.TrustTier != wantTier {
+				t.Errorf("role %q: tier = %+v, want %q", role, p, wantTier)
 			}
 		})
 	}
@@ -306,7 +352,7 @@ func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
 
 	ownerReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["sec-check","ci-maintainer","ci-maintainer"]}`))
 	ownerReq.Header.Set("Content-Type", "application/json")
-	ownerReq.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(ownerReq)
 	ownerRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(ownerRec, ownerReq)
 	if ownerRec.Code != http.StatusOK {
@@ -322,7 +368,7 @@ func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
 
 	badReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["scanner"]}`))
 	badReq.Header.Set("Content-Type", "application/json")
-	badReq.Header.Set("X-Hive-Role", "owner")
+	markOwnerRequest(badReq)
 	badRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(badRec, badReq)
 	if badRec.Code != http.StatusBadRequest {

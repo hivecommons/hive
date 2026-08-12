@@ -11317,6 +11317,7 @@ function burnAreaChart() {
           window._acmmOverride = null;
         } else {
           window._lastStatus.acmmLevel = window._acmmOverride.level;
+          window._lastStatus.acmmLevelConfigured = true;
           window._lastStatus.acmmPackAgents = window._acmmOverride.packAgents;
         }
       }
@@ -13843,6 +13844,7 @@ function burnAreaChart() {
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;
           const _pa = lastData.acmmPackAgents || null;
           applyACMMVisibility(_lvl, _pa);
+          refreshWelcomeAutoChecks(lastData);
         } catch (err) {
           console.error('SSE agent-status parse error:', err);
         }
@@ -14190,6 +14192,7 @@ function burnAreaChart() {
         window._acmmOverride = { level: level, packAgents: data.packAgents || [] };
         if (window._lastStatus) {
           window._lastStatus.acmmLevel = level;
+          window._lastStatus.acmmLevelConfigured = true;
           window._lastStatus.acmmPackAgents = data.packAgents || [];
           render(window._lastStatus);
         }
@@ -14224,6 +14227,7 @@ function burnAreaChart() {
         window._acmmOverride = { level: level, packAgents: data.packAgents || [] };
         if (window._lastStatus) {
           window._lastStatus.acmmLevel = level;
+          window._lastStatus.acmmLevelConfigured = true;
           window._lastStatus.acmmPackAgents = data.packAgents || [];
           render(window._lastStatus);
         }
@@ -19747,6 +19751,23 @@ function burnAreaChart() {
     // the hive changes); steps without `auto` are manual click-to-check
     // boxes persisted in hive-welcome-state-v1. Content is static markup —
     // the dialog renders once on open, never in the hot render path.
+    function _welcomeAgents(data) {
+      return (data && Array.isArray(data.agents)) ? data.agents : [];
+    }
+    function _welcomeConfiguredValue(v) {
+      const s = (v || '').trim().toLowerCase();
+      return s !== '' && s !== 'auto' && s !== 'default';
+    }
+    function _welcomeAgentBackend(a) {
+      return ((a && (a.cli || a.govBackend)) || '').trim();
+    }
+    function _welcomeAgentHasConcreteModel(a) {
+      const backend = _welcomeAgentBackend(a);
+      if (SINGLE_OPTION_BACKENDS.includes(backend) && modelsForBackend(backend).length === 1) return true;
+      const model = ((a && (a.model || a.govModel)) || '').trim();
+      if (!_welcomeConfiguredValue(model)) return false;
+      return !isAutoModelSentinel(backend, model);
+    }
     const WELCOME_STEPS = [
       {
         id: 'welcome',
@@ -19777,8 +19798,13 @@ function burnAreaChart() {
       {
         id: 'methods',
         title: 'Pick a method for each agent',
-        auto: null,
+        auto: (data) => {
+          const agents = _welcomeAgents(data);
+          if (agents.length === 0) return false;
+          return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
+        },
         body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Governor Config → LiteLLM). Mix and match per agent.',
+        autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', onclick: 'welcomeShowAgentCard()' }]
       },
       {
@@ -19802,8 +19828,13 @@ function burnAreaChart() {
       {
         id: 'models',
         title: 'Choose models',
-        auto: null,
+        auto: (data) => {
+          const agents = _welcomeAgents(data);
+          if (agents.length === 0) return false;
+          return agents.every(_welcomeAgentHasConcreteModel);
+        },
         body: 'The <strong>model dropdown</strong> on each agent card lists models auto-discovered for its method. 📌 pinning a model stops the governor from auto-selecting a different one — it never blocks your own changes.',
+        autoNote: 'Checks itself once every configured agent has a concrete non-default model, or uses a backend with no model choice.',
         actions: [{ label: 'Show me', onclick: 'welcomeShowAgentCard()' }]
       },
       {
@@ -19831,8 +19862,9 @@ function burnAreaChart() {
       {
         id: 'acmm',
         title: 'Set your ACMM level',
-        auto: null,
+        auto: (data) => !!(data && data.acmmLevelConfigured === true),
         body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.',
+        autoNote: 'Checks itself once an ACMM level is explicitly saved on the hive.',
         actions: [{ label: 'Show me', onclick: 'welcomeShowACMM()' }]
       }
     ];

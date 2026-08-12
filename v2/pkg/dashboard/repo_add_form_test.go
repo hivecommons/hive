@@ -29,7 +29,7 @@ func TestGovernorRepos_RejectsCrossForge(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 for a cross-forge repo", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "expected repo name only") {
+	if !strings.Contains(w.Body.String(), "expected 'repo' or 'owner/repo'") {
 		t.Errorf("expected canonical-shape message, got: %s", w.Body.String())
 	}
 	// The hive's forge must be left untouched.

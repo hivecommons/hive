@@ -169,6 +169,26 @@ func TestEnsureBobAuthSettingsCorruptFile(t *testing.T) {
 	assertAPIKeyAuth(t, authBlock(t, readBobSettings(t, home)))
 }
 
+func TestEnsureBobAuthSettingsMalformedJSONRewritesWithSharedMode(t *testing.T) {
+	home := t.TempDir()
+	writeBobSettings(t, home, `{"security":`)
+	if err := os.Chmod(bobSettingsPath(home), 0o600); err != nil {
+		t.Fatalf("chmod seed settings: %v", err)
+	}
+
+	m := &Manager{logger: discardLogger()}
+	m.ensureBobAuthSettings("tester", home)
+
+	assertAPIKeyAuth(t, authBlock(t, readBobSettings(t, home)))
+	info, err := os.Stat(bobSettingsPath(home))
+	if err != nil {
+		t.Fatalf("stat settings: %v", err)
+	}
+	if got := info.Mode().Perm(); got != config.BobSettingsFileMode {
+		t.Errorf("rewritten malformed settings mode = %o, want %o", got, config.BobSettingsFileMode)
+	}
+}
+
 // TestEnsureBobAuthSettingsWrongTypes covers intermediates of the wrong JSON
 // type. There is no sane merge, so they are replaced rather than crashing.
 func TestEnsureBobAuthSettingsWrongTypes(t *testing.T) {
@@ -465,6 +485,31 @@ func TestVerifyBobStateDirsWritableFlagsMissingDirWithUnwritableParent(t *testin
 	m := &Manager{logger: discardLogger()}
 	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
 	wantDir := filepath.Dir(bobSettingsPath(home))
+	if len(got) != 1 || got[0] != wantDir {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, wantDir)
+	}
+}
+
+func TestVerifyBobStateDirsWritableFlagsMissingNestedParent(t *testing.T) {
+	home := t.TempDir()
+	homeBob := filepath.Dir(bobSettingsPath(home))
+	if err := os.MkdirAll(homeBob, 0o770); err != nil {
+		t.Fatalf("mkdir home .bob: %v", err)
+	}
+	if err := os.Chmod(homeBob, 0o770); err != nil {
+		t.Fatalf("chmod home .bob: %v", err)
+	}
+
+	workRoot := t.TempDir()
+	if err := os.Chmod(workRoot, 0o750); err != nil {
+		t.Fatalf("chmod workRoot: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(workRoot, 0o770) })
+	workDir := filepath.Join(workRoot, "agents", "tester")
+
+	m := &Manager{logger: discardLogger()}
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
+	wantDir := filepath.Join(workDir, config.BobStateDirName)
 	if len(got) != 1 || got[0] != wantDir {
 		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, wantDir)
 	}
