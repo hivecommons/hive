@@ -320,6 +320,21 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 			return
 		}
 		gw.APIKeyFile = path
+		// The legacy litellm: section keeps a SEPARATE key store
+		// (/data/secrets/litellm_api_key + the hive-secrets Secret) that
+		// pre-gateways code paths (local proxy, env fallbacks) still resolve.
+		// When this gateway is the one the legacy section points at, sync the
+		// legacy store too — otherwise a key rotated here leaves the legacy
+		// file holding the old (possibly revoked) key, and anything resolving
+		// through it fails against the gateway from then on.
+		if kind == config.GatewayKindLiteLLM && s.legacyLiteLLMSectionMatches(gw) {
+			if legacyPath, syncErr := s.storeLiteLLMAPIKey(submittedKey); syncErr != nil {
+				s.logger.Warn("legacy litellm key store not synced after gateway key save",
+					"gateway", name, "error", syncErr)
+			} else {
+				cfg.Governor.LiteLLM.APIKeyFile = legacyPath
+			}
+		}
 	}
 
 	if idx >= 0 {
@@ -616,4 +631,20 @@ func (s *Server) storeGatewayAPIKey(name, key string) (string, error) {
 	}
 	s.logger.Info("gateway api key stored", "gateway", name, "api_key_file", path)
 	return path, nil
+}
+
+// legacyLiteLLMSectionMatches reports whether the legacy governor.litellm
+// section refers to the same proxy as gw, meaning its key store must be kept
+// in sync when gw's key rotates. Matching is by endpoint; an unset legacy
+// endpoint falls back to the conventional gateway name "litellm" (the
+// built-in method's gateway shares its name with its kind).
+func (s *Server) legacyLiteLLMSectionMatches(gw config.GatewayConfig) bool {
+	if s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	legacy := strings.TrimRight(strings.TrimSpace(s.deps.Config.Governor.LiteLLM.Endpoint), "/")
+	if legacy == "" {
+		return strings.EqualFold(gw.Name, config.GatewayKindLiteLLM)
+	}
+	return strings.EqualFold(legacy, strings.TrimRight(strings.TrimSpace(gw.Endpoint), "/"))
 }
