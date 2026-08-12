@@ -532,8 +532,8 @@ func isCSRFSafe(r *http.Request) bool {
 // accepted every *.hive.kubestellar.io sibling. That single predicate answered
 // two different questions, and conflating them was the bug:
 //
-//   "may this origin AUTHOR a request?"      → only the hub itself
-//   "may we SEND a browser here?"            → any hive's own domain
+//	"may this origin AUTHOR a request?"      → only the hub itself
+//	"may we SEND a browser here?"            → any hive's own domain
 //
 // Because every tenant is a sibling under the same parent domain, the permissive
 // answer let a hostile tenant both drive CSRF mutations and — via the
@@ -3869,6 +3869,22 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Owner != username && username != hubAdminUsername {
 		http.Error(w, `{"error":"only the owner can rename this hive"}`, http.StatusForbidden)
+		return
+	}
+
+	// Refuse a rename while an assignment is still in flight
+	// (assignmentInFlight: Status==statusAssigned && !ClaimDelivered). During
+	// that window the spoke pod is heartbeating under its baked HIVE_ID env
+	// (the slot id), while the claim that would carry the operator-set identity
+	// has not yet been delivered. Rewriting ProjectName now forks the hive's
+	// identity: the half-written renamed record is orphaned while the pod keeps
+	// reporting under the slot id, so the dashboard renders the hive as offline
+	// alongside a duplicate row. This is the only window that is unsafe — a
+	// fully-claimed hive (ClaimDelivered) and an available placeholder
+	// (statusAvailable) are both fine to rename, so only the in-flight window
+	// is blocked, with 409 Conflict.
+	if assignmentInFlight(h) {
+		http.Error(w, `{"error":"cannot rename while assignment is in progress — wait for the hive to finish provisioning, then rename"}`, http.StatusConflict)
 		return
 	}
 
