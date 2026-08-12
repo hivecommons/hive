@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,13 +16,15 @@ func TestValidateGitSourceURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "https", raw: "https://github.com/org/repo.git"},
-		{name: "http", raw: "http://example.com/org/repo"},
+		{name: "http", raw: "http://example.com/org/repo", wantErr: true},
 		{name: "file scheme", raw: "file:///etc/passwd", wantErr: true},
 		{name: "ssh scheme", raw: "ssh://github.com/org/repo.git", wantErr: true},
 		{name: "git scheme", raw: "git://github.com/org/repo.git", wantErr: true},
+		{name: "ftp scheme", raw: "ftp://example.com/org/repo.git", wantErr: true},
 		{name: "ext helper", raw: "ext::sh -c 'id'", wantErr: true},
 		{name: "scp like", raw: "git@github.com:o/r.git", wantErr: true},
 		{name: "missing scheme", raw: "github.com/org/repo.git", wantErr: true},
+		{name: "absolute local path", raw: "/data/hive.yaml", wantErr: true},
 		{name: "invalid escape", raw: "https://example.com/%zz", wantErr: true},
 		{name: "empty host", raw: "https:///org/repo.git", wantErr: true},
 		{name: "leading dash", raw: "--upload-pack=/bin/sh", wantErr: true},
@@ -52,6 +55,73 @@ func TestValidateGitSourceURL(t *testing.T) {
 	}
 }
 
+func TestValidateGitSourceURL_HTTPRequiresPrivateOptIn(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	if err := ValidateGitSourceURL("http://git.internal.example/org/repo.git"); err != nil {
+		t.Fatalf("explicit private-source opt-in should allow http git remotes, got %v", err)
+	}
+}
+
+func TestValidateGitSourceURL_AllowsPublicLegacyIPv4Forms(t *testing.T) {
+	tests := []string{
+		"https://134744072/repo.git",       // 8.8.8.8 as a single decimal integer.
+		"https://8.8.8/repo.git",           // shortened dotted form: 8.8.0.8.
+		"https://010.010.010.010/repo.git", // 8.8.8.8 in dotted octal form.
+	}
+	for _, raw := range tests {
+		if err := ValidateGitSourceURL(raw); err != nil {
+			t.Fatalf("expected public legacy IPv4 form %q to pass, got %v", raw, err)
+		}
+	}
+}
+
+func TestValidateGitSourceBranch(t *testing.T) {
+	tests := []struct {
+		name    string
+		branch  string
+		wantErr bool
+	}{
+		{name: "main", branch: "main"},
+		{name: "release branch", branch: "release/v2"},
+		{name: "empty", wantErr: true},
+		{name: "flag-like", branch: "--upload-pack=/bin/sh", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGitSourceBranch(tc.branch)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateGitSourceBranch(%q) succeeded, want error", tc.branch)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateGitSourceBranch(%q) error = %v", tc.branch, err)
+			}
+		})
+	}
+}
+
+func TestGitSourceEnvProtocolAllowlist(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
+	if got := gitSourceEnvValue(); got != "https" {
+		t.Fatalf("default git env should allow only https, got %q", got)
+	}
+
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "true")
+	if got := gitSourceEnvValue(); got != "https:http" {
+		t.Fatalf("private-source opt-in should allow http for git subprocesses, got %q", got)
+	}
+}
+
+func gitSourceEnvValue() string {
+	const prefix = "GIT_ALLOW_PROTOCOL="
+	value := ""
+	for _, entry := range gitSourceEnv() {
+		if strings.HasPrefix(entry, prefix) {
+			value = strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return value
+}
+
 func TestGitSourceInitRejectsInvalidURL(t *testing.T) {
 	gs := NewGitSource(GitSourceConfig{
 		Name:  "bad",
@@ -61,6 +131,23 @@ func TestGitSourceInitRejectsInvalidURL(t *testing.T) {
 
 	if err := gs.Init(context.Background()); err == nil {
 		t.Fatal("expected invalid URL error")
+	}
+}
+
+func TestGitSourceInitRejectsFlagLikeBranch(t *testing.T) {
+	cloneDir := t.TempDir()
+	initGitRepo(t, cloneDir)
+	gs := NewGitSource(GitSourceConfig{
+		Name:   "bad-branch",
+		URL:    "https://github.com/org/repo.git",
+		Branch: "--upload-pack=/bin/sh",
+		Layer:  LayerProject,
+	}, t.TempDir(), slog.Default())
+	gs.cloneDir = cloneDir
+	gs.indexDir = cloneDir
+
+	if err := gs.Init(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid branch") {
+		t.Fatalf("expected invalid branch error before clone, got %v", err)
 	}
 }
 

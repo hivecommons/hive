@@ -19,7 +19,7 @@ const (
 	// gitSourceCloneTimeout caps how long the initial clone can take.
 	gitSourceCloneTimeout = 120 * time.Second
 
-	gitAllowedProtocols = "https:http"
+	gitAllowedProtocols = "https"
 
 	// gitSourceSyncInterval is how often we pull updates from the remote.
 	gitSourceSyncInterval = 5 * time.Minute
@@ -79,6 +79,9 @@ func NewGitSource(config GitSourceConfig, baseDir string, logger *slog.Logger) *
 func (g *GitSource) Init(ctx context.Context) error {
 	if err := ValidateGitSourceURL(g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: invalid url: %w", g.config.Name, err)
+	}
+	if err := ValidateGitSourceBranch(g.config.Branch); err != nil {
+		return fmt.Errorf("git source %s: invalid branch: %w", g.config.Name, err)
 	}
 
 	if err := g.ensureCloned(ctx); err != nil {
@@ -263,7 +266,7 @@ func ValidateGitSourceURL(raw string) error {
 		return fmt.Errorf("git URL is invalid")
 	}
 	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "https" && scheme != "http" {
+	if scheme != "https" && !(scheme == "http" && allowPrivateGitSource()) {
 		if scheme == "" {
 			return fmt.Errorf("git URL scheme is required")
 		}
@@ -286,6 +289,19 @@ func ValidateGitSourceURL(raw string) error {
 		return fmt.Errorf("git URL host resolves to a private/internal address (set HIVE_ALLOW_PRIVATE_GIT_SOURCE=true for an internal Git server)")
 	}
 
+	return nil
+}
+
+// ValidateGitSourceBranch rejects branch values that git could parse as
+// command-line options when passed as the argument to `git clone --branch`.
+func ValidateGitSourceBranch(branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return fmt.Errorf("git branch is required")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("git branch must not start with '-'")
+	}
 	return nil
 }
 
@@ -403,9 +419,13 @@ func isSCPStyleGitURL(raw string) bool {
 }
 
 func gitSourceEnv() []string {
+	allowedProtocols := gitAllowedProtocols
+	if allowPrivateGitSource() {
+		allowedProtocols += ":http"
+	}
 	return append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ALLOW_PROTOCOL="+gitAllowedProtocols,
+		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
 	)
 }
 
