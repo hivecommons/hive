@@ -677,6 +677,44 @@ func isMetaCheck(name string) bool {
 	return false
 }
 
+// chromiumShardCheckRE matches the Playwright matrix's per-shard check-run
+// names, e.g. "Test (chromium, shard 1)", "Test (chromium, shard 2/4)".
+var chromiumShardCheckRE = regexp.MustCompile(`(?i)^test \(chromium,\s*shard`)
+
+// isIgnorableCICheck reports check runs this project's standing merge policy
+// treats as non-required: it is the superset used to decide whether a
+// check-run's COMPLETED CONCLUSION (not just its presence) is allowed to
+// block a merge. It always includes the meta/deploy-gate checks from
+// isMetaCheck, plus the browser/E2E suites (Playwright, Mobile Browser Tests,
+// the chromium shard matrix) and coverage reporting that GitHub's own
+// mergeable_state="unstable" already treats as non-required (see
+// mergeableFromState) but that isMetaCheck deliberately does NOT cover —
+// isMetaCheck's own test locks in that a chromium shard IS real code CI for
+// CIStatus classification purposes, so that name-blocking logic must stay
+// separate from this one.
+//
+// This predicate exists because commitGreen (automerge_sweep.go) must ignore
+// a CANCELLED conclusion on these checks: Playwright/Mobile/chromium-shard
+// runs routinely get cancelled mid-flight (matrix cancellation, concurrency
+// groups, flake reruns) even though nothing about them is required for
+// branch protection, and a cancelled non-required check must never wedge an
+// otherwise-green, MERGEABLE PR out of the self-merge sweep (#22438,
+// #22440 — build-gate success, PR mergeable, only blocker was a cancelled
+// Playwright/Mobile shard).
+func isIgnorableCICheck(name string) bool {
+	if isMetaCheck(name) {
+		return true
+	}
+	switch name {
+	case "Playwright", "Mobile Browser Tests", "coverage-report":
+		return true
+	}
+	if strings.HasPrefix(name, "Playwright") || strings.HasPrefix(name, "Mobile Browser Tests") {
+		return true
+	}
+	return chromiumShardCheckRE.MatchString(name)
+}
+
 // Bounds for fetchFailureExcerpt: annotations are fetched for at most
 // excerptMaxRuns failing check runs, keeping at most excerptMaxLines lines and
 // excerptMaxChars characters total. Enough to carry a stack of real errors

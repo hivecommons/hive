@@ -530,6 +530,17 @@ func parseHiveQueueReview(body string) string {
 // required. Meta gates (tide, netlify previews, ...) are excluded on both
 // surfaces — tide in particular posts a commit status that stays "pending"
 // forever on Prow-managed repos and must never wedge the queue.
+//
+// A non-success CONCLUSION (cancelled, failure, timed_out, ...) on an
+// ignorable/non-required check (isIgnorableCICheck — Playwright, Mobile
+// Browser Tests, the chromium shard matrix, plus the isMetaCheck set) is
+// likewise not a blocker: those suites are routinely cancelled mid-flight
+// (matrix/concurrency-group cancellation, flake reruns) with zero bearing on
+// mergeability, and treating a cancelled Playwright/Mobile shard as red left
+// otherwise-green, MERGEABLE PRs (build-gate success) permanently skipped by
+// the self-merge sweep with reason "check-cancelled" (#22438, #22440).
+// Required checks (build-gate, build/test/docker, ...) still gate: only the
+// ignorable set gets a pass on a bad conclusion.
 func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool, string, error) {
 	statusOpts := &gh.ListOptions{PerPage: 100}
 	for {
@@ -546,6 +557,9 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 			case "pending":
 				return false, "status-pending", nil
 			default: // "failure", "error"
+				if isIgnorableCICheck(s.GetContext()) {
+					continue
+				}
 				return false, "status-" + s.GetState(), nil
 			}
 		}
@@ -566,11 +580,17 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 				continue
 			}
 			if cr.GetStatus() != "completed" {
+				if isIgnorableCICheck(cr.GetName()) {
+					continue
+				}
 				return false, "check-pending", nil
 			}
 			switch cr.GetConclusion() {
 			case "success", "neutral", "skipped":
 			default:
+				if isIgnorableCICheck(cr.GetName()) {
+					continue
+				}
 				return false, "check-" + cr.GetConclusion(), nil
 			}
 		}

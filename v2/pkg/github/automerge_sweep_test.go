@@ -321,6 +321,12 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 		{name: "check failure blocks", statuses: []status{{"ci/build", "success"}}, checks: []check{{"build", "completed", "failure"}}, wantReason: "check-failure"},
 		{name: "pending meta status and check are ignored", statuses: []status{{"tide", "pending"}, {"ci/build", "success"}}, checks: []check{{"tide", "in_progress", ""}, {"build", "completed", "success"}}, wantGreen: true},
 		{name: "no statuses or checks is green after mergeable gate", wantGreen: true},
+		{name: "cancelled Playwright check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Playwright", "completed", "cancelled"}}, wantGreen: true},
+		{name: "cancelled Mobile Browser Tests check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Mobile Browser Tests", "completed", "cancelled"}}, wantGreen: true},
+		{name: "cancelled chromium shard check with green build-gate is green", checks: []check{{"build-gate", "completed", "success"}, {"Test (chromium, shard 3)", "completed", "cancelled"}}, wantGreen: true},
+		{name: "in-progress chromium shard does not block", checks: []check{{"build-gate", "completed", "success"}, {"Test (chromium, shard 1)", "in_progress", ""}}, wantGreen: true},
+		{name: "cancelled build-gate still blocks", checks: []check{{"build-gate", "completed", "cancelled"}}, wantReason: "check-cancelled"},
+		{name: "failing build-gate still blocks alongside cancelled Playwright", checks: []check{{"build-gate", "completed", "failure"}, {"Playwright", "completed", "cancelled"}}, wantReason: "check-failure"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

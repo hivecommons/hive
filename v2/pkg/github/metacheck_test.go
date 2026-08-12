@@ -27,3 +27,34 @@ func TestIsMetaCheck(t *testing.T) {
 		}
 	}
 }
+
+// TestIsIgnorableCICheck locks in the wider non-required set that
+// commitGreen uses to decide whether a bad CONCLUSION (cancelled, failure,
+// ...) is allowed to pass: it includes everything isMetaCheck already
+// covers, plus the browser/E2E suites that routinely get cancelled
+// mid-flight (Playwright, Mobile Browser Tests, the chromium shard matrix).
+// Required build/test/docker checks must NOT be in this set.
+func TestIsIgnorableCICheck(t *testing.T) {
+	ignorable := []string{
+		"tide",
+		"enforce-guardrails",
+		"netlify/kubestellarconsole/deploy-preview",
+		"copilot-pull-request-reviewer",
+		"Playwright",
+		"Mobile Browser Tests",
+		"Test (chromium, shard 1)",
+		"Test (chromium, shard 2/4)",
+		"coverage-report",
+	}
+	for _, name := range ignorable {
+		if !isIgnorableCICheck(name) {
+			t.Errorf("isIgnorableCICheck(%q) = false, want true (non-required check)", name)
+		}
+	}
+	required := []string{"build-gate", "build", "test", "docker", "unit-test", "TypeScript & ESLint"}
+	for _, name := range required {
+		if isIgnorableCICheck(name) {
+			t.Errorf("isIgnorableCICheck(%q) = true, want false (required check must still gate)", name)
+		}
+	}
+}
