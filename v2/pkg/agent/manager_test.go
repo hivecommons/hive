@@ -767,3 +767,39 @@ func TestStart_EnvIncludesHiveVars(t *testing.T) {
 		t.Error("HIVE_AGENT=env-test not found in env pairs")
 	}
 }
+func TestResume_PersistenceCallbackCanReenterManager(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"worker": makeAgentConfig("claude", "sonnet"),
+	}, discardLogger(), ProjectContext{})
+	m.agents["worker"].Paused = true
+	m.agents["worker"].Config.Paused = true
+
+	callbackCalled := make(chan struct{}, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name != "worker" || paused {
+			t.Errorf("persist callback = (%q, %v), want (worker, false)", name, paused)
+		}
+		_ = m.AllStatuses()
+		callbackCalled <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Resume(context.Background(), "worker", "test", "test resume")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Resume() error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume() deadlocked while persistence callback re-entered manager")
+	}
+
+	select {
+	case <-callbackCalled:
+	default:
+		t.Fatal("resume persistence callback was not called")
+	}
+}

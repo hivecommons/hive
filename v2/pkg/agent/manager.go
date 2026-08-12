@@ -5306,6 +5306,9 @@ func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reaso
 }
 
 func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.mu.Lock()
 	agent, ok := m.agents[name]
 	if !ok {
@@ -5315,15 +5318,14 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 
 	prevTrigger := agent.PausedTrigger
 	prevReason := agent.PausedReason
-	// Snapshot backend/model while m.mu is held so audit details stay stable
-	// even when Resume relaunches the agent before returning.
+	// Snapshot backend/model while m.mu is still held — the audit call below
+	// runs after the deliberate early Unlock, where touching agent fields
+	// would be an unsynchronized read.
 	resumeBackend := agent.effectiveBackend()
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
 	agent.Config.Paused = false
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, false)
-	}
+	persistPause := m.persistPauseCallback
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
@@ -5331,7 +5333,17 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	if needsRelaunch {
 		agent.forceRelaunch = true
 	}
+	// Release the global agents-map lock before slow per-agent tmux
+	// operations (ensureTmuxSession + launchInTmux ~2s each). This allows
+	// concurrent Resume() calls for different agents to run in parallel
+	// instead of serializing on the mutex.
+	m.mu.Unlock()
 
+	// Persistence republishes the complete runtime config and re-enters the
+	// manager to update agent snapshots. Never invoke it while holding m.mu.
+	if persistPause != nil {
+		persistPause(name, false)
+	}
 	m.logger.Info("audit: agent resumed",
 		"name", name,
 		"trigger", trigger,
@@ -5348,14 +5360,10 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	))
 	if needsRelaunch {
 		if err := m.ensureTmuxSession(agent); err != nil {
-			m.mu.Unlock()
 			return err
 		}
-		err := m.launchInTmux(ctx, agent)
-		m.mu.Unlock()
-		return err
+		return m.launchInTmux(ctx, agent)
 	}
-	m.mu.Unlock()
 	return nil
 }
 
