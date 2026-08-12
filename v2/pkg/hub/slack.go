@@ -345,7 +345,7 @@ func decodeSlackRequest(w http.ResponseWriter, r *http.Request) (slackSendReques
 // the caller should return.
 func slackPreflight(w http.ResponseWriter, r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")

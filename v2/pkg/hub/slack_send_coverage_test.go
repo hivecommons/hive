@@ -276,7 +276,6 @@ func TestSlackPreflightDoesNotReflectUntrustedOrigin(t *testing.T) {
 func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 	for _, origin := range []string{
 		"https://hive.kubestellar.io",
-		"https://my-hive.hive.kubestellar.io",
 		"http://localhost:5174",
 	} {
 		rec := httptest.NewRecorder()
@@ -287,6 +286,24 @@ func TestSlackPreflightAllowsTrustedOrigins(t *testing.T) {
 
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
 			t.Errorf("trusted origin %q not allowed (got %q)", origin, got)
+		}
+	}
+
+	// Audit F4: a sibling tenant is NOT a trusted CORS origin. It used to be
+	// echoed here with Allow-Credentials, which let a hostile hive operator
+	// script credentialed cross-tenant reads against the hub.
+	for _, origin := range []string{
+		"https://my-hive.hive.kubestellar.io",
+		"https://attacker-hive.hive.kubestellar.io",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.Header.Set("Origin", origin)
+
+		slackPreflight(rec, req)
+
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("F4 REGRESSION: sibling origin %q reflected as %q", origin, got)
 		}
 	}
 }

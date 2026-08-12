@@ -170,7 +170,10 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		redirect = r.URL.Query().Get("rd")
 	}
 	if redirect != "" && (!strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//")) {
-		if !isTrustedOrigin(redirect) {
+		// Redirect trust intentionally still spans sibling tenants: hosted hives
+		// bounce here via their ingress auth-signin and must be returned home.
+		// This is NOT the CSRF boundary — see isSameOriginAsHub (audit F4).
+		if !isTrustedRedirectTarget(redirect) {
 			redirect = "/dashboard"
 		}
 	}
@@ -331,6 +334,37 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
 		return
 	}
+	// AUDIT F4, DELIBERATELY NOT CHANGED — read before "fixing" this.
+	//
+	// The audit asks for a host-only `__Host-` session cookie. That is correct
+	// in the abstract and NOT safely applicable here, because this cookie is
+	// load-bearing across a trust boundary: it is minted by the hub (Go) and
+	// verified INDEPENDENTLY by every spoke's Node proxy
+	// (v2/proxy/server.js — verifyHubUserCookieEither, and the WebSocket
+	// terminal path). The proxy can only verify a cookie the browser actually
+	// sends it, and the browser only sends this one to <id>.hive.kubestellar.io
+	// BECAUSE of the Domain attribute below. Dropping Domain (which __Host-
+	// additionally forbids outright) would stop the cookie reaching any spoke
+	// and log every hosted tenant out of their own dashboard and terminal —
+	// a fleet-wide outage across ~62 hives, and precisely the flag-day auth
+	// change that caused incident #2773.
+	//
+	// The verify-both/mint-new pattern used for the N2 Ed25519 cutover
+	// (hub_cookie.go) does NOT rescue this. That pattern works when both
+	// formats travel the same path and only the VERIFIER must learn a new
+	// shape. Here the change is to the cookie's delivery scope: a host-only
+	// cookie is never transmitted to the spoke at all, so there is no request
+	// in which a spoke could verify it, no matter what it accepts. Making this
+	// safe needs a real design change (e.g. a distinct spoke-scoped session
+	// cookie minted per tenant at SSO handoff), not a rollout trick.
+	//
+	// What this PR does instead is remove the sibling's ability to USE the
+	// cookie it receives: an untrusted tenant can no longer author an accepted
+	// mutation (isSameOriginAsHub) nor read a credentialed CORS response. The
+	// cookie still travels to siblings — a real, ACCEPTED residual risk that a
+	// hostile tenant can read it only if some other bug lets them (it stays
+	// HttpOnly + Secure), which is why the spoke-scoped-session redesign is
+	// tracked as follow-up rather than closed.
 	cookie := &http.Cookie{
 		Name:     "hive_hub_user",
 		Value:    cookieValue,
@@ -362,7 +396,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		if _, target, ok := strings.Cut(decoded, oauthStateSeparator); ok {
 			decoded = target
 		}
-		if decoded != "" && ((strings.HasPrefix(decoded, "/") && !strings.HasPrefix(decoded, "//")) || isTrustedOrigin(decoded)) {
+		if decoded != "" && ((strings.HasPrefix(decoded, "/") && !strings.HasPrefix(decoded, "//")) || isTrustedRedirectTarget(decoded)) {
 			redirect = decoded
 		}
 	}

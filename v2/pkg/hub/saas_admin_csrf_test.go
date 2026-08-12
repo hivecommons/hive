@@ -57,23 +57,37 @@ func TestRequireAdminCSRFCrossOriginPostDenied(t *testing.T) {
 }
 
 // TestRequireAdminCSRFSiblingTenantOriginDenied covers the lane the audit
-// reproduced: a hostile tenant spoke. isTrustedOrigin still allows
-// *.hive.kubestellar.io, so this currently passes the CSRF check and is denied
-// only if the wider trusted-origin reduction lands. Asserting the *documented*
-// current behaviour keeps this test honest rather than aspirational — flip it
-// to expect 403 when the exact-origin change ships.
-func TestRequireAdminCSRFSiblingTenantOriginStillTrusted(t *testing.T) {
+// reproduced: a hostile tenant spoke.
+//
+// This test previously existed as TestRequireAdminCSRFSiblingTenantOriginStillTrusted
+// — it ASSERTED the vulnerable behaviour and t.Skip'd if it were ever fixed,
+// documenting the gap as "tracked for the exact-origin work". That work is
+// audit F4 and it has now landed, so the test is flipped to a real assertion.
+//
+// The request carries a GENUINELY VALID admin cookie, so a 403 can only come
+// from the CSRF gate; the pre-existing TestRequireAdminNonAdmin would get its
+// 403 from the identity check and would keep passing with this hole open.
+func TestRequireAdminCSRFSiblingTenantOriginDenied(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
+	s := newHandlerHub()
+	mkUser(t, hubAdminUsername)
+
+	reached := false
+	handler := adminCSRFHandler(s, &reached)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/hub-banner", nil)
 	req.Header.Set("Origin", "https://attacker-hive.hive.kubestellar.io")
+	req.AddCookie(testAuthCookie(hubAdminUsername))
+	rec := httptest.NewRecorder()
+	handler(rec, req)
 
-	if !isCSRFSafe(req) {
-		t.Skip("sibling-tenant origin is no longer trusted — the exact-origin fix has landed; update this test to assert 403 through requireAdmin")
+	if reached {
+		t.Fatal("F4 REGRESSION: an admin mutation from a hostile sibling tenant origin reached the handler")
 	}
-	t.Log("KNOWN GAP (N6, second half): a sibling *.hive.kubestellar.io origin is still CSRF-trusted; " +
-		"the requireAdmin gate does not close this lane on its own. Tracked for the exact-origin + CSRF-token work.")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("sibling-origin admin POST: code=%d, want 403 (CSRF); body=%q", rec.Code, rec.Body.String())
+	}
 }
 
 // TestRequireAdminSafeGetStillAllowed guards against over-correction: the CSRF

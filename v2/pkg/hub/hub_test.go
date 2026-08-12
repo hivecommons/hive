@@ -9,16 +9,25 @@ import (
 	"testing"
 )
 
-func TestIsTrustedOrigin(t *testing.T) {
+// TestIsSameOriginAsHub is the request-authoring trust boundary (audit F4).
+// Sibling tenants must NOT be trusted here — that was the vulnerability.
+func TestIsSameOriginAsHub(t *testing.T) {
 	tests := []struct {
 		origin string
 		want   bool
 	}{
+		// Positive controls: the legitimate hub origin and local dev must stay
+		// trusted, so a handler that rejects everything cannot pass this test.
 		{"https://hive.kubestellar.io", true},
-		{"https://hosted-test.hive.kubestellar.io", true},
-		{"https://my.hosted.hive.kubestellar.io", true},
+		{"https://hive.kubestellar.io/dashboard", true},
 		{"http://localhost", true},
+		{"http://localhost:3001", true},
 		{"http://127.0.0.1", true},
+		// F4: sibling tenants are no longer request-authoring origins.
+		{"https://hosted-test.hive.kubestellar.io", false},
+		{"https://my.hosted.hive.kubestellar.io", false},
+		{"https://attacker-hive.hive.kubestellar.io", false},
+		// Unrelated / lookalike hosts stay rejected.
 		{"https://evil.com", false},
 		{"https://hive.kubestellar.io.evil.com", false},
 		{"https://evil-hive.kubestellar.io", false},
@@ -27,9 +36,37 @@ func TestIsTrustedOrigin(t *testing.T) {
 		{"https://localhost.evil.com", false},
 	}
 	for _, tt := range tests {
-		got := isTrustedOrigin(tt.origin)
+		got := isSameOriginAsHub(tt.origin)
 		if got != tt.want {
-			t.Errorf("isTrustedOrigin(%q) = %v, want %v", tt.origin, got, tt.want)
+			t.Errorf("isSameOriginAsHub(%q) = %v, want %v", tt.origin, got, tt.want)
+		}
+	}
+}
+
+// TestIsTrustedRedirectTarget pins the OTHER half of the F4 split: post-login
+// redirects must still reach hosted tenants, because every hive's ingress
+// auth-signin bounces through the hub with redirect=https://<id>.hive...
+// Narrowing this would break hosted sign-in.
+func TestIsTrustedRedirectTarget(t *testing.T) {
+	tests := []struct {
+		target string
+		want   bool
+	}{
+		{"https://hive.kubestellar.io", true},
+		{"https://hosted-test.hive.kubestellar.io/dashboard", true},
+		{"https://my.hosted.hive.kubestellar.io", true},
+		{"http://localhost:3001", true},
+		{"http://127.0.0.1", true},
+		{"https://evil.com", false},
+		{"https://hive.kubestellar.io.evil.com", false},
+		{"https://evil-hive.kubestellar.io", false},
+		{"", false},
+		{"https://localhost.evil.com", false},
+	}
+	for _, tt := range tests {
+		got := isTrustedRedirectTarget(tt.target)
+		if got != tt.want {
+			t.Errorf("isTrustedRedirectTarget(%q) = %v, want %v", tt.target, got, tt.want)
 		}
 	}
 }
@@ -47,6 +84,10 @@ func TestIsCSRFSafe(t *testing.T) {
 		{"OPTIONS is safe", "OPTIONS", "", "", true},
 		{"POST with trusted origin", "POST", "https://hive.kubestellar.io", "", true},
 		{"POST with evil origin", "POST", "https://evil.com", "", false},
+		// F4: a sibling tenant is a hostile origin for CSRF purposes even
+		// though the browser hands it the parent-domain session cookie.
+		{"POST from sibling tenant origin", "POST", "https://attacker-hive.hive.kubestellar.io", "", false},
+		{"POST from sibling tenant origin with JSON ct", "POST", "https://attacker-hive.hive.kubestellar.io", "application/json", false},
 		{"POST with JSON content-type", "POST", "", "application/json", true},
 		{"POST with no origin or ct", "POST", "", "", false},
 		{"POST with evil origin suffix", "POST", "https://hive.kubestellar.io.evil.com", "", false},

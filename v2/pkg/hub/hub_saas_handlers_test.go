@@ -929,24 +929,38 @@ func TestGetAuthUserBearer(t *testing.T) {
 	ghTokenCacheMu.Unlock()
 }
 
-func TestIsTrustedOriginSubdomain(t *testing.T) {
-	if !isTrustedOrigin("https://dashboard.hive.kubestellar.io") {
-		t.Error("subdomain of hive.kubestellar.io should be trusted")
+// TestSubdomainTrustIsRedirectOnly records the F4 split explicitly: a
+// *.hive.kubestellar.io subdomain is trusted as a post-login REDIRECT target
+// (hosted sign-in depends on it) but is NOT trusted to author a request.
+//
+// This test previously asserted, via isTrustedOrigin, that a subdomain was
+// trusted for BOTH — which is the vulnerability F4 reported.
+func TestSubdomainTrustIsRedirectOnly(t *testing.T) {
+	for _, sub := range []string{
+		"https://dashboard.hive.kubestellar.io",
+		"https://my-hive.hive.kubestellar.io",
+	} {
+		if !isTrustedRedirectTarget(sub) {
+			t.Errorf("%s should remain a trusted redirect target (hosted sign-in depends on it)", sub)
+		}
+		if isSameOriginAsHub(sub) {
+			t.Errorf("F4 REGRESSION: %s is trusted to author requests at the hub", sub)
+		}
 	}
-	if !isTrustedOrigin("https://my-hive.hive.kubestellar.io") {
-		t.Error("any subdomain of hive.kubestellar.io should be trusted")
-	}
-	if !isTrustedOrigin("http://localhost:3001") {
-		t.Error("localhost should be trusted")
-	}
-	if !isTrustedOrigin("http://127.0.0.1:8080") {
-		t.Error("127.0.0.1 should be trusted")
+	// Local development is the hub itself, so it is trusted for both.
+	for _, local := range []string{"http://localhost:3001", "http://127.0.0.1:8080"} {
+		if !isTrustedRedirectTarget(local) || !isSameOriginAsHub(local) {
+			t.Errorf("%s should be trusted for local development", local)
+		}
 	}
 }
 
-func TestIsTrustedOriginBadParse(t *testing.T) {
-	if isTrustedOrigin("://invalid") {
-		t.Error("unparseable URL should not be trusted")
+func TestOriginTrustBadParse(t *testing.T) {
+	if isSameOriginAsHub("://invalid") {
+		t.Error("unparseable URL should not be a trusted origin")
+	}
+	if isTrustedRedirectTarget("://invalid") {
+		t.Error("unparseable URL should not be a trusted redirect target")
 	}
 }
 

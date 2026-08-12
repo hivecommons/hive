@@ -297,7 +297,6 @@ func TestBulkHandlerPreflightOnlyTrustsKnownOrigins(t *testing.T) {
 
 	trusted := []string{
 		"https://hive.kubestellar.io",
-		"https://console.hive.kubestellar.io",
 		"http://localhost:5174",
 		"http://127.0.0.1:8080",
 	}
@@ -325,6 +324,12 @@ func TestBulkHandlerPreflightOnlyTrustsKnownOrigins(t *testing.T) {
 		"https://hive.kubestellar.io.evil.com",
 		"https://notlocalhost",
 		"::not a url::",
+		// Audit F4: sibling tenants are untrusted for credentialed CORS. The
+		// browser hands them the parent-domain session cookie, so reflecting
+		// Allow-Origin + Allow-Credentials back to one gives a hostile hive
+		// operator a scripted cross-tenant read of the hub API.
+		"https://console.hive.kubestellar.io",
+		"https://attacker-hive.hive.kubestellar.io",
 	}
 	for _, origin := range untrusted {
 		t.Run("untrusted "+origin, func(t *testing.T) {

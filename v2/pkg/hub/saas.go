@@ -541,26 +541,91 @@ func isCSRFSafe(r *http.Request) bool {
 	}
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		return isTrustedOrigin(origin)
+		return isSameOriginAsHub(origin)
 	}
 	referer := r.Header.Get("Referer")
 	if referer != "" {
-		return isTrustedOrigin(referer)
+		return isSameOriginAsHub(referer)
 	}
 	ct := r.Header.Get("Content-Type")
 	return strings.Contains(ct, "application/json")
 }
 
-func isTrustedOrigin(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
+// hubCanonicalHost is the ONE host that serves the hub's own dashboard and API.
+// Every legitimate browser mutation against the hub is issued by a document
+// loaded from this host — tenant spokes are separate origins that talk to the
+// hub through their own proxy, never by scripting a cross-origin POST at it.
+const hubCanonicalHost = "hive.kubestellar.io"
+
+// hubDomainSuffix is the shared parent domain the hosted tenants live under
+// (<id>.hive.kubestellar.io). It is a REDIRECT-trust boundary only — see
+// isTrustedRedirectTarget — and deliberately NOT a CSRF or CORS boundary.
+const hubDomainSuffix = ".hive.kubestellar.io"
+
+// isSameOriginAsHub reports whether raw names the hub's own origin, i.e. the
+// only origin permitted to drive a state-changing request or to receive a
+// credentialed CORS response.
+//
+// SECURITY (audit F4): this used to be isTrustedOrigin, which accepted EVERY
+// suffix match of .hive.kubestellar.io. Because the hub session cookie is
+// scoped Domain=.hive.kubestellar.io, the browser attaches it to requests
+// issued from any sibling tenant — so a hostile hive operator, serving script
+// from their own <id>.hive.kubestellar.io dashboard, could POST at the hub with
+// the victim admin's ambient cookie and have the CSRF gate wave it through. The
+// audit demonstrated exactly this by flipping another tenant's visibility from
+// a sibling Origin. Suffix-matching a domain whose subdomains are handed out to
+// untrusted third parties is not an origin check at all.
+//
+// localhost/127.0.0.1 stay trusted for local development, where the hub is
+// served from those hosts and there is no multi-tenant sibling to speak of.
+func isSameOriginAsHub(raw string) bool {
+	host, ok := originHost(raw)
+	if !ok {
 		return false
 	}
-	host := u.Hostname()
-	return host == "hive.kubestellar.io" ||
-		strings.HasSuffix(host, ".hive.kubestellar.io") ||
+	return host == hubCanonicalHost || host == "localhost" || host == "127.0.0.1"
+}
+
+// isTrustedRedirectTarget reports whether raw is a URL the hub may bounce a
+// browser BACK to after login.
+//
+// This one MUST keep accepting sibling tenants, and that is not an oversight:
+// every hosted hive's ingress carries
+//
+//	auth-signin: https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri
+//
+// (see saas_provision.go), so the ordinary "open my hive" flow arrives at the
+// hub with redirect=https://<id>.hive.kubestellar.io/... and must be allowed to
+// return there. Narrowing this to the exact hub origin would break sign-in for
+// all hosted tenants.
+//
+// Sending a browser to a sibling is a far weaker capability than accepting a
+// mutation FROM one: the tenant already controls that host and can navigate the
+// user there unaided. The dangerous half — trusting a sibling to author a
+// request — is what isSameOriginAsHub now refuses.
+func isTrustedRedirectTarget(raw string) bool {
+	host, ok := originHost(raw)
+	if !ok {
+		return false
+	}
+	return host == hubCanonicalHost ||
+		strings.HasSuffix(host, hubDomainSuffix) ||
 		host == "localhost" ||
 		host == "127.0.0.1"
+}
+
+// originHost extracts the hostname from raw, rejecting values that do not parse.
+// Shared by both trust predicates so they can never disagree about how a URL is
+// decomposed.
+func originHost(raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	return u.Hostname(), true
 }
 
 // getRealAuthUser resolves the REAL authenticated user from the signed session
@@ -883,22 +948,34 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"users": views})
 }
 
-// impersonateCookieDomain matches the session cookie's domain so the two are
-// scoped identically across the hive.kubestellar.io hosts. It mirrors the
-// hive_hub_user cookie set in oauth.go.
-const impersonateCookieDomain = ".hive.kubestellar.io"
-
 // setImpersonateCookie writes (value != "") or clears (value == "") the signed
 // impersonation cookie with the same hardened attributes as the session cookie:
 // HttpOnly (no JS access), Secure (HTTPS only), SameSite=Lax. The short MaxAge
 // mirrors impersonateTTL so the browser drops the cookie about when the server
 // would stop honoring it.
+//
+// SECURITY (audit F4): this cookie is HOST-ONLY. It previously carried
+// Domain=.hive.kubestellar.io, copied from the session cookie, which meant the
+// admin's live impersonation grant was transmitted to every hosted tenant's
+// dashboard — i.e. handed to ~62 untrusted third parties on every request they
+// received. Unlike hive_hub_user, NOTHING outside the hub ever reads it:
+// grep confirms hive_hub_impersonate appears only in this package
+// (activeImpersonationGrant / resolveIdentity), never in the spoke proxy
+// (v2/proxy/server.js) or any manifest. Dropping Domain therefore costs
+// nothing and removes the cookie from the sibling attack surface entirely.
+//
+// Omitting Domain (rather than setting it) is what makes a cookie host-only per
+// RFC 6265 §4.1.2.3 — there is no "Domain=host" spelling that achieves this.
+//
+// No flag day: the mint and the read both happen on hive.kubestellar.io, so a
+// browser holding the OLD domain-scoped cookie still presents it to the hub and
+// still verifies. The next impersonate/exit re-mints it host-only. Worst case
+// for an in-flight grant is that it expires on its own 30-minute TTL.
 func setImpersonateCookie(w http.ResponseWriter, value string) {
 	c := &http.Cookie{
 		Name:     impersonateCookieName,
 		Value:    value,
 		Path:     "/",
-		Domain:   impersonateCookieDomain,
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
@@ -909,7 +986,34 @@ func setImpersonateCookie(w http.ResponseWriter, value string) {
 		c.MaxAge = int(impersonateTTL / time.Second)
 	}
 	http.SetCookie(w, c)
+	if value == "" {
+		// Also expire the legacy DOMAIN-scoped cookie. A host-only Set-Cookie
+		// cannot delete a domain-scoped one — they are distinct entries in the
+		// jar, and the browser would keep sending the old one on every hub
+		// request until its own TTL lapsed, leaving "Exit impersonation"
+		// silently ineffective for admins mid-migration. Emitting both
+		// deletions is unconditional and idempotent: if no legacy cookie
+		// exists, this is a no-op the browser discards.
+		//
+		// Removable once no admin can still be holding a pre-fix grant, which
+		// the 30-minute impersonateTTL bounds.
+		http.SetCookie(w, &http.Cookie{
+			Name:     impersonateCookieName,
+			Value:    "",
+			Path:     "/",
+			Domain:   legacyImpersonateCookieDomain,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
+
+// legacyImpersonateCookieDomain is the sibling-wide scope the impersonation
+// cookie used to carry before audit F4 made it host-only. Retained ONLY so the
+// exit path can expire cookies minted by the previous build.
+const legacyImpersonateCookieDomain = ".hive.kubestellar.io"
 
 // handleImpersonateStart begins an admin read-only "View as user" session.
 // Registered behind requireAdmin, so only the real hub admin reaches it (and
@@ -3510,7 +3614,7 @@ func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request)
 
 func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -3599,7 +3703,7 @@ func branchToTag(branch string) string {
 
 func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -3733,7 +3837,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 
 func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
@@ -3820,7 +3924,7 @@ const maxHiveDisplayNameLen = 100
 //     original label — a known, documented staleness, not a silent one.
 func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
@@ -3922,7 +4026,7 @@ func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
 
 func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
