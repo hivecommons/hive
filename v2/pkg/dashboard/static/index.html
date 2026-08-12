@@ -1335,6 +1335,8 @@
     .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
+    .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
+    .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 4px; }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
 
     /* Cost spend-over-time: range pills + bucketed bar chart */
@@ -7852,6 +7854,10 @@ function burnAreaChart() {
     // spend reported by OpenRouter / LiteLLM gateways). Estimates are always
     // labeled "est." so they never masquerade as actual billing.
     const COST_POLL_MS = 60000;
+    // How many leading characters of a session id to show before eliding — full
+    // id stays available on hover (title). Session ids are UUID-length, so a
+    // short prefix is enough to disambiguate visually.
+    const COST_SESSION_ID_CHARS = 8;
     // Format a dollar amount with thousands separators (commas). Small amounts
     // keep 2-decimal cents; amounts >= $100 are shown as whole dollars but still
     // comma-grouped (e.g. $20,849). Sentinels for null / sub-cent are preserved.
@@ -7965,6 +7971,59 @@ function burnAreaChart() {
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
         : '';
 
+      // ── Per-sandbox (per-agent) estimated cost ──
+      // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
+      // per-agent breakdown. Sorted most-expensive first.
+      const bySandbox = (est.by_agent || []).slice().sort((a, b) => b.usd - a.usd);
+      const sandboxRows = bySandbox.map(a => {
+        const approx = a.source === 'unpriced';
+        const usdCell = approx
+          ? `<span title="tier estimate — no exact list price for this sandbox's model">~${fmtUSD(a.usd)}</span>`
+          : fmtUSD(a.usd);
+        return `<tr>
+          <td class="cmodel">${esc(a.name || 'unknown')}</td>
+          <td class="cnum">${fmtTokens(a.input)}</td>
+          <td class="cnum">${fmtTokens(a.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+      const sandboxTable = `
+        <div class="cost-subtable-title" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price)">usage by sandbox</div>
+        <table class="cost-table">
+          <thead><tr><th>sandbox (agent)</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${sandboxRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+        </table>`;
+
+      // ── Cost per session ──
+      // Each row is one agent run (session) inside its sandbox, priced from its
+      // own token splits. Backend already sorts most-expensive first and caps
+      // the count; we show the session id (shortened), owning sandbox, and model.
+      const bySession = est.by_session || [];
+      const shortId = (id) => {
+        const s = String(id || '');
+        return s.length > COST_SESSION_ID_CHARS ? s.slice(0, COST_SESSION_ID_CHARS) + '…' : (s || '—');
+      };
+      const sessionRows = bySession.map(sn => {
+        const approx = sn.source === 'unpriced';
+        const usdCell = approx
+          ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(sn.usd)}</span>`
+          : fmtUSD(sn.usd);
+        return `<tr>
+          <td class="csession" title="${esc(sn.session_id || '')}">${esc(shortId(sn.session_id))}</td>
+          <td class="cmodel">${esc(sn.agent || 'unknown')}</td>
+          <td class="cmodel">${esc(sn.model || '—')}</td>
+          <td class="cnum">${fmtTokens(sn.input)}</td>
+          <td class="cnum">${fmtTokens(sn.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+      const sessionTable = `
+        <div class="cost-subtable-title" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price)">cost per session</div>
+        <table class="cost-table">
+          <thead><tr><th>session</th><th>sandbox</th><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${sessionRows || '<tr><td colspan="6" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
+        </table>`;
+
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
         <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
@@ -7977,6 +8036,8 @@ function burnAreaChart() {
           <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
           <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
+        ${sandboxTable}
+        ${sessionTable}
         ${unpricedNote}
         <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
       </div>`;
