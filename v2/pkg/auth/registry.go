@@ -29,6 +29,22 @@ func nowUTC() time.Time {
 	return time.Now().UTC()
 }
 
+// splitScopes parses a scope override env value. Accepts space- or comma-
+// separated scopes ("openid email profile" or "openid,email,profile"); empties
+// are dropped. Used for <PREFIX>_SCOPES, chiefly the generic "custom" provider
+// whose IdP may need different scopes than the openid/email/profile default.
+func splitScopes(s string) []string {
+	f := func(r rune) bool { return r == ' ' || r == ',' || r == '\t' || r == '\n' }
+	parts := strings.FieldsFunc(s, f)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Registry holds the enabled human-login providers, in a stable display order.
 type Registry struct {
 	providers []*Provider
@@ -134,6 +150,19 @@ var oidcSpecs = []oidcProviderSpec{
 		envPrefix:     "HIVE_HUB_OIDC_REDHAT",
 		scopes:        []string{"openid", "email", "profile"},
 	},
+	{
+		// Generic/BYO OIDC provider. Lets an operator wire ANY standards-compliant
+		// OIDC IdP (Okta, Auth0, Microsoft Entra single-tenant, Keycloak, Ping,
+		// ForgeRock, Dex, Cognito, …) with no code change — everything comes from
+		// env. The issuer MUST be provided (no default); the display label defaults
+		// to "Single Sign-On" but is overridable via _DISPLAY. Its canonical
+		// provider slug is "custom", so users key as custom:<sub>.
+		name:          "custom",
+		display:       "Single Sign-On",
+		defaultIssuer: "", // must set HIVE_HUB_OIDC_CUSTOM_ISSUER
+		envPrefix:     "HIVE_HUB_OIDC_CUSTOM",
+		scopes:        []string{"openid", "email", "profile"},
+	},
 }
 
 // BuildRegistry assembles the enabled human-login providers from the environment.
@@ -179,19 +208,31 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 			// Configured client id but no issuer we can use → skip, don't crash.
 			continue
 		}
-		// Subject claim: env override wins, else the spec default, else "sub".
-		subjectClaim := os.Getenv(spec.envPrefix + "_SUBJECT_CLAIM")
+		// Optional per-provider env overrides. These matter most for the generic
+		// "custom" provider (whose brand/label/scopes we can't know in advance),
+		// but are honored for any provider so an operator can retune without code.
+		display := spec.display
+		if d := strings.TrimSpace(os.Getenv(spec.envPrefix + "_DISPLAY")); d != "" {
+			display = d
+		}
+		scopes := spec.scopes
+		if s := strings.TrimSpace(os.Getenv(spec.envPrefix + "_SCOPES")); s != "" {
+			scopes = splitScopes(s)
+		}
+		// Subject claim: env override wins, else the spec default (e.g. IBMid "uid"),
+		// else empty → the verifier falls back to the OIDC-standard "sub".
+		subjectClaim := strings.TrimSpace(os.Getenv(spec.envPrefix + "_SUBJECT_CLAIM"))
 		if subjectClaim == "" {
 			subjectClaim = spec.subjectClaim
 		}
 		p := &Provider{
 			Name:         spec.name,
-			DisplayName:  spec.display,
+			DisplayName:  display,
 			IsOIDC:       true,
 			Issuer:       strings.TrimRight(issuer, "/"),
 			ClientID:     clientID,
 			ClientSecret: os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
-			Scopes:       spec.scopes,
+			Scopes:       scopes,
 			SubjectClaim: subjectClaim,
 		}
 		oidc = append(oidc, p)
