@@ -107,7 +107,7 @@ func (s *HubServer) registerBulkRoutes() {
 
 // authorizeBulkHive re-derives authorization for one hive from the hub's own
 // store, mirroring the owner check every single-hive handler performs
-// (h.Owner != username && username != hubAdminUsername). It returns the loaded
+// (!canonicalEqual(h.Owner, username) && !isHubAdmin(username)). It returns the loaded
 // hive on success, or a reason string on refusal. The client's list is never
 // trusted: an ID that does not resolve, or resolves to someone else's hive, is
 // refused here rather than acted on.
@@ -119,7 +119,7 @@ func authorizeBulkHive(id, username string) (*SaaSHive, string) {
 	if h == nil {
 		return nil, "hive not found"
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		return nil, "not authorized for this hive"
 	}
 	return h, ""
@@ -127,7 +127,7 @@ func authorizeBulkHive(id, username string) (*SaaSHive, string) {
 
 func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")

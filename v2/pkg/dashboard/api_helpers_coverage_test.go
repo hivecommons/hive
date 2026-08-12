@@ -218,11 +218,3 @@ func TestCovJ_DefaultStatsConfig(t *testing.T) {
 	// exercise the lookup path.
 	_ = defaultStatsConfig("totally-unknown-agent")
 }
-
-// --- restoreGHUserSession reads a fixed token path (absent) → early return ---
-
-func TestCovJ_RestoreGHUserSession(t *testing.T) {
-	s := covHelperServer(t)
-	// userTokenPath is absent in the sandbox → the no-token branch runs.
-	s.restoreGHUserSession()
-}

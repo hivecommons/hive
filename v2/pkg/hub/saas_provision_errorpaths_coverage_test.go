@@ -12,7 +12,7 @@ import (
 )
 
 // ============================================================
-// saas_provision.go — vanity-ingress mirroring, provision/migrate error
+// saas_provision.go — vanity-ingress mirroring, provision error
 // paths, quota/cleanup branches, watcher edges (#2559)
 //
 // Every test here reuses the package's established serial seams:
@@ -204,48 +204,6 @@ func TestProvisionHiveApplyFails(t *testing.T) {
 	}
 }
 
-// ── migrateHive provisioning-failure path ───────────────────────────────────
-
-// TestMigrateHiveProvisionFails covers the migration branch where the target
-// provision fails: the hive is marked failed, status restored to running, and
-// the source is NOT deprovisioned.
-func TestMigrateHiveProvisionFails(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	// kubectl apply fails everywhere -> provisionHive on the target fails.
-	installKubectlScript(t, "#!/bin/sh\nexit 1\n")
-
-	s := &HubServer{
-		logger: provTestLogger(),
-		saveCh: make(chan struct{}, 1),
-		clusters: map[string]ClusterConfig{
-			"hive-oke": *dynamicCluster(),
-			"target":   {ID: "target", Name: "Target", InCluster: true, StorageType: storageTypeDynamic, Domain: "target.example.com"},
-		},
-	}
-	h := &SaaSHive{ID: "hosted-migfail", Owner: "alice", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2, ClusterID: "hive-oke", Status: "running"}
-	saveSaaSHive(h)
-	s.registry.Hives = []RegistryEntry{{ID: "hosted-migfail", ClusterID: "hive-oke"}}
-
-	from := s.clusters["hive-oke"]
-	to := s.clusters["target"]
-	s.migrateHive(h, &from, &to)
-
-	got := loadSaaSHive("hosted-migfail")
-	if got == nil {
-		t.Fatal("hive record missing after failed migration")
-	}
-	if got.MigrationStatus != "failed" {
-		t.Errorf("MigrationStatus = %q, want failed", got.MigrationStatus)
-	}
-	if got.Status != "running" {
-		t.Errorf("Status = %q, want running (restored)", got.Status)
-	}
-	if got.ClusterID != "hive-oke" {
-		t.Errorf("ClusterID = %q, want hive-oke (unchanged on failed migration)", got.ClusterID)
-	}
-}
-
 // ── repairVanityURLsForClaimedHives repaired>0 ──────────────────────────────
 
 // TestRepairVanityURLsForClaimedHivesRepairsOne seeds one repairable claimed
@@ -277,12 +235,11 @@ func TestRepairVanityURLsForClaimedHivesRepairsOne(t *testing.T) {
 
 // ── startProvisionWatcher edge branches ─────────────────────────────────────
 
-// TestProvisionWatcherNoClusterAndMigrationClear covers two watcher branches in
+// TestProvisionWatcherNoClusterAndRunningFlip covers two watcher branches in
 // one pass: a provisioning hive whose ClusterID names no known cluster (the
-// "no cluster config" continue), and a provisioning hive with
-// MigrationStatus=completed that flips to running and has its migration tracking
-// cleared.
-func TestProvisionWatcherNoClusterAndMigrationClear(t *testing.T) {
+// "no cluster config" continue), and a provisioning hive on a known cluster
+// that flips to running once its deployment reports an available replica.
+func TestProvisionWatcherNoClusterAndRunningFlip(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	installReplicaKubectl(t) // reports availableReplicas=1
@@ -299,12 +256,11 @@ func TestProvisionWatcherNoClusterAndMigrationClear(t *testing.T) {
 		ID: "prov-nocluster", Owner: "alice", Status: "provisioning",
 		ClusterID: "does-not-exist", CreatedAt: now,
 	})
-	// Migration-completed hive on a known (non-default) cluster -> flips to
-	// running and clears migration fields.
+	// Provisioning hive on a known (non-default) cluster -> flips to running
+	// once its deployment reports an available replica.
 	saveSaaSHive(&SaaSHive{
-		ID: "prov-migrated", Owner: "alice", Status: "provisioning", ClusterID: "mig-cluster",
-		CreatedAt: now, MigrationStatus: "completed", MigrationFrom: "old", MigrationTo: "mig-cluster",
-		MigrationStartedAt: now,
+		ID: "prov-ready", Owner: "alice", Status: "provisioning", ClusterID: "mig-cluster",
+		CreatedAt: now,
 	})
 
 	// No defaultClusterID entry, so an unknown ClusterID resolves to nil rather
@@ -318,8 +274,8 @@ func TestProvisionWatcherNoClusterAndMigrationClear(t *testing.T) {
 
 	deadline := time.After(3 * time.Second)
 	for {
-		mig := loadSaaSHive("prov-migrated")
-		if mig != nil && mig.Status == "running" && mig.MigrationStatus == "" {
+		ready := loadSaaSHive("prov-ready")
+		if ready != nil && ready.Status == "running" {
 			// The no-cluster hive must be untouched (still provisioning).
 			nc := loadSaaSHive("prov-nocluster")
 			if nc != nil && nc.Status != "provisioning" {
@@ -329,7 +285,7 @@ func TestProvisionWatcherNoClusterAndMigrationClear(t *testing.T) {
 		}
 		select {
 		case <-deadline:
-			t.Logf("watcher did not settle (migrated=%v)", statusOf(loadSaaSHive("prov-migrated")))
+			t.Logf("watcher did not settle (ready=%v)", statusOf(loadSaaSHive("prov-ready")))
 			return
 		case <-time.After(20 * time.Millisecond):
 		}

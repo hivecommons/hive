@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -63,15 +64,56 @@ func TestValidateGitSourceURL_HTTPRequiresPrivateOptIn(t *testing.T) {
 }
 
 func TestValidateGitSourceURL_AllowsPublicLegacyIPv4Forms(t *testing.T) {
+	// These forms are not net.ParseIP literals, so they reach the resolver.
+	// Stub it so the test asserts the VALIDATOR's behaviour rather than whether
+	// the machine running it happens to have working DNS.
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, host string) ([]string, error) {
+		switch host {
+		case "134744072":
+			return []string{"8.8.8.8"}, nil
+		case "8.8.8":
+			return []string{"8.8.0.8"}, nil
+		}
+		return nil, errors.New("unexpected host: " + host)
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+
 	tests := []string{
-		"https://134744072/repo.git",       // 8.8.8.8 as a single decimal integer.
-		"https://8.8.8/repo.git",           // shortened dotted form: 8.8.0.8.
-		"https://010.010.010.010/repo.git", // 8.8.8.8 in dotted octal form.
+		"https://134744072/repo.git", // 8.8.8.8 as a single decimal integer.
+		"https://8.8.8/repo.git",     // shortened dotted form: 8.8.0.8.
 	}
 	for _, raw := range tests {
 		if err := ValidateGitSourceURL(raw); err != nil {
 			t.Fatalf("expected public legacy IPv4 form %q to pass, got %v", raw, err)
 		}
+	}
+}
+
+// CORRECTION (audit F8). This case used to sit in the list above, commented
+// "8.8.8.8 in dotted octal form" and asserted to PASS. That comment is wrong:
+// Go's resolver — and glibc's, and Python's, all independently checked — read
+// the leading zeros as DECIMAL, so 010.010.010.010 resolves to 10.10.10.10,
+// which is RFC1918 PRIVATE. The old assertion therefore required the validator
+// to accept an SSRF target, and it only "passed" because the literal-only check
+// never resolved the name at all.
+//
+// Once the check resolves (F8), this form is correctly REJECTED. Pinning that
+// here so the corrected behaviour cannot be mistaken for a regression and
+// reverted.
+func TestF8_DottedOctalFormIsPrivateAndRejected(t *testing.T) {
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, host string) ([]string, error) {
+		if host == "010.010.010.010" {
+			return []string{"10.10.10.10"}, nil
+		}
+		return nil, errors.New("unexpected host: " + host)
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+
+	if err := ValidateGitSourceURL("https://010.010.010.010/repo.git"); err == nil {
+		t.Fatal("F8: 010.010.010.010 resolves to the RFC1918 address 10.10.10.10 and must be rejected as an SSRF target")
 	}
 }
 

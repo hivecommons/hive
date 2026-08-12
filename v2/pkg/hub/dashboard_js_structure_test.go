@@ -99,7 +99,7 @@ func dashboardScriptBlocks(t *testing.T) []string {
 // that a genuinely balanced block returns 0.
 func braceDepth(src string) int {
 	depth := 0
-	var inStr byte    // quote char when inside a string
+	var inStr byte // quote char when inside a string
 	inLineComment := false
 	inBlockComment := false
 	inRegex := false

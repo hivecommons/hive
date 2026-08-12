@@ -527,7 +527,7 @@ kubectl --context "$CTX" -n "$NS" get pod "$POD" \
 
 Automated provisioning writes this for you. **Manual provisioning does not** —
 you must create it by hand, or the hive is invisible in **My Hives** and every
-management action (upgrade, migrate, claim) returns **`hive not found`**.
+management action (upgrade, claim) returns **`hive not found`**.
 
 The read is `loadSaaSHive(id)` → `/data/saas/hives/<id>/meta.json`, read **live
 from disk on every call**, so a new or edited file takes effect immediately with
@@ -593,7 +593,7 @@ if it does not exist.
 > **`meta.json` requirement is why heartbeats can be accepted but upgrades fail.**
 > The heartbeat path is separate from `loadSaaSHive`. A hive can heartbeat and
 > appear "online" while a missing `meta.json` makes the **Upgrade** button (and
-> claim, migrate, toggle-auto-upgrade) return `hive not found`. If you see that,
+> claim, toggle-auto-upgrade) return `hive not found`. If you see that,
 > the fix is almost always a missing `meta.json`.
 
 ---

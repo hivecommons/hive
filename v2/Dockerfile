@@ -85,13 +85,36 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
  && curl -fsSL -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/v${SU_EXEC_VERSION}/su-exec.c" \
  && echo "${SU_EXEC_SHA256}  /tmp/su-exec.c" | sha256sum -c - \
  && gcc -Wall -o /usr/local/bin/su-exec /tmp/su-exec.c \
- && chmod u+s /usr/local/bin/su-exec \
  && rm /tmp/su-exec.c \
  && apt-get purge -y gcc libc6-dev && apt-get autoremove -y
 
 # Non-root user for agent processes (Claude Code refuses --dangerously-skip-permissions as root)
-# node:24-slim already has group 1000 (node), so reuse it
-RUN useradd -m -u 1001 -g node -s /bin/bash dev
+# node:24-slim already has group 1000 (node), so reuse it as dev's primary group.
+#
+# SECURITY (audit C6, CWE-250/732): `hive-launch` is a dedicated supplementary
+# group whose ONLY member is dev. It gates exec of the SUID-root su-exec helper
+# (chmod 4750 below).
+#
+# su-exec was previously `chmod u+s` with the default 755 — SETUID-ROOT AND
+# WORLD-EXECUTABLE. Verified live on this branch across all three production
+# clusters: any agent UID could run `su-exec root sh` and become root inside its
+# own container, defeating the per-agent-UID isolation the whole ACMM capability
+# model rests on. That container holds the GitHub App key and every agent's
+# credentials.
+#
+# Only the hive process (running as dev, UID 1001) ever execs su-exec — see the
+# four call sites in pkg/agent/manager.go. Agents are launched BY it and never
+# invoke it themselves, so restricting exec to dev breaks nothing.
+#
+# root:node 4750 would NOT be enough: dev AND every agent UID share the primary
+# group `node` (agents are created `-g node`), so a node-gated helper is still
+# reachable by every agent. The group must contain dev alone.
+RUN groupadd --system hive-launch \
+ && useradd -m -u 1001 -g node -G hive-launch -s /bin/bash dev \
+ && chown root:hive-launch /usr/local/bin/su-exec \
+ && chmod 4750 /usr/local/bin/su-exec \
+ && [ "$(stat -c '%G' /usr/local/bin/su-exec)" = "hive-launch" ] \
+ && [ "$(stat -c '%a' /usr/local/bin/su-exec)" = "4750" ]
 
 # --- Layer 2: ttyd (pinned version for reproducible builds) ---
 ARG TTYD_VERSION=1.7.7

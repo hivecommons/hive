@@ -583,7 +583,7 @@ func TestHandleHiveStatusAccessDenied(t *testing.T) {
 	}
 }
 
-func TestHandleHiveStatusWithAccess(t *testing.T) {
+func TestHandleHiveStatusWithGrantedOwnerAccess(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
@@ -591,7 +591,7 @@ func TestHandleHiveStatusWithAccess(t *testing.T) {
 	defer authCleanup()
 
 	u := ensureSaaSUser("accuser")
-	u.Hives["acc-hive"] = "read"
+	u.Hives["acc-hive"] = "owner"
 	saveSaaSUser(u)
 
 	saveSaaSHive(&SaaSHive{ID: "acc-hive", Owner: "other-owner", Status: "running"})

@@ -102,4 +102,32 @@ func TestHandleRenameHive(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("bad body status = %d, want 400", rec.Code)
 	}
+
+	// Assignment in flight (Status=assigned && !ClaimDelivered) -> 409, and the
+	// hive is NOT renamed on disk. Renaming during this window forks the hive's
+	// identity (pod heartbeats under the baked slot HIVE_ID while the renamed
+	// record is orphaned) -> offline + duplicate row.
+	saveSaaSHive(&SaaSHive{ID: "h7", Owner: "alice", ProjectName: "in-flight", Status: statusAssigned, ClaimDelivered: false})
+	rec = httptest.NewRecorder()
+	req = setPathValue(reqWithUser(http.MethodPut, "/name", `{"project_name":"too-soon"}`, "alice"), "id", "h7")
+	s.handleRenameHive(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("mid-assignment rename status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if got := loadSaaSHive("h7"); got == nil || got.ProjectName != "in-flight" {
+		t.Errorf("mid-assignment rename must not persist; got %+v", got)
+	}
+
+	// A fully-assigned, claim-delivered hive is a LIVE hive: rename still
+	// succeeds (the in-flight guard applies only to the unclaimed window).
+	saveSaaSHive(&SaaSHive{ID: "h8", Owner: "alice", ProjectName: "live-old", Status: statusAssigned, ClaimDelivered: true})
+	rec = httptest.NewRecorder()
+	req = setPathValue(reqWithUser(http.MethodPut, "/name", `{"project_name":"live-new"}`, "alice"), "id", "h8")
+	s.handleRenameHive(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim-delivered rename status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if got := loadSaaSHive("h8"); got == nil || got.ProjectName != "live-new" {
+		t.Errorf("claim-delivered rename not persisted; got %+v", got)
+	}
 }

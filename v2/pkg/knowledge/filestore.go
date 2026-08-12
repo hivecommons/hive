@@ -88,6 +88,56 @@ func (s *FileStore) SetName(name string) { s.name = name }
 // RootDir returns the filesystem path.
 func (s *FileStore) RootDir() string { return s.rootDir }
 
+// WriteFacts persists facts into the vault as markdown files with YAML
+// frontmatter, one file per fact. This is the local-write counterpart to the
+// remote wiki Client.IngestFacts, and it is how user-imported facts land in a
+// vault (issue #3581). It mirrors the bead synthesizer's on-disk format so a
+// hand-imported fact and a synthesized one index identically. Files are written
+// atomically (temp + rename); the caller triggers a reindex afterward.
+func (s *FileStore) WriteFacts(facts []ExtractedFact) error {
+	if err := os.MkdirAll(s.rootDir, 0o755); err != nil {
+		return fmt.Errorf("creating vault dir: %w", err)
+	}
+	for _, f := range facts {
+		if strings.TrimSpace(f.Title) == "" {
+			// A titleless fact has no stable slug/filename; skip rather than
+			// clobber a shared "untitled.md".
+			continue
+		}
+		slug := slugify(f.Title)
+		filename := strings.ReplaceAll(slug+".md", "/", "_")
+		path := filepath.Join(s.rootDir, filename)
+
+		var buf strings.Builder
+		buf.WriteString("---\n")
+		fmt.Fprintf(&buf, "title: %s\n", f.Title)
+		if f.Type != "" {
+			fmt.Fprintf(&buf, "type: %s\n", string(f.Type))
+		}
+		if f.Confidence > 0 {
+			fmt.Fprintf(&buf, "confidence: %.2f\n", f.Confidence)
+		}
+		if len(f.Tags) > 0 {
+			fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(f.Tags, ", "))
+		}
+		if len(f.Related) > 0 {
+			fmt.Fprintf(&buf, "related: [%s]\n", strings.Join(f.Related, ", "))
+		}
+		fmt.Fprintf(&buf, "imported: %s\n", time.Now().UTC().Format(time.RFC3339))
+		buf.WriteString("---\n\n")
+		buf.WriteString(f.Body)
+
+		tmpPath := path + ".tmp"
+		if err := os.WriteFile(tmpPath, []byte(buf.String()), 0o644); err != nil {
+			return fmt.Errorf("writing vault file: %w", err)
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return fmt.Errorf("renaming vault file: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *FileStore) reindex() {
 	pages := make(map[string]filePage)
 

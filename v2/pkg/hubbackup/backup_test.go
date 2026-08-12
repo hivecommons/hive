@@ -1,11 +1,16 @@
 package hubbackup
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -259,7 +264,7 @@ func TestBuildIncludesSpokesAndSecrets(t *testing.T) {
 
 	spokes := fakeSpokes{spokes: []SpokeConfig{
 		{ID: "hosted-x", Files: map[string][]byte{
-			"hive.yaml.runtime":       []byte("project:\n  org: acme\n"),
+			"hive.yaml.runtime":   []byte("project:\n  org: acme\n"),
 			"hive-id":             []byte("hosted-x"),
 			"gh-app-key-5686.pem": []byte("-----BEGIN RSA PRIVATE KEY-----\n"),
 		}},
@@ -317,7 +322,7 @@ func TestExtractRestoresContent(t *testing.T) {
 	spokes := fakeSpokes{spokes: []SpokeConfig{
 		{ID: "hosted-x", Files: map[string][]byte{
 			"hive.yaml.runtime": spokeYAML,
-			"hive-id":       []byte("hosted-x"),
+			"hive-id":           []byte("hosted-x"),
 		}},
 	}}
 	sealed, _, err := Build(key, spokes, nil, quietLogger())
@@ -453,5 +458,125 @@ func TestStripSecretNoise(t *testing.T) {
 	}
 	if !strings.Contains(s, `"data"`) || !strings.Contains(s, `"name": "x"`) {
 		t.Errorf("stripped output lost required fields: %s", s)
+	}
+}
+
+// sealTar builds a sealed archive from raw tar members, so a test can present
+// an archive the hub did NOT produce — i.e. an attacker-supplied one. Extract
+// runs on operator-supplied files, so the header fields are untrusted input.
+func sealTar(t *testing.T, key []byte, members []*tar.Header, bodies [][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	// A manifest keeps Verify happy.
+	man, _ := json.Marshal(&Manifest{FormatVersion: backupFormatVersion})
+	all := append([]*tar.Header{{Name: manifestName, Mode: 0o600, Size: int64(len(man))}}, members...)
+	allBodies := append([][]byte{man}, bodies...)
+	for i, h := range all {
+		h.Size = int64(len(allBodies[i]))
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(allBodies[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := Seal(key, buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealed
+}
+
+// Audit §8 (prior N18). The restore loop wrote every member with
+// os.FileMode(hdr.Mode) — a field the archive controls. Verified empirically:
+// under a permissive umask, a header carrying 0666/0777 restores a
+// WORLD-WRITABLE file, so any local user can then rewrite restored hub state.
+//
+// A umask is a deployment accident, not a security control, so the mask belongs
+// in the code.
+func TestN18_RestoredFileIsNotGroupOrWorldWritable(t *testing.T) {
+	key := decodeTestKey(t)
+	sealed := sealTar(t,
+		key,
+		[]*tar.Header{{Name: "hub/evil.txt", Mode: 0o777}},
+		[][]byte{[]byte("payload")},
+	)
+
+	// Clear the process umask for the duration of the extract. Without this the
+	// test passes against the VULNERABLE code on any machine with a normal
+	// umask (022), because the kernel strips the world bits before they hit
+	// disk — proving nothing about the code. A umask is a deployment default,
+	// not a guarantee, so the assertion must hold without one.
+	oldMask := syscall.Umask(0)
+	dest := t.TempDir()
+	_, err := Extract(key, sealed, dest)
+	syscall.Umask(oldMask)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	st, err := os.Stat(filepath.Join(dest, "hub", "evil.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm&0o022 != 0 {
+		t.Fatalf("N18: archive-controlled mode produced a group/world-writable restored file: %04o", perm)
+	}
+}
+
+// POSITIVE CONTROL: masking must not break restore. The file must still exist,
+// still be readable, and still hold its exact bytes — otherwise the test above
+// would pass against a restore that wrote nothing at all.
+func TestN18_RestoreStillWritesReadableContent(t *testing.T) {
+	key := decodeTestKey(t)
+	const payload = "restored-bytes"
+	sealed := sealTar(t,
+		key,
+		[]*tar.Header{{Name: "hub/ok.txt", Mode: 0o600}},
+		[][]byte{[]byte(payload)},
+	)
+
+	dest := t.TempDir()
+	if _, err := Extract(key, sealed, dest); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "hub", "ok.txt"))
+	if err != nil {
+		t.Fatalf("test is vacuous: restore wrote no readable file: %v", err)
+	}
+	if string(got) != payload {
+		t.Fatalf("restored content corrupted: %q", got)
+	}
+	// A restrictive mode from the archive must still be honoured.
+	st, _ := os.Stat(filepath.Join(dest, "hub", "ok.txt"))
+	if st.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("an archive asking for 0600 should stay owner-only, got %04o", st.Mode().Perm())
+	}
+}
+
+// io.ReadAll(tr) was unbounded, so a decompression bomb was read wholly into
+// memory. The ceiling must reject an over-size member rather than truncate it.
+func TestN18_OversizeArchiveMemberIsRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates >256MiB")
+	}
+	key := decodeTestKey(t)
+	big := make([]byte, restoreMaxFileBytes+1)
+	sealed := sealTar(t,
+		key,
+		[]*tar.Header{{Name: "hub/bomb.bin", Mode: 0o600}},
+		[][]byte{big},
+	)
+
+	dest := t.TempDir()
+	if _, err := Extract(key, sealed, dest); err == nil {
+		t.Fatal("N18: an archive member larger than the restore limit was accepted — a decompression bomb can OOM the hub")
 	}
 }

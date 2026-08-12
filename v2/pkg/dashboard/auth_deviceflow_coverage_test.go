@@ -155,11 +155,9 @@ func TestCovDF_GHUserAuthPoll_Error(t *testing.T) {
 }
 
 func TestCovDF_GHUserAuthPoll_CompleteOwner(t *testing.T) {
-	s, deps, _ := dfServer(t, "complete", "octocat")
+	s, _, _ := dfServer(t, "complete", "octocat")
 	// Not direct-route (no allowlist) → role owner, token persisted only if
-	// userTokenPath is writable; SetUserClient captures the token.
-	var gotToken string
-	deps.SetUserClient = func(tok string) { gotToken = tok }
+	// userTokenPath is writable.
 	doPost(s, "/api/gh-user-auth/start", nil)
 	rec := doPost(s, "/api/gh-user-auth/poll", nil)
 	var body map[string]any
@@ -170,7 +168,6 @@ func TestCovDF_GHUserAuthPoll_CompleteOwner(t *testing.T) {
 	if body["status"] != "complete" && body["status"] != "error" {
 		t.Fatalf("unexpected status %v (body=%s)", body["status"], rec.Body.String())
 	}
-	_ = gotToken
 }
 
 func TestCovDF_GHUserAuthPoll_UnverifiableIdentity(t *testing.T) {
@@ -369,20 +366,4 @@ func TestCovDF_SSO_NotAuthorized(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("unauthorized sso: want 403, got %d", rec.Code)
 	}
-}
-
-// ---- restoreGHUserSession ----
-
-func TestCovDF_RestoreGHUserSession_NoSetUserClient(t *testing.T) {
-	s, deps, _ := dfServer(t, "complete", "octocat")
-	deps.SetUserClient = nil
-	// Should return early without panicking (no token file present anyway).
-	s.restoreGHUserSession()
-}
-
-func TestCovDF_RestoreGHUserSession_NoToken(t *testing.T) {
-	s, deps, _ := dfServer(t, "complete", "octocat")
-	deps.SetUserClient = func(string) {}
-	// userTokenPath absent in tests → early return.
-	s.restoreGHUserSession()
 }

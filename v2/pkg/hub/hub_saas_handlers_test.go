@@ -914,24 +914,54 @@ func TestGetAuthUserBearer(t *testing.T) {
 	ghTokenCacheMu.Unlock()
 }
 
-func TestIsTrustedOriginSubdomain(t *testing.T) {
-	if !isTrustedOrigin("https://dashboard.hive.kubestellar.io") {
-		t.Error("subdomain of hive.kubestellar.io should be trusted")
+// CORRECTED (audit F4). This test used to assert that any
+// *.hive.kubestellar.io sibling "should be trusted" — i.e. it encoded the
+// vulnerability as a passing assertion, which is why the finding stayed green
+// for so long. Authoring authority is now the exact hub origin only.
+func TestIsSameOriginAsHub(t *testing.T) {
+	if !isSameOriginAsHub("https://hive.kubestellar.io") {
+		t.Error("the hub's own origin must be able to author requests")
 	}
-	if !isTrustedOrigin("https://my-hive.hive.kubestellar.io") {
-		t.Error("any subdomain of hive.kubestellar.io should be trusted")
+	if isSameOriginAsHub("https://dashboard.hive.kubestellar.io") {
+		t.Error("F4: a sibling tenant origin must NOT be able to author requests")
 	}
-	if !isTrustedOrigin("http://localhost:3001") {
-		t.Error("localhost should be trusted")
+	if isSameOriginAsHub("https://my-hive.hive.kubestellar.io") {
+		t.Error("F4: a sibling tenant origin must NOT be able to author requests")
 	}
-	if !isTrustedOrigin("http://127.0.0.1:8080") {
-		t.Error("127.0.0.1 should be trusted")
+	// Local development has no hostile sibling.
+	if !isSameOriginAsHub("http://localhost:3001") {
+		t.Error("localhost should be able to author requests")
+	}
+	if !isSameOriginAsHub("http://127.0.0.1:8080") {
+		t.Error("127.0.0.1 should be able to author requests")
 	}
 }
 
-func TestIsTrustedOriginBadParse(t *testing.T) {
-	if isTrustedOrigin("://invalid") {
-		t.Error("unparseable URL should not be trusted")
+// Sending a BROWSER to a sibling is still correct and is load-bearing: every
+// hosted hive's ingress carries auth-signin=.../login?redirect=<its own host>,
+// so rejecting siblings here would break sign-in fleet-wide.
+func TestIsTrustedRedirectTarget(t *testing.T) {
+	for _, ok := range []string{
+		"https://hive.kubestellar.io",
+		"https://dashboard.hive.kubestellar.io",
+		"https://my-hive.hive.kubestellar.io",
+		"http://localhost:3001",
+	} {
+		if !isTrustedRedirectTarget(ok) {
+			t.Errorf("%q must remain a valid redirect target — sign-in depends on it", ok)
+		}
+	}
+	if isTrustedRedirectTarget("https://evil.example.com") {
+		t.Error("an unrelated domain must not be a redirect target")
+	}
+}
+
+func TestOriginPredicatesBadParse(t *testing.T) {
+	if isSameOriginAsHub("://invalid") {
+		t.Error("unparseable URL must not be able to author requests")
+	}
+	if isTrustedRedirectTarget("://invalid") {
+		t.Error("unparseable URL must not be a redirect target")
 	}
 }
 
