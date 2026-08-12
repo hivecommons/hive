@@ -2082,9 +2082,6 @@ func (s *Server) handleSummaries(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = config.RoleOwner
-	}
 	user := strings.TrimSpace(r.Header.Get("X-Hive-User"))
 	if !config.RoleAtLeast(role, config.RoleMerger) {
 		jsonError(w, "merger or owner access required", http.StatusForbidden)
@@ -7051,12 +7048,7 @@ func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
 	// Vault connection is an owner-only operation: it indexes an entire directory
 	// tree and makes its contents queryable. Restricting to owner prevents a
 	// write-role contributor from exfiltrating secrets via the knowledge API.
-	role := r.Header.Get("X-Hive-Role")
-	if role == "" {
-		role = "owner"
-	}
-	if role != "owner" {
-		jsonError(w, "owner access required", http.StatusForbidden)
+	if !requireOwnerRole(w, r) {
 		return
 	}
 
