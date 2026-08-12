@@ -238,7 +238,7 @@ const forgeSwitchNeedsInstallNote = "installation_id was cleared because it belo
 // channel for this, already implemented on both ends.
 func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")

@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"net/url"
+	"strings"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +35,7 @@ func TestHandleOAuthCallbackTokenExchangeFails(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default()}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc", nil)
+	req := newCallbackRequestWithState(t, "abc")
 	s.handleOAuthCallback(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("bad token json status = %d, want 502", rec.Code)
@@ -51,7 +53,7 @@ func TestHandleOAuthCallbackNoAccessToken_Cov(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default()}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc", nil)
+	req := newCallbackRequestWithState(t, "abc")
 	s.handleOAuthCallback(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("empty token status = %d, want 502", rec.Code)
@@ -80,7 +82,12 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	rec := httptest.NewRecorder()
 	// A safe relative redirect state should be honored.
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state=%2Fmy-hives", nil)
+	nonce, err := oauthStateNonce()
+	if err != nil {
+		t.Fatalf("mint nonce: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state="+url.QueryEscape(nonce+oauthStateSeparator+"/my-hives"), nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: nonce})
 	s.handleOAuthCallback(rec, req)
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("success status = %d, want 307 (body=%s)", rec.Code, rec.Body.String())
@@ -135,7 +142,7 @@ func TestHandleOAuthCallbackInvalidLogin(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default()}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc", nil)
+	req := newCallbackRequestWithState(t, "abc")
 	s.handleOAuthCallback(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("invalid login status = %d, want 502", rec.Code)
@@ -304,5 +311,142 @@ func TestClusterNameForID_Cov(t *testing.T) {
 	}
 	if got := s.clusterNameForID("missing"); got != "" {
 		t.Errorf("unknown -> %q, want empty", got)
+	}
+}
+
+// newCallbackRequestWithState builds an OAuth callback carrying a matching state
+// nonce in both the query and the cookie — i.e. a login this browser genuinely
+// started (audit F11). Tests exercising the token-exchange path need this or
+// they are rejected at the state gate and never reach it.
+func newCallbackRequestWithState(t *testing.T, code string) *http.Request {
+	t.Helper()
+	nonce, err := oauthStateNonce()
+	if err != nil {
+		t.Fatalf("mint nonce: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code="+code+"&state="+url.QueryEscape(nonce+oauthStateSeparator+"/dashboard"), nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: nonce})
+	return req
+}
+
+// Audit F11 (CWE-352) — ported from v4 (#3435). `state` used to be nothing but
+// the redirect target, so it proved only that the callback carried a URL, never
+// that this browser had STARTED a login.
+//
+// The attack: complete an OAuth flow against your own GitHub account, capture
+// the callback URL, hand it to a victim. Their browser completes it and they are
+// silently logged into the ATTACKER's account — every issue they file and repo
+// they connect afterwards lands there. Redirect validation does nothing about
+// it: the URL is valid; it is the SESSION that is forged.
+func TestF11_CallbackWithoutStateNonceIsRejected(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	var exchanged bool
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanged = true
+		w.Write([]byte(`{"access_token":"gho_attacker"}`))
+	}))
+	defer tok.Close()
+	usr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"login":"attacker","avatar_url":"https://x/a.png"}`))
+	}))
+	defer usr.Close()
+	oldTok, oldUsr := defaultGHTokenURL, defaultGHUserURL
+	defaultGHTokenURL, defaultGHUserURL = tok.URL, usr.URL
+	defer func() { defaultGHTokenURL, defaultGHUserURL = oldTok, oldUsr }()
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
+	rec := httptest.NewRecorder()
+	// The victim's browser holds NO state cookie: it never started this login.
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=attacker-code&state=%2Fdashboard", nil)
+	s.handleOAuthCallback(rec, req)
+
+	if rec.Code == http.StatusTemporaryRedirect {
+		t.Fatal("F11: a callback the browser never initiated completed a login — an attacker can log a victim into the attacker's account")
+	}
+	if exchanged {
+		t.Error("F11: the forged callback reached the token exchange; the state gate must reject it before burning a code")
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "hive_hub_user" && c.Value != "" {
+			t.Fatalf("F11: a session cookie was minted for a forged callback: %q", c.Value)
+		}
+	}
+}
+
+func TestF11_CallbackWithMismatchedStateNonceIsRejected(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state="+url.QueryEscape("attacker-nonce"+oauthStateSeparator+"/dashboard"), nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: "victim-nonce"})
+	s.handleOAuthCallback(rec, req)
+
+	if rec.Code == http.StatusTemporaryRedirect {
+		t.Fatal("F11: a callback whose state did not match the browser's cookie completed a login")
+	}
+}
+
+// /login must actually issue the nonce — the callback gate is worth nothing if
+// the login side never mints one.
+func TestF11_LoginIssuesStateNonceCookieAndParameter(t *testing.T) {
+	t.Setenv("HIVE_HUB_OAUTH_CLIENT_ID", "test-client-id")
+	s := &HubServer{logger: slog.Default()}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login?redirect=/my-hives", nil)
+	s.handleLogin(rec, req)
+
+	var nonce string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName {
+			nonce = c.Value
+			if !c.HttpOnly || !c.Secure {
+				t.Error("F11: the state cookie must be HttpOnly and Secure")
+			}
+			if c.Domain != "" {
+				t.Errorf("F11: the state cookie must be host-scoped, got Domain=%q — a sibling tenant would receive it", c.Domain)
+			}
+		}
+	}
+	if nonce == "" {
+		t.Fatal("F11: /login issued no state nonce cookie, so the callback gate can never pass")
+	}
+
+	parsed, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	state := parsed.Query().Get("state")
+	if !strings.HasPrefix(state, nonce+oauthStateSeparator) {
+		t.Fatalf("F11: state %q does not carry the issued nonce", state)
+	}
+	if !strings.HasSuffix(state, "/my-hives") {
+		t.Errorf("F11: the redirect target was lost from state: %q", state)
+	}
+}
+
+// Audit F4 (CWE-352/942) — ported from v4 (#3499). A sibling tenant origin must
+// not be able to author a state change, and must not receive a credentialed
+// CORS reflection (which would be a scripted cross-tenant READ).
+func TestF4_SiblingOriginCannotAuthorMutation(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/saas/hives/x/visibility", nil)
+	req.Header.Set("Origin", "https://evil.hive.kubestellar.io")
+	req.Header.Set("Content-Type", "application/json")
+	if isCSRFSafe(req) {
+		t.Fatal("F4: a sibling tenant Origin was accepted as CSRF-safe — it can drive cross-tenant mutations")
+	}
+}
+
+// POSITIVE CONTROL: the hub's own origin must still be able to author, or the
+// fix is just a gate broken shut and every legitimate mutation breaks.
+func TestF4_HubOriginStillAuthorsMutation(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/saas/hives/x/visibility", nil)
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
+	req.Header.Set("Content-Type", "application/json")
+	if !isCSRFSafe(req) {
+		t.Fatal("the hub's own origin must remain CSRF-safe — rejecting it breaks every legitimate mutation")
 	}
 }

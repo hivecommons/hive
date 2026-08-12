@@ -297,7 +297,9 @@ func TestBulkHandlerPreflightOnlyTrustsKnownOrigins(t *testing.T) {
 
 	trusted := []string{
 		"https://hive.kubestellar.io",
-		"https://console.hive.kubestellar.io",
+		// F4: "https://console.hive.kubestellar.io" was here and is now
+		// deliberately absent — a sibling tenant must NOT receive a
+		// credentialed CORS reflection. See the untrusted list below.
 		"http://localhost:5174",
 		"http://127.0.0.1:8080",
 	}

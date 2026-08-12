@@ -515,17 +515,52 @@ func isCSRFSafe(r *http.Request) bool {
 	}
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		return isTrustedOrigin(origin)
+		return isSameOriginAsHub(origin)
 	}
 	referer := r.Header.Get("Referer")
 	if referer != "" {
-		return isTrustedOrigin(referer)
+		return isSameOriginAsHub(referer)
 	}
 	ct := r.Header.Get("Content-Type")
 	return strings.Contains(ct, "application/json")
 }
 
-func isTrustedOrigin(raw string) bool {
+// isSameOriginAsHub reports whether raw is the hub's OWN origin — i.e. whether
+// a request claiming to come from it may AUTHOR a state change here.
+//
+// SECURITY (audit F4, CWE-352/942): this used to be isTrustedOrigin, which
+// accepted every *.hive.kubestellar.io sibling. That single predicate answered
+// two different questions, and conflating them was the bug:
+//
+//   "may this origin AUTHOR a request?"      → only the hub itself
+//   "may we SEND a browser here?"            → any hive's own domain
+//
+// Because every tenant is a sibling under the same parent domain, the permissive
+// answer let a hostile tenant both drive CSRF mutations and — via the
+// credentialed CORS reflection below — script a cross-tenant READ of the hub
+// API. Authoring authority is now the exact hub origin only.
+//
+// localhost/127.0.0.1 stay for local development, where there is no sibling to
+// be hostile.
+func isSameOriginAsHub(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "hive.kubestellar.io" ||
+		host == "localhost" ||
+		host == "127.0.0.1"
+}
+
+// isTrustedRedirectTarget reports whether we may send a BROWSER to raw.
+//
+// Siblings are still accepted here, and must be: every hosted hive's ingress
+// carries auth-signin=.../login?redirect=$scheme://$http_host$request_uri, so
+// tightening this lane would break sign-in for the entire fleet. Sending a
+// browser to a tenant's own domain grants that tenant nothing it does not
+// already have — unlike accepting a request it authored.
+func isTrustedRedirectTarget(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
@@ -3504,7 +3539,7 @@ func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request)
 
 func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -3593,7 +3628,7 @@ func branchToTag(branch string) string {
 
 func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -3727,7 +3762,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 
 func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
@@ -3814,7 +3849,7 @@ const maxHiveDisplayNameLen = 100
 //     original label — a known, documented staleness, not a silent one.
 func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
@@ -3916,7 +3951,7 @@ func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
 
 func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if isTrustedOrigin(origin) {
+	if isSameOriginAsHub(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
