@@ -49,6 +49,32 @@ func TestInferenceAPIKeyPrefersGatewayKey(t *testing.T) {
 	}
 }
 
+// A gateway entry that resolves no key of its own (endpoint-only, key kept in
+// the classic litellm: block) must keep falling back to the legacy store —
+// pinned by TestInferenceModelsNonWatsonxUsesRawKeyPath too; this is the
+// direct-unit twin.
+func TestInferenceAPIKeyKeylessGatewayFallsBackToLegacy(t *testing.T) {
+	s, _ := apiServer(t)
+	dir := t.TempDir()
+	legacyKey := filepath.Join(dir, "litellm_api_key")
+	if err := os.WriteFile(legacyKey, []byte("sk-legacy-ONLY\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gov := &s.deps.Config.Governor
+	gov.LiteLLM.Endpoint = "https://litellm.example.com"
+	gov.LiteLLM.APIKeyFile = legacyKey
+	gov.Gateways = []config.GatewayConfig{{
+		Name:     "litellm",
+		Kind:     config.GatewayKindLiteLLM,
+		Endpoint: "https://litellm.example.com",
+	}}
+
+	if got := s.inferenceAPIKey("litellm"); got != "sk-legacy-ONLY" {
+		t.Fatalf("inferenceAPIKey = %q, want the legacy fallback for a keyless gateway", got)
+	}
+}
+
 // Upserting the litellm gateway with a new key must also sync the legacy
 // litellm: key store, so pre-gateways resolution paths never see a revoked key.
 func TestGatewaysUpsertSyncsLegacyLiteLLMKey(t *testing.T) {
