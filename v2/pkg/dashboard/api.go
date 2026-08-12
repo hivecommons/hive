@@ -36,6 +36,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
+	// ACMM level-up advice (ported from v4). ADVISORY ONLY — it computes a
+	// recommendation from already-collected signals and never applies a level;
+	// a human approves the actual change via handlePackSetLevel.
+	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
 	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
