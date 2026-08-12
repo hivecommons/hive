@@ -1368,6 +1368,22 @@ func main() {
 		// is the loop-safety authority that decides when to STOP nudging.
 		ghClient.SetMergeReEngageHook(mergeReEngageHook(cfg))
 		ghClient.StartMergeRequestWatcher(ctx, bindMergeAuthz(agentMgr.AuthorizeMerge), nil)
+
+		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
+		// directly over the REST API, without a human "Approved ... for Hive
+		// auto-merge" queue review and without waiting on tide. Prow forbids
+		// self-approval (lgtm+approved must come from someone other than the
+		// author), and the author here is always the App itself, so the
+		// human-queue path (StartMergeRequestWatcher above / the governor
+		// sweep) can never clear for the App's own PRs — this is the only
+		// route that lands them. See AutoMergeConfig and
+		// SweepSelfAuthoredAutoMerges for the full rationale and the safety
+		// properties preserved (green required checks, head-SHA re-verified
+		// immediately before merge, squash method, all tiers included).
+		// Default ON; `auto_merge.self_authored: false` disables it.
+		if cfg.AutoMerge.SelfAuthoredEnabled() {
+			ghClient.StartSelfAuthoredAutoMergeSweep(ctx, cfg.AutoMerge.MaxMerges)
+		}
 	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config

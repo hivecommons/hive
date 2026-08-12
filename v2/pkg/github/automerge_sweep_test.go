@@ -667,6 +667,212 @@ func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	}
 }
 
+// selfAuthoredPR describes one PR in the fake API used by the
+// SweepSelfAuthoredAutoMerges tests below.
+type selfAuthoredPR struct {
+	number          int
+	author          string
+	draft           bool
+	mergeableState  string
+	statusState     string
+	checkStatus     string
+	checkConclusion string
+	// headSHAOverride, when set, is returned by the SECOND PR fetch (the
+	// merge-time re-check) instead of the first-fetch head SHA — simulates a
+	// push landing between evaluation and merge.
+	headSHAOverride string
+}
+
+func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int) *httptest.Server {
+	t.Helper()
+	byNumber := make(map[int]*selfAuthoredPR, len(prs))
+	fetchCount := make(map[int]int)
+	for i := range prs {
+		byNumber[prs[i].number] = &prs[i]
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
+			var out []map[string]any
+			for _, pr := range prs {
+				out = append(out, map[string]any{
+					"number": pr.number,
+					"draft":  pr.draft,
+					"user":   map[string]string{"login": pr.author},
+				})
+			}
+			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
+			pr := byNumber[number]
+			fetchCount[number]++
+			headSHA := "sha" + strconv.Itoa(pr.number)
+			if fetchCount[number] > 1 && pr.headSHAOverride != "" {
+				headSHA = pr.headSHAOverride
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"number":          pr.number,
+				"state":           "open",
+				"draft":           pr.draft,
+				"mergeable_state": pr.mergeableState,
+				"mergeable":       pr.mergeableState == "clean",
+				"user":            map[string]string{"login": pr.author},
+				"head":            map[string]string{"sha": headSHA},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
+			number := shaNumber(t, r.URL.Path)
+			pr := byNumber[number]
+			json.NewEncoder(w).Encode(map[string]any{
+				"state":       pr.statusState,
+				"total_count": 1,
+				"statuses":    []map[string]string{{"context": "ci/build", "state": pr.statusState}},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/check-runs"):
+			number := shaNumber(t, r.URL.Path)
+			pr := byNumber[number]
+			json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 1,
+				"check_runs": []map[string]string{{
+					"name":       "build",
+					"status":     pr.checkStatus,
+					"conclusion": pr.checkConclusion,
+				}},
+			})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/merge")
+			*merged = append(*merged, number)
+			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+}
+
+func TestSweepSelfAuthoredAutoMergesMergesGreenAppPRWithoutHumanReview(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	var audits []AutoMergeSweepEvent
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{
+		Audit: func(event AutoMergeSweepEvent) { audits = append(audits, event) },
+	})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 1 || len(merged) != 1 || merged[0] != 11 {
+		t.Fatalf("merged result=%v merge calls=%v, want PR 11 merged without any human review", result.Merged, merged)
+	}
+	if len(audits) != 1 || audits[0].Number != 11 || audits[0].Author != testHiveAppBotLogin || audits[0].QueuedBy != "" {
+		t.Fatalf("audit events = %#v, want App-authored PR 11 with no queuer", audits)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesIgnoresNonAppAuthoredPR(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 || result.Seen != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want non-App-authored PR never listed or merged", result, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsHeadChangedSinceEval(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+		headSHAOverride: "newsha11",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("merged result=%v merge calls=%v, want a head move between eval and merge to block the merge", result.Merged, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsWhenChecksNotGreen(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: testHiveAppBotLogin, mergeableState: "clean",
+		statusState: "pending", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("merged result=%v merge calls=%v, want pending CI to block the merge", result.Merged, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesSkipsDraftAndNotMergeable(t *testing.T) {
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{
+		{number: 11, author: testHiveAppBotLogin, draft: true, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+		{number: 12, author: testHiveAppBotLogin, mergeableState: "dirty", statusState: "success", checkStatus: "completed", checkConclusion: "success"},
+	}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("merged result=%v merge calls=%v, want draft and dirty PRs skipped", result.Merged, merged)
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesReportsNoAppBotLogin(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 11, author: "alice", mergeableState: "clean",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if len(result.Merged) != 0 || len(merged) != 0 {
+		t.Fatalf("result=%+v merge calls=%v, want sweep to no-op without an App bot login", result, merged)
+	}
+	if !strings.Contains(logs.String(), autoMergeWarnNoAppBotLogin) {
+		t.Fatalf("logs = %q, want no-app-bot-login warning", logs.String())
+	}
+}
+
+func TestSweepSelfAuthoredAutoMergesNilClient(t *testing.T) {
+	var nilClient *Client
+	if _, err := nilClient.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != ErrNoGitHubClient {
+		t.Fatalf("nil sweep error = %v, want ErrNoGitHubClient", err)
+	}
+}
+
 func newAutoMergeSweepClient(apiURL string) *Client {
 	c := NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	c.SetAppBotLogin(testHiveAppBotLogin)

@@ -7,11 +7,19 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
 
 const DefaultAutoMergeSweepMaxMerges = 3
+
+// selfAuthoredAutoMergeSweepInterval is how often
+// StartSelfAuthoredAutoMergeSweep re-scans the App's own open PRs. Matches
+// the human-queue merge-request watcher's cadence (mergeRequestPollInterval):
+// merges are latency-sensitive (an eligible PR should land quickly) but a
+// tight loop risks GitHub secondary rate limits across every managed repo.
+const selfAuthoredAutoMergeSweepInterval = 10 * time.Second
 
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
@@ -109,6 +117,233 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 		}
 	}
 	return result, nil
+}
+
+// SweepSelfAuthoredAutoMerges merges the App's OWN open PRs directly on green
+// CI, without a human "Approved ... for Hive auto-merge" queue review and
+// without waiting on tide.
+//
+// Why this must exist as a SEPARATE path from SweepQueuedAutoMerges: Prow
+// structurally forbids self-approval — tide requires lgtm+approved labels
+// from a reviewer distinct from the PR author, and the author here is always
+// the App itself. A human queuer can supply that for someone else's PR (the
+// existing sweep above), but nobody can supply it for the App's own PR: the
+// App cannot review its own work, and asking a human to rubber-stamp every
+// App PR defeats the point of automation. So the App must self-merge
+// directly over the GitHub REST API (squash), the same bypass-tide mechanism
+// SweepQueuedAutoMerges already uses for tide-pending/unstable states (see
+// mergeableFromState) — this path just skips the human-queue-approval lookup
+// entirely rather than needing one.
+//
+// Every OTHER safety property is identical to the human queue: mergeability
+// (mergeableFromState), green required checks (commitGreen), and a head-SHA
+// re-check immediately before the merge call so a push landing between
+// enumeration and merge can never be squashed unreviewed — mirrored below via
+// re-fetching the PR right before calling Merge and comparing SHAs, the same
+// pattern trySweepQueuedPR uses via the queue-approval's recorded HeadSHA.
+// There is no queuedBy in this path, so the author==queuedBy self-merge-ban
+// in trySweepQueuedPR simply does not apply — there is no queuer to compare
+// against.
+func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	maxMerges := opts.MaxMerges
+	if maxMerges <= 0 {
+		maxMerges = DefaultAutoMergeSweepMaxMerges
+	}
+	result := &AutoMergeSweepResult{}
+	if strings.TrimSpace(c.appBotLogin) == "" {
+		// No usable App identity: there is no "self" to authenticate PRs as
+		// App-authored, so this sweep has nothing safe to do. Warn once per
+		// call (matching the human-queue sweep's per-call warn cadence) rather
+		// than per-repo, since the cause is hive-wide, not per-repo.
+		c.warn(autoMergeWarnNoAppBotLogin, "reason", autoMergeReasonNoAppBotLogin, "cause", autoMergeNoAppBotLoginOperatorRemediation)
+		return result, nil
+	}
+
+	for _, repo := range c.getRepos() {
+		if len(result.Merged) >= maxMerges {
+			break
+		}
+		owner, repoName := c.splitRepo(repo)
+		prs, err := c.listOpenAppAuthoredPullRequests(ctx, owner, repoName)
+		if err != nil {
+			return result, err
+		}
+		for _, pr := range prs {
+			if len(result.Merged) >= maxMerges {
+				break
+			}
+			result.Seen++
+			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, pr.GetNumber())
+			if err != nil {
+				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", pr.GetNumber(), "reason", reason, "error", err)
+				result.Skipped++
+				continue
+			}
+			if reason != "" {
+				c.info("self-authored automerge sweep skipped PR", "repo", repo, "pr", pr.GetNumber(), "reason", reason)
+				result.Skipped++
+				continue
+			}
+			result.Merged = append(result.Merged, event)
+			if opts.Audit != nil {
+				opts.Audit(event)
+			}
+		}
+	}
+	return result, nil
+}
+
+// StartSelfAuthoredAutoMergeSweep runs a loop that periodically calls
+// SweepSelfAuthoredAutoMerges. It returns immediately; the loop runs until ctx
+// is cancelled. A nil client is a no-op. maxMerges is passed straight through
+// to AutoMergeSweepOptions.MaxMerges (<=0 falls back to
+// DefaultAutoMergeSweepMaxMerges there). Mirrors
+// StartMergeRequestWatcher/StartPRRequestWatcher's own-ticker-goroutine
+// pattern so all three App-identity-dependent watchers share one shape.
+func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int) {
+	if c == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(selfAuthoredAutoMergeSweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges}); err != nil {
+					c.warn("self-authored automerge sweep failed", "error", err)
+				}
+			}
+		}
+	}()
+	c.info("self-authored automerge sweep started", "interval", selfAuthoredAutoMergeSweepInterval)
+}
+
+// listOpenAppAuthoredPullRequests returns every open, non-draft PR in owner/repo
+// authored by the App bot login. Uses the PR list endpoint (not issue search)
+// because the caller needs PullRequest objects (head SHA, mergeable state)
+// for every candidate, not just issue metadata.
+func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+	opts := &gh.PullRequestListOptions{
+		State:       "open",
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	var out []*gh.PullRequest
+	for {
+		prs, resp, err := c.client.PullRequests.List(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing open PRs for %s/%s: %w", owner, repo, err)
+		}
+		for _, pr := range prs {
+			if pr.GetDraft() {
+				continue
+			}
+			if !strings.EqualFold(safeGetLogin(pr.GetUser()), c.appBotLogin) {
+				continue
+			}
+			out = append(out, pr)
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+}
+
+// trySweepSelfAuthoredPR evaluates and, if eligible, merges one App-authored
+// PR. Re-fetches the PR immediately before merging to re-verify the head SHA
+// against the one that was evaluated as green — the same
+// evaluated-then-re-verified-at-merge-time safety property trySweepQueuedPR
+// gets from the queue approval's recorded HeadSHA, just without a stored
+// approval record to compare against (there is no queue step in this path).
+func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int) (AutoMergeSweepEvent, string, error) {
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		return AutoMergeSweepEvent{}, "fetch-pr", err
+	}
+	if !strings.EqualFold(pr.GetState(), "open") {
+		return AutoMergeSweepEvent{}, "closed", nil
+	}
+	if pr.GetDraft() {
+		return AutoMergeSweepEvent{}, "draft", nil
+	}
+	author := safeGetLogin(pr.GetUser())
+	if !strings.EqualFold(author, c.appBotLogin) {
+		// Not the App's own PR: this path never touches non-App-authored PRs,
+		// matching the human-queue sweep's untouched behavior for PRs it does
+		// not own. Defense in depth — listOpenAppAuthoredPullRequests already
+		// filtered on author, but a PR can change hands (rare, but GitHub
+		// permits transferring PR authorship attribution in some flows) between
+		// listing and evaluating it here.
+		return AutoMergeSweepEvent{}, "not-app-authored", nil
+	}
+
+	evaluatedHeadSHA := ""
+	if pr.GetHead() != nil {
+		evaluatedHeadSHA = pr.GetHead().GetSHA()
+	}
+	if evaluatedHeadSHA == "" {
+		return AutoMergeSweepEvent{}, "missing-head-sha", nil
+	}
+
+	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
+	if mergeable != MergeableYes {
+		return AutoMergeSweepEvent{}, "not-mergeable", nil
+	}
+	green, reason, err := c.commitGreen(ctx, owner, repo, evaluatedHeadSHA)
+	if err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	}
+	if !green {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
+
+	// Re-verify the head SHA immediately before merging: a push landing
+	// between the green-check above and the merge call below must never be
+	// squashed without having gone through commitGreen itself.
+	current, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		if isGitHubStatus(err, http.StatusNotFound) {
+			return AutoMergeSweepEvent{}, "gone", nil
+		}
+		return AutoMergeSweepEvent{}, "fetch-pr-recheck", err
+	}
+	currentHeadSHA := ""
+	if current.GetHead() != nil {
+		currentHeadSHA = current.GetHead().GetSHA()
+	}
+	if currentHeadSHA == "" || currentHeadSHA != evaluatedHeadSHA {
+		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+	}
+
+	mergeResult, _, err := c.client.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
+		SHA:         evaluatedHeadSHA,
+		MergeMethod: "squash",
+	})
+	if err != nil {
+		return AutoMergeSweepEvent{}, "merge-failed", err
+	}
+	if !mergeResult.GetMerged() {
+		return AutoMergeSweepEvent{}, "merge-not-applied", nil
+	}
+	event := AutoMergeSweepEvent{
+		Repo:     displayRepo,
+		Number:   number,
+		Author:   author,
+		QueuedBy: "", // no queuer in the self-authored path — the App merges its own PR
+		HeadSHA:  evaluatedHeadSHA,
+		MergeSHA: mergeResult.GetSHA(),
+	}
+	c.info("self-authored automerge sweep merged PR", "repo", displayRepo, "pr", number, "author", author, "merge_sha", event.MergeSHA)
+	return event, "", nil
 }
 
 func (c *Client) listQueuedPullRequestIssues(ctx context.Context, owner, repo, label string) ([]*gh.Issue, error) {

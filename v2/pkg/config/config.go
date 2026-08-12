@@ -62,6 +62,7 @@ type Config struct {
 	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
+	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
@@ -4531,6 +4532,39 @@ type ReviewConfig struct {
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
 	FixerAgent         string   `yaml:"fixer_agent,omitempty" json:"fixer_agent,omitempty"`
+}
+
+// AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).
+// Prow structurally forbids self-approval on a PR's own author, so a PR the
+// Forge App itself opens can never collect the lgtm+approved labels tide
+// requires — nobody but the App authored it, and the App cannot review its
+// own work. The sweep is Hive's only route to landing such a PR: it merges
+// directly over the GitHub REST API (squash), bypassing tide entirely,
+// exactly as the existing human-queue sweep already does for tide-pending/
+// unstable states (see mergeableFromState). This block controls ONLY that
+// self-authored path; the human "Approved ... for Hive auto-merge" queue
+// (governor.labels.automerge) is untouched and still requires a distinct
+// human queuer.
+type AutoMergeConfig struct {
+	// SelfAuthored enables SweepSelfAuthoredAutoMerges: the App merges its own
+	// open, CI-green PRs without a human queue-approval review, at every
+	// intent tier (including Tier3, which normally requires HumanApproval —
+	// see intent.Evaluate). *bool so "unset" is distinguishable from an
+	// explicit false: default is ON, matching the operator intent that the
+	// App should never be blocked behind a review it is structurally unable
+	// to obtain for its own PRs. Set `auto_merge.self_authored: false` to
+	// disable and fall back to fully manual merges for App PRs.
+	SelfAuthored *bool `yaml:"self_authored,omitempty" json:"self_authored,omitempty"`
+	// MaxMerges caps merges per sweep pass, shared semantics with
+	// AutoMergeSweepOptions.MaxMerges for the human queue sweep. Zero means
+	// DefaultAutoMergeSweepMaxMerges.
+	MaxMerges int `yaml:"max_merges,omitempty" json:"max_merges,omitempty"`
+}
+
+// SelfAuthoredEnabled reports whether the App-self-merge sweep is on for this
+// hive. Default ON (nil == enabled): see AutoMergeConfig.SelfAuthored.
+func (a AutoMergeConfig) SelfAuthoredEnabled() bool {
+	return a.SelfAuthored == nil || *a.SelfAuthored
 }
 
 // DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated
