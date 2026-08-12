@@ -1116,6 +1116,14 @@ const (
 type BobConfig struct {
 	APIKeyEnv  string `yaml:"api_key_env" json:"api_key_env,omitempty"`   // env var NAME holding the key; default HIVE_BOB_API_KEY
 	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"` // path to a file holding the key; default /secrets/bob_api_key
+	// KeyName is an optional, human-chosen LABEL for the configured key
+	// ("Team inference key", "andy personal", …). It is safe-to-show metadata,
+	// NOT a secret — it records WHICH key a hive is set to use so managers can
+	// tell keys apart without ever seeing the value. omitempty keeps hive.yaml
+	// on existing hives (which never recorded a name) byte-identical on
+	// round-trip; an absent name is a normal, backwards-compatible state that
+	// the dashboard renders as "(unnamed)" rather than an error.
+	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
 }
 
 // ResolveAPIKey returns the bob API key, or "" when none is configured.

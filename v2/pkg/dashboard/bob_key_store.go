@@ -63,6 +63,11 @@ const (
 	// aimed at the field) cannot write an unbounded blob onto the PVC.
 	// bobshell keys are far shorter than this; the limit only rejects abuse.
 	bobKeyMaxLen = 4096
+	// bobKeyNameMaxLen bounds the optional human LABEL for the key. It is a
+	// short display string ("Team inference key"), not the secret, so the
+	// limit is generous enough for a descriptive name yet small enough that a
+	// stray paste into the name field cannot bloat hive.yaml.
+	bobKeyNameMaxLen = 128
 )
 
 // writableBobKeyFile is a package var (not a const) so tests can point it at
