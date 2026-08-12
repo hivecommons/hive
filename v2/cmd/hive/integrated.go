@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -610,12 +611,28 @@ func runIntegratedManagement(command string, args []string) int {
 	client := hivegithub.NewClient(token, "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)), *githubAPIURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	selectionCleared := false
+	if command == "uninstall" && *deleteState {
+		var clearErr error
+		selectionCleared, clearErr = integrated.ForgetCurrentState(integratedStateRoot(), *stateDir)
+		if clearErr != nil {
+			fmt.Fprintln(os.Stderr, "uninstall could not durably retire its current repository selection:", clearErr)
+			return 1
+		}
+	}
 	result, err := integrated.RunManagement(ctx, integrated.ManagementOptions{
 		Operation: integrated.ManagementOperation(command), StateDir: *stateDir, VisualHiveRef: visualRef,
 		VisualHiveCommand: managementRuntimeCommand, VisualHiveArgs: managementRuntimeArgs,
 		LifecycleBeadsDirs: append([]string(nil), lifecycleBeadsDirs...), DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
 	})
 	if err != nil {
+		if selectionCleared {
+			if info, statErr := os.Stat(*stateDir); statErr == nil && info.IsDir() {
+				if restoreErr := integrated.RememberCurrentState(integratedStateRoot(), *stateDir); restoreErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore current repository selection after failed uninstall finalization: %w", restoreErr))
+				}
+			}
+		}
 		shouldRestart := shouldRestartManagementScheduler(command, *stateDir)
 		if wasRunning && shouldRestart {
 			_, _ = ensureIntegratedDaemonStarted(*stateDir, restartInterval)

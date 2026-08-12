@@ -38,6 +38,7 @@ if [ -n "$BODY_FILE" ]; then
     exit 2
   fi
 fi
+
 if [ -z "$REPO" ] || [ -z "$TITLE" ] || [ -z "$BODY" ]; then
   echo "hive-open-issue: --repo, --title, and --body are required" >&2
   exit 2
