@@ -7227,7 +7227,9 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
-	if err := knowledge.ValidateGitSourceURL(req.URL); err != nil {
+	// Context-aware so the SSRF DNS lookup inherits this request's deadline
+	// and cancellation rather than running on a background context.
+	if err := knowledge.ValidateGitSourceURLContext(r.Context(), req.URL); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
