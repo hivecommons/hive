@@ -91,6 +91,22 @@ type Provider struct {
 	AvatarClaim  string
 	EmailClaim   string
 
+	// IssuerTemplate enables MULTI-TENANT providers (Microsoft Entra "common"/
+	// "organizations", multi-tenant Okta orgs). Multi-tenant issuers embed a
+	// per-tenant id: the discovery/config issuer contains a literal "{tenantid}"
+	// placeholder while each id_token's `iss` carries the REAL tenant id. A single
+	// strict `iss == Issuer` check can't express that, so when IssuerTemplate is
+	// set (e.g. "https://login.microsoftonline.com/{tenantid}/v2.0") the verifier
+	// instead matches the token's `iss` against the template, extracts the tenant,
+	// enforces AllowedTenants (if any), and namespaces the subject as
+	// "<tenant>:<sub>" so identities never collide across tenants. Empty means the
+	// single-tenant strict-issuer path (unchanged).
+	IssuerTemplate string
+	// AllowedTenants optionally restricts a multi-tenant provider to specific
+	// tenant ids (Entra directory GUIDs). Empty = any tenant that satisfies the
+	// template is accepted.
+	AllowedTenants []string
+
 	// discovered caches the OIDC discovery document + JWKS behind mu.
 	mu         sync.Mutex
 	discovered bool
@@ -221,15 +237,37 @@ func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (
 		return key, nil
 	}
 
-	parser := jwt.NewParser(
+	// Issuer validation differs for single- vs multi-tenant. Single-tenant: the
+	// jwt parser enforces iss == p.Issuer. Multi-tenant: iss is per-tenant, so we
+	// validate it against IssuerTemplate ourselves AFTER parsing (below) and do
+	// NOT pin a fixed issuer here.
+	parserOpts := []jwt.ParserOption{
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}),
-		jwt.WithIssuer(p.Issuer),
 		jwt.WithAudience(p.ClientID),
 		jwt.WithExpirationRequired(),
-	)
+	}
+	if p.IssuerTemplate == "" {
+		parserOpts = append(parserOpts, jwt.WithIssuer(p.Issuer))
+	}
+	parser := jwt.NewParser(parserOpts...)
 	claims := jwt.MapClaims{}
 	if _, err := parser.ParseWithClaims(raw, claims, keyFunc); err != nil {
 		return nil, fmt.Errorf("id_token verification failed: %w", err)
+	}
+
+	// Multi-tenant: match the token issuer against the template, extract + gate the
+	// tenant. Fails closed on a non-matching iss or a disallowed tenant.
+	tenant := ""
+	if p.IssuerTemplate != "" {
+		iss, _ := claims["iss"].(string)
+		t, ok := tenantFromIssuer(p.IssuerTemplate, iss)
+		if !ok {
+			return nil, fmt.Errorf("id_token issuer %q does not match template %q", iss, p.IssuerTemplate)
+		}
+		if len(p.AllowedTenants) > 0 && !containsFold(p.AllowedTenants, t) {
+			return nil, fmt.Errorf("id_token tenant %q is not in the allowed set", t)
+		}
+		tenant = t
 	}
 
 	// Nonce binds the id_token to the login THIS browser started (replay/
@@ -251,12 +289,58 @@ func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (
 	if sub == "" {
 		return nil, errors.New("id_token has no subject")
 	}
+	// Multi-tenant: namespace the subject by tenant so the SAME sub value in two
+	// different tenants yields two distinct identities ("<tenant>:<sub>"). A bare
+	// sub is per-issuer-unique, and in multi-tenant mode the issuer varies, so
+	// without this two tenants could collide. Uses a '.' separator, not ':',
+	// because ':' is the canonical provider separator upstream.
+	if tenant != "" {
+		sub = tenant + "." + sub
+	}
 	return &Claims{
 		Subject:   sub,
 		Name:      stringClaim(claims, p.claimName(p.NameClaim, claimName)),
 		AvatarURL: stringClaim(claims, p.claimName(p.AvatarClaim, claimPicture)),
 		Email:     stringClaim(claims, p.claimName(p.EmailClaim, claimEmail)),
 	}, nil
+}
+
+// tenantFromIssuer matches a concrete token issuer against a template containing
+// a single "{tenantid}" placeholder and returns the substituted tenant value.
+// The non-placeholder parts must match exactly (trailing slashes normalized), and
+// the tenant must be a plausible id (non-empty, no '/'). Returns ok=false on any
+// mismatch — this is a security check, so it fails closed.
+func tenantFromIssuer(template, iss string) (string, bool) {
+	const ph = "{tenantid}"
+	i := strings.Index(template, ph)
+	if i < 0 || iss == "" {
+		return "", false
+	}
+	prefix := template[:i]
+	suffix := template[i+len(ph):]
+	// Normalize trailing slashes on the whole strings before splitting.
+	iss = strings.TrimRight(iss, "/")
+	suffix = strings.TrimRight(suffix, "/")
+	if !strings.HasPrefix(iss, prefix) || !strings.HasSuffix(iss, suffix) {
+		return "", false
+	}
+	tenant := iss[len(prefix) : len(iss)-len(suffix)]
+	tenant = strings.Trim(tenant, "/")
+	if tenant == "" || strings.ContainsAny(tenant, "/{}") {
+		return "", false
+	}
+	return tenant, true
+}
+
+// containsFold reports whether s is in list, case-insensitively (tenant GUIDs are
+// case-insensitive).
+func containsFold(list []string, s string) bool {
+	for _, x := range list {
+		if strings.EqualFold(strings.TrimSpace(x), s) {
+			return true
+		}
+	}
+	return false
 }
 
 // keyForKID returns the RSA public key for a JWKS key id, fetching/refreshing the
@@ -307,12 +391,20 @@ func (p *Provider) ensureDiscovered(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Discovery's issuer MUST be present AND equal the configured issuer. This
+	// Discovery's issuer MUST be present AND consistent with configuration. This
 	// prevents a swapped/hostile discovery doc from redirecting token/JWKS to an
-	// attacker origin. Requiring it (rather than skipping the check when the doc
-	// omits `issuer`) closes the downgrade where a doc with no issuer but hostile
-	// jwks_uri would be trusted; per OIDC Discovery the issuer field is REQUIRED.
-	if strings.TrimRight(doc.Issuer, "/") != strings.TrimRight(p.Issuer, "/") {
+	// attacker origin. Per OIDC Discovery the issuer field is REQUIRED.
+	//
+	// Single-tenant: strict equality with p.Issuer.
+	// Multi-tenant: the doc's issuer legitimately carries the "{tenantid}"
+	// placeholder (e.g. Entra's common/organizations metadata), so it must equal
+	// the configured IssuerTemplate instead — still an exact, non-attacker-
+	// controllable match, just against the templated form.
+	if p.IssuerTemplate != "" {
+		if strings.TrimRight(doc.Issuer, "/") != strings.TrimRight(p.IssuerTemplate, "/") {
+			return fmt.Errorf("discovery issuer %q != configured issuer template %q", doc.Issuer, p.IssuerTemplate)
+		}
+	} else if strings.TrimRight(doc.Issuer, "/") != strings.TrimRight(p.Issuer, "/") {
 		return fmt.Errorf("discovery issuer %q != configured issuer %q", doc.Issuer, p.Issuer)
 	}
 	p.mu.Lock()

@@ -18,6 +18,10 @@ permissions:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    # Hard cap so a hung runner / stuck -race build auto-fails instead of
+    # blocking PR merges indefinitely (the go test -timeout only bounds the test
+    # step, not checkout/setup/build/post-processing or a wedged runner). #3615.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: v2

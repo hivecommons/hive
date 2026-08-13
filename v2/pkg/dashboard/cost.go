@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,7 +104,39 @@ type costEstimated struct {
 	ByModel        []costModelEntry `json:"by_model"`
 	ByAgent        []costModelEntry `json:"by_agent"`
 	UnpricedModels []string         `json:"unpriced_models"`
+	// BySession is the estimated cost for each individual agent session
+	// (sandbox run), letting the UI show "usage by sandbox and cost per
+	// session" rather than only per-model/per-agent aggregates. Each entry is
+	// priced from its own token splits × list price, exactly like the
+	// aggregate rows. Omitted (empty slice) when no session data is available.
+	BySession []costSessionEntry `json:"by_session"`
 }
+
+// costSessionEntry is one session's estimated cost. A "session" is one agent
+// run inside its sandbox, keyed by SessionID; Agent identifies which sandbox
+// (agent) owned it and Model the model it used. Source is "estimated" for
+// priced models and "unpriced" for models absent from the price table.
+type costSessionEntry struct {
+	SessionID string  `json:"session_id"`
+	Agent     string  `json:"agent"`
+	Model     string  `json:"model"`
+	USD       float64 `json:"usd"`
+	Source    string  `json:"source"` // "estimated" | "unpriced"
+	Input     int64   `json:"input"`
+	Output    int64   `json:"output"`
+	CacheRead int64   `json:"cache_read"`
+	// Messages and LastActive give the UI enough to show session size and
+	// recency without a second round-trip. LastActive is a unix-seconds stamp
+	// (0 when the scanner could not determine it).
+	Messages   int   `json:"messages"`
+	LastActive int64 `json:"last_active,omitempty"`
+}
+
+// maxCostSessions caps how many per-session rows the /api/cost payload carries,
+// so a long-lived fleet with thousands of scanned sessions can't bloat the
+// response. The most-expensive sessions are kept (the UI sorts by cost), which
+// is what an operator hunting a cost spike wants to see first.
+const maxCostSessions = 200
 
 const costEstimateDisclaimer = "Estimated from token counts × published list prices. " +
 	"Subscription plans (Claude, Copilot), self-hosted inference (vLLM), and negotiated rates differ from list price. " +
@@ -146,6 +179,7 @@ func (s *Server) estimatedCost() costEstimated {
 	if s.deps != nil && s.deps.Tokens != nil {
 		if summary := s.deps.Tokens.Summary(); summary != nil {
 			est = flattenEstimated(tokens.EstimateFromSummary(summary))
+			est.BySession = estimatedSessions(summary)
 		}
 	}
 	if est.ByModel == nil {
@@ -157,7 +191,47 @@ func (s *Server) estimatedCost() costEstimated {
 	if est.UnpricedModels == nil {
 		est.UnpricedModels = []string{}
 	}
+	if est.BySession == nil {
+		est.BySession = []costSessionEntry{}
+	}
 	return est
+}
+
+// estimatedSessions prices every scanned session individually so the UI can
+// show cost per session (and, via the Agent field, group sessions by sandbox).
+// It is a pure function of the summary — each session's own token splits are
+// priced at list price, identically to the aggregate rows. The result is sorted
+// most-expensive first and capped at maxCostSessions so the payload stays
+// bounded on a large fleet. Returns an empty (non-nil) slice when there is no
+// session data.
+func estimatedSessions(summary *tokens.AggregateSummary) []costSessionEntry {
+	if summary == nil {
+		return []costSessionEntry{}
+	}
+	sessions := summary.Sessions
+	out := make([]costSessionEntry, 0, len(sessions))
+	for _, sess := range sessions {
+		usd, exact := tokens.EstimateCostUSD(sess.Model, sess.InputTokens, sess.OutputTokens, sess.CacheRead, sess.CacheCreate)
+		out = append(out, costSessionEntry{
+			SessionID:  sess.SessionID,
+			Agent:      sess.Agent,
+			Model:      sess.Model,
+			USD:        usd,
+			Source:     sourceForPriced(exact),
+			Input:      sess.InputTokens,
+			Output:     sess.OutputTokens,
+			CacheRead:  sess.CacheRead,
+			Messages:   sess.Messages,
+			LastActive: sess.LastActive,
+		})
+	}
+	// Most-expensive first — that's what an operator hunting a cost spike wants,
+	// and it makes the maxCostSessions cap keep the rows that matter.
+	sort.Slice(out, func(i, j int) bool { return out[i].USD > out[j].USD })
+	if len(out) > maxCostSessions {
+		out = out[:maxCostSessions]
+	}
+	return out
 }
 
 // flattenEstimated converts the map-keyed EstimatedCost into sorted-agnostic

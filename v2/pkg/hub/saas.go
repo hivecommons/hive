@@ -418,6 +418,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	// Daily image-pulls sparkline series (external adoption gauge). requireAuth,
+	// not requireAdmin: any signed-in hub user sees the same public-adoption
+	// number, and the underlying data is scraped from the PUBLIC package page.
+	s.mux.HandleFunc("GET /api/hub/image-pulls", s.requireAuth(s.handleImagePulls))
 	// Token attribution rollups. requireAuth (not requireAdmin) because a
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
@@ -4834,6 +4838,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Record the per-release image-pulls snapshot (external-adoption chart). The
+	// call is internally guarded to snapshot only when the v2 release SHA advances,
+	// so ticking it alongside the frequent SHA poll is cheap — no separate
+	// scheduler. See image_pulls.go.
+	s.maybeSnapshotImagePulls(ctx, time.Now())
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4856,6 +4865,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -8341,6 +8351,14 @@ const dashboardHTML = `<!DOCTYPE html>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
+        <!-- Image-pulls sparkline: 30-day daily-delta of container-image PULLS
+             of the public spoke image (ghcr.io/kubestellar/hive:v2). Gauges
+             external adoption beyond the hosted fleet. Derived from GitHub's
+             cumulative "Total downloads" counter — it is pulls/day, NOT unique
+             downloads (uniqueness is not measurable). Populated by
+             loadImagePulls(). Hidden until there is data to show. -->
+        <div id="image-pulls-spark" style="display:none;margin-top:8px"
+             title="Container-image pulls per v2 release: the pulls that landed while each of the last ~10 v2 SHAs was the newest release, of the public hive image (ghcr.io/kubestellar/hive:v2). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -12558,6 +12576,7 @@ const dashboardHTML = `<!DOCTYPE html>
         renderAdminProvisionRequests(data.provision_requests || []);
         loadPublicHives(data.hives || []);
         loadUsage();
+        loadImagePulls();
       } catch(e) {
         /* Surface EVERY failure in the load→render path, not just fetch errors.
            The old guard only painted a message when _allDashHives was empty —
@@ -12573,6 +12592,81 @@ const dashboardHTML = `<!DOCTYPE html>
       } finally {
         _hivesLoading = false;
       }
+    }
+
+    /* loadImagePulls fetches the per-RELEASE pull series (pulls that landed while
+       each of the last ~10 v2 SHAs was the newest release) and paints a small
+       inline-SVG bar chart near the header — one bar per release, newest on the
+       right. Gauges external adoption of the public spoke image
+       (ghcr.io/kubestellar/hive:v2) beyond the hosted fleet. Honest labelling:
+       derived from GitHub's cumulative download counter (pulls, NOT unique
+       downloads). Cold start (fewer than two release snapshots → no window can be
+       closed yet) shows "collecting…". */
+    async function loadImagePulls() {
+      var host = document.getElementById('image-pulls-spark');
+      if (!host) return;
+      var data;
+      try {
+        var resp = await fetch('/api/hub/image-pulls');
+        if (!resp.ok) { host.style.display = 'none'; return; }
+        data = await resp.json();
+      } catch (e) {
+        /* Adoption chart is non-critical chrome — never let it break the
+           dashboard. Just leave it hidden on any failure. */
+        host.style.display = 'none';
+        return;
+      }
+      var points = (data && data.points) || [];
+      host.style.display = 'block';
+
+      /* Cold start: needs at least two release snapshots to close one window. */
+      if ((data && data.collecting) || points.length < 1) {
+        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Image pulls per v2 release: <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
+        return;
+      }
+
+      /* Bar-chart geometry. Named so there are no bare magic numbers below. */
+      var BAR_W = 14;      // px, per-release bar width
+      var BAR_GAP = 3;     // px, gap between bars
+      var BAR_H = 30;      // px, drawing height
+      var BAR_PAD = 2;     // px, top breathing room so the tallest bar isn't clipped
+
+      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
+      var maxV = Math.max.apply(null, vals);
+      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
+      var chartW = points.length * BAR_W + (points.length - 1) * BAR_GAP;
+      var usableH = BAR_H - BAR_PAD;
+
+      var bars = '';
+      points.forEach(function(p, i) {
+        var v = vals[i];
+        var h = Math.max(1, (v / maxV) * usableH); // min 1px so a zero-pull release is still visible
+        var x = i * (BAR_W + BAR_GAP);
+        var y = BAR_H - h;
+        var sha = esc(String(p.sha || ''));
+        var tip = sha + ': ' + v + ' pulls' + (p.date ? ' (since ' + esc(String(p.date)) + ')' : '');
+        // The newest bar (last) is highlighted; older ones muted.
+        var fill = (i === points.length - 1) ? '#60a5fa' : 'rgba(96,165,250,0.45)';
+        bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + BAR_W + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + fill + '"><title>' + tip + '</title></rect>';
+      });
+
+      var svg =
+        '<svg width="' + chartW + '" height="' + BAR_H + '" viewBox="0 0 ' + chartW + ' ' + BAR_H + '" ' +
+        'style="display:block;overflow:visible">' + bars + '</svg>';
+
+      var latest = (data && Number(data.latest)) || 0;
+      var total = (data && Number(data.total_window)) || 0;
+      var newestSHA = points.length ? esc(String(points[points.length - 1].sha || '')) : '';
+
+      host.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">Pulls per v2 release</div>' +
+          svg +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' +
+            '<span style="color:#60a5fa;font-weight:600">' + esc(String(latest)) + '</span> on ' + newestSHA +
+            ' &middot; ' + esc(String(total)) + ' over last ' + points.length + ' releases' +
+          '</div>' +
+        '</div>';
     }
 
     /* renderHivesError replaces the eternal spinner with an actionable message.
@@ -15654,18 +15748,42 @@ const dashboardHTML = `<!DOCTYPE html>
        provider rides the users payload as u.provider (derived server-side via
        userProvider). A legacy record with no provider resolves to github, so
        every existing row shows the GitHub chip — no blank. */
+    // providerLogoSVG returns a small inline brand SVG per login provider, matching
+    // the login picker's marks. Inline SVG (not an icon font / text letter) so the
+    // badge never renders as tofu. Injected as raw HTML — a fixed literal from our
+    // closed provider set, not user input, so safe to embed unescaped.
+    function providerLogoSVG(p) {
+      var s = 'width="12" height="12" style="flex:none" aria-hidden="true"';
+      switch (p) {
+        case 'github':
+          return '<svg viewBox="0 0 16 16" fill="currentColor" ' + s + '><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+        case 'google':
+          return '<svg viewBox="0 0 18 18" ' + s + '><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>';
+        case 'ibmid':
+          return '<svg viewBox="0 0 512 205" height="9" style="flex:none;width:auto" fill="#1F70C1" aria-hidden="true"><path d="M99.55552,190.060579 L99.55552,204.282819 L0,204.282819 L0,190.060579 L99.55552,190.060579 Z M255.1384,190.059939 C245.151671,199.241068 232.070596,204.31949 218.50496,204.282019 L218.50496,204.282019 L113.77792,204.141379 L113.77792,190.059939 Z M403.1664,190.059779 L398.2,204.282179 L393.2784,190.059779 L403.1664,190.059779 Z M355.55584,190.060579 L355.55584,204.282819 L284.44464,204.282819 L284.44464,190.060579 L355.55584,190.060579 Z M512,190.060579 L512,204.282819 L440.8888,204.282819 L440.8888,190.060579 L512,190.060579 Z M271.24672,162.908899 C270.026362,167.89787 268.099708,172.686973 265.52512,177.131139 L265.52512,177.131139 L113.77792,177.131139 L113.77792,162.908899 Z M412.6976,162.909379 L407.7056,177.131779 L388.7392,177.131779 L383.7472,162.909379 L412.6976,162.909379 Z M355.55584,162.908899 L355.55584,177.131139 L284.44464,177.131139 L284.44464,162.908899 L355.55584,162.908899 Z M512,162.908899 L512,177.131139 L440.8888,177.131139 L440.8888,162.908899 L512,162.908899 Z M99.55552,162.908899 L99.55552,177.131139 L0,177.131139 L0,162.908899 L99.55552,162.908899 Z M71.11104,135.757379 L71.11104,149.979779 L28.44432,149.979779 L28.44432,135.757379 L71.11104,135.757379 Z M184.88896,135.757379 L184.88896,149.979779 L142.22224,149.979779 L142.22224,135.757379 L184.88896,135.757379 Z M270.90576,135.757379 C272.166041,140.393192 272.805755,145.175711 272.80816,149.979779 L272.80816,149.979779 L224.96976,149.979779 L224.96976,135.757379 Z M422.2304,135.757379 L417.2368,149.979779 L379.208,149.979779 L374.2144,135.757379 L422.2304,135.757379 Z M355.55568,135.757379 L355.55568,149.979779 L312.88896,149.979779 L312.88896,135.757379 L355.55568,135.757379 Z M483.55552,135.757379 L483.55552,149.979779 L440.8888,149.979779 L440.8888,135.757379 L483.55552,135.757379 Z M71.11104,108.606019 L71.11104,122.828259 L28.44432,122.828259 L28.44432,108.606019 L71.11104,108.606019 Z M355.55568,108.606019 L355.55568,122.828259 L312.88896,122.828259 L312.88896,108.606019 L355.55568,108.606019 Z M483.55552,108.606019 L483.55552,122.828259 L440.8888,122.828259 L440.8888,108.606019 L483.55552,108.606019 Z M253.64576,108.605379 C258.382421,112.634795 262.394807,117.444874 265.50928,122.827459 L265.50928,122.827459 L142.22176,122.827459 L142.22176,108.605379 Z M431.7616,108.605379 L426.7696,122.827779 L369.6752,122.827779 L364.6832,108.605379 L431.7616,108.605379 Z M394.224,81.4549786 L398.2224,92.9509786 L402.2192,81.4549786 L483.5552,81.4549786 L483.5552,95.6773786 L440.8896,95.6773786 L440.8896,82.6085786 L436.3008,95.6773786 L360.144,95.6773786 L355.5552,82.6069786 L355.5552,95.6773786 L312.8896,95.6773786 L312.8896,81.4549786 L394.224,81.4549786 Z M142.22224,81.4543386 L265.51024,81.4551386 C262.395586,86.8377816 258.383042,91.6479099 253.64624,95.6773786 L253.64624,95.6773786 L142.22224,95.6773786 L142.22224,81.4543386 Z M71.11104,81.4543386 L71.11104,95.6765786 L28.44432,95.6765786 L28.44432,81.4543386 L71.11104,81.4543386 Z M71.11104,54.3029786 L71.11104,68.5252186 L28.44432,68.5252186 L28.44432,54.3029786 L71.11104,54.3029786 Z M184.88896,54.3029786 L184.88896,68.5252186 L142.22224,68.5252186 L142.22224,54.3029786 L184.88896,54.3029786 Z M272.80816,54.3031386 C272.805733,59.1071522 272.166019,63.8896155 270.90576,68.5253786 L270.90576,68.5253786 L224.96976,68.5253786 L224.96976,54.3031386 Z M384.7824,54.3029786 L389.728,68.5253786 L312.8896,68.5253786 L312.8896,54.3029786 L384.7824,54.3029786 Z M483.5552,54.3029786 L483.5552,68.5253786 L406.7168,68.5253786 L411.6624,54.3029786 L483.5552,54.3029786 Z M99.55552,27.1514586 L99.55552,41.3736986 L0,41.3736986 L0,27.1514586 L99.55552,27.1514586 Z M265.52512,27.1514586 C268.099627,31.5955505 270.026276,36.3845354 271.24672,41.3733786 L271.24672,41.3733786 L113.77792,41.3733786 L113.77792,27.1514586 Z M512,27.1509786 L512,41.3733786 L416.1584,41.3733786 L421.104,27.1509786 L512,27.1509786 Z M375.3408,27.1509786 L380.2864,41.3733786 L284.4448,41.3733786 L284.4448,27.1509786 L375.3408,27.1509786 Z M99.55552,9.85716419e-05 L99.55552,14.2223386 L0,14.2223386 L0,9.85716419e-05 L99.55552,9.85716419e-05 Z M218.50496,4.91529226e-05 C232.066886,-0.0182214039 245.141087,5.05759937 255.13792,14.2221786 L255.13792,14.2221786 L113.77792,14.2221786 L113.77792,4.91529226e-05 Z M512,0.000578571642 L512,14.2229786 L425.6,14.2229786 L430.5456,0.000578571642 L512,0.000578571642 Z M365.8992,0.000578571642 L370.8448,14.2229786 L284.4448,14.2229786 L284.4448,0.000578571642 L365.8992,0.000578571642 Z"/></svg>';
+        case 'redhat':
+          return '<svg viewBox="0 0 24 24" fill="#EE0000" ' + s + '><path d="M16.35 14.4c1.6 0 3.9-.33 3.9-2.24a1.8 1.8 0 0 0-.04-.44l-.95-4.12c-.22-.9-.41-1.31-2-2.12-1.24-.63-3.94-1.67-4.74-1.67-.74 0-.96.96-1.85.94-.86-.02-1.5-.74-2.3-.74-.77 0-1.27.52-1.66 1.6 0 0-1.08 3.05-1.22 3.49a.83.83 0 0 0-.03.25c0 1.2 4.71 5.32 10.88 5.32M20.47 12.94c.22 1.05.22 1.16.22 1.3 0 1.8-2.02 2.79-4.67 2.79-6 0-11.25-3.51-11.25-5.83 0-.32.07-.63.18-.93C2.94 10.36 1 10.63 1 12.34c0 2.8 6.63 6.26 11.87 6.26 4.02 0 5.03-1.82 5.03-3.25 0-1.13-.97-2.4-2.43-2.41"/></svg>';
+        case 'microsoft':
+          return '<svg viewBox="0 0 23 23" ' + s + '><path fill="#F25022" d="M0 0h11v11H0z"/><path fill="#7FBA00" d="M12 0h11v11H12z"/><path fill="#00A4EF" d="M0 12h11v11H0z"/><path fill="#FFB900" d="M12 12h11v11H12z"/></svg>';
+        default:
+          return '';
+      }
+    }
+
     function providerBadge(u) {
       var p = String((u && u.provider) || 'github').toLowerCase();
       var meta = {
-        github: {label: 'GitHub', glyph: '', color: '#c9d1d9', bg: 'rgba(110,118,129,0.25)'},
-        google: {label: 'Google', glyph: 'G',      color: '#e8eaed', bg: 'rgba(66,133,244,0.22)'},
-        ibmid:  {label: 'IBMid',  glyph: 'IBM',    color: '#e8eaed', bg: 'rgba(15,98,254,0.22)'},
-        redhat: {label: 'Red Hat',glyph: '●', color: '#f5c2c7', bg: 'rgba(238,0,0,0.22)'}
-      }[p] || {label: p || 'unknown', glyph: '', color: 'var(--muted)', bg: 'rgba(110,118,129,0.25)'};
+        github: {label: 'GitHub', color: '#c9d1d9', bg: 'rgba(110,118,129,0.25)'},
+        google: {label: 'Google', color: '#e8eaed', bg: 'rgba(66,133,244,0.22)'},
+        ibmid:  {label: 'IBMid',  color: '#e8eaed', bg: 'rgba(15,98,254,0.22)'},
+        redhat: {label: 'Red Hat',color: '#f5c2c7', bg: 'rgba(238,0,0,0.22)'},
+        microsoft: {label: 'Microsoft', color: '#e8eaed', bg: 'rgba(0,120,215,0.22)'}
+      }[p] || {label: p || 'unknown', color: 'var(--muted)', bg: 'rgba(110,118,129,0.25)'};
+      var logo = providerLogoSVG(p);
       return '<span title="Signed in with ' + escAttr(meta.label) + '"' +
-        ' style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:9999px;' +
+        ' style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:9999px;' +
         'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
-        (meta.glyph ? esc(meta.glyph) + ' ' : '') + esc(meta.label) + '</span>';
+        (logo ? logo : '') + esc(meta.label) + '</span>';
     }
 
     // renderContactCell is the collapsed summary shown in the main user row.

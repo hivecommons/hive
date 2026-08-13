@@ -401,8 +401,8 @@ func TestBobKeyUILivesOnGovernorTab(t *testing.T) {
 		{"tab is wired into render dispatch", "case GOVERNOR_BOB_TAB: return renderGovBob();"},
 		{"tab renderer exists", "function renderGovBob() {"},
 		{"status loader exists", "async function loadBobKeyStatus() {"},
-		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source) {"},
-		{"dialog is opened from the panel", "openBobKeyDialog(configured, source)"},
+		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source, keyName) {"},
+		{"dialog is opened from the panel", "openBobKeyDialog(configured, source, keyName)"},
 		{"clear is reachable from the panel", "clearBtn.addEventListener('click', clearBobKey)"},
 	}
 	for _, tc := range cases {
@@ -496,9 +496,10 @@ func TestBobKeyUINeverRendersTheKeyValue(t *testing.T) {
 	if !strings.Contains(html, "// Drop the secret from the DOM before removing the node.") {
 		t.Error("the dialog must clear the input value before removing the node")
 	}
-	// The panel must render presence + source only, never a value field.
-	if !strings.Contains(html, "renderBobKeyPanel(host, d.configured === true, d.source || '')") {
-		t.Error("the panel must be fed only `configured` and the safe `source` string")
+	// The panel must render presence + source + the safe key NAME only, never a
+	// value field. keyName is an operator-chosen label, not the secret.
+	if !strings.Contains(html, "renderBobKeyPanel(host, d.configured === true, d.source || '', d.keyName || '')") {
+		t.Error("the panel must be fed only `configured`, the safe `source` string, and the safe `keyName` label")
 	}
 }
 

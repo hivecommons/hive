@@ -14,6 +14,20 @@ import (
 
 const localKnowledgeDir = "/data/knowledge"
 
+// vaultsBaseDir is where user-created knowledge channels (vaults) are stored on
+// the spoke's data volume, one directory per channel. It mirrors the location the
+// bead synthesizer uses for its own vault. A var (not const) only so purge/create
+// tests can point it at a temp dir; production never reassigns it.
+var vaultsBaseDir = "/data/vaults"
+
+// reservedVaultName is the automation vault the bead synthesizer writes into. It
+// must never be offered to users as an import target nor be creatable/writable by
+// hand: importing into it would corrupt the synthesizer's own store, and it is
+// deliberately hidden from every user-facing channel picker. See issue #3581,
+// where the Import Facts dropdown surfaced this vault as the only option and every
+// import failed with "layer bead-synth-wiki has no configured endpoint".
+const reservedVaultName = "bead-synth-wiki"
+
 // KnowledgeAPI provides a unified interface for dashboard endpoints to query
 // across all configured wiki layers.
 type KnowledgeAPI struct {
@@ -349,13 +363,13 @@ func (k *KnowledgeAPI) PromoteFact(ctx context.Context, req PromoteRequest) Prom
 
 // ImportFacts parses markdown or JSON content and ingests extracted facts.
 func (k *KnowledgeAPI) ImportFacts(ctx context.Context, layer LayerType, content string, format string) (int, error) {
-	client := k.clientForLayer(layer)
-	if client == nil {
-		return 0, fmt.Errorf("layer %s has no configured endpoint", layer)
+	// The reserved automation vault is never a valid user import target — writing
+	// into it would corrupt the bead synthesizer's store (issue #3581).
+	if string(layer) == reservedVaultName {
+		return 0, fmt.Errorf("%q is a reserved automation channel and cannot be imported into; pick or create another channel", reservedVaultName)
 	}
 
 	var facts []ExtractedFact
-
 	switch format {
 	case "json":
 		if err := parseJSONFacts(content, &facts); err != nil {
@@ -366,17 +380,114 @@ func (k *KnowledgeAPI) ImportFacts(ctx context.Context, layer LayerType, content
 	default:
 		facts = parseMarkdownFacts(content)
 	}
-
 	if len(facts) == 0 {
 		return 0, nil
 	}
 
+	// Prefer a local vault (channel) with this name — the common case on a spoke
+	// with no remote wiki layers configured, and the fix for #3581 where import
+	// used to fail because only remote "layers" were writable. Fall back to a
+	// configured remote layer endpoint when no vault matches.
+	if v := k.vaultByName(string(layer)); v != nil {
+		if err := v.WriteFacts(facts); err != nil {
+			return 0, fmt.Errorf("writing facts to channel %q: %w", layer, err)
+		}
+		k.triggerVaultReindex(v.RootDir())
+		k.logger.Info("facts imported to vault", "count", len(facts), "channel", layer, "format", format)
+		return len(facts), nil
+	}
+
+	client := k.clientForLayer(layer)
+	if client == nil {
+		return 0, fmt.Errorf("no writable channel named %q — create a channel first, or configure a wiki endpoint for that layer", layer)
+	}
 	if err := client.IngestFacts(ctx, facts); err != nil {
 		return 0, fmt.Errorf("ingesting imported facts: %w", err)
 	}
-
 	k.logger.Info("facts imported", "count", len(facts), "layer", layer, "format", format)
 	return len(facts), nil
+}
+
+// vaultByName returns the connected vault whose name matches (case-sensitive),
+// or nil. The reserved automation vault is intentionally NOT matchable here — it
+// is filtered so it can never be resolved as an import target.
+func (k *KnowledgeAPI) vaultByName(name string) *FileStore {
+	if name == "" || name == reservedVaultName {
+		return nil
+	}
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	for _, v := range k.vaults {
+		if v.Name() == name {
+			return v
+		}
+	}
+	return nil
+}
+
+// WritableVaults returns the connected vaults a user may import into — every
+// vault except the reserved automation one. This is the source of truth for the
+// dashboard's channel pickers (issue #3581).
+func (k *KnowledgeAPI) WritableVaults() []VaultInfo {
+	all := k.Vaults()
+	out := make([]VaultInfo, 0, len(all))
+	for _, v := range all {
+		if v.Name == reservedVaultName {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// CreateVault creates a brand-new local knowledge channel (vault) under
+// vaultsBaseDir and connects it so users can import facts into it. The name must
+// be path-safe and must not collide with the reserved automation vault. Creating
+// an already-existing channel is idempotent (it just connects it).
+func (k *KnowledgeAPI) CreateVault(name string) (VaultInfo, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return VaultInfo{}, fmt.Errorf("channel name is required")
+	}
+	if name == reservedVaultName {
+		return VaultInfo{}, fmt.Errorf("%q is reserved for automation and cannot be created", reservedVaultName)
+	}
+	if !isSafeVaultName(name) {
+		return VaultInfo{}, fmt.Errorf("invalid channel name %q: use letters, numbers, spaces, dashes or underscores", name)
+	}
+
+	dir := filepath.Join(vaultsBaseDir, slugify(name))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return VaultInfo{}, fmt.Errorf("creating channel dir: %w", err)
+	}
+	// ConnectVault is idempotent-ish: it errors if this exact dir is already
+	// connected, which for a create-or-connect flow we treat as success.
+	if err := k.ConnectVault(dir, name); err != nil && !strings.Contains(err.Error(), "already connected") {
+		return VaultInfo{}, err
+	}
+	for _, v := range k.Vaults() {
+		if v.RootDir == dir {
+			return v, nil
+		}
+	}
+	return VaultInfo{Name: name, RootDir: dir}, nil
+}
+
+// isSafeVaultName rejects names that could escape vaultsBaseDir or break the
+// on-disk layout. Deliberately conservative: a channel name is a human label.
+func isSafeVaultName(name string) bool {
+	if len(name) > 64 || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == ' ' || r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Subscriptions returns the current list of subscribed wiki endpoints.
@@ -491,6 +602,34 @@ func (k *KnowledgeAPI) DisconnectVault(rootDir string) error {
 	}
 	k.vaults = newVaults
 	k.logger.Info("vault disconnected", "dir", rootDir)
+	return nil
+}
+
+// PurgeVault disconnects a vault AND deletes its files from disk. This is the
+// destructive "delete channel" path (vs DisconnectVault, which only un-indexes
+// and leaves files in place). It is guarded hard: the directory MUST live under
+// vaultsBaseDir and MUST NOT be the reserved automation vault — a purge outside
+// the vaults tree, or of bead-synth-wiki, is refused. The disconnect happens
+// first so agents stop reading it before the files vanish.
+func (k *KnowledgeAPI) PurgeVault(rootDir string) error {
+	clean := filepath.Clean(rootDir)
+	base := filepath.Clean(vaultsBaseDir)
+	// Must be strictly inside vaultsBaseDir (not the base itself, not a sibling).
+	if clean == base || !strings.HasPrefix(clean, base+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to purge %q: not inside %s", rootDir, base)
+	}
+	if filepath.Base(clean) == reservedVaultName {
+		return fmt.Errorf("%q is reserved for automation and cannot be purged", reservedVaultName)
+	}
+	// Disconnect first (best effort — a vault may be purged even if it was never
+	// indexed as a connected vault, e.g. a leftover dir), then remove the files.
+	if err := k.DisconnectVault(rootDir); err != nil {
+		k.logger.Info("purge: vault not connected, removing files anyway", "dir", clean, "err", err)
+	}
+	if err := os.RemoveAll(clean); err != nil {
+		return fmt.Errorf("deleting channel files: %w", err)
+	}
+	k.logger.Info("vault purged", "dir", clean)
 	return nil
 }
 

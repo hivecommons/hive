@@ -36,6 +36,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
+	// ACMM level-up advice (ported from v4). ADVISORY ONLY — it computes a
+	// recommendation from already-collected signals and never applies a level;
+	// a human approves the actual change via handlePackSetLevel.
+	s.mux.HandleFunc("GET /api/acmm-recommendation", s.handleACMMRecommendation)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
 	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
@@ -122,6 +126,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
+	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
@@ -182,6 +187,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/fact-history", s.handleFactHistory)
 	s.mux.HandleFunc("POST /api/knowledge/create", s.handleKnowledgeCreate)
 	s.mux.HandleFunc("POST /api/knowledge/import", s.handleKnowledgeImport)
+	// Channels (user-writable local vaults). Registered under /channels rather
+	// than /vaults so they don't collide with the GET /api/knowledge/{layer}
+	// wildcard below. This is the import-target surface fixed in #3581.
+	s.mux.HandleFunc("GET /api/knowledge/channels", s.handleKnowledgeChannelsList)
+	s.mux.HandleFunc("POST /api/knowledge/channels", s.handleKnowledgeChannelCreate)
 	s.mux.HandleFunc("POST /api/knowledge/promote", s.handleKnowledgePromote)
 	s.mux.HandleFunc("GET /api/knowledge/subscriptions", s.handleKnowledgeSubsList)
 	s.mux.HandleFunc("POST /api/knowledge/subscriptions", s.handleKnowledgeSubsAdd)
@@ -4181,6 +4191,22 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorBudgetReset opens a fresh budget window on demand. The
+// operator's recovery path when the window's spend has (or a mis-sized limit
+// has) closed the kick gate: fix the limit via PUT /budget, then reset the
+// window here so kicks resume immediately — budgeting stays ON, unlike the
+// "ignore budget" bypass. Spend re-anchors at zero and the once-per-window
+// alerts rearm.
+func (s *Server) handleGovernorBudgetReset(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	s.deps.Governor.ResetBudgetWindow()
+	s.auditFromRequest(r, "governor_budget_window_reset", auditDetail("section", "budget"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "reset"})
+}
+
 func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -4873,6 +4899,10 @@ func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request)
 		// configured is presence-only; the key value is never serialized.
 		"configured": source != "",
 		"source":     source,
+		// keyName is the operator-chosen LABEL for the key, not the key value —
+		// safe to serialize. Empty on hives that never recorded a name (the
+		// dashboard renders that as "(unnamed)"), so no backwards-compat break.
+		"keyName": bc.KeyName,
 	})
 }
 
@@ -4893,6 +4923,11 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		APIKey *string `json:"apiKey"`
+		// KeyName is an optional human LABEL recorded alongside the key so
+		// managers can tell WHICH key a hive uses without seeing the value.
+		// It is not a secret and is stored in plaintext in hive.yaml. Absent
+		// (nil) leaves any existing name untouched; present-but-empty clears it.
+		KeyName *string `json:"keyName"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -4926,6 +4961,21 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize the optional key NAME. It is a label, not a secret: leading
+	// and trailing whitespace is trimmed (a name is a display string, not a
+	// token), interior whitespace is allowed ("Team inference key"), and only
+	// the length is bounded. nil means "leave the existing name as-is".
+	var keyName string
+	nameProvided := body.KeyName != nil
+	if nameProvided {
+		keyName = strings.TrimSpace(*body.KeyName)
+		if len(keyName) > bobKeyNameMaxLen {
+			jsonError(w, fmt.Sprintf("keyName is too long (limit %d characters)", bobKeyNameMaxLen),
+				http.StatusBadRequest)
+			return
+		}
+	}
+
 	cfg := s.deps.Config
 	// Apply to a copy so a store failure leaves config untouched.
 	bc := cfg.Governor.Bob
@@ -4944,6 +4994,12 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 	if looksLikeAPIKeyValue(bc.APIKeyEnv) {
 		bc.APIKeyEnv = ""
 		s.logger.Info("cleared key-like value from bob api_key_env (replaced by stored API key)")
+	}
+	// Record the label only when the caller supplied the field, so a
+	// name-less "Replace key" PUT keeps the existing name rather than wiping
+	// it. A provided empty string intentionally clears it.
+	if nameProvided {
+		bc.KeyName = keyName
 	}
 	cfg.Governor.Bob = bc
 
@@ -4981,6 +5037,8 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 		"configured": true,
 		// Path only, never the value.
 		"source": "file:" + keyFile,
+		// The operator-chosen label for the key (safe to echo; not the value).
+		"keyName": bc.KeyName,
 		// The pod does not need restarting; the resolver reads the key live.
 		"restartNeeded": false,
 		// How many parked bob agents were started by this save, so the UI can
@@ -5013,9 +5071,12 @@ func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Reques
 	cfg := s.deps.Config
 	bc := cfg.Governor.Bob
 	// Only drop the pointer if it names the file we just removed; an operator
-	// who pointed api_key_file at their own path keeps that setting.
+	// who pointed api_key_file at their own path keeps that setting. The label
+	// describes the key we just cleared, so drop it in the same case — leaving
+	// a stale "Team inference key" beside a now-empty slot would mislead.
 	if bc.APIKeyFile == writableBobKeyFile {
 		bc.APIKeyFile = ""
+		bc.KeyName = ""
 	}
 	cfg.Governor.Bob = bc
 
@@ -6182,6 +6243,21 @@ func (s *Server) inferenceAPIKey(backend string) string {
 			return key
 		}
 	}
+	// Same contract as inference-time forwarding: an explicit gateway for
+	// this backend wins over the legacy litellm: key store (see
+	// ResolveLiteLLMInferenceKey). A key rotated via the Model Gateways tab
+	// lands only in the gateway's key file, so resolving the legacy file here
+	// made discovery send the revoked key and log "no models found from any
+	// endpoint" (surfaced as a sticky error toast) while the save-time probe
+	// — which uses the submitted key — reported the models fine.
+	//
+	// A matching gateway that resolves NO key of its own still falls back to
+	// the legacy store: keyless gateway entries (e.g. an endpoint-only entry
+	// with the key kept in the classic litellm: block) predate per-gateway
+	// keys and must keep discovering with the legacy key.
+	if key := gov.ResolveLiteLLMInferenceKey(backend); key != "" {
+		return key
+	}
 	return gov.LiteLLM.ResolveAPIKey()
 }
 
@@ -6926,6 +7002,38 @@ func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]interface{}{"ok": true, "imported": count, "layer": req.Layer, "format": req.Format})
 }
 
+// handleKnowledgeChannelsList returns the user-writable channels (vaults) that
+// facts can be imported into. The reserved automation vault is excluded (#3581).
+func (s *Server) handleKnowledgeChannelsList(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonResponse(w, []interface{}{})
+		return
+	}
+	jsonResponse(w, s.deps.Knowledge.WritableVaults())
+}
+
+// handleKnowledgeChannelCreate creates a new local channel (vault) to import into.
+func (s *Server) handleKnowledgeChannelCreate(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	info, err := s.deps.Knowledge.CreateVault(req.Name)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "knowledge_channel_create", auditDetail("channel", info.Name), "")
+	jsonResponse(w, map[string]interface{}{"ok": true, "channel": info})
+}
+
 func (s *Server) handleKnowledgeSubsList(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Knowledge == nil {
 		jsonResponse(w, []interface{}{})
@@ -7085,6 +7193,9 @@ func (s *Server) handleVaultsDisconnect(w http.ResponseWriter, r *http.Request) 
 
 	var req struct {
 		Path string `json:"path"`
+		// Purge=true deletes the channel's files from disk (destructive), not just
+		// un-indexing it. Defaults false so a plain remove stays non-destructive.
+		Purge bool `json:"purge"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -7103,6 +7214,15 @@ func (s *Server) handleVaultsDisconnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if req.Purge {
+		if err := s.deps.Knowledge.PurgeVault(req.Path); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.auditFromRequest(r, "vault_purge", auditDetail("path", req.Path), "")
+		jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.Path, "purged": true})
+		return
+	}
 	if err := s.deps.Knowledge.DisconnectVault(req.Path); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return

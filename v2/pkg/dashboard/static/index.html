@@ -1335,6 +1335,8 @@
     .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
+    .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
+    .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 4px; }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
 
     /* Cost spend-over-time: range pills + bucketed bar chart */
@@ -6839,6 +6841,25 @@
         .then(r => r.json()).then(d => { budgetIgnored = d.ignored; renderAll(); });
     }
 
+    // Opens a fresh budget window: spend re-anchors at 0, the exhausted gate
+    // reopens, budgeting stays ON. The recovery path when a mis-sized (or
+    // genuinely spent) budget is suppressing kicks — unlike "ignore budget",
+    // which turns enforcement off entirely.
+    async function resetBudgetWindow() {
+      try {
+        const r = await fetch('/api/config/governor/budget/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          showToast(d.error || ('Failed to reset budget window (HTTP ' + r.status + ')'), 'error');
+          return;
+        }
+        showToast('Budget window reset — spend restarts at 0, suppressed kicks resume', 'success');
+        renderAll();
+      } catch (e) {
+        showToast('Failed to reset budget window: ' + e.message, 'error');
+      }
+    }
+
     function renderBudgetBar(budget) {
       if (!budget || !budget.BUDGET_WEEKLY) return '';
       const PCT_SAFE = 50;
@@ -6861,7 +6882,7 @@
         govAction = '<span style="color:var(--muted)">Budget enforcement disabled by operator</span>';
       } else if (exhausted) {
         const windowEnds = budget.WINDOW_ENDS_AT ? new Date(budget.WINDOW_ENDS_AT).toLocaleString() : 'the next window';
-        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span>`;
+        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span> <button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend restarts at 0 and suspended kicks resume. Budget enforcement stays on — raise Total Tokens in Governor Config first if the limit itself was too small." style="margin-left:8px;padding:1px 8px;font-size:0.66rem;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--fg);cursor:pointer">reset window now</button>`;
       } else if (pctUsed >= PCT_BUDGET_WARN) {
         govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of weekly limit used; kicks suspend at 100%</span>`;
       } else if (projPct > PCT_WARN) {
@@ -6874,7 +6895,7 @@
 
       const ignoreCheck = `<label style="font-size:0.68rem;color:var(--muted);cursor:pointer;margin-left:12px" title="When checked, the governor ignores budget limits entirely. No model downgrading, no kick skipping. Use with caution — spending will be uncapped until unchecked.">
         <input type="checkbox" ${budgetIgnored ? 'checked' : ''} onchange="toggleBudgetIgnore()" style="cursor:pointer;vertical-align:middle"> ignore budget
-      </label>`;
+      </label><button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend re-anchors at 0 and the window timer restarts. Budget enforcement stays on." style="margin-left:8px;padding:0 6px;font-size:0.64rem;background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;vertical-align:middle">reset window</button>`;
 
       return `<div class="budget-bar">
         <div class="budget-bar-label">
@@ -7852,6 +7873,10 @@ function burnAreaChart() {
     // spend reported by OpenRouter / LiteLLM gateways). Estimates are always
     // labeled "est." so they never masquerade as actual billing.
     const COST_POLL_MS = 60000;
+    // How many leading characters of a session id to show before eliding — full
+    // id stays available on hover (title). Session ids are UUID-length, so a
+    // short prefix is enough to disambiguate visually.
+    const COST_SESSION_ID_CHARS = 8;
     // Format a dollar amount with thousands separators (commas). Small amounts
     // keep 2-decimal cents; amounts >= $100 are shown as whole dollars but still
     // comma-grouped (e.g. $20,849). Sentinels for null / sub-cent are preserved.
@@ -7965,6 +7990,59 @@ function burnAreaChart() {
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
         : '';
 
+      // ── Per-sandbox (per-agent) estimated cost ──
+      // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
+      // per-agent breakdown. Sorted most-expensive first.
+      const bySandbox = (est.by_agent || []).slice().sort((a, b) => b.usd - a.usd);
+      const sandboxRows = bySandbox.map(a => {
+        const approx = a.source === 'unpriced';
+        const usdCell = approx
+          ? `<span title="tier estimate — no exact list price for this sandbox's model">~${fmtUSD(a.usd)}</span>`
+          : fmtUSD(a.usd);
+        return `<tr>
+          <td class="cmodel">${esc(a.name || 'unknown')}</td>
+          <td class="cnum">${fmtTokens(a.input)}</td>
+          <td class="cnum">${fmtTokens(a.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+      const sandboxTable = `
+        <div class="cost-subtable-title" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price)">usage by sandbox</div>
+        <table class="cost-table">
+          <thead><tr><th>sandbox (agent)</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${sandboxRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+        </table>`;
+
+      // ── Cost per session ──
+      // Each row is one agent run (session) inside its sandbox, priced from its
+      // own token splits. Backend already sorts most-expensive first and caps
+      // the count; we show the session id (shortened), owning sandbox, and model.
+      const bySession = est.by_session || [];
+      const shortId = (id) => {
+        const s = String(id || '');
+        return s.length > COST_SESSION_ID_CHARS ? s.slice(0, COST_SESSION_ID_CHARS) + '…' : (s || '—');
+      };
+      const sessionRows = bySession.map(sn => {
+        const approx = sn.source === 'unpriced';
+        const usdCell = approx
+          ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(sn.usd)}</span>`
+          : fmtUSD(sn.usd);
+        return `<tr>
+          <td class="csession" title="${esc(sn.session_id || '')}">${esc(shortId(sn.session_id))}</td>
+          <td class="cmodel">${esc(sn.agent || 'unknown')}</td>
+          <td class="cmodel">${esc(sn.model || '—')}</td>
+          <td class="cnum">${fmtTokens(sn.input)}</td>
+          <td class="cnum">${fmtTokens(sn.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+      const sessionTable = `
+        <div class="cost-subtable-title" title="Estimated cost for each individual agent session (sandbox run), most expensive first (token × list price)">cost per session</div>
+        <table class="cost-table">
+          <thead><tr><th>session</th><th>sandbox</th><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${sessionRows || '<tr><td colspan="6" style="color:var(--muted)">no sessions yet</td></tr>'}</tbody>
+        </table>`;
+
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
         <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
@@ -7977,6 +8055,8 @@ function burnAreaChart() {
           <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
           <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
+        ${sandboxTable}
+        ${sessionTable}
         ${unpricedNote}
         <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
       </div>`;
@@ -8802,6 +8882,9 @@ function burnAreaChart() {
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
+    // The automation vault the bead synthesizer owns. It is never a valid user
+    // import target and is filtered out of every channel picker (issue #3581).
+    const RESERVED_KB_CHANNEL = 'bead-synth-wiki';
     const KB_FACT_TYPES = ['pattern', 'gotcha', 'regression', 'decision', 'test_scaffold', 'integration', 'coverage_rule'];
 
     // ── Document Sources ──
@@ -10017,13 +10100,16 @@ function burnAreaChart() {
     }
 
     function kbOpenImport() {
-      const layers = (_kbCache || {}).layers || [];
+      // Writable channels only — exclude the reserved automation vault and
+      // read-only git sources so import never targets a non-writable layer (#3581).
+      const layers = ((_kbCache || {}).layers || []).filter(l =>
+        l && l.type && l.type !== RESERVED_KB_CHANNEL && !String(l.type).startsWith('git_source:'));
       let layerOpts = '';
-      for (const l of layers) {
-        const sel = l.type === 'project' ? ' selected' : '';
+      layers.forEach((l, i) => {
+        const sel = i === 0 ? ' selected' : '';
         layerOpts += `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
-      }
-      if (!layerOpts) layerOpts = '<option value="project">Project</option>';
+      });
+      if (!layerOpts) layerOpts = '<option value="" disabled selected>No channel yet — create one first</option>';
 
       const html = `
         <div class="stack">
@@ -10075,6 +10161,8 @@ function burnAreaChart() {
       const format = document.getElementById('kb-import-format')?.value;
 
       if (!content) { await hiveAlert('Content is required'); return; }
+      if (!layer) { await hiveAlert('Pick a channel to import into, or create one with "+ New channel".'); return; }
+      if (layer === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation. Choose or create another channel.'); return; }
 
       try {
         const r = await fetch('/api/knowledge/import', {
@@ -10087,6 +10175,86 @@ function burnAreaChart() {
         await hiveAlert('Imported ' + (data.imported || 0) + ' facts to ' + layer);
         fetchKnowledgeStats();
         kbSearch();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
+    // kbNewChannel reveals an inline text input to name a new knowledge channel
+    // (rather than a blocking window.prompt, which clashes with the dashboard's
+    // modal conventions). This is the path for adding knowledge on channels other
+    // than the reserved automation vault (issue #3581).
+    function kbNewChannel() {
+      const row = document.getElementById('kb-newchannel-row');
+      if (row) { row.style.display = 'flex'; document.getElementById('kb-newchannel-name')?.focus(); }
+    }
+
+    // kbCreateChannel POSTs the new channel, then adds + selects it in the import
+    // dropdown without a full re-render.
+    async function kbCreateChannel() {
+      const input = document.getElementById('kb-newchannel-name');
+      const name = input?.value?.trim();
+      if (!name) { await hiveAlert('Enter a channel name.'); return; }
+      if (name === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved for automation.'); return; }
+      try {
+        const r = await fetch('/api/knowledge/channels', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ name }),
+        });
+        const data = await r.json();
+        if (!r.ok) { await hiveAlert(data.error || 'Failed to create channel'); return; }
+        const created = (data.channel && data.channel.name) || name;
+        await fetchKnowledgeStats();
+        const sel = document.getElementById('kb-import-layer');
+        if (sel) {
+          let opt = Array.from(sel.options).find(o => o.value === created);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = created;
+            opt.textContent = KB_LAYER_LABELS[created] || created;
+            const ph = Array.from(sel.options).find(o => o.disabled);
+            if (ph) ph.remove();
+            sel.appendChild(opt);
+          }
+          sel.value = created;
+        }
+        if (input) input.value = '';
+        const row = document.getElementById('kb-newchannel-row');
+        if (row) row.style.display = 'none';
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
+    // kbRemoveChannel disconnects the currently-selected channel: it stops feeding
+    // agents (un-indexed), leaving its files on disk. Resolves the channel's
+    // on-disk path from the channels list, since disconnect keys on path.
+    async function kbRemoveChannel() {
+      const sel = document.getElementById('kb-import-layer');
+      const name = sel?.value;
+      if (!name) { await hiveAlert('No channel selected.'); return; }
+      if (name === RESERVED_KB_CHANNEL) { await hiveAlert(RESERVED_KB_CHANNEL + ' is reserved and cannot be removed.'); return; }
+      // Only user-created channels (vaults) are removable; the static writable
+      // layers (project/org/community/personal) are not channels we can disconnect.
+      if (['project', 'org', 'community', 'personal'].includes(name)) {
+        await hiveAlert('"' + name + '" is a built-in layer, not a removable channel.');
+        return;
+      }
+      if (!await hiveConfirm('Remove channel "' + name + '"? It stops feeding agents. By default the imported files stay on disk (you can re-add the channel later).', 'Remove channel')) return;
+      // Offer the destructive option separately, defaulting to keep-files.
+      const purge = await hiveConfirm('Also DELETE the imported files permanently? This cannot be undone.\n\nOK = delete files · Cancel = keep files on disk', 'Delete files?');
+      try {
+        // Resolve the channel name → on-disk path from the channels list.
+        const listR = await fetch('/api/knowledge/channels');
+        const channels = listR.ok ? await listR.json() : [];
+        const match = (channels || []).find(c => c.name === name);
+        if (!match || !match.root_dir) { await hiveAlert('Could not resolve the channel path to remove.'); return; }
+        const r = await fetch('/api/knowledge/vaults', {
+          method: 'DELETE', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ path: match.root_dir, purge }),
+        });
+        const data = await r.json();
+        if (!r.ok) { await hiveAlert(data.error || 'Failed to remove channel'); return; }
+        // Drop it from the dropdown and refresh stats.
+        const opt = Array.from(sel.options).find(o => o.value === name);
+        if (opt) opt.remove();
+        await fetchKnowledgeStats();
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
@@ -10265,10 +10433,18 @@ function burnAreaChart() {
         html += '</div>';
 
         // ── Import Facts section ──
-        const layerOpts2 = layers.map(l => {
-          const sel = l.type === 'project' ? ' selected' : '';
+        // Build the import-target list from user-WRITABLE channels only. The
+        // reserved automation vault (RESERVED_KB_CHANNEL) and read-only git-source
+        // pseudo-layers are excluded — offering them caused #3581, where importing
+        // into bead-synth-wiki failed with "has no configured endpoint". Users can
+        // also create a new channel inline; if there is nothing to import into yet,
+        // the select shows a disabled prompt rather than a bad target.
+        const importChannels = (layers || []).filter(l =>
+          l && l.type && l.type !== RESERVED_KB_CHANNEL && !String(l.type).startsWith('git_source:'));
+        const layerOpts2 = importChannels.map((l, i) => {
+          const sel = i === 0 ? ' selected' : '';
           return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
-        }).join('') || '<option value="project">Project</option>';
+        }).join('') || '<option value="" disabled selected>No channel yet — create one below</option>';
 
         html += '<div>';
         html += '<div class="row" style="margin-bottom:8px">';
@@ -10279,7 +10455,15 @@ function burnAreaChart() {
 
         html += '<details open style="margin-top:10px"><summary class="summary-label">Paste Content</summary>';
         html += '<div class="stack" style="margin-top:8px">';
-        html += `<select id="kb-import-layer" class="field-input">${layerOpts2}</select>`;
+        html += `<div style="display:flex;gap:8px;align-items:center">`;
+        html += `<select id="kb-import-layer" class="field-input" style="flex:1">${layerOpts2}</select>`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbNewChannel()" title="Create a new knowledge channel to import into">+ New channel</button>`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbRemoveChannel()" title="Remove the selected channel (stops it feeding agents; files remain on disk)">Remove</button>`;
+        html += `</div>`;
+        html += `<div id="kb-newchannel-row" style="display:none;gap:8px;align-items:center">`;
+        html += `<input id="kb-newchannel-name" type="text" class="kb-search-box" placeholder="New channel name (e.g. Runbooks)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();kbCreateChannel();}">`;
+        html += `<button class="nous-btn btn-blue" style="padding:8px 20px;white-space:nowrap" onclick="kbCreateChannel()">Create</button>`;
+        html += `</div>`;
         html += `<select id="kb-import-format" class="field-input">
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
@@ -14713,7 +14897,7 @@ function burnAreaChart() {
         if (!host) return;
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
-        renderBobKeyPanel(host, d.configured === true, d.source || '');
+        renderBobKeyPanel(host, d.configured === true, d.source || '', d.keyName || '');
       } catch (e) {
         host = host || document.getElementById('gov-bob-host');
         if (host) host.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Failed to load bob key status: ' + esc(e.message) + '</div>';
@@ -14721,11 +14905,17 @@ function burnAreaChart() {
     }
 
     // renderBobKeyPanel paints the bob credential card. `source` is the safe
-    // source string only; the key value never reaches this function.
-    function renderBobKeyPanel(host, configured, source) {
+    // source string only; the key value never reaches this function. `keyName`
+    // is the operator-chosen LABEL for the key (also safe to show) — it lets a
+    // manager see WHICH key this hive uses without the secret. Empty on hives
+    // that never recorded a name, which we render as "(unnamed)".
+    function renderBobKeyPanel(host, configured, source, keyName) {
       if (!host) return;
+      const nameLabel = configured
+        ? ' <strong style="color:var(--fg)">' + esc(keyName || '(unnamed)') + '</strong>'
+        : '';
       const statusLine = configured
-        ? '<span style="color:var(--green)">✓ Key set</span>' + (source ? ' <span style="color:var(--muted)">(' + esc(source) + ')</span>' : '')
+        ? '<span style="color:var(--green)">✓ Key set</span>' + nameLabel + (source ? ' <span style="color:var(--muted)">(' + esc(source) + ')</span>' : '')
         : '<span style="color:var(--muted)">No key set — agents using bob cannot start.</span>';
       host.innerHTML = `
         <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px">
@@ -14753,7 +14943,7 @@ function burnAreaChart() {
       // via the agent-card dispatcher) because this panel is repainted on every
       // set/clear and owns its own buttons.
       const setBtn = host.querySelector('[data-action="bobKeySet"]');
-      if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source));
+      if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source, keyName));
       const clearBtn = host.querySelector('[data-action="bobKeyClear"]');
       if (clearBtn) clearBtn.addEventListener('click', clearBobKey);
       // Test the SAVED key from the card: result goes to the card's inline
@@ -15391,8 +15581,12 @@ function burnAreaChart() {
       }
       host.innerHTML = _gateways.map(function(gw) {
         const meta = gatewayKindMeta(gw.kind);
+        // keyName is the operator-chosen LABEL for the key (safe to show, never
+        // the secret). When a key is set we surface it — a recorded name, or
+        // "(unnamed)" for gateways that never recorded one — so a manager can
+        // tell WHICH key each gateway uses without seeing the value.
         const keyLine = gw.hasKey
-          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''}`
+          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''} · Using key: ${esc(gw.keyName || '(unnamed)')}`
           : 'no key';
         return `
         <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
@@ -15533,7 +15727,7 @@ function burnAreaChart() {
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
-      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false, project_id: '' };
+      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false, project_id: '', keyName: '' };
       const presetButtons = GATEWAY_PRESETS.map(function(p) {
         const active = gw.kind === p.kind;
         return `<button type="button" onclick="applyGatewayPreset('${p.kind}')" data-gw-preset="${p.kind}" style="padding:5px 12px;border:1px solid ${active ? 'var(--cyan)' : 'var(--border)'};border-radius:6px;background:${active ? 'var(--cyan)' : 'var(--bg)'};color:${active ? 'var(--bg)' : 'var(--fg)'};cursor:pointer;font-size:0.74rem;font-weight:600">${esc(p.label)}</button>`;
@@ -15563,6 +15757,11 @@ function burnAreaChart() {
             <label>API Key</label>
             <input type="password" id="gw-apikey" value="" autocomplete="new-password" placeholder="${gw.hasKey ? '(key is set — enter a new key to replace it)' : 'sk-…'}" onchange="onGatewayEndpointOrKeyChange()">
             <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Stored as a secret on this hive (owner-only file), never in config.</div>
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>Key name <span style="color:var(--muted);font-weight:400">(optional label, not the secret)</span></label>
+            <input type="text" id="gw-key-name" value="${esc(gw.keyName || '')}" autocomplete="off" spellcheck="false" maxlength="128" placeholder="e.g. Team inference key">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">A plaintext label that records WHICH key this is so you can tell keys apart later — never the value. Leave blank for "(unnamed)".</div>
           </div>
           <div class="config-field" style="margin-bottom:10px">
             <label>Default Model</label>
@@ -15730,6 +15929,7 @@ function burnAreaChart() {
       const endpoint = (document.getElementById('gw-endpoint') || {}).value || '';
       const apiKey = (document.getElementById('gw-apikey') || {}).value || '';
       const projectId = (document.getElementById('gw-project-id') || {}).value || '';
+      const keyName = (document.getElementById('gw-key-name') || {}).value || '';
       const defaultModel = gatewayCurrentDefaultModel();
       const resultEl = document.getElementById('gw-form-result');
       if (!name.trim()) { showToast('Gateway name is required', 'error'); return; }
@@ -15743,6 +15943,11 @@ function burnAreaChart() {
         // Always sent so clearing the field on a non-watsonx gateway persists;
         // omitempty on the server keeps it out of hive.yaml when blank.
         project_id: projectId.trim(),
+        // The optional plaintext LABEL for the key (never the value). Always
+        // sent (even empty) so blanking the field clears a stale name; the
+        // server trims and length-bounds it, and omitempty keeps it out of
+        // hive.yaml when blank.
+        key_name: keyName.trim(),
       };
       // Persist the watsonx region (the preset derives the endpoint from it and
       // the server can too when the endpoint is blank).
@@ -19305,7 +19510,7 @@ function burnAreaChart() {
       }
     }
 
-    function openBobKeyDialog(configured, source) {
+    function openBobKeyDialog(configured, source, keyName) {
       var overlay = document.getElementById('bob-key-overlay');
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
@@ -19342,6 +19547,16 @@ function burnAreaChart() {
               'style="color:#4589ff">bob Shell setup</a>' +
           '</div>' +
         '</div>' +
+        /* Optional label. Not a secret — it records WHICH key this is
+           (e.g. "Team inference key") so managers can tell keys apart later
+           without ever seeing the value. Pre-filled with the current name so
+           a plain "Replace key" keeps it. */
+        '<label for="bob-key-name-input" style="display:block;font-size:0.78rem;color:var(--muted);margin:8px 0 4px">' +
+          'Key name <span style="color:var(--muted)">(optional label, not the secret)</span></label>' +
+        '<input id="bob-key-name-input" type="text" autocomplete="off" spellcheck="false" maxlength="128" ' +
+          'placeholder="e.g. Team inference key" value="' + esc(keyName || '') + '" ' +
+          'style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);' +
+          'background:var(--panel);color:var(--fg);margin:0 0 8px">' +
         '<input id="bob-key-input" type="password" autocomplete="off" spellcheck="false" ' +
           'placeholder="Paste the bob API key" ' +
           'style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);' +
@@ -19394,13 +19609,18 @@ function burnAreaChart() {
       if (saveBtn) saveBtn.addEventListener('click', async function() {
         var key = (input && input.value || '').trim();
         if (!key) { setStatus('Paste a key first.', 'var(--red)'); return; }
+        // The name is an optional plaintext label sent alongside the key. Always
+        // sending the field (even empty) lets the operator clear a stale name by
+        // blanking it; the server trims and length-bounds it.
+        var nameInput = document.getElementById('bob-key-name-input');
+        var keyName = (nameInput && nameInput.value || '').trim();
         saveBtn.disabled = true;
         setStatus('Saving…');
         try {
           var resp = await fetch('/api/config/governor/bob', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apiKey: key })
+            body: JSON.stringify({ apiKey: key, keyName: keyName })
           });
           var data = await resp.json().catch(function() { return {}; });
           if (!resp.ok) {
