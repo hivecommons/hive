@@ -44,15 +44,15 @@ import (
 // key is missing and the hive is in dashboard-only mode).
 
 const (
-	// pullSnapshotIntervalHours is the minimum age of the newest snapshot before
-	// a new one is taken. The SHA poller ticks every latestSHAPollInterval (2m),
-	// far more often than we want to record a data point, so the snapshot step is
-	// guarded to run at most once per this many hours.
-	pullSnapshotIntervalHours = 24
-
-	// pullHistoryWindowDays is how many daily snapshots the rolling series
-	// retains. Older entries are pruned on every write so the file stays bounded.
-	pullHistoryWindowDays = 30
+	// pullReleaseWindow is how many recent v2 RELEASES (distinct SHAs) the series
+	// retains. Each release records the cumulative pull count at the moment it was
+	// first seen; the pulls attributed to a release are the cumulative delta from
+	// the PREVIOUS release to the next, i.e. the pulls that landed while that
+	// release was newest. Older entries are pruned on every write.
+	//
+	// One extra is kept internally (window+1 snapshots) because N release BARS
+	// need N+1 cumulative readings to bound N windows.
+	pullReleaseWindow = 10
 
 	// pullPageTimeout bounds the single HTTP GET of the public package page.
 	pullPageTimeout = 10 * time.Second
@@ -74,10 +74,12 @@ var imagePullsPath = "/data/saas/image-pulls.json"
 // the <h3> are separated only by whitespace/markup, matched non-greedily.
 var totalDownloadsRe = regexp.MustCompile(`(?s)Total downloads.*?<h3[^>]*\btitle="(\d+)"`)
 
-// pullSnapshot is one daily data point: the cumulative total-downloads counter
-// as read on Date. Deltas between consecutive snapshots give pulls/day.
+// pullSnapshot is one RELEASE data point: the cumulative total-downloads counter
+// as read when the v2 latest SHA first became SHA. Deltas between consecutive
+// releases give the pulls that landed while a release was newest.
 type pullSnapshot struct {
-	Date       string `json:"date"`       // YYYY-MM-DD (UTC) the snapshot was taken
+	SHA        string `json:"sha"`        // short v2 release SHA this snapshot bounds
+	Date       string `json:"date"`       // YYYY-MM-DD (UTC) the release was first seen
 	Cumulative int64  `json:"cumulative"` // cumulative total downloads at that time
 }
 
@@ -134,42 +136,33 @@ func persistImagePullsLocked(logger *slog.Logger) {
 	}
 }
 
-// pruneOldSnapshots returns the newest pullHistoryWindowDays entries, sorted by
-// date ascending. It also collapses duplicate dates (keeping the last write for
-// a given day) so a same-day re-snapshot never double-counts.
+// pruneOldSnapshots keeps the newest (pullReleaseWindow + 1) RELEASE snapshots in
+// insertion order (chronological — the poller only ever appends the current
+// release), collapsing consecutive duplicates of the same SHA (last-write-wins)
+// so a re-observed release never double-counts. window+1 snapshots bound window
+// release BARS. Legacy day-keyed snapshots (no SHA, from before this change) are
+// dropped so the series cleanly re-seeds on the release model.
 func pruneOldSnapshots(in []pullSnapshot) []pullSnapshot {
 	if len(in) == 0 {
 		return nil
 	}
-	// Collapse by date, last-write-wins.
-	byDate := make(map[string]pullSnapshot, len(in))
-	order := make([]string, 0, len(in))
+	out := make([]pullSnapshot, 0, len(in))
 	for _, s := range in {
-		if _, seen := byDate[s.Date]; !seen {
-			order = append(order, s.Date)
+		if s.SHA == "" {
+			continue // drop legacy day-keyed entries
 		}
-		byDate[s.Date] = s
+		if n := len(out); n > 0 && out[n-1].SHA == s.SHA {
+			out[n-1] = s // same release re-observed → last-write-wins
+			continue
+		}
+		out = append(out, s)
 	}
-	sortStrings(order)
-	out := make([]pullSnapshot, 0, len(order))
-	for _, d := range order {
-		out = append(out, byDate[d])
-	}
-	if len(out) > pullHistoryWindowDays {
-		out = out[len(out)-pullHistoryWindowDays:]
+	if keep := pullReleaseWindow + 1; len(out) > keep {
+		out = out[len(out)-keep:]
 	}
 	return out
 }
 
-// sortStrings sorts a slice of date strings ascending. YYYY-MM-DD sorts
-// lexicographically the same as chronologically, so a plain string sort works.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
-}
 
 // fetchCumulativePulls reads the exact cumulative "Total downloads" count from
 // the public package page. A var so tests can stub the network round-trip.
@@ -220,23 +213,27 @@ var fetchCumulativePulls = func(ctx context.Context, logger *slog.Logger) (int64
 	return n, true
 }
 
-// maybeSnapshotImagePulls records a new daily snapshot if the newest one is
-// older than pullSnapshotIntervalHours. Called from the SHA poller each tick;
-// the interval guard makes it a no-op most ticks. It restores from disk on first
-// call. now is injected so tests control the clock.
+// maybeSnapshotImagePulls records a new snapshot when the current v2 RELEASE SHA
+// differs from the newest snapshot's SHA — i.e. at each new release boundary. It
+// captures the cumulative pull count at that moment, so the pulls attributed to
+// the PREVIOUS release are (this snapshot's cumulative − that release's
+// cumulative). Called from the SHA poller each tick; a no-op on ticks where the
+// v2 SHA hasn't advanced. It restores from disk on first call. now is injected so
+// tests control the clock.
 func (s *HubServer) maybeSnapshotImagePulls(ctx context.Context, now time.Time) {
 	loadPersistedImagePulls(s.logger)
 
+	sha := getLatestSHAForBranch("v2")
+	if sha == "" {
+		return // v2 SHA not resolved yet (early boot) — nothing to key on
+	}
+	sha = shortSHA(sha)
 	today := now.UTC().Format("2006-01-02")
 
 	imagePullsMu.Lock()
 	due := true
-	if n := len(imagePullSeries); n > 0 {
-		last := imagePullSeries[n-1]
-		// Already have today's point → nothing to do.
-		if last.Date == today {
-			due = false
-		}
+	if n := len(imagePullSeries); n > 0 && imagePullSeries[n-1].SHA == sha {
+		due = false // already recorded this release
 	}
 	imagePullsMu.Unlock()
 	if !due {
@@ -250,42 +247,51 @@ func (s *HubServer) maybeSnapshotImagePulls(ctx context.Context, now time.Time) 
 
 	imagePullsMu.Lock()
 	defer imagePullsMu.Unlock()
-	// Re-check under lock in case a concurrent tick already wrote today's point.
-	if n := len(imagePullSeries); n > 0 && imagePullSeries[n-1].Date == today {
+	// Re-check under lock in case a concurrent tick already recorded this release.
+	if n := len(imagePullSeries); n > 0 && imagePullSeries[n-1].SHA == sha {
 		return
 	}
 	imagePullSeries = pruneOldSnapshots(append(imagePullSeries, pullSnapshot{
+		SHA:        sha,
 		Date:       today,
 		Cumulative: cumulative,
 	}))
 	persistImagePullsLocked(s.logger)
-	s.logger.Info("image pulls: recorded daily snapshot", "date", today, "cumulative", cumulative)
+	s.logger.Info("image pulls: recorded release snapshot", "sha", sha, "date", today, "cumulative", cumulative)
 }
 
-// imagePullPoint is one day of the DELTA series returned to the frontend.
+// imagePullPoint is one RELEASE's pulls in the series returned to the frontend:
+// the pulls that landed while SHA was the newest v2 release (cumulative delta from
+// the release BEFORE it to the release after it).
 type imagePullPoint struct {
-	Date  string `json:"date"`  // YYYY-MM-DD
-	Pulls int64  `json:"pulls"` // pulls that landed that day (cumulative delta)
+	SHA   string `json:"sha"`   // short v2 release SHA
+	Date  string `json:"date"`  // YYYY-MM-DD the release was first seen
+	Pulls int64  `json:"pulls"` // pulls during this release's window
 }
 
 // imagePullsResponse is the /api/hub/image-pulls payload.
 type imagePullsResponse struct {
-	// Points is the day-over-day delta series. It has one fewer entry than the
-	// snapshot series (a delta needs two cumulative readings), so with only one
-	// snapshot so far it is empty and the frontend shows "collecting…".
+	// Points is the per-release series (oldest→newest), up to pullReleaseWindow
+	// entries. N bars need N+1 cumulative snapshots, so with fewer than two
+	// snapshots it is empty and the frontend shows "collecting…".
 	Points []imagePullPoint `json:"points"`
-	// Total30d is the sum of the deltas in the window (pulls over the period).
-	Total30d int64 `json:"total_30d"`
-	// Latest is the most recent day's pulls, or 0 when not enough data yet.
+	// TotalWindow is the sum of pulls across the releases in the window.
+	TotalWindow int64 `json:"total_window"`
+	// Latest is the most recent release's pulls, or 0 when not enough data yet.
 	Latest int64 `json:"latest"`
-	// Collecting is true until there are at least two snapshots — i.e. until a
-	// delta can be computed. The frontend renders "collecting…" instead of a
-	// broken one-point chart.
+	// Releases is how many release bars are in Points.
+	Releases int `json:"releases"`
+	// Collecting is true until there are at least two release snapshots — i.e.
+	// until one release window can be closed. The frontend renders "collecting…"
+	// instead of a broken zero-bar chart.
 	Collecting bool `json:"collecting"`
 }
 
-// buildImagePullsResponse converts the cumulative snapshot series into daily
-// deltas. Split out from the handler so it is unit-testable without HTTP.
+// buildImagePullsResponse converts the cumulative release-snapshot series into
+// per-release pull windows. Split out from the handler so it is unit-testable
+// without HTTP. Each bar i is the cumulative delta between release i and i+1, so
+// the NEWEST snapshot (the current release, still accruing) does not yet get its
+// own closed bar — its window closes when the next release lands.
 func buildImagePullsResponse(series []pullSnapshot) imagePullsResponse {
 	resp := imagePullsResponse{Points: []imagePullPoint{}}
 	if len(series) < 2 {
@@ -299,12 +305,19 @@ func buildImagePullsResponse(series []pullSnapshot) imagePullsResponse {
 		if delta < 0 {
 			delta = 0
 		}
-		resp.Points = append(resp.Points, imagePullPoint{Date: series[i].Date, Pulls: delta})
-		resp.Total30d += delta
+		// The bar belongs to the EARLIER release (series[i-1]) — those are the
+		// pulls that landed while it was the newest release, up to the next one.
+		resp.Points = append(resp.Points, imagePullPoint{
+			SHA:   series[i-1].SHA,
+			Date:  series[i-1].Date,
+			Pulls: delta,
+		})
+		resp.TotalWindow += delta
 	}
 	if n := len(resp.Points); n > 0 {
 		resp.Latest = resp.Points[n-1].Pulls
 	}
+	resp.Releases = len(resp.Points)
 	return resp
 }
 
