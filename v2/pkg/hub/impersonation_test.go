@@ -153,6 +153,12 @@ func TestWriteBlockedDuringImpersonation(t *testing.T) {
 	rec := httptest.NewRecorder()
 	post := httptest.NewRequest(http.MethodPost, "/api/saas/hives", strings.NewReader("{}"))
 	post.Header.Set("Content-Type", "application/json")
+	// AUDIT F4: without an Origin this now stops at the CSRF gate with 403. The
+	// status would still be 403, so the test would keep passing while no longer
+	// exercising the IMPERSONATION write-block it is named for — the "read-only"
+	// body assertion below is what catches the difference. Send the same-origin
+	// header a real browser would so the request reaches the block under test.
+	post.Header.Set("Origin", "https://hive.kubestellar.io")
 	post.AddCookie(testAuthCookie(hubAdminUsername))
 	post.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
 	guardedAuth(rec, post)
@@ -171,6 +177,7 @@ func TestWriteBlockedDuringImpersonation(t *testing.T) {
 	guardedAdmin := s.requireAdmin(next)
 	rec = httptest.NewRecorder()
 	del := httptest.NewRequest(http.MethodDelete, "/api/saas/admin/users/alice", nil)
+	del.Header.Set("Origin", "https://hive.kubestellar.io") // see the note on `post` above (F4)
 	del.AddCookie(testAuthCookie(hubAdminUsername))
 	del.AddCookie(impersonateCookie(hubAdminUsername, "alice", now))
 	guardedAdmin(rec, del)

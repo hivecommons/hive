@@ -156,6 +156,7 @@ func TestWSAuthRevoked(t *testing.T) {
 	// missing role, see requireContributorWrite / C5 fix).
 	revokeReq := httptest.NewRequest(http.MethodPost, "/api/contributors/"+reg["contributor_id"]+"/revoke", nil)
 	revokeReq.Header.Set("X-Hive-Role", "owner")
+	revokeReq.Header.Set(ownerRoleVerifiedHeader, "true")
 	revokeW := httptest.NewRecorder()
 	s.mux.ServeHTTP(revokeW, revokeReq)
 

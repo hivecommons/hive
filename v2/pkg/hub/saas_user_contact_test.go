@@ -23,6 +23,11 @@ func contactUpdateHandler(srv *HubServer) http.Handler {
 func contactPutRequest(username, body, asUser string) *http.Request {
 	req := httptest.NewRequest("PUT", "/api/saas/admin/users/"+username, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	// AUDIT F4: mutations fail closed without Origin/Referer. These tests cover
+	// admin contact-field authorization and caps; the same-origin header keeps
+	// them past the CSRF gate so they still exercise that. CSRF itself is
+	// asserted in csrf_f4_fail_closed_test.go.
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
 	if asUser != "" {
 		req.AddCookie(testAuthCookie(asUser))
 	}

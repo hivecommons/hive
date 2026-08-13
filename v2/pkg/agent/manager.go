@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -54,6 +55,14 @@ const (
 	paneCaptureSleep     = 500 * time.Millisecond
 	proxyListenPort      = 18443
 	proxyCACertPath      = "/data/proxy-ca.pem"
+
+	// fullLogCaptureLines bounds the "download/view full log" capture (see
+	// CaptureFullLog). tmux's -S - captures the entire scrollback, but a wedged
+	// agent that has spammed for hours can hold a very large buffer; this caps the
+	// number of lines pulled back from the tail so the endpoint stays bounded.
+	// It is deliberately far larger than the tmux history-limit tmux is usually
+	// started with, so in practice it returns the WHOLE retained session.
+	fullLogCaptureLines = 50000
 )
 
 var defaultTmuxSocket string
@@ -2610,6 +2619,42 @@ func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
 	return string(out)
 }
 
+// CaptureFullLog returns the agent's full retained tmux scrollback for its
+// current (latest) session, as plain text. It backs the dashboard's
+// "download / view full log" controls (issue #3693): the browser Terminal only
+// shows the last screenful, so this pulls the whole retained buffer — from the
+// tail up to fullLogCaptureLines — using the SAME per-agent socket + su-exec
+// path as every other capture, so it works under per-UID isolation.
+//
+// The capture is bounded to the current tmux session, so it is scoped to the
+// agent's latest run (a restart kills and recreates the session, dropping the
+// prior run's scrollback). It is NOT delimited to a run boundary WITHIN a
+// long-lived session; when an agent has been kicked repeatedly without a
+// restart, the buffer holds multiple kicks' output back to the tmux
+// history-limit. That is an accepted v1 limitation — the whole retained
+// session is returned.
+func (m *Manager) CaptureFullLog(name string) (string, error) {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("agent %s not found", name)
+	}
+	if agent.tmuxSession == "" {
+		return "", fmt.Errorf("agent %s has no active session", name)
+	}
+	// -S -<n>: start n lines back into history; -E -: through the last visible
+	// line; -J: join wrapped lines so copied text is not hard-wrapped at the
+	// pane width; -p: print to stdout. -1: keep the tail behaviour bounded.
+	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
+		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("capturing pane for %s: %w", name, err)
+	}
+	return string(out), nil
+}
+
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
 func (m *Manager) captureVisiblePaneForAgent(agent *AgentProcess) string {
 	if m.visiblePaneCapture != nil {
@@ -5162,8 +5207,9 @@ func (m *Manager) seedJSONFile(agentName, path string, seed map[string]any) {
 // ensureClaudeSettings creates a per-agent writable HOME directory for inference
 // agents with pre-populated .claude/settings.json. Each agent gets its own dir
 // to avoid cross-agent permission conflicts when Claude Code creates session
-// files. Directories use 0o777 so the agent UID can create subdirs freely
-// (hive runs as dev, not root, so chown is not available).
+// files. Directories are created 0o700 and chowned to the agent UID where the
+// deployment permits it (the hosted container runs as root), falling back to
+// 0o777 only where chown is refused — see tightenInferenceHome.
 //
 // The .claude.json and settings.json seeds are repaired on every call
 // (missing keys merged in, corrupt files rewritten) so agents launched by
@@ -5174,7 +5220,11 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	settingsDir := filepath.Join(homePath, ".claude")
 	settingsFile := filepath.Join(settingsDir, "settings.json")
 
-	if err := os.MkdirAll(settingsDir, inferenceHomeDirMode); err != nil {
+	// SECURITY (audit F12): os.MkdirAll stats components with a
+	// symlink-FOLLOWING stat, so a pre-planted link at the predictable anchor
+	// redirected everything below — including the root-privileged Chown/Chmod
+	// in tightenInferenceHome. mkdirAllNoFollow Lstats every component instead.
+	if err := mkdirAllNoFollow(inferenceHomeRoot(), settingsDir, inferenceHomeDirMode); err != nil {
 		m.logger.Warn("failed to create claude inference home", "agent", agentName, "error", err)
 		return
 	}
@@ -5343,11 +5393,110 @@ const (
 	inferenceHomeSharedDirMode = 0o777
 )
 
+// errInferenceHomeSymlink reports that a path component of an inference HOME is
+// a symlink, so the caller must not act on it (audit F12).
+var errInferenceHomeSymlink = errors.New("inference home path component is a symlink")
+
+// lstatNoFollow reports whether path exists and is a real directory, refusing a
+// symlink (audit F12).
+//
+// Returns (false, nil) when the path does not exist yet — the normal first-run
+// case, which the callers create. Any symlink, at any component, is
+// errInferenceHomeSymlink: acting on it is exactly the redirection this guard
+// exists to stop.
+func lstatNoFollow(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("%w: %s", errInferenceHomeSymlink, path)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("inference home path is not a directory: %s", path)
+	}
+	return true, nil
+}
+
+// mkdirAllNoFollow creates dir and any missing parents BELOW root, refusing to
+// traverse or create through a symlink (audit F12).
+//
+// SECURITY: os.MkdirAll stats each component with a symlink-FOLLOWING stat and
+// is happy to treat a link-to-directory as an existing component, so a
+// pre-planted link at the predictable anchor
+// (/tmp/.claude-inference-home-<agent>) silently redirects the whole subtree —
+// and with it the path-based Chown/Chmod in tightenInferenceHome, which run as
+// root in the hosted container. Lstat-ing every component below root closes
+// that: a planted link fails loudly instead of redirecting.
+//
+// root is RESOLVED rather than Lstat-refused: it is the operator-controlled
+// container path (/tmp, or a test temp dir), and on macOS /tmp is itself a
+// symlink to private/tmp — refusing it would break every real launch. The
+// threat model is a link planted at the AGENT-controlled anchor below root, so
+// resolving root and then Lstat-ing every component beneath it is what matters.
+// root always already exists and is never created here.
+func mkdirAllNoFollow(root, dir string, perm os.FileMode) error {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	// Re-anchor dir onto the resolved root so Rel compares like with like.
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	root = resolvedRoot
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("inference home %s escapes root %s", dir, root)
+	}
+	current := root
+	if rel == "." {
+		return nil
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		exists, err := lstatNoFollow(current)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if err := os.Mkdir(current, perm); err != nil && !os.IsExist(err) {
+			return err
+		}
+		// Re-check: os.Mkdir returning EEXIST means something raced us into
+		// place, and that something may be a symlink.
+		if _, err := lstatNoFollow(current); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// inferenceHomeRoot returns the directory the per-agent inference HOMEs are
+// created in — /tmp in production, the override's parent under test.
+func inferenceHomeRoot() string {
+	if inferenceHomePrefixOverride != "" {
+		return filepath.Dir(inferenceHomePrefixOverride)
+	}
+	return filepath.Dir(claudeInferenceHomePrefix)
+}
+
 // tightenInferenceHome tries to give the agent UID sole ownership of its
 // inference HOME, falling back to the historical world-writable mode when the
 // hive lacks the privilege to chown. Best-effort by design: every failure path
-// leaves a WORKING home, because the O_NOFOLLOW writers — not this — are what
-// close audit F12.
+// leaves a WORKING home.
+//
+// SECURITY (audit F12): os.Chown and os.Chmod both FOLLOW symlinks, and this
+// runs as root in the hosted container, so each directory is Lstat-verified as
+// a real directory immediately before it is acted on. A planted link is skipped
+// loudly rather than having the hive's own privilege redirected onto whatever
+// it points at. The leaf O_NOFOLLOW writers do NOT cover this: they protect
+// files, and these are the ANCHOR DIRECTORIES.
 func (m *Manager) tightenInferenceHome(agentName, homePath, settingsDir string, uid int) {
 	if uid <= 0 {
 		// No per-agent UID: the hive itself is the only writer, so 0700 owned
@@ -5355,6 +5504,11 @@ func (m *Manager) tightenInferenceHome(agentName, homePath, settingsDir string, 
 		return
 	}
 	for _, dir := range []string{homePath, settingsDir} {
+		if exists, err := lstatNoFollow(dir); err != nil || !exists {
+			m.logger.Warn("refusing to tighten inference home (not a real directory)",
+				"agent", agentName, "dir", dir, "error", err)
+			continue
+		}
 		if err := os.Chown(dir, uid, -1); err != nil {
 			// Unprivileged deployment. Restore the shared mode so the agent can
 			// still use its HOME, and say so once at debug level rather than

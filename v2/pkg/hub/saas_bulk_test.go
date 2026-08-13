@@ -50,6 +50,12 @@ func bulkPost(t *testing.T, srv *HubServer, user string, body any) (*httptest.Re
 	}
 	req := httptest.NewRequest("POST", "/api/saas/hives/bulk", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
+	// AUDIT F4: mutations now fail CLOSED without Origin/Referer, so this helper
+	// must send the header a real browser would. These tests are about bulk
+	// action semantics (caps, dedup, per-hive ownership), not about CSRF — the
+	// CSRF behaviour is asserted directly in csrf_f4_fail_closed_test.go. Without
+	// this every case here would stop at 403 and silently test nothing.
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
 	if user != "" {
 		req.AddCookie(testAuthCookie(user))
 	}

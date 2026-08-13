@@ -54,7 +54,7 @@ func getGrantableUsers(t *testing.T, s *HubServer, username string) *httptest.Re
 		// key the hub verifies session cookies with.
 		req.AddCookie(&http.Cookie{
 			Name:  "hive_hub_user",
-			Value: mintHubUserCookieValue(deriveDomainKey(grantableTestSecret, infoSessionKey), username),
+			Value: mintHubUserCookieValueV2(deriveDomainKey(grantableTestSecret, infoSessionEd25519Seed), username),
 		})
 	}
 	rec := httptest.NewRecorder()

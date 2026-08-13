@@ -287,20 +287,53 @@ func spokeDomainKey(envVar, info string) string {
 	return deriveDomainKey(strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")), info)
 }
 
+// EnvHiveID is the spoke's own hive identity, injected into every hosted
+// Deployment and read by loadOrGenerateHiveID as the authoritative source. It is
+// the second input SpokeHeartbeatKey needs to SELF-DERIVE the per-hive bearer.
+const EnvHiveID = "HIVE_ID"
+
 // SpokeHeartbeatKey returns the bearer a spoke presents on /api/heartbeat and
 // /api/task-status. Exported for use from the dashboard/heartbeat call sites.
 //
-// N1 note: a hub-provisioned spoke gets HIVE_HEARTBEAT_KEY, which is now the
-// PER-HIVE bearer — no spoke-side change is needed, the value in the env var
-// simply becomes identity-bound at the next re-provision.
+// Resolution order, most to least identity-bound (audit F2):
 //
-// The HIVE_HUB_SECRET fallback below still derives the FLEET-wide bearer, and
-// deliberately so: it serves self-hosted operators who legitimately hold the
-// master and beat against their own hub, where "any spoke can claim any ID" is
-// not a cross-tenant concern because there is exactly one tenant. The hub keeps
-// accepting that value through verifyHeartbeatBearer's legacy lane. A hosted
-// spoke cannot reach this path — it never receives the master.
-func SpokeHeartbeatKey() string { return spokeDomainKey(EnvHeartbeatKey, infoHeartbeatKey) }
+//  1. HIVE_HEARTBEAT_KEY — the hub-injected value. Since the N1 provisioning
+//     change this IS the per-hive bearer, so a spoke provisioned at any point
+//     after that change is already identity-bound with no code involved.
+//  2. Self-derived per-hive bearer, from HIVE_HUB_SECRET + HIVE_ID. This is the
+//     lane that makes an IN-PLACE cutover possible without re-provisioning.
+//  3. Fleet-wide derivation from HIVE_HUB_SECRET alone — the legacy value, kept
+//     only for a spoke that genuinely cannot identify itself (no HIVE_ID).
+//
+// Lane 2 is the F2 fix. The per-hive bearer is HMAC(master, info || 0x00 ||
+// hiveID) — a pure function of two things the spoke ALREADY HOLDS. Any spoke
+// with both the master and its own hive ID can compute the identity-bound bearer
+// itself, with no hub action, no new secret, and no re-provision. Measured on the
+// live fleet, 62 of 65 spokes are already on lane 1 and the remaining 3 have
+// HIVE_HEARTBEAT_KEY absent but HIVE_HUB_SECRET and HIVE_ID both present — so
+// they move from the fleet-wide bearer to the per-hive one the moment they roll
+// this code, which is what lets the hub's legacy lane be deleted afterwards.
+//
+// A spoke deriving lane 2 is strictly SAFER than one deriving lane 3: it presents
+// a credential that only authenticates as itself. This does not weaken the
+// self-hosted case either — a single-tenant operator's hub re-derives the same
+// per-hive value from the same master, so verification succeeds unchanged.
+//
+// Lane 3 remains only for the degenerate "master but no identity" configuration.
+// derivePerHiveKey returns "" for an empty hive ID rather than silently sharing
+// one key again, so that case is detected rather than assumed away.
+func SpokeHeartbeatKey() string {
+	if v := strings.TrimSpace(os.Getenv(EnvHeartbeatKey)); v != "" {
+		return v
+	}
+	master := strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET"))
+	if hiveID := strings.TrimSpace(os.Getenv(EnvHiveID)); hiveID != "" {
+		if perHive := derivePerHiveKey(master, infoHeartbeatKey, hiveID); perHive != "" {
+			return perHive
+		}
+	}
+	return deriveDomainKey(master, infoHeartbeatKey)
+}
 
 // SpokeSessionKey returns the key a spoke uses to VERIFY the hub-minted
 // `hive_hub_user` session/terminal cookie. It signs nothing on the spoke.

@@ -6682,7 +6682,7 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6723,7 +6723,7 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6858,7 +6858,7 @@ func normalizeUniqueAgentRoles(in []string) []string {
 }
 
 func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -6959,7 +6959,7 @@ func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	id := r.PathValue("id")

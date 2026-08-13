@@ -394,7 +394,20 @@ func verifyHubUserCookieEitherAt(pubHex, legacySecret, value string, now time.Ti
 	if u, ok := verifyHubUserCookieValueV2(pubHex, value); ok {
 		return u, true
 	}
-	return verifyHubUserCookieValue(legacySecret, value)
+	// AUDIT F1 (Critical, open across four audits): the legacy symmetric lane is
+	// GONE. It verified the cookie against HIVE_SESSION_KEY, which provisioning
+	// injects byte-identically into every spoke — so any spoke operator could mint
+	// "username.HMAC(username)" and be accepted as a hub admin on ~21 admin routes.
+	//
+	// It survived four audits only because cutting it would have broken v2 spokes
+	// mid-rollout. The whole fleet now runs v4 and production mints V2/Ed25519
+	// (oauth.go mintSessionCookies), so the compatibility argument is void and the
+	// lane is deleted rather than deprecated. legacySecret is retained in the
+	// signature but is deliberately unused: callers still pass it, and accepting
+	// and ignoring it is safer than a signature change that a merge could
+	// mis-resolve into re-enabling the lane.
+	_ = legacySecret
+	return "", false
 }
 
 // hubCookieIsV3 reports whether a cookie value carries the F10 format. Rollout

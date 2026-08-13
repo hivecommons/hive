@@ -124,13 +124,48 @@ func canonicalizeLegacy(id string) string {
 }
 
 // canonicalEqual reports whether two identity strings denote the same user,
-// tolerant of legacy (bare) vs canonical form and case-insensitive on the
-// GitHub-login subject (GitHub logins are case-insensitive; OIDC subs are exact
-// but a case-fold on an opaque sub is harmless because two subs that differ only
-// by case are not issued). Use this in place of raw string / EqualFold(Owner,…)
-// comparisons.
+// tolerant of legacy (bare) vs canonical form. Use this in place of raw string /
+// EqualFold(Owner,…) comparisons.
+//
+// AUDIT F17. This used to be a flat strings.EqualFold over the whole canonical
+// id, justified by "a case-fold on an opaque sub is harmless because two subs
+// that differ only by case are not issued". That holds for GitHub, whose logins
+// are genuinely case-insensitive and cannot collide. It is NOT guaranteed for
+// any OIDC provider: `sub` is defined as a case-SENSITIVE opaque string, and an
+// operator-run IdP (custom:, and Entra/Okta/Auth0/Keycloak behind it) may issue
+// subs that differ only by case — a base64/base64url sub does this routinely.
+// Under the old fold, `custom:AbC` and `custom:abc` were the same user, so a
+// self-registerable IdP account was a path to another tenant's hives.
+//
+// So the comparison is now provider-aware:
+//
+//   - the PROVIDER label always folds — it is a fixed keyword from
+//     identityProviders, and "GitHub:" vs "github:" is just wire noise.
+//   - a github SUBJECT folds — GitHub logins are case-insensitive, and folding
+//     is required for the legacy shim (a stored "ClubAnderson" must still match
+//     an authenticated "github:clubanderson").
+//   - every OTHER provider's subject compares EXACTLY. This is the strict
+//     direction: it can only ever refuse a match the old code accepted, and the
+//     only matches it refuses are ones that were never the same principal.
 func canonicalEqual(a, b string) bool {
-	return strings.EqualFold(canonicalizeLegacy(a), canonicalizeLegacy(b))
+	ca, cb := canonicalizeLegacy(a), canonicalizeLegacy(b)
+	if ca == "" || cb == "" {
+		return ca == cb
+	}
+	pa, sa, oka := parseCanonical(ca)
+	pb, sb, okb := parseCanonical(cb)
+	if !oka || !okb {
+		// Unparseable / unknown-provider ids are not identities we can reason
+		// about per-provider. Compare them exactly — the conservative choice.
+		return ca == cb
+	}
+	if pa != pb {
+		return false
+	}
+	if pa == legacyProvider {
+		return strings.EqualFold(sa, sb)
+	}
+	return sa == sb
 }
 
 // filenameHexUpper is the alphabet for the "-XX-" escape used by

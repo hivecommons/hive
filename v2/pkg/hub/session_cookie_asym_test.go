@@ -3,6 +3,7 @@ package hub
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // N2 (CWE-321/798): the hub session cookie must be ASYMMETRICALLY signed.
@@ -108,11 +109,8 @@ func TestSessionCookieDualVerifyDuringRollout(t *testing.T) {
 	v2Cookie := mintHubUserCookieValueV2(s.sessionSigningSeed(), "alice")
 	legacyCookie := mintHubUserCookieValue(legacySecret, "bob")
 
-	if u, ok := verifyHubUserCookieEither(pub, legacySecret, v2Cookie); !ok || u != "alice" {
-		t.Errorf("v2 cookie failed dual-verify: (%q,%v)", u, ok)
-	}
-	if u, ok := verifyHubUserCookieEither(pub, legacySecret, legacyCookie); !ok || u != "bob" {
-		t.Errorf("legacy cookie failed dual-verify: (%q,%v) — live sessions would break at deploy", u, ok)
+	if _, ok := verifyHubUserCookieEitherAt(pub, legacySecret, legacyCookie, time.Now(), nil); ok {
+		t.Error("AUDIT F1: the legacy symmetric cookie must NOT verify — that lane is deleted")
 	}
 
 	// And once the legacy secret is withdrawn (the follow-up removal PR), the

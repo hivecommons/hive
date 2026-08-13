@@ -112,7 +112,10 @@ func gitPullWithEnv(ctx context.Context, dir string, env []string) error {
 	pullCtx, cancel := context.WithTimeout(ctx, gitPullTimeoutSeconds*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(pullCtx, "git", "pull", "--ff-only")
+	// AUDIT F8 (residual): `--ff-only` bounds what git will MERGE, not where it
+	// will FETCH FROM. Without redirect suppression the remote can 302 this pull
+	// at an internal address after the URL passed validation. See gitNoRedirectArgs.
+	cmd := exec.CommandContext(pullCtx, "git", gitCmdArgs("pull", "--ff-only")...)
 	cmd.Dir = dir
 	cmd.Env = env
 

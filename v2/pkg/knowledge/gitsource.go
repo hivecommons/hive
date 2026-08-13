@@ -204,7 +204,7 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 
 	args = append(args, "--", g.config.URL, g.cloneDir)
 
-	cmd := exec.CommandContext(cloneCtx, "git", args...)
+	cmd := exec.CommandContext(cloneCtx, "git", gitCmdArgs(args...)...)
 	cmd.Env = gitSourceEnv()
 
 	output, err := cmd.CombinedOutput()
@@ -474,6 +474,30 @@ func isSCPStyleGitURL(raw string) bool {
 	at := strings.Index(raw, "@")
 	colon := strings.Index(raw, ":")
 	return at > 0 && colon > at+1
+}
+
+// gitNoRedirectArgs are the leading `git -c …` overrides that forbid a remote
+// from bouncing a fetch to a different host AFTER the URL has passed validation.
+//
+// AUDIT F8 (residual). The DNS-pinning fix closed the "resolve the validated
+// hostname to 127.0.0.1" hole, but validation still only inspects the URL the
+// operator configured. git follows HTTP 3xx by default, so a public, allow-listed
+// remote can answer the very first request with `302 Location:
+// http://169.254.169.254/…` (or any in-cluster service) and git will happily
+// re-issue the request there — with credentials, and with every URL/DNS check
+// already behind it. `http.followRedirects=false` makes git treat a redirect as
+// an error instead of a destination, so a validated URL is the ONLY URL fetched.
+//
+// This is passed as `-c` args rather than an env var because there is no
+// GIT_HTTP_FOLLOW_REDIRECTS; http.followRedirects is config-only, and repo-local
+// config is attacker-influenced on a re-used clone dir whereas `-c` on the
+// command line wins over every config file.
+var gitNoRedirectArgs = []string{"-c", "http.followRedirects=false"}
+
+// gitCmdArgs prefixes a git argument list with the redirect suppression above.
+// Every git invocation that talks to a REMOTE must go through this.
+func gitCmdArgs(args ...string) []string {
+	return append(append([]string{}, gitNoRedirectArgs...), args...)
 }
 
 func gitSourceEnv() []string {
