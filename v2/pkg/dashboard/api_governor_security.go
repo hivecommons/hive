@@ -7,7 +7,16 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
+// handleGovernorSecurity serves PUT /api/config/governor/security. It is
+// OWNER-ONLY: the body carries agentSandboxEnabled, ioscanFailMode and
+// intentEnforce, so an un-gated version let any read-write member turn the
+// agent sandbox off outright. Every sibling governor-config handler
+// (health/logging/hub/trajectory/thresholds/...) already calls requireOwnerRole;
+// this one was the outlier. Audit F16 (2026-08-13).
 func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		IoscanEnabled        *bool     `json:"ioscanEnabled"`
 		IoscanFailMode       *string   `json:"ioscanFailMode"`
