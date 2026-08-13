@@ -380,7 +380,7 @@ func (s *HubServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	scoped := make([]RegistryEntry, 0, len(s.registry.Hives))
 	for _, h := range s.registry.Hives {
-		if isAdmin || strings.EqualFold(strings.TrimSpace(h.Owner), strings.TrimSpace(username)) {
+		if isAdmin || canonicalEqual(h.Owner, username) {
 			scoped = append(scoped, h)
 		}
 	}

@@ -69,7 +69,7 @@ func (s *HubServer) ownsHiveForFunding(username, hiveID string) bool {
 		return true
 	}
 	h := loadSaaSHive(hiveID)
-	if h != nil && strings.EqualFold(h.Owner, username) {
+	if h != nil && canonicalEqual(h.Owner, username) {
 		return true
 	}
 	if u := loadSaaSUser(username); u != nil {

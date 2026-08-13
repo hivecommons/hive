@@ -828,12 +828,73 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	return user.Login
 }
 
+// saaSUserFilePaths returns the candidate on-disk paths for an identity, in
+// read/try order: the canonical filename first, then the legacy "<login>.json"
+// fallback for a bare or github: identity. The caller has already rejected
+// path-traversal characters in the raw username.
+func saaSUserFilePaths(username string) []string {
+	var paths []string
+	if stem, err := encodeUserFilename(username); err == nil {
+		paths = append(paths, filepath.Join(saasUsersDir, stem+".json"))
+	}
+	provider, subject, ok := parseCanonical(username)
+	if ok && provider == legacyProvider {
+		legacy := filepath.Join(saasUsersDir, subject+".json")
+		if len(paths) == 0 || paths[0] != legacy {
+			paths = append(paths, legacy)
+		}
+	}
+	return paths
+}
+
+// readSaaSUserFile reads a user's JSON, trying the canonical filename then the
+// legacy fallback (see saaSUserFilePaths). Returns the first file that reads.
+func readSaaSUserFile(username string) ([]byte, error) {
+	var firstErr error
+	for _, p := range saaSUserFilePaths(username) {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			return data, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = os.ErrNotExist
+	}
+	return nil, firstErr
+}
+
+// saveSaaSUserPath returns the file path a user record is written to. A GitHub
+// (or bare-legacy) primary keeps its legacy "<login>.json" so existing records
+// are updated in place with no rename; a non-GitHub primary writes the canonical
+// "<provider>.<subject>.json".
+func saveSaaSUserPath(u *SaaSUser) (string, error) {
+	// The record's primary identity. Today this is GitHubUsername (a bare login
+	// for GitHub users, or a canonical id once non-GitHub records exist in 1d+).
+	id := u.GitHubUsername
+	provider, subject, ok := parseCanonical(id)
+	if !ok {
+		return "", fmt.Errorf("invalid identity for save: %q", id)
+	}
+	if provider == legacyProvider {
+		return filepath.Join(saasUsersDir, subject+".json"), nil
+	}
+	stem, err := encodeUserFilename(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(saasUsersDir, stem+".json"), nil
+}
+
 func loadSaaSUser(username string) *SaaSUser {
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
 		return nil
 	}
-	path := filepath.Join(saasUsersDir, username+".json")
-	data, err := os.ReadFile(path)
+	// Dual-read: try the canonical filename ("google.1078.json") then the legacy
+	// "<login>.json". No file is rewritten — existing users resolve via legacy.
+	data, err := readSaaSUserFile(username)
 	if err != nil {
 		return nil
 	}
@@ -866,7 +927,10 @@ func saveSaaSUser(u *SaaSUser) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(saasUsersDir, u.GitHubUsername+".json")
+	path, err := saveSaaSUserPath(u)
+	if err != nil {
+		return err
+	}
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return err
@@ -910,7 +974,14 @@ func listAllSaaSUsers() []SaaSUser {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		u := loadSaaSUser(strings.TrimSuffix(e.Name(), ".json"))
+		stem := strings.TrimSuffix(e.Name(), ".json")
+		// A canonical filename ("google.1078", "github.foo") decodes to its wire
+		// id; a legacy filename ("foo") does not — load it as the bare login.
+		key := stem
+		if id, ok := decodeUserFilename(stem); ok {
+			key = id
+		}
+		u := loadSaaSUser(key)
 		if u != nil {
 			users = append(users, *u)
 		}
@@ -2590,7 +2661,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result = append(result, entry)
 			continue
 		}
-		if strings.EqualFold(h.Owner, username) {
+		if canonicalEqual(h.Owner, username) {
 			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
@@ -2638,7 +2709,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, sh := range listSaaSHives() {
-		if (sh.Owner == username || isAdmin) && !seen[sh.ID] {
+		if (canonicalEqual(sh.Owner, username) || isAdmin) && !seen[sh.ID] {
 			user.Hives[sh.ID] = "owner"
 			entry := MyHiveEntry{
 				RegistryEntry: RegistryEntry{
@@ -2889,7 +2960,7 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 			hiveAccess[h.ID] = hiveAccessInfo{Role: role, Status: "accepted"}
 			continue
 		}
-		if strings.EqualFold(h.Owner, username) {
+		if canonicalEqual(h.Owner, username) {
 			hiveAccess[h.ID] = hiveAccessInfo{Role: "owner", Status: "accepted"}
 			continue
 		}
@@ -3141,7 +3212,7 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		if _, hasAccess := user.Hives[id]; !hasAccess {
 			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			return
@@ -3228,7 +3299,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			return
 		}
-		if h := loadSaaSHive(id); h != nil && h.Owner == username {
+		if h := loadSaaSHive(id); h != nil && canonicalEqual(h.Owner, username) {
 			role = saasRoleOwner
 		} else if r, ok := user.Hives[id]; ok {
 			role = r
@@ -3276,7 +3347,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can delete this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -3347,7 +3418,7 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can migrate this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -3692,7 +3763,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
@@ -3781,7 +3852,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
 		return
 	}
@@ -3916,7 +3987,7 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"hive not found — only hosted hives can be toggled from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can change visibility"}`, http.StatusForbidden)
 		return
 	}
@@ -4003,7 +4074,7 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found — only hosted hives can be renamed from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can rename this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -4126,7 +4197,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			Repos: regEntry.Repos,
 		}
 	}
-	if h.Owner != username && !isHubAdmin(username) {
+	if !canonicalEqual(h.Owner, username) && !isHubAdmin(username) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
@@ -5454,7 +5525,7 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 	// hive with no owner fell through and its raw config was fetchable by ANY
 	// authenticated hub user. Fail closed: only the site admin may pull an
 	// ownerless hive's config.
-	if !isHubAdmin(caller) && (owner == "" || caller != owner) {
+	if !isHubAdmin(caller) && (owner == "" || !canonicalEqual(caller, owner)) {
 		http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -5600,7 +5671,7 @@ func userIsHiveOwner(username string, h *SaaSHive) bool {
 	if isHubAdmin(username) {
 		return true
 	}
-	if strings.EqualFold(h.Owner, username) {
+	if canonicalEqual(h.Owner, username) {
 		return true
 	}
 	u := loadSaaSUser(username)
