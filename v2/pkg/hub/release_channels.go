@@ -138,6 +138,11 @@ var ghcrTagDigest = func(repo, tag string, logger *slog.Logger) string {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tok); err != nil {
+		// Previously silent. A malformed token response makes every subsequent
+		// manifest HEAD unauthorized, so the whole channel block renders
+		// "unknown" with nothing in the log to explain why.
+		logger.Warn("channel resolve: GHCR token response was not decodable",
+			"repo", repo, "tag", tag, "status", tokenResp.StatusCode, "error", err)
 		return ""
 	}
 	req, _ := http.NewRequest("HEAD", fmt.Sprintf("%s/v2/%s/manifests/%s", ghcrBase, repo, tag), nil)
@@ -150,9 +155,21 @@ var ghcrTagDigest = func(repo, tag string, logger *slog.Logger) string {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// Previously silent, which is how an auth/permission regression on the
+		// package (401/403) or a channel CI never published (404) could blank
+		// the dashboard's channel rows with zero diagnostic trace.
+		logger.Warn("channel resolve: GHCR manifest HEAD returned non-OK",
+			"repo", repo, "tag", tag, "status", resp.StatusCode)
 		return ""
 	}
-	return resp.Header.Get("Docker-Content-Digest")
+	digest := resp.Header.Get("Docker-Content-Digest")
+	if digest == "" {
+		// A 200 with no digest header is a registry contract violation; without
+		// this the tag silently behaves as if it did not exist.
+		logger.Warn("channel resolve: GHCR returned 200 without Docker-Content-Digest",
+			"repo", repo, "tag", tag)
+	}
+	return digest
 }
 
 // resolveChannelTargets builds the channel→image association from digests
@@ -189,7 +206,14 @@ func resolveChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []
 	for _, ch := range releaseChannels {
 		t := ChannelTarget{Channel: ch}
 		t.Digest = ghcrTagDigest(ghcrRepoSpoke, ch, logger)
-		if t.Digest != "" {
+		if t.Digest == "" {
+			// The channel row will render "unknown". Say so once, at the level
+			// that knows it is a CHANNEL failing rather than an anonymous tag
+			// lookup, so an operator seeing "unknown" on the dashboard can find
+			// the reason without attaching a debugger.
+			logger.Warn("channel resolve: channel did not resolve to any image — the dashboard will render it as \"unknown\"",
+				"channel", ch, "repo", ghcrRepoSpoke)
+		} else {
 			// Branch stays empty when the digest matches nothing tracked. That
 			// is a real state (a channel pinned to an older build), and the UI
 			// renders it as such rather than inventing an attribution.
@@ -226,8 +250,23 @@ func getChannelTargets(branchSHAs map[string]string, logger *slog.Logger) []Chan
 			break
 		}
 	}
-	if !resolvedAny && len(stale) > 0 {
-		return stale
+	if !resolvedAny {
+		// Nothing resolved at all — the registry was unreachable, not "the
+		// channels vanished".
+		//
+		// Serve the previous good answer when there is one. When there is NOT
+		// (cold cache: the hub started while GHCR was unreachable), return the
+		// empty rows WITHOUT caching them. Caching here latched "unknown" for
+		// the full channelDigestTTL, so a hub that lost one refresh showed no
+		// channel association for five minutes and no amount of reloading the
+		// dashboard would fix it. Leaving the cache untouched means the very
+		// next poll retries.
+		logger.Warn("channel resolve: no channel resolved to an image — serving the previous answer if one exists, and retrying on the next poll",
+			"had_previous", len(stale) > 0)
+		if len(stale) > 0 {
+			return stale
+		}
+		return fresh
 	}
 
 	channelTargetMu.Lock()

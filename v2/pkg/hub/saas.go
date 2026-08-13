@@ -653,20 +653,82 @@ func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// isCSRFSafe reports whether a request may be allowed to MUTATE state.
+//
+// AUDIT F4 (replay half). This used to end with
+//
+//	return strings.Contains(ct, "application/json")
+//
+// which meant a mutation carrying NEITHER Origin NOR Referer was treated as
+// safe as long as it said `Content-Type: application/json`. That fails OPEN, and
+// the Content-Type is not a defence: it is fully attacker-controlled, and — the
+// part that actually matters — Origin is absent in exactly the cases CSRF cares
+// about. A browser omits Origin on plenty of navigations and redirect-issued
+// requests, and Referer is routinely stripped by
+// `Referrer-Policy: no-referrer`, privacy extensions, and corporate proxies. So
+// "no headers" was never a reliable signal of "not a browser"; it was a signal
+// of "we cannot tell", and the old code resolved that ambiguity in the
+// attacker's favour on every requireAuth and requireAdmin write.
+//
+// It now fails CLOSED: a mutation must positively demonstrate it is either
+// same-origin or not-a-browser. There are exactly two ways to do that.
+//
+//  1. Origin (preferred) or Referer matches the hub. Browsers attach Origin to
+//     every cross-origin mutation and cannot forge it from script, which is what
+//     makes it load-bearing.
+//
+//  2. The request authenticates with `Authorization: Bearer …` and sends NO
+//     session cookie. This is the explicit non-browser lane, and it is safe for
+//     a structural reason rather than a stylistic one: CSRF is an AMBIENT
+//     credential attack. A cross-site request rides the cookie the browser
+//     attaches automatically; it cannot attach an Authorization header, because
+//     setting one from script requires CORS permission the hub never grants. A
+//     request whose ONLY credential is a bearer token therefore cannot be
+//     cross-site forged — the attacker would need the token itself, at which
+//     point CSRF is irrelevant.
+//
+//     The "no session cookie" half is not optional. If a request carrying the
+//     ambient cookie could opt out of the CSRF check merely by ALSO presenting a
+//     header, then an attacker who can get any header set (or a stale token
+//     lying in a client) re-opens the hole. Cookie present ⇒ ambient credential
+//     ⇒ Origin must be proven.
+//
+// See getRealAuthUser: Bearer is already a first-class authentication path here,
+// so this is not a new trust surface, only an explicit statement of which lane a
+// caller is using.
 func isCSRFSafe(r *http.Request) bool {
 	if r.Method == "GET" || r.Method == "HEAD" || r.Method == "OPTIONS" {
 		return true
 	}
-	origin := r.Header.Get("Origin")
-	if origin != "" {
+	// Origin first: it is present on cross-origin browser mutations and cannot
+	// be spoofed by page script.
+	if origin := r.Header.Get("Origin"); origin != "" {
 		return isSameOriginAsHub(origin)
 	}
-	referer := r.Header.Get("Referer")
-	if referer != "" {
+	if referer := r.Header.Get("Referer"); referer != "" {
 		return isSameOriginAsHub(referer)
 	}
-	ct := r.Header.Get("Content-Type")
-	return strings.Contains(ct, "application/json")
+	// No origin information. The ONLY remaining way to be safe is to prove this
+	// is not an ambient-credential browser request.
+	return isNonBrowserAPIRequest(r)
+}
+
+// isNonBrowserAPIRequest reports whether a request authenticates purely with a
+// bearer token and carries no ambient session cookie — the one shape that is
+// structurally immune to CSRF. See isCSRFSafe for why both halves are required.
+func isNonBrowserAPIRequest(r *http.Request) bool {
+	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		return false
+	}
+	// Any hub session cookie means an ambient credential is in play, and the
+	// request must prove its origin like any other browser mutation. Checked by
+	// presence, not by validity: an INVALID cookie still means a browser sent
+	// one, and letting a bogus cookie value re-enable the bearer bypass would be
+	// a trivially attacker-satisfiable condition.
+	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
+		return false
+	}
+	return true
 }
 
 // hubCanonicalHost is the ONE host that serves the hub's own dashboard and API.

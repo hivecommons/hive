@@ -28,6 +28,25 @@ type Finding struct {
 	Detail    string    `json:"detail,omitempty"`
 	File      string    `json:"file,omitempty"`
 	Line      int       `json:"line,omitempty"`
+	// PathStale is set by VerifyFindingPaths when File names a repo file path
+	// that does NOT exist at the digest's analyzed snapshot (Digest.AnalyzedSnapshot).
+	// Such a finding was generated against a different/older tree than the one
+	// cited in the digest — rendering its path as a live reference would repeat
+	// the "docs/install.md that isn't there" bug (#3704). The renderer marks it
+	// as outdated instead of emitting a dead file reference.
+	PathStale bool `json:"path_stale,omitempty"`
+}
+
+// Snapshot identifies the single commit that a digest's analysis is pinned to.
+// The advisory generator resolves the target repo's latest commit ONCE at the
+// start of a post cycle and records it here, so (a) every file reference in the
+// digest can be verified against one consistent tree and (b) the exact version
+// analyzed is cited in the posted comment (#3704).
+type Snapshot struct {
+	Owner  string `json:"owner"`
+	Repo   string `json:"repo"`
+	Branch string `json:"branch,omitempty"`
+	SHA    string `json:"sha"`
 }
 
 // ResolvedFinding is a closed advisory bead shown in the "Recently Resolved" section.
@@ -45,6 +64,13 @@ type Digest struct {
 	ByAgent          map[string][]Finding `json:"by_agent"`
 	TotalCount       int                  `json:"total_count"`
 	RecentlyResolved []ResolvedFinding    `json:"recently_resolved,omitempty"`
+	// AnalyzedSnapshot, when set, pins the digest to a single repo commit: the
+	// latest commit of the target repo as of when this post cycle started. It is
+	// cited in the rendered comment and used by VerifyFindingPaths to detect
+	// findings whose file paths no longer exist at that commit (#3704). nil keeps
+	// the previous behavior (no citation, no verification) for callers/tests that
+	// do not resolve a snapshot.
+	AnalyzedSnapshot *Snapshot `json:"analyzed_snapshot,omitempty"`
 }
 
 // Store manages advisory findings on disk.
@@ -394,6 +420,73 @@ func repoHintFromTitle(title string, num int, org string) (string, string, bool)
 	return "", "", false
 }
 
+// isFilePathRef reports whether ref denotes a repository file path (as opposed
+// to a GitHub issue/PR reference). File-path refs are the ones formatFindingRef
+// renders as `file:line` code spans and the ones VerifyFindingPaths checks for
+// existence at the analyzed snapshot. A gh-N ref ("gh-123") or an inline issue
+// ref ("repo#123", "owner/repo#123") is NOT a file path.
+func isFilePathRef(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if ghNumRefPattern.MatchString(ref) {
+		return false
+	}
+	if inlineRefPattern.FindString(ref) == ref {
+		return false
+	}
+	return true
+}
+
+// splitFilePathRef separates a "path:line" style ref into its path component.
+// Only a trailing ":<digits>" is treated as a line suffix; colons elsewhere
+// (rare in repo paths) are left in the path. Returns the bare path.
+func splitFilePathRef(ref string) string {
+	if i := strings.LastIndex(ref, ":"); i > 0 {
+		if _, err := strconv.Atoi(ref[i+1:]); err == nil {
+			return ref[:i]
+		}
+	}
+	return ref
+}
+
+// VerifyFindingPaths checks every finding whose File names a repository file
+// path against the digest's analyzed snapshot and marks those that do not exist
+// at that commit as PathStale. This is the direct guard for #3704: a finding
+// generated against an older tree (e.g. one citing "docs/install.md" that was
+// since removed) must not be rendered as a live file reference under a commit
+// citation where the file is absent.
+//
+// exists is called with the bare file path (line suffix stripped) and must
+// report whether that path exists at the snapshot commit. It is only called for
+// file-path refs, so gh-issue/PR refs never trigger a network lookup. If the
+// digest has no AnalyzedSnapshot, or exists is nil, VerifyFindingPaths is a
+// no-op — callers that do not pin a snapshot keep the previous behavior.
+func VerifyFindingPaths(d *Digest, exists func(path string) bool) {
+	if d == nil || d.AnalyzedSnapshot == nil || exists == nil {
+		return
+	}
+	// Cache results per path: the same file commonly backs multiple findings,
+	// and existence at a fixed commit is stable for the whole cycle.
+	checked := make(map[string]bool)
+	for agent, findings := range d.ByAgent {
+		for i := range findings {
+			f := &findings[i]
+			if !isFilePathRef(f.File) {
+				continue
+			}
+			path := splitFilePathRef(f.File)
+			ok, seen := checked[path]
+			if !seen {
+				ok = exists(path)
+				checked[path] = ok
+			}
+			f.PathStale = !ok
+		}
+		d.ByAgent[agent] = findings
+	}
+}
+
 // FormatDigestMarkdown formats a digest as markdown for posting to GitHub.
 // Findings are grouped by severity (high→low) with a summary table, then
 // listed with their source agent — this gives repo owners a quick "what matters"
@@ -416,6 +509,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		b.WriteString("This comment is updated periodically.\n\n")
 		b.WriteString("**Findings:** 0 — all previously reported findings are resolved. ✅\n\n")
 		writeRecentlyResolved(&b, d, org, primaryRepo)
+		writeAnalyzedFooter(&b, d)
 		return NeutralizeMentions(b.String())
 	}
 
@@ -462,7 +556,16 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))
 		for _, f := range items {
-			loc := formatFindingRef(logscrub.ScrubString(f.File), f.Line, org, primaryRepo, f.Title)
+			var loc string
+			if f.PathStale {
+				// The file path does not exist at the analyzed commit (#3704):
+				// do not render it as a live `file` reference — it would point
+				// at a path that isn't there. Flag the finding as outdated
+				// instead so a reader knows to disregard the stale location.
+				loc = " _(file path not found at analyzed commit — finding may be outdated)_"
+			} else {
+				loc = formatFindingRef(logscrub.ScrubString(f.File), f.Line, org, primaryRepo, f.Title)
+			}
 			title := logscrub.ScrubString(f.Title)
 			detail := logscrub.ScrubString(f.Detail)
 			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, linkifyRefs(title, org), loc, f.Agent))
@@ -474,6 +577,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	}
 
 	writeRecentlyResolved(&b, d, org, primaryRepo)
+	writeAnalyzedFooter(&b, d)
 
 	// Findings quote agent output verbatim and routinely name humans
 	// ("PR #665, by @omerap12"). The digest comment is rewritten every cycle,
@@ -509,6 +613,32 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
 	}
 	b.WriteString("\n")
+}
+
+// writeAnalyzedFooter cites the exact repo commit this digest's analysis is
+// pinned to (#3704, invariant 2). Rendered only when a snapshot was resolved;
+// callers that do not pin one (older flows, tests) get no footer.
+func writeAnalyzedFooter(b *strings.Builder, d *Digest) {
+	s := d.AnalyzedSnapshot
+	if s == nil || s.SHA == "" {
+		return
+	}
+	shortSHA := s.SHA
+	const shortSHALen = 12
+	if len(shortSHA) > shortSHALen {
+		shortSHA = shortSHA[:shortSHALen]
+	}
+	b.WriteString("---\n")
+	if s.Owner != "" && s.Repo != "" {
+		commitURL := fmt.Sprintf("https://github.com/%s/%s/commit/%s", s.Owner, s.Repo, s.SHA)
+		fmt.Fprintf(b, "*Analyzed at [`%s/%s@%s`](%s)", s.Owner, s.Repo, shortSHA, commitURL)
+	} else {
+		fmt.Fprintf(b, "*Analyzed at `%s`", shortSHA)
+	}
+	if s.Branch != "" {
+		fmt.Fprintf(b, " (branch `%s`)", s.Branch)
+	}
+	b.WriteString(" — the latest commit when this digest was generated. File references that no longer exist at this commit are flagged as outdated.*\n")
 }
 
 // SetLatestDigest stores the most recent digest for dashboard access.

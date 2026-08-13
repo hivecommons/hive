@@ -21,7 +21,7 @@ func postSlack(t *testing.T, username, body string, path string, pathVals map[st
 	if username != "" {
 		req.AddCookie(&http.Cookie{
 			Name:  "hive_hub_user",
-			Value: mintHubUserCookieValue(deriveDomainKey(slackTestSecret, infoSessionKey), username),
+			Value: mintHubUserCookieValueV2(deriveDomainKey(slackTestSecret, infoSessionEd25519Seed), username),
 		})
 	}
 	rec := httptest.NewRecorder()
