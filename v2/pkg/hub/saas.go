@@ -3392,15 +3392,11 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// Mint the handoff token. Without a hub secret we can't sign one, so fall
 	// back to a plain dashboard redirect (spoke will prompt for login).
 	//
-	// Dual-mint (transitional v2→v4 backport): a v4 spoke verifies SSO with an
-	// Ed25519 PUBLIC key and CANNOT verify a legacy symmetric HMAC token; the 33
-	// old spokes verify symmetric and CANNOT verify Ed25519. So the hub must mint
-	// the scheme THIS consuming hive can verify. We branch per-hive on a positive
-	// v4 signal (hiveWantsEd25519SSO: the console-hive allowlist plus a
-	// heartbeat-reported v4 commit/image), and DEFAULT to the legacy symmetric
-	// mint for every hive not positively identified as v4 — so the old fleet is
-	// never broken. Once all hives report a v4 version this becomes version-driven
-	// and the allowlist can be retired.
+	// Ed25519-only: every v4 spoke verifies SSO handoff tokens with an Ed25519
+	// PUBLIC key (see MintSSOToken/VerifySSOToken in sso.go). There is no
+	// per-hive branching or legacy symmetric fallback here — the hub always
+	// mints with its Ed25519 signing seed, and a spoke that cannot verify
+	// Ed25519 tokens simply falls through to the plain dashboard redirect below.
 	if s.hubSecret != "" {
 		if tok := MintSSOToken(s.ssoSigningSeed(), username, role, id, time.Now()); tok != "" {
 			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
