@@ -402,6 +402,15 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 			uid, lookupErr := LookupUIDByLocalPort(port)
 			if lookupErr == nil {
 				agentName = p.uidMap.LookupByUID(uid)
+				// The hive's own control plane is not an agent, so the lookup
+				// above returns "". Under v4's forced-proxy egress that made
+				// every hive-originated write — notably the App installation
+				// token mint — look like an unattributable agent, which the
+				// mode gate blocks. Name it explicitly so it is attributed
+				// rather than mistaken for a UID-attribution failure.
+				if agentName == "" && p.uidMap.IsInternalUID(uid) {
+					agentName = internalCallerName
+				}
 			}
 		}
 	}
@@ -843,6 +852,11 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			}
 			req.Body = io.NopCloser(strings.NewReader(string(body)))
 			req.ContentLength = int64(len(body))
+		} else if agentName == internalCallerName {
+			// The hive itself has no ACMM mode to enforce — ACMM governs AGENT
+			// autonomy. Its control-plane calls (App token mint, heartbeat)
+			// must not be gated as if they were agent writes. Repo-filter and
+			// canary-egress checks below still apply.
 		} else if !AllowedByMode(mode, req.Method, req.URL.Path) {
 			blocked = true
 			// An unidentified agent is silently treated as ADVISORY, which turns
@@ -1012,6 +1026,14 @@ func githubWriteBodyMayLeak(method, path string) bool {
 func isGitReceivePack(path string) bool {
 	return strings.HasSuffix(path, "/git-receive-pack")
 }
+
+// internalCallerName attributes a connection that originated from the hive's
+// OWN control plane rather than from a sandboxed agent. It is deliberately not
+// a valid agent name (agents come from the UID map) so it can never collide
+// with one, and it is what distinguishes "the hive called GitHub" from the
+// genuine failure mode the mode gate warns about: "an agent's UID could not be
+// attributed". See UIDMap.IsInternalUID for the security argument.
+const internalCallerName = "hive-internal"
 
 func (p *GitHubProxy) recordViolation(agentName, method, path string) {
 	p.logger.Warn("proxy request blocked", "agent", agentName, "method", method, "path", path)
