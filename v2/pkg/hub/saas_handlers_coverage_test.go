@@ -28,9 +28,15 @@ const testHubSecret = "test-hub-secret-f4"
 // the hub now verifies session cookies with. A cookie signed with the raw master
 // no longer verifies (that is the whole point of the fix), so tests must sign
 // with the session sub-key to match getAuthUser / handleAuthUser.
+// testAuthCookie mints the cookie production mints: V2 / Ed25519.
+//
+// AUDIT F1: this helper used to mint the LEGACY symmetric format keyed on the
+// derived session key. That lane is deleted (any spoke holds the same key, so
+// accepting it means any spoke can forge hub admin), and a test helper that
+// keeps minting it would silently exercise a path production no longer has.
 func testAuthCookie(username string) *http.Cookie {
-	sessionKey := deriveDomainKey(testHubSecret, infoSessionKey)
-	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValue(sessionKey, username)}
+	seed := deriveDomainKey(testHubSecret, infoSessionEd25519Seed)
+	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValueV2(seed, username)}
 }
 
 // heartbeatBearer returns the derived HEARTBEAT-domain bearer for a given master

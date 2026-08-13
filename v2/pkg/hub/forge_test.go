@@ -324,7 +324,7 @@ func postForgeSwitch(t *testing.T, s *HubServer, hiveID, username, body string) 
 	if username != "" {
 		req.AddCookie(&http.Cookie{
 			Name:  "hive_hub_user",
-			Value: mintHubUserCookieValue(deriveDomainKey(forgeTestSecret, infoSessionKey), username),
+			Value: mintHubUserCookieValueV2(deriveDomainKey(forgeTestSecret, infoSessionEd25519Seed), username),
 		})
 	}
 	rec := httptest.NewRecorder()

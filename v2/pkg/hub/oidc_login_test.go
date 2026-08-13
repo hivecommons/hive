@@ -150,13 +150,18 @@ func TestOIDCCallback_CreatesCanonicalUser(t *testing.T) {
 	}
 
 	// The session cookie is minted over the canonical id and verifies through
-	// the hub's own verifier (Ed25519 v2 format).
+	// the hub's own verifier.
+	//
+	// AUDIT F10 — updated from hubCookieIsV2 to hubCookieIsV3, a tightening
+	// rather than a relaxation: v3 is Ed25519-signed like v2 and additionally
+	// carries a signed expiry and a revocable session id. See the same change in
+	// oauth_provision_coverage_test.go.
 	var gotSession bool
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "hive_hub_user" && c.Value != "" {
 			gotSession = true
-			if !hubCookieIsV2(c.Value) {
-				t.Errorf("hive_hub_user is not the Ed25519 v2 format: %q", c.Value)
+			if !hubCookieIsV3(c.Value) {
+				t.Errorf("hive_hub_user is not the Ed25519 v3 format: %q", c.Value)
 			}
 			if user, ok := s.verifyHubUserCookie(c.Value); !ok || user != "google:"+sub {
 				t.Errorf("hive_hub_user verifies to %q (ok=%v), want google:%s", user, ok, sub)

@@ -98,17 +98,61 @@ func (r *revokedSessions) isRevoked(sid string, now time.Time) bool {
 // A non-positive exp is ignored rather than stored: an entry that is already
 // expired would be evicted on the next prune without ever having rejected
 // anything, and storing it would let a caller grow the file with dead keys.
+// AUDIT F15: two hard bounds on the persisted store, both of which hold even if
+// the verify-before-revoke check in handleLogout is ever weakened or bypassed.
+// Defence in depth: the store's own invariants must not depend on its caller.
+const (
+	// maxRevokedSessionExpiry clamps how far in the future a stored entry may
+	// sit. An entry's expiry comes from the cookie's SIGNED claims, so it is not
+	// attacker-chosen once signatures are verified — but a bug that let an
+	// unverified value through, or a future minting change with a longer TTL,
+	// would otherwise pin entries indefinitely. Sized off the longest session the
+	// hub will ever mint (cookieSessionTTL) with slack for clock skew: nothing
+	// legitimate can exceed it, and anything that claims to is lying.
+	maxRevokedSessionExpiry = cookieSessionTTL + 24*time.Hour
+
+	// maxRevokedSessions hard-caps the entry count so the file, the startup parse
+	// and the memory footprint stay bounded no matter what. The natural bound is
+	// "sessions revoked within one cookie lifetime", which for this fleet is
+	// orders of magnitude below this number; reaching it means something is
+	// wrong, so it is logged rather than silently absorbed.
+	maxRevokedSessions = 100_000
+)
+
 func (r *revokedSessions) revoke(sid string, exp int64, now time.Time) bool {
 	if r == nil || sid == "" || exp <= now.Unix() {
 		return false
+	}
+	// Clamp to the mint horizon. An entry is only useful until the cookie it
+	// names fails its own expiry check; anything beyond that is dead weight that
+	// merely occupies the store for longer.
+	if maxExp := now.Add(maxRevokedSessionExpiry).Unix(); exp > maxExp {
+		exp = maxExp
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.sid[sid]; ok && existing >= exp {
 		return false
 	}
+	// The cap applies only to NEW session IDs — extending an entry that already
+	// exists adds nothing to the store's size, and refusing it would be the
+	// unsafe direction (it would leave a session un-revoked).
+	if _, exists := r.sid[sid]; !exists && len(r.sid) >= maxRevokedSessions {
+		return false
+	}
 	r.sid[sid] = exp
 	return true
+}
+
+// atCapacity reports whether the store has hit its hard cap, so the caller can
+// log it. Separate from revoke so the lock discipline stays simple.
+func (r *revokedSessions) atCapacity() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.sid) >= maxRevokedSessions
 }
 
 // pruneExpired drops entries whose expiry has passed, reporting whether anything
@@ -286,12 +330,71 @@ func (s *HubServer) revokeHubSessionCookieAt(value string, now time.Time) bool {
 		return false
 	}
 	if !s.revokedSessions.revoke(sid, exp, now) {
+		if s.revokedSessions.atCapacity() {
+			// AUDIT F15: the hard cap refused an entry. This should be
+			// unreachable in normal operation, so it is an operational signal,
+			// not a routine outcome — a session the user asked to revoke has NOT
+			// been revoked.
+			s.logger.Error("revocation store at capacity — session NOT revoked",
+				"cap", maxRevokedSessions)
+		}
 		return false
 	}
 	s.revokedSessions.pruneExpired(now)
-	s.saveRevokedSessions()
+	// AUDIT F15: coalesce the disk write, but stay DURABLE.
+	//
+	// The tempting version of this is "mark dirty, flush on a timer, return" —
+	// which is wrong here, and the F10 restart test is what says so. Revocation's
+	// entire value proposition is that it survives a roll: the hub restarts
+	// several times a day, so a revocation that is only in memory un-revokes
+	// itself on a schedule an attacker can simply wait for. A purely deferred
+	// flush reintroduces exactly the bug F10 was filed for, just with a 2-second
+	// window instead of an unbounded one.
+	//
+	// So the write still happens before this returns. What coalescing buys is
+	// that CONCURRENT revocations collapse into one write rather than one each:
+	// the flush is idempotent and drains whatever is pending, so a burst of N
+	// logouts costs far fewer than N full-file rewrites without any of them
+	// returning before their own entry is on disk.
+	s.markRevokedSessionsDirty()
+	s.flushRevokedSessions()
 	s.logger.Info("audit: hub session revoked", "sid", sid)
 	return true
+}
+
+// markRevokedSessionsDirty records that the in-memory set has changes not yet on
+// disk. Separate from the flush so several revocations can accumulate into one
+// pending write.
+func (s *HubServer) markRevokedSessionsDirty() {
+	if s == nil {
+		return
+	}
+	s.revokedSaveMu.Lock()
+	s.revokedSaveDirty = true
+	s.revokedSaveMu.Unlock()
+}
+
+// flushRevokedSessions persists the set if anything is pending, and is a no-op
+// otherwise. Safe to call unconditionally and from any goroutine.
+//
+// The dirty flag is cleared BEFORE the write, under the lock, and the write
+// snapshots the whole set. That ordering is what makes concurrent revocations
+// coalesce: a revocation that lands while a flush is in progress re-marks the
+// set dirty, and either it was already captured by the in-flight snapshot
+// (harmless — the next flush is a cheap no-op re-write) or it is picked up by
+// the next flush. The one thing that must never happen is a change being
+// dropped, and clearing-before-writing cannot drop one; clearing after could.
+func (s *HubServer) flushRevokedSessions() {
+	if s == nil || s.revokedSessions == nil {
+		return
+	}
+	s.revokedSaveMu.Lock()
+	dirty := s.revokedSaveDirty
+	s.revokedSaveDirty = false
+	s.revokedSaveMu.Unlock()
+	if dirty {
+		s.saveRevokedSessions()
+	}
 }
 
 // hubSessionRevokedLookup adapts the store to the hubSessionRevokedFunc the

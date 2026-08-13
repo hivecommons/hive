@@ -88,9 +88,13 @@ func TestSpokeHeartbeatKeyCannotForgeOtherDomains(t *testing.T) {
 func TestSpokeKeyResolutionPrefersExplicitEnv(t *testing.T) {
 	const master = "legacy-master"
 
-	// Legacy path: only the master is present → derive.
+	// Legacy path: the master is present but the spoke cannot identify itself
+	// (no HIVE_ID) → fleet-wide derivation. This is now the LAST resort; see
+	// TestSpokeHeartbeatKeySelfDerivesPerHive for the identity-bound lane that
+	// takes precedence whenever HIVE_ID is set.
 	t.Setenv("HIVE_HUB_SECRET", master)
 	t.Setenv(EnvHeartbeatKey, "")
+	t.Setenv(EnvHiveID, "")
 	if got, want := SpokeHeartbeatKey(), deriveDomainKey(master, infoHeartbeatKey); got != want {
 		t.Errorf("legacy heartbeat key = %q, want derived %q", got, want)
 	}

@@ -145,7 +145,23 @@ func removeTree(path string) error {
 		if walkErr != nil {
 			return nil
 		}
-		if d.IsDir() {
+		// AUDIT N17 (open across three audits): os.Chmod FOLLOWS symlinks. This
+		// walk runs over an agent-writable workspace, so a symlink planted there
+		// pointing at any path the cleanup user can chmod — a key file, a config,
+		// a binary on a shared mount — gets that TARGET relaxed to 0o660/0o770,
+		// not the link. Nothing here needs to chmod a symlink: the link's own mode
+		// is irrelevant to RemoveAll (which unlinks it) and its target is by
+		// definition outside the tree we are deleting. So skip links entirely.
+		//
+		// WalkDir does not follow symlinks itself, so d.Type() already reports the
+		// link — but d can come from a cached ReadDir entry, and a path can be
+		// swapped for a symlink between the readdir and this chmod (TOCTOU). The
+		// Lstat is the authoritative, immediately-before check.
+		info, lerr := os.Lstat(p)
+		if lerr != nil || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if info.IsDir() {
 			os.Chmod(p, 0o770)
 		} else {
 			os.Chmod(p, 0o660)

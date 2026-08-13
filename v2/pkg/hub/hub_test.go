@@ -88,7 +88,15 @@ func TestIsCSRFSafe(t *testing.T) {
 		// though the browser hands it the parent-domain session cookie.
 		{"POST from sibling tenant origin", "POST", "https://attacker-hive.hive.kubestellar.io", "", false},
 		{"POST from sibling tenant origin with JSON ct", "POST", "https://attacker-hive.hive.kubestellar.io", "application/json", false},
-		{"POST with JSON content-type", "POST", "", "application/json", true},
+		// AUDIT F4 — THIS CASE IS INVERTED, NOT RELAXED. It previously asserted
+		// `true`: a POST with no Origin, no Referer and Content-Type
+		// application/json was treated as CSRF-safe. That WAS the vulnerability,
+		// written down as an expectation. Content-Type is attacker-controlled and
+		// proves nothing, and "no Origin/Referer" is not evidence of a
+		// non-browser caller — Referrer-Policy: no-referrer, privacy extensions
+		// and corporate proxies strip these routinely. Failing closed is the
+		// whole fix, so the expectation flips to `false`.
+		{"POST with JSON content-type and no origin is NOT safe", "POST", "", "application/json", false},
 		{"POST with no origin or ct", "POST", "", "", false},
 		{"POST with evil origin suffix", "POST", "https://hive.kubestellar.io.evil.com", "", false},
 		{"DELETE with trusted referer", "DELETE", "", "", false},

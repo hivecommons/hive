@@ -122,11 +122,21 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	if user, ok := verifyHubUserCookieEither(pub, legacy, sessionCookie.Value); !ok || user != "octocat" {
 		t.Errorf("minted cookie did not verify: (%q, %v)", user, ok)
 	}
-	// And it must be the v2 format, not a legacy HMAC cookie that merely still
-	// verifies — otherwise the hub is silently minting the forgeable format.
-	if !hubCookieIsV2(sessionCookie.Value) {
-		t.Errorf("hub minted a LEGACY (symmetric) session cookie %q — any spoke could forge one",
+	// AUDIT F10 — updated from hubCookieIsV2 to hubCookieIsV3. This is a
+	// TIGHTENING, not a relaxation: the original intent was "must not be the
+	// forgeable symmetric format", and v3 is Ed25519-signed exactly as v2 is,
+	// PLUS it carries a signed expiry and a revocable session id. Asserting v2
+	// here after the mint flip would demand the hub keep issuing the
+	// non-revocable format, i.e. the test would pin the finding open.
+	if !hubCookieIsV3(sessionCookie.Value) {
+		t.Errorf("hub did not mint a v3 session cookie %q — a v2/legacy cookie has "+
+			"no signed expiry and no session id, so logout cannot revoke it (F10)",
 			sessionCookie.Value)
+	}
+	// The forgeable-format guarantee the original assertion existed for, stated
+	// directly rather than implied by the version marker.
+	if hubCookieIsV2(sessionCookie.Value) {
+		t.Error("hub minted a v2 cookie — expected v3")
 	}
 }
 

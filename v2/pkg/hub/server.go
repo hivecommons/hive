@@ -979,6 +979,15 @@ type HubServer struct {
 	// never touched while s.mu is held — see hub_session_revocation.go.
 	revokedSessions *revokedSessions
 
+	// revokedSave* coalesce the revocation set's disk writes (audit F15) without
+	// giving up durability: concurrent revocations collapse into one full-file
+	// rewrite instead of one each, but every revocation is still on disk before
+	// its call returns — a deferred-only flush would un-revoke sessions across a
+	// hub roll, which is the F10 bug. Leaf mutex like the store's own, never
+	// touched while s.mu is held — see flushRevokedSessions.
+	revokedSaveMu    sync.Mutex
+	revokedSaveDirty bool
+
 	// urlHealth remembers how many consecutive times each hive's PUBLIC
 	// dashboard URL failed to serve, so a transient blip can be told apart from
 	// a link that has been dead for hours. Populated by the auth-audit loop,

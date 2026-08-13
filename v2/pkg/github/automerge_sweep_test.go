@@ -355,7 +355,11 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 			}))
 			defer api.Close()
 			c := newAutoMergeSweepClient(api.URL)
-			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "sha")
+			// branch="" means the required-checks set is deliberately
+			// unresolvable here, exercising the fail-closed
+			// isMetaCheck/isIgnorableCICheck allowlist fallback path — see
+			// TestCommitGreenRequiredChecksOnly for the required-set-known path.
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "", "sha")
 			if err != nil {
 				t.Fatalf("commitGreen returned error: %v", err)
 			}
@@ -640,9 +644,206 @@ func TestCommitGreenAPIErrors(t *testing.T) {
 			}))
 			defer api.Close()
 			c := newAutoMergeSweepClient(api.URL)
-			_, reason, err := c.commitGreen(context.Background(), "acme", "widget", "sha")
+			_, reason, err := c.commitGreen(context.Background(), "acme", "widget", "", "sha")
 			if err == nil || reason != tt.wantReason {
 				t.Fatalf("commitGreen reason=%q err=%v, want %q error", reason, err, tt.wantReason)
+			}
+		})
+	}
+}
+
+// TestCommitGreenRequiredChecksOnly locks in the required-checks-ONLY gate:
+// commitGreen must consult the branch's actual required status checks
+// (Repositories.GetRequiredStatusChecks) and ignore any check/status whose
+// context is not in that set, no matter its state — this replaces the old
+// hardcoded isMetaCheck/isIgnorableCICheck allowlist that repeatedly missed
+// non-required check names (#22471 "Detect untested files", #22450
+// "Analyze (python)"/CodeQL).
+func TestCommitGreenRequiredChecksOnly(t *testing.T) {
+	tests := []struct {
+		name             string
+		requiredContexts []string
+		statuses         []struct{ context, state string }
+		checks           []struct{ name, status, conclusion string }
+		wantGreen        bool
+		wantReason       string
+	}{
+		{
+			name:             "non-required cancelled check-run never blocks",
+			requiredContexts: []string{"build-gate"},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Detect untested files", "completed", "cancelled"},
+			},
+			wantGreen: true,
+		},
+		{
+			name:             "non-required failing check-run (CodeQL) never blocks",
+			requiredContexts: []string{"build-gate"},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Analyze (python)", "completed", "failure"},
+			},
+			wantGreen: true,
+		},
+		{
+			name:             "non-required pending check-run never blocks",
+			requiredContexts: []string{"build-gate"},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Analyze (python)", "in_progress", ""},
+			},
+			wantGreen: true,
+		},
+		{
+			name:             "required check pending blocks",
+			requiredContexts: []string{"build-gate"},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "in_progress", ""},
+			},
+			wantReason: "check-pending",
+		},
+		{
+			name:             "required check failure blocks",
+			requiredContexts: []string{"build-gate"},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "failure"},
+			},
+			wantReason: "check-failure",
+		},
+		{
+			name:             "non-required failing status context never blocks",
+			requiredContexts: []string{"build-gate"},
+			statuses: []struct{ context, state string }{
+				{"ci/legacy-lint", "failure"},
+			},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+			},
+			wantGreen: true,
+		},
+		{
+			name:             "required status context failure blocks",
+			requiredContexts: []string{"ci/build"},
+			statuses: []struct{ context, state string }{
+				{"ci/build", "failure"},
+			},
+			wantReason: "status-failure",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+					json.NewEncoder(w).Encode(map[string]any{
+						"strict":   true,
+						"contexts": tt.requiredContexts,
+					})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+					statuses := []map[string]string{}
+					combined := "success"
+					for _, s := range tt.statuses {
+						statuses = append(statuses, map[string]string{"context": s.context, "state": s.state})
+						if s.state != "success" {
+							combined = s.state
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]any{"state": combined, "total_count": len(statuses), "statuses": statuses})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+					runs := []map[string]string{}
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+					}
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+			if err != nil {
+				t.Fatalf("commitGreen returned error: %v", err)
+			}
+			if green != tt.wantGreen || reason != tt.wantReason {
+				t.Fatalf("commitGreen = (%v,%q), want (%v,%q)", green, reason, tt.wantGreen, tt.wantReason)
+			}
+		})
+	}
+}
+
+// TestCommitGreenRequiredChecksUnavailableFallsBack locks in the fail-closed
+// fallback: when the required-checks set cannot be determined, commitGreen
+// must NOT treat every check as ignorable — it falls back to the old
+// isMetaCheck/isIgnorableCICheck allowlist rather than merging over
+// everything.
+func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
+	tests := []struct {
+		name           string
+		protectionCode int // HTTP status GetRequiredStatusChecks returns; 0 = branch-not-protected message
+		checks         []struct{ name, status, conclusion string }
+		wantGreen      bool
+		wantReason     string
+	}{
+		{
+			name:           "branch protection API error falls back to allowlist and still blocks unknown failing check",
+			protectionCode: http.StatusInternalServerError,
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"some-custom-check", "completed", "failure"},
+			},
+			wantReason: "check-failure",
+		},
+		{
+			name:           "branch protection API error still allows fallback allowlist (Playwright) to pass",
+			protectionCode: http.StatusInternalServerError,
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Playwright", "completed", "cancelled"},
+			},
+			wantGreen: true,
+		},
+		{
+			name:           "unprotected branch (no required checks) is a known empty set, everything ignorable",
+			protectionCode: 0,
+			checks: []struct{ name, status, conclusion string }{
+				{"anything", "completed", "failure"},
+			},
+			wantGreen: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+					if tt.protectionCode == 0 {
+						w.WriteHeader(http.StatusNotFound)
+						json.NewEncoder(w).Encode(map[string]any{"message": "Branch not protected"})
+						return
+					}
+					http.Error(w, "boom", tt.protectionCode)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+					runs := []map[string]string{}
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+					}
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+			if err != nil {
+				t.Fatalf("commitGreen returned error: %v", err)
+			}
+			if green != tt.wantGreen || reason != tt.wantReason {
+				t.Fatalf("commitGreen = (%v,%q), want (%v,%q)", green, reason, tt.wantGreen, tt.wantReason)
 			}
 		})
 	}
@@ -941,9 +1142,22 @@ func TestStartSelfAuthoredAutoMergeSweepNilClient(t *testing.T) {
 	nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6)
 }
 
+// testTrustedMergers are the logins the sweep fixtures treat as holding the
+// merger tier. "bob" is the queuer in every fixture that is EXPECTED to merge,
+// so granting it here preserves each existing test's original intent (a
+// legitimate queued merge lands) now that the sweep enforces the trusted-merger
+// gate (audit F3). Anyone NOT listed is untrusted and must not merge.
+var testTrustedMergers = map[string]bool{"bob": true, "carol": true}
+
 func newAutoMergeSweepClient(apiURL string) *Client {
 	c := NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	c.SetAppBotLogin(testHiveAppBotLogin)
+	// Audit F3: the sweep fails CLOSED without an authorizer, so every test
+	// exercising the merge path must install one. Tests that assert the
+	// fail-closed behaviour itself build their client without this helper.
+	c.SetMergerAuthorizer(func(login string) bool {
+		return testTrustedMergers[strings.ToLower(strings.TrimSpace(login))]
+	})
 	return c
 }
 

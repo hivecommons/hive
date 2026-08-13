@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,9 +27,14 @@ const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
 	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
+	autoMergeReasonUntrustedMerger            = "untrusted-merger"
+	autoMergeReasonNoMergerAuthz              = "no-merger-authorizer"
 	autoMergeWarnNoAppBotLogin                = "automerge sweep disabled: no GitHub App bot login configured"
 	autoMergeWarnUntrustedQueueApproval       = "rejected untrusted Hive auto-merge queue approval"
+	autoMergeWarnUntrustedMerger              = "rejected Hive auto-merge queued by an untrusted actor"
+	autoMergeWarnNoMergerAuthz                = "automerge sweep disabled: no trusted-merger authorizer configured"
 	autoMergeNoAppBotLoginOperatorRemediation = "Hive has no usable GitHub App, so App-authorship cannot be verified and auto-merge is disabled"
+	autoMergeNoMergerAuthzRemediation         = "Hive cannot classify who queued the merge, so auto-merge is disabled (fail-closed)"
 )
 
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
@@ -36,6 +42,49 @@ var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) fo
 type AutoMergeSweepOptions struct {
 	MaxMerges int
 	Audit     func(AutoMergeSweepEvent)
+}
+
+// MergerAuthorizer reports whether login is trusted to QUEUE a merge — i.e.
+// holds at least config.RoleMerger in the hive's authorized-users allowlist.
+//
+// SECURITY (audit F3). The queue-time role check lives in the dashboard handler
+// (requireMergerOrOwnerRole), but the sweep is a SEPARATE authority that runs a
+// minute later off nothing but the label and the App-authored approval body. It
+// re-derives the queuer's login from that body and used to merge on it
+// unconditionally, so anything that could get the merger-queue label applied
+// got its PR merged regardless of who asked. Re-verifying the role HERE is what
+// makes the merger tier real at the point the merge actually happens.
+//
+// Returns false for an unknown/unclassifiable login: a nil authorizer or an
+// unresolvable actor must never merge (fail CLOSED).
+type MergerAuthorizer func(login string) bool
+
+// SetMergerAuthorizer installs the trusted-merger gate consulted by
+// SweepQueuedAutoMerges. nil fails closed — the sweep merges nothing.
+func (c *Client) SetMergerAuthorizer(fn MergerAuthorizer) {
+	if c == nil {
+		return
+	}
+	c.mergerAuthzMu.Lock()
+	defer c.mergerAuthzMu.Unlock()
+	c.mergerAuthz = fn
+}
+
+// isTrustedMerger reports whether login may queue a merge. Fails CLOSED.
+func (c *Client) isTrustedMerger(login string) (allowed, configured bool) {
+	if c == nil {
+		return false, false
+	}
+	c.mergerAuthzMu.RLock()
+	fn := c.mergerAuthz
+	c.mergerAuthzMu.RUnlock()
+	if fn == nil {
+		return false, false
+	}
+	if strings.TrimSpace(login) == "" {
+		return false, true
+	}
+	return fn(login), true
 }
 
 type AutoMergeSweepEvent struct {
@@ -61,8 +110,10 @@ type hiveQueueApproval struct {
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
 // only squashes open, labelled, non-draft PRs in managed repos after GitHub
-// reports them mergeable, commit statuses/check-runs are green, and the latest
-// Hive App-authored queue approval proves the queuer is not the PR author.
+// reports them mergeable, commit statuses/check-runs are green, the latest
+// Hive App-authored queue approval proves the queuer is not the PR author, and
+// the queuer is a TRUSTED merger (audit F3 — see MergerAuthorizer). Without an
+// authorizer installed the sweep fails closed and merges nothing.
 func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -74,6 +125,7 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 	label := c.AutoMergeLabel()
 	result := &AutoMergeSweepResult{}
 	noAppBotLoginWarned := false
+	noMergerAuthzWarned := false
 
 	for _, repo := range c.getRepos() {
 		if len(result.Merged) >= maxMerges {
@@ -102,6 +154,14 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 				if !noAppBotLoginWarned {
 					c.warn(autoMergeWarnNoAppBotLogin, "repo", repo, "pr", issue.GetNumber(), "reason", reason, "cause", autoMergeNoAppBotLoginOperatorRemediation)
 					noAppBotLoginWarned = true
+				}
+				result.Skipped++
+				continue
+			}
+			if reason == autoMergeReasonNoMergerAuthz {
+				if !noMergerAuthzWarned {
+					c.warn(autoMergeWarnNoMergerAuthz, "repo", repo, "pr", issue.GetNumber(), "reason", reason, "cause", autoMergeNoMergerAuthzRemediation)
+					noMergerAuthzWarned = true
 				}
 				result.Skipped++
 				continue
@@ -316,7 +376,11 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if mergeable != MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}
-	green, reason, err := c.commitGreen(ctx, owner, repo, evaluatedHeadSHA)
+	baseBranch := ""
+	if pr.GetBase() != nil {
+		baseBranch = pr.GetBase().GetRef()
+	}
+	green, reason, err := c.commitGreen(ctx, owner, repo, baseBranch, evaluatedHeadSHA)
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -439,12 +503,31 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if strings.EqualFold(author, queuedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
 	}
+	// SECURITY (audit F3): the self-merge ban above only proves queuer !=
+	// author. It is defeated by a sockpuppet — a second account queues and
+	// approves the first account's work — and on its own it lets ANY actor who
+	// can get the merger-queue label applied merge anything. Re-verify the
+	// merger tier here, at the point the merge actually happens, rather than
+	// trusting the queue-time check in the dashboard handler.
+	trusted, configured := c.isTrustedMerger(queuedBy)
+	if !configured {
+		return AutoMergeSweepEvent{}, autoMergeReasonNoMergerAuthz, nil
+	}
+	if !trusted {
+		c.warn(autoMergeWarnUntrustedMerger, "owner", owner, "repo", repo, "pr", number,
+			"queued_by", queuedBy, "author", author)
+		return AutoMergeSweepEvent{}, autoMergeReasonUntrustedMerger, nil
+	}
 
 	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)
 	if mergeable != MergeableYes {
 		return AutoMergeSweepEvent{}, "not-mergeable", nil
 	}
-	green, reason, err := c.commitGreen(ctx, owner, repo, headSHA)
+	baseBranch := ""
+	if pr.GetBase() != nil {
+		baseBranch = pr.GetBase().GetRef()
+	}
+	green, reason, err := c.commitGreen(ctx, owner, repo, baseBranch, headSHA)
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
 	}
@@ -538,28 +621,41 @@ func parseHiveQueueReview(body string) string {
 	return matches[1]
 }
 
-// commitGreen reports whether every non-meta commit status and check run on
-// the head SHA has actually succeeded. Pending is NOT green: the sweep runs
-// every minute and a queue action usually lands seconds after the PR opens,
-// so treating in-flight CI as green would squash the PR before its first CI
-// run finishes — mergeable_state cannot catch that, because "unstable"
-// (non-required checks outstanding) deliberately maps to MergeableYes and
-// managed repos generally have no branch protection making any check
-// required. Meta gates (tide, netlify previews, ...) are excluded on both
-// surfaces — tide in particular posts a commit status that stays "pending"
-// forever on Prow-managed repos and must never wedge the queue.
+// commitGreen reports whether the head SHA is mergeable from a CI
+// standpoint.
 //
-// A non-success CONCLUSION (cancelled, failure, timed_out, ...) on an
-// ignorable/non-required check (isIgnorableCICheck — Playwright, Mobile
-// Browser Tests, the chromium shard matrix, plus the isMetaCheck set) is
-// likewise not a blocker: those suites are routinely cancelled mid-flight
-// (matrix/concurrency-group cancellation, flake reruns) with zero bearing on
-// mergeability, and treating a cancelled Playwright/Mobile shard as red left
-// otherwise-green, MERGEABLE PRs (build-gate success) permanently skipped by
-// the self-merge sweep with reason "check-cancelled" (#22438, #22440).
-// Required checks (build-gate, build/test/docker, ...) still gate: only the
-// ignorable set gets a pass on a bad conclusion.
-func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool, string, error) {
+// Gating is REQUIRED-CHECKS-ONLY: commitGreen first asks GitHub which status
+// contexts/check-run names are actually required by the target branch's
+// branch protection (requiredStatusCheckContexts). Any status or check-run
+// whose context/name is NOT in that required set is skipped entirely,
+// regardless of its state or conclusion — pending, failing, or cancelled
+// non-required checks can never block self-merge. A required check still
+// fully gates: pending blocks (return not-green, "pending" — the sweep must
+// never squash a PR before its required CI has finished), and a
+// failure/error/cancelled conclusion on a required check blocks too.
+//
+// Why required-only, not a hardcoded ignore-list: the previous approach
+// (isMetaCheck/isIgnorableCICheck as an ALLOWLIST of names to ignore) is
+// whack-a-mole against an open-ended set of non-required checks — #3611 added
+// Playwright/Mobile Browser Tests/coverage-report/the chromium shard matrix,
+// but "Detect untested files" (cancelled) still blocked #22471 and "Analyze
+// (python)" (CodeQL, failure) still blocks #22450 because neither name was on
+// the list. Every managed repo's ACTUAL required-checks set (e.g. console's
+// main branch requires only "build-gate") is the one true source of what
+// must be green; anything else is by definition non-required and must never
+// wedge the queue.
+//
+// Fail-closed fallback: if the required-checks set cannot be determined
+// (branch protection absent/erroring, no branch known, or the API call
+// fails) this deliberately does NOT fall back to "ignore everything" — that
+// would merge over a genuinely broken build the moment GitHub's protection
+// API hiccups. Instead it falls back to the OLD isMetaCheck/isIgnorableCICheck
+// allowlist behavior, so an outage of the branch-protection endpoint degrades
+// gating back to the previously-shipped conservative behavior rather than to
+// "always green".
+func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
+	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
+
 	statusOpts := &gh.ListOptions{PerPage: 100}
 	for {
 		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, repo, sha, statusOpts)
@@ -567,7 +663,15 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 			return false, "status-check", err
 		}
 		for _, s := range status.Statuses {
-			if isMetaCheck(s.GetContext()) {
+			ctxName := s.GetContext()
+			if requiredKnown {
+				// Required-checks-only gating: skip anything not on the
+				// branch's actual required list, no matter its state.
+				if !required[ctxName] {
+					continue
+				}
+			} else if isMetaCheck(ctxName) {
+				// Fail-closed fallback path (required set unavailable).
 				continue
 			}
 			switch s.GetState() {
@@ -575,7 +679,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 			case "pending":
 				return false, "status-pending", nil
 			default: // "failure", "error"
-				if isIgnorableCICheck(s.GetContext()) {
+				if !requiredKnown && isIgnorableCICheck(ctxName) {
 					continue
 				}
 				return false, "status-" + s.GetState(), nil
@@ -594,11 +698,16 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 			return false, "check-runs", err
 		}
 		for _, cr := range checkRuns.CheckRuns {
-			if isMetaCheck(cr.GetName()) {
+			name := cr.GetName()
+			if requiredKnown {
+				if !required[name] {
+					continue
+				}
+			} else if isMetaCheck(name) {
 				continue
 			}
 			if cr.GetStatus() != "completed" {
-				if isIgnorableCICheck(cr.GetName()) {
+				if !requiredKnown && isIgnorableCICheck(name) {
 					continue
 				}
 				return false, "check-pending", nil
@@ -606,7 +715,7 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 			switch cr.GetConclusion() {
 			case "success", "neutral", "skipped":
 			default:
-				if isIgnorableCICheck(cr.GetName()) {
+				if !requiredKnown && isIgnorableCICheck(name) {
 					continue
 				}
 				return false, "check-" + cr.GetConclusion(), nil
@@ -617,6 +726,59 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, sha string) (bool
 		}
 		opts.ListOptions.Page = resp.NextPage
 	}
+}
+
+// requiredStatusCheckContexts returns the set of status-check contexts /
+// check-run names that branch protection actually requires on branch, and
+// whether that set could be determined at all. It is the single source of
+// truth commitGreen gates on: membership in this set is what makes a check
+// "required" (must be green) versus ignorable (any state/conclusion, never
+// blocks).
+//
+// requiredKnown is false (empty set, ignore it) when:
+//   - branch is empty (caller could not resolve the PR's base branch), or
+//   - the repo/branch has no branch protection configured
+//     (gh.ErrBranchNotProtected — a repo with zero required checks is a
+//     valid, common state, NOT an error), or
+//   - the GitHub API call itself failed (rate limit, transient 5xx, ...).
+//
+// In all of those cases the caller must fall back to the OLD
+// isMetaCheck/isIgnorableCICheck allowlist rather than treating "we don't
+// know the required set" as "nothing is required" — see commitGreen's
+// fail-closed comment.
+func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
+	if strings.TrimSpace(branch) == "" {
+		return nil, false
+	}
+	rsc, _, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
+	if err != nil {
+		// gh.ErrBranchNotProtected means "this branch legitimately requires
+		// nothing" — that IS a known, empty required set, not a failure to
+		// determine it, so requiredKnown is true with an empty map (every
+		// check is then non-required and ignorable).
+		if errors.Is(err, gh.ErrBranchNotProtected) {
+			return map[string]bool{}, true
+		}
+		return nil, false
+	}
+	if rsc == nil {
+		return map[string]bool{}, true
+	}
+	required := make(map[string]bool)
+	if rsc.Contexts != nil {
+		for _, name := range *rsc.Contexts {
+			required[name] = true
+		}
+	}
+	if rsc.Checks != nil {
+		for _, check := range *rsc.Checks {
+			if check == nil {
+				continue
+			}
+			required[check.Context] = true
+		}
+	}
+	return required, true
 }
 
 func hasLabel(labels []string, want string) bool {
