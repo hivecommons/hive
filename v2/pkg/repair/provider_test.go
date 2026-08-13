@@ -396,6 +396,7 @@ func TestCodexProviderAcceptsPackagedV0146CapabilityInventory(t *testing.T) {
 	t.Setenv("HIVE_TEST_CODEX_VERSION_OUTPUT", "codex-cli 0.146.0")
 	t.Setenv("HIVE_TEST_CODEX_FEATURES_OUTPUT", codexReviewedFeatureInventoryV0146Linux)
 	provider := CodexProvider{Command: os.Args[0]}
+	defer forgetCodexProviderAttestation(provider)
 	if err := provider.Health(context.Background()); err != nil {
 		t.Fatalf("packaged Codex capability contract was rejected: %v", err)
 	}
