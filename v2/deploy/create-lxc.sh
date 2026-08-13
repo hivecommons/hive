@@ -15,7 +15,7 @@ set -euo pipefail
 
 CTID="${CTID:-111}"
 HOSTNAME="${LXC_HOSTNAME:-hive}"
-PASSWORD="${LXC_PASSWORD:-changeme}"
+PASSWORD="${LXC_PASSWORD:-}"
 TEMPLATE="local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 STORAGE="local-lvm"
 DISK_SIZE=16
@@ -28,12 +28,22 @@ while [[ $# -gt 0 ]]; do
     --ctid)     CTID="$2"; shift 2 ;;
     --hostname) HOSTNAME="$2"; shift 2 ;;
     --password) PASSWORD="$2"; shift 2 ;;
+    # --no-password creates the container without SSH password auth (key-only after bootstrap)
+    --no-password) PASSWORD=""; shift ;;
     --disk)     DISK_SIZE="$2"; shift 2 ;;
     --memory)   RAM_MB="$2"; shift 2 ;;
     --cores)    CORES="$2"; shift 2 ;;
     *)          echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Require an explicit password — no insecure default.
+if [[ -z "${PASSWORD}" ]]; then
+  echo "ERROR: --password <password> is required (no default to prevent accidental weak credentials)."
+  echo "  Supply a strong password: --password \$(openssl rand -hex 16)"
+  echo "  After bootstrap, disable SSH password auth and add your public key instead."
+  exit 1
+fi
 
 # Check if template exists, download if not
 if ! pveam list local | grep -q "ubuntu-24.04-standard"; then
@@ -73,7 +83,7 @@ echo "=== Starting LXC ==="
 pct start "${CTID}"
 sleep 5
 
-echo "=== Enabling SSH with root password auth ==="
+echo "=== Enabling SSH with root password auth (temporary — disable after adding SSH key) ==="
 pct exec "${CTID}" -- bash -c '
   sed -i "s/^#*PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config
   sed -i "s/^#*PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
@@ -88,6 +98,10 @@ echo ""
 echo "=== LXC ${CTID} (${HOSTNAME}) created ==="
 echo ""
 echo "SSH:  ssh root@${LXC_IP}  (password: ${PASSWORD})"
+echo ""
+echo "⚠️  SECURITY: SSH root password auth is enabled for initial bootstrap only."
+echo "   After installing your SSH public key, disable password auth:"
+echo "   pct exec ${CTID} -- bash -c 'sed -i s/PasswordAuthentication yes/PasswordAuthentication no/ /etc/ssh/sshd_config && systemctl restart sshd'"
 echo ""
 echo "Next: run the bootstrap script inside the LXC:"
 echo "  pct exec ${CTID} -- bash -c 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/v2/deploy/bootstrap-lxc.sh | bash'"
