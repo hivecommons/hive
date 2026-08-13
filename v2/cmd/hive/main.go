@@ -830,6 +830,15 @@ func singletonLockPath() string {
 const spokeRestartMinUptime = 10 * time.Minute
 
 func main() {
+	// --version fast path, before any flag parsing or startup work: the CI
+	// smoke test (and operators) probe the binary with `hive --version`; the
+	// standard flag set would reject it ("flag provided but not defined").
+	// dd's full CLI dispatcher handles this via a version subcommand; this is
+	// the minimal equivalent for the v4 line.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Printf("hive 3.0.0 (commit %s, branch %s)\n", gitShort, gitBranch)
+		return
+	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {
