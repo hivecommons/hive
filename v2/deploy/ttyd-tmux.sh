@@ -37,18 +37,42 @@ SOCK_OWNER_GID=$(stat -c '%g' "$TMUX_SOCKET" 2>/dev/null || echo "")
 SOCK_OWNER_SPEC="${SOCK_OWNER_UID}:${SOCK_OWNER_GID}"
 CURRENT_UID=$(id -u)
 
+# Scroll-wheel history (issue #3694). The browser terminal is a live tmux
+# attach, so the only real scrollback is tmux's copy-mode — which the wheel can
+# only enter when `mouse on`. Earlier versions of this script set `mouse off`
+# on attach, which left wheel events untranslated: scrolling up did not page
+# back through history, it merely reflowed a few lines at the bottom of the
+# viewport (the reported symptom). Enable mouse mode instead so the wheel drives
+# copy-mode and scrolls back through the pane's history normally, and give the
+# pane a generous history-limit so there is meaningful scrollback to reach.
+# Both are per-session options restored to their previous values on detach so
+# an agent CLI that manages mouse mode itself is not permanently altered.
+#
+# HIVE_TTYD_HISTORY_LIMIT overrides the scrollback depth applied on attach.
+TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
+
+# attach_with runs the attach lifecycle. $1 is an optional command prefix
+# (e.g. "su-exec <spec>") so the same logic serves both the owner and non-owner
+# paths without duplication.
+attach_with() {
+  local run=("$@")
+  local prev_mouse prev_history exit_code=0
+  prev_mouse=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -v mouse 2>/dev/null || echo "on")
+  prev_history=$("${run[@]}" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -gv history-limit 2>/dev/null || echo "")
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse on 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$TTYD_HISTORY_LIMIT" 2>/dev/null || true
+  "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
+  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
+  if [ -n "$prev_history" ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$prev_history" 2>/dev/null || true
+  fi
+  return "$exit_code"
+}
+
 if [ -n "$SOCK_OWNER_UID" ] && [ "$SOCK_OWNER_UID" != "$CURRENT_UID" ] && command -v su-exec >/dev/null 2>&1; then
-  PREV_MOUSE=$(su-exec "$SOCK_OWNER_SPEC" tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -v mouse 2>/dev/null || echo "on")
-  su-exec "$SOCK_OWNER_SPEC" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse off 2>/dev/null || true
-  EXIT_CODE=0
-  su-exec "$SOCK_OWNER_SPEC" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || EXIT_CODE=$?
-  su-exec "$SOCK_OWNER_SPEC" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$PREV_MOUSE" 2>/dev/null || true
-  exit $EXIT_CODE
+  attach_with su-exec "$SOCK_OWNER_SPEC"
+  exit $?
 else
-  PREV_MOUSE=$(tmux -S "$TMUX_SOCKET" show-option -t "$SESSION" -v mouse 2>/dev/null || echo "on")
-  tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse off 2>/dev/null || true
-  EXIT_CODE=0
-  tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || EXIT_CODE=$?
-  tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$PREV_MOUSE" 2>/dev/null || true
-  exit $EXIT_CODE
+  attach_with
+  exit $?
 fi

@@ -6,7 +6,7 @@ This directory contains Kubernetes/LXC manifests plus runtime helper scripts use
 
 ### `ttyd-tmux.sh`
 
-`ttyd` serves the browser terminal websocket, but agent tmux sessions may be owned by per-agent UIDs. Because tmux only lets the socket owner attach, `ttyd-tmux.sh <session>` finds the matching `/tmp/tmux-*/<session>` socket, derives its numeric UID/GID, and uses `su-exec` to attach as that owner. It temporarily disables tmux mouse mode while attached and restores it on exit.
+`ttyd` serves the browser terminal websocket, but agent tmux sessions may be owned by per-agent UIDs. Because tmux only lets the socket owner attach, `ttyd-tmux.sh <session>` finds the matching `/tmp/tmux-*/<session>` socket, derives its numeric UID/GID, and uses `su-exec` to attach as that owner. While attached it enables tmux mouse mode (so the scroll wheel drives copy-mode scrollback instead of just reflowing the viewport — issue #3694) and raises the pane `history-limit` (default `50000`, override with `HIVE_TTYD_HISTORY_LIMIT`) so there is meaningful scrollback to reach. Both options are restored to their previous values on detach.
 
 Use it indirectly through the dashboard terminal link. If a terminal pane says no tmux socket was found, check that the agent session name exists and that the socket is present under `/tmp/tmux-*` in the container.
 
