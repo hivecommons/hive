@@ -24,11 +24,11 @@ import (
 var saasHivesDir = "/data/saas/hives"
 
 const (
-	maxHivesPerUser       = 3
-	maxSaaSHivesTotal     = 0 // 0 = unlimited
-	provisionTimeout      = 5 * time.Minute
-	cpuRequest            = "500m"
-	cpuLimit              = "2000m"
+	maxHivesPerUser   = 3
+	maxSaaSHivesTotal = 0 // 0 = unlimited
+	provisionTimeout  = 5 * time.Minute
+	cpuRequest        = "500m"
+	cpuLimit          = "2000m"
 	// memRequest/memLimit size the spoke pod for the WHOLE agent fleet, not just
 	// the Go hive process. Each active coding agent (Copilot/Claude CLI) grows to
 	// ~2GB RSS, and an L6 hive runs 5-6 concurrently plus the hive process, so an
@@ -1719,7 +1719,16 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
 	os.MkdirAll(dir, 0o755)
 
-	repos := h.Repos
+	// Strip a leading "<org>/" off each repo before it is baked into the spoke's
+	// hive.yaml. The spoke builds every repo target as org + "/" + repo, so an
+	// org-qualified entry here resolves to "org/org/repo" and every agent on that
+	// hive fails with a repo_target misconfiguration. primary_repo below is
+	// normalized on the spoke at config load; repos was not, which is how a hive
+	// ends up with a correct bare primary_repo next to a broken repos list.
+	// A repo qualified with a DIFFERENT org is left alone so the spoke still
+	// reports it rather than silently targeting a repository nobody named.
+	repos, _ := config.NormalizeProjectRepos(h.Org, h.Repos)
+	normalizedPrimaryRepo, _ := config.NormalizeRepoForOrg(h.Org, h.PrimaryRepo)
 	reposYAML := "[]"
 	if len(repos) > 0 {
 		parts := make([]string, 0, len(repos))
@@ -1759,7 +1768,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"Namespace":       "hive-hosted-" + h.ID,
 		"Org":             sanitize(h.Org),
 		"Repos":           reposYAML,
-		"PrimaryRepo":     sanitize(h.PrimaryRepo),
+		"PrimaryRepo":     sanitize(normalizedPrimaryRepo),
 		"AuthorizedUsers": authorizedUsersForHive(h),
 		"ACMMLevel":       h.ACMMLevel,
 		"Token":           req.GitHubToken,
@@ -1801,7 +1810,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// Kept as an empty list rather than deleting the template block, so a
 		// spoke rolling on an older manifest sees the field disappear cleanly
 		// instead of failing to render.
-		"AdditionalAppKeys": []provisionAppKey{},
+		"AdditionalAppKeys":     []provisionAppKey{},
 		"CPURequest":            cpuRequest,
 		"CPULimit":              cpuLimit,
 		"MemRequest":            memRequest,

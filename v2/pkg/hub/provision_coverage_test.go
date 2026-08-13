@@ -3,6 +3,8 @@ package hub
 import (
 	"log/slog"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ============================================================
@@ -103,5 +105,63 @@ func TestExtractYAMLValue_ProvCov(t *testing.T) {
 	}
 	if got := extractYAMLValue(yaml, "missing"); got != "" {
 		t.Errorf("missing = %q, want empty", got)
+	}
+}
+
+// The provisioner bakes project.repos straight into the spoke's hive.yaml, so an
+// org-qualified entry that reaches it becomes a permanently broken hive: the
+// spoke resolves targets as org + "/" + repo, yielding "org/org/repo". This pins
+// the normalization the provisioner applies to h.Repos/h.PrimaryRepo.
+func TestProvisionRepoNormalization(t *testing.T) {
+	tests := []struct {
+		name        string
+		org         string
+		repos       []string
+		primary     string
+		wantRepos   []string
+		wantPrimary string
+	}{
+		{
+			name:        "org qualified entry is stripped",
+			org:         "zacburns",
+			repos:       []string{"zacburns/mlz-manager"},
+			primary:     "zacburns/mlz-manager",
+			wantRepos:   []string{"mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+		// Positive control: an already-correct project must pass through intact.
+		{
+			name:        "bare entry unchanged",
+			org:         "zacburns",
+			repos:       []string{"mlz-manager"},
+			primary:     "mlz-manager",
+			wantRepos:   []string{"mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+		{
+			name:        "foreign org left for the spoke to reject",
+			org:         "zacburns",
+			repos:       []string{"someoneelse/mlz-manager"},
+			primary:     "mlz-manager",
+			wantRepos:   []string{"someoneelse/mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRepos, _ := config.NormalizeProjectRepos(tt.org, tt.repos)
+			if len(gotRepos) != len(tt.wantRepos) {
+				t.Fatalf("repos = %v, want %v", gotRepos, tt.wantRepos)
+			}
+			for i := range tt.wantRepos {
+				if gotRepos[i] != tt.wantRepos[i] {
+					t.Fatalf("repos = %v, want %v", gotRepos, tt.wantRepos)
+				}
+			}
+			gotPrimary, _ := config.NormalizeRepoForOrg(tt.org, tt.primary)
+			if gotPrimary != tt.wantPrimary {
+				t.Fatalf("primary = %q, want %q", gotPrimary, tt.wantPrimary)
+			}
+		})
 	}
 }

@@ -26,8 +26,74 @@ func ValidateRepoTargets(cfg *Config) *RepoTargetIssue {
 	return ValidateProjectRepoTargets(cfg.Project.Org, cfg.Project.Repos, cfg.Project.PrimaryRepo, cfg.GitHub.HostLabel())
 }
 
+// NormalizeRepoForOrg accepts a repos-list entry and returns the bare repo name
+// the org/repo target is built from.
+//
+// A repo entry is combined with project.org to form "org/repo", so an entry that
+// already carries its own org ("zacburns/mlz-manager" under org "zacburns")
+// resolves to "zacburns/zacburns/mlz-manager" and every agent targeting it
+// fails. Owners paste the org-qualified form routinely — it is the shape GitHub
+// shows everywhere — so accept it when the prefix matches the configured org and
+// strip it back to the bare name.
+//
+// Only an exact, case-insensitive match on the configured org is stripped.
+// An entry qualified with a DIFFERENT org ("other/hive" under org "kubestellar")
+// is left untouched so validateRepoName still rejects it: silently dropping a
+// mismatched org would retarget the hive at a repository the owner did not name.
+// The second return reports whether a prefix was stripped.
+func NormalizeRepoForOrg(org, repo string) (string, bool) {
+	org = strings.TrimSpace(org)
+	repo = strings.TrimSpace(repo)
+	if org == "" || repo == "" || strings.Contains(org, "/") {
+		return repo, false
+	}
+	// A URL is a different misconfiguration with its own error message; leave it
+	// for validateRepoName rather than half-parsing it here.
+	if looksLikeURL(repo) {
+		return repo, false
+	}
+	prefix := org + "/"
+	if len(repo) <= len(prefix) || !strings.EqualFold(repo[:len(prefix)], prefix) {
+		return repo, false
+	}
+	rest := repo[len(prefix):]
+	// "org/a/b" is not an org-qualified repo name — it is some deeper path we
+	// must not guess at. Leave it to be rejected.
+	if rest == "" || strings.Contains(rest, "/") {
+		return repo, false
+	}
+	return rest, true
+}
+
+// NormalizeProjectRepos returns repos with any entry qualified by the configured
+// org rewritten to its bare repo name. Entries that need no change are returned
+// as-is. The second return reports whether anything changed, so callers can log
+// or persist the repair.
+func NormalizeProjectRepos(org string, repos []string) ([]string, bool) {
+	if len(repos) == 0 {
+		return repos, false
+	}
+	out := make([]string, len(repos))
+	changed := false
+	for i, repo := range repos {
+		normalized, stripped := NormalizeRepoForOrg(org, repo)
+		out[i] = normalized
+		if stripped {
+			changed = true
+		}
+	}
+	if !changed {
+		return repos, false
+	}
+	return out, true
+}
+
 // ValidateProjectRepoTargets is the testable core used by provisioning and
 // config-save paths before they have a full Config object.
+//
+// Org-qualified entries that match org are normalized before validation, so
+// "zacburns/mlz-manager" under org "zacburns" is accepted; anything else that
+// still contains '/' keeps failing with the same operator-facing message.
 func ValidateProjectRepoTargets(org string, repos []string, primaryRepo, forgeHost string) *RepoTargetIssue {
 	org = strings.TrimSpace(org)
 	if org == "" {
@@ -43,12 +109,14 @@ func ValidateProjectRepoTargets(org string, repos []string, primaryRepo, forgeHo
 		return issue("project.repos", "repo is empty — expected org/repo")
 	}
 	for _, repo := range repos {
-		if repoIssue := validateRepoName("project.repos", repo); repoIssue != nil {
+		normalized, _ := NormalizeRepoForOrg(org, repo)
+		if repoIssue := validateRepoName("project.repos", normalized); repoIssue != nil {
 			return repoIssue
 		}
 	}
 	if strings.TrimSpace(primaryRepo) != "" {
-		if repoIssue := validateRepoName("project.primary_repo", primaryRepo); repoIssue != nil {
+		normalizedPrimary, _ := NormalizeRepoForOrg(org, primaryRepo)
+		if repoIssue := validateRepoName("project.primary_repo", normalizedPrimary); repoIssue != nil {
 			return repoIssue
 		}
 	}

@@ -5484,9 +5484,26 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if body.PrimaryRepo != nil {
 		validatePrimary = *body.PrimaryRepo
 	}
+	// Normalize org-qualified entries ("myorg/myrepo" under org "myorg") to the
+	// bare repo name BEFORE validating, so the accepted value and the persisted
+	// value are the same shape. Without this an owner pasting the org/repo form
+	// GitHub shows everywhere is rejected with a 400 here, or — worse, on paths
+	// that skip this handler — persisted org-qualified and then resolved as
+	// "org/org/repo", which fails every agent. An entry qualified with a
+	// different org is left untouched and still 400s below.
+	validateRepos, _ = config.NormalizeProjectRepos(org, validateRepos)
+	validatePrimary, _ = config.NormalizeRepoForOrg(org, validatePrimary)
 	if issue := config.ValidateProjectRepoTargets(org, validateRepos, validatePrimary, spokeHost); issue != nil {
 		jsonError(w, issue.Message, http.StatusBadRequest)
 		return
+	}
+	// Feed the normalized values back into the body so the persistence code
+	// below stores bare names even when its own url-parse branch does not fire.
+	if len(body.Repos) > 0 {
+		body.Repos = validateRepos
+	}
+	if body.PrimaryRepo != nil {
+		body.PrimaryRepo = &validatePrimary
 	}
 	for _, ref := range body.Repos {
 		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
