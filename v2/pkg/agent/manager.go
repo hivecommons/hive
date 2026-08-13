@@ -2616,7 +2616,10 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
 		strings.Contains(output, bobInputPlaceholderDefault) ||
-		strings.Contains(output, codexInputPromptMarker) ||
+		// codexInputPromptMarker ("›") is matched line-anchored inside
+		// paneHasInputPrompt, which excludes numbered selection menus — a
+		// bare substring match here would call a pending "› 1. No, exit"
+		// menu input-ready and kick into it.
 		strings.Contains(output, piContextMarker)
 }
 
