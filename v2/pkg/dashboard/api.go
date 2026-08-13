@@ -1865,19 +1865,24 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// Issue a per-user session (opaque random id → username+role) instead of a
 	// single shared cookie. Each authenticated user gets their own session so
 	// requests resolve to the user that owns their cookie — never a shared one.
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
-			return
-		}
-		setSessionCookie(w, r, sid)
-		// Mint the short-lived per-hive terminal assertion cookie the Node proxy
-		// verifies as its PRIMARY per-hive gate (finding C3 follow-up). Same
-		// {user,hive,role} just authorized for this session, bound to THIS hive
-		// with an expiry. No-op on non-hosted hives.
-		s.setTerminalAssertionCookie(w, r, username, role)
+	//
+	// Always mint the session. This used to be gated on s.authToken != "", which
+	// meant a spoke with no dashboard token logged "authenticated via device
+	// flow", returned {status:"complete"}, and set NO cookie at all — so "/"
+	// rejected the request and the login page bounced forever (same failure
+	// handleSSO fixed). The session store is the authority on identity here and
+	// does not depend on a shared token existing.
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
+		return
 	}
+	setSessionCookie(w, r, sid)
+	// Mint the short-lived per-hive terminal assertion cookie the Node proxy
+	// verifies as its PRIMARY per-hive gate (finding C3 follow-up). Same
+	// {user,hive,role} just authorized for this session, bound to THIS hive
+	// with an expiry. No-op on non-hosted hives.
+	s.setTerminalAssertionCookie(w, r, username, role)
 
 	// Audit the successful login with the authenticated GitHub username as the
 	// actor (not the request's X-Hive-User, which has no session yet at this

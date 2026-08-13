@@ -215,6 +215,86 @@ func TestCovDF_GHUserAuthPoll_DirectRouteViewer(t *testing.T) {
 	}
 }
 
+// TestCovDF_GHUserAuthPoll_EmptyAuthTokenStillMintsSession is the device-flow
+// twin of the SSO regression test: minting the session used to be gated on
+// s.authToken != "", so a spoke provisioned without a dashboard token returned
+// {status:"complete"} having set NO cookie at all — "/" rejected the very next
+// request and the login page bounced forever. The session store is the
+// authority on identity and does not depend on a shared token existing, so the
+// cookie must be set even when authToken is empty. The C3 terminal-assertion
+// cookie is minted in the same path and must not be lost either.
+func TestCovDF_GHUserAuthPoll_EmptyAuthTokenStillMintsSession(t *testing.T) {
+	s, deps, _ := dfServer(t, "complete", "octocat")
+	s.authToken = ""
+	// Give the terminal-assertion mint a signing key and a hive identity so the
+	// C3 cookie is observable (it is a no-op without both).
+	deps.Config.HiveID = testHiveID
+	t.Setenv("HIVE_HUB_SECRET", testHubSecret)
+
+	doPost(s, "/api/gh-user-auth/start", nil)
+
+	// Drive the poll with X-Forwarded-Proto set, mirroring production traffic
+	// behind the TLS-terminating proxy, so Secure cookie attributes are asserted.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/gh-user-auth/poll", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	s.mux.ServeHTTP(rec, req)
+
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] != "complete" {
+		t.Fatalf("want complete, got %v (%s)", body["status"], rec.Body.String())
+	}
+
+	c := sessionCookie(rec)
+	if c == nil {
+		t.Fatal("no hive_session cookie set with empty authToken — the login page would bounce forever")
+	}
+	if c.Value == "" {
+		t.Fatal("hive_session cookie set to an empty value")
+	}
+	if !c.HttpOnly {
+		t.Error("session cookie must be HttpOnly")
+	}
+	if !c.Secure {
+		t.Error("session cookie must be Secure behind TLS-terminating nginx")
+	}
+	if c.Path != "/" {
+		t.Errorf("cookie Path = %q, want / so it is returned on the root request", c.Path)
+	}
+	if c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("cookie SameSite = %v, want Lax", c.SameSite)
+	}
+
+	// The minted session must resolve to the authenticated identity, otherwise
+	// "/" rejects the very next request.
+	sess := s.lookupSession(c.Value)
+	if sess == nil {
+		t.Fatal("session cookie does not resolve to a session")
+	}
+	if sess.Username != "octocat" {
+		t.Errorf("session username = %q, want octocat", sess.Username)
+	}
+	if sess.Role != config.RoleOwner {
+		t.Errorf("session role = %q, want %q", sess.Role, config.RoleOwner)
+	}
+
+	// The C3 terminal-assertion mint lives in the same (formerly gated) path and
+	// must survive the un-nesting.
+	var terminal *http.Cookie
+	for _, ck := range (&http.Response{Header: rec.Header()}).Cookies() {
+		if ck.Name == terminalAssertionCookieName {
+			terminal = ck
+		}
+	}
+	if terminal == nil {
+		t.Fatal("no terminal assertion cookie set — the C3 mint was lost from the device-flow path")
+	}
+	if terminal.Value == "" {
+		t.Fatal("terminal assertion cookie set to an empty value")
+	}
+}
+
 func TestCovDF_GHUserAuthStatus_Session(t *testing.T) {
 	s, _, _ := dfServer(t, "complete", "octocat")
 	sid := s.createUserSession("alice", config.RoleOwner)
