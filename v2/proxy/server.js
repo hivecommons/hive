@@ -699,7 +699,13 @@ app.get('/api-docs', (_req, res) => {
   <style>body { margin: 0; padding: 0; }</style>
 </head><body>
   <redoc spec-url="/api/openapi.json"></redoc>
-  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <!-- Pinned to a specific Redoc version with a Subresource Integrity hash so a
+       compromise of the CDN or a silent 'latest'-tag update cannot execute
+       arbitrary script in the dashboard origin. crossorigin is required for SRI
+       to be enforced on a cross-origin script. Ported from v2 (#3297/#3265). -->
+  <script src="https://cdn.redoc.ly/redoc/v2.1.5/bundles/redoc.standalone.js"
+          integrity="sha384-0GrsyTQc9Oqd8h+b2dbc4XdR2T/DYpy0tLNNstyx+LBMUyiBbcWPbEs9aRmUcaxD"
+          crossorigin="anonymous"></script>
 </body></html>`);
 });
 
