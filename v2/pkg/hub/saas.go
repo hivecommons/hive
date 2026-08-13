@@ -10343,13 +10343,71 @@ const dashboardHTML = `<!DOCTYPE html>
       var sentinel = _upgradingHives[h.id];
       var sha = h.gitHash || '';
       if (sentinel && sha === sentinel) return true;
-      /* Hub-reported. Suppressed when the hive is ALREADY at latest (the latch
-         is stale — exactly the server-side bug this pairs with) or when latest
-         is unresolved, because the row suppresses the spinner in both cases and
-         the pill must match. */
+      /* Hub-reported. Suppressed when latest is unresolved, because the row
+         suppresses the spinner then too and the pill must match.
+
+         NOT suppressed merely because the hive reads as "current". The fleet
+         runs floating TAGS (v4-latest) while the hub tracks progress by git
+         SHA, so 'isCurrent' is a SHA comparison against the branch tip and a
+         spoke can sit behind the tip for many minutes with its tag unchanged
+         and zero Kubernetes-visible drift. Suppressing on isCurrent was only
+         ever a client-side patch over the stale server latch that the
+         stale_upgrade.go convergence sweep now clears at the source; keeping it
+         here would re-hide genuinely in-flight upgrades. */
       var latestUnknown = !branchLatest;
-      var isCurrent = !!branchLatest && sameShaJS(sha, branchLatest);
-      return !!(h.upgrading && !isCurrent && !latestUnknown);
+      if (latestUnknown) return false;
+      if (h.upgrading) return true;
+      /* Behind the branch tip with a target ALREADY armed by the hub. The hub
+         has instructed this SHA and is waiting for the spoke to report it, so
+         the rollout is in flight even before 'upgrading' latches — this is the
+         window that made the pill under-report against a moving tag. A hive
+         that is behind with NO armed target is not upgrading; it is "queued"
+         (auto-upgrade on) or simply out of date, and both are other states. */
+      var isCurrent = sameShaJS(sha, branchLatest);
+      if (!isCurrent && h.upgradeTarget && !h.autoUpgrade &&
+          !sameShaJS(sha, h.upgradeTarget)) {
+        return true;
+      }
+      return false;
+    }
+
+    /* normalizeUpgradeState expires the client-side sentinels for ONE hive.
+       It is the only writer of _upgradingHives during a render.
+
+       This has to run over the whole list BEFORE anything filters, counts or
+       draws, because _upgradingHives is global mutable state that
+       hiveIsUpgradingNow reads. While expiry lived inside the row loop, the
+       facet counter and applyDashFilters — both of which run first, over every
+       hive — saw a different map than the rows did, so the pill and the badge
+       could disagree even though they now call the same predicate. Sharing a
+       function only guarantees agreement if it is also given the same inputs.
+
+       Returns nothing; callers re-read _upgradingHives through the predicate. */
+    function normalizeUpgradeState(h) {
+      if (!h) return;
+      var branchName = h.gitBranch || 'v2';
+      var st = hiveSwitchState(h, branchName);
+      /* A switch sentinel that no longer resolves to a switch (the target
+         became a same-branch SHA) is stale and must not force upgrading. */
+      if (st.switchSentinelStale) {
+        delete _upgradingHives[h.id];
+        delete _switchStartedAt[h.id];
+        return;
+      }
+      if (st.isSwitching) return;
+      /* The hive has moved off the SHA it carried when Upgrade was clicked, so
+         the click has landed and the sentinel has done its job. */
+      var sentinel = _upgradingHives[h.id];
+      if (sentinel && (h.gitHash || '') !== sentinel) {
+        delete _upgradingHives[h.id];
+        delete _switchStartedAt[h.id];
+      }
+    }
+
+    /* normalizeUpgradeStates applies the above across the fleet. Called at the
+       top of renderHives, ahead of every filter, facet count and row. */
+    function normalizeUpgradeStates(hives) {
+      for (var i = 0; i < (hives || []).length; i++) normalizeUpgradeState(hives[i]);
     }
 
     function hiveUpgradeState(h) {
@@ -13320,6 +13378,11 @@ const dashboardHTML = `<!DOCTYPE html>
       for (var _si = 0; _si < allHives.length; _si++) {
         (isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll).push(allHives[_si]);
       }
+      /* Expire client-side upgrade sentinels ONCE, before anything reads them.
+         Filtering, facet counting and row drawing are all pure readers of
+         _upgradingHives from here on, so they cannot observe each other's
+         mutations and the pill can no longer disagree with the badge. */
+      normalizeUpgradeStates(assignedAll);
       var hives = applyDashFilters(assignedAll).concat(unassignedAll);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
@@ -13557,16 +13620,19 @@ const dashboardHTML = `<!DOCTYPE html>
           var upgradeState = hiveSwitchState(h, branchName);
           var isSwitching = upgradeState.isSwitching;
           var targetBranch = upgradeState.targetBranch;
-          /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
-             stops forcing the upgrading state on later auto-upgrades. */
-          if (upgradeState.switchSentinelStale) delete _upgradingHives[h.id];
-          var sentinel = _upgradingHives[h.id];
+          /* Sentinel expiry used to happen HERE, mid-render. That is what kept
+             the pill and the badge disagreeing even after they were given a
+             shared predicate: applyDashFilters (and the facet counter) run over
+             the whole list BEFORE this loop body executes for any row, so the
+             pill read the pre-expiry sentinel map while the row read the
+             post-expiry one — and on the next paint the pill read a map mutated
+             by the PREVIOUS render. Same function, different inputs, different
+             answers. Expiry now happens in normalizeUpgradeState(), once, ahead
+             of filtering; this loop is a pure reader. */
           /* ONE predicate, shared with the filter pill (hiveUpgradeState ->
              hiveIsUpgradingNow), so a spinning row is always matched by the
              "Upgrading" facet and vice versa. */
           var isUpgrading = hiveIsUpgradingNow(h, branchName, branchLatest);
-          if (sentinel && sha !== sentinel && !isSwitching) { delete _upgradingHives[h.id]; delete _switchStartedAt[h.id]; }
-          if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
           var status = latestUnknown
