@@ -19,8 +19,8 @@ import (
 // that owns ITS cookie — never a single shared identity.
 //
 // The GitHub OAuth token is intentionally NOT stored on the session; the token
-// lives only where it is needed (SetUserClient / userTokenPath) and is never
-// exposed through the session. The session carries only identity + role.
+// lives only in the persisted userTokenPath file and is never exposed through
+// the session. The session carries only identity + role.
 type userSession struct {
 	Username  string
 	Role      string

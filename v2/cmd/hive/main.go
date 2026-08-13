@@ -1045,24 +1045,14 @@ func main() {
 	}
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-		ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+		ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 	}
-	// Load user token for advisory posting (comments on issues as the logged-in user)
-	var userGHClient atomic.Pointer[github.Client]
-	if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
-		userToken := strings.TrimSpace(string(tokenData))
-		if userToken != "" {
-			// Identity check goes to github.com (the user token is a github.com
-			// OAuth token); the repo client stays on the per-hive host.
-			if username, err := github.ValidateToken(userToken, cfg.GitHub.OAuthAPIURL()); err == nil {
-				uc := github.NewClient(userToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
-				userGHClient.Store(uc)
-				logger.Info("user GitHub token loaded for advisory posting", "username", username)
-			} else {
-				logger.Warn("persisted user token is invalid or expired", "error", err)
-			}
-		}
-	}
+	// The user write-token client (userGHClient) was removed: every GitHub write
+	// — issues, PRs, comments, merges, and the advisory digest — now goes through
+	// the hive's App installation token (ghClient / kubestellar-hive[bot]). The
+	// user token only ever served as an advisory-digest fallback writer, which is
+	// no longer wanted (and forced the excessive "repo" login scope, issue #1927).
+	// Dashboard login now requests no scope and no user write-token is persisted.
 
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
 	sched := scheduler.New(cfg, logger)
@@ -1576,10 +1566,7 @@ func main() {
 			ghClient.SetRepos(cfg.Project.Repos)
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-				ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
-			}
-			if uc := userGHClient.Load(); uc != nil {
-				uc.SetRepos(cfg.Project.Repos)
+				ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
 			logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", cfg.Project.Repos)
@@ -2233,13 +2220,8 @@ func main() {
 		ReInitFunc: func() {
 			initAgentConfigDrivenSystems(cfg)
 		},
-		SetUserClient: func(token string) {
-			uc := github.NewClient(token, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
-			userGHClient.Store(uc)
-			logger.Info("user GitHub client updated via device flow")
-		},
 		EnumerateFunc: func() {
-			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, nil, logger)
+			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
 		},
 		AdvisoryResetFunc: func(newPrimaryRepo string) {
 			logger.Info("advisory reset: primary repo changed, creating new advisory issue", "repo", newPrimaryRepo)
@@ -2284,7 +2266,7 @@ func main() {
 			newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-				newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
 
 			ghClient = newClient
@@ -2640,9 +2622,6 @@ func main() {
 		}
 		// Re-sync subsystems that cache config values
 		ghClient.SetRepos(cfg.Project.Repos)
-		if uc := userGHClient.Load(); uc != nil {
-			uc.SetRepos(cfg.Project.Repos)
-		}
 		gov.UpdateConfig(cfg.Governor)
 		agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 
@@ -2685,7 +2664,7 @@ func main() {
 					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-						newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 					}
 					ghClient = newClient
 					appAuth = newAppAuth
@@ -3828,7 +3807,7 @@ func main() {
 				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, committed.Project.Org, committed.Project.Repos, logger, committed.GitHub.BotLogin())
 				if len(committed.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(committed.Governor.Labels.Exempt)
-					newClient.SetAutoMergeLabel(committed.Governor.Labels.AutoMerge)
+					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(committed.Governor.Labels.AutoMerge))
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
@@ -3987,12 +3966,9 @@ func main() {
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level
 
-			// Re-sync the GitHub clients that cache the repo list (mirrors the
+			// Re-sync the GitHub client that caches the repo list (mirrors the
 			// config-watcher reload path).
 			ghClient.SetRepos(cfg.Project.Repos)
-			if uc := userGHClient.Load(); uc != nil {
-				uc.SetRepos(cfg.Project.Repos)
-			}
 
 			// Persist to the PVC overlay so the claim survives a pod restart
 			// (config save writes the overlay hive.yaml, same as level switches).
@@ -4135,6 +4111,7 @@ func main() {
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
 	defer ticker.Stop()
+	var lastAutoMergeSweep time.Time
 
 	var agentTicker *time.Ticker
 	if cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -4184,7 +4161,8 @@ func main() {
 
 	gov.ClearLastKicks()
 	logger.Info("cleared last kicks for startup — all eligible agents will be kicked on first eval")
-	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, nil, logger)
+	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
+	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 
 	agentTickCh := func() <-chan time.Time {
@@ -4224,7 +4202,8 @@ func main() {
 					}
 				}
 			}
-			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, restarted, logger)
+			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
+			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -4785,7 +4764,6 @@ func runEvalCycle(
 	lastActionable *atomic.Pointer[github.ActionableResult],
 	advisoryStore *advisory.Store,
 	advisoryIssues map[string]int,
-	userGHClient *atomic.Pointer[github.Client],
 	restartedAgents []string,
 	logger *slog.Logger,
 ) {
@@ -5208,28 +5186,16 @@ func runEvalCycle(
 					// the bot's own comment) would false-flag the App as "Not
 					// Installed" even though the App itself works fine.
 					if err := ghClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
-						// App failed. Try the user client as a FALLBACK ONLY so
-						// the digest still gets posted. A user-fallback success
-						// does NOT clear the App banner — the App error below is
-						// what decides the banner state.
-						postedViaFallback := false
-						if uc := userGHClient.Load(); uc != nil {
-							if uerr := uc.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); uerr == nil {
-								logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "user-fallback")
-								postedViaFallback = true
-							}
-						}
-						// Record the outcome for the heartbeat's advisory-staleness
-						// signal. A user-fallback success still counts as a fresh
-						// digest post (the issue DID get updated); otherwise record the
-						// App error so the hub can flag the digest as stale with its
-						// specific cause. err.Error() is the same string logged just
-						// below — log-safe, never key material.
-						if postedViaFallback {
-							dashSrv.RecordAdvisoryPost(digest.TotalCount)
-						} else {
-							dashSrv.RecordAdvisoryError(err.Error())
-						}
+						// The App is the sole advisory-digest writer. The former
+						// user-token fallback was removed (issue #1927): it only
+						// existed to post the digest under the logged-in user's
+						// identity when the App failed, which is exactly the
+						// owner-attributed write path we no longer want — and it
+						// forced every dashboard login through the excessive "repo"
+						// scope. Record the App error so the hub flags the digest
+						// as stale with its specific cause. err.Error() is the same
+						// string logged just below — log-safe, never key material.
+						dashSrv.RecordAdvisoryError(err.Error())
 						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
 							// App is installed (we found the issue) but a real
@@ -5941,6 +5907,48 @@ func runEscalationSweep(
 		}
 	}
 	return escalated
+}
+
+// autoMergeSweepInterval is the minimum spacing between label-queued
+// auto-merge sweeps. The sweep piggybacks on the governor eval tick, which can
+// fire much more often than once a minute; this floor keeps the sweep from
+// hammering the GitHub API on short eval intervals.
+const autoMergeSweepInterval = time.Minute
+
+// runAutoMergeSweepIfDue drains the label-queued auto-merge queue (the human
+// "Approved ... for Hive auto-merge" path) at most once per
+// autoMergeSweepInterval. All merge-eligibility decisions — queue-approval
+// trust, check verification, tier gates — live inside SweepQueuedAutoMerges;
+// this function is only the scheduler and the dashboard audit sink.
+func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < autoMergeSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepQueuedAutoMerges(ctx, github.AutoMergeSweepOptions{
+		MaxMerges: github.DefaultAutoMergeSweepMaxMerges,
+		Audit: func(event github.AutoMergeSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
+				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
+			dashSrv.AuditLog("system", "automerge-sweep-merged", detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("automerge sweep failed", "error", err)
+		return
+	}
+	if len(result.Merged) > 0 || result.Seen > 0 {
+		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
+	}
 }
 
 // mergeEligiblePath is a var (not a const) only so tests can point
@@ -6712,6 +6720,19 @@ func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.Dis
 	if err := review.WriteDispatchState("", state); err != nil {
 		logger.Warn("failed to persist review dispatch state", "error", err)
 	}
+}
+
+// normalizedAutoMergeLabel resolves the configured queue label, falling back
+// to the shared default when the value is blank. Client.SetAutoMergeLabel
+// ignores blank input (keeping whatever was set before) and
+// Client.AutoMergeLabel falls back on read, but the cmd layer normalizes
+// eagerly too so a partially-populated config can never propagate an unnamed
+// label to a fresh client.
+func normalizedAutoMergeLabel(label string) string {
+	if label = strings.TrimSpace(label); label != "" {
+		return label
+	}
+	return github.AutoMergeQueuedLabel
 }
 
 func atomicWrite(path string, data []byte) {

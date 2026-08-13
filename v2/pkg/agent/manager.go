@@ -269,6 +269,14 @@ type Manager struct {
 
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
+	//
+	// Invocation contract: Pause/Resume snapshot this under m.mu but invoke
+	// it only AFTER releasing m.mu. The callback does config disk I/O and is
+	// allowed to re-enter the manager (AllStatuses, GetStatus, ...); m.mu is
+	// a non-reentrant sync.RWMutex, so invoking it with the write lock held
+	// would deadlock the pause path and wedge every operation queued behind
+	// m.mu (heartbeat AllStatuses, SendKick, terminal ResolveAgent) — the
+	// same failure class as the mint-issuer deadlock fixed in ca5f0f00.
 	persistPauseCallback func(name string, paused bool)
 
 	// breakerEngaged and breakerPaused hold the fleet-breaker's state, guarded
@@ -6328,14 +6336,11 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	}
 	agent.State = StatePaused
 	agent.Config.Paused = true
+	// Snapshot the persistence callback under m.mu but invoke it only after
+	// the unlock below: it does config disk I/O and may re-enter the manager,
+	// and m.mu is a non-reentrant RWMutex — calling it here would deadlock
+	// (see the persistPauseCallback field docs).
 	persistPause := m.persistPauseCallback
-	m.mu.Unlock()
-
-	// Persistence republishes the complete runtime config and re-enters the
-	// manager to update agent snapshots. Never invoke it while holding m.mu.
-	if persistPause != nil {
-		persistPause(name, true)
-	}
 	m.logger.Info("audit: agent paused",
 		"name", name,
 		"trigger", trigger,
@@ -6350,6 +6355,11 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 		"trigger", trigger,
 		"reason", reason,
 	))
+	m.mu.Unlock()
+
+	if persistPause != nil {
+		persistPause(name, true)
+	}
 	return nil
 }
 
@@ -6379,8 +6389,13 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
 	agent.Config.Paused = false
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, false)
+	if persistPause := m.persistPauseCallback; persistPause != nil {
+		// Deferred so it runs after this function's explicit m.mu.Unlock on
+		// every return path: the callback does config disk I/O and may
+		// re-enter the manager, and m.mu is a non-reentrant RWMutex —
+		// invoking it here with the lock held deadlocks Resume and wedges
+		// everything queued behind m.mu (see persistPauseCallback docs).
+		defer persistPause(name, false)
 	}
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""

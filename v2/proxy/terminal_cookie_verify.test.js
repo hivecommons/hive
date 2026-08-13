@@ -15,6 +15,17 @@
 //
 // Both gates are covered here. Fixing only the HTTP one would be security
 // theatre: a WebSocket upgrade reaches the same ttyd.
+//
+// PORTED FROM v2 (#3657): v4's /terminal gate is layered signature verification
+// (this file, unchanged from v2) PLUS a PER-HIVE authorization step
+// (isAuthorizedForThisHive / authorizeTerminal, audit #2756 + N4 + F4) that v2
+// does not have at all. A hub-wide-valid signed cookie is necessary but no
+// longer sufficient on v4: the caller must also be on THIS hive's authorized
+// list (or hold a signed per-hive terminal assertion). The proxy itself is NOT
+// changed for this port — only the "valid cookie" positive control below is
+// adapted to also supply HIVE_AUTHORIZED_USERS/HIVE_ID, i.e. the config a real
+// hosted hive is provisioned with, so it exercises v4's actual (correct, more
+// restrictive) authorization rather than failing on a layer v2 never had.
 
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, request as httpRequest } from 'http';
@@ -29,6 +40,7 @@ const PROXY_PORT = 19101;
 const GO_PORT = 19102;
 const TTYD_PORT = 19103;
 const HOSTED_HOST = 'hive-f3.hive.kubestellar.io';
+const HIVE_ID = 'hive-f3';
 
 // The master this spoke is provisioned with; the proxy derives SESSION_KEY from
 // it exactly as Go's SpokeSessionKey() does.
@@ -72,6 +84,13 @@ function startProxy() {
         HIVE_DASHBOARD_TOKEN: '',
         HIVE_STATIC_DIR: __dirname,
         HIVE_HUB_SECRET: MASTER,
+        HIVE_ID: HIVE_ID,
+        // v4 per-hive authorization (#2756/N4/F4): the static allowlist a real
+        // hosted hive is provisioned with. 'alice' is the positive control below
+        // (a valid signature alone must no longer be sufficient); 'mallory' is
+        // deliberately OMITTED so the re-labelled-cookie case at the bottom is
+        // denied on signature, not merely on authorization.
+        HIVE_AUTHORIZED_USERS: 'alice:owner',
         NODE_ENV: 'test',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -140,12 +159,17 @@ try {
   assert.ok(!(await terminalWS(null)), 'missing cookie WS must be refused');
   console.log('  ✓ absent cookie denied');
 
-  // --- CONTROL: a genuinely hub-signed cookie still works --------------------
+  // --- CONTROL: a genuinely hub-signed AND per-hive-authorized cookie works --
+  // 'alice' is both correctly signed (mintCookie) and on HIVE_AUTHORIZED_USERS
+  // above — i.e. the config a real hosted hive is provisioned with. This proves
+  // the signature-verification fix does not lock out a legitimately authorized
+  // user, without asserting anything about the separate per-hive authorization
+  // layer (covered by the fallback's own unit coverage, not this F3 test).
   const good = mintCookie('alice');
   assert.equal(await terminalHTTP(good), 200,
-    'a VALID hub-signed cookie must still reach the terminal — the fix must not lock out real users');
-  assert.ok(await terminalWS(good), 'a VALID hub-signed cookie must still open the WS');
-  console.log('  ✓ valid hub-signed cookie still granted (HTTP + WS)');
+    'a VALID hub-signed, per-hive-authorized cookie must still reach the terminal — the fix must not lock out real users');
+  assert.ok(await terminalWS(good), 'a VALID hub-signed, per-hive-authorized cookie must still open the WS');
+  console.log('  ✓ valid hub-signed + authorized cookie still granted (HTTP + WS)');
 
   // --- Tampering: right shape, wrong signature ------------------------------
   const tampered = 'mallory.' + good.split('.')[1];

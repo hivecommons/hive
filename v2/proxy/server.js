@@ -322,6 +322,16 @@ function verifyTerminalAssertion(key, token, expectedHiveID, nowSec) {
 // authorizeTerminal — this only changes whether the hub cookie must ALSO be
 // present.
 //
+// parseCookies is shared by the HTTP and WebSocket terminal gates so the two
+// cannot drift — they are equally exploitable and must stay in lockstep.
+function parseCookies(header) {
+  return (header || '').split(';').reduce((acc, c) => {
+    const [k, ...v] = c.trim().split('=');
+    if (k) acc[k] = v.join('=');
+    return acc;
+  }, {});
+}
+
 // Returns the identity to authorize as, or null if neither credential is usable.
 // Fails closed: an absent, expired, wrong-hive or badly-signed assertion with no
 // valid hub cookie yields null and the caller denies.
@@ -699,7 +709,13 @@ app.get('/api-docs', (_req, res) => {
   <style>body { margin: 0; padding: 0; }</style>
 </head><body>
   <redoc spec-url="/api/openapi.json"></redoc>
-  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <!-- Pinned to a specific Redoc version with a Subresource Integrity hash so a
+       compromise of the CDN or a silent 'latest'-tag update cannot execute
+       arbitrary script in the dashboard origin. crossorigin is required for SRI
+       to be enforced on a cross-origin script. Ported from v2 (#3297/#3265). -->
+  <script src="https://cdn.redoc.ly/redoc/v2.1.5/bundles/redoc.standalone.js"
+          integrity="sha384-0GrsyTQc9Oqd8h+b2dbc4XdR2T/DYpy0tLNNstyx+LBMUyiBbcWPbEs9aRmUcaxD"
+          crossorigin="anonymous"></script>
 </body></html>`);
 });
 
@@ -723,11 +739,7 @@ app.use('/terminal', (req, res, next) => {
   const host = req.headers.host || '';
   const isHosted = isHostedHost(host);
   if (isHosted) {
-    const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
-      const [k, ...v] = c.trim().split('=');
-      if (k) acc[k] = v.join('=');
-      return acc;
-    }, {});
+    const cookies = parseCookies(req.headers.cookie);
     // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
     // signature — a non-empty value is NOT proof of authentication.
     const user = resolveTerminalIdentity(cookies);
@@ -826,11 +838,7 @@ server.on('upgrade', (req, socket, head) => {
     const host = req.headers.host || '';
     const isHosted = isHostedHost(host);
     if (isHosted) {
-      const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
-        const [k, ...v] = c.trim().split('=');
-        if (k) acc[k] = v.join('=');
-        return acc;
-      }, {});
+      const cookies = parseCookies(req.headers.cookie);
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
       const wsUser = resolveTerminalIdentity(cookies);
       if (!wsUser) {

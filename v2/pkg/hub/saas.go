@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -50,6 +51,92 @@ func resolveHubAdminUsername() string {
 		return v
 	}
 	return defaultHubAdminUsername
+}
+
+// hubAdminsEnv is the env var (comma-separated canonical ids, e.g.
+// "github:clubanderson,google:1078...") that overrides the admin SET for
+// multi-provider login. A bare login in the list is accepted and treated as
+// github: via the identity shim. When unset, the admin set is the single
+// hubAdminUsername above (itself overridable via HIVE_HUB_ADMIN_USERNAME), so
+// both existing env contracts keep working. Prefer isHubAdmin()/
+// primaryHubAdmin() over comparing against hubAdminUsername directly, so
+// multi-provider admins work and so a same-subject identity on a DIFFERENT
+// provider can never inherit admin.
+const hubAdminsEnv = "HIVE_HUB_ADMINS"
+
+// hubAdminSet returns the canonicalized set of admin identities. Sourced from
+// HIVE_HUB_ADMINS when set, else the single hubAdminUsername. Every entry is
+// run through canonicalizeLegacy so a bare login becomes github:<login>; this
+// is what stops a Google/IBMid user whose subject happens to be the admin's
+// login from matching the GitHub admin.
+func hubAdminSet() map[string]bool {
+	raw := strings.TrimSpace(os.Getenv(hubAdminsEnv))
+	entries := []string{hubAdminUsername}
+	if raw != "" {
+		entries = splitCSV(raw)
+	}
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if c := canonicalizeLegacy(e); c != "" {
+			set[strings.ToLower(c)] = true
+		}
+	}
+	return set
+}
+
+// isHubAdmin reports whether the given identity (bare-legacy or canonical) is a
+// hub admin. Both the input and the configured admin ids are canonicalized, so
+// "clubanderson", "github:clubanderson", and "GitHub:ClubAnderson" all match the
+// default admin, while "google:clubanderson" does NOT.
+func isHubAdmin(id string) bool {
+	if id == "" {
+		return false
+	}
+	return hubAdminSet()[strings.ToLower(canonicalizeLegacy(id))]
+}
+
+// primaryHubAdmin returns the canonical identity of the primary hub admin — the
+// first entry of HIVE_HUB_ADMINS, else the resolved hubAdminUsername. Used where
+// the code needs a concrete admin identity to WRITE (e.g. audit attribution).
+func primaryHubAdmin() string {
+	raw := strings.TrimSpace(os.Getenv(hubAdminsEnv))
+	if raw != "" {
+		if list := splitCSV(raw); len(list) > 0 {
+			return canonicalizeLegacy(list[0])
+		}
+	}
+	return canonicalizeLegacy(hubAdminUsername)
+}
+
+// userCanonicalID returns a user's canonical wire-form identity: the explicit
+// CanonicalID when present, else the legacy-shimmed GitHubUsername (a bare login
+// becomes github:<login>). This is the single source of truth for "who is this
+// record" across the dual-read storage path and the provider badge.
+func userCanonicalID(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.CanonicalID != "" {
+		return canonicalizeLegacy(u.CanonicalID)
+	}
+	return canonicalizeLegacy(u.GitHubUsername)
+}
+
+// userProvider returns a user's login provider ("github"/"google"/"ibmid"/
+// "redhat"/"microsoft"/"custom"), from the stored Provider field when set, else
+// parsed from the canonical identity. Legacy records with neither resolve to
+// "github" via the shim. Drives the admin Users-table auth-method badge.
+func userProvider(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.Provider != "" {
+		return strings.ToLower(u.Provider)
+	}
+	if p, _, ok := parseCanonical(userCanonicalID(u)); ok {
+		return p
+	}
+	return legacyProvider
 }
 
 func splitCSV(s string) []string {
@@ -173,6 +260,34 @@ type SaaSUser struct {
 	SaaSQuota      int               `json:"saas_quota"`
 	Blocked        bool              `json:"blocked"`
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
+
+	// Multi-provider identity (phase 1d). All omitempty so the thousands of
+	// existing GitHub-only records on the PVC round-trip byte-identical until a
+	// user first logs in / links after this ships.
+	//
+	//   CanonicalID  the wire-form primary identity ("google:1078", "github:foo").
+	//                Empty on a legacy record → the shim treats GitHubUsername as
+	//                the (github:) primary. saveSaaSUser/loadSaaSUser already dual-
+	//                read on GitHubUsername; CanonicalID is the explicit form used
+	//                by the badge and by Phase 2's OIDC callback when it creates a
+	//                non-GitHub user.
+	//   Provider     "github" | "google" | "ibmid" | "redhat" | "microsoft" |
+	//                "custom" — drives the admin Users-table auth-method badge.
+	//                Derivable from CanonicalID but stored so the badge needs no
+	//                parse per render.
+	//   AvatarURL    stored avatar (Google/IBMid give a picture claim); replaces
+	//                the derived github.com/<login>.png where present.
+	//   Email        the provider email claim (display only; NEVER the key — subs
+	//                are stable, emails are reassignable).
+	//   LinkedGitHubLogin  an OPTIONAL attached GitHub identity for a non-GitHub
+	//                primary who needs user-scoped GitHub calls (contributor
+	//                reissue). Never required to own a hive — the App does the
+	//                GitHub work.
+	CanonicalID       string `json:"canonical_id,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	AvatarURL         string `json:"avatar_url,omitempty"`
+	Email             string `json:"email,omitempty"`
+	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
 
 	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
 	// outside GitHub (and to remember what was said last time). All three are
@@ -327,6 +442,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	// Daily image-pulls sparkline series (external adoption gauge). requireAuth,
+	// not requireAdmin: any signed-in hub user sees the same public-adoption
+	// number, and the underlying data is scraped from the PUBLIC package page.
+	s.mux.HandleFunc("GET /api/hub/image-pulls", s.requireAuth(s.handleImagePulls))
 	// Token attribution rollups. requireAuth (not requireAdmin) because a
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
@@ -401,7 +520,6 @@ func (s *HubServer) registerSaaSRoutes() {
 	// pool so it can be re-armed. Admin-only, and guarded to the wedged middle
 	// state (assigned && !claim_delivered) inside the handler.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
-	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	// Acknowledging a fleet alert is an operator action on the operator's own
 	// view, so it is admin-only (see alerts.go).
@@ -479,7 +597,7 @@ func (s *HubServer) blockIfImpersonatingWrite(w http.ResponseWriter, r *http.Req
 // read used for messaging/audit/status; the security decisions live in
 // resolveIdentity.
 func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGrant, bool) {
-	if s.getRealAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getRealAuthUser(r)) {
 		return impersonationGrant{}, false
 	}
 	cookie, err := r.Cookie(impersonateCookieName)
@@ -487,7 +605,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 		return impersonationGrant{}, false
 	}
 	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
-	if !ok || grant.Admin != hubAdminUsername {
+	if !ok || !isHubAdmin(grant.Admin) {
 		return impersonationGrant{}, false
 	}
 	if loadSaaSUser(grant.Target) == nil {
@@ -672,7 +790,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 //   - a hive_hub_impersonate cookie is present AND its HMAC verifies AND it has
 //     not expired (verifyImpersonateCookieValue);
 //   - the grant's Admin field equals the REAL signed session user;
-//   - that real user is exactly hubAdminUsername (only the admin may impersonate
+//   - that real user is a hub admin (isHubAdmin — only an admin may impersonate
 //     — a stolen cookie replayed on a non-admin session is ignored);
 //   - the target resolves to a real registered user on disk.
 //
@@ -683,7 +801,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 // the target is always a normal user, and writes never run under it.
 func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string, impersonating bool) {
 	realUser = s.getRealAuthUser(r)
-	if realUser == "" || realUser != hubAdminUsername {
+	if realUser == "" || !isHubAdmin(realUser) {
 		return realUser, realUser, false
 	}
 	cookie, err := r.Cookie(impersonateCookieName)
@@ -773,12 +891,74 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	return user.Login
 }
 
+// saaSUserFilePaths returns the candidate on-disk paths for an identity, in
+// read/try order: the canonical filename first, then the legacy "<login>.json"
+// fallback for a bare or github: identity. The caller has already rejected
+// path-traversal characters in the raw username.
+func saaSUserFilePaths(username string) []string {
+	var paths []string
+	if stem, err := encodeUserFilename(username); err == nil {
+		paths = append(paths, filepath.Join(saasUsersDir, stem+".json"))
+	}
+	provider, subject, ok := parseCanonical(username)
+	if ok && provider == legacyProvider {
+		legacy := filepath.Join(saasUsersDir, subject+".json")
+		if len(paths) == 0 || paths[0] != legacy {
+			paths = append(paths, legacy)
+		}
+	}
+	return paths
+}
+
+// readSaaSUserFile reads a user's JSON, trying the canonical filename then the
+// legacy fallback (see saaSUserFilePaths). Returns the first file that reads.
+func readSaaSUserFile(username string) ([]byte, error) {
+	var firstErr error
+	for _, p := range saaSUserFilePaths(username) {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			return data, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr == nil {
+		firstErr = os.ErrNotExist
+	}
+	return nil, firstErr
+}
+
+// saveSaaSUserPath returns the file path a user record is written to. A GitHub
+// (or bare-legacy) primary keeps its legacy "<login>.json" so existing records
+// are updated in place with no rename; a non-GitHub primary writes the canonical
+// "<provider>.<subject>.json".
+func saveSaaSUserPath(u *SaaSUser) (string, error) {
+	// The record's primary identity: the explicit CanonicalID when set (a
+	// non-GitHub or newly-created user), else GitHubUsername (a bare login for
+	// legacy GitHub users). Either resolves through parseCanonical + the shim.
+	id := userCanonicalID(u)
+	provider, subject, ok := parseCanonical(id)
+	if !ok {
+		return "", fmt.Errorf("invalid identity for save: %q", id)
+	}
+	if provider == legacyProvider {
+		return filepath.Join(saasUsersDir, subject+".json"), nil
+	}
+	stem, err := encodeUserFilename(id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(saasUsersDir, stem+".json"), nil
+}
+
 func loadSaaSUser(username string) *SaaSUser {
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
 		return nil
 	}
-	path := filepath.Join(saasUsersDir, username+".json")
-	data, err := os.ReadFile(path)
+	// Dual-read: try the canonical filename ("google.1078.json") then the legacy
+	// "<login>.json". No file is rewritten — existing users resolve via legacy.
+	data, err := readSaaSUserFile(username)
 	if err != nil {
 		return nil
 	}
@@ -811,7 +991,10 @@ func saveSaaSUser(u *SaaSUser) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(saasUsersDir, u.GitHubUsername+".json")
+	path, err := saveSaaSUserPath(u)
+	if err != nil {
+		return err
+	}
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return err
@@ -830,7 +1013,7 @@ func ensureSaaSUser(username string) *SaaSUser {
 		return u
 	}
 	quota := 0
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		quota = -1
 	}
 	u = &SaaSUser{
@@ -855,7 +1038,14 @@ func listAllSaaSUsers() []SaaSUser {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		u := loadSaaSUser(strings.TrimSuffix(e.Name(), ".json"))
+		stem := strings.TrimSuffix(e.Name(), ".json")
+		// A canonical filename ("google.1078", "github.foo") decodes to its wire
+		// id; a legacy filename ("foo") does not — load it as the bare login.
+		key := stem
+		if id, ok := decodeUserFilename(stem); ok {
+			key = id
+		}
+		u := loadSaaSUser(key)
 		if u != nil {
 			users = append(users, *u)
 		}
@@ -886,7 +1076,7 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		// particular the impersonation exit) must still be reachable by the real
 		// admin, and no admin-only surface may leak to the impersonated target.
 		username := s.getRealAuthUser(r)
-		if username != hubAdminUsername {
+		if !isHubAdmin(username) {
 			http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 			return
 		}
@@ -936,6 +1126,11 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	type adminUserView struct {
 		SaaSUser
 		StatusTier string `json:"status_tier"`
+		// Provider is always populated (derived via userProvider) so the Users
+		// table's auth-method badge never has to parse — a legacy github-only
+		// record resolves to "github". This shadows SaaSUser.Provider's
+		// omitempty, so the field is present on every row.
+		Provider string `json:"provider"`
 	}
 	views := make([]adminUserView, 0, len(users))
 	for i := range users {
@@ -944,6 +1139,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		views = append(views, adminUserView{
 			SaaSUser:   users[i],
 			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+			Provider:   userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1148,7 +1344,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 // record (login state, quota, encrypted token).
 func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		writeJSONError(w, http.StatusForbidden, "cannot delete the hub admin")
 		return
 	}
@@ -1566,7 +1762,11 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		select {
 		case res := <-query.ch:
 			if res.err != nil {
-				s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				if errors.Is(res.err, errClusterPullOnly) {
+					s.logger.Info("cluster health: pull-only cluster, using the health its spokes report over the heartbeat", "cluster", cID)
+				} else {
+					s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				}
 				// Fall back to heartbeat-reported health if available.
 				if hbHealth := s.getHeartbeatHealthForCluster(cID); hbHealth != nil {
 					pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), hbHealth, hiveCounts[cID])
@@ -1701,8 +1901,21 @@ func clusterHealthQueryTimeoutFor(cluster *ClusterConfig) time.Duration {
 	return defaultClusterHealthQueryTimeout
 }
 
+// errClusterPullOnly marks a health query skipped because the hub cannot reach
+// the cluster at all. It is an EXPECTED outcome, not a fault, so callers report
+// it as such and use the spokes' own heartbeat-reported health instead.
+var errClusterPullOnly = errors.New("cluster is pull-only: not reachable from the hub")
+
 // buildSingleClusterHealth queries a single cluster for node health data.
 func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slog.Logger) (PerClusterHealth, error) {
+	if cluster.PullOnly {
+		// Node-level health comes from kubectl, which cannot run here. This is
+		// not a new failure mode: the caller already falls back to the health
+		// the spokes THEMSELVES report over the heartbeat, which is exactly the
+		// right source for a pull-only pool. Returning the sentinel routes into
+		// that path and keeps it out of the "query failed" warning.
+		return PerClusterHealth{}, fmt.Errorf("%w: %s", errClusterPullOnly, cluster.ID)
+	}
 	timeout := clusterHealthQueryTimeoutFor(cluster)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -2249,11 +2462,6 @@ type MyHiveEntry struct {
 	// only alongside AssignedAt (i.e. for an assigned-but-unclaimed row).
 	AssignStuckSeconds int `json:"assignStuckSeconds,omitempty"`
 
-	// Migration tracking (Phase 7).
-	MigrationStatus string `json:"migrationStatus,omitempty"`
-	MigrationFrom   string `json:"migrationFrom,omitempty"`
-	MigrationTo     string `json:"migrationTo,omitempty"`
-
 	// Drift holds config-drift signals computed server-side against the fleet
 	// norm (see drift.go). It rides this payload rather than a per-row API call
 	// so the My Hives table can render the badge and the fleet-exceptions
@@ -2456,9 +2664,6 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			entry.GovernorMode = "ERROR"
 			entry.ProvError = sh.Error
 		}
-		entry.MigrationStatus = sh.MigrationStatus
-		entry.MigrationFrom = sh.MigrationFrom
-		entry.MigrationTo = sh.MigrationTo
 
 		// Assigning transient state: after a placeholder is assigned, the meta
 		// records the real project but the spoke still reports the old placeholder
@@ -2524,7 +2729,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			if isAdmin && role != "owner" {
@@ -2535,7 +2740,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result = append(result, entry)
 			continue
 		}
-		if strings.EqualFold(h.Owner, username) {
+		if canonicalEqual(h.Owner, username) {
 			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
@@ -2583,7 +2788,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, sh := range listSaaSHives() {
-		if (sh.Owner == username || isAdmin) && !seen[sh.ID] {
+		if (canonicalEqual(sh.Owner, username) || isAdmin) && !seen[sh.ID] {
 			user.Hives[sh.ID] = "owner"
 			entry := MyHiveEntry{
 				RegistryEntry: RegistryEntry{
@@ -2747,21 +2952,22 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"hives":                   result,
-		"saas_quota":              user.SaaSQuota,
-		"saas_used":               saasCount,
-		"is_admin":                isAdmin,
-		"latest_sha":              getLatestSHA(),
-		"latest_shas":             getDisplaySHAs(),
-		"latest_sha_messages":     getDisplaySHAMessages(),
-		"latest_sha_image_status": getImageStatuses(),
-		"commit_messages":         getCommitMessages(),
-		"hub_git_hash":            s.hubGitHash,
-		"hub_git_branch":          s.hubGitBranch,
-		"tracked_branches":        s.trackedBranchList(),
-		"hub_auto_upgrade":        isHubAutoUpgrade(),
-		"hub_upgrade_state":       s.hubUpgradeState(),
-		"show_my_hives":           true,
+		"hives":                    result,
+		"saas_quota":               user.SaaSQuota,
+		"saas_used":                saasCount,
+		"is_admin":                 isAdmin,
+		"latest_sha":               getLatestSHA(),
+		"latest_shas":              getDisplaySHAs(),
+		"latest_sha_messages":      getDisplaySHAMessages(),
+		"latest_sha_image_status":  getImageStatuses(),
+		"latest_sha_build_started": getImageBuildStartTimes(),
+		"commit_messages":          getCommitMessages(),
+		"hub_git_hash":             s.hubGitHash,
+		"hub_git_branch":           s.hubGitBranch,
+		"tracked_branches":         s.trackedBranchList(),
+		"hub_auto_upgrade":         isHubAutoUpgrade(),
+		"hub_upgrade_state":        s.hubUpgradeState(),
+		"show_my_hives":            true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
 		// round-trip would make the panel pop in after the list and shift it.
@@ -2828,13 +3034,13 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	hiveAccess := make(map[string]hiveAccessInfo)
 
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			hiveAccess[h.ID] = hiveAccessInfo{Role: role, Status: "accepted"}
 			continue
 		}
-		if strings.EqualFold(h.Owner, username) {
+		if canonicalEqual(h.Owner, username) {
 			hiveAccess[h.ID] = hiveAccessInfo{Role: "owner", Status: "accepted"}
 			continue
 		}
@@ -2853,14 +3059,15 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"authenticated":           true,
-		"show_my_hives":           true,
-		"hives":                   hiveAccess,
-		"latest_sha":              getLatestSHA(),
-		"latest_shas":             getDisplaySHAs(),
-		"latest_sha_messages":     getDisplaySHAMessages(),
-		"latest_sha_image_status": getImageStatuses(),
-		"commit_messages":         getCommitMessages(),
+		"authenticated":            true,
+		"show_my_hives":            true,
+		"hives":                    hiveAccess,
+		"latest_sha":               getLatestSHA(),
+		"latest_shas":              getDisplaySHAs(),
+		"latest_sha_messages":      getDisplaySHAMessages(),
+		"latest_sha_image_status":  getImageStatuses(),
+		"latest_sha_build_started": getImageBuildStartTimes(),
+		"commit_messages":          getCommitMessages(),
 	})
 }
 
@@ -3086,7 +3293,12 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	// Effective owners (creator, granted owner, hub admin — userIsHiveOwner)
+	// always pass; other granted roles keep read access to status. This is a
+	// deliberate v4 deviation from v2, which tightened status to owner-only:
+	// restricting existing read/read-write access is out of scope for the
+	// granted-owner parity port (which only EXTENDS who passes owner checks).
+	if !userIsHiveOwner(username, h) {
 		if _, hasAccess := user.Hives[id]; !hasAccess {
 			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			return
@@ -3165,7 +3377,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// the spoke. The role we pass is advisory — the spoke re-checks its own
 	// allowlist and uses that role authoritatively.
 	role := saasRoleRead
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		role = saasRoleOwner
 	} else {
 		user := loadSaaSUser(username)
@@ -3173,7 +3385,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			return
 		}
-		if h := loadSaaSHive(id); h != nil && h.Owner == username {
+		if h := loadSaaSHive(id); h != nil && canonicalEqual(h.Owner, username) {
 			role = saasRoleOwner
 		} else if r, ok := user.Hives[id]; ok {
 			role = r
@@ -3186,15 +3398,11 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// Mint the handoff token. Without a hub secret we can't sign one, so fall
 	// back to a plain dashboard redirect (spoke will prompt for login).
 	//
-	// Dual-mint (transitional v2→v4 backport): a v4 spoke verifies SSO with an
-	// Ed25519 PUBLIC key and CANNOT verify a legacy symmetric HMAC token; the 33
-	// old spokes verify symmetric and CANNOT verify Ed25519. So the hub must mint
-	// the scheme THIS consuming hive can verify. We branch per-hive on a positive
-	// v4 signal (hiveWantsEd25519SSO: the console-hive allowlist plus a
-	// heartbeat-reported v4 commit/image), and DEFAULT to the legacy symmetric
-	// mint for every hive not positively identified as v4 — so the old fleet is
-	// never broken. Once all hives report a v4 version this becomes version-driven
-	// and the allowlist can be retired.
+	// Ed25519-only: every v4 spoke verifies SSO handoff tokens with an Ed25519
+	// PUBLIC key (see MintSSOToken/VerifySSOToken in sso.go). There is no
+	// per-hive branching or legacy symmetric fallback here — the hub always
+	// mints with its Ed25519 signing seed, and a spoke that cannot verify
+	// Ed25519 tokens simply falls through to the plain dashboard redirect below.
 	if s.hubSecret != "" {
 		if tok := MintSSOToken(s.ssoSigningSeed(), username, role, id, time.Now()); tok != "" {
 			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
@@ -3214,14 +3422,17 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 
 	h := loadSaaSHive(id)
 	if h == nil {
-		// SaaS entry already gone — still clean up the in-memory registry
-		// so the hive disappears from the listing immediately.
+		// SaaS meta.json already gone — still clean up the in-memory registry so
+		// the hive disappears from the listing immediately, and best-effort purge
+		// any leftover record dir / timeline file so a partial prior delete cannot
+		// leave a status:"available" husk that resurrects in the listing.
 		s.removeRegistryEntry(id, username)
+		removeHiveRecord(id, s.logger)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can delete this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -3244,6 +3455,21 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("no cluster config for deprovision; removing registry entry anyway",
 			"hive_id", id, "cluster_id", h.ClusterID)
 	}
+	// Durably purge the hub-side record. This is what stops the "resurrection":
+	// deprovisionHive removes the hive directory only when a cluster config is
+	// available (the else branch above skips it), and NEITHER path removes the
+	// timeline file. Without this, a delete with no cluster config left the
+	// hives/<id>/ dir — status:"available" — behind, so the hive reappeared in
+	// the unassigned/available list forever. removeHiveRecord is idempotent, so
+	// calling it after a successful deprovision (which already removed the dir)
+	// is harmless and still cleans up the timeline file deprovision never touched.
+	//
+	// NOTE: this is the genuine, user-initiated delete path. It is deliberately
+	// NOT the placeholder-recycle path — resetting a slot to status:"available"
+	// (handleResetAssignment / sweepStuckAssignments in saas_reset_assignment.go)
+	// rewrites meta.json in place and KEEPS the record, and never reaches this
+	// handler. So purging the record here cannot break placeholder recycling.
+	removeHiveRecord(id, s.logger)
 	s.removeRegistryEntry(id, username)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username,
@@ -3270,100 +3496,6 @@ const (
 	// teardown could not run; cloud resources may need manual cleanup.
 	deleteStatusPartial = "partially_deleted"
 )
-
-// MigrateRequest is the JSON body for POST /api/saas/hives/{id}/migrate.
-type MigrateRequest struct {
-	TargetClusterID string `json:"target_cluster_id"`
-}
-
-// migrateMaxBodyBytes limits the migrate request body size.
-const migrateMaxBodyBytes = 1024
-
-func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
-	username := s.getAuthUser(r)
-	id := r.PathValue("id")
-	if strings.Contains(id, "..") || strings.Contains(id, "/") {
-		http.Error(w, `{"error":"invalid hive id"}`, http.StatusBadRequest)
-		return
-	}
-
-	h := loadSaaSHive(id)
-	if h == nil {
-		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
-		return
-	}
-	if h.Owner != username && username != hubAdminUsername {
-		http.Error(w, `{"error":"only the owner can migrate this hive"}`, http.StatusForbidden)
-		return
-	}
-
-	// Reject if already migrating.
-	if h.MigrationStatus == "migrating" {
-		http.Error(w, `{"error":"migration already in progress"}`, http.StatusConflict)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, migrateMaxBodyBytes)
-	var req MigrateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-
-	if req.TargetClusterID == "" {
-		http.Error(w, `{"error":"target_cluster_id is required"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate target cluster exists.
-	toCluster, ok := s.clusters[req.TargetClusterID]
-	if !ok {
-		http.Error(w, `{"error":"unknown target cluster"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Validate target is different from current.
-	currentClusterID := clusterIDForSaaSHive(*h)
-	if req.TargetClusterID == currentClusterID {
-		http.Error(w, `{"error":"target cluster is the same as current cluster"}`, http.StatusBadRequest)
-		return
-	}
-
-	fromCluster, ok := s.clusters[currentClusterID]
-	if !ok {
-		http.Error(w, `{"error":"current cluster config not found"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Set migration status and launch background goroutine.
-	h.MigrationStatus = "migrating"
-	h.MigrationFrom = currentClusterID
-	h.MigrationTo = req.TargetClusterID
-	h.MigrationStartedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSaaSHive(h); err != nil {
-		http.Error(w, `{"error":"failed to save migration state"}`, http.StatusInternalServerError)
-		return
-	}
-
-	s.logger.Info("audit: hive migration initiated",
-		"hive_id", id, "from", currentClusterID, "to", req.TargetClusterID, "by", username)
-
-	// Registered with provisionWG so tests can drain this goroutine before
-	// swapping the package-level saas*Dir vars. Without it, migrateHive's
-	// saveSaaSHive call races the next test's temp-dir teardown.
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
-		s.migrateHive(h, &fromCluster, &toCluster)
-	}()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "migrating",
-		"from":   currentClusterID,
-		"to":     req.TargetClusterID,
-	})
-}
 
 var hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
 
@@ -3637,7 +3769,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
@@ -3726,7 +3858,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
 		return
 	}
@@ -3861,7 +3993,7 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"hive not found — only hosted hives can be toggled from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can change visibility"}`, http.StatusForbidden)
 		return
 	}
@@ -3948,7 +4080,7 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found — only hosted hives can be renamed from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can rename this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -4071,7 +4203,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			Repos: regEntry.Repos,
 		}
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if !userIsHiveOwner(username, h) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
@@ -4184,6 +4316,12 @@ type branchHeadInfo struct {
 	SHA         string
 	Message     string
 	ImageStatus string
+	// BuildStartedAt is when THIS SHA first entered the "building" status, so the
+	// dashboard can show an elapsed build timer. It is stamped once on the
+	// ready→building (or new-SHA→building) transition and preserved across polls
+	// while the same SHA keeps building; it is zeroed when the image finishes
+	// (ready/failed) or a new SHA takes over. Zero means "not building / unknown".
+	BuildStartedAt time.Time
 }
 
 // githubAPIBase and ghcrBase are the GitHub/GHCR origins used by the SHA-poll
@@ -4574,10 +4712,24 @@ func getBranchHead(branch string) branchHeadInfo {
 func setBranchHead(branch, sha, msg, status string) {
 	latestSHAMu.Lock()
 	defer latestSHAMu.Unlock()
-	if msg == "" && headSHAByBranch[branch].SHA == sha {
-		msg = headSHAByBranch[branch].Message
+	prev := headSHAByBranch[branch]
+	if msg == "" && prev.SHA == sha {
+		msg = prev.Message
 	}
-	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status}
+	// Stamp the build-start time on the first poll that sees this SHA building,
+	// and carry it forward on every subsequent poll while the same SHA is still
+	// building — so the dashboard's elapsed timer counts from when the build
+	// actually started, not from each poll. Clear it once the image is
+	// ready/failed or a different SHA takes over.
+	var buildStartedAt time.Time
+	if status == imageStatusBuilding {
+		if prev.SHA == sha && !prev.BuildStartedAt.IsZero() {
+			buildStartedAt = prev.BuildStartedAt // same build, keep the original start
+		} else {
+			buildStartedAt = time.Now() // newly observed building SHA
+		}
+	}
+	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status, BuildStartedAt: buildStartedAt}
 	if msg != "" {
 		commitMsgBySHA[sha] = msg
 	}
@@ -4632,6 +4784,22 @@ func getImageStatuses() map[string]string {
 	for k, v := range headSHAByBranch {
 		if v.SHA != "" && v.ImageStatus != "" {
 			cp[k] = v.ImageStatus
+		}
+	}
+	return cp
+}
+
+// getImageBuildStartTimes returns branch→unix-millis of when each currently
+// "building" head first started building, for the dashboard's elapsed build
+// timer. Only branches that are actively building have an entry; ready/failed/
+// unknown branches are omitted. Millis match the JS side (Date.now()).
+func getImageBuildStartTimes() map[string]int64 {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]int64, len(headSHAByBranch))
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" && v.ImageStatus == imageStatusBuilding && !v.BuildStartedAt.IsZero() {
+			cp[k] = v.BuildStartedAt.UnixMilli()
 		}
 	}
 	return cp
@@ -4739,6 +4907,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Record the per-release image-pulls snapshot (external-adoption chart). The
+	// call is internally guarded to snapshot only when the v2 release SHA advances,
+	// so ticking it alongside the frequent SHA poll is cheap — no separate
+	// scheduler. See image_pulls.go.
+	s.maybeSnapshotImagePulls(ctx, time.Now())
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4761,6 +4934,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -4804,6 +4978,16 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 func (s *HubServer) clusterRecentlyUnreachable(clusterID string) bool {
 	if clusterID == "" {
 		return false
+	}
+	// A pull-only cluster is unreachable BY DECLARATION and permanently, so it
+	// never has to be learned the expensive way. This breaker exists because
+	// discovering unreachability costs a full dial timeout per hive per cycle —
+	// ~90s a call, with a pool of hives serialising into tens of minutes of
+	// blocking. Saying so in clusters.json means that price is never paid even
+	// once, and every caller that already consults this breaker is covered
+	// without needing its own pull-only check.
+	if c, ok := s.clusters[clusterID]; ok && c.PullOnly {
+		return true
 	}
 	s.clusterUnreachableMu.Lock()
 	defer s.clusterUnreachableMu.Unlock()
@@ -5399,7 +5583,7 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 	// hive with no owner fell through and its raw config was fetchable by ANY
 	// authenticated hub user. Fail closed: only the site admin may pull an
 	// ownerless hive's config.
-	if caller != hubAdminUsername && (owner == "" || caller != owner) {
+	if !isHubAdmin(caller) && (owner == "" || !canonicalEqual(caller, owner)) {
 		http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -5542,10 +5726,10 @@ func userIsHiveOwner(username string, h *SaaSHive) bool {
 	if username == "" || h == nil {
 		return false
 	}
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		return true
 	}
-	if strings.EqualFold(h.Owner, username) {
+	if canonicalEqual(h.Owner, username) {
 		return true
 	}
 	u := loadSaaSUser(username)
@@ -5566,7 +5750,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	}
 	// Notes is admin-only; a non-admin owner viewing their hive's access gets
 	// name+Slack but not the admin's private CRM notes.
-	access := accessForHive(hiveID, listAllSaaSUsers(), username == hubAdminUsername)
+	access := accessForHive(hiveID, listAllSaaSUsers(), isHubAdmin(username))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"access": access})
 }
@@ -5582,7 +5766,7 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	username := s.getAuthUser(r)
 	// Any user who owns at least one hive may see the roster; that is the same
 	// bar as being able to open Manage Access at all. Admin always qualifies.
-	owns := username == hubAdminUsername
+	owns := isHubAdmin(username)
 	if !owns {
 		for _, h := range listSaaSHives() {
 			h := h
@@ -5804,7 +5988,7 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := user.Hives[hiveID]
-	if !config.RoleAtLeast(role, config.RoleReadWrite) && username != hubAdminUsername {
+	if !config.RoleAtLeast(role, config.RoleReadWrite) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5838,7 +6022,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	approverRole := approverUser.Hives[hiveID]
-	if !config.RoleAtLeast(approverRole, config.RoleReadWrite) && approver != hubAdminUsername {
+	if !config.RoleAtLeast(approverRole, config.RoleReadWrite) && !isHubAdmin(approver) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5855,7 +6039,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"role must be read, read-write, merger, or owner"}`, http.StatusBadRequest)
 		return
 	}
-	if approver != hubAdminUsername && config.RoleAtLeast(body.Role, approverRole) {
+	if !isHubAdmin(approver) && config.RoleAtLeast(body.Role, approverRole) {
 		http.Error(w, `{"error":"cannot grant a role equal to or higher than your own"}`, http.StatusForbidden)
 		return
 	}
@@ -5896,7 +6080,7 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	denierRole := denierUser.Hives[hiveID]
-	if !config.RoleAtLeast(denierRole, config.RoleReadWrite) && denier != hubAdminUsername {
+	if !config.RoleAtLeast(denierRole, config.RoleReadWrite) && !isHubAdmin(denier) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5933,7 +6117,7 @@ func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	approverRole := approverUser.Hives[hiveID]
-	if approverRole != "owner" && approver != hubAdminUsername {
+	if approverRole != "owner" && !isHubAdmin(approver) {
 		http.Error(w, `{"error":"only the owner can approve access"}`, http.StatusForbidden)
 		return
 	}
@@ -5979,7 +6163,7 @@ func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	denierRole := denierUser.Hives[hiveID]
-	if denierRole != "owner" && denier != hubAdminUsername {
+	if denierRole != "owner" && !isHubAdmin(denier) {
 		http.Error(w, `{"error":"only the owner can deny access"}`, http.StatusForbidden)
 		return
 	}
@@ -6477,7 +6661,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		// Admin chose a specific placeholder — validate it is an available
 		// placeholder (same check the assign path uses) before using it. The
 		// full status recheck under loadSaaSHive below still guards the race.
-		if sel := loadSaaSHive(hiveID); sel == nil || sel.Status != statusAvailable || sel.Owner != hubAdminUsername {
+		if sel := loadSaaSHive(hiveID); sel == nil || sel.Status != statusAvailable || !isHubAdmin(sel.Owner) {
 			http.Error(w, `{"error":"selected placeholder is not available"}`, http.StatusConflict)
 			return
 		}
@@ -6749,7 +6933,7 @@ func findAvailablePlaceholder(clusterID string) string {
 		if h.Status != statusAvailable {
 			continue
 		}
-		if h.Owner != hubAdminUsername {
+		if !isHubAdmin(h.Owner) {
 			continue
 		}
 		if clusterIDForHive(&h) != clusterID {
@@ -6778,7 +6962,7 @@ func listAvailablePlaceholders(pool string) []AvailablePlaceholder {
 		if h.Status != statusAvailable {
 			continue
 		}
-		if h.Owner != hubAdminUsername {
+		if !isHubAdmin(h.Owner) {
 			continue
 		}
 		cluster := clusterIDForHive(&h)
@@ -7208,7 +7392,7 @@ type AssignHiveRequest struct {
 // both reachable (hive-oke) and heartbeat-only (vllm-d) clusters: NO hub→spoke
 // push or kubectl is used, so a vllm-d claim is delivered entirely by heartbeat.
 func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 		return
 	}
@@ -7540,7 +7724,7 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requester := s.getAuthUser(r)
-	if requester != body.Username && requester != hubAdminUsername {
+	if requester != body.Username && !isHubAdmin(requester) {
 		http.Error(w, `{"error":"can only retrieve your own token"}`, http.StatusForbidden)
 		return
 	}
@@ -8270,6 +8454,14 @@ const dashboardHTML = `<!DOCTYPE html>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
+        <!-- Image-pulls sparkline: 30-day daily-delta of container-image PULLS
+             of the public spoke image (ghcr.io/kubestellar/hive:v2). Gauges
+             external adoption beyond the hosted fleet. Derived from GitHub's
+             cumulative "Total downloads" counter — it is pulls/day, NOT unique
+             downloads (uniqueness is not measurable). Populated by
+             loadImagePulls(). Hidden until there is data to show. -->
+        <div id="image-pulls-spark" style="display:none;margin-top:8px"
+             title="Container-image pulls per v2 release: the pulls that landed while each of the last ~10 v2 SHAs was the newest release, of the public hive image (ghcr.io/kubestellar/hive:v2). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -9363,7 +9555,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var c = colors[st] || colors.unknown;
       var ic = icons[st] || '?';
       var isUpgrading = _upgradingHives[h.id];
-      var statusLabel = isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1);
+      var isDeleting = _deletingHives[h.id];
+      if (isDeleting) { c = colors.warning; ic = '⏳'; }
+      var statusLabel = isDeleting ? 'Deleting…' : (isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1));
       /* Checks, failures first, so the reason for a bad status reads before the
          wall of passing checks. Stable within each group (spoke report order). */
       var checks = healthChecks(h).slice().sort(function(a, b) {
@@ -9861,6 +10055,32 @@ const dashboardHTML = `<!DOCTYPE html>
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
+    /* branch -> unix-millis when the currently-building image started building,
+       from the hub (getImageBuildStartTimes). Drives the elapsed build timer. */
+    var _latestBuildStarted = {};
+
+    /* Format elapsed build time from an epoch-ms start as "Mm Ss" (or "Ss" under
+       a minute). Clamps negatives (clock skew) to 0. */
+    function fmtBuildElapsed(startMs) {
+      var s = Math.max(0, Math.floor((Date.now() - Number(startMs)) / 1000));
+      var m = Math.floor(s / 60);
+      var rem = s % 60;
+      return m > 0 ? (m + 'm ' + rem + 's') : (rem + 's');
+    }
+
+    /* Live-update every rendered build timer once a second, in place, so the
+       count climbs without re-rendering the whole image panel or hitting the
+       hub. Runs off a single shared interval started once below. */
+    function _tickBuildTimers() {
+      var els = document.querySelectorAll('.build-timer');
+      for (var i = 0; i < els.length; i++) {
+        var start = els[i].getAttribute('data-build-start');
+        if (start) els[i].textContent = fmtBuildElapsed(start);
+      }
+    }
+    if (typeof window !== 'undefined' && !window._buildTimerInterval) {
+      window._buildTimerInterval = setInterval(_tickBuildTimers, 1000);
+    }
     var _trackedBranchesList = [];
     var _clusterList = [];
     var _commitMessages = {};
@@ -12322,6 +12542,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
+        _latestBuildStarted = data.latest_sha_build_started || {};
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
         var shaEl = document.getElementById('latest-image-sha');
@@ -12335,7 +12556,15 @@ const dashboardHTML = `<!DOCTYPE html>
               var brStatus = _latestImageStatus[br] || 'ready';
               var brStatusHTML = '';
               if (brStatus === 'building') {
-                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>';
+                var _bStart = _latestBuildStarted[br];
+                /* Elapsed build timer: a span the live ticker (_tickBuildTimers)
+                   refreshes each second. data-build-start carries the epoch-ms
+                   start so the ticker can recompute without a server round-trip.
+                   Omitted when the hub hasn't reported a start time yet. */
+                var _timerHTML = _bStart
+                  ? '<span class="build-timer" data-build-start="' + _bStart + '" style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap;font-variant-numeric:tabular-nums">' + fmtBuildElapsed(_bStart) + '</span>'
+                  : '';
+                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>' + _timerHTML;
               } else if (brStatus === 'failed') {
                 brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>';
               }
@@ -12436,6 +12665,7 @@ const dashboardHTML = `<!DOCTYPE html>
         renderAdminProvisionRequests(data.provision_requests || []);
         loadPublicHives(data.hives || []);
         loadUsage();
+        loadImagePulls();
       } catch(e) {
         /* Surface EVERY failure in the load→render path, not just fetch errors.
            The old guard only painted a message when _allDashHives was empty —
@@ -12451,6 +12681,80 @@ const dashboardHTML = `<!DOCTYPE html>
       } finally {
         _hivesLoading = false;
       }
+    }
+
+    /* loadImagePulls fetches the per-RELEASE pull series (pulls that landed while
+       each of the last ~10 v2 SHAs was the newest release) and paints a small
+       inline-SVG bar chart near the header — one bar per release, newest on the
+       right. Gauges external adoption of the public spoke image
+       (ghcr.io/kubestellar/hive:v2) beyond the hosted fleet. Honest labelling:
+       derived from GitHub's cumulative download counter (pulls, NOT unique
+       downloads). Cold start (fewer than two release snapshots → no window can be
+       closed yet) shows "collecting…". */
+    async function loadImagePulls() {
+      var host = document.getElementById('image-pulls-spark');
+      if (!host) return;
+      var data;
+      try {
+        var resp = await fetch('/api/hub/image-pulls');
+        if (!resp.ok) { host.style.display = 'none'; return; }
+        data = await resp.json();
+      } catch (e) {
+        /* Adoption chart is non-critical chrome — never let it break the
+           dashboard. Just leave it hidden on any failure. */
+        host.style.display = 'none';
+        return;
+      }
+      var points = (data && data.points) || [];
+      host.style.display = 'block';
+
+      /* Cold start: needs at least two release snapshots to close one window. */
+      if ((data && data.collecting) || points.length < 1) {
+        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Image pulls per v2 release: <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
+        return;
+      }
+
+      /* Bar-chart geometry. Named so there are no bare magic numbers below. */
+      var BAR_W = 14;      // px, per-release bar width
+      var BAR_GAP = 3;     // px, gap between bars
+      var BAR_H = 30;      // px, drawing height
+      var BAR_PAD = 2;     // px, top breathing room so the tallest bar isn't clipped
+
+      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
+      var maxV = Math.max.apply(null, vals);
+      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
+      var chartW = points.length * BAR_W + (points.length - 1) * BAR_GAP;
+      var usableH = BAR_H - BAR_PAD;
+
+      var bars = '';
+      points.forEach(function(p, i) {
+        var v = vals[i];
+        var h = Math.max(1, (v / maxV) * usableH); // min 1px so a zero-pull release is still visible
+        var x = i * (BAR_W + BAR_GAP);
+        var y = BAR_H - h;
+        var sha = esc(String(p.sha || ''));
+        var tip = sha + ': ' + v + ' pulls' + (p.date ? ' (since ' + esc(String(p.date)) + ')' : '');
+        // The newest bar (last) is highlighted; older ones muted.
+        var fill = (i === points.length - 1) ? '#60a5fa' : 'rgba(96,165,250,0.45)';
+        bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + BAR_W + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + fill + '"><title>' + tip + '</title></rect>';
+      });
+
+      var svg =
+        '<svg width="' + chartW + '" height="' + BAR_H + '" viewBox="0 0 ' + chartW + ' ' + BAR_H + '" ' +
+        'style="display:block;overflow:visible">' + bars + '</svg>';
+
+      var latest = (data && Number(data.latest)) || 0;
+      var total = (data && Number(data.total_window)) || 0;
+      var newestSHA = points.length ? esc(String(points[points.length - 1].sha || '')) : '';
+      host.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">Pulls per v2 release</div>' +
+          svg +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' +
+            '<span style="color:#60a5fa;font-weight:600">' + esc(String(latest)) + '</span> on ' + newestSHA +
+            ' &middot; ' + esc(String(total)) + ' over last ' + points.length + ' releases' +
+          '</div>' +
+        '</div>';
     }
 
     /* renderHivesError replaces the eternal spinner with an actionable message.
@@ -12981,9 +13285,25 @@ const dashboardHTML = `<!DOCTYPE html>
         // blue glowing/slow-blinking "upgrading" dot (see .online-dot.upgrading) —
         // it outranks the normal online/offline health dot so an upgrade reads at
         // a glance and is never mistaken for the ok/degraded/critical/unknown state.
+        // The OFFLINE dot (grey, no heartbeat) previously carried no tooltip, so
+        // an operator hovering a dead row learned nothing \u2014 not even which
+        // Kubernetes namespace the hive lives in. healthBadge() already gives the
+        // ONLINE dot a rich hover (status + ns: + heartbeat age); this mirrors the
+        // reference facts an operator needs to go find the offline hive on the
+        // cluster. Built defensively \u2014 every part is skipped when its field is
+        // empty \u2014 and escaped with escAttr since it lands inside a quoted title.
+        var offlineDotTitle = (function() {
+          var parts = ['Offline'];
+          var ns = hiveNamespace(h);            // 'hive-hosted-<id>' or '' for local
+          if (ns) parts.push('ns: ' + ns);
+          var cluster = h.clusterName || h.clusterId || '';
+          if (cluster) parts.push('cluster: ' + cluster);
+          if (h.lastHeartbeat) parts.push('last seen: ' + fmtUserTS(h.lastHeartbeat));
+          return parts.join('\n');
+        })();
         var dot = h.upgrading
           ? '<span class="online-dot upgrading" title="Upgrading \u2014 a rollout is in progress"></span>'
-          : (h.online ? healthBadge(h) : '<span class="online-dot off"></span>');
+          : (h.online ? healthBadge(h) : '<span class="online-dot off" title="' + escAttr(offlineDotTitle) + '" style="cursor:help"></span>');
         var rp = repoPath(h);
         // Link on the hive's own GitHub instance (github_host) so a GHE repo
         // points at github.ibm.com, not 404 on github.com.
@@ -12999,10 +13319,6 @@ const dashboardHTML = `<!DOCTYPE html>
           ? '<span style="color:var(--accent);white-space:nowrap" title="Waiting for the spoke to report the new project via heartbeat"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Assigning to ' + esc(h.assigningTo || '?') + '</span>'
           : h.provStatus === 'provisioning'
           ? '<span style="color:var(--accent);white-space:nowrap">⏳ Provisioning</span>'
-          : h.migrationStatus === 'migrating'
-          ? '<span style="color:var(--accent);white-space:nowrap"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Migrating to ' + esc(h.migrationTo || '?') + '</span>'
-          : h.migrationStatus === 'failed'
-          ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ Migration failed</span>'
           : modeBadge(h.governorMode);
         /* A placeholder wedged at assigned && !claim_delivered gets a subtle
            live-ticking "claim pending · Nm" pill so a stuck assignment is
@@ -13061,7 +13377,6 @@ const dashboardHTML = `<!DOCTYPE html>
            instance while costing the healthy one a single rolling restart. */
         if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
-        if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
         /* Drift folded ONTO Version: config drift is overwhelmingly "this hive's
@@ -13325,7 +13640,7 @@ const dashboardHTML = `<!DOCTYPE html>
            is unique across both the assigned and unassigned sections. */
         return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + '>' +
           bulkCheckboxCell(h, section || 'all') +
-          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
+          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + ('<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(h.github_host, rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the GitHub icon uses (ghRepoURL(h.github_host, rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((h.github_host || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + privatePill + iaPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + privatePill + iaPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
@@ -13697,6 +14012,10 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _upgradingHives = {};
+    // _deletingHives[id] = true while a hive delete is in flight, so the hub
+    // table shows a "Deleting…" status on that row instead of the row just
+    // silently vanishing (or looking normal) mid-teardown.
+    var _deletingHives = {};
     var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
     var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
 
@@ -15511,6 +15830,48 @@ const dashboardHTML = `<!DOCTYPE html>
       return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
+    /* providerBadge renders the user's login method (auth provider) as a small
+       chip next to their name in the admin Users table, so an admin can see at a
+       glance who signed in with GitHub vs Google vs IBMid vs Red Hat vs
+       Microsoft. The provider rides the users payload as u.provider (derived
+       server-side via userProvider). A legacy record with no provider resolves
+       to github, so every existing row shows the GitHub chip — no blank. */
+    // providerLogoSVG returns a small inline brand SVG per login provider, matching
+    // the marks used on the /login picker, so the badge is recognizable at a glance.
+    function providerLogoSVG(p) {
+      var s = 'width="12" height="12" style="flex:none" aria-hidden="true"';
+      switch (p) {
+        case 'github':
+          return '<svg viewBox="0 0 16 16" fill="currentColor" ' + s + '><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+        case 'google':
+          return '<svg viewBox="0 0 18 18" ' + s + '><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>';
+        case 'ibmid':
+          return '<svg viewBox="0 0 24 24" fill="#1F70C1" ' + s + '><path d="M2 4h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2z"/></svg>';
+        case 'redhat':
+          return '<svg viewBox="0 0 24 24" fill="#EE0000" ' + s + '><path d="M16.35 14.4c1.6 0 3.9-.33 3.9-2.24a1.8 1.8 0 0 0-.04-.44l-.95-4.12c-.22-.9-.41-1.31-2-2.12-1.24-.63-3.94-1.67-4.74-1.67-.74 0-.96.96-1.85.94-.86-.02-1.5-.74-2.3-.74-.77 0-1.27.52-1.66 1.6 0 0-1.08 3.05-1.22 3.49a.83.83 0 0 0-.03.25c0 1.2 4.71 5.32 10.88 5.32M20.47 12.94c.22 1.05.22 1.16.22 1.3 0 1.8-2.02 2.79-4.67 2.79-6 0-11.25-3.51-11.25-5.83 0-.32.07-.63.18-.93C2.94 10.36 1 10.63 1 12.34c0 2.8 6.63 6.26 11.87 6.26 4.02 0 5.03-1.82 5.03-3.25 0-1.13-.97-2.4-2.43-2.41"/></svg>';
+        case 'microsoft':
+          return '<svg viewBox="0 0 23 23" ' + s + '><path fill="#F25022" d="M0 0h11v11H0z"/><path fill="#7FBA00" d="M12 0h11v11H12z"/><path fill="#00A4EF" d="M0 12h11v11H0z"/><path fill="#FFB900" d="M12 12h11v11H12z"/></svg>';
+        default:
+          return '';
+      }
+    }
+
+    function providerBadge(u) {
+      var p = String((u && u.provider) || 'github').toLowerCase();
+      var meta = {
+        github: {label: 'GitHub', color: '#c9d1d9', bg: 'rgba(110,118,129,0.25)'},
+        google: {label: 'Google', color: '#e8eaed', bg: 'rgba(66,133,244,0.22)'},
+        ibmid:  {label: 'IBMid',  color: '#e8eaed', bg: 'rgba(15,98,254,0.22)'},
+        redhat: {label: 'Red Hat',color: '#f5c2c7', bg: 'rgba(238,0,0,0.22)'},
+        microsoft: {label: 'Microsoft', color: '#e8eaed', bg: 'rgba(0,120,215,0.22)'}
+      }[p] || {label: p || 'unknown', color: 'var(--muted)', bg: 'rgba(110,118,129,0.25)'};
+      var logo = providerLogoSVG(p);
+      return '<span title="Signed in with ' + escAttr(meta.label) + '"' +
+        ' style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:9999px;' +
+        'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
+        (logo ? logo : '') + esc(meta.label) + '</span>';
+    }
+
     // renderContactCell is the collapsed summary shown in the main user row.
     function renderContactCell(u) {
       var bits = [];
@@ -16163,6 +16524,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var nameCell = avatar +
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
             '<span style="color:var(--text);font-weight:600">' + esc(u.github_username) + '</span>' +
+            providerBadge(u) +
             (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
@@ -16274,6 +16636,9 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!await hiveConfirm('Delete ' + id + '? This removes the namespace, PV, OCI storage, and all data.')) return;
       var btns = document.querySelectorAll('button[onclick*="deleteHive"]');
       btns.forEach(function(b) { b.disabled = true; b.textContent = 'Deleting...'; b.style.opacity = '0.6'; });
+      // Mark the row as deleting so its status shows "Deleting…" until the next
+      // refresh removes it (or clears the flag on failure).
+      _deletingHives[id] = true;
       try {
         gtag('event','hive_deleted',{hive_id:id});
         hiveToast('Deleting ' + id + '...', 'info');
@@ -16281,6 +16646,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) {
           var d = await resp.json().catch(function(){ return {}; });
           hiveToast(d.error || 'Delete failed', 'error');
+          delete _deletingHives[id];
           // Refresh regardless: the hub removes the registry entry even when
           // teardown fails, so the listing may already be correct.
           loadHives();
@@ -16299,7 +16665,7 @@ const dashboardHTML = `<!DOCTYPE html>
           hiveToast('Deleted ' + id, 'success');
         }
         loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _deletingHives[id]; }
       finally { btns.forEach(function(b) { b.disabled = false; b.textContent = 'Delete'; b.style.opacity = '1'; }); }
     }
 
@@ -16326,56 +16692,6 @@ const dashboardHTML = `<!DOCTYPE html>
       openTimelineModal(btn.getAttribute('data-hive-id') || '', btn.getAttribute('data-hive-name') || '');
     });
 
-    function openMigrateModal(hiveId, currentClusterId) {
-      var targets = (_clusterList || []).filter(function(c) { return c.id !== currentClusterId; });
-      if (!targets.length) { hiveToast('No other clusters available', 'error'); return; }
-      var currentName = (_clusterList || []).reduce(function(n, c) { return c.id === currentClusterId ? (c.name || c.id) : n; }, currentClusterId);
-      var options = targets.map(function(c) {
-        var caps = [];
-        if (c.has_gpu) caps.push('GPU');
-        if (c.arch) caps.push(c.arch);
-        var label = c.name || c.id;
-        if (caps.length) label += ' (' + caps.join(', ') + ')';
-        return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
-      }).join('');
-      var content = '<div style="margin-bottom:12px">Move <strong>' + esc(hiveId) + '</strong> from <strong>' + esc(currentName) + '</strong> to:</div>' +
-        '<select id="migrate-target" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:12px">' + options + '</select>' +
-        '<div style="padding:8px 12px;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:6px;font-size:0.8rem;color:#eab308;margin-bottom:12px">The hive will be reprovisioned on the target cluster. This may take a few minutes. The hive will rebuild its state from GitHub.</div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
-        '<button onclick="closeMigrateModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
-        '<button onclick="confirmMigrate(\'' + esc(hiveId) + '\')" style="padding:6px 16px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Move</button>' +
-        '</div>';
-      var overlay = document.createElement('div');
-      overlay.id = 'migrate-overlay';
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
-      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%">' +
-        '<h3 style="margin:0 0 16px 0;font-size:1rem">Move to cluster</h3>' + content + '</div>';
-      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeMigrateModal(); });
-      document.body.appendChild(overlay);
-    }
-    function closeMigrateModal() {
-      var ov = document.getElementById('migrate-overlay');
-      if (ov) ov.remove();
-    }
-    async function confirmMigrate(hiveId) {
-      var sel = document.getElementById('migrate-target');
-      if (!sel) return;
-      var targetId = sel.value;
-      closeMigrateModal();
-      hiveToast('Migrating ' + hiveId + '...', 'info');
-      try {
-        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/migrate', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({target_cluster_id: targetId})
-        });
-        var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Migration failed', 'error'); return; }
-        gtag('event', 'hive_migrate', {hive_id: hiveId, from: data.from, to: data.to});
-        hiveToast('Migration started: ' + hiveId + ' moving to ' + targetId, 'success');
-        loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
-    }
 
     var ASSIGN_DEFAULT_ACMM = 2;
     /* openAssignModal claims one placeholder for a real project.

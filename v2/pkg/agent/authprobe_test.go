@@ -174,10 +174,17 @@ func TestAgentAuthState_ClaudeCredentialFileMissingThenPresent(t *testing.T) {
 	})
 
 	m := &Manager{}
-	if avail, known := m.AgentAuthState("writer", 0, "claude", false, false); !known || avail {
-		t.Fatalf("missing claude credentials: got (avail=%v, known=%v), want known unauthenticated", avail, known)
+	// A MISSING Claude credential file is INCONCLUSIVE, not proof of needs-login:
+	// Claude can be authenticated with no file on disk (in-memory session /
+	// keychain / a per-UID home this probe cannot read). Report unknown → no
+	// badge. (A real Claude login prompt is caught by the pane-scan needsLogin
+	// signal, covered by TestAgentAuthState_PaneLoginPromptWins.) This is the fix
+	// for the false 🔑 badge on authenticated-but-restarting Claude agents.
+	if avail, known := m.AgentAuthState("writer", 0, "claude", false, false); known || avail {
+		t.Fatalf("missing claude credentials: got (avail=%v, known=%v), want unknown (no badge)", avail, known)
 	}
 
+	// A PRESENT+valid Claude credential file is still positive proof.
 	writeClaudeCreds(t, shared)
 	if avail, known := m.AgentAuthState("writer", 0, "claude", false, false); !known || !avail {
 		t.Fatalf("shared claude credentials present: got (avail=%v, known=%v), want authenticated", avail, known)
@@ -227,17 +234,40 @@ func TestAgentAuthPathConstructionUsesIsolatedHomes(t *testing.T) {
 	}
 }
 
-// TestAgentAuthState_TruePositivePreserved: an interactive backend with no
-// credentials anywhere and an agent that is NOT running must still report
-// "needs login" — the signal has to keep working.
+// TestAgentAuthState_TruePositivePreserved: an interactive backend whose missing
+// credential file IS conclusive (copilot — no in-memory-session path like
+// Claude's) and an agent that is NOT running must still report "needs login" —
+// the file-probe signal has to keep working for those backends. (Claude is the
+// exception: a missing file is inconclusive → no badge; see
+// TestAgentAuthState_ClaudeCredentialFileMissingThenPresent.)
 func TestAgentAuthState_TruePositivePreserved(t *testing.T) {
 	emptySharedPaths(t)
 	t.Setenv("HOME", t.TempDir())
 	m := &Manager{}
 
-	avail, known := m.AgentAuthState("scanner", 2007, "claude", false /*running*/, false)
+	avail, known := m.AgentAuthState("scanner", 2007, "copilot", false /*running*/, false)
 	if !known || avail {
-		t.Fatalf("no credentials + not running must report needs-login; got (avail=%v, known=%v)", avail, known)
+		t.Fatalf("no copilot credentials + not running must report needs-login; got (avail=%v, known=%v)", avail, known)
+	}
+}
+
+// TestAgentAuthState_ClaudeMissingFileIsInconclusive: the specific fix — a Claude
+// agent that is NOT running with NO credentials file must report UNKNOWN (no
+// badge), because a missing Claude file does not prove needs-login (in-memory
+// session / unreadable per-UID home). A false 🔑 badge on such an agent — the
+// bug this fixes — was worse than showing nothing.
+func TestAgentAuthState_ClaudeMissingFileIsInconclusive(t *testing.T) {
+	emptySharedPaths(t)
+	t.Setenv("HOME", t.TempDir())
+	m := &Manager{}
+
+	avail, known := m.AgentAuthState("quality", 2006, "claude", false /*running*/, false /*needsLogin*/)
+	if known || avail {
+		t.Fatalf("claude, not running, no file: want unknown (no badge); got (avail=%v, known=%v)", avail, known)
+	}
+	// But a real pane login prompt STILL badges, even for Claude.
+	if avail, known := m.AgentAuthState("quality", 2006, "claude", false, true /*needsLogin*/); !known || avail {
+		t.Fatalf("claude at a real login prompt: want needs-login; got (avail=%v, known=%v)", avail, known)
 	}
 }
 
