@@ -29,19 +29,13 @@ set -euo pipefail
 REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 [[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
-HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
+CONTRIBUTOR_MODE_MARKER="/etc/hive/contributor-mode"
 
-# Contributor mode comes from a root-owned marker file at the image
-# boundary. The env var HIVE_CONTRIBUTOR_MODE is caller-controlled and
-# must never switch token injection or PR routing.
-#
-# SECURITY (#3249, re-landing #3321/fb87b4c7 on v4): this guard shipped on v2
-# but was dropped from v4 by a v2->v4 sync merge that resolved bin/gh-wrapper.sh
-# in favour of the v4 side. The marker tests and the contributor Dockerfile's
-# `touch /etc/hive/contributor-mode` both survived the sync, so the regression
-# suite kept asserting a boundary the wrapper no longer enforced.
+# Contributor mode is an image property, not a caller-controlled environment
+# toggle. Keep this path constant: an agent can set its own environment and must
+# not be able to redirect the trust check to an agent-writable marker.
 _contributor_mode() {
-  [[ -f "$HIVE_CONTRIBUTOR_MODE_MARKER" ]]
+  [[ -f "$CONTRIBUTOR_MODE_MARKER" ]]
 }
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.

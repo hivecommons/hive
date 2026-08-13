@@ -44,6 +44,9 @@ chmod +x "$MOCK_GH"
 # (exported below) rather than rewriting REAL_GH with sed — the override is the
 # supported seam for pointing the wrapper at a stub binary.
 cp "$WRAPPER" "$TEST_WRAPPER"
+# Production deliberately has no environment-variable override for this trust
+# boundary. Redirect the marker only in the temporary test copy.
+sed -i "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"|" "$TEST_WRAPPER"
 chmod +x "$TEST_WRAPPER"
 
 export GH_TOKEN="test-token-mock"
@@ -63,12 +66,11 @@ _run_test() {
   shift 2
 
   local output rc=0
-  rm -f "${WORK_DIR}/no-contributor-marker"
+  rm -f "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -91,12 +93,11 @@ _run_test_spoof() {
   shift 2
 
   local output rc=0
-  rm -f "${WORK_DIR}/no-contributor-marker"
+  rm -f "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_AGENT="octocat" \
     HIVE_AGENT_DISPLAY_NAME="octocat" \
     HIVE_AGENT_ID="scanner" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_LOGIN="scanner[bot]" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -119,12 +120,11 @@ _run_test_identity_failure() {
   shift 2
 
   local output rc=0
-  rm -f "${WORK_DIR}/no-contributor-marker"
+  rm -f "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     MOCK_GH_FAIL_IDENTITY="true" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
@@ -147,12 +147,11 @@ _run_test_cached_env_spoof() {
   shift 2
 
   local output rc=0
-  rm -f "${WORK_DIR}/no-contributor-marker"
+  rm -f "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     HIVE_AUTH_LOGIN_CACHED="octocat" \
     MOCK_GH_LOGIN="test-bot[bot]" \
     GH_TOKEN="test-token-mock" \
@@ -179,7 +178,6 @@ _run_test_contributor() {
   touch "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_CONTRIBUTOR_MODE="true" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/contributor-marker" \
     HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
@@ -207,10 +205,9 @@ _run_test_env_only() {
   shift 2
 
   local output rc=0
-  rm -f "${WORK_DIR}/no-contributor-marker"
+  rm -f "${WORK_DIR}/contributor-marker"
   output="$(env \
     HIVE_CONTRIBUTOR_MODE="true" \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/no-contributor-marker" \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
@@ -238,7 +235,6 @@ _run_test_marker_only() {
   local output rc=0
   touch "${WORK_DIR}/contributor-marker"
   output="$(env \
-    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/contributor-marker" \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
