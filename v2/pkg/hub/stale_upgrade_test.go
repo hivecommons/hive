@@ -23,6 +23,10 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 		entry     RegistryEntry
 		latestSHA string
 		orphaned  bool
+		// converged distinguishes a clear that means "the upgrade LANDED, only
+		// the latch was stale" from one that means "the attempt was abandoned".
+		// The sweep re-arms and spends retry budget only on the latter.
+		converged bool
 	}{
 		{
 			// The floating-tag loop this fix closes: a hive tracking a mutable
@@ -110,7 +114,12 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			orphaned: false,
 		},
 		{
-			name: "not orphaned: spoke already reports the target, heartbeat path clears it",
+			// The z-mlz-manager fixture: latched past the clear threshold, spoke
+			// alive and heartbeating, and already ON the SHA it was asked for.
+			// The upgrade completed; only the latch is stale, so it is cleared as
+			// converged. Waiting for the heartbeat path here is what left the
+			// spinner and the old SHA on screen for 35m+ with nothing in flight.
+			name: "converged: spoke already reports the target and the latch is stale",
 			entry: RegistryEntry{
 				Upgrading:        true,
 				UpgradeStartedAt: started,
@@ -118,7 +127,8 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 				UpgradeTarget:    "fc32ae4",
 				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
-			orphaned: false,
+			orphaned:  true,
+			converged: true,
 		},
 		{
 			name: "not orphaned: an explicitly reported failure keeps its known cause",
@@ -170,16 +180,26 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			orphaned: false,
 		},
 		{
-			// Zero start, alive, but the spoke already reports the target SHA: the
-			// heartbeat path clears it, this sweep must not race ahead.
-			name: "not orphaned: zero start time but the spoke already reports the target",
+			// Zero start, alive, and the spoke already reports the target SHA: the
+			// upgrade CONVERGED and only the latch is stale, so the sweep clears it.
+			//
+			// This case used to expect orphaned=false, deferring to "the heartbeat
+			// path clears it". That deferral is the z-mlz-manager wedge: the
+			// completion chain in server.go fires on a state TRANSITION, and once
+			// the entry already records the target SHA no later beat carries one.
+			// Both sides waited for the other and the spinner ran forever. Clearing
+			// here is safe because liveness is already proven — a mid-restart pod is
+			// not heartbeating — and `converged` keeps it out of the re-arm and
+			// retry-budget paths that a genuine abandoned attempt takes.
+			name: "converged: zero start time and the spoke already reports the target",
 			entry: RegistryEntry{
 				Upgrading:     true,
 				GitHash:       "fc32ae4",
 				UpgradeTarget: "fc32ae4",
 				LastHeartbeat: rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
-			orphaned: false,
+			orphaned:  true,
+			converged: true,
 		},
 		{
 			name:     "not upgrading at all",
@@ -196,6 +216,9 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			}
 			if got.orphaned && got.reason == "" {
 				t.Fatal("an orphaned verdict must carry a reason for the log")
+			}
+			if got.converged != tc.converged {
+				t.Fatalf("converged = %v, want %v (reason %q)", got.converged, tc.converged, got.reason)
 			}
 		})
 	}

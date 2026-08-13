@@ -10306,9 +10306,55 @@ const dashboardHTML = `<!DOCTYPE html>
                      elapsed counter must not claim to know one.
        'upgrading' is tested FIRST because an in-flight upgrade outranks a
        queued one; without that ordering a hive would be double-counted. */
+    /* hiveIsUpgradingNow is THE predicate for "this hive's row shows the
+       Upgrading/Switching spinner". Both the row badge and the filter pill call
+       it, so the pill can never disagree with what the operator sees in the
+       list.
+
+       It previously did not exist: the pill tested only h.upgrading while the
+       row OR'd together three sources, so the pill under-reported. A hive
+       mid-branch-switch, or one carrying a just-clicked client-side sentinel,
+       rendered a spinner the pill could not match; and the row's own
+       "isCurrent -> not really upgrading" suppression was invisible to the
+       pill, which counted such a hive as upgrading with no badge to show for
+       it. Three sources, one of them purely client-side, mean the answer cannot
+       be derived from the hub JSON alone — hence a shared function rather than
+       a shared field.
+
+       branchName / branchLatest are the row's already-resolved values; when the
+       caller has not resolved them (the facet counter iterating raw hives) they
+       are recomputed here from the same globals the row uses, so both paths
+       reach the identical answer. */
+    function hiveIsUpgradingNow(h, branchName, branchLatest) {
+      if (!h) return false;
+      if (branchName === undefined || branchName === null || branchName === '') {
+        branchName = h.gitBranch || 'v2';
+      }
+      if (branchLatest === undefined || branchLatest === null) {
+        branchLatest = _latestSHAs[branchName] || _latestSHA || '';
+      }
+      /* A branch switch is an upgrade in flight even though h.upgrading may
+         still be false — the spoke keeps reporting the OLD branch until the new
+         pod heartbeats. */
+      if (hiveSwitchState(h, branchName).isSwitching) return true;
+      /* Client-side sentinel: the operator clicked Upgrade and the hive still
+         reports the pre-click SHA. The hub has not yet flipped h.upgrading, but
+         the row is already spinning. */
+      var sentinel = _upgradingHives[h.id];
+      var sha = h.gitHash || '';
+      if (sentinel && sha === sentinel) return true;
+      /* Hub-reported. Suppressed when the hive is ALREADY at latest (the latch
+         is stale — exactly the server-side bug this pairs with) or when latest
+         is unresolved, because the row suppresses the spinner in both cases and
+         the pill must match. */
+      var latestUnknown = !branchLatest;
+      var isCurrent = !!branchLatest && sameShaJS(sha, branchLatest);
+      return !!(h.upgrading && !isCurrent && !latestUnknown);
+    }
+
     function hiveUpgradeState(h) {
       if (!h) return '';
-      if (h.upgrading) return UPGRADE_FILTER_UPGRADING;
+      if (hiveIsUpgradingNow(h)) return UPGRADE_FILTER_UPGRADING;
       if (h.autoUpgrade && h.upgradeTarget) return UPGRADE_FILTER_QUEUED;
       return '';
     }
@@ -13515,8 +13561,10 @@ const dashboardHTML = `<!DOCTYPE html>
              stops forcing the upgrading state on later auto-upgrades. */
           if (upgradeState.switchSentinelStale) delete _upgradingHives[h.id];
           var sentinel = _upgradingHives[h.id];
-          var isUpgrading = isSwitching ||
-            (sentinel && sha === sentinel) || (h.upgrading && !isCurrent && !latestUnknown);
+          /* ONE predicate, shared with the filter pill (hiveUpgradeState ->
+             hiveIsUpgradingNow), so a spinning row is always matched by the
+             "Upgrading" facet and vice versa. */
+          var isUpgrading = hiveIsUpgradingNow(h, branchName, branchLatest);
           if (sentinel && sha !== sentinel && !isSwitching) { delete _upgradingHives[h.id]; delete _switchStartedAt[h.id]; }
           if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
