@@ -64,7 +64,10 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./... -count=1 -timeout 25m
+        # -short is the documented CI contract: env-dependent integration tests
+        # (rootless-podman etc.) guard on testing.Short and self-skip; without
+        # it they hard-fail on runners lacking their prerequisites.
+        run: go test ./... -short -count=1 -timeout 25m
 
       - name: Vet
         run: go vet ./...
