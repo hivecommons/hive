@@ -779,7 +779,32 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
       # host WITHOUT xt_owner their failure does NOT abort the ruleset or flip the
       # F5 fatal `_iptables_ok` flag — the mark exemption + redirect still
       # establish, and `_iptables_ok=true` is set as long as the chain is built.
-      if $IPT -t nat -N HIVE_PROXY 2>/dev/null; then
+      # Chain creation retries with captured stderr and lock-wait. One-shot
+      # creation with silenced stderr turned a TRANSIENT netlink/xtables
+      # failure into a fail-closed FATAL crash-loop: on 2026-08-13 three
+      # spokes sharing one node rolled simultaneously at the daily upgrade
+      # window and kept re-colliding in synchronized backoff for three
+      # hours (a-ks-wec2). Jittered retries break the lockstep; the real
+      # iptables error is logged instead of discarded.
+      _ipt_chain_ok=false
+      _ipt_try=0
+      while [ "$_ipt_try" -lt 5 ]; do
+        _ipt_try=$((_ipt_try + 1))
+        # A leftover chain from a prior partial attempt counts as created —
+        # flush it so rule appends below start from a clean slate.
+        if $IPT -t nat -nL HIVE_PROXY >/dev/null 2>&1; then
+          $IPT -t nat -F HIVE_PROXY 2>/dev/null || true
+          _ipt_chain_ok=true
+          break
+        fi
+        if $IPT -w 10 -t nat -N HIVE_PROXY 2>/tmp/hive-ipt-err.log; then
+          _ipt_chain_ok=true
+          break
+        fi
+        echo "[entrypoint] WARN: iptables chain creation attempt ${_ipt_try}/5 failed: $(cat /tmp/hive-ipt-err.log 2>/dev/null) — retrying"
+        sleep $(( _ipt_try * 2 + $$ % 3 ))
+      done
+      if [ "$_ipt_chain_ok" = "true" ]; then
         # OKE: owner-match exemption (reliable where xt_owner is present).
         # `|| true` keeps a failed append non-fatal on OpenShift (no xt_owner).
         $IPT -t nat -A HIVE_PROXY -m owner --uid-owner 0 -j RETURN || true
@@ -800,7 +825,7 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
     json.dump(m, f, indent=2)
 " 2>/dev/null || true
       else
-        echo "[entrypoint] ERROR: iptables chain creation failed (need NET_ADMIN capability)"
+        echo "[entrypoint] ERROR: iptables chain creation failed after ${_ipt_try} attempts: $(cat /tmp/hive-ipt-err.log 2>/dev/null)"
       fi
     else
       echo "[entrypoint] ERROR: iptables not found — cannot force proxy egress"
