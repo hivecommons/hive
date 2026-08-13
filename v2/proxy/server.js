@@ -322,6 +322,16 @@ function verifyTerminalAssertion(key, token, expectedHiveID, nowSec) {
 // authorizeTerminal — this only changes whether the hub cookie must ALSO be
 // present.
 //
+// parseCookies is shared by the HTTP and WebSocket terminal gates so the two
+// cannot drift — they are equally exploitable and must stay in lockstep.
+function parseCookies(header) {
+  return (header || '').split(';').reduce((acc, c) => {
+    const [k, ...v] = c.trim().split('=');
+    if (k) acc[k] = v.join('=');
+    return acc;
+  }, {});
+}
+
 // Returns the identity to authorize as, or null if neither credential is usable.
 // Fails closed: an absent, expired, wrong-hive or badly-signed assertion with no
 // valid hub cookie yields null and the caller denies.
@@ -729,11 +739,7 @@ app.use('/terminal', (req, res, next) => {
   const host = req.headers.host || '';
   const isHosted = isHostedHost(host);
   if (isHosted) {
-    const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
-      const [k, ...v] = c.trim().split('=');
-      if (k) acc[k] = v.join('=');
-      return acc;
-    }, {});
+    const cookies = parseCookies(req.headers.cookie);
     // SECURITY (CWE-345): the cookie is HMAC-signed by the hub. Verify the
     // signature — a non-empty value is NOT proof of authentication.
     const user = resolveTerminalIdentity(cookies);
@@ -832,11 +838,7 @@ server.on('upgrade', (req, socket, head) => {
     const host = req.headers.host || '';
     const isHosted = isHostedHost(host);
     if (isHosted) {
-      const cookies = (req.headers.cookie || '').split(';').reduce((acc, c) => {
-        const [k, ...v] = c.trim().split('=');
-        if (k) acc[k] = v.join('=');
-        return acc;
-      }, {});
+      const cookies = parseCookies(req.headers.cookie);
       // SECURITY (CWE-345): verify the hub's HMAC signature, not mere existence.
       const wsUser = resolveTerminalIdentity(cookies);
       if (!wsUser) {
