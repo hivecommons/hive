@@ -1,8 +1,13 @@
 package hub
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -235,5 +240,127 @@ func TestReleaseChannelsReturnsCopy(t *testing.T) {
 	got[0] = "mutated"
 	if releaseChannels[0] != ReleaseChannelStable {
 		t.Error("ReleaseChannels() exposed the package slice — a caller mutated it")
+	}
+}
+
+// TestResolveChannelTargetsWarnsWhenChannelUnresolvable is the loud-failure
+// guarantee: when a channel tag cannot be resolved the row renders "unknown",
+// and that MUST be accompanied by a WARN naming the channel. A silent empty
+// result is what made the original dashboard investigation require a debugger.
+//
+// POSITIVE CONTROL: the successful channels in the same pass must NOT warn, so
+// an implementation that simply logs a warning unconditionally fails here.
+func TestResolveChannelTargetsWarnsWhenChannelUnresolvable(t *testing.T) {
+	stubChannelDigests(t, map[string]string{
+		"v4-latest":          "sha256:aaaa",
+		ReleaseChannelStable: "sha256:aaaa",
+		// candidate/edge deliberately absent from the registry.
+	})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	resolveChannelTargets(map[string]string{"v4": "3d31590"}, logger)
+	logged := buf.String()
+
+	for _, ch := range []string{ReleaseChannelCandidate, ReleaseChannelEdge} {
+		if !strings.Contains(logged, `channel=`+ch) {
+			t.Errorf("unresolvable channel %q produced no WARN naming it; an operator seeing \"unknown\" has nothing to go on.\nlog:\n%s", ch, logged)
+		}
+	}
+	if strings.Contains(logged, `channel=`+ReleaseChannelStable) {
+		t.Errorf("channel %q resolved successfully but was still warned about — the warning must be specific to real failures.\nlog:\n%s", ReleaseChannelStable, logged)
+	}
+}
+
+// TestGhcrTagDigestWarnsOnNonOK covers the transport layer directly: a 401/403
+// (package permissions regressed) or 404 (channel never published) must be
+// visible in the log, not swallowed into an empty string.
+func TestGhcrTagDigestWarnsOnNonOK(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/token") {
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, `{"token":"t"}`)
+				return
+			}
+			w.WriteHeader(status)
+		}))
+
+		oldBase := ghcrBase
+		ghcrBase = srv.URL
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		got := ghcrTagDigest(ghcrRepoSpoke, ReleaseChannelStable, logger)
+		ghcrBase = oldBase
+		srv.Close()
+
+		if got != "" {
+			t.Errorf("status %d: digest = %q, want empty", status, got)
+		}
+		if !strings.Contains(buf.String(), fmt.Sprintf("status=%d", status)) {
+			t.Errorf("status %d was swallowed without a WARN carrying the status.\nlog:\n%s", status, buf.String())
+		}
+	}
+}
+
+// TestGhcrTagDigestSucceedsAndStaysQuiet is the POSITIVE CONTROL for the two
+// tests above: the happy path must return the digest and log NOTHING at WARN.
+// Without this, "warn on every call" would satisfy the failure tests.
+func TestGhcrTagDigestSucceedsAndStaysQuiet(t *testing.T) {
+	const want = "sha256:abc123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/token") {
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"token":"t"}`)
+			return
+		}
+		w.Header().Set("Docker-Content-Digest", want)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	oldBase := ghcrBase
+	ghcrBase = srv.URL
+	defer func() { ghcrBase = oldBase }()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	got := ghcrTagDigest(ghcrRepoSpoke, ReleaseChannelStable, logger)
+
+	if got != want {
+		t.Errorf("digest = %q, want %q", got, want)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a successful resolve logged at WARN: %s", buf.String())
+	}
+}
+
+// TestGetChannelTargetsEmptyResolveDoesNotPoisonCache: a first refresh that
+// resolves NOTHING (cold cache + registry down) must not be latched for the
+// full TTL — once the registry recovers the next call must resolve for real.
+// This is the "empty result poisons the 5-minute cache" failure mode.
+func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
+	resetChannelTargetCache()
+	orig := ghcrTagDigest
+	t.Cleanup(func() { ghcrTagDigest = orig; resetChannelTargetCache() })
+
+	// Cold cache, registry dark.
+	ghcrTagDigest = func(string, string, *slog.Logger) string { return "" }
+	shas := map[string]string{"v4": "3d31590"}
+	if got := getChannelTargets(shas, testChannelLogger()); targetFor(got, ReleaseChannelStable).Digest != "" {
+		t.Fatalf("expected an empty first resolve, got %+v", got)
+	}
+
+	// Registry recovers. No TTL manipulation: an empty result must not have
+	// been cached as if it were a good answer.
+	ghcrTagDigest = func(_, tag string, _ *slog.Logger) string {
+		if tag == "v4-latest" || tag == ReleaseChannelStable {
+			return "sha256:aaaa"
+		}
+		return ""
+	}
+	got := getChannelTargets(shas, testChannelLogger())
+	if targetFor(got, ReleaseChannelStable).Branch != "v4" {
+		t.Errorf("an empty resolve poisoned the cache: stable = %+v, want branch v4 once the registry recovered", targetFor(got, ReleaseChannelStable))
 	}
 }
