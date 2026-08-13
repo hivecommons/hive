@@ -3420,9 +3420,12 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 
 	h := loadSaaSHive(id)
 	if h == nil {
-		// SaaS entry already gone — still clean up the in-memory registry
-		// so the hive disappears from the listing immediately.
+		// SaaS meta.json already gone — still clean up the in-memory registry so
+		// the hive disappears from the listing immediately, and best-effort purge
+		// any leftover record dir / timeline file so a partial prior delete cannot
+		// leave a status:"available" husk that resurrects in the listing.
 		s.removeRegistryEntry(id, username)
+		removeHiveRecord(id, s.logger)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
@@ -3450,6 +3453,21 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("no cluster config for deprovision; removing registry entry anyway",
 			"hive_id", id, "cluster_id", h.ClusterID)
 	}
+	// Durably purge the hub-side record. This is what stops the "resurrection":
+	// deprovisionHive removes the hive directory only when a cluster config is
+	// available (the else branch above skips it), and NEITHER path removes the
+	// timeline file. Without this, a delete with no cluster config left the
+	// hives/<id>/ dir — status:"available" — behind, so the hive reappeared in
+	// the unassigned/available list forever. removeHiveRecord is idempotent, so
+	// calling it after a successful deprovision (which already removed the dir)
+	// is harmless and still cleans up the timeline file deprovision never touched.
+	//
+	// NOTE: this is the genuine, user-initiated delete path. It is deliberately
+	// NOT the placeholder-recycle path — resetting a slot to status:"available"
+	// (handleResetAssignment / sweepStuckAssignments in saas_reset_assignment.go)
+	// rewrites meta.json in place and KEEPS the record, and never reaches this
+	// handler. So purging the record here cannot break placeholder recycling.
+	removeHiveRecord(id, s.logger)
 	s.removeRegistryEntry(id, username)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username,
@@ -9485,7 +9503,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var c = colors[st] || colors.unknown;
       var ic = icons[st] || '?';
       var isUpgrading = _upgradingHives[h.id];
-      var statusLabel = isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1);
+      var isDeleting = _deletingHives[h.id];
+      if (isDeleting) { c = colors.warning; ic = '⏳'; }
+      var statusLabel = isDeleting ? 'Deleting…' : (isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1));
       /* Checks, failures first, so the reason for a bad status reads before the
          wall of passing checks. Stable within each group (spoke report order). */
       var checks = healthChecks(h).slice().sort(function(a, b) {
@@ -13830,6 +13850,10 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _upgradingHives = {};
+    // _deletingHives[id] = true while a hive delete is in flight, so the hub
+    // table shows a "Deleting…" status on that row instead of the row just
+    // silently vanishing (or looking normal) mid-teardown.
+    var _deletingHives = {};
     var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
     var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
 
@@ -16450,6 +16474,9 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!await hiveConfirm('Delete ' + id + '? This removes the namespace, PV, OCI storage, and all data.')) return;
       var btns = document.querySelectorAll('button[onclick*="deleteHive"]');
       btns.forEach(function(b) { b.disabled = true; b.textContent = 'Deleting...'; b.style.opacity = '0.6'; });
+      // Mark the row as deleting so its status shows "Deleting…" until the next
+      // refresh removes it (or clears the flag on failure).
+      _deletingHives[id] = true;
       try {
         gtag('event','hive_deleted',{hive_id:id});
         hiveToast('Deleting ' + id + '...', 'info');
@@ -16457,6 +16484,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) {
           var d = await resp.json().catch(function(){ return {}; });
           hiveToast(d.error || 'Delete failed', 'error');
+          delete _deletingHives[id];
           // Refresh regardless: the hub removes the registry entry even when
           // teardown fails, so the listing may already be correct.
           loadHives();
@@ -16475,7 +16503,7 @@ const dashboardHTML = `<!DOCTYPE html>
           hiveToast('Deleted ' + id, 'success');
         }
         loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _deletingHives[id]; }
       finally { btns.forEach(function(b) { b.disabled = false; b.textContent = 'Delete'; b.style.opacity = '1'; }); }
     }
 
