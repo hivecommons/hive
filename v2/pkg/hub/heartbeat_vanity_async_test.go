@@ -173,11 +173,12 @@ func TestVanityRepairKickInlineGuards(t *testing.T) {
 	cases := []*SaaSHive{
 		nil, // no record at all
 		{ID: "hosted-unclaimed", Status: statusAvailable, Org: "available-x", ClusterID: "vllm-d"},
-		func() *SaaSHive { // already has a vanity URL
-			h := assignedVllmdHive("hosted-has-vanity")
-			h.VanityURL = "https://already.example.com"
-			return h
-		}(),
+		// NOTE: "already has a vanity URL" is deliberately NOT in this list any
+		// more. It used to be, and that short-circuit is exactly why a stale
+		// vanity host could never be corrected — the only code that reads the
+		// live Route sat behind it. Such a hive must now reach the repair so it
+		// can reconcile against reality; see
+		// TestVanityRepairKickRunsForHiveWithExistingVanityURL below.
 		func() *SaaSHive { // incomplete claim — nothing to derive a host from
 			h := assignedVllmdHive("hosted-no-primary")
 			h.PrimaryRepo = ""
@@ -201,6 +202,34 @@ func TestVanityRepairKickInlineGuards(t *testing.T) {
 	if got := entered.Load(); got != 0 {
 		t.Errorf("no-op kicks reached the servability seam %d times, want 0", got)
 	}
+}
+
+// A claimed hive that ALREADY has a vanity URL must still be kicked, because
+// the stored host is not self-validating: it can drift from the live Route
+// (the suffix is random, so any re-mint changes it) and the reconcile inside
+// the repair is the only thing that compares the two. This is the inverse of
+// the guard list above, and it fails against the pre-fix short-circuit.
+func TestVanityRepairKickRunsForHiveWithExistingVanityURL(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s, _, _ := newBlockedVanityHub(t)
+
+	h := assignedVllmdHive("hosted-has-vanity")
+	h.VanityURL = "https://already.example.com"
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
+	}
+
+	s.kickVanityURLRepairAsync(h.ID)
+
+	deadline := time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		if _, inFlight := s.vanityRepairInFlight.Load(h.ID); inFlight {
+			return // the reconcile pass was spawned, which is the contract here
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Error("kick spawned no repair for a hive with a vanity URL, so a stale host could never be reconciled")
 }
 
 // A successful repair must not write through a record loaded before its slow

@@ -230,7 +230,15 @@ func (s *Server) handlePlanTree(w http.ResponseWriter, r *http.Request) {
 
 // handlePlanApprove serves POST /api/plan/{epicID}/approve: approve the plan,
 // releasing its children through Ready().
+//
+// OWNER-ONLY. Approval is the whole point of the plan-review gate: decompose.go
+// withholds a draft epic's children from Ready() "until a human approves the
+// plan", and ApprovePlan is what releases them into agent execution. An
+// un-gated approve makes the gate decorative. Audit F16 (2026-08-13).
 func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	epicID := r.PathValue("epicID")
 	store, agentName := s.findEpicStore(epicID)
 	if store == nil {
@@ -249,7 +257,16 @@ func (s *Server) handlePlanApprove(w http.ResponseWriter, r *http.Request) {
 
 // handlePlanReject serves POST /api/plan/{epicID}/reject: return an approved (or
 // draft) plan to draft state, re-gating its children.
+//
+// OWNER-ONLY. RejectPlan is documented as "the inverse of ApprovePlan". If
+// approve is owner-only and reject is not, a read-write member can undo an
+// owner's approval at will — the gate is bypassed from the other side, and the
+// two ends of one state machine must sit at the same trust level.
+// Audit F16 (2026-08-13).
 func (s *Server) handlePlanReject(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	epicID := r.PathValue("epicID")
 	store, agentName := s.findEpicStore(epicID)
 	if store == nil {
@@ -269,7 +286,16 @@ func (s *Server) handlePlanReject(w http.ResponseWriter, r *http.Request) {
 // handlePlanChild serves POST /api/plan/{epicID}/child/{childID}: edit a child
 // before approval. Body {"action":"retag","execution":"agent_suitable"} retags;
 // {"action":"remove"} removes (closes) the child.
+//
+// OWNER-ONLY. This edits the plan that approval will release: "remove" closes a
+// child bead outright and "retag" flips a child between human_required and
+// agent_suitable — i.e. it can hand work the planner marked as needing a human
+// to an agent. That is the same decision approve makes, taken one bead at a
+// time, so it sits behind the same gate. Audit F16 (2026-08-13).
 func (s *Server) handlePlanChild(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	epicID := r.PathValue("epicID")
 	childID := r.PathValue("childID")
 	store, agentName := s.findEpicStore(epicID)

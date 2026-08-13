@@ -37,7 +37,6 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 		deps.ConfigCoordinator = NewConfigCoordinator(deps.Config, deps.Governor, deps.AgentMgr)
 	}
 	s.loadSidebarFromDisk()
-	s.restoreGHUserSession()
 	s.registerContributeRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -202,6 +201,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/fact-history", s.handleFactHistory)
 	s.mux.HandleFunc("POST /api/knowledge/create", s.handleKnowledgeCreate)
 	s.mux.HandleFunc("POST /api/knowledge/import", s.handleKnowledgeImport)
+	// Channels (user-writable local vaults). Registered under /channels rather
+	// than /vaults so they don't collide with the GET /api/knowledge/{layer}
+	// wildcard below. This is the import-target surface fixed in #3581.
+	s.mux.HandleFunc("GET /api/knowledge/channels", s.handleKnowledgeChannelsList)
+	s.mux.HandleFunc("POST /api/knowledge/channels", s.handleKnowledgeChannelCreate)
 	s.mux.HandleFunc("POST /api/knowledge/promote", s.handleKnowledgePromote)
 	s.mux.HandleFunc("GET /api/knowledge/subscriptions", s.handleKnowledgeSubsList)
 	s.mux.HandleFunc("POST /api/knowledge/subscriptions", s.handleKnowledgeSubsAdd)
@@ -1898,44 +1902,37 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		role = resolvedRole
 	}
 
-	// The persisted token and the hive's shared user GitHub client represent the
-	// hive's WRITE identity (advisory posting, autonomous actions). Only the
-	// owner (read-write) may set them; a read-only viewer logging in must never
-	// clobber the owner's token/client with their own identity. Viewers still
-	// get a per-user session below, they just don't become the hive's actor.
-	if role == config.RoleOwner {
-		tmpTokenPath := userTokenPath + ".tmp"
-		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to save token: " + err.Error()})
-			return
-		}
-		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to persist token: " + err.Error()})
-			return
-		}
-		if s.deps.SetUserClient != nil {
-			s.deps.SetUserClient(token)
-		}
-	}
+	// The login token is used ONLY to prove identity (username + role, above).
+	// It is deliberately NOT persisted and NOT installed as a hive write
+	// identity: every GitHub write goes through the App installation token, so
+	// there is nothing for a user token to do. This is what lets the device flow
+	// request no scope at all (issue #1927) — an owner logging in no longer has
+	// to grant "read and write all repositories" just to administer their hive.
+	// Both owners and viewers get an identity-only per-user session below.
 
 	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username, "role", role)
 
 	// Issue a per-user session (opaque random id → username+role) instead of a
 	// single shared cookie. Each authenticated user gets their own session so
 	// requests resolve to the user that owns their cookie — never a shared one.
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
-			return
-		}
-		setSessionCookie(w, r, sid)
-		// Mint the short-lived per-hive terminal assertion cookie the Node proxy
-		// verifies as its PRIMARY per-hive gate (finding C3 follow-up). Same
-		// {user,hive,role} just authorized for this session, bound to THIS hive
-		// with an expiry. No-op on non-hosted hives.
-		s.setTerminalAssertionCookie(w, r, username, role)
+	//
+	// Always mint the session. This used to be gated on s.authToken != "", which
+	// meant a spoke with no dashboard token logged "authenticated via device
+	// flow", returned {status:"complete"}, and set NO cookie at all — so "/"
+	// rejected the request and the login page bounced forever (same failure
+	// handleSSO fixed). The session store is the authority on identity here and
+	// does not depend on a shared token existing.
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
+		return
 	}
+	setSessionCookie(w, r, sid)
+	// Mint the short-lived per-hive terminal assertion cookie the Node proxy
+	// verifies as its PRIMARY per-hive gate (finding C3 follow-up). Same
+	// {user,hive,role} just authorized for this session, bound to THIS hive
+	// with an expiry. No-op on non-hosted hives.
+	s.setTerminalAssertionCookie(w, r, username, role)
 
 	// Audit the successful login with the authenticated GitHub username as the
 	// actor (not the request's X-Hive-User, which has no session yet at this
@@ -2177,35 +2174,6 @@ func (s *Server) handleGHUserAuthSession(w http.ResponseWriter, r *http.Request)
 	// handler; we never mint a session here (doing so from a shared secret or a
 	// disk token file would grant any caller a valid session).
 	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-// restoreGHUserSession loads a previously-saved GitHub user OAuth token from
-// disk and calls SetUserClient so that advisory posting works immediately
-// after a container restart, without requiring re-login via Device Flow.
-func (s *Server) restoreGHUserSession() {
-	if s.deps == nil || s.deps.SetUserClient == nil {
-		return
-	}
-
-	tokenData, err := os.ReadFile(userTokenPath)
-	if err != nil {
-		return // no saved token — nothing to restore
-	}
-
-	token := strings.TrimSpace(string(tokenData))
-	if token == "" {
-		return
-	}
-
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
-	if err != nil {
-		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
-		os.Remove(userTokenPath)
-		return
-	}
-
-	s.deps.SetUserClient(token)
-	s.deps.Logger.Info("restored GitHub user session from disk", "username", user.Login)
 }
 
 func (s *Server) handleGHRateLimits(w http.ResponseWriter, r *http.Request) {
@@ -5734,9 +5702,26 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if body.PrimaryRepo != nil {
 		validatePrimary = *body.PrimaryRepo
 	}
+	// Normalize org-qualified entries ("myorg/myrepo" under org "myorg") to the
+	// bare repo name BEFORE validating, so the accepted value and the persisted
+	// value are the same shape. Without this an owner pasting the org/repo form
+	// GitHub shows everywhere is rejected with a 400 here, or — worse, on paths
+	// that skip this handler — persisted org-qualified and then resolved as
+	// "org/org/repo", which fails every agent. An entry qualified with a
+	// different org is left untouched and still 400s below.
+	validateRepos, _ = config.NormalizeProjectRepos(org, validateRepos)
+	validatePrimary, _ = config.NormalizeRepoForOrg(org, validatePrimary)
 	if issue := config.ValidateProjectRepoTargets(org, validateRepos, validatePrimary, spokeHost); issue != nil {
 		jsonError(w, issue.Message, http.StatusBadRequest)
 		return
+	}
+	// Feed the normalized values back into the body so the persistence code
+	// below stores bare names even when its own url-parse branch does not fire.
+	if len(body.Repos) > 0 {
+		body.Repos = validateRepos
+	}
+	if body.PrimaryRepo != nil {
+		body.PrimaryRepo = &validatePrimary
 	}
 	for _, ref := range body.Repos {
 		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
@@ -6745,7 +6730,17 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 // the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
 func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
-	client := &http.Client{Timeout: inferenceModelQueryTimeout}
+	client := &http.Client{
+		Timeout: inferenceModelQueryTimeout,
+		// SECURITY (audit F13): Go's default redirect policy PRESERVES the
+		// Authorization header across same-host hops and follows up to 10
+		// redirects. An upstream that answers /v1/models with a 302 could
+		// therefore walk the gateway key onward. Strip credentials on any hop
+		// that changes host, so a redirect can never carry the key somewhere the
+		// original request was not authorized to reach. probeModelsWithHeaders
+		// already used this policy; this sibling was simply missed.
+		CheckRedirect: noRedirectToPrivate,
+	}
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -7413,6 +7408,38 @@ func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditFromRequest(r, "knowledge_import", auditDetail("layer", req.Layer, "format", req.Format), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "imported": count, "layer": req.Layer, "format": req.Format})
+}
+
+// handleKnowledgeChannelsList returns the user-writable channels (vaults) that
+// facts can be imported into. The reserved automation vault is excluded (#3581).
+func (s *Server) handleKnowledgeChannelsList(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonResponse(w, []interface{}{})
+		return
+	}
+	jsonResponse(w, s.deps.Knowledge.WritableVaults())
+}
+
+// handleKnowledgeChannelCreate creates a new local channel (vault) to import into.
+func (s *Server) handleKnowledgeChannelCreate(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	info, err := s.deps.Knowledge.CreateVault(req.Name)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "knowledge_channel_create", auditDetail("channel", info.Name), "")
+	jsonResponse(w, map[string]interface{}{"ok": true, "channel": info})
 }
 
 func (s *Server) handleKnowledgeSubsList(w http.ResponseWriter, r *http.Request) {

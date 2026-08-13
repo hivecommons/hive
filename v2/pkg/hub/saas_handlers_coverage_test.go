@@ -265,46 +265,6 @@ func TestHandleUpgradeHiveKubectlFails(t *testing.T) {
 	}
 }
 
-func TestHandleMigrateHiveValidation(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	s := newHandlerHub()
-	mkUser(t, "alice")
-
-	// Invalid id.
-	rec := httptest.NewRecorder()
-	req := setPathValue(reqWithUser(http.MethodPost, "/mig", "", "alice"), "id", "../x")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("invalid id status = %d, want 400", rec.Code)
-	}
-
-	// Not found.
-	rec = httptest.NewRecorder()
-	req = setPathValue(reqWithUser(http.MethodPost, "/mig", `{}`, "alice"), "id", "missing")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("missing hive status = %d, want 404", rec.Code)
-	}
-
-	// Owner, missing target cluster -> 400.
-	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
-	rec = httptest.NewRecorder()
-	req = setPathValue(reqWithUser(http.MethodPost, "/mig", `{}`, "alice"), "id", "h1")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("missing target status = %d, want 400", rec.Code)
-	}
-
-	// Unknown target cluster -> 400.
-	rec = httptest.NewRecorder()
-	req = setPathValue(reqWithUser(http.MethodPost, "/mig", `{"target_cluster_id":"nope"}`, "alice"), "id", "h1")
-	s.handleMigrateHive(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("unknown target status = %d, want 400", rec.Code)
-	}
-}
-
 func TestHandleSwitchBranchValidation(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

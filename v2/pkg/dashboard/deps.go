@@ -40,7 +40,6 @@ type Dependencies struct {
 	PersistFunc                   func()
 	SkipReloadFunc                func()
 	ReInitFunc                    func()
-	SetUserClient                 func(token string)
 	EnumerateFunc                 func()
 	AdvisoryResetFunc             func(newPrimaryRepo string)
 	ReinitGitHubFunc              func(appID, installationID int64, keyFile string) error

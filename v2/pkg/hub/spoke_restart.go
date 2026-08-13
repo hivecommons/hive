@@ -152,7 +152,7 @@ func (s *HubServer) restartSpokeForHeartbeat(hiveID string) bool {
 // (RolloutRestartSelf): a stale pod is replaced and never comes back, while
 // the healthy instance suffers one rolling restart.
 func (s *HubServer) handleRestartSpoke(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 		return
 	}

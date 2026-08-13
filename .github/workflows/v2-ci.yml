@@ -64,7 +64,10 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./... -count=1 -timeout 25m
+        # -short is the documented CI contract: env-dependent integration tests
+        # (rootless-podman etc.) guard on testing.Short and self-skip; without
+        # it they hard-fail on runners lacking their prerequisites.
+        run: go test ./... -short -count=1 -timeout 25m
 
       - name: Vet
         run: go vet ./...
@@ -76,6 +79,16 @@ jobs:
       # fails the PR rather than a deploy.
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
+
+      # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
+      # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
+      # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
+      # ancestor of v4, yet the pin was gone. Audit findings F14 and F18 both
+      # died this way. This asserts the INVARIANT (nothing floats) rather than
+      # any behaviour, so a merge that drops a pin fails the PR instead of
+      # quietly shipping a build that trusts whatever npm/Docker Hub serves.
+      - name: Supply-chain pin guard
+        run: bash deploy/test_supply_chain_pins.sh
 
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
@@ -178,8 +191,12 @@ jobs:
             docker rm -f -v "$name" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
+          # --cap-add NET_ADMIN mirrors the production contract: the pod spec
+          # grants it (SCC hive-netadmin) and the image binary carries
+          # cap_net_admin+ep file caps (SO_MARK egress attribution), so exec
+          # under docker's default cap set fails EPERM by design, not by bug.
           timeout --signal=TERM --kill-after=10s 60s \
-            docker run --rm --name "$name" --network none hive:test --version
+            docker run --rm --name "$name" --network none --cap-add NET_ADMIN hive:test --version
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'

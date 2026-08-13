@@ -283,12 +283,17 @@ func TestContributorWrite_ReadViewerForbidden(t *testing.T) {
 	}
 }
 
-// TestContributorWrite_OwnerAndRWAllowed proves owner and read-write pass the gate
-// (they are not blocked). SECURITY (C5): an absent/empty role is NO LONGER allowed
-// here — the gate now fails closed on a missing role (see
-// TestContributorWrite_MissingRoleForbidden), because an absent header is exactly
-// what an unauthenticated caller reaching the pod directly presents.
-func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
+// TestContributorTrustIsOwnerOnly: contributor trust is OWNER-ONLY (audit F14).
+//
+// This test previously asserted that read-write ALSO passed the gate — it encoded
+// the vulnerability. #3460 gated these handlers with requireOwnerRole; a v2->v4
+// sync merge reverted that, and F14 (2026-08-13) re-reproduced it. Setting a
+// contributor's trust tier is an owner action, so read-write must now be denied.
+//
+// The owner case also needs ownerRoleVerifiedHeader: requireOwnerRole demands
+// BOTH the role header and the verified marker, so that a caller who can spoof
+// X-Hive-Role alone cannot mint owner authority.
+func TestContributorTrustIsOwnerOnly(t *testing.T) {
 	for _, role := range []string{"owner", "read-write"} {
 		t.Run("trust_"+role, func(t *testing.T) {
 			setupContributeEnv(t)
@@ -302,14 +307,23 @@ func TestContributorWrite_OwnerAndRWAllowed(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPut, "/api/contributors/alice/trust", strings.NewReader(`{"tier":"trusted"}`))
 			req.SetPathValue("id", "alice")
-			if role != "" {
+			if role == "owner" {
+				markOwnerRequest(req)
+			} else if role != "" {
 				req.Header.Set("X-Hive-Role", role)
 			}
 			w := httptest.NewRecorder()
 			s.handleContributorTrust(w, req)
 
-			if w.Code != http.StatusOK {
-				t.Fatalf("role %q got %d, want 200 (body: %s)", role, w.Code, w.Body.String())
+			wantCode := http.StatusOK
+			if role != "owner" {
+				wantCode = http.StatusForbidden
+			}
+			if w.Code != wantCode {
+				t.Fatalf("role %q got %d, want %d (body: %s)", role, w.Code, wantCode, w.Body.String())
+			}
+			if role != "owner" {
+				return // denied as intended; nothing further to assert
 			}
 			if p := findContributor("alice"); p == nil || p.TrustTier != "trusted" {
 				t.Errorf("role %q: tier not promoted: %+v", role, p)
@@ -448,6 +462,7 @@ func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
 	ownerReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["sec-check","ci-maintainer","ci-maintainer"]}`))
 	ownerReq.Header.Set("Content-Type", "application/json")
 	ownerReq.Header.Set("X-Hive-Role", "owner")
+	ownerReq.Header.Set(ownerRoleVerifiedHeader, "true")
 	ownerRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(ownerRec, ownerReq)
 	if ownerRec.Code != http.StatusOK {
@@ -464,6 +479,7 @@ func TestContributorAgentRoleGrantsAuthzAndRoundTrip(t *testing.T) {
 	badReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["scanner"]}`))
 	badReq.Header.Set("Content-Type", "application/json")
 	badReq.Header.Set("X-Hive-Role", "owner")
+	badReq.Header.Set(ownerRoleVerifiedHeader, "true")
 	badRec := httptest.NewRecorder()
 	s.mux.ServeHTTP(badRec, badReq)
 	if badRec.Code != http.StatusBadRequest {

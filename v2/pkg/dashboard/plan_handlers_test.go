@@ -16,6 +16,16 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/planning"
 )
 
+// The plan MUTATION routes (approve/reject/child) are owner-only as of audit
+// F16 — approval is what releases a draft epic's children into agent execution.
+// The tests below exercise happy paths, not-found and input validation, so they
+// call markOwnerRequest to supply credentials and keep their original
+// assertions. Authorization itself is covered by f16_owner_gate_test.go.
+//
+// The read-only GET route (handlePlanTree) is deliberately NOT owner-gated, so
+// its tests intentionally send no credentials — do not "fix" them by adding
+// markOwnerRequest; that would hide a regression if the GET were ever gated.
+
 // planServer builds a Server with a single "architect" bead store and an epic
 // decomposed into children. It returns the server, store, and epic.
 func planServer(t *testing.T) (*Server, *beads.Store, *beads.Bead) {
@@ -82,6 +92,7 @@ func TestHandlePlanApprove(t *testing.T) {
 	srv, store, epic := planServer(t)
 
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/approve", nil)
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -94,7 +105,9 @@ func TestHandlePlanApprove(t *testing.T) {
 
 	// Double-approve → 400.
 	w2 := httptest.NewRecorder()
-	srv.mux.ServeHTTP(w2, httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/approve", nil))
+	req2 := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/approve", nil)
+	markOwnerRequest(req2)
+	srv.mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusBadRequest {
 		t.Fatalf("double approve want 400, got %d", w2.Code)
 	}
@@ -103,7 +116,9 @@ func TestHandlePlanApprove(t *testing.T) {
 func TestHandlePlanApprove_NotFound(t *testing.T) {
 	srv, _, _ := planServer(t)
 	w := httptest.NewRecorder()
-	srv.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/plan/missing/approve", nil))
+	req := httptest.NewRequest("POST", "/api/plan/missing/approve", nil)
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", w.Code)
 	}
@@ -115,7 +130,9 @@ func TestHandlePlanReject(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 	w := httptest.NewRecorder()
-	srv.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/reject", nil))
+	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/reject", nil)
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -141,6 +158,7 @@ func TestHandlePlanChild_Retag(t *testing.T) {
 
 	body := strings.NewReader(`{"action":"retag","execution":"human_required"}`)
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/child/"+child.ID, body)
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -164,6 +182,7 @@ func TestHandlePlanChild_Remove(t *testing.T) {
 	}
 	body := strings.NewReader(`{"action":"remove"}`)
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/child/"+child.ID, body)
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -187,6 +206,7 @@ func TestHandlePlanChild_BadAction(t *testing.T) {
 	}
 	body := strings.NewReader(`{"action":"bogus"}`)
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/child/"+child.ID, body)
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -208,7 +228,9 @@ func TestHandlePlanReject_BadState(t *testing.T) {
 	}
 	srv.RegisterAPI(srv.deps)
 	w := httptest.NewRecorder()
-	srv.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/reject", nil))
+	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/reject", nil)
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", w.Code)
 	}
@@ -217,7 +239,9 @@ func TestHandlePlanReject_BadState(t *testing.T) {
 func TestHandlePlanReject_NotFound(t *testing.T) {
 	srv, _, _ := planServer(t)
 	w := httptest.NewRecorder()
-	srv.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/plan/missing/reject", nil))
+	req := httptest.NewRequest("POST", "/api/plan/missing/reject", nil)
+	markOwnerRequest(req)
+	srv.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", w.Code)
 	}
@@ -227,6 +251,7 @@ func TestHandlePlanChild_NotFound(t *testing.T) {
 	srv, _, _ := planServer(t)
 	body := strings.NewReader(`{"action":"remove"}`)
 	req := httptest.NewRequest("POST", "/api/plan/missing/child/x", body)
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -238,6 +263,7 @@ func TestHandlePlanChild_NotFound(t *testing.T) {
 func TestHandlePlanChild_BadBody(t *testing.T) {
 	srv, _, epic := planServer(t)
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/child/x", strings.NewReader("{not json"))
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -258,6 +284,7 @@ func TestHandlePlanChild_RetagError(t *testing.T) {
 	// Invalid execution value → RetagChild errors → 400.
 	body := strings.NewReader(`{"action":"retag","execution":"bogus"}`)
 	req := httptest.NewRequest("POST", "/api/plan/"+epic.ID+"/child/"+child.ID, body)
+	markOwnerRequest(req)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)

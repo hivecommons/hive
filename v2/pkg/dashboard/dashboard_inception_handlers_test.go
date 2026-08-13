@@ -382,14 +382,3 @@ func TestHandleKnowledgeExportNilKnowledge(t *testing.T) {
 	// Should handle nil knowledge gracefully — either 503 or creates fallback
 	_ = w.Code
 }
-
-func TestRestoreGHUserSessionNilDeps(t *testing.T) {
-	srv := NewServer(0, slog.Default())
-	srv.restoreGHUserSession()
-}
-
-func TestRestoreGHUserSessionNoToken(t *testing.T) {
-	srv := newMinimalServer(t)
-	srv.deps.SetUserClient = func(token string) {}
-	srv.restoreGHUserSession()
-}

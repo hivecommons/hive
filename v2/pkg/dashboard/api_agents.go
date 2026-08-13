@@ -46,7 +46,13 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, agents)
 }
 
+// handleAgentCreate serves POST /api/agents. OWNER-ONLY, matching
+// handleAgentDelete below: creating an agent writes an agent file, lifts any
+// deletion tombstone, and starts a live process. Audit F16 (2026-08-13).
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Name  string             `json:"name"`
 		Agent config.AgentConfig `json:"agent"`
@@ -259,7 +265,13 @@ func agentConfigFromDefinition(def *agentDefinition) config.AgentConfig {
 	}
 }
 
+// handleAgentImport serves POST /api/agents/import. OWNER-ONLY for the same
+// reason as handleAgentCreate — it is a create path that additionally fetches a
+// caller-supplied remote definition. Audit F16 (2026-08-13).
 func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Source  string `json:"source"`
 		URL     string `json:"url"`

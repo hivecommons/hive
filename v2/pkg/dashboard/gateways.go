@@ -15,7 +15,9 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -487,6 +489,13 @@ func (s *Server) handleGovernorGatewaysDelete(w http.ResponseWriter, r *http.Req
 // re-opening an existing gateway populates its models without re-entering the
 // key. Returns {ok, models:[...]} or {ok:false, error}.
 func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.Request) {
+	// SECURITY (audit F13): discover mutates nothing, but it drives an outbound
+	// request to a caller-named endpoint and can attach a stored credential, so
+	// it is gated like the other gateway routes rather than left open.
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
 	var body struct {
 		Name      string `json:"name"`
 		Endpoint  string `json:"endpoint"`
@@ -507,6 +516,10 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := guardDiscoverEndpoint(r.Context(), endpoint); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	key := strings.TrimSpace(body.APIKey)
 	kind := strings.ToLower(strings.TrimSpace(body.Kind))
 	projectID := strings.TrimSpace(body.ProjectID)
@@ -515,7 +528,23 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	// stored gateway of this name.
 	if key == "" || kind == "" || projectID == "" {
 		if gw := s.deps.Config.Governor.ResolveGateway(strings.TrimSpace(body.Name)); gw != nil {
-			if key == "" {
+			// SECURITY (audit F13, CWE-200): this is the same defect as N8 and F6,
+			// which were fixed on the UPSERT handler but never here. A credential
+			// the caller did not supply must never be sent to an endpoint the
+			// caller chose. Falling back to the stored key while taking the
+			// endpoint from the request body made one POST — naming an existing
+			// gateway and any attacker-controlled endpoint — walk the stored key
+			// straight out. The caller never had to know the key.
+			//
+			// The stored key is therefore usable only when the caller names the
+			// gateway's OWN persisted endpoint: that address already receives this
+			// key on every agent request, so probing it discloses nothing new. Any
+			// other endpoint requires the caller to supply their own key, which
+			// they already possess.
+			//
+			// kind/project_id are NOT secrets, so they still fall back freely —
+			// only the key is endpoint-bound.
+			if key == "" && sameGatewayEndpoint(endpoint, gw.Endpoint) {
 				key = gw.ResolveAPIKey()
 			}
 			if kind == "" {
@@ -617,12 +646,97 @@ func (s *Server) registerGatewayEndpoints() {
 // validateGatewayEndpoint checks the endpoint parses as an absolute http(s)
 // URL, mirroring LiteLLMConfig.Validate.
 func validateGatewayEndpoint(endpoint string) error {
+	_, err := parseGatewayEndpoint(endpoint)
+	return err
+}
+
+// parseGatewayEndpoint is validateGatewayEndpoint's shared parse step, returning
+// the parsed URL so callers that need the host do not re-parse (and cannot drift
+// from what validation accepted).
+func parseGatewayEndpoint(endpoint string) (*url.URL, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, err)
+		return nil, fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, err)
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("endpoint %q must be an absolute http(s) URL", endpoint)
+		return nil, fmt.Errorf("endpoint %q must be an absolute http(s) URL", endpoint)
+	}
+	return u, nil
+}
+
+// sameGatewayEndpoint reports whether a caller-supplied endpoint addresses the
+// SAME upstream as a gateway's persisted endpoint. It is the gate on reusing a
+// stored credential (audit F13), so it compares canonically and is deliberately
+// strict: anything it cannot prove identical returns false, which merely costs
+// the caller a re-typed key.
+//
+// Canonicalisation covers the ways two spellings of one address differ
+// innocently — scheme/host case, the implicit :80/:443 port, a trailing slash —
+// and nothing else. In particular userinfo must match, so
+// "https://evil@gw.example" is NOT the same upstream as "https://gw.example":
+// Go sends userinfo as Basic credentials and the host itself can differ under
+// some parsers, both of which are exactly the confusion an attacker wants.
+func sameGatewayEndpoint(supplied, stored string) bool {
+	a, errA := parseGatewayEndpoint(strings.TrimSpace(supplied))
+	b, errB := parseGatewayEndpoint(strings.TrimSpace(stored))
+	if errA != nil || errB != nil {
+		return false
+	}
+	return canonicalGatewayEndpoint(a) == canonicalGatewayEndpoint(b)
+}
+
+// canonicalGatewayEndpoint renders a URL in a normalized form for equality
+// comparison: lowercased scheme and host, the default port made explicit, and a
+// trailing slash trimmed from the path.
+func canonicalGatewayEndpoint(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	user := ""
+	if u.User != nil {
+		user = u.User.String() + "@"
+	}
+	path := strings.TrimRight(u.Path, "/")
+	return scheme + "://" + user + net.JoinHostPort(host, port) + path
+}
+
+// errGatewayEndpointPrivate is returned when a caller-supplied discover target
+// resolves into private/loopback/link-local space.
+var errGatewayEndpointPrivate = errors.New("endpoint resolves to a private, loopback or link-local address and cannot be probed from the discover form; save the gateway and use its test action instead")
+
+// guardDiscoverEndpoint is the SSRF gate on the DISCOVER path (audit F13).
+//
+// Scope note, because the placement is deliberate and easy to "fix" wrongly:
+// this check is NOT in validateGatewayEndpoint. That helper also validates the
+// UPSERT path, where in-cluster gateways are a supported, documented
+// configuration — the bundled local litellm proxy is http://127.0.0.1:18445 and
+// vllm/llm-d default to *.svc.cluster.local (see HIVE_VLLM_ENDPOINT). Blanket
+// private-address denial there would break real deployments, which is why the
+// F6 fix explicitly rejected it as the remedy.
+//
+// Discover is different: it is an unauthenticated-shaped, caller-driven fetch
+// whose only job is populating a dropdown. Refusing to aim it at internal
+// addresses removes the SSRF probe primitive (cloud metadata at 169.254.169.254,
+// port-scanning localhost via error/timing differences) while leaving every
+// legitimate in-cluster gateway configurable through upsert + the test action,
+// which probe a PERSISTED endpoint an owner already committed to.
+//
+// Resolution is done via DNS, not string matching, so "evil.example" pointing at
+// 169.254.169.254 is caught; it fails CLOSED on resolution error.
+func guardDiscoverEndpoint(ctx context.Context, endpoint string) error {
+	u, err := parseGatewayEndpoint(endpoint)
+	if err != nil {
+		return err
+	}
+	if isPrivateURL(ctx, u.Scheme+"://"+u.Host) {
+		return errGatewayEndpointPrivate
 	}
 	return nil
 }

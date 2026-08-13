@@ -270,6 +270,10 @@ func TestWatsonxDiscover_InvalidKeyReturnsNoModels(t *testing.T) {
 	body := `{"name":"watsonx","kind":"watsonx","endpoint":"https://public.example/ml/gateway","project_id":"p","api_key":"bad-key-1234567890"}`
 	req := httptest.NewRequest("POST", "/api/config/governor/gateways/discover", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	// Discover is owner-gated (audit F13); these tests exercise the watsonx
+	// verdict logic BEHIND that gate, so they authenticate like the upsert tests
+	// in this file already do.
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleGovernorGatewaysDiscover(w, req)
 	if w.Code != http.StatusOK {
@@ -318,6 +322,10 @@ func TestWatsonxDiscover_ValidKeyListingFailureFallsBack(t *testing.T) {
 	body := `{"name":"watsonx","kind":"watsonx","endpoint":"https://public.example/ml/gateway","project_id":"p","api_key":"good-key-1234567890"}`
 	req := httptest.NewRequest("POST", "/api/config/governor/gateways/discover", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	// Discover is owner-gated (audit F13); these tests exercise the watsonx
+	// verdict logic BEHIND that gate, so they authenticate like the upsert tests
+	// in this file already do.
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleGovernorGatewaysDiscover(w, req)
 	var out struct {

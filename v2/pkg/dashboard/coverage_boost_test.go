@@ -1588,19 +1588,6 @@ func TestHandleGHUserAuthStatus_NoToken(t *testing.T) {
 	}
 }
 
-// --- restoreGHUserSession ---
-
-func TestRestoreGHUserSession_NilDeps(t *testing.T) {
-	srv := &Server{}
-	srv.restoreGHUserSession() // should not panic
-}
-
-func TestRestoreGHUserSession_NoSetUserClient(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.SetUserClient = nil
-	srv.restoreGHUserSession() // should not panic
-}
-
 // --- checkModelAllowed ---
 
 func TestCheckModelAllowed_NoConfig(t *testing.T) {

@@ -3,10 +3,12 @@ package hub
 import (
 	"log/slog"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ============================================================
-// saas_provision.go — provisionHive / deprovisionHive / migrateHive
+// saas_provision.go — provisionHive / deprovisionHive
 //
 // Uses the scripted fake kubectl (returns 0 for every command) and dynamic
 // storage so the OCI/NFS network branches are skipped. This exercises the
@@ -93,38 +95,6 @@ func TestDeprovisionHiveWithSCC(t *testing.T) {
 	deprovisionHive(h, cluster, slog.Default())
 }
 
-func TestMigrateHive(t *testing.T) {
-	cleanup := helperSetupTempDirs(t)
-	defer cleanup()
-	installScriptedKubectl(t)
-
-	s := &HubServer{
-		logger: slog.Default(),
-		saveCh: make(chan struct{}, 1),
-		clusters: map[string]ClusterConfig{
-			"hive-oke": *dynamicCluster(),
-			"target":   {ID: "target", Name: "Target", InCluster: true, StorageType: storageTypeDynamic, Domain: "target.example.com"},
-		},
-	}
-	h := &SaaSHive{ID: "hosted-mig", Owner: "alice", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2, ClusterID: "hive-oke"}
-	saveSaaSHive(h)
-	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{"hosted-mig": "owner"}})
-	s.registry.Hives = []RegistryEntry{{ID: "hosted-mig", ClusterID: "hive-oke"}}
-
-	from := s.clusters["hive-oke"]
-	to := s.clusters["target"]
-	s.migrateHive(h, &from, &to)
-
-	// After a successful migration the record points at the target cluster.
-	got := loadSaaSHive("hosted-mig")
-	if got == nil {
-		t.Fatal("hive record missing after migration")
-	}
-	if got.ClusterID != "target" {
-		t.Errorf("migrated cluster = %q, want target (migration_status=%q err=%q)", got.ClusterID, got.MigrationStatus, got.Error)
-	}
-}
-
 func TestExtractYAMLValue_ProvCov(t *testing.T) {
 	yaml := "app_id: 42\ninstallation_id: 99\nother: x"
 	if got := extractYAMLValue(yaml, "app_id"); got != "42" {
@@ -135,5 +105,63 @@ func TestExtractYAMLValue_ProvCov(t *testing.T) {
 	}
 	if got := extractYAMLValue(yaml, "missing"); got != "" {
 		t.Errorf("missing = %q, want empty", got)
+	}
+}
+
+// The provisioner bakes project.repos straight into the spoke's hive.yaml, so an
+// org-qualified entry that reaches it becomes a permanently broken hive: the
+// spoke resolves targets as org + "/" + repo, yielding "org/org/repo". This pins
+// the normalization the provisioner applies to h.Repos/h.PrimaryRepo.
+func TestProvisionRepoNormalization(t *testing.T) {
+	tests := []struct {
+		name        string
+		org         string
+		repos       []string
+		primary     string
+		wantRepos   []string
+		wantPrimary string
+	}{
+		{
+			name:        "org qualified entry is stripped",
+			org:         "zacburns",
+			repos:       []string{"zacburns/mlz-manager"},
+			primary:     "zacburns/mlz-manager",
+			wantRepos:   []string{"mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+		// Positive control: an already-correct project must pass through intact.
+		{
+			name:        "bare entry unchanged",
+			org:         "zacburns",
+			repos:       []string{"mlz-manager"},
+			primary:     "mlz-manager",
+			wantRepos:   []string{"mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+		{
+			name:        "foreign org left for the spoke to reject",
+			org:         "zacburns",
+			repos:       []string{"someoneelse/mlz-manager"},
+			primary:     "mlz-manager",
+			wantRepos:   []string{"someoneelse/mlz-manager"},
+			wantPrimary: "mlz-manager",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRepos, _ := config.NormalizeProjectRepos(tt.org, tt.repos)
+			if len(gotRepos) != len(tt.wantRepos) {
+				t.Fatalf("repos = %v, want %v", gotRepos, tt.wantRepos)
+			}
+			for i := range tt.wantRepos {
+				if gotRepos[i] != tt.wantRepos[i] {
+					t.Fatalf("repos = %v, want %v", gotRepos, tt.wantRepos)
+				}
+			}
+			gotPrimary, _ := config.NormalizeRepoForOrg(tt.org, tt.primary)
+			if gotPrimary != tt.wantPrimary {
+				t.Fatalf("primary = %q, want %q", gotPrimary, tt.wantPrimary)
+			}
+		})
 	}
 }

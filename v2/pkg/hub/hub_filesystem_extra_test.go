@@ -590,6 +590,8 @@ func TestHandleHiveStatusWithAccess(t *testing.T) {
 	authCleanup := helperSetupAuthUser(t, "ghp_status_acc", "accuser")
 	defer authCleanup()
 
+	// A granted READ role: since the owner-only tightening (operator
+	// decision matching v2), read access no longer grants hive status.
 	u := ensureSaaSUser("accuser")
 	u.Hives["acc-hive"] = "read"
 	saveSaaSUser(u)
@@ -605,8 +607,8 @@ func TestHandleHiveStatusWithAccess(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 (status is owner-only; read grant does not suffice), got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 

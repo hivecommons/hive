@@ -289,6 +289,13 @@ func TestCmdCloseAndReopenViaUpdate(t *testing.T) {
 		cmdClose([]string{b.ID})
 	})
 
+	// Re-open: cmd* helpers persist through their own store handle, so a
+	// fresh handle (not this test's stale pre-command one) must observe it.
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// Verify closed via list.
 	items := store.List(beads.ListFilter{})
 	found := false
@@ -309,6 +316,12 @@ func TestCmdCloseAndReopenViaUpdate(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--status", "open"})
 	})
 
+	// Re-open: cmd* helpers persist via their own handle; a fresh handle
+	// must observe it (the pre-command handle is stale by design).
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	items = store.List(beads.ListFilter{})
 	found = false
 	for _, item := range items {
@@ -342,6 +355,12 @@ func TestCmdUpdateMetadata(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--set-metadata", "finding_type=coverage-gap"})
 	})
 
+	// Re-open: cmd* helpers persist via their own handle; a fresh handle
+	// must observe it (the pre-command handle is stale by design).
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	items := store.List(beads.ListFilter{})
 	found := false
 	for _, item := range items {
@@ -360,6 +379,12 @@ func TestCmdUpdateMetadata(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--unset-metadata", "finding_type"})
 	})
 
+	// Re-open: cmd* helpers persist via their own handle; a fresh handle
+	// must observe it (the pre-command handle is stale by design).
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	items = store.List(beads.ListFilter{})
 	found = false
 	for _, item := range items {
@@ -393,6 +418,12 @@ func TestCmdUpdateClaim(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--claim"})
 	})
 
+	// Re-open: cmd* helpers persist via their own handle; a fresh handle
+	// must observe it (the pre-command handle is stale by design).
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	items := store.List(beads.ListFilter{})
 	found := false
 	for _, item := range items {
@@ -427,6 +458,12 @@ func TestCmdReset(t *testing.T) {
 		cmdReset([]string{"--reason", "test reset"})
 	})
 
+	// Re-open: cmd* helpers persist via their own handle; a fresh handle
+	// must observe it (the pre-command handle is stale by design).
+	store, err = beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ready := store.Ready("")
 	if len(ready) != 0 {
 		t.Errorf("after reset, Ready() returned %d beads; want 0", len(ready))

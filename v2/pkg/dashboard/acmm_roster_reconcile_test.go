@@ -214,6 +214,7 @@ func TestSetLevelReconcilesUnpinnedBackendModelPair(t *testing.T) {
 
 	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":4}`))
 	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handlePackSetLevel(w, req)
 	if w.Code != 200 {

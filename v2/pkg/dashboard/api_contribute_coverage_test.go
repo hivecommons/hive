@@ -31,6 +31,7 @@ func doPutOwner(s *Server, path string, body interface{}) *httptest.ResponseReco
 	req := httptest.NewRequest(http.MethodPut, path, &b)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -42,6 +43,7 @@ func doPostOwner(s *Server, path string, body interface{}) *httptest.ResponseRec
 	req := httptest.NewRequest(http.MethodPost, path, &b)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }
@@ -55,6 +57,7 @@ func doDeleteOwner(s *Server, path string, body interface{}) *httptest.ResponseR
 	req := httptest.NewRequest(http.MethodDelete, path, &b)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
 	s.mux.ServeHTTP(rec, req)
 	return rec
 }

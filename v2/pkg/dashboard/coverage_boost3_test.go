@@ -495,22 +495,6 @@ func TestHandleGHUserAuthPoll_ActiveFlow(t *testing.T) {
 	}
 }
 
-// --- restoreGHUserSession with saved token ---
-
-func TestRestoreGHUserSession_WithToken(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.SetUserClient = func(token string) {}
-
-	// Write a fake token to disk
-	dir := t.TempDir()
-	tokenFile := dir + "/gh-user-token"
-	os.WriteFile(tokenFile, []byte("ghp_faketoken12345678\n"), 0o600)
-
-	// restoreGHUserSession reads from hardcoded path, can't test directly.
-	// Just verify the function doesn't panic.
-	srv.restoreGHUserSession()
-}
-
 // --- loadSidebarFromDisk / saveSidebarToDisk ---
 
 func TestSaveSidebarToDisk(t *testing.T) {
@@ -702,6 +686,9 @@ func TestHandleAgentImport_InvalidBody_Boost(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/agents/import", strings.NewReader("not yaml"))
 	req.Header.Set("Content-Type", "application/json")
+	// Import is owner-only (audit F16). This test asserts body validation, not
+	// authorization, so give it credentials and keep asserting 400.
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleAgentImport(w, req)
 

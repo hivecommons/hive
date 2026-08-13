@@ -222,7 +222,20 @@ func (m *Manager) AgentAuthState(agentName string, uid int, backend string, runn
 				return true, true
 			}
 		}
-		return false, true
+		// A found+valid token is positive proof (above). Its ABSENCE, however, is
+		// NOT proof of "needs login" for Claude: unlike copilot/codex, Claude can
+		// be authenticated with NO credentials file on disk — a live in-memory
+		// session, or credentials under a home this probe cannot read (per-UID
+		// HOME, keychain). Reporting `known=true` here painted the amber 🔑
+		// needs-login badge on Claude agents that were demonstrably authenticated
+		// and mid-work — the false positive was hit whenever such an agent's
+		// process state flapped to not-running (e.g. a frequently-restarting
+		// agent) so the (2) running-guard above didn't fire. Report UNKNOWN
+		// (no opinion → no badge) instead: a missing Claude cred file is
+		// inconclusive, and inventing a login prompt that does not exist is worse
+		// than showing nothing. A REAL Claude login prompt is still caught by the
+		// pane-scan needsLogin signal at (3), which outranks this.
+		return false, false
 	case "copilot":
 		m.mu.RLock()
 		tok := m.copilotAuthToken

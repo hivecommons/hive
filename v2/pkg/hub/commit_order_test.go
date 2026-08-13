@@ -259,10 +259,17 @@ func TestHandleHeartbeatKeepsLatchWhileAncestryUnresolved(t *testing.T) {
 	}
 }
 
-// The orphan sweep must treat a spoke at-or-ahead of its target as NOT
-// orphaned — pre-fix it swept, re-armed and (after maxOrphanedUpgradeSweeps)
-// reported a false permanent UpgradeFailed for an upgrade that had landed.
-func TestEvaluateOrphanedUpgradeAheadOfTargetNotOrphaned(t *testing.T) {
+// The orphan sweep must treat a spoke at-or-ahead of its target as CONVERGED:
+// the latch is cleared, but as a completed upgrade — never re-armed, never
+// charged against maxOrphanedUpgradeSweeps, and never escalated to a false
+// permanent UpgradeFailed (the fault this test originally guarded).
+//
+// It formerly asserted orphaned=false, i.e. "leave it to the heartbeat path".
+// That deferral wedged z-mlz-manager: once the entry records the target SHA,
+// later beats carry no transition for the completion chain to act on, so the
+// latch survived forever. Clearing is now correct; `converged` is what keeps
+// the abandoned-attempt handling from firing on a success.
+func TestEvaluateOrphanedUpgradeAheadOfTargetIsConverged(t *testing.T) {
 	resetCommitOrderState(t)
 	stubCommitCompare(func(base, head string, logger *slog.Logger) (string, error) {
 		return "", errors.New("stubbed offline")
@@ -274,15 +281,25 @@ func TestEvaluateOrphanedUpgradeAheadOfTargetNotOrphaned(t *testing.T) {
 		LastHeartbeat:    now.Add(-time.Minute).UTC().Format(time.RFC3339),
 	}
 
-	// Unresolved ancestry: liveness + wrong SHA still reads as orphaned.
-	if ev := evaluateOrphanedUpgrade(entry, now, "ccccccc"); !ev.orphaned {
+	// Unresolved ancestry: liveness + wrong SHA reads as an ABANDONED orphan —
+	// we cannot yet prove the spoke surpassed the target.
+	ev := evaluateOrphanedUpgrade(entry, now, "ccccccc")
+	if !ev.orphaned {
 		t.Fatal("sanity: unresolved ancestry should still evaluate as orphaned")
 	}
+	if ev.converged {
+		t.Errorf("unresolved ancestry cannot prove convergence: %+v", ev)
+	}
 
-	// Resolved ahead: converged, not orphaned.
+	// Resolved ahead: cleared, and marked converged so the sweep records a
+	// completion rather than re-arming a stale pin.
 	seedCommitOrder("bbbbbbb", "aaaaaaa", true)
-	if ev := evaluateOrphanedUpgrade(entry, now, "ccccccc"); ev.orphaned {
-		t.Errorf("a spoke ahead of its target is converged, not orphaned: %+v", ev)
+	ev = evaluateOrphanedUpgrade(entry, now, "ccccccc")
+	if !ev.orphaned {
+		t.Errorf("a spoke ahead of its target must have its stale latch cleared: %+v", ev)
+	}
+	if !ev.converged {
+		t.Errorf("a spoke ahead of its target is a COMPLETED upgrade: %+v", ev)
 	}
 }
 

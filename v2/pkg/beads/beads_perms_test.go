@@ -17,7 +17,7 @@ import (
 // NewStore explicitly chmods after creation so the result is not clipped by
 // umask. It must also keep the directory private to owner+node group; world
 // read/traverse would weaken the per-UID agent isolation boundary.
-func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
+func TestNewSharedStore_CreatesGroupWritableDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not meaningful on Windows")
 	}
@@ -26,7 +26,7 @@ func TestNewStore_CreatesGroupWritableDir(t *testing.T) {
 		t.Fatalf("precondition: dir should not exist yet, stat err=%v", err)
 	}
 
-	s, err := NewStore(dir)
+	s, err := NewSharedStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -81,4 +81,24 @@ func umaskAllowsGroupWrite(t *testing.T) bool {
 	old := syscall.Umask(0)
 	syscall.Umask(old)
 	return old&0020 == 0
+}
+
+// TestNewStore_CreatesPrivateDir pins the other half of the split: the
+// default constructor is owner-private (bd scratch stores, Visual Hive
+// state dirs); group-shared role stores must opt in via NewSharedStore.
+func TestNewStore_CreatesPrivateDir(t *testing.T) {
+	dir := t.TempDir() + "/private-store"
+	if _, err := NewStore(dir); err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("dir not created: %v", err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0o700 {
+		t.Errorf("dir mode = %o, want 700", mode)
+	}
+	if fi.Mode()&os.ModeSetgid != 0 {
+		t.Errorf("private store must not carry setgid, got %v", fi.Mode())
+	}
 }
