@@ -1172,9 +1172,6 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	if h.Status == statusAvailable {
 		return false // unclaimed placeholder — assign mints it at claim time
 	}
-	if h.VanityURL != "" {
-		return false // already has one — never re-mint (idempotency + stable host)
-	}
 	// An incomplete claim has nothing to derive a friendly host from.
 	if h.Org == "" || h.PrimaryRepo == "" {
 		return false
@@ -1182,6 +1179,12 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	cluster := s.clusterForHive(h)
 	if cluster == nil || cluster.Domain == "" {
 		return false
+	}
+	if h.VanityURL != "" {
+		// Already has one. Do NOT re-mint (that would churn the host every
+		// beat, since the suffix is random) — but DO reconcile it against the
+		// live route, because a stored host is not self-validating.
+		return s.reconcileStaleVanityURL(hiveID, h, cluster)
 	}
 	// Reuse the host an EXISTING vanity route already serves before minting a
 	// new one. generateHiveID appends a fresh random suffix on every call, so a
@@ -1227,6 +1230,81 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	return true
 }
 
+// reconcileStaleVanityURL corrects a STORED vanity URL that no longer matches
+// the host the hive's live vanity Route/Ingress actually serves, reporting
+// whether it changed anything.
+//
+// This closes the drift half of the vanity bug. The mint paths
+// (mintClaimVanityURL, repairVanityURLForHive) write h.VanityURL exactly once
+// and every later call returns early on `h.VanityURL != ""`, so the stored
+// value was treated as permanently authoritative. But the host it names is not
+// stable: hiveNameVanityHost appends randomHostSuffix() on every call, so any
+// path that re-mints — a re-provision, a reset+re-assign, an operator
+// recreating the spoke's routes — produces a DIFFERENT hostname. When the new
+// Route is created but the registry write is missed (or a re-provision recreates
+// the Route from the hive's name while meta.json keeps the older record), the
+// hub links a hostname no Route serves. The live symptom is the OpenShift
+// "Application is not available" page: the registry advertised
+// hosted-<name>-ph31.apps... while the spoke's hive-vanity Route served
+// hosted-<name>-qcd0.apps... — same hive, same display name, different random
+// suffix, and nothing in the hub ever compared the two.
+//
+// Reality wins. The Route is what actually serves traffic, so when the live host
+// disagrees with the stored one the stored one is what is wrong, and we adopt
+// the live host rather than trying to make the cluster match the registry.
+//
+// Conservative by design, mirroring the mint paths it sits beside:
+//   - A cluster that cannot be read (unreachable, kubectl error, no vanity
+//     route) yields "" from existingVanityHost, which is NOT evidence of drift.
+//     We return early and keep the stored value; a heartbeat-only cluster must
+//     never have its working URL blanked by an inability to look.
+//   - A live host that already matches the stored one is the overwhelmingly
+//     common case and writes nothing.
+//   - No makeVanityHostServable call: the host we are adopting is, by
+//     construction, the one an existing Route already serves, so it needs no
+//     ingress work. That also keeps this path free of any cluster WRITE.
+//   - The record is RE-LOADED before writing, for the same reason every other
+//     path in this file does it: existingVanityHost can block for minutes in
+//     kubectl while the heartbeat path keeps load-modify-writing this hive
+//     (ClaimDelivered/ACMMDelivered latches, forge handshakes), and saving
+//     through a pre-window copy would silently revert them.
+func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster *ClusterConfig) bool {
+	stored := h.VanityURL
+	if stored == "" {
+		return false
+	}
+	liveHost := s.existingVanityHost(hiveID, cluster)
+	if liveHost == "" {
+		// Could not read the cluster, or there is no vanity route to compare
+		// against. Absence of evidence is not evidence of drift — keep what we
+		// have, since it is the only link the dashboard can offer.
+		return false
+	}
+	liveURL := "https://" + liveHost
+	if stored == liveURL {
+		return false // already tracking the live route
+	}
+	// Re-load before writing so we do not clobber fields written while the
+	// kubectl read above was blocked.
+	h = loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.VanityURL != stored {
+		// Another path rewrote it while we were reading the cluster; that write
+		// is newer than our observation, so leave it and re-check next beat.
+		return false
+	}
+	h.VanityURL = liveURL
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("vanity url reconcile: failed to save hive", "hive", hiveID, "error", err)
+		return false
+	}
+	s.logger.Info("vanity url reconcile: stored vanity host did not match the live route, adopted the live host",
+		"hive", hiveID, "stored", stored, "live", liveURL, "cluster", cluster.ID)
+	return true
+}
+
 // kickVanityURLRepairAsync runs repairVanityURLForHive in the background, at
 // most one attempt per hive at a time, registered with provisionWG so tests can
 // drain it before swapping the package-level saas*Dir vars.
@@ -1247,7 +1325,14 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 // placeholder, incomplete claim, no cluster domain) spawns no goroutine at all.
 func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 	h := loadSaaSHive(hiveID)
-	if h == nil || h.Status == statusAvailable || h.VanityURL != "" ||
+	// NOTE: a non-empty VanityURL is deliberately NOT a short-circuit here.
+	// It used to be, which is precisely why a stale vanity host could never be
+	// corrected: the only path that reads the live route was gated behind
+	// "has no vanity URL yet". repairVanityURLForHive now reconciles a stored
+	// host against the live one, so hives WITH a vanity URL must still reach it.
+	// The remaining guards below (unclaimed, incomplete claim, no cluster
+	// domain) still keep every truly-inapplicable hive off the goroutine path.
+	if h == nil || h.Status == statusAvailable ||
 		h.Org == "" || h.PrimaryRepo == "" {
 		return
 	}
