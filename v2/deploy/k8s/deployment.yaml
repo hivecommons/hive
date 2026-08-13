@@ -42,13 +42,11 @@ spec:
                 secretKeyRef:
                   name: hive-secrets
                   key: HIVE_GITHUB_TOKEN
-                  optional: true
             - name: HIVE_DASHBOARD_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: hive-secrets
                   key: HIVE_DASHBOARD_TOKEN
-                  optional: true
             - name: HIVE_VLLM_ENDPOINT
               value: "http://vllm-svc.hive-inference.svc.cluster.local:8000"
             - name: HIVE_LLMD_ENDPOINT
