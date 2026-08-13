@@ -882,6 +882,20 @@ type HubServer struct {
 	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
 	// (both are poller-loop-only state; no need for a separate mutex).
 	lastNetAdminReconcile time.Time
+	// lastPerHiveEnvReconcile throttles the per-hive security env reconcile
+	// (perhive_env_reconcile.go), which ensures HIVE_HEARTBEAT_KEY /
+	// HIVE_TERMINAL_KEY / HIVE_SESSION_KEY / HIVE_SSO_PUBLIC_KEY /
+	// HIVE_SESSION_PUBLIC_KEY are present and correct on every hosted spoke.
+	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
+	// both are poller-loop-only state.
+	lastPerHiveEnvReconcile time.Time
+	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
+	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
+	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see
+	// the long note on PerHiveEnvSnapshot) so a paused spoke cannot drop out of
+	// the denominator and make the fleet read converged while it is not.
+	perHiveEnvSeen map[string]perHiveEnvObservation
+	perHiveEnvMu   sync.RWMutex
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on

@@ -4978,6 +4978,13 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Ensure the five per-hive security env vars are present and correct on
+	// every hosted spoke. Nothing else re-asserts them after provision time, so
+	// without this the fleet's key posture survives only as an out-of-band
+	// manual patch. Throttled internally to perHiveEnvReconcileInterval and
+	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
+	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
+	s.reconcilePerHiveEnvIfDue()
 	// Record the per-release image-pulls snapshot (external-adoption chart). The
 	// call is internally guarded to snapshot only when the v2 release SHA advances,
 	// so ticking it alongside the frequent SHA poll is cheap — no separate
@@ -5005,6 +5012,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.reconcilePerHiveEnvIfDue()
 		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
