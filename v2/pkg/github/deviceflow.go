@@ -145,17 +145,6 @@ func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string,
 	}
 
 	if pr.AccessToken != "" {
-		granted := map[string]bool{}
-		for _, scope := range strings.FieldsFunc(pr.Scope, func(r rune) bool {
-			return r == ',' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
-		}) {
-			granted[strings.TrimSpace(scope)] = true
-		}
-		for _, required := range strings.Fields(deviceScope) {
-			if !granted[required] {
-				return "", "", fmt.Errorf("device flow token is missing required OAuth scope %q", required)
-			}
-		}
 		return pr.AccessToken, "complete", nil
 	}
 	if pr.Error == "authorization_pending" || pr.Error == "slow_down" {
