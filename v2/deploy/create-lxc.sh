@@ -4,8 +4,13 @@ set -euo pipefail
 # create-lxc.sh — Create a Proxmox LXC container for Hive v2 (Docker-based).
 #
 # Run this on the Proxmox host.
-# Usage:
-#   bash create-lxc.sh [--ctid 111] [--hostname hive-certus] [--password maver1ck]
+# Usage (pick one auth mode):
+#   bash create-lxc.sh [--ctid 111] [--hostname hive-certus] --password <strong-password>
+#   bash create-lxc.sh [--ctid 111] [--hostname hive-certus] --no-password --ssh-key /root/.ssh/id_ed25519.pub
+#
+# --password:    enables SSH root password auth (temporary — disable after adding a key)
+# --no-password: key-only mode — no root password, SSH password auth disabled;
+#                requires --ssh-key <public-key-file on the Proxmox host>
 #
 # Or from your Mac:
 #   sshpass -p <pw> ssh root@<proxmox-ip> 'bash -s' < create-lxc.sh
@@ -16,6 +21,8 @@ set -euo pipefail
 CTID="${CTID:-111}"
 HOSTNAME="${LXC_HOSTNAME:-hive}"
 PASSWORD="${LXC_PASSWORD:-}"
+KEY_ONLY=0
+SSH_KEY_FILE="${LXC_SSH_KEY:-}"
 TEMPLATE="local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 STORAGE="local-lvm"
 DISK_SIZE=16
@@ -28,8 +35,9 @@ while [[ $# -gt 0 ]]; do
     --ctid)     CTID="$2"; shift 2 ;;
     --hostname) HOSTNAME="$2"; shift 2 ;;
     --password) PASSWORD="$2"; shift 2 ;;
-    # --no-password creates the container without SSH password auth (key-only after bootstrap)
-    --no-password) PASSWORD=""; shift ;;
+    # --no-password: key-only mode — no root password, SSH password auth disabled (requires --ssh-key)
+    --no-password) KEY_ONLY=1; shift ;;
+    --ssh-key)  SSH_KEY_FILE="$2"; shift 2 ;;
     --disk)     DISK_SIZE="$2"; shift 2 ;;
     --memory)   RAM_MB="$2"; shift 2 ;;
     --cores)    CORES="$2"; shift 2 ;;
@@ -37,11 +45,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Require an explicit password — no insecure default.
-if [[ -z "${PASSWORD}" ]]; then
+# Auth mode validation — no insecure defaults.
+if [[ "${KEY_ONLY}" -eq 1 ]]; then
+  if [[ -n "${PASSWORD}" ]]; then
+    echo "ERROR: --no-password and --password are mutually exclusive."
+    exit 1
+  fi
+  if [[ -z "${SSH_KEY_FILE}" ]]; then
+    echo "ERROR: --no-password requires --ssh-key <public-key-file> so root stays reachable over SSH."
+    exit 1
+  fi
+  if [[ ! -f "${SSH_KEY_FILE}" ]]; then
+    echo "ERROR: SSH public key file not found: ${SSH_KEY_FILE}"
+    exit 1
+  fi
+elif [[ -z "${PASSWORD}" ]]; then
   echo "ERROR: --password <password> is required (no default to prevent accidental weak credentials)."
   echo "  Supply a strong password: --password \$(openssl rand -hex 16)"
-  echo "  After bootstrap, disable SSH password auth and add your public key instead."
+  echo "  Or provision key-only: --no-password --ssh-key <public-key-file>"
   exit 1
 fi
 
@@ -58,6 +79,17 @@ if pct status "${CTID}" &>/dev/null; then
   exit 1
 fi
 
+# Key-only mode injects the public key; password mode sets the root password.
+AUTH_ARGS=()
+if [[ "${KEY_ONLY}" -eq 1 ]]; then
+  AUTH_ARGS+=(--ssh-public-keys "${SSH_KEY_FILE}")
+else
+  AUTH_ARGS+=(--password "${PASSWORD}")
+  if [[ -n "${SSH_KEY_FILE}" ]]; then
+    AUTH_ARGS+=(--ssh-public-keys "${SSH_KEY_FILE}")
+  fi
+fi
+
 echo "=== Creating LXC ${CTID} (${HOSTNAME}) ==="
 pct create "${CTID}" "${TEMPLATE}" \
   --hostname "${HOSTNAME}" \
@@ -70,7 +102,7 @@ pct create "${CTID}" "${TEMPLATE}" \
   --features "nesting=1,keyctl=1" \
   --unprivileged 0 \
   --start 0 \
-  --password "${PASSWORD}"
+  "${AUTH_ARGS[@]}"
 
 # Docker-in-LXC requires AppArmor unconfined + no cap drop
 echo "=== Configuring LXC for Docker compatibility ==="
@@ -83,12 +115,21 @@ echo "=== Starting LXC ==="
 pct start "${CTID}"
 sleep 5
 
-echo "=== Enabling SSH with root password auth (temporary — disable after adding SSH key) ==="
-pct exec "${CTID}" -- bash -c '
-  sed -i "s/^#*PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config
-  sed -i "s/^#*PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
-  systemctl restart sshd
-'
+if [[ "${KEY_ONLY}" -eq 1 ]]; then
+  echo "=== Hardening SSH (key-based auth only) ==="
+  pct exec "${CTID}" -- bash -c '
+    sed -i "s/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/" /etc/ssh/sshd_config
+    sed -i "s/^#*PasswordAuthentication.*/PasswordAuthentication no/" /etc/ssh/sshd_config
+    systemctl restart sshd
+  '
+else
+  echo "=== Enabling SSH with root password auth (temporary — disable after adding SSH key) ==="
+  pct exec "${CTID}" -- bash -c '
+    sed -i "s/^#*PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config
+    sed -i "s/^#*PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+    systemctl restart sshd
+  '
+fi
 
 echo "=== LXC IP address ==="
 LXC_IP=$(pct exec "${CTID}" -- ip -4 addr show eth0 | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || echo "unknown")
@@ -97,14 +138,22 @@ echo "  IP: ${LXC_IP}"
 echo ""
 echo "=== LXC ${CTID} (${HOSTNAME}) created ==="
 echo ""
-echo "SSH:  ssh root@${LXC_IP}  (password: ${PASSWORD})"
-echo ""
-echo "⚠️  SECURITY: SSH root password auth is enabled for initial bootstrap only."
-echo "   After installing your SSH public key, disable password auth:"
-echo "   pct exec ${CTID} -- bash -c 'sed -i s/PasswordAuthentication yes/PasswordAuthentication no/ /etc/ssh/sshd_config && systemctl restart sshd'"
+if [[ "${KEY_ONLY}" -eq 1 ]]; then
+  echo "SSH:  ssh root@${LXC_IP}  (key-based auth only — password auth disabled)"
+else
+  echo "SSH:  ssh root@${LXC_IP}  (password: ${PASSWORD})"
+  echo ""
+  echo "⚠️  SECURITY: SSH root password auth is enabled for initial bootstrap only."
+  echo "   After installing your SSH public key, disable password auth:"
+  echo "   pct exec ${CTID} -- bash -c 'sed -i s/PasswordAuthentication yes/PasswordAuthentication no/ /etc/ssh/sshd_config && systemctl restart sshd'"
+fi
 echo ""
 echo "Next: run the bootstrap script inside the LXC:"
 echo "  pct exec ${CTID} -- bash -c 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/v2/deploy/bootstrap-lxc.sh | bash'"
 echo ""
 echo "Or via SSH:"
-echo "  sshpass -p ${PASSWORD} ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/v2/deploy/bootstrap-lxc.sh | bash'"
+if [[ "${KEY_ONLY}" -eq 1 ]]; then
+  echo "  ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/v2/deploy/bootstrap-lxc.sh | bash'"
+else
+  echo "  sshpass -p ${PASSWORD} ssh root@${LXC_IP} 'apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/kubestellar/hive/v2/v2/deploy/bootstrap-lxc.sh | bash'"
+fi
