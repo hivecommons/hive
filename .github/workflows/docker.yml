@@ -199,7 +199,7 @@ jobs:
           fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive:%s ' "$c"; done) \\
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive:%s ' "$c"; done) \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
 
@@ -330,7 +330,7 @@ jobs:
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-contributor:latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-contributor:%s ' "$c"; done) \\
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-contributor:%s ' "$c"; done) \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
 
@@ -464,6 +464,6 @@ jobs:
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-hub:latest \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.branch_tag }}-latest \
-            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-hub:%s ' "$c"; done) \\
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-hub:%s ' "$c"; done) \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' "${digests[@]}")
