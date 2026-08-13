@@ -107,6 +107,37 @@ func primaryHubAdmin() string {
 	return canonicalizeLegacy(hubAdminUsername)
 }
 
+// userCanonicalID returns a user's canonical wire-form identity: the explicit
+// CanonicalID when present, else the legacy-shimmed GitHubUsername (a bare login
+// becomes github:<login>). This is the single source of truth for "who is this
+// record" across the dual-read storage path and the provider badge.
+func userCanonicalID(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.CanonicalID != "" {
+		return canonicalizeLegacy(u.CanonicalID)
+	}
+	return canonicalizeLegacy(u.GitHubUsername)
+}
+
+// userProvider returns a user's login provider ("github"/"google"/"ibmid"/
+// "redhat"/"microsoft"/"custom"), from the stored Provider field when set, else
+// parsed from the canonical identity. Legacy records with neither resolve to
+// "github" via the shim. Drives the admin Users-table auth-method badge.
+func userProvider(u *SaaSUser) string {
+	if u == nil {
+		return ""
+	}
+	if u.Provider != "" {
+		return strings.ToLower(u.Provider)
+	}
+	if p, _, ok := parseCanonical(userCanonicalID(u)); ok {
+		return p
+	}
+	return legacyProvider
+}
+
 func splitCSV(s string) []string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
@@ -228,6 +259,34 @@ type SaaSUser struct {
 	SaaSQuota      int               `json:"saas_quota"`
 	Blocked        bool              `json:"blocked"`
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
+
+	// Multi-provider identity (phase 1d). All omitempty so the thousands of
+	// existing GitHub-only records on the PVC round-trip byte-identical until a
+	// user first logs in / links after this ships.
+	//
+	//   CanonicalID  the wire-form primary identity ("google:1078", "github:foo").
+	//                Empty on a legacy record → the shim treats GitHubUsername as
+	//                the (github:) primary. saveSaaSUser/loadSaaSUser already dual-
+	//                read on GitHubUsername; CanonicalID is the explicit form used
+	//                by the badge and by Phase 2's OIDC callback when it creates a
+	//                non-GitHub user.
+	//   Provider     "github" | "google" | "ibmid" | "redhat" | "microsoft" |
+	//                "custom" — drives the admin Users-table auth-method badge.
+	//                Derivable from CanonicalID but stored so the badge needs no
+	//                parse per render.
+	//   AvatarURL    stored avatar (Google/IBMid give a picture claim); replaces
+	//                the derived github.com/<login>.png where present.
+	//   Email        the provider email claim (display only; NEVER the key — subs
+	//                are stable, emails are reassignable).
+	//   LinkedGitHubLogin  an OPTIONAL attached GitHub identity for a non-GitHub
+	//                primary who needs user-scoped GitHub calls (contributor
+	//                reissue). Never required to own a hive — the App does the
+	//                GitHub work.
+	CanonicalID       string `json:"canonical_id,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	AvatarURL         string `json:"avatar_url,omitempty"`
+	Email             string `json:"email,omitempty"`
+	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
 
 	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
 	// outside GitHub (and to remember what was said last time). All three are
@@ -871,9 +930,10 @@ func readSaaSUserFile(username string) ([]byte, error) {
 // are updated in place with no rename; a non-GitHub primary writes the canonical
 // "<provider>.<subject>.json".
 func saveSaaSUserPath(u *SaaSUser) (string, error) {
-	// The record's primary identity. Today this is GitHubUsername (a bare login
-	// for GitHub users, or a canonical id once non-GitHub records exist in 1d+).
-	id := u.GitHubUsername
+	// The record's primary identity: the explicit CanonicalID when set (a
+	// non-GitHub or newly-created user), else GitHubUsername (a bare login for
+	// legacy GitHub users). Either resolves through parseCanonical + the shim.
+	id := userCanonicalID(u)
 	provider, subject, ok := parseCanonical(id)
 	if !ok {
 		return "", fmt.Errorf("invalid identity for save: %q", id)
@@ -1062,6 +1122,11 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	type adminUserView struct {
 		SaaSUser
 		StatusTier string `json:"status_tier"`
+		// Provider is always populated (derived via userProvider) so the Users
+		// table's auth-method badge never has to parse — a legacy github-only
+		// record resolves to "github". This shadows SaaSUser.Provider's
+		// omitempty, so the field is present on every row.
+		Provider string `json:"provider"`
 	}
 	views := make([]adminUserView, 0, len(users))
 	for i := range users {
@@ -1070,6 +1135,7 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		views = append(views, adminUserView{
 			SaaSUser:   users[i],
 			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+			Provider:   userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -15637,6 +15703,48 @@ const dashboardHTML = `<!DOCTYPE html>
       return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
+    /* providerBadge renders the user's login method (auth provider) as a small
+       chip next to their name in the admin Users table, so an admin can see at a
+       glance who signed in with GitHub vs Google vs IBMid vs Red Hat vs
+       Microsoft. The provider rides the users payload as u.provider (derived
+       server-side via userProvider). A legacy record with no provider resolves
+       to github, so every existing row shows the GitHub chip — no blank. */
+    // providerLogoSVG returns a small inline brand SVG per login provider, matching
+    // the marks used on the /login picker, so the badge is recognizable at a glance.
+    function providerLogoSVG(p) {
+      var s = 'width="12" height="12" style="flex:none" aria-hidden="true"';
+      switch (p) {
+        case 'github':
+          return '<svg viewBox="0 0 16 16" fill="currentColor" ' + s + '><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+        case 'google':
+          return '<svg viewBox="0 0 18 18" ' + s + '><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>';
+        case 'ibmid':
+          return '<svg viewBox="0 0 24 24" fill="#1F70C1" ' + s + '><path d="M2 4h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2z"/></svg>';
+        case 'redhat':
+          return '<svg viewBox="0 0 24 24" fill="#EE0000" ' + s + '><path d="M16.35 14.4c1.6 0 3.9-.33 3.9-2.24a1.8 1.8 0 0 0-.04-.44l-.95-4.12c-.22-.9-.41-1.31-2-2.12-1.24-.63-3.94-1.67-4.74-1.67-.74 0-.96.96-1.85.94-.86-.02-1.5-.74-2.3-.74-.77 0-1.27.52-1.66 1.6 0 0-1.08 3.05-1.22 3.49a.83.83 0 0 0-.03.25c0 1.2 4.71 5.32 10.88 5.32M20.47 12.94c.22 1.05.22 1.16.22 1.3 0 1.8-2.02 2.79-4.67 2.79-6 0-11.25-3.51-11.25-5.83 0-.32.07-.63.18-.93C2.94 10.36 1 10.63 1 12.34c0 2.8 6.63 6.26 11.87 6.26 4.02 0 5.03-1.82 5.03-3.25 0-1.13-.97-2.4-2.43-2.41"/></svg>';
+        case 'microsoft':
+          return '<svg viewBox="0 0 23 23" ' + s + '><path fill="#F25022" d="M0 0h11v11H0z"/><path fill="#7FBA00" d="M12 0h11v11H12z"/><path fill="#00A4EF" d="M0 12h11v11H0z"/><path fill="#FFB900" d="M12 12h11v11H12z"/></svg>';
+        default:
+          return '';
+      }
+    }
+
+    function providerBadge(u) {
+      var p = String((u && u.provider) || 'github').toLowerCase();
+      var meta = {
+        github: {label: 'GitHub', color: '#c9d1d9', bg: 'rgba(110,118,129,0.25)'},
+        google: {label: 'Google', color: '#e8eaed', bg: 'rgba(66,133,244,0.22)'},
+        ibmid:  {label: 'IBMid',  color: '#e8eaed', bg: 'rgba(15,98,254,0.22)'},
+        redhat: {label: 'Red Hat',color: '#f5c2c7', bg: 'rgba(238,0,0,0.22)'},
+        microsoft: {label: 'Microsoft', color: '#e8eaed', bg: 'rgba(0,120,215,0.22)'}
+      }[p] || {label: p || 'unknown', color: 'var(--muted)', bg: 'rgba(110,118,129,0.25)'};
+      var logo = providerLogoSVG(p);
+      return '<span title="Signed in with ' + escAttr(meta.label) + '"' +
+        ' style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:9999px;' +
+        'font-size:0.6rem;font-weight:600;color:' + meta.color + ';background:' + meta.bg + '">' +
+        (logo ? logo : '') + esc(meta.label) + '</span>';
+    }
+
     // renderContactCell is the collapsed summary shown in the main user row.
     function renderContactCell(u) {
       var bits = [];
@@ -16289,6 +16397,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var nameCell = avatar +
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
             '<span style="color:var(--text);font-weight:600">' + esc(u.github_username) + '</span>' +
+            providerBadge(u) +
             (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
