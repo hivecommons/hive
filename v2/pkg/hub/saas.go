@@ -13417,7 +13417,7 @@ const dashboardHTML = `<!DOCTYPE html>
              spinner, label and title always agree. Only a target on a DIFFERENT
              branch is a switch; a plain-SHA (auto-upgrade) target always reads
              "Upgrading", even if a stale switch sentinel lingers. */
-          var upgradeState = hiveUpgradeState(h, branchName);
+          var upgradeState = hiveSwitchState(h, branchName);
           var isSwitching = upgradeState.isSwitching;
           var targetBranch = upgradeState.targetBranch;
           /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
@@ -14249,7 +14249,7 @@ const dashboardHTML = `<!DOCTYPE html>
        from the branch the hive currently reports. A plain-SHA target — an
        auto-upgrade — yields no target branch and is therefore an upgrade, never
        a switch, regardless of any sticky sentinel. */
-    function hiveUpgradeState(h, branchName) {
+    function hiveSwitchState(h, branchName) {
       var sentinel = _upgradingHives[h.id];
       var hasSwitchSentinel = typeof sentinel === 'string'
         && sentinel.indexOf(SWITCH_SENTINEL_PREFIX) === 0;
@@ -16633,7 +16633,11 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function deleteHive(id) {
-      if (!await hiveConfirm('Delete ' + id + '? This removes the namespace, PV, OCI storage, and all data.')) return;
+      // Confirm with the friendly hive NAME the operator sees in the table, not
+      // the raw id / vanity-URL slug. Fall back to the id if the row is gone.
+      var _row = document.querySelector('[data-hive-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      var name = (_row && _row.getAttribute('data-hive-name')) || id;
+      if (!await hiveConfirm('Delete "' + name + '"? This removes the namespace, PV, OCI storage, and all data.')) return;
       var btns = document.querySelectorAll('button[onclick*="deleteHive"]');
       btns.forEach(function(b) { b.disabled = true; b.textContent = 'Deleting...'; b.style.opacity = '0.6'; });
       // Mark the row as deleting so its status shows "Deleting…" until the next
@@ -16641,7 +16645,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _deletingHives[id] = true;
       try {
         gtag('event','hive_deleted',{hive_id:id});
-        hiveToast('Deleting ' + id + '...', 'info');
+        hiveToast('Deleting "' + name + '"…', 'info');
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id), {method: 'DELETE'});
         if (!resp.ok) {
           var d = await resp.json().catch(function(){ return {}; });
@@ -16660,9 +16664,9 @@ const dashboardHTML = `<!DOCTYPE html>
              storage, so those may survive. Rendering it as an 'error' toast made
              a partial success look like the delete had failed even though the
              row vanished. Show it as an informational notice instead. */
-          hiveToast('Removed ' + id + ' from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
+          hiveToast('Removed "' + name + '" from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
         } else {
-          hiveToast('Deleted ' + id, 'success');
+          hiveToast('Deleted "' + name + '"', 'success');
         }
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _deletingHives[id]; }
