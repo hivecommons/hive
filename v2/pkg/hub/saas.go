@@ -10173,6 +10173,35 @@ const dashboardHTML = `<!DOCTYPE html>
       var hex = d.indexOf(':') >= 0 ? d.slice(d.indexOf(':') + 1) : d;
       return hex.length > 7 ? hex.slice(0, 7) : hex;
     }
+
+    /* Version label for the My Hives version pill and the picker's CHANNELS
+       entries. A release channel is a moving tag, so its bare name ("stable")
+       tells the operator nothing about what code the hive is actually
+       tracking; append the branch the channel CURRENTLY resolves to —
+       "stable (v4)". The association comes from _channelTargets, the server's
+       digest-derived mapping (release_channels.go matches each channel tag's
+       registry digest against the tracked branches' "<branch>-latest"
+       digests on the hub's poll cadence) — deliberately NOT a hardcoded
+       channel->branch table, so when CI re-points a channel the label follows
+       with no hub code change. Never guesses: a channel resolved to a digest
+       no tracked branch owns shows the short digest instead, and a channel
+       with no resolution yet shows "(?)". Branch names pass through
+       untouched. DISPLAY-ONLY: every selection and comparison still uses the
+       bare channel name — only the rendered text changes. */
+    function versionLabel(v) {
+      for (var i = 0; i < _channelTargets.length; i++) {
+        var t = _channelTargets[i];
+        if (t && t.channel === v) {
+          if (t.branch) return v + ' (' + t.branch + ')';
+          if (t.digest) return v + ' (' + shortDigest(t.digest) + ')';
+          return v + ' (?)';
+        }
+      }
+      /* A channel the payload names but the resolver has no row for (e.g. a
+         cold channel cache) — still mark it as unresolved, never bare. */
+      if (_releaseChannels.indexOf(v) >= 0) return v + ' (?)';
+      return v;
+    }
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
@@ -13597,16 +13626,25 @@ const dashboardHTML = `<!DOCTYPE html>
               var cbTitle = cbT && cbT.branch
                 ? 'Currently ' + cbT.branch + ' ' + (cbT.sha || '') + ' — the hive follows this channel as it is re-pointed'
                 : 'Moving release channel — the hive follows it as it is re-pointed';
-              chOpts += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(cb) + '\',this)" title="' + escAttr(cbTitle) + '" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#4ade80;border-radius:4px" onmouseover="this.style.background=\'rgba(34,197,94,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(cb) + '</div>';
+              /* Label carries the channel's CURRENT branch — "stable (v4)" —
+                 while the switch VALUE stays the bare channel name: the hive
+                 is pinned to the moving tag, not to the branch it happens to
+                 resolve to today. */
+              chOpts += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(cb) + '\',this)" title="' + escAttr(cbTitle) + '" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#4ade80;border-radius:4px" onmouseover="this.style.background=\'rgba(34,197,94,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(versionLabel(cb)) + '</div>';
             }
             if (chOpts) {
               branchOptions += '<div style="border-top:1px solid #30363d;margin:4px 0"></div>' +
                 '<div style="padding:2px 10px;font-size:0.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Channels</div>' + chOpts;
             }
           }
+          /* Pill text goes through versionLabel so a hive tracking a channel
+             reads "stable (v4)" — the branch the channel currently resolves
+             to — while a plain branch renders unchanged. branchName itself
+             stays the bare value: every comparison (cb === branchName) and
+             switch payload below keys on it. */
           var branch = canSwitchBranch
-            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
-            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(branchName) + '</span>';
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(versionLabel(branchName)) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(versionLabel(branchName)) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
