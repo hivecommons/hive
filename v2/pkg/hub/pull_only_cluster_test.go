@@ -3,8 +3,6 @@ package hub
 import (
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -172,44 +170,10 @@ func TestPullOnlyVanityHostIsNotSilentlyAttempted(t *testing.T) {
 // halves are kubectl. A pull-only cluster cannot serve either half, so the
 // handler must refuse BEFORE it flips the hive into the migrating state —
 // otherwise a hive is left marked migrating for work that can never run.
-func TestMigrateRejectsPullOnlyCluster(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		sourcePullOnly bool
-		targetPullOnly bool
-	}{
-		{"target is pull-only", false, true},
-		{"source is pull-only", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Cleanup(helperSetupTempDirs(t))
-			mkUser(t, "po-user")
-
-			srv := newHandlerHub2()
-			srv.clusters = map[string]ClusterConfig{
-				defaultClusterID: {ID: defaultClusterID, KubeconfigPath: "/tmp/kc", PullOnly: tc.sourcePullOnly},
-				"pool-b":         {ID: "pool-b", KubeconfigPath: "/tmp/kc", PullOnly: tc.targetPullOnly},
-			}
-			if err := saveSaaSHive(&SaaSHive{ID: "hosted-po", Owner: "po-user"}); err != nil {
-				t.Fatalf("seed hive: %v", err)
-			}
-
-			w := httptest.NewRecorder()
-			req := setPathValue(reqWithUser(http.MethodPost, "/api/saas/hives/hosted-po/migrate",
-				`{"target_cluster_id":"pool-b"}`, "po-user"), "id", "hosted-po")
-			srv.handleMigrateHive(w, req)
-
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("migration involving a pull-only cluster must be refused with 400, got %d: %s", w.Code, w.Body.String())
-			}
-			// The refusal must leave no migration state behind.
-			if h := loadSaaSHive("hosted-po"); h != nil && h.MigrationStatus != "" {
-				t.Errorf("hive was flipped into migration state %q despite the migration being refused", h.MigrationStatus)
-			}
-		})
-	}
-}
-
+// TestMigrateRejectsPullOnlyCluster was removed with the migration API
+// itself: the pull-only refusal it pinned is now structural (the route no
+// longer exists — see migrate_removed_test.go). Manual migration guidance
+// lives in docs/cross-cluster-migration.md.
 // loadClusterConfigsFrom parses a clusters.json at an arbitrary path using the
 // same loader production uses.
 func loadClusterConfigsFrom(t *testing.T, path string) map[string]ClusterConfig {
