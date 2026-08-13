@@ -52,6 +52,61 @@ func resolveHubAdminUsername() string {
 	return defaultHubAdminUsername
 }
 
+// hubAdminsEnv is the env var (comma-separated canonical ids, e.g.
+// "github:clubanderson,google:1078...") that overrides the admin SET for
+// multi-provider login. A bare login in the list is accepted and treated as
+// github: via the identity shim. When unset, the admin set is the single
+// hubAdminUsername above (itself overridable via HIVE_HUB_ADMIN_USERNAME), so
+// both existing env contracts keep working. Prefer isHubAdmin()/
+// primaryHubAdmin() over comparing against hubAdminUsername directly, so
+// multi-provider admins work and so a same-subject identity on a DIFFERENT
+// provider can never inherit admin.
+const hubAdminsEnv = "HIVE_HUB_ADMINS"
+
+// hubAdminSet returns the canonicalized set of admin identities. Sourced from
+// HIVE_HUB_ADMINS when set, else the single hubAdminUsername. Every entry is
+// run through canonicalizeLegacy so a bare login becomes github:<login>; this
+// is what stops a Google/IBMid user whose subject happens to be the admin's
+// login from matching the GitHub admin.
+func hubAdminSet() map[string]bool {
+	raw := strings.TrimSpace(os.Getenv(hubAdminsEnv))
+	entries := []string{hubAdminUsername}
+	if raw != "" {
+		entries = splitCSV(raw)
+	}
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if c := canonicalizeLegacy(e); c != "" {
+			set[strings.ToLower(c)] = true
+		}
+	}
+	return set
+}
+
+// isHubAdmin reports whether the given identity (bare-legacy or canonical) is a
+// hub admin. Both the input and the configured admin ids are canonicalized, so
+// "clubanderson", "github:clubanderson", and "GitHub:ClubAnderson" all match the
+// default admin, while "google:clubanderson" does NOT.
+func isHubAdmin(id string) bool {
+	if id == "" {
+		return false
+	}
+	return hubAdminSet()[strings.ToLower(canonicalizeLegacy(id))]
+}
+
+// primaryHubAdmin returns the canonical identity of the primary hub admin — the
+// first entry of HIVE_HUB_ADMINS, else the resolved hubAdminUsername. Used where
+// the code needs a concrete admin identity to WRITE (e.g. audit attribution).
+func primaryHubAdmin() string {
+	raw := strings.TrimSpace(os.Getenv(hubAdminsEnv))
+	if raw != "" {
+		if list := splitCSV(raw); len(list) > 0 {
+			return canonicalizeLegacy(list[0])
+		}
+	}
+	return canonicalizeLegacy(hubAdminUsername)
+}
+
 func splitCSV(s string) []string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
@@ -479,7 +534,7 @@ func (s *HubServer) blockIfImpersonatingWrite(w http.ResponseWriter, r *http.Req
 // read used for messaging/audit/status; the security decisions live in
 // resolveIdentity.
 func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGrant, bool) {
-	if s.getRealAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getRealAuthUser(r)) {
 		return impersonationGrant{}, false
 	}
 	cookie, err := r.Cookie(impersonateCookieName)
@@ -487,7 +542,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 		return impersonationGrant{}, false
 	}
 	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
-	if !ok || grant.Admin != hubAdminUsername {
+	if !ok || !isHubAdmin(grant.Admin) {
 		return impersonationGrant{}, false
 	}
 	if loadSaaSUser(grant.Target) == nil {
@@ -672,7 +727,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 //   - a hive_hub_impersonate cookie is present AND its HMAC verifies AND it has
 //     not expired (verifyImpersonateCookieValue);
 //   - the grant's Admin field equals the REAL signed session user;
-//   - that real user is exactly hubAdminUsername (only the admin may impersonate
+//   - that real user is a hub admin (isHubAdmin — only an admin may impersonate
 //     — a stolen cookie replayed on a non-admin session is ignored);
 //   - the target resolves to a real registered user on disk.
 //
@@ -683,7 +738,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 // the target is always a normal user, and writes never run under it.
 func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string, impersonating bool) {
 	realUser = s.getRealAuthUser(r)
-	if realUser == "" || realUser != hubAdminUsername {
+	if realUser == "" || !isHubAdmin(realUser) {
 		return realUser, realUser, false
 	}
 	cookie, err := r.Cookie(impersonateCookieName)
@@ -830,7 +885,7 @@ func ensureSaaSUser(username string) *SaaSUser {
 		return u
 	}
 	quota := 0
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		quota = -1
 	}
 	u = &SaaSUser{
@@ -886,7 +941,7 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		// particular the impersonation exit) must still be reachable by the real
 		// admin, and no admin-only surface may leak to the impersonated target.
 		username := s.getRealAuthUser(r)
-		if username != hubAdminUsername {
+		if !isHubAdmin(username) {
 			http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 			return
 		}
@@ -1148,7 +1203,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 // record (login state, quota, encrypted token).
 func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		writeJSONError(w, http.StatusForbidden, "cannot delete the hub admin")
 		return
 	}
@@ -2524,7 +2579,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			if isAdmin && role != "owner" {
@@ -2828,7 +2883,7 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	hiveAccess := make(map[string]hiveAccessInfo)
 
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
 			hiveAccess[h.ID] = hiveAccessInfo{Role: role, Status: "accepted"}
@@ -3086,7 +3141,7 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		if _, hasAccess := user.Hives[id]; !hasAccess {
 			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			return
@@ -3165,7 +3220,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// the spoke. The role we pass is advisory — the spoke re-checks its own
 	// allowlist and uses that role authoritatively.
 	role := saasRoleRead
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		role = saasRoleOwner
 	} else {
 		user := loadSaaSUser(username)
@@ -3221,7 +3276,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can delete this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -3292,7 +3347,7 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can migrate this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -3637,7 +3692,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
@@ -3726,7 +3781,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
 		return
 	}
@@ -3861,7 +3916,7 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"hive not found — only hosted hives can be toggled from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can change visibility"}`, http.StatusForbidden)
 		return
 	}
@@ -3948,7 +4003,7 @@ func (s *HubServer) handleRenameHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"hive not found — only hosted hives can be renamed from here"}`, http.StatusNotFound)
 		return
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		http.Error(w, `{"error":"only the owner can rename this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -4071,7 +4126,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			Repos: regEntry.Repos,
 		}
 	}
-	if h.Owner != username && username != hubAdminUsername {
+	if h.Owner != username && !isHubAdmin(username) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
@@ -5399,7 +5454,7 @@ func (s *HubServer) handleProxyHiveConfig(w http.ResponseWriter, r *http.Request
 	// hive with no owner fell through and its raw config was fetchable by ANY
 	// authenticated hub user. Fail closed: only the site admin may pull an
 	// ownerless hive's config.
-	if caller != hubAdminUsername && (owner == "" || caller != owner) {
+	if !isHubAdmin(caller) && (owner == "" || caller != owner) {
 		http.Error(w, `{"error":"not authorized for this hive"}`, http.StatusForbidden)
 		return
 	}
@@ -5542,7 +5597,7 @@ func userIsHiveOwner(username string, h *SaaSHive) bool {
 	if username == "" || h == nil {
 		return false
 	}
-	if username == hubAdminUsername {
+	if isHubAdmin(username) {
 		return true
 	}
 	if strings.EqualFold(h.Owner, username) {
@@ -5566,7 +5621,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	}
 	// Notes is admin-only; a non-admin owner viewing their hive's access gets
 	// name+Slack but not the admin's private CRM notes.
-	access := accessForHive(hiveID, listAllSaaSUsers(), username == hubAdminUsername)
+	access := accessForHive(hiveID, listAllSaaSUsers(), isHubAdmin(username))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"access": access})
 }
@@ -5582,7 +5637,7 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	username := s.getAuthUser(r)
 	// Any user who owns at least one hive may see the roster; that is the same
 	// bar as being able to open Manage Access at all. Admin always qualifies.
-	owns := username == hubAdminUsername
+	owns := isHubAdmin(username)
 	if !owns {
 		for _, h := range listSaaSHives() {
 			h := h
@@ -5804,7 +5859,7 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := user.Hives[hiveID]
-	if !config.RoleAtLeast(role, config.RoleReadWrite) && username != hubAdminUsername {
+	if !config.RoleAtLeast(role, config.RoleReadWrite) && !isHubAdmin(username) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5838,7 +5893,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	approverRole := approverUser.Hives[hiveID]
-	if !config.RoleAtLeast(approverRole, config.RoleReadWrite) && approver != hubAdminUsername {
+	if !config.RoleAtLeast(approverRole, config.RoleReadWrite) && !isHubAdmin(approver) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5855,7 +5910,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"role must be read, read-write, merger, or owner"}`, http.StatusBadRequest)
 		return
 	}
-	if approver != hubAdminUsername && config.RoleAtLeast(body.Role, approverRole) {
+	if !isHubAdmin(approver) && config.RoleAtLeast(body.Role, approverRole) {
 		http.Error(w, `{"error":"cannot grant a role equal to or higher than your own"}`, http.StatusForbidden)
 		return
 	}
@@ -5896,7 +5951,7 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	denierRole := denierUser.Hives[hiveID]
-	if !config.RoleAtLeast(denierRole, config.RoleReadWrite) && denier != hubAdminUsername {
+	if !config.RoleAtLeast(denierRole, config.RoleReadWrite) && !isHubAdmin(denier) {
 		http.Error(w, `{"error":"need owner or read-write access"}`, http.StatusForbidden)
 		return
 	}
@@ -5933,7 +5988,7 @@ func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	approverRole := approverUser.Hives[hiveID]
-	if approverRole != "owner" && approver != hubAdminUsername {
+	if approverRole != "owner" && !isHubAdmin(approver) {
 		http.Error(w, `{"error":"only the owner can approve access"}`, http.StatusForbidden)
 		return
 	}
@@ -5979,7 +6034,7 @@ func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	denierRole := denierUser.Hives[hiveID]
-	if denierRole != "owner" && denier != hubAdminUsername {
+	if denierRole != "owner" && !isHubAdmin(denier) {
 		http.Error(w, `{"error":"only the owner can deny access"}`, http.StatusForbidden)
 		return
 	}
@@ -6477,7 +6532,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		// Admin chose a specific placeholder — validate it is an available
 		// placeholder (same check the assign path uses) before using it. The
 		// full status recheck under loadSaaSHive below still guards the race.
-		if sel := loadSaaSHive(hiveID); sel == nil || sel.Status != statusAvailable || sel.Owner != hubAdminUsername {
+		if sel := loadSaaSHive(hiveID); sel == nil || sel.Status != statusAvailable || !isHubAdmin(sel.Owner) {
 			http.Error(w, `{"error":"selected placeholder is not available"}`, http.StatusConflict)
 			return
 		}
@@ -6749,7 +6804,7 @@ func findAvailablePlaceholder(clusterID string) string {
 		if h.Status != statusAvailable {
 			continue
 		}
-		if h.Owner != hubAdminUsername {
+		if !isHubAdmin(h.Owner) {
 			continue
 		}
 		if clusterIDForHive(&h) != clusterID {
@@ -6778,7 +6833,7 @@ func listAvailablePlaceholders(pool string) []AvailablePlaceholder {
 		if h.Status != statusAvailable {
 			continue
 		}
-		if h.Owner != hubAdminUsername {
+		if !isHubAdmin(h.Owner) {
 			continue
 		}
 		cluster := clusterIDForHive(&h)
@@ -7208,7 +7263,7 @@ type AssignHiveRequest struct {
 // both reachable (hive-oke) and heartbeat-only (vllm-d) clusters: NO hub→spoke
 // push or kubectl is used, so a vllm-d claim is delivered entirely by heartbeat.
 func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
-	if s.getAuthUser(r) != hubAdminUsername {
+	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
 		return
 	}
@@ -7540,7 +7595,7 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requester := s.getAuthUser(r)
-	if requester != body.Username && requester != hubAdminUsername {
+	if requester != body.Username && !isHubAdmin(requester) {
 		http.Error(w, `{"error":"can only retrieve your own token"}`, http.StatusForbidden)
 		return
 	}

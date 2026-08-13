@@ -375,7 +375,7 @@ func (s *HubServer) usageHistorySnapshot() []UsageSnapshot {
 // unauthenticated caller never reaches this handler at all.
 func (s *HubServer) handleUsage(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
-	isAdmin := username == hubAdminUsername
+	isAdmin := isHubAdmin(username)
 
 	s.mu.RLock()
 	scoped := make([]RegistryEntry, 0, len(s.registry.Hives))
