@@ -212,7 +212,7 @@ Two rules of thumb:
 
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
 
-Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `v2/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session.
+Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `v2/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session. See [Agent peer-awareness logging](agent-logging.md) for the pluk log format, when it's available, and its retention behavior.
 
 Every discovery probe is best-effort: a failed or absent probe falls back to a current static list, so a model dropdown is never empty. Fallback entries are marked "unverified" in the UI.
 
