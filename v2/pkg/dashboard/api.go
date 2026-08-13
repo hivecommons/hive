@@ -63,6 +63,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/lifecycle-timeline", s.handleLifecycleTimeline)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
+	// Full retained scrollback of an agent's latest run, as plain text (#3693).
+	// Backs the Terminal's "view / download full log" controls.
+	s.mux.HandleFunc("GET /api/agents/{name}/log", s.handleAgentFullLog)
 
 	s.mux.HandleFunc("GET /api/role", s.handleRole)
 

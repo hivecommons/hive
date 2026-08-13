@@ -54,6 +54,14 @@ const (
 	paneCaptureSleep     = 500 * time.Millisecond
 	proxyListenPort      = 18443
 	proxyCACertPath      = "/data/proxy-ca.pem"
+
+	// fullLogCaptureLines bounds the "download/view full log" capture (see
+	// CaptureFullLog). tmux's -S - captures the entire scrollback, but a wedged
+	// agent that has spammed for hours can hold a very large buffer; this caps the
+	// number of lines pulled back from the tail so the endpoint stays bounded.
+	// It is deliberately far larger than the tmux history-limit tmux is usually
+	// started with, so in practice it returns the WHOLE retained session.
+	fullLogCaptureLines = 50000
 )
 
 var defaultTmuxSocket string
@@ -2608,6 +2616,42 @@ func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
 		return ""
 	}
 	return string(out)
+}
+
+// CaptureFullLog returns the agent's full retained tmux scrollback for its
+// current (latest) session, as plain text. It backs the dashboard's
+// "download / view full log" controls (issue #3693): the browser Terminal only
+// shows the last screenful, so this pulls the whole retained buffer — from the
+// tail up to fullLogCaptureLines — using the SAME per-agent socket + su-exec
+// path as every other capture, so it works under per-UID isolation.
+//
+// The capture is bounded to the current tmux session, so it is scoped to the
+// agent's latest run (a restart kills and recreates the session, dropping the
+// prior run's scrollback). It is NOT delimited to a run boundary WITHIN a
+// long-lived session; when an agent has been kicked repeatedly without a
+// restart, the buffer holds multiple kicks' output back to the tmux
+// history-limit. That is an accepted v1 limitation — the whole retained
+// session is returned.
+func (m *Manager) CaptureFullLog(name string) (string, error) {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	m.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("agent %s not found", name)
+	}
+	if agent.tmuxSession == "" {
+		return "", fmt.Errorf("agent %s has no active session", name)
+	}
+	// -S -<n>: start n lines back into history; -E -: through the last visible
+	// line; -J: join wrapped lines so copied text is not hard-wrapped at the
+	// pane width; -p: print to stdout. -1: keep the tail behaviour bounded.
+	cmd := m.tmuxCmd(agent, "capture-pane", "-t", agent.tmuxSession, "-p", "-J",
+		"-S", fmt.Sprintf("-%d", fullLogCaptureLines), "-E", "-")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("capturing pane for %s: %w", name, err)
+	}
+	return string(out), nil
 }
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).
