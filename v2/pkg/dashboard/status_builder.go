@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+
+	"github.com/kubestellar/hive/v2/pkg/skillreg"
 	"regexp"
 	"runtime"
 	"sort"
@@ -199,6 +201,7 @@ func BuildFrontendStatus(
 		HiveID:              cfg.HiveID,
 		Agents:              buildAgents(agentStatuses, cfg, govState),
 		Governor:            buildGovernor(govState, cfg),
+		Skills:              buildSkills(),
 		Tokens:              buildTokens(tokenCollector),
 		Repos:               buildRepos(cfg, actionable),
 		Beads:               BuildBeadsFromConfig(beadStores, cfg),
@@ -1528,4 +1531,29 @@ func redactTokens(s string) string {
 	s = deviceCodeRedactor.ReplaceAllString(s, "${1}****-****")
 	s = deviceCodeLineRedactor.ReplaceAllString(s, "[auth flow redacted]")
 	return s
+}
+
+// buildSkills probes the conventional skills directory and reports the registry
+// state. The registry is not wired into the runtime yet, so this is best-effort
+// and honest-empty: when the directory does not exist it reports available=false
+// / loaded=0 ("not configured") rather than fabricating a count. When the dir is
+// present, skillreg.Load tolerates unreadable/malformed files and returns the
+// number of skills successfully loaded.
+// skillsDir is the conventional agent-skill registry directory. It is a var,
+// not a const, purely so tests can point it at a temp dir.
+var skillsDir = dataVolumePath + "/skills"
+
+func buildSkills() FrontendSkills {
+	dir := skillsDir
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return FrontendSkills{Available: false, Loaded: 0}
+	}
+	// Load tolerates a missing/unreadable dir and bad files; a returned error is
+	// only for a truly unexpected condition, so treat any error as "unavailable".
+	loaded, lErr := skillreg.NewRegistry().Load(dir, nil)
+	if lErr != nil {
+		return FrontendSkills{Available: false, Loaded: 0, Dir: dir}
+	}
+	return FrontendSkills{Available: true, Loaded: loaded, Dir: dir}
 }
