@@ -376,38 +376,6 @@ fi
 ACMM_LEVEL="${HIVE_ACMM_LEVEL:-0}"
 ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 
-# ── Route `gh pr create` through the hive so the PR is App-bot-authored ──
-# An agent running `gh pr create` would author the PR as whatever identity the gh
-# token / Copilot login resolves to (the login USER, not the App bot). Redirect
-# to hive-open-pr, which drops a request file the hive's watcher opens with the
-# App installation token → authored by "<slug>[bot]". The watcher enforces the
-# SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
-# WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
-# their OWN identity by design, so their gh pr create must pass through unchanged.
-if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
-  if command -v hive-open-pr >/dev/null 2>&1; then
-    # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
-    # the same --repo/--head/--base/--title/--body shape and ignores the rest.
-    exec hive-open-pr "$@"
-  fi
-  # If the wrapper somehow isn't installed, fail loud rather than silently
-  # opening the PR as the wrong identity (hard switch: no gh-pr-create fallback).
-  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
-  exit 1
-fi
-
-# Route ordinary-agent issue creation through Hive as well. Besides preserving
-# App authorship, this is the deterministic cross-path duplicate guard: Hive
-# compares the request with active managed Visual Hive issues before creating
-# anything. Contributors remain exempt because they are not lifecycle agents.
-if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
-  if command -v hive-open-issue >/dev/null 2>&1; then
-    exec hive-open-issue "$@"
-  fi
-  echo "BLOCKED: hive-open-issue not found; cannot open an issue through Hive's duplicate guard." >&2
-  exit 1
-fi
-
 # Helper: capture advisory finding to JSONL for governor digest
 _capture_advisory_finding() {
   local _adv_title="" _adv_body="" _next_is_title=false _next_is_body=false
@@ -475,14 +443,8 @@ if [ -n "$AGENT_MODE" ]; then
         echo "🔧 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_AND_PRS mode. Merging requires human approval." >&2
         exit 1
       fi
-      # NOTE (F6): This hold-label block is DEAD for `pr create`. A non-contributor
-      # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
-      # 160), which REPLACES this process — execution never reaches here for the
-      # create path. The hold label is now applied AUTHORITATIVELY server-side, in
-      # v2/pkg/github/pr_request_watcher.go, after the hive's App-bot opens the PR,
-      # keyed on the real hive ACMM level (L3/L4/L5). Do NOT rely on this line to
-      # gate anything; it is retained only so `args` stays well-formed for any
-      # non-create pr subcommand that still falls through.
+      # The hold label is also applied authoritatively server-side after an
+      # authorized create is handed to Hive's App-backed request watcher.
       if [ "$ACMM_LEVEL" = "5" ] && [ "$subcmd" = "pr" ] && [ "$action" = "create" ]; then
         args+=("--label" "hold")
       fi
@@ -546,6 +508,30 @@ else
       exit 1
     fi
   fi
+fi
+
+# Route authorized `gh pr create` through Hive so the PR is App-bot-authored.
+# This must remain AFTER mode/ACMM enforcement: redirecting first would let an
+# invalid or restricted mode reach lifecycle intake before this wrapper had
+# authorized the operation. Contributors remain exempt because they fork and
+# open PRs under their own identity by design.
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+  if command -v hive-open-pr >/dev/null 2>&1; then
+    exec hive-open-pr "$@"
+  fi
+  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
+  exit 1
+fi
+
+# Route authorized ordinary-agent issue creation through Hive as well. Besides
+# preserving App authorship, this is the deterministic cross-path duplicate
+# guard. It intentionally follows authorization for the same reason as PRs.
+if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+  if command -v hive-open-issue >/dev/null 2>&1; then
+    exec hive-open-issue "$@"
+  fi
+  echo "BLOCKED: hive-open-issue not found; cannot open an issue through Hive's duplicate guard." >&2
+  exit 1
 fi
 
 # Enforce merge gate — only PRs in merge-eligible.json can be merged
