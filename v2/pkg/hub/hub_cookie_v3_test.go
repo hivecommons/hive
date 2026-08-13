@@ -233,7 +233,6 @@ func TestF10_EitherLaneIsAdditive(t *testing.T) {
 	}{
 		{"v3 lane", v3, "v3user"},
 		{"v2 lane still verifies", v2, "v2user"},
-		{"legacy HMAC lane still verifies", legacy, "legacyuser"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			user, ok := verifyHubUserCookieEitherAt(pub, legacySecret, tc.value, now, nil)
@@ -242,6 +241,17 @@ func TestF10_EitherLaneIsAdditive(t *testing.T) {
 			}
 		})
 	}
+
+	// AUDIT F1: this case previously asserted "legacy HMAC lane still verifies".
+	// That ENCODED THE VULNERABILITY — the legacy lane is keyed on the fleet-wide
+	// HIVE_SESSION_KEY, so accepting it means any spoke can forge hub admin. The
+	// lane is deleted; the assertion is inverted rather than removed, so the file
+	// still documents that the legacy format is deliberately refused.
+	t.Run("legacy HMAC lane is REJECTED", func(t *testing.T) {
+		if user, ok := verifyHubUserCookieEitherAt(pub, legacySecret, legacy, now, nil); ok {
+			t.Errorf("legacy cookie accepted as %q — F1 lane is back", user)
+		}
+	})
 
 	// An expired v3 must NOT silently fall through to the v2 or legacy lane and
 	// get accepted there. That fallthrough would re-open the finding completely.
