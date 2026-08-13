@@ -443,3 +443,108 @@ func TestSweepUnwedgesZeroStartTimestamp(t *testing.T) {
 		t.Errorf("the un-wedged hive must be re-armed for delivery, got %q", got)
 	}
 }
+
+// TestSweepConvergedPathClearsWithoutReArmOrBudget is the integration test for
+// the converged path added in #3718: when a hive has already reached (or
+// surpassed) its UpgradeTarget, the sweep must clear the stale Upgrading latch
+// WITHOUT re-arming heartbeatUpgrade and WITHOUT burning retry budget. This
+// guards against the z-mlz-manager wedge where both the heartbeat completion
+// chain and the sweep deferred to each other, leaving the spinner running
+// forever on a hive that had in fact upgraded successfully.
+func TestSweepConvergedPathClearsWithoutReArmOrBudget(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	// Pre-arm a heartbeat instruction that should be removed by the converged clear.
+	s.heartbeatUpgrade["converged-hive"] = "fc32ae4"
+
+	s.registry.Hives = []RegistryEntry{{
+		ID:               "converged-hive",
+		Upgrading:        true,
+		UpgradeStartedAt: time.Now().Add(-68 * time.Minute),
+		GitHash:          "fc32ae4",  // already ON the target
+		UpgradeTarget:    "fc32ae4",
+		LastHeartbeat:    rfc3339(time.Now().Add(-30 * time.Second)),
+		// Simulate a hive that was previously swept once as orphaned before
+		// it landed the upgrade. The converged path must reset this.
+		OrphanedUpgradeSweeps: 1,
+	}}
+
+	s.sweepOrphanedUpgrades()
+
+	h := s.registry.Hives[0]
+
+	// 1. Upgrading latch must be cleared.
+	if h.Upgrading {
+		t.Error("converged hive must have Upgrading cleared")
+	}
+	// 2. UpgradeTarget must be cleared (the upgrade landed; there is nothing to
+	//    preserve for observability — unlike the orphaned path which keeps it).
+	if h.UpgradeTarget != "" {
+		t.Errorf("converged clear must reset UpgradeTarget, got %q", h.UpgradeTarget)
+	}
+	// 3. UpgradeStartedAt must be zeroed.
+	if !h.UpgradeStartedAt.IsZero() {
+		t.Error("converged clear must zero UpgradeStartedAt")
+	}
+	// 4. OrphanedUpgradeSweeps must be reset so prior sweeps don't count toward
+	//    the fault budget on a FUTURE upgrade.
+	if h.OrphanedUpgradeSweeps != 0 {
+		t.Errorf("converged clear must reset OrphanedUpgradeSweeps, got %d", h.OrphanedUpgradeSweeps)
+	}
+	// 5. No UpgradeFailed state.
+	if h.UpgradeFailed {
+		t.Error("converged clear must not mark the hive as failed")
+	}
+	if h.UpgradeError != "" {
+		t.Errorf("converged clear must not leave an error, got %q", h.UpgradeError)
+	}
+	if !h.UpgradeFailedAt.IsZero() {
+		t.Error("converged clear must zero UpgradeFailedAt")
+	}
+	// 6. heartbeatUpgrade must be REMOVED, not re-armed: re-arming would
+	//    re-instruct an upgrade that already happened.
+	if _, armed := s.heartbeatUpgrade["converged-hive"]; armed {
+		t.Error("converged hive must NOT be re-armed in heartbeatUpgrade — the upgrade already landed")
+	}
+}
+
+// TestSweepConvergedNeverEscalatesToFault guards against the most dangerous
+// regression: a hive that repeatedly converges (e.g., on successive upgrades
+// where the heartbeat path is slow to clear the latch) must NEVER trip the
+// maxOrphanedUpgradeSweeps fault escalation. Each converged clear resets the
+// counter, so even maxOrphanedUpgradeSweeps+N cycles produce no UpgradeFailed.
+func TestSweepConvergedNeverEscalatesToFault(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "repeat-converger",
+		GitHash:       "fc32ae4",
+		UpgradeTarget: "fc32ae4",
+	}}
+
+	for i := 0; i < maxOrphanedUpgradeSweeps+2; i++ {
+		h := &s.registry.Hives[0]
+		h.Upgrading = true
+		h.UpgradeStartedAt = time.Now().Add(-68 * time.Minute)
+		h.GitHash = "fc32ae4"
+		h.UpgradeTarget = "fc32ae4"
+		h.LastHeartbeat = rfc3339(time.Now().Add(-30 * time.Second))
+
+		s.sweepOrphanedUpgrades()
+
+		if s.registry.Hives[0].OrphanedUpgradeSweeps != 0 {
+			t.Fatalf("cycle %d: converged sweep must reset OrphanedUpgradeSweeps, got %d",
+				i, s.registry.Hives[0].OrphanedUpgradeSweeps)
+		}
+		if _, armed := s.heartbeatUpgrade["repeat-converger"]; armed {
+			t.Fatalf("cycle %d: converged hive must not be re-armed", i)
+		}
+	}
+	if s.registry.Hives[0].UpgradeFailed {
+		t.Error("a hive that converges on every cycle must never be reported as a permanent upgrade failure")
+	}
+}
