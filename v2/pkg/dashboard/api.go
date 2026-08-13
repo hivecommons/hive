@@ -189,6 +189,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/fact-history", s.handleFactHistory)
 	s.mux.HandleFunc("POST /api/knowledge/create", s.handleKnowledgeCreate)
 	s.mux.HandleFunc("POST /api/knowledge/import", s.handleKnowledgeImport)
+	// Channels (user-writable local vaults). Registered under /channels rather
+	// than /vaults so they don't collide with the GET /api/knowledge/{layer}
+	// wildcard below. This is the import-target surface fixed in #3581.
+	s.mux.HandleFunc("GET /api/knowledge/channels", s.handleKnowledgeChannelsList)
+	s.mux.HandleFunc("POST /api/knowledge/channels", s.handleKnowledgeChannelCreate)
 	s.mux.HandleFunc("POST /api/knowledge/promote", s.handleKnowledgePromote)
 	s.mux.HandleFunc("GET /api/knowledge/subscriptions", s.handleKnowledgeSubsList)
 	s.mux.HandleFunc("POST /api/knowledge/subscriptions", s.handleKnowledgeSubsAdd)
@@ -7144,6 +7149,38 @@ func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditFromRequest(r, "knowledge_import", auditDetail("layer", req.Layer, "format", req.Format), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "imported": count, "layer": req.Layer, "format": req.Format})
+}
+
+// handleKnowledgeChannelsList returns the user-writable channels (vaults) that
+// facts can be imported into. The reserved automation vault is excluded (#3581).
+func (s *Server) handleKnowledgeChannelsList(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonResponse(w, []interface{}{})
+		return
+	}
+	jsonResponse(w, s.deps.Knowledge.WritableVaults())
+}
+
+// handleKnowledgeChannelCreate creates a new local channel (vault) to import into.
+func (s *Server) handleKnowledgeChannelCreate(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Knowledge == nil {
+		jsonError(w, "knowledge not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	info, err := s.deps.Knowledge.CreateVault(req.Name)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.auditFromRequest(r, "knowledge_channel_create", auditDetail("channel", info.Name), "")
+	jsonResponse(w, map[string]interface{}{"ok": true, "channel": info})
 }
 
 func (s *Server) handleKnowledgeSubsList(w http.ResponseWriter, r *http.Request) {
