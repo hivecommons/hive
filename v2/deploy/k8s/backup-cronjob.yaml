@@ -15,9 +15,10 @@ metadata:
   name: hive-hub-backup
   namespace: hive-hub
 ---
-# The backup reads Secrets in its own namespace and execs into spoke pods on
-# this cluster. Read-only apart from pod/exec, which is required to read
-# per-spoke PVC state the hub cannot mount.
+# The backup execs into spoke pods on this cluster (cross-namespace) and lists
+# namespaces. Pods/exec and namespace discovery require cluster scope.
+# Secrets are NOT included here — they are granted only within hive-hub namespace
+# via the Role + RoleBinding below (sec-check #3708).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -30,9 +31,6 @@ rules:
     resources: ["pods/exec"]
     verbs: ["create"]
   - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
-  - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list"]
 ---
@@ -44,6 +42,33 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: hive-hub-backup
+subjects:
+  - kind: ServiceAccount
+    name: hive-hub-backup
+    namespace: hive-hub
+---
+# Namespace-scoped secret access: the backup only needs to read secrets within
+# hive-hub. Keeping this as a Role (not ClusterRole) prevents a compromised
+# backup pod from exfiltrating secrets from other namespaces (sec-check #3708).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-hub-backup-secrets
+  namespace: hive-hub
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-hub-backup-secrets
+  namespace: hive-hub
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-hub-backup-secrets
 subjects:
   - kind: ServiceAccount
     name: hive-hub-backup
@@ -74,7 +99,13 @@ spec:
           restartPolicy: Never
           containers:
             - name: backup
-              image: ghcr.io/kubestellar/hive:v2-latest
+              # Pinned by digest to prevent supply-chain attacks on the mutable
+              # v2-latest tag. This SA holds secrets:list in hive-hub and
+              # pods/exec cluster-wide, so a registry push must never silently
+              # deliver untrusted code. Bump the digest at release time.
+              # Compute: gh api /orgs/kubestellar/packages/container/hive/versions
+              #   -q '.[]|select(.metadata.container.tags[]=="v2-latest")|.name'
+              image: ghcr.io/kubestellar/hive:v2-latest@sha256:6d637955d33839f7a4d28e965ecf673a1500be522a1b208ee818cadec45e9fce
               command: ["/usr/local/bin/hive-backup", "run"]
               env:
                 # AES-256 key for the archive. MUST be escrowed outside the
