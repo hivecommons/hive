@@ -956,6 +956,9 @@
       50% { border-left-color: color-mix(in srgb, var(--yellow) 80%, transparent); }
     }
     .agent-card.status-stale { animation: pulse-amber 2s ease-in-out infinite; }
+    /* Last upstream/launch error — stacked below .agent-state, never under the
+       working-indicator dot, so a retry in progress cannot hide it (#3604). */
+    .agent-error { font-size: 0.72rem; color: var(--red); margin-top: 4px; text-align: right; word-break: break-word; }
     .agent-name { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; }
     .agent-name .dot {
       display: inline-block; width: 8px; height: 8px;
@@ -5777,6 +5780,20 @@
             if (isStale) return '<span class="status-badge needs-context">stale</span>';
             return '';
           })()}${agentSpendChip(a.name)}</div>
+          ${(() => {
+            // Last upstream/launch error stays on its own line below the state
+            // badge, never behind the working-indicator dot — previously the
+            // agent kept retrying with the spinner visible while lastError was
+            // silently dropped, so operators could not see e.g. a 429 until
+            // retries were exhausted (#3604). Composing "retrying: <err>" keeps
+            // both facts legible at once instead of one overlapping/hiding the
+            // other. No per-attempt counter is tracked on the backend, so the
+            // prefix names the state rather than fabricating a retry count.
+            if (!a.lastError) return '';
+            const retrying = a.busy === 'working' && !isPaused && !isOff && !isStopped;
+            const prefix = retrying ? 'retrying: ' : '';
+            return `<div class="agent-error" title="${esc(a.lastError)}">⚠ ${esc(prefix)}${esc(a.lastError)}</div>`;
+          })()}
           <div class="agent-card-details">
           <div class="agent-field"><span class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
