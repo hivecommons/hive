@@ -431,7 +431,10 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 			CertIssuer:   "letsencrypt-prod",
 			Domain:       "hive.kubestellar.io",
 			Arch:         "arm64",
-			ImageTag:     "v2-latest",
+			// v4 is the ONLY image a hosted spoke can run: audit F2 deleted the
+			// fleet-wide heartbeat lane, and a v2 spoke has no SpokeHeartbeatKey
+			// self-derive path, so it cannot authenticate to this hub at all.
+			ImageTag: "v4-latest",
 		}
 		return clusters
 	}
@@ -1842,10 +1845,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		imagePullPolicy = "Always"
 	}
 
-	// Determine image tag from cluster config, falling back to v2-latest.
+	// Determine image tag from cluster config, falling back to v4-latest.
+	//
+	// AUDIT F2 FOLLOW-UP: this fallback MUST NOT be v2. verifyHeartbeatBearer no
+	// longer accepts the fleet-wide bearer, and the per-hive bearer reaches a
+	// spoke either by injection or by SpokeHeartbeatKey() self-deriving it — a
+	// path that exists only in the v4 tree. A v2-tagged spoke therefore cannot
+	// heartbeat against this hub, so defaulting to v2-latest silently provisions
+	// a hive that is dead on arrival.
 	imageTag := cluster.ImageTag
 	if imageTag == "" {
-		imageTag = "v2-latest"
+		imageTag = "v4-latest"
 	}
 
 	data := map[string]any{
