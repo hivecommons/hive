@@ -57,6 +57,192 @@ function verifyHubUserCookie(secret, value) {
   return username;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F10 / N2: Ed25519 session-cookie verification (ported from v4).
+//
+// This proxy previously verified ONLY the symmetric HMAC cookie. That is the
+// weakest of the three formats the hub can emit and — because the session key
+// is derived from a master every spoke holds — it is forgeable by any spoke.
+//
+// Dispatch is on the MARKER INSIDE THE VALUE, not on the cookie name, so this
+// works whether the value arrives as `hive_hub_user` or `hive_hub_user_v2`
+// (the v2 hub emits both; see #3272). No new cookie name is required.
+//
+// VERIFIER ONLY: nothing here mints. The hub still mints v2-format values, so
+// behaviour is unchanged at deploy — this simply lets a spoke ACCEPT the
+// stronger formats once the hub begins emitting them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// INFO_SESSION_ED25519_SEED must stay byte-identical to infoSessionEd25519Seed
+// in v2/pkg/hub/hub_keys.go — verified identical on v2 and v4.
+const INFO_SESSION_ED25519_SEED = 'hive-session-ed25519-v1';
+
+function deriveSessionPublicKey() {
+  const explicit = (process.env.HIVE_SESSION_PUBLIC_KEY || '').trim();
+  if (explicit) return explicit;
+  const master = (process.env.HIVE_HUB_SECRET || '').trim();
+  if (!master) return '';
+  const seedHex = crypto.createHmac('sha256', master).update(INFO_SESSION_ED25519_SEED).digest('hex');
+  try {
+    // Node cannot expand a raw Ed25519 seed directly, so wrap it in the PKCS#8
+    // prefix for a 32-byte Ed25519 private key and export the public half. This
+    // mirrors Go's ed25519.NewKeyFromSeed(seed).Public().
+    const pkcs8 = Buffer.concat([
+      Buffer.from('302e020100300506032b657004220420', 'hex'),
+      Buffer.from(seedHex, 'hex'),
+    ]);
+    const priv = crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+    const spki = crypto.createPublicKey(priv).export({ format: 'der', type: 'spki' });
+    // Strip the 12-byte SPKI header to get the raw 32-byte public key, matching
+    // the hex encoding the hub ships in HIVE_SESSION_PUBLIC_KEY.
+    return Buffer.from(spki.subarray(spki.length - 32)).toString('hex');
+  } catch (_) {
+    return '';
+  }
+}
+
+const SESSION_PUBLIC_KEY = deriveSessionPublicKey();
+
+// HUB_COOKIE_V2_MARKER separates the username from its Ed25519 signature.
+const HUB_COOKIE_V2_MARKER = '.v2.';
+
+// verifyHubUserCookieV2 mirrors verifyHubUserCookieValueV2 in
+// v2/pkg/hub/hub_cookie.go EXACTLY: value is `<username>.v2.<base64url(sig)>`
+// where sig is Ed25519 over the username, verified against the hub's PUBLIC key.
+// Returns the verified username, or '' on any failure.
+function verifyHubUserCookieV2(pubHex, value) {
+  if (!pubHex || !value) return '';
+  const idx = value.lastIndexOf(HUB_COOKIE_V2_MARKER);
+  if (idx <= 0) return '';
+  const username = value.slice(0, idx);
+  const sigB64 = value.slice(idx + HUB_COOKIE_V2_MARKER.length);
+  if (!username || !sigB64) return '';
+  try {
+    const raw = Buffer.from(pubHex, 'hex');
+    if (raw.length !== 32) return '';
+    // Wrap the raw 32-byte key in its SPKI header so Node can import it.
+    const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]);
+    const pub = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const sig = Buffer.from(sigB64, 'base64url');
+    return crypto.verify(null, Buffer.from(username), pub, sig) ? username : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+// HUB_COOKIE_V3_MARKER separates the signed claims payload from its Ed25519
+// signature. Must stay byte-identical to hubCookieV3Marker in
+// v2/pkg/hub/hub_cookie.go.
+const HUB_COOKIE_V3_MARKER = '.v3.';
+
+// HUB_COOKIE_CLOCK_SKEW_SECONDS mirrors ssoClockSkew in v2/pkg/hub/sso.go. The
+// hub and this spoke are separate clusters with separate clocks; without a
+// tolerance a freshly minted cookie is rejected by a spoke running seconds
+// ahead of the hub.
+const HUB_COOKIE_CLOCK_SKEW_SECONDS = 30;
+
+// verifyHubUserCookieV3 mirrors verifyHubUserCookieValueV3 in
+// v2/pkg/hub/hub_cookie.go EXACTLY.
+//
+// AUDIT F10: the v2 cookie signs only the username, so its lifetime lives in the
+// browser's MaxAge — which is a hint the browser may ignore and a copied cookie
+// never had in the first place. v3 moves the claims inside the signature:
+//
+//   value = base64url(JSON{u,iat,exp,sid}) + '.v3.' + base64url(Ed25519 sig)
+//
+// so this proxy can enforce the expiry itself rather than trusting the browser.
+//
+// The JSON keys (u/iat/exp/sid) and the base64url alphabet are a FROZEN wire
+// contract with the Go hub. If the two sides disagree by a single byte, every
+// hosted login breaks at deploy — silently, and production-only, because nothing
+// but a real hub-minted cookie exercises the disagreement. session_cookie_v3.test.js
+// pins Go-minted vectors for exactly this reason.
+//
+// Revocation is deliberately NOT checked here: the spoke has no revocation store
+// and asking the hub would put a network dependency on the terminal path. The
+// spoke enforces signature + expiry; the hub additionally enforces revocation.
+//
+// Returns the verified username, or '' on any failure.
+
+// verifyHubUserCookieV3 mirrors verifyHubUserCookieValueV3 in
+// v2/pkg/hub/hub_cookie.go EXACTLY.
+//
+// AUDIT F10: the v2 cookie signs only the username, so its lifetime lives in the
+// browser's MaxAge — which is a hint the browser may ignore and a copied cookie
+// never had in the first place. v3 moves the claims inside the signature:
+//
+//   value = base64url(JSON{u,iat,exp,sid}) + '.v3.' + base64url(Ed25519 sig)
+//
+// so this proxy can enforce the expiry itself rather than trusting the browser.
+//
+// The JSON keys (u/iat/exp/sid) and the base64url alphabet are a FROZEN wire
+// contract with the Go hub. If the two sides disagree by a single byte, every
+// hosted login breaks at deploy — silently, and production-only, because nothing
+// but a real hub-minted cookie exercises the disagreement. session_cookie_v3.test.js
+// pins Go-minted vectors for exactly this reason.
+//
+// Revocation is deliberately NOT checked here: the spoke has no revocation store
+// and asking the hub would put a network dependency on the terminal path. The
+// spoke enforces signature + expiry; the hub additionally enforces revocation.
+//
+// Returns the verified username, or '' on any failure.
+function verifyHubUserCookieV3(pubHex, value, nowSeconds) {
+  if (!pubHex || !value) return '';
+  const idx = value.lastIndexOf(HUB_COOKIE_V3_MARKER);
+  if (idx <= 0) return '';
+  const body = value.slice(0, idx);
+  const sigB64 = value.slice(idx + HUB_COOKIE_V3_MARKER.length);
+  if (!body || !sigB64) return '';
+  try {
+    const raw = Buffer.from(pubHex, 'hex');
+    if (raw.length !== 32) return '';
+    // Wrap the raw 32-byte key in its SPKI header so Node can import it.
+    const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]);
+    const pub = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const sig = Buffer.from(sigB64, 'base64url');
+    // Verify the signature over the ENCODED body BEFORE parsing any payload
+    // byte — never let attacker-controlled JSON reach the parser first.
+    if (!crypto.verify(null, Buffer.from(body), pub, sig)) return '';
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!claims || typeof claims.u !== 'string' || !claims.u) return '';
+    if (typeof claims.sid !== 'string' || !claims.sid) return '';
+    if (typeof claims.iat !== 'number' || typeof claims.exp !== 'number') return '';
+    const now = Number.isFinite(nowSeconds) ? nowSeconds : Math.floor(Date.now() / 1000);
+    if (claims.iat > now + HUB_COOKIE_CLOCK_SKEW_SECONDS) return ''; // not yet valid
+    if (claims.exp < now - HUB_COOKIE_CLOCK_SKEW_SECONDS) return ''; // expired
+    return claims.u;
+  } catch (_) {
+    return '';
+  }
+}
+
+// verifyHubUserCookieEither accepts a v3 (F10: signed lifetime), a v2 (Ed25519)
+// cookie or, during the rollout window only, a legacy HMAC one — mirroring the Go
+// helper of the same name. Lanes are tried v3 → v2 → legacy.
+//
+// The v2 and legacy branches are STRICTLY additive compatibility paths. Removing
+// either one 401s every part of the fleet that has not rolled. The legacy branch
+// is additionally the N2 vulnerability (verify-capable implies mint-capable) and
+// is removed once the fleet has rolled and existing cookies have aged out.
+
+// verifyHubUserCookieEither accepts a v3 (F10: signed lifetime), a v2 (Ed25519)
+// cookie or, during the rollout window only, a legacy HMAC one — mirroring the Go
+// helper of the same name. Lanes are tried v3 → v2 → legacy.
+//
+// The v2 and legacy branches are STRICTLY additive compatibility paths. Removing
+// either one 401s every part of the fleet that has not rolled. The legacy branch
+// is additionally the N2 vulnerability (verify-capable implies mint-capable) and
+// is removed once the fleet has rolled and existing cookies have aged out.
+function verifyHubUserCookieEither(pubHex, legacySecret, value) {
+  const v3 = verifyHubUserCookieV3(pubHex, value);
+  if (v3) return v3;
+  const v2 = verifyHubUserCookieV2(pubHex, value);
+  if (v2) return v2;
+  return verifyHubUserCookie(legacySecret, value);
+}
+
+
 // parseCookies is shared by the HTTP and WebSocket terminal gates so the two
 // cannot drift — they are equally exploitable and must stay in lockstep.
 function parseCookies(header) {
@@ -255,7 +441,12 @@ app.use('/terminal', (req, res, next) => {
     // verify must deny, not wave everyone through — that is the same bug in a
     // different disguise.
     const cookies = parseCookies(req.headers.cookie);
-    const user = verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user']);
+    // Accept the strongest format present: v3 (signed lifetime + revocable sid)
+    // → v2 (Ed25519) → legacy HMAC. Additive — never rejects a value the
+    // HMAC-only check would have accepted.
+    const user = verifyHubUserCookieEither(
+      SESSION_PUBLIC_KEY, SESSION_KEY,
+      cookies['hive_hub_user_v2'] || cookies['hive_hub_user']);
     if (!user) {
       if (req.headers.upgrade === 'websocket') {
         req.socket.destroy();
@@ -340,7 +531,9 @@ server.on('upgrade', (req, socket, head) => {
       // path on presence-only would leave the hole fully open — the HTTP fix
       // alone would be security theatre.
       const cookies = parseCookies(req.headers.cookie);
-      if (!verifyHubUserCookie(SESSION_KEY, cookies['hive_hub_user'])) {
+      if (!verifyHubUserCookieEither(
+        SESSION_PUBLIC_KEY, SESSION_KEY,
+        cookies['hive_hub_user_v2'] || cookies['hive_hub_user'])) {
         socket.destroy();
         return;
       }

@@ -246,7 +246,11 @@ type StatusPayload struct {
 	Tokens    FrontendTokens   `json:"tokens"`
 	Repos     []FrontendRepo   `json:"repos"`
 	Beads     FrontendBeads    `json:"beads"`
-	Health    map[string]any   `json:"health"`
+	// Skills reports the agent-skill registry state (ported from v4). It is
+	// honest-empty — available=false / loaded=0 — when /data/skills does not
+	// exist, rather than fabricating a count for an unconfigured hive.
+	Skills FrontendSkills `json:"skills"`
+	Health map[string]any `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -433,6 +437,13 @@ type FrontendRepo struct {
 	PRs              int    `json:"prs"`
 	ActionableIssues []any  `json:"actionableIssues"`
 	OpenPrs          []any  `json:"openPrs"`
+}
+
+// FrontendSkills reports the agent-skill registry state for the dashboard.
+type FrontendSkills struct {
+	Available bool   `json:"available"`
+	Loaded    int    `json:"loaded"`
+	Dir       string `json:"dir,omitempty"`
 }
 
 type FrontendBeads struct {

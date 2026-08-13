@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,22 @@ func neturlValues() url.Values {
 // without reaching into time inside the OIDC file.
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+// splitScopes parses a scope override env value. Accepts space- or comma-
+// separated scopes ("openid email profile" or "openid,email,profile"); empties
+// are dropped. Used for <PREFIX>_SCOPES, chiefly the generic "custom" provider
+// whose IdP may need different scopes than the openid/email/profile default.
+func splitScopes(s string) []string {
+	f := func(r rune) bool { return r == ' ' || r == ',' || r == '\t' || r == '\n' }
+	parts := strings.FieldsFunc(s, f)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Registry holds the enabled human-login providers, in a stable display order.
@@ -95,6 +112,22 @@ type oidcProviderSpec struct {
 	defaultIssuer string // "" means the issuer MUST come from env
 	envPrefix     string // e.g. "HIVE_HUB_OIDC_GOOGLE"
 	scopes        []string
+	// subjectClaim overrides which id_token claim carries the STABLE per-user
+	// identifier. Empty means the OIDC-standard "sub". IBMid does not advertise
+	// "sub" in its discovery claims_supported — its stable identifier is "uid"
+	// (an IBMid serial); preferred_username/email are reassignable and must NOT
+	// be the key. An env override (<PREFIX>_SUBJECT_CLAIM) lets us retune from a
+	// real token without a code change if IBMid does emit a usable "sub".
+	subjectClaim string
+	// multiTenant marks a provider whose issuer is per-tenant (Microsoft Entra
+	// common/organizations). When set, <PREFIX>_TENANT selects the tenant segment
+	// used for DISCOVERY ("common"/"organizations"/a specific directory GUID),
+	// while token validation uses issuerTemplateFmt with a "{tenantid}" marker so
+	// each token's real tenant is matched + namespaced.
+	multiTenant bool
+	// issuerTemplateFmt is the issuer with a "%s" for the tenant segment, e.g.
+	// "https://login.microsoftonline.com/%s/v2.0".
+	issuerTemplateFmt string
 }
 
 // oidcSpecs is the closed set of OIDC providers the hub can enable. A provider is
@@ -112,15 +145,48 @@ var oidcSpecs = []oidcProviderSpec{
 	{
 		name:          "ibmid",
 		display:       "IBMid",
-		defaultIssuer: "", // tenant-specific (IBM App ID): must set _ISSUER
+		defaultIssuer: "", // tenant-specific (IBM App ID / w3id): must set _ISSUER
 		envPrefix:     "HIVE_HUB_OIDC_IBMID",
 		scopes:        []string{"openid", "email", "profile"},
+		// IBMid's discovery does not list "sub"; "uid" is the stable IBMid serial.
+		// Confirmed against the live IBMid discovery claims_supported (uid present,
+		// sub absent). Overridable via HIVE_HUB_OIDC_IBMID_SUBJECT_CLAIM.
+		subjectClaim: "uid",
 	},
 	{
 		name:          "redhat",
 		display:       "Red Hat",
 		defaultIssuer: "https://sso.redhat.com/auth/realms/redhat-external",
 		envPrefix:     "HIVE_HUB_OIDC_REDHAT",
+		scopes:        []string{"openid", "email", "profile"},
+	},
+	{
+		// Microsoft Entra ID (Azure AD). Multi-tenant capable: HIVE_HUB_OIDC_
+		// MICROSOFT_TENANT selects the tenant segment for discovery — a specific
+		// directory GUID for SINGLE-tenant, or "common"/"organizations" for
+		// MULTI-tenant. In multi-tenant mode each token's real tenant is validated
+		// against the issuer template and the subject is namespaced per tenant;
+		// HIVE_HUB_OIDC_MICROSOFT_ALLOWED_TENANTS optionally restricts which tenants
+		// may sign in. Free to set up: any Microsoft 365 / Entra tenant (incl. the
+		// free M365 Developer Program) can register an app at no cost.
+		name:              "microsoft",
+		display:           "Microsoft",
+		envPrefix:         "HIVE_HUB_OIDC_MICROSOFT",
+		scopes:            []string{"openid", "email", "profile"},
+		multiTenant:       true,
+		issuerTemplateFmt: "https://login.microsoftonline.com/%s/v2.0",
+	},
+	{
+		// Generic/BYO OIDC provider. Lets an operator wire ANY standards-compliant
+		// OIDC IdP (Okta, Auth0, Microsoft Entra single-tenant, Keycloak, Ping,
+		// ForgeRock, Dex, Cognito, …) with no code change — everything comes from
+		// env. The issuer MUST be provided (no default); the display label defaults
+		// to "Single Sign-On" but is overridable via _DISPLAY. Its canonical
+		// provider slug is "custom", so users key as custom:<sub>.
+		name:          "custom",
+		display:       "Single Sign-On",
+		defaultIssuer: "", // must set HIVE_HUB_OIDC_CUSTOM_ISSUER
+		envPrefix:     "HIVE_HUB_OIDC_CUSTOM",
 		scopes:        []string{"openid", "email", "profile"},
 	},
 }
@@ -160,22 +226,63 @@ func BuildRegistry(githubClientID, ghAuthorizeURL, ghTokenURL string) *Registry 
 		if clientID == "" {
 			continue // provider not configured → not enabled
 		}
-		issuer := os.Getenv(spec.envPrefix + "_ISSUER")
-		if issuer == "" {
-			issuer = spec.defaultIssuer
+		// Resolve issuer. Multi-tenant providers (Microsoft Entra) derive it from a
+		// tenant segment; everyone else uses _ISSUER or the spec default.
+		var issuer, issuerTemplate string
+		var allowedTenants []string
+		if spec.multiTenant {
+			tenant := strings.TrimSpace(os.Getenv(spec.envPrefix + "_TENANT"))
+			if tenant == "" {
+				tenant = "organizations" // sensible default: any work/school Entra org
+			}
+			issuer = fmt.Sprintf(spec.issuerTemplateFmt, tenant)
+			// A concrete directory GUID is single-tenant (strict issuer); the
+			// well-known multi-tenant segments need the {tenantid} template so each
+			// token's real tenant is validated + namespaced.
+			if tenant == "common" || tenant == "organizations" || tenant == "consumers" {
+				issuerTemplate = fmt.Sprintf(spec.issuerTemplateFmt, "{tenantid}")
+			}
+			if a := strings.TrimSpace(os.Getenv(spec.envPrefix + "_ALLOWED_TENANTS")); a != "" {
+				allowedTenants = splitScopes(a) // reuse comma/space splitter
+			}
+		} else {
+			issuer = os.Getenv(spec.envPrefix + "_ISSUER")
+			if issuer == "" {
+				issuer = spec.defaultIssuer
+			}
 		}
 		if issuer == "" {
 			// Configured client id but no issuer we can use → skip, don't crash.
 			continue
 		}
+		// Optional per-provider env overrides. These matter most for the generic
+		// "custom" provider (whose brand/label/scopes we can't know in advance),
+		// but are honored for any provider so an operator can retune without code.
+		display := spec.display
+		if d := strings.TrimSpace(os.Getenv(spec.envPrefix + "_DISPLAY")); d != "" {
+			display = d
+		}
+		scopes := spec.scopes
+		if s := strings.TrimSpace(os.Getenv(spec.envPrefix + "_SCOPES")); s != "" {
+			scopes = splitScopes(s)
+		}
+		// Subject claim: env override wins, else the spec default (e.g. IBMid "uid"),
+		// else empty → the verifier falls back to the OIDC-standard "sub".
+		subjectClaim := strings.TrimSpace(os.Getenv(spec.envPrefix + "_SUBJECT_CLAIM"))
+		if subjectClaim == "" {
+			subjectClaim = spec.subjectClaim
+		}
 		p := &Provider{
-			Name:         spec.name,
-			DisplayName:  spec.display,
-			IsOIDC:       true,
-			Issuer:       strings.TrimRight(issuer, "/"),
-			ClientID:     clientID,
-			ClientSecret: os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
-			Scopes:       spec.scopes,
+			Name:           spec.name,
+			DisplayName:    display,
+			IsOIDC:         true,
+			Issuer:         strings.TrimRight(issuer, "/"),
+			IssuerTemplate: strings.TrimRight(issuerTemplate, "/"),
+			AllowedTenants: allowedTenants,
+			ClientID:       clientID,
+			ClientSecret:   os.Getenv(spec.envPrefix + "_CLIENT_SECRET"),
+			Scopes:         scopes,
+			SubjectClaim:   subjectClaim,
 		}
 		oidc = append(oidc, p)
 	}

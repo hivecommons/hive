@@ -36,6 +36,14 @@ var identityProviders = map[string]bool{
 	"google": true,
 	"ibmid":  true,
 	"redhat": true,
+	// Generic/BYO OIDC provider (operator-configured: Okta, Auth0, Entra,
+	// Keycloak, …). Its subjects are namespaced as custom:<sub>, distinct from
+	// every branded provider, so an operator's IdP can never collide identities
+	// with github:/google:/etc.
+	"custom": true,
+	// Microsoft Entra ID (Azure AD), single- or multi-tenant. Multi-tenant subjects
+	// are namespaced per Entra tenant inside the OIDC layer before this sees them.
+	"microsoft": true,
 }
 
 // legacyProvider is the provider a bare, un-namespaced key is assumed to belong

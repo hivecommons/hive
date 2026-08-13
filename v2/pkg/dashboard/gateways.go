@@ -87,6 +87,13 @@ const (
 	// maxGatewayNameLen bounds a gateway name so it stays usable as an agent
 	// backend id and as a filesystem-safe secret filename component.
 	maxGatewayNameLen = 64
+
+	// gatewayKeyNameMaxLen bounds the optional human LABEL for a gateway's key.
+	// It is a short display string ("Team inference key"), not the secret, so
+	// the limit is generous enough for a descriptive name yet small enough that
+	// a stray paste into the name field cannot bloat hive.yaml. Matches the bob
+	// key's bobKeyNameMaxLen (#3598).
+	gatewayKeyNameMaxLen = 128
 )
 
 // validGatewayKinds is the set of kinds the UI presets map to. An empty kind is
@@ -126,6 +133,11 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 		"region":     gw.Region,
 		"hasKey":     key != "",
 		"keyHint":    keyHint,
+		// keyName is the operator-chosen LABEL for this gateway's key, not the
+		// key value — safe to serialize. Empty on gateways that never recorded
+		// a name (the dashboard renders that as "(unnamed)"), so no
+		// backwards-compat break.
+		"keyName": gw.KeyName,
 	}
 }
 
@@ -165,6 +177,11 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		CABundle     *string `json:"ca_bundle"`
 		ProjectID    *string `json:"project_id"`
 		Region       *string `json:"region"`
+		// KeyName is an optional human LABEL recorded alongside the key so
+		// managers can tell WHICH key a gateway uses without seeing the value.
+		// It is not a secret and is stored in plaintext in hive.yaml. Absent
+		// (nil) leaves any existing name untouched; present-but-empty clears it.
+		KeyName *string `json:"key_name"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -237,6 +254,22 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Normalize the optional key NAME. It is a label, not a secret: leading and
+	// trailing whitespace is trimmed (a name is a display string, not a token),
+	// interior whitespace is allowed ("Team inference key"), and only the length
+	// is bounded. nil means "leave the existing name as-is"; an explicit empty
+	// string clears it. Validated before any secret file is written so a
+	// rejected name never leaves a stray key behind.
+	var keyName string
+	keyNameProvided := body.KeyName != nil
+	if keyNameProvided {
+		keyName = strings.TrimSpace(*body.KeyName)
+		if len(keyName) > gatewayKeyNameMaxLen {
+			jsonError(w, fmt.Sprintf("key name is too long (limit %d characters)", gatewayKeyNameMaxLen), http.StatusBadRequest)
+			return
+		}
+	}
+
 	cfg := s.deps.Config
 
 	// Find an existing entry so we can preserve fields the caller left blank
@@ -261,6 +294,7 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		gw.CABundle = gws[idx].CABundle
 		gw.ProjectID = gws[idx].ProjectID
 		gw.Region = gws[idx].Region
+		gw.KeyName = gws[idx].KeyName
 	}
 	if body.APIKeyEnv != nil {
 		gw.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
@@ -279,6 +313,12 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	}
 	if body.Region != nil {
 		gw.Region = strings.TrimSpace(*body.Region)
+	}
+	// Record the label only when the caller supplied the field, so a name-less
+	// "Replace key" PUT keeps the existing name rather than wiping it. A
+	// provided empty string intentionally clears it.
+	if keyNameProvided {
+		gw.KeyName = keyName
 	}
 
 	submittedKey := strings.TrimSpace(body.APIKey)
@@ -311,6 +351,21 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 			return
 		}
 		gw.APIKeyFile = path
+		// The legacy litellm: section keeps a SEPARATE key store
+		// (/data/secrets/litellm_api_key + the hive-secrets Secret) that
+		// pre-gateways code paths (local proxy, env fallbacks) still resolve.
+		// When this gateway is the one the legacy section points at, sync the
+		// legacy store too — otherwise a key rotated here leaves the legacy
+		// file holding the old (possibly revoked) key, and anything resolving
+		// through it fails against the gateway from then on.
+		if kind == config.GatewayKindLiteLLM && s.legacyLiteLLMSectionMatches(gw) {
+			if legacyPath, syncErr := s.storeLiteLLMAPIKey(submittedKey); syncErr != nil {
+				s.logger.Warn("legacy litellm key store not synced after gateway key save",
+					"gateway", name, "error", syncErr)
+			} else {
+				cfg.Governor.LiteLLM.APIKeyFile = legacyPath
+			}
+		}
 	}
 
 	if idx >= 0 {
@@ -566,4 +621,20 @@ func (s *Server) storeGatewayAPIKey(name, key string) (string, error) {
 	}
 	s.logger.Info("gateway api key stored", "gateway", name, "api_key_file", path)
 	return path, nil
+}
+
+// legacyLiteLLMSectionMatches reports whether the legacy governor.litellm
+// section refers to the same proxy as gw, meaning its key store must be kept
+// in sync when gw's key rotates. Matching is by endpoint; an unset legacy
+// endpoint falls back to the conventional gateway name "litellm" (the
+// built-in method's gateway shares its name with its kind).
+func (s *Server) legacyLiteLLMSectionMatches(gw config.GatewayConfig) bool {
+	if s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	legacy := strings.TrimRight(strings.TrimSpace(s.deps.Config.Governor.LiteLLM.Endpoint), "/")
+	if legacy == "" {
+		return strings.EqualFold(gw.Name, config.GatewayKindLiteLLM)
+	}
+	return strings.EqualFold(legacy, strings.TrimRight(strings.TrimSpace(gw.Endpoint), "/"))
 }

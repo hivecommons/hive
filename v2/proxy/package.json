@@ -2,12 +2,12 @@
   "name": "hive-dashboard-proxy",
   "version": "2.0.0",
   "private": true,
-  "description": "Thin proxy: auth + static files → Go binary API",
+  "description": "Thin proxy: auth + static files \u2192 Go binary API",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node server.test.js && node terminal_cookie_verify.test.js && node redoc_pin.test.js"
+    "test": "node server.test.js && node terminal_cookie_verify.test.js && node redoc_pin.test.js && node session_cookie_v3.test.js"
   },
   "dependencies": {
     "express": "^5.2.0",
