@@ -583,6 +583,25 @@ type SaaSHive struct {
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
 
+	// TrackedChannel is the release channel ("stable", "candidate", "edge")
+	// this hive's image is pinned to, or "" for a hive on a plain branch.
+	//
+	// WHY THE REGISTRY CANNOT CARRY THIS: a channel image IS a build of some
+	// release branch, so the spoke heartbeats the binary's baked-in branch —
+	// a "stable" retag of a v4 build reports git_branch="v4" — and
+	// RegistryEntry.GitBranch is rewritten from that payload every beat.
+	// Within one heartbeat of a channel switch the registry has forgotten the
+	// channel entirely (the exact adopt-stale-value class RequestedGitHubHost
+	// documents above). The selection therefore lives here, on the hub-owned
+	// record, which no heartbeat path writes.
+	//
+	// Written ONLY by handleSwitchBranch: set when the requested switch target
+	// is a release channel, cleared when it is a plain branch. Overlaid onto
+	// the My Hives payload at read time (enrichFromSaaSMeta) so the version
+	// pill renders the channel — "stable (v4)" — while GitBranch keeps
+	// reporting the code branch actually running.
+	TrackedChannel string `json:"tracked_channel,omitempty"`
+
 	// Forge names the forge FAMILY this hive runs against: "" / "github" /
 	// "github-enterprise" (the GitHub App path), or "gitlab" / "gitea" (the
 	// pkg/forge adapter path, PRIVATE-TOKEN auth — no GitHub App). Empty means

@@ -2475,6 +2475,15 @@ type MyHiveEntry struct {
 	ProvError   string `json:"provError,omitempty"`
 	ProvStatus  string `json:"provStatus,omitempty"`
 	AutoUpgrade bool   `json:"autoUpgrade"`
+	// TrackedChannel is the release channel this hive's image is pinned to
+	// ("stable", "candidate", "edge"), or "" for a plain-branch hive. Overlaid
+	// at read time from the hub-owned SaaSHive record — deliberately NOT from
+	// the registry, whose GitBranch the spoke rewrites every beat with the
+	// image's baked-in branch (a channel retag of a v4 build heartbeats "v4").
+	// When set, the dashboard's version pill and picker treat it as the
+	// current selection (rendered via versionLabel as "stable (v4)") while
+	// gitBranch keeps driving everything about the code actually running.
+	TrackedChannel string `json:"trackedChannel,omitempty"`
 	// AutoUpgradeMode is always sent NORMALIZED (never empty when autoUpgrade is
 	// on) so the dashboard can render the effective mode without re-deriving the
 	// legacy empty-means-instant rule in JavaScript.
@@ -2663,6 +2672,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
+		// The tracked release channel comes from meta, never the registry: the
+		// spoke's heartbeat rewrites GitBranch with the image's baked-in branch
+		// every beat, which is exactly how the channel selection was being
+		// forgotten. Read-time overlay also means the pill flips to the channel
+		// on the very next poll after the switch, without waiting for a beat.
+		entry.TrackedChannel = sh.TrackedChannel
 		// Overlay the hosted namespace at read time too, so a placeholder or a
 		// hive whose live registry entry predates the field still shows
 		// "hive-hosted-<id>" in My Hives. Derived from the SaaSHive record, same
@@ -3991,6 +4006,26 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 			"hint", "branch may be deprecated or its CI image build never completed")
 		http.Error(w, `{"error":"no published image for that branch (deprecated branch, or its image build has not completed)"}`, http.StatusBadRequest)
 		return
+	}
+	// Persist WHAT the operator selected before delivering it, on the hub-owned
+	// hive record. The registry cannot remember a channel selection: the spoke
+	// heartbeats the image's baked-in branch (a "stable" retag of a v4 build
+	// reports git_branch="v4") and overwrites GitBranch every beat, so within
+	// one beat of the switch the dashboard's pill fell back to the branch. Set
+	// on a channel switch, cleared on a plain-branch switch, written by no
+	// other path — heartbeats never touch it. Done after every validation gate
+	// above (so a refused switch records nothing) and before the two delivery
+	// paths below (so kubectl-vs-heartbeat delivery cannot diverge on it). A
+	// save failure only downgrades the pill to the reported branch; it must
+	// not block the switch itself.
+	if isChannel {
+		h.TrackedChannel = body.Branch
+	} else {
+		h.TrackedChannel = ""
+	}
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Warn("branch switch: failed to persist tracked channel — the version pill will fall back to the spoke-reported branch",
+			"hive", id, "target", body.Branch, "error", err)
 	}
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
@@ -10228,8 +10263,11 @@ const dashboardHTML = `<!DOCTYPE html>
        Reads NEVER throw: storage can be disabled, full, or hold junk, and none
        of that may block the network path. */
     var LS_HIVES_CACHE = 'hive-my-hives-cache';
-    /* Bump on ANY change to the hive row shape consumed by renderHives(). */
-    var HIVES_CACHE_VERSION = 1;
+    /* Bump on ANY change to the hive row shape consumed by renderHives().
+       v2: rows carry trackedChannel (the hub-persisted release-channel
+       selection the version pill renders); a v1 cache would repaint a
+       channel-pinned hive as its bare branch for the pre-network paint. */
+    var HIVES_CACHE_VERSION = 2;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -11384,6 +11422,10 @@ const dashboardHTML = `<!DOCTYPE html>
       var parts = [
         h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
         h.role, h.gitBranch, h.gitHash, h.dashboardUrl,
+        /* The tracked release channel is what the version pill shows for a
+           channel-pinned hive, so "stable" has to find those rows even though
+           their gitBranch reports the underlying release branch. */
+        h.trackedChannel,
         /* The GitHub host is shown as a pill in the Location column, so it has
            to be searchable too — "github.ibm.com" is how an admin narrows to
            the GHE fleet. Absent means public GitHub, which is what the pill
@@ -13593,6 +13635,18 @@ const dashboardHTML = `<!DOCTYPE html>
         var versionCell = '';
         if (sha) {
           var branchName = h.gitBranch || 'v2';
+          /* Effective version SELECTION, distinct from the running branch. A
+             hive following a release channel heartbeats the channel image's
+             baked-in branch (a "stable" retag of a v4 build reports
+             gitBranch "v4"), so gitBranch alone forgets the channel within
+             one beat of the switch — the pill read "v4" on a stable hive.
+             trackedChannel is the hub-persisted selection
+             (SaaSHive.TrackedChannel: written only by a branch/channel
+             switch, never by heartbeats). When set it is what the pill shows
+             and what the picker treats as currently selected; branchName
+             keeps driving everything about the code actually running
+             (latest/behind, drift, upgrade state). */
+          var versionSel = h.trackedChannel || branchName;
           var branchLatest = _latestSHAs[branchName] || _latestSHA;
           var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
           if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
@@ -13608,14 +13662,20 @@ const dashboardHTML = `<!DOCTYPE html>
           if (canSwitchBranch) {
             for (var bi = 0; bi < _trackedBranches.length; bi++) {
               var tb = _trackedBranches[bi];
-              if (tb !== branchName) {
+              /* Compared against the SELECTION, not the running branch: a hive
+                 tracking "stable" (currently a v4 image) must still offer v4
+                 here — picking it is a real action, un-tracking the channel. */
+              if (tb !== versionSel) {
                 branchOptions += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
               }
             }
             var chOpts = '';
             for (var cbi = 0; cbi < _releaseChannels.length; cbi++) {
               var cb = _releaseChannels[cbi];
-              if (cb === branchName) continue;
+              /* The channel the hive already tracks is the current selection —
+                 omit it exactly as the running branch is omitted above. Keyed
+                 on versionSel so "stable" reads as selected, not "v4". */
+              if (cb === versionSel) continue;
               /* Name what the channel resolves to RIGHT NOW in the hover, so
                  the operator is not picking a word with no visible meaning.
                  Falls back to the channel's own description when unresolved. */
@@ -13637,14 +13697,15 @@ const dashboardHTML = `<!DOCTYPE html>
                 '<div style="padding:2px 10px;font-size:0.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Channels</div>' + chOpts;
             }
           }
-          /* Pill text goes through versionLabel so a hive tracking a channel
-             reads "stable (v4)" — the branch the channel currently resolves
-             to — while a plain branch renders unchanged. branchName itself
-             stays the bare value: every comparison (cb === branchName) and
-             switch payload below keys on it. */
+          /* Pill text is the SELECTION (versionSel) through versionLabel, so
+             a hive tracking a channel reads "stable (v4)" — the channel plus
+             the branch it currently resolves to — and keeps reading that
+             after the spoke heartbeats its baked-in branch. A plain-branch
+             hive renders unchanged. Display-only: versionSel/branchName stay
+             bare values, and every switch payload sends the bare name. */
           var branch = canSwitchBranch
-            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(versionLabel(branchName)) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
-            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(versionLabel(branchName)) + '</span>';
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(versionLabel(versionSel)) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(versionLabel(versionSel)) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
