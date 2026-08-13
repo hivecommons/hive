@@ -204,7 +204,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
 ARG PI_VERSION=0.84.1
-RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
 
 # --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
