@@ -146,6 +146,29 @@ func TestSplitAtParagraphs_SingleShort(t *testing.T) {
 	}
 }
 
+func TestValidateLocalFilePath(t *testing.T) {
+	orig := allowedFilePrefixes
+	t.Cleanup(func() { allowedFilePrefixes = orig })
+
+	base := t.TempDir()
+	allowedFilePrefixes = []string{base + string(filepath.Separator)}
+
+	if err := validateLocalFilePath(filepath.Join(base, "doc.md")); err != nil {
+		t.Fatalf("expected allowed local document path: %v", err)
+	}
+	if err := validateLocalFilePath(filepath.Join(base, "..", "secret.md")); err == nil {
+		t.Fatal("expected path outside allowed prefix to be rejected")
+	}
+
+	ds := &DocumentSource{knowledgeDir: base}
+	if err := ds.validateFilePath(filepath.Join(base, "nested", "doc.md")); err != nil {
+		t.Fatalf("expected DocumentSource path under knowledge dir: %v", err)
+	}
+	if err := ds.validateFilePath(filepath.Join(base, "..", "secret.md")); err == nil {
+		t.Fatal("expected DocumentSource path outside knowledge dir to be rejected")
+	}
+}
+
 // --- Context7 coverage (context7Get and wrappers) ---
 
 func TestContext7Get_Success(t *testing.T) {
@@ -393,8 +416,11 @@ func TestDocumentSource_ImportWithGraph(t *testing.T) {
 	baseDir := filepath.Join(tmpDir, "knowledge")
 	gs := newTestGraphStore(t)
 
-	srcFile := filepath.Join(tmpDir, "test.txt")
+	srcFile := filepath.Join(baseDir, "test.txt")
 	content := "First para about one thing.\n\nSecond para about another thing.\n\nThird para wraps up."
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(srcFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

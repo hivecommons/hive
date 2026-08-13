@@ -69,6 +69,74 @@ func TestDocumentSource_ImportFile(t *testing.T) {
 	}
 }
 
+// TestDocumentSource_ImportFile_OutsideKnowledgeDirRejected is the positive
+// control for the file_path confinement guard: it points a doc source at a
+// real, readable file OUTSIDE the knowledge directory (simulating an
+// authenticated caller using file_path to exfiltrate e.g. /data/hive.yaml or
+// /secrets/*). If the validateFilePath check at the read site is removed,
+// Import succeeds reading the file and this test FAILS.
+func TestDocumentSource_ImportFile_OutsideKnowledgeDirRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	vaultDir := filepath.Join(tmpDir, "vault")
+	baseDir := filepath.Join(tmpDir, "knowledge")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Readable file outside the knowledge dir (sibling of baseDir).
+	secretFile := filepath.Join(tmpDir, "secret.txt")
+	if err := os.WriteFile(secretFile, []byte("super secret credentials"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	// Absolute path outside the knowledge dir must be rejected.
+	ds := NewDocumentSource(DocSourceConfig{
+		Name:     "evil-abs",
+		FilePath: secretFile,
+		Layer:    LayerProject,
+	}, baseDir, vaultDir, nil, logger, "")
+	if _, err := ds.Import(context.Background()); err == nil {
+		t.Fatal("expected Import to reject absolute file_path outside knowledge dir")
+	} else if !strings.Contains(err.Error(), "outside the allowed knowledge directory") {
+		t.Fatalf("expected confinement error, got: %v", err)
+	}
+
+	// ../ traversal escaping the knowledge dir must be rejected.
+	ds = NewDocumentSource(DocSourceConfig{
+		Name:     "evil-traversal",
+		FilePath: filepath.Join(baseDir, "..", "secret.txt"),
+		Layer:    LayerProject,
+	}, baseDir, vaultDir, nil, logger, "")
+	if _, err := ds.Import(context.Background()); err == nil {
+		t.Fatal("expected Import to reject ../ traversal escaping knowledge dir")
+	} else if !strings.Contains(err.Error(), "outside the allowed knowledge directory") {
+		t.Fatalf("expected confinement error, got: %v", err)
+	}
+
+	// No artifact may have been written for the rejected sources.
+	for _, slug := range []string{"evil-abs", "evil-traversal"} {
+		if _, err := os.Stat(filepath.Join(baseDir, docStorageDir, slug, docSourceFile+".txt")); !os.IsNotExist(err) {
+			t.Errorf("artifact for %s should not exist after rejected import", slug)
+		}
+	}
+
+	// A file inside the knowledge dir imports fine (guard is not over-broad).
+	okFile := filepath.Join(baseDir, "doc.txt")
+	if err := os.WriteFile(okFile, []byte("Legitimate knowledge content."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ds = NewDocumentSource(DocSourceConfig{
+		Name:     "ok-doc",
+		FilePath: okFile,
+		Layer:    LayerProject,
+	}, baseDir, vaultDir, nil, logger, "")
+	if _, err := ds.Import(context.Background()); err != nil {
+		t.Fatalf("expected in-dir import to succeed: %v", err)
+	}
+}
+
 func TestDocumentSource_ImportURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
