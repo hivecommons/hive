@@ -20,6 +20,15 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: hive
+      securityContext:
+        # RuntimeDefault seccomp profile restricts available syscalls to the
+        # default container runtime allowlist, reducing kernel attack surface.
+        # runAsNonRoot is intentionally omitted: the hive process starts as
+        # root to set up iptables rules and then uses SUID su-exec (chmod 4750
+        # root:hive-launch) to switch per-agent worker processes to non-root
+        # UIDs. Setting runAsNonRoot here would break that UID-switching flow.
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: hive
           image: hive:latest
