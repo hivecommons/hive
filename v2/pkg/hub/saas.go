@@ -3293,16 +3293,13 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
-	// Effective owners (creator, granted owner, hub admin — userIsHiveOwner)
-	// always pass; other granted roles keep read access to status. This is a
-	// deliberate v4 deviation from v2, which tightened status to owner-only:
-	// restricting existing read/read-write access is out of scope for the
-	// granted-owner parity port (which only EXTENDS who passes owner checks).
+	// Owner-only, matching v2's tightening (operator decision 2026-08-13):
+	// effective owners (creator, granted owner, hub admin — userIsHiveOwner)
+	// read status; granted read/read-write roles do NOT. The full SaaSHive
+	// record includes operational metadata beyond what a read grant implies.
 	if !userIsHiveOwner(username, h) {
-		if _, hasAccess := user.Hives[id]; !hasAccess {
-			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
-			return
-		}
+		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h)

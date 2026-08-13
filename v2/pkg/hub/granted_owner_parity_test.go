@@ -146,12 +146,12 @@ func TestGrantedOwnerParityForHiveManagementHandlers(t *testing.T) {
 	}
 }
 
-// TestHiveStatusAccessSemantics pins handleHiveStatus's v4 semantics after the
-// granted-owner parity port: effective owners (creator and granted owner) pass
-// via userIsHiveOwner, granted read/read-write users KEEP their existing status
-// access via the access fallback (a deliberate deviation from v2, which
-// tightened status to owner-only), and unrelated users remain rejected — the
-// positive control that the gate is still enforced.
+// TestHiveStatusAccessSemantics pins handleHiveStatus's owner-only semantics
+// (operator decision 2026-08-13, matching v2's tightening): effective owners
+// (creator and granted owner) pass via userIsHiveOwner; granted read and
+// read-write roles are rejected — the full SaaSHive record carries operational
+// metadata beyond what a read grant implies; unrelated users remain rejected
+// as the positive control that the gate is still enforced.
 func TestHiveStatusAccessSemantics(t *testing.T) {
 	actors := []struct {
 		name       string
@@ -161,8 +161,8 @@ func TestHiveStatusAccessSemantics(t *testing.T) {
 	}{
 		{name: "creator is allowed", username: "creator", wantStatus: http.StatusOK},
 		{name: "granted owner is allowed", username: "granted-owner", role: "owner", wantStatus: http.StatusOK},
-		{name: "granted read keeps status access", username: "reader", role: "read", wantStatus: http.StatusOK},
-		{name: "granted read-write keeps status access", username: "writer", role: "read-write", wantStatus: http.StatusOK},
+		{name: "granted read is rejected (owner-only)", username: "reader", role: "read", wantStatus: http.StatusForbidden},
+		{name: "granted read-write is rejected (owner-only)", username: "writer", role: "read-write", wantStatus: http.StatusForbidden},
 		{name: "unrelated user is rejected", username: "stranger", wantStatus: http.StatusForbidden},
 	}
 
