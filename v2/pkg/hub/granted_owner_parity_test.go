@@ -40,13 +40,8 @@ func TestGrantedOwnerParityForHiveManagementHandlers(t *testing.T) {
 			},
 			handler: (*HubServer).handleDeleteHive,
 		},
-		{
-			name:    "migrate hive",
-			method:  http.MethodPost,
-			target:  "/migrate",
-			body:    `{"target_cluster_id":"hive-oke"}`,
-			handler: (*HubServer).handleMigrateHive,
-		},
+		// "migrate hive" was removed from this table with the migration API
+		// itself (v2 #3577 port) — the route no longer exists to gate.
 		{
 			name:   "upgrade hive",
 			method: http.MethodPost,
