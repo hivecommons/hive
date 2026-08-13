@@ -26,7 +26,7 @@ func TestNewSharedStore_CreatesGroupWritableDir(t *testing.T) {
 		t.Fatalf("precondition: dir should not exist yet, stat err=%v", err)
 	}
 
-	s, err := NewStore(dir)
+	s, err := NewSharedStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
