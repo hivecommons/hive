@@ -4946,6 +4946,50 @@ func runEvalCycle(
 			if parts := strings.SplitN(primaryRepo, "/", 2); len(parts) == 2 {
 				org, repoName = parts[0], parts[1]
 			}
+
+			// #3704: pin the digest to ONE repo commit. Resolve the target repo's
+			// latest commit ONCE here (invariants 1 & 3), cite it in the rendered
+			// comment (invariant 2, via the footer FormatDigestMarkdown emits when
+			// AnalyzedSnapshot is set), and verify each finding's file path against
+			// that exact commit so a since-removed path (e.g. "docs/install.md") is
+			// flagged as outdated rather than cited as live. Best-effort: if the SHA
+			// cannot be resolved, fall back to the previous unpinned behavior rather
+			// than skip the digest.
+			if ghClient != nil && org != "" && repoName != "" {
+				branch := cfg.Policies.Branch
+				if branch == "" {
+					if r, _, rerr := ghClient.GetRepo(ctx, org, repoName); rerr == nil {
+						branch = r.GetDefaultBranch()
+					} else {
+						logger.Warn("advisory: could not resolve default branch for snapshot", "repo", primaryRepo, "error", rerr)
+					}
+				}
+				if branch != "" {
+					if sha, serr := ghClient.LatestCommitHash(ctx, org, repoName, branch); serr == nil && sha != "" {
+						digest.AnalyzedSnapshot = &advisory.Snapshot{
+							Owner:  org,
+							Repo:   repoName,
+							Branch: branch,
+							SHA:    sha,
+						}
+						advisory.VerifyFindingPaths(digest, func(path string) bool {
+							exists, verr := ghClient.PathExistsAtRef(ctx, org, repoName, path, sha)
+							if verr != nil {
+								// Inconclusive check (network/rate-limit, not a 404):
+								// treat as existing so a transient error never
+								// mislabels a real path as outdated.
+								logger.Warn("advisory: path existence check failed", "path", path, "repo", primaryRepo, "sha", sha, "error", verr)
+								return true
+							}
+							return exists
+						})
+						logger.Info("advisory digest pinned to commit", "repo", primaryRepo, "branch", branch, "sha", sha)
+					} else if serr != nil {
+						logger.Warn("advisory: could not resolve latest commit for snapshot", "repo", primaryRepo, "branch", branch, "error", serr)
+					}
+				}
+			}
+
 			md := advisory.FormatDigestMarkdown(digest, org, repoName)
 			if md != "" {
 				if issueNum, ok := advisoryIssues[primaryRepo]; ok && issueNum > 0 {

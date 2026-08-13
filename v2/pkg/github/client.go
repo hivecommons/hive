@@ -1101,6 +1101,30 @@ func (c *Client) GetFileContentRef(ctx context.Context, owner, repo, path, ref s
 	return content, nil
 }
 
+// PathExistsAtRef reports whether path exists in owner/repo at the given git ref
+// (branch, tag, or commit SHA). It is used by the advisory digest to verify that
+// a finding's file reference still exists at the pinned analysis commit (#3704),
+// so a stale path (e.g. a since-removed "docs/install.md") is not cited as if it
+// were live. A 404 means "does not exist"; any other error is returned so the
+// caller can decide how to treat an inconclusive check.
+func (c *Client) PathExistsAtRef(ctx context.Context, owner, repo, path, ref string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	var opts *gh.RepositoryContentGetOptions
+	if ref != "" {
+		opts = &gh.RepositoryContentGetOptions{Ref: ref}
+	}
+	fileContent, dirContent, resp, err := c.client.Repositories.GetContents(ctx, owner, repo, path, opts)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking %s/%s/%s@%s: %w", owner, repo, path, ref, err)
+	}
+	return fileContent != nil || len(dirContent) > 0, nil
+}
+
 // SearchPRCount searches GitHub for PRs by author within an org.
 // state is "open" or "merged".
 func (c *Client) SearchPRCount(ctx context.Context, author, org, state string) (int, error) {
