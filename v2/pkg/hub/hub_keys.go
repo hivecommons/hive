@@ -219,6 +219,47 @@ func SSOSigningSeedFromMaster(master string) string {
 // for a hive we have positively identified as v4.
 var ssoEd25519HiveIDs = map[string]bool{
 	"hosted-kubestellar-console-4vkt": true,
+	// Spokes IMAGE-FLIPPED to v4 rather than provisioned as v4. They run v4 code
+	// (so they verify Ed25519 only) but the hub has no registry entry for them
+	// yet — hiveWantsEd25519SSO returns early on entry == nil, so the rolling-tag
+	// check below never runs and they fell back to the legacy symmetric mint.
+	// Listing them here restores SSO immediately; each drops out of this map on
+	// its own once it heartbeats and the v4-latest tag check classifies it.
+	"hosted-available-akswec2-260810-ig9w":               true,
+	"hosted-available-akswec2-260810-n0sv":               true,
+	"hosted-available-akswec2-260810-wbkh":               true,
+	"hosted-available-oke-01-placeholder-bb95":           true,
+	"hosted-available-oke-11-placeholder-r05x":           true,
+	"hosted-available-oke-12-placeholder-2soo":           true,
+	"hosted-available-oke-14-placeholder-jwgm":           true,
+	"hosted-available-oke-15-placeholder-iv1r":           true,
+	"hosted-available-oke-260812-0nzc-available-ok-ba44": true,
+	"hosted-available-oke-260812-756i-available-ok-7ids": true,
+	"hosted-available-oke-260812-8yiz-available-ok-go05": true,
+	"hosted-available-oke-260812-ixya-available-ok-3do3": true,
+	"hosted-available-oke-260812-jlem-available-ok-nnpj": true,
+	"hosted-available-vllmd-09":                          true,
+	"hosted-available-vllmd-15":                          true,
+	"hosted-available-vllmd-260731-fbo1":                 true,
+	"hosted-available-vllmd-260731-fikn":                 true,
+	"hosted-available-vllmd-260731-gzlo":                 true,
+	"hosted-available-vllmd-260731-iia2":                 true,
+	"hosted-available-vllmd-260731-jnip":                 true,
+	"hosted-available-vllmd-260731-nq4a":                 true,
+	"hosted-available-vllmd-260731-os6j":                 true,
+	"hosted-available-vllmd-260731-sl58":                 true,
+	"hosted-available-vllmd-260731-vx5z":                 true,
+	"hosted-available-vllmd-260806-1bo3":                 true,
+	"hosted-available-vllmd-260806-1cyh":                 true,
+	"hosted-available-vllmd-260806-2d19":                 true,
+	"hosted-available-vllmd-260806-3yl8":                 true,
+	"hosted-available-vllmd-260806-50rc":                 true,
+	"hosted-available-vllmd-260806-5q6l":                 true,
+	"hosted-available-vllmd-260806-6vax":                 true,
+	"hosted-available-vllmd-260806-8ejh":                 true,
+	"hosted-available-vllmd-260806-8xkt":                 true,
+	"hosted-available-vllmd-260806-ajoe":                 true,
+	"hosted-open-source-osscar-appli-rc57":               true,
 }
 
 // hiveWantsEd25519SSO reports whether the hub should mint an ASYMMETRIC (Ed25519)
@@ -256,8 +297,20 @@ func hiveWantsEd25519SSO(hiveID string, entry *RegistryEntry) bool {
 	if gh != "" && (strings.HasPrefix(ssoEd25519TargetCommit, gh) || strings.HasPrefix(gh, ssoEd25519TargetCommit)) {
 		return true
 	}
-	if img := strings.ToLower(entry.ImageRef); strings.Contains(img, ssoEd25519TargetCommit) {
+	img := strings.ToLower(entry.ImageRef)
+	if strings.Contains(img, ssoEd25519TargetCommit) {
 		return true
 	}
-	return false
+	// ssoEd25519ImageTag is the ROLLING v4 tag. The commit check above pins one
+	// frozen build (12c34e5), so every v4 spoke that has since rolled forward —
+	// which is all of them — stopped matching and silently fell back to the
+	// legacy symmetric mint. A v4 spoke CANNOT verify that token, so the handoff
+	// died with "sso: bad signature" and the user was bounced to the hub login.
+	// Matching the tag itself is what actually tracks "this hive runs v4", and it
+	// keeps working across rolls instead of expiring at the next image build.
+	//
+	// Still positive-only: an unclassifiable hive stays on the legacy symmetric
+	// mint, so the v2 fleet is untouched.
+	const ssoEd25519ImageTag = "v4-latest"
+	return strings.Contains(img, ssoEd25519ImageTag)
 }
