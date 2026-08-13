@@ -187,6 +187,16 @@ func stampHostedNamespaceIdentity(cluster *ClusterConfig, namespace, name, org, 
 	if cluster == nil || strings.TrimSpace(namespace) == "" {
 		return
 	}
+	if cluster.PullOnly {
+		// A pull-only cluster's namespaces are not ours to label. Before
+		// clusters like this could be registered, clusterForHive fell back to
+		// the DEFAULT cluster and this ran against the hub's own cluster,
+		// stamping (or failing to find) a namespace that lives on another
+		// cluster entirely.
+		logger.Info("skipping hosted namespace identity stamp: cluster is not reachable from the hub",
+			"cluster", cluster.ID, "namespace", namespace, "hive_id", hiveID)
+		return
+	}
 	labels, annotations := hiveNamespaceIdentityLabels(name, org, hiveID)
 	if len(labels) == 0 && len(annotations) == 0 {
 		return

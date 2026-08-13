@@ -57,6 +57,12 @@ Use it when all of these hold:
    an entry in `/data/saas/clusters.json` on the hub PVC. The entry carries
    a `kubeconfig_path` and a `context` for the hub to use. The hub runs
    plain `kubectl` for the in-cluster entry.
+
+   A cluster marked `"pull_only": true` is excluded. Its spokes connect
+   outbound over the heartbeat and the hub cannot `kubectl` into them, so
+   it can be neither the source nor the target of a migrate call — the API
+   rejects both with a 400 before any migration state is recorded. Move
+   those hives by hand using the manual procedure below.
 2. **No hive data must be preserved.** The API does not copy volume data.
 3. **You are the hive owner or the hub admin.** The hub rejects any other
    caller with a 403.
