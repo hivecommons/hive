@@ -702,6 +702,10 @@ func TestHandleGovernorReposSpecialChars(t *testing.T) {
 	}
 }
 
+// A mixed list: the entry qualified with this hive's own org ("testorg") is
+// normalized to its bare name, and the already-bare entry is left exactly as it
+// was. The bare entry is the positive control — it proves the handler strips an
+// org prefix rather than everything up to a '/'.
 func TestHandleGovernorReposStripOrgPrefix(t *testing.T) {
 	srv := newFullServer(t)
 	body := `{"repos":["testorg/my-repo","other-repo"],"primaryRepo":"my-repo"}`
@@ -711,14 +715,17 @@ func TestHandleGovernorReposStripOrgPrefix(t *testing.T) {
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
-	// Verify org prefix was not silently stripped
 	repos := srv.deps.Config.Project.Repos
-	for _, r := range repos {
-		if strings.HasPrefix(r, "testorg/") {
-			t.Errorf("org prefix should be stripped: %q", r)
+	want := []string{"my-repo", "other-repo"}
+	if len(repos) != len(want) {
+		t.Fatalf("repos = %v, want %v", repos, want)
+	}
+	for i := range want {
+		if repos[i] != want[i] {
+			t.Fatalf("repos = %v, want %v", repos, want)
 		}
 	}
 }

@@ -632,8 +632,40 @@ func TestLoadWithOverrides_ConfigEnvOverridesRepos(t *testing.T) {
 	if len(cfg.Project.Repos) != 2 {
 		t.Fatalf("len(Project.Repos) = %d, want 2", len(cfg.Project.Repos))
 	}
-	if cfg.Project.Repos[0] != "my-org/alpha" {
-		t.Errorf("Project.Repos[0] = %q, want %q", cfg.Project.Repos[0], "my-org/alpha")
+	// PROJECT_REPOS still overrides the YAML; the org-qualified entries are
+	// normalized to bare repo names on load, because repo targets are built as
+	// org + "/" + repo and "my-org/alpha" would otherwise resolve to
+	// "my-org/my-org/alpha".
+	want := []string{"alpha", "beta"}
+	for i := range want {
+		if cfg.Project.Repos[i] != want[i] {
+			t.Errorf("Project.Repos[%d] = %q, want %q", i, cfg.Project.Repos[i], want[i])
+		}
+	}
+}
+
+// Positive control for the normalization above: config.env values that are
+// already bare must survive the override path untouched.
+func TestLoadWithOverrides_ConfigEnvBareReposUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "hive.yaml")
+	os.WriteFile(yamlPath, []byte(minimalValidYAML("my-org", "ghp_tok")), 0o600)
+
+	envPath := filepath.Join(dir, "config.env")
+	os.WriteFile(envPath, []byte("PROJECT_REPOS=alpha beta\n"), 0o600)
+
+	cfg, err := LoadWithOverrides(yamlPath, envPath)
+	if err != nil {
+		t.Fatalf("LoadWithOverrides() error = %v", err)
+	}
+	want := []string{"alpha", "beta"}
+	if len(cfg.Project.Repos) != len(want) {
+		t.Fatalf("Project.Repos = %v, want %v", cfg.Project.Repos, want)
+	}
+	for i := range want {
+		if cfg.Project.Repos[i] != want[i] {
+			t.Errorf("Project.Repos[%d] = %q, want %q", i, cfg.Project.Repos[i], want[i])
+		}
 	}
 }
 

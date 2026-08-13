@@ -3608,11 +3608,19 @@ const (
 )
 
 func (c *Config) applyDefaults() {
+	// Repo targets are built as org + "/" + repo, so an entry that already
+	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
+	// matching org prefix off both primary_repo and every repos entry on load.
+	// primary_repo has been normalized here for a long time; repos was not,
+	// which is why live configs are seen with a correct bare primary_repo next
+	// to an org-qualified repos list. A mismatched org is deliberately left
+	// alone so ValidateRepoTargets still rejects it rather than silently
+	// retargeting the hive at a repository the owner never named.
 	if c.Project.PrimaryRepo != "" && c.Project.Org != "" {
-		prefix := c.Project.Org + "/"
-		if strings.HasPrefix(c.Project.PrimaryRepo, prefix) {
-			c.Project.PrimaryRepo = strings.TrimPrefix(c.Project.PrimaryRepo, prefix)
-		}
+		c.Project.PrimaryRepo, _ = NormalizeRepoForOrg(c.Project.Org, c.Project.PrimaryRepo)
+	}
+	if len(c.Project.Repos) > 0 && c.Project.Org != "" {
+		c.Project.Repos, _ = NormalizeProjectRepos(c.Project.Org, c.Project.Repos)
 	}
 	if c.Dashboard.Port == 0 {
 		c.Dashboard.Port = defaultDashboardPort

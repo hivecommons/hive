@@ -1486,14 +1486,34 @@ func TestHandleGovernorRepos_Success(t *testing.T) {
 	}
 }
 
+// The fixture's org is "myorg", so "myorg/new-repo" is the hive's own org
+// spelled out — the form GitHub shows everywhere. Accept it and store the bare
+// repo name, because repo targets are built as org + "/" + repo and the
+// qualified form would otherwise resolve to "myorg/myorg/new-repo".
 func TestHandleGovernorRepos_StripOrg(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/new-repo"}, "primaryRepo": "myorg/new-repo"})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	if len(deps.Config.Project.Repos) == 1 && deps.Config.Project.Repos[0] == "new-repo" {
-		t.Errorf("repos mutated to stripped value %v despite rejection", deps.Config.Project.Repos)
+	if len(deps.Config.Project.Repos) != 1 || deps.Config.Project.Repos[0] != "new-repo" {
+		t.Errorf("repos = %v, want [new-repo]", deps.Config.Project.Repos)
+	}
+	if deps.Config.Project.PrimaryRepo != "new-repo" {
+		t.Errorf("primaryRepo = %q, want %q", deps.Config.Project.PrimaryRepo, "new-repo")
+	}
+}
+
+// A repo qualified with someone else's org must still be rejected outright and
+// must not mutate the stored config.
+func TestHandleGovernorRepos_ForeignOrgRejected(t *testing.T) {
+	s, deps := apiServer(t)
+	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"notmyorg/new-repo"}, "primaryRepo": "repo1"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if len(deps.Config.Project.Repos) != 1 || deps.Config.Project.Repos[0] != "repo1" {
+		t.Errorf("repos = %v, want the pre-request [repo1]", deps.Config.Project.Repos)
 	}
 }
 

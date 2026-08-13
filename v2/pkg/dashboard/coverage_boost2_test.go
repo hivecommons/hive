@@ -348,6 +348,11 @@ func TestHandleSnapshotPage_CustomHubURL(t *testing.T) {
 
 // --- handleGovernorRepos with path-stripping ---
 
+// An entry qualified with THIS hive's own org is the shape GitHub shows
+// everywhere, so the save is accepted and stored as the bare repo name. It must
+// never be persisted org-qualified: repo targets are built as org + "/" + repo,
+// so "testorg/repo1" under org "testorg" would resolve to
+// "testorg/testorg/repo1" and fail every agent.
 func TestHandleGovernorRepos_StripOrgPrefix(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Project.Org = "testorg"
@@ -358,14 +363,83 @@ func TestHandleGovernorRepos_StripOrgPrefix(t *testing.T) {
 	markOwnerRequest(req)
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
 	}
 	repos := srv.deps.Config.Project.Repos
-	for _, r := range repos {
-		if strings.Contains(r, "testorg/") {
-			t.Errorf("repo %q should not contain org prefix", r)
-		}
+	if len(repos) != 1 || repos[0] != "repo1" {
+		t.Fatalf("Project.Repos = %v, want [repo1]", repos)
+	}
+}
+
+// The org-qualified form is accepted in primaryRepo too, and both fields land
+// bare so the always-exactly-one-default guard still matches them up.
+func TestHandleGovernorRepos_StripOrgPrefixFromPrimary(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "zacburns"
+	body := `{"repos":["zacburns/mlz-manager"],"primaryRepo":"zacburns/mlz-manager"}`
+	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	srv.handleGovernorRepos(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "mlz-manager" {
+		t.Fatalf("Project.Repos = %v, want [mlz-manager]", got)
+	}
+	if got := srv.deps.Config.Project.PrimaryRepo; got != "mlz-manager" {
+		t.Fatalf("Project.PrimaryRepo = %q, want %q", got, "mlz-manager")
+	}
+}
+
+// Positive control for the two tests above: a bare repo name must pass through
+// the write path untouched. Without this a handler that stripped everything
+// before the first '/' would still look correct.
+func TestHandleGovernorRepos_BareRepoUnchanged(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "testorg"
+	body := `{"repos":["repo1"],"primaryRepo":"repo1"}`
+	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	srv.handleGovernorRepos(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "repo1" {
+		t.Fatalf("Project.Repos = %v, want [repo1]", got)
+	}
+}
+
+// A repo qualified with a DIFFERENT org must still be rejected with the clear
+// repo_target message — normalizing it away would silently retarget the hive at
+// a repository the owner never named.
+func TestHandleGovernorRepos_ForeignOrgPrefixRejected(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Project.Org = "testorg"
+	srv.deps.Config.Project.Repos = []string{"repo1"}
+	srv.deps.Config.Project.PrimaryRepo = "repo1"
+	body := `{"repos":["someoneelse/repo1"],"primaryRepo":"repo1"}`
+	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	markOwnerRequest(req)
+	srv.handleGovernorRepos(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "contains '/'") {
+		t.Fatalf("body = %q, want the repo_target contains-'/' message", w.Body.String())
+	}
+	// The rejected value must not have been persisted.
+	if got := srv.deps.Config.Project.Repos; len(got) != 1 || got[0] != "repo1" {
+		t.Fatalf("Project.Repos = %v, want the pre-request [repo1]", got)
 	}
 }
 

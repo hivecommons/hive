@@ -2965,6 +2965,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"hub_git_hash":             s.hubGitHash,
 		"hub_git_branch":           s.hubGitBranch,
 		"tracked_branches":         s.trackedBranchList(),
+		// Release channels are moving tags; the dashboard renders them as their
+		// own "channel -> image" block above the per-branch rows, and offers
+		// them as branch-switch targets. The association is resolved from
+		// registry digests (cached), never hardcoded to a branch name.
+		"release_channels":         ReleaseChannels(),
+		"channel_targets":          getChannelTargets(getDisplaySHAs(), s.logger),
 		"hub_auto_upgrade":         isHubAutoUpgrade(),
 		"hub_upgrade_state":        s.hubUpgradeState(),
 		"show_my_hives":            true,
@@ -3293,16 +3299,13 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}
-	// Effective owners (creator, granted owner, hub admin — userIsHiveOwner)
-	// always pass; other granted roles keep read access to status. This is a
-	// deliberate v4 deviation from v2, which tightened status to owner-only:
-	// restricting existing read/read-write access is out of scope for the
-	// granted-owner parity port (which only EXTENDS who passes owner checks).
+	// Owner-only, matching v2's tightening (operator decision 2026-08-13):
+	// effective owners (creator, granted owner, hub admin — userIsHiveOwner)
+	// read status; granted read/read-write roles do NOT. The full SaaSHive
+	// record includes operational metadata beyond what a read grant implies.
 	if !userIsHiveOwner(username, h) {
-		if _, hasAccess := user.Hives[id]; !hasAccess {
-			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
-			return
-		}
+		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h)
@@ -3869,7 +3872,12 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"branch is required"}`, http.StatusBadRequest)
 		return
 	}
-	validBranch := false
+	// A release channel is a moving TAG, not a git ref, so the branch-existence
+	// checks below would reject it ("stable" is not a branch on the hive repo).
+	// Accept it here and let the shared publish check further down be the real
+	// gate — the tag still has to exist on GHCR before we point a hive at it.
+	isChannel := isReleaseChannel(body.Branch)
+	validBranch := isChannel
 	for _, b := range s.trackedBranchList() {
 		if b == body.Branch {
 			validBranch = true
@@ -3897,7 +3905,8 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ns := "hive-hosted-" + id
-	imageTag := branchToTag(body.Branch) + "-latest"
+	// A channel IS the tag ("stable"); a branch's moving tag is "<branch>-latest".
+	imageTag := upgradeTargetTag(body.Branch)
 	image := "ghcr.io/kubestellar/hive:" + imageTag
 	// Refuse a branch name that sanitizes into something that is not a valid
 	// channel tag, rather than stranding the spoke on ImagePullBackOff behind a
@@ -3960,7 +3969,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
-			s.beginUpgrade(i, branchToTag(body.Branch)+"-latest")
+			s.beginUpgrade(i, imageTag)
 			break
 		}
 	}
@@ -10082,6 +10091,26 @@ const dashboardHTML = `<!DOCTYPE html>
       window._buildTimerInterval = setInterval(_tickBuildTimers, 1000);
     }
     var _trackedBranchesList = [];
+    /* Release channels: the ordered channel names, and the server-resolved
+       channel -> image association (see release_channels.go). _channelTargets
+       entries are {channel, branch, sha, digest}; branch/sha are EMPTY when the
+       channel points at a digest that is not any tracked branch's latest, and
+       the UI must render that honestly rather than guessing a branch. */
+    var _releaseChannels = [];
+    var _channelTargets = [];
+    /* Width of the channel-name pill in the "channel -> image" block. Fixed so
+       the three arrows line up in a column; sized for the longest channel name
+       ("candidate") at 0.6rem. */
+    var CHANNEL_NAME_MIN_W_PX = 62;
+
+    /* A registry digest is "sha256:<64 hex>" — far too long for a table cell.
+       Show the same 7 hex chars a short git SHA uses, keeping the full digest
+       in the title so it is still copyable/verifiable. */
+    function shortDigest(d) {
+      if (!d) return '';
+      var hex = d.indexOf(':') >= 0 ? d.slice(d.indexOf(':') + 1) : d;
+      return hex.length > 7 ? hex.slice(0, 7) : hex;
+    }
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
@@ -12540,6 +12569,8 @@ const dashboardHTML = `<!DOCTYPE html>
         _latestSHA = data.latest_sha || _latestSHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
+        if (data.release_channels) _releaseChannels = data.release_channels;
+        if (data.channel_targets) _channelTargets = data.channel_targets;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
         _latestBuildStarted = data.latest_sha_build_started || {};
@@ -12573,7 +12604,40 @@ const dashboardHTML = `<!DOCTYPE html>
           } else if (_latestSHA) {
             lines = '<span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHA) + '</span>';
           }
-          shaEl.innerHTML = lines ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Latest available images:</div>' + lines : '<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
+          /* Channel block, rendered ABOVE the per-branch rows as
+                 stable    ->  v4 3d31590 : <subject>
+             so the moving tags read as pointers INTO the branch list below
+             rather than as extra branches. The arrow column is fixed-width so
+             the three channel names left-align and the targets line up.
+             Nothing here assumes a channel tracks any particular branch: the
+             target comes from the server's digest match, and a channel with no
+             match renders its digest (or "unknown") instead of a branch. */
+          var chLines = '';
+          for (var ci = 0; ci < _channelTargets.length; ci++) {
+            var ct = _channelTargets[ci] || {};
+            var ctTarget;
+            if (ct.branch) {
+              var ctMsg = _latestSHAMessages[ct.branch] || '';
+              ctTarget = '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(ct.branch) + '</span><span style="font-family:monospace;color:var(--muted);margin-left:6px">' + esc(ct.sha || '') + '</span>' + (ctMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(ctMsg) + '</span>' : '');
+            } else if (ct.digest) {
+              /* Resolved, but to something no tracked branch points at — a
+                 pinned or mid-promotion build. Show the digest so the operator
+                 can still identify it; do NOT attribute it to a branch. */
+              ctTarget = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(ct.digest) + '">' + esc(shortDigest(ct.digest)) + '</span>';
+            } else {
+              ctTarget = '<span style="color:var(--muted);opacity:0.7;font-size:0.7rem" title="Channel tag could not be resolved on GHCR">unknown</span>';
+            }
+            chLines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;min-width:' + CHANNEL_NAME_MIN_W_PX + 'px;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);text-align:center" title="Release channel — a moving tag that follows whichever build is currently promoted to this track">' + esc(ct.channel) + '</span><span style="color:var(--muted);opacity:0.6;font-size:0.7rem">-&gt;</span>' + ctTarget + '</div>';
+          }
+          if (chLines) {
+            chLines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Release channels:</div>' + chLines +
+              '<div style="height:6px"></div>';
+          }
+          /* The branch rows keep their original header; the channel block gets
+             its own above it, so neither reads as a subheading of the other. */
+          if (lines) lines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Latest available images:</div>' + lines;
+          lines = chLines + lines;
+          shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
         var hubBranch = data.hub_git_branch || 'v2';
@@ -13395,7 +13459,14 @@ const dashboardHTML = `<!DOCTYPE html>
           var branchLatest = _latestSHAs[branchName] || _latestSHA;
           var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
           if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
-          var canSwitchBranch = isHosted && h.role === 'owner' && _trackedBranches.length > 1 && !h.upgrading;
+          /* A release channel is as valid an upgrade target as a branch — the
+             hive gets pinned to the moving tag and follows promotions — so the
+             same menu offers both. Channels are listed in their own section
+             below the branches, because picking a channel is a different KIND
+             of choice (track a promotion policy vs. track a git branch) and
+             mixing them into one flat list hides that. */
+          var canSwitchBranch = isHosted && h.role === 'owner' &&
+            (_trackedBranches.length > 1 || _releaseChannels.length > 0) && !h.upgrading;
           var branchOptions = '';
           if (canSwitchBranch) {
             for (var bi = 0; bi < _trackedBranches.length; bi++) {
@@ -13403,6 +13474,26 @@ const dashboardHTML = `<!DOCTYPE html>
               if (tb !== branchName) {
                 branchOptions += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
               }
+            }
+            var chOpts = '';
+            for (var cbi = 0; cbi < _releaseChannels.length; cbi++) {
+              var cb = _releaseChannels[cbi];
+              if (cb === branchName) continue;
+              /* Name what the channel resolves to RIGHT NOW in the hover, so
+                 the operator is not picking a word with no visible meaning.
+                 Falls back to the channel's own description when unresolved. */
+              var cbT = null;
+              for (var cti = 0; cti < _channelTargets.length; cti++) {
+                if (_channelTargets[cti] && _channelTargets[cti].channel === cb) { cbT = _channelTargets[cti]; break; }
+              }
+              var cbTitle = cbT && cbT.branch
+                ? 'Currently ' + cbT.branch + ' ' + (cbT.sha || '') + ' — the hive follows this channel as it is re-pointed'
+                : 'Moving release channel — the hive follows it as it is re-pointed';
+              chOpts += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(cb) + '\',this)" title="' + escAttr(cbTitle) + '" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#4ade80;border-radius:4px" onmouseover="this.style.background=\'rgba(34,197,94,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(cb) + '</div>';
+            }
+            if (chOpts) {
+              branchOptions += '<div style="border-top:1px solid #30363d;margin:4px 0"></div>' +
+                '<div style="padding:2px 10px;font-size:0.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Channels</div>' + chOpts;
             }
           }
           var branch = canSwitchBranch
@@ -13417,7 +13508,7 @@ const dashboardHTML = `<!DOCTYPE html>
              spinner, label and title always agree. Only a target on a DIFFERENT
              branch is a switch; a plain-SHA (auto-upgrade) target always reads
              "Upgrading", even if a stale switch sentinel lingers. */
-          var upgradeState = hiveUpgradeState(h, branchName);
+          var upgradeState = hiveSwitchState(h, branchName);
           var isSwitching = upgradeState.isSwitching;
           var targetBranch = upgradeState.targetBranch;
           /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
@@ -14249,7 +14340,7 @@ const dashboardHTML = `<!DOCTYPE html>
        from the branch the hive currently reports. A plain-SHA target — an
        auto-upgrade — yields no target branch and is therefore an upgrade, never
        a switch, regardless of any sticky sentinel. */
-    function hiveUpgradeState(h, branchName) {
+    function hiveSwitchState(h, branchName) {
       var sentinel = _upgradingHives[h.id];
       var hasSwitchSentinel = typeof sentinel === 'string'
         && sentinel.indexOf(SWITCH_SENTINEL_PREFIX) === 0;
@@ -16633,7 +16724,11 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function deleteHive(id) {
-      if (!await hiveConfirm('Delete ' + id + '? This removes the namespace, PV, OCI storage, and all data.')) return;
+      // Confirm with the friendly hive NAME the operator sees in the table, not
+      // the raw id / vanity-URL slug. Fall back to the id if the row is gone.
+      var _row = document.querySelector('[data-hive-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      var name = (_row && _row.getAttribute('data-hive-name')) || id;
+      if (!await hiveConfirm('Delete "' + name + '"? This removes the namespace, PV, OCI storage, and all data.')) return;
       var btns = document.querySelectorAll('button[onclick*="deleteHive"]');
       btns.forEach(function(b) { b.disabled = true; b.textContent = 'Deleting...'; b.style.opacity = '0.6'; });
       // Mark the row as deleting so its status shows "Deleting…" until the next
@@ -16641,7 +16736,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _deletingHives[id] = true;
       try {
         gtag('event','hive_deleted',{hive_id:id});
-        hiveToast('Deleting ' + id + '...', 'info');
+        hiveToast('Deleting "' + name + '"…', 'info');
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id), {method: 'DELETE'});
         if (!resp.ok) {
           var d = await resp.json().catch(function(){ return {}; });
@@ -16660,9 +16755,9 @@ const dashboardHTML = `<!DOCTYPE html>
              storage, so those may survive. Rendering it as an 'error' toast made
              a partial success look like the delete had failed even though the
              row vanished. Show it as an informational notice instead. */
-          hiveToast('Removed ' + id + ' from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
+          hiveToast('Removed "' + name + '" from the hub; some cloud resources may need manual cleanup' + (ok.warning ? ' (' + ok.warning + ')' : ''), 'info');
         } else {
-          hiveToast('Deleted ' + id, 'success');
+          hiveToast('Deleted "' + name + '"', 'success');
         }
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _deletingHives[id]; }
