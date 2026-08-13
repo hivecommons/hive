@@ -90,6 +90,31 @@ var heartbeatLoopActive atomic.Bool
 // goroutine, read by the dashboard's HTTP handler goroutine.
 var lastHeartbeatAttemptUnix atomic.Int64
 
+// lastGoodPayload caches the most recent payload a collect() actually
+// produced. It exists so a beat whose collect() TIMED OUT can still be sent —
+// carrying slightly-stale stats — instead of being dropped entirely.
+//
+// WHY (offline regression from the #3743 collect-timeout fix): when /data
+// (NFS RWX PVC) wedges, the agent-manager mutex is held across the stuck write
+// and collect() -> AllStatuses() blocks every cycle. #3743 bounded collect()
+// so the loop keeps ticking (liveness stays green), but on timeout it returned
+// nil and sendHeartbeat SKIPPED THE ENTIRE BEAT — POSTing nothing to the hub.
+// On a persistently-wedged spoke every beat's collect() times out, so every
+// beat was skipped, the hub received no heartbeats, and after the stale
+// threshold the UI marked an alive, 1/1-Ready hive OFFLINE. Caching the last
+// good payload lets the spoke keep beating (marked StatsStale) through the
+// stall so the hub keeps it online.
+//
+// Guarded by its own mutex because the collect goroutine writes it (on
+// success) while the sender reads it (on timeout); the two can overlap when a
+// late-returning wedged collect finally completes. A whole-payload clone is
+// stored so a later in-place mutation of the returned payload (name filtering,
+// timestamp stamping in sendHeartbeat) never races a reader of the cache.
+var lastGoodPayload = struct {
+	sync.Mutex
+	payload *HeartbeatPayload
+}{}
+
 // storeUnixOrZero stores t as unix seconds, or 0 for the zero time so it
 // reads back as "never happened" through the Last* accessors.
 func storeUnixOrZero(dst *atomic.Int64, t time.Time) {
@@ -598,6 +623,18 @@ type HeartbeatPayload struct {
 	// reporting it harmlessly and to describe what per-app-id files a spoke holds.
 	// It carries fingerprints ONLY — never key material.
 	GitHubAppKeysHeld map[string]string `json:"github_app_keys_held,omitempty"`
+	// StatsStale is true when this beat carries CACHED collected stats rather
+	// than fresh ones, because collect() timed out this cycle (see
+	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
+	// signal — the spoke process is alive and its loop is ticking — so the hub
+	// MUST keep the hive online and advance lastHeartbeat; it should simply not
+	// treat the agent/fleet/health numbers as freshly observed. Without this
+	// beat the hub would receive nothing at all while /data (NFS) is wedged and
+	// would mark an alive, 1/1-Ready hive OFFLINE after the stale threshold.
+	//
+	// omitempty so a healthy fresh beat, and every older spoke, sends nothing —
+	// which the hub reads as "stats are fresh", never as an error.
+	StatsStale bool `json:"stats_stale,omitempty"`
 }
 
 const (
@@ -853,11 +890,36 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	// that is actually alive (the NFS server is stuck, which a restart cannot
 	// fix), producing a fleet-wide liveness crash-loop. The attempt above is
 	// already recorded, so timing collect() out lets the loop keep ticking and
-	// keeps liveness green while the process is genuinely alive; the beat is
-	// simply skipped this cycle and retried on the next tick.
+	// keeps liveness green while the process is genuinely alive.
+	//
+	// But a timed-out collect must NOT skip the whole beat: on a spoke whose
+	// /data (NFS) is persistently wedged, collect() times out EVERY cycle, so
+	// skipping every beat means the hub receives no heartbeats and marks an
+	// alive, 1/1-Ready hive OFFLINE after the stale threshold (the offline
+	// regression from #3743). Instead, on timeout we fall back to the LAST-GOOD
+	// collected payload (cached below on every success), marked StatsStale, so
+	// the hub still gets a live beat and keeps the hive online — the stats are
+	// merely slightly stale, not absent. Only a spoke that has NEVER completed a
+	// collect (the first beats) has no cache to fall back on; that alone skips.
 	payload := collectWithTimeout(ctx, collect, heartbeatTimeout, logger)
 	if payload == nil {
-		return nil
+		cached := loadLastGoodPayload()
+		if cached == nil {
+			// No successful collect yet — genuinely nothing to send. Rare: only
+			// the first beats before any collect has ever finished in time.
+			logger.Warn("hub heartbeat collect timed out and no cached payload yet — skipping this beat; loop keeps ticking so liveness stays green")
+			return nil
+		}
+		// Send the cached stats so the hub keeps the hive online through the
+		// stall. Mark them stale so the hub does not treat the agent/fleet
+		// numbers as freshly observed.
+		cached.StatsStale = true
+		payload = cached
+		logger.Warn("hub heartbeat collect timed out — sending LAST-GOOD cached stats (marked stale) so the hub keeps this hive online; loop keeps ticking so liveness stays green")
+	} else {
+		// Fresh collect: remember it (a clone, so the in-place filtering below
+		// never mutates the cache) for the next time collect() times out.
+		storeLastGoodPayload(payload)
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	payload.PublicURLSelfCheck = publicURLSelfCheckFor(ctx, payload.DashboardURL, logger)
@@ -974,13 +1036,61 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 		return payload
 	case <-timer.C:
 		if logger != nil {
-			logger.Warn("hub heartbeat collect timed out — skipping this beat; loop keeps ticking so liveness stays green",
+			// The CALLER decides what to do with a timed-out collect (send
+			// cached last-good stats, or skip on the first beats) — it logs the
+			// outcome. Here we only note the timeout itself.
+			logger.Warn("hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
 				"timeout", timeout.String())
 		}
 		return nil
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+// storeLastGoodPayload caches a deep clone of a payload that collect() produced
+// successfully, for reuse when a later collect() times out. A clone is stored
+// (not the pointer) so sendHeartbeat's in-place filtering/stamping of the live
+// payload never mutates what a future timed-out beat will send.
+func storeLastGoodPayload(p *HeartbeatPayload) {
+	c := clonePayload(p)
+	if c == nil {
+		return
+	}
+	lastGoodPayload.Lock()
+	lastGoodPayload.payload = c
+	lastGoodPayload.Unlock()
+}
+
+// loadLastGoodPayload returns a deep clone of the last successfully-collected
+// payload, or nil if collect() has never yet succeeded. A clone is returned so
+// the caller can mutate it (set StatsStale, re-stamp Timestamp) without
+// touching the cached copy that the next timed-out beat will reuse.
+func loadLastGoodPayload() *HeartbeatPayload {
+	lastGoodPayload.Lock()
+	p := lastGoodPayload.payload
+	lastGoodPayload.Unlock()
+	return clonePayload(p)
+}
+
+// clonePayload deep-copies a HeartbeatPayload via JSON round-trip. JSON is the
+// exact shape that goes on the wire, so a clone through it can never share a
+// slice/map/pointer with the original — which is what makes the cache safe to
+// read from the sender while the collect goroutine writes a fresh one. Returns
+// nil for a nil input or on the (not expected in practice) marshal error.
+func clonePayload(p *HeartbeatPayload) *HeartbeatPayload {
+	if p == nil {
+		return nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	var out HeartbeatPayload
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return &out
 }
 
 func publicURLSelfCheckFor(ctx context.Context, rawURL string, logger *slog.Logger) *PublicURLSelfCheck {
