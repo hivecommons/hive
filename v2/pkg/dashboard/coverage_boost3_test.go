@@ -686,6 +686,9 @@ func TestHandleAgentImport_InvalidBody_Boost(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/agents/import", strings.NewReader("not yaml"))
 	req.Header.Set("Content-Type", "application/json")
+	// Import is owner-only (audit F16). This test asserts body validation, not
+	// authorization, so give it credentials and keep asserting 400.
+	markOwnerRequest(req)
 	w := httptest.NewRecorder()
 	srv.handleAgentImport(w, req)
 

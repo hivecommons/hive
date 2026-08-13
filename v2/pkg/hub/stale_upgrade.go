@@ -49,6 +49,17 @@ const maxOrphanedUpgradeSweeps = 3
 type upgradeAttemptEvidence struct {
 	// orphaned is true when the flag should be cleared.
 	orphaned bool
+	// converged marks the clear as a COMPLETED upgrade rather than an abandoned
+	// one: the spoke is demonstrably at (or ahead of) the target it was asked
+	// for, so the rollout succeeded and only the latch was left behind.
+	//
+	// The sweep must treat the two differently. An abandoned attempt is re-armed
+	// and counts against maxOrphanedUpgradeSweeps, because the hive is still on
+	// its old build and the instruction has to be re-delivered. A converged one
+	// must do NEITHER: re-arming would re-instruct an upgrade that has already
+	// happened (rolling a healthy pod), and burning retry budget would let three
+	// successful upgrades tip the hive into a permanent, false UpgradeFailed.
+	converged bool
 	// reason is a short human-readable justification, logged and surfaced.
 	reason string
 	// elapsed is the time since the upgrade was instructed.
@@ -136,15 +147,45 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 		return ev
 	}
 
-	// The spoke is alive and post-dates the instruction. If it is already on the
+	// The spoke is alive, post-dates the instruction, and is already ON the
 	// target — or AHEAD of it (a floating-tag re-pull lands on whatever CI last
 	// published, which can surpass a stale target; only ancestry can prove
-	// that) — the flag is merely lagging and the heartbeat path clears it; only
-	// a spoke still on a SHA behind the target is genuinely un-upgraded.
+	// that). The upgrade CONVERGED. Clear the latch here.
+	//
+	// This used to `return ev` (orphaned=false) on the reasoning that "the flag
+	// is merely lagging and the heartbeat path clears it". That deferral is the
+	// z-mlz-manager wedge: it is only true when a heartbeat actually arrives
+	// carrying a state TRANSITION the completion chain in server.go recognises.
+	// When the spoke's entry already records the target SHA — because the hub
+	// asked for X, the spoke rolled onto X (or onto a newer Y that the entry has
+	// since recorded), and every later beat therefore reports the SAME hash the
+	// entry already holds — the completion chain sees no change to act on, so it
+	// never fires. Both sides then defer to each other and the "Upgrading"
+	// spinner, its elapsed counter and the stale SHA it was armed with survive
+	// forever. Live case: z-mlz-manager sat Upgrading=true with
+	// GitHash == UpgradeTarget == 815d7e4 for 35m+ while its pod was ready and
+	// healthy on v4-latest.
+	//
+	// Deciding it HERE is safe precisely because we have already proven all
+	// three of: the flag is latched, orphanedUpgradeClearAfter has elapsed (or
+	// the start clock is corrupt), and the spoke has heartbeated SINCE the
+	// instruction. A genuine in-flight rollout fails the last test — a
+	// restarting pod is not heartbeating — so this can never cancel a live
+	// upgrade.
+	//
+	// converged is reported distinctly from the un-upgraded orphan below so the
+	// timeline and logs do not accuse a hive that in fact upgraded successfully
+	// of having "never completed".
+	//
 	// commitAtOrAheadOfTarget is cache-only (the sweep holds s.mu), so an
 	// unresolved pair is treated as "behind" this cycle and re-evaluated next.
 	if entry.UpgradeTarget != "" && (sameCommit(entry.GitHash, entry.UpgradeTarget) ||
 		commitAtOrAheadOfTarget(entry.GitHash, entry.UpgradeTarget, nil)) {
+		ev.orphaned = true
+		ev.converged = true
+		ev.reason = "spoke is running " + orDash(entry.GitHash) +
+			", at or ahead of the requested target " + orDash(entry.UpgradeTarget) +
+			" — upgrade completed but the latch was never cleared"
 		return ev
 	}
 
@@ -187,6 +228,9 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		// retrying — reported as a fault rather than re-armed.
 		exhausted bool
 		sweeps    int
+		// converged marks a clear that completed successfully — logged and
+		// timelined as a completion, never as an abandonment.
+		converged bool
 	}
 	var swept []cleared
 
@@ -202,6 +246,26 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		}
 		ev := evaluateOrphanedUpgrade(h, now, getLatestSHAForBranch(branch))
 		if !ev.orphaned {
+			continue
+		}
+		if ev.converged {
+			// The upgrade LANDED; only the latch was stale. Clear it outright:
+			// no retry-budget spend, no re-arm, and reset the counter so a hive
+			// that needed one sweep on each of three separate upgrades is never
+			// declared permanently faulty. Drop any armed instruction too, or
+			// the next beat re-delivers an upgrade that already happened.
+			swept = append(swept, cleared{
+				id: h.ID, from: h.GitHash, to: h.UpgradeTarget,
+				elapsed: ev.elapsed, reason: ev.reason, converged: true,
+			})
+			h.Upgrading = false
+			h.UpgradeTarget = ""
+			h.UpgradeStartedAt = time.Time{}
+			h.OrphanedUpgradeSweeps = 0
+			h.UpgradeFailed = false
+			h.UpgradeError = ""
+			h.UpgradeFailedAt = time.Time{}
+			delete(s.heartbeatUpgrade, h.ID)
 			continue
 		}
 		h.OrphanedUpgradeSweeps++
@@ -259,6 +323,20 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 	s.mu.Unlock()
 
 	for _, c := range swept {
+		if c.converged {
+			s.logger.Info("cleared stale upgrade latch — upgrade had already completed",
+				"hive_id", c.id,
+				"elapsed", roundedDuration(c.elapsed),
+				"sha", orDash(c.from),
+				"target", orDash(c.to),
+				"reason", c.reason,
+			)
+			s.recordTimeline(c.id, TimelineUpgradeStale,
+				"upgrade to "+orDash(c.to)+" had already completed (hive is on "+
+					orDash(c.from)+") — cleared a stale in-flight latch",
+				"stale-upgrade-sweep")
+			continue
+		}
 		if c.exhausted {
 			s.logger.Error("upgrade repeatedly failed to land — giving up and reporting a fault",
 				"hive_id", c.id,

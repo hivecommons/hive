@@ -80,6 +80,16 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
+      # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
+      # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
+      # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
+      # ancestor of v4, yet the pin was gone. Audit findings F14 and F18 both
+      # died this way. This asserts the INVARIANT (nothing floats) rather than
+      # any behaviour, so a merge that drops a pin fails the PR instead of
+      # quietly shipping a build that trusts whatever npm/Docker Hub serves.
+      - name: Supply-chain pin guard
+        run: bash deploy/test_supply_chain_pins.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This

@@ -354,6 +354,9 @@ func TestHandleAgentImport_InvalidBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/import",
 		strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
+	// Import is owner-only (audit F16). This test is about body validation, not
+	// authorization, so give it credentials and keep asserting 400.
+	markOwnerRequest(req)
 	s.mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {

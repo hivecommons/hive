@@ -6730,7 +6730,17 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 // the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
 func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
-	client := &http.Client{Timeout: inferenceModelQueryTimeout}
+	client := &http.Client{
+		Timeout: inferenceModelQueryTimeout,
+		// SECURITY (audit F13): Go's default redirect policy PRESERVES the
+		// Authorization header across same-host hops and follows up to 10
+		// redirects. An upstream that answers /v1/models with a 302 could
+		// therefore walk the gateway key onward. Strip credentials on any hop
+		// that changes host, so a redirect can never carry the key somewhere the
+		// original request was not authorized to reach. probeModelsWithHeaders
+		// already used this policy; this sibling was simply missed.
+		CheckRedirect: noRedirectToPrivate,
+	}
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
