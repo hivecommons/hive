@@ -12,7 +12,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says n
 
 ### `hive-panes.sh`
 
-`hive-panes [lines]` prints the last N raw-output lines from every other agent's pluk JSONL log in `/var/run/pluk/logs`. It skips the caller named by `HIVE_PROXY_AGENT`, strips ANSI/control sequences, and never attaches to another tmux session. Agents can run it for read-only peer awareness when diagnosing fleet activity.
+`hive-panes [lines]` prints the last N raw-output lines from every other agent's pluk JSONL log in `/var/run/pluk/logs`. It skips the caller named by `HIVE_PROXY_AGENT`, strips ANSI/control sequences, and never attaches to another tmux session. Agents can run it for read-only peer awareness when diagnosing fleet activity. See [Agent peer-awareness logging](../docs/agent-logging.md) for what pluk is, the JSONL format, and when logs are (or aren't) available.
 
 ## Other files
 

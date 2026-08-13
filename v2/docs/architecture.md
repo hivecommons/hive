@@ -346,7 +346,7 @@ flowchart LR
 - Log output is wrapped by `pkg/logscrub`, which redacts recognized GitHub token and JWT-like strings from messages and string attributes. See [Security notes](security.md) for guarantees and limits.
 - Network exposure and TLS termination are documented in [Network and port requirements](network-requirements.md) and [TLS setup](tls-setup.md).
 - `/terminal` is served by `ttyd`, which invokes `deploy/ttyd-tmux.sh` to attach to the selected `hive-<agent>` tmux session as the socket-owning UID. This is required when agents run under per-agent users and tmux rejects attaches from the proxy user.
-- `deploy/hive-panes.sh` backs a read-only peer-observation workflow: it reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent, strips terminal escapes, and prints recent output without opening another agent's tmux socket.
+- `deploy/hive-panes.sh` backs a read-only peer-observation workflow: it reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent, strips terminal escapes, and prints recent output without opening another agent's tmux socket. See [Agent peer-awareness logging](agent-logging.md) for the log format, attachment conditions, and retention.
 
 ---
 

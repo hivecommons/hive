@@ -20,7 +20,7 @@ Each agent runs in one of four modes, controlling what actions it can take on Gi
 
 ### L1 — Inception (Assisted) (2 agents)
 
-A single interactive advisor helps with repo setup and architecture decisions. Guide agent makes advisory beads. Brainstorm agent handles project inception — turning raw ideas into structured KB facts and scaffold. No feedback loops.
+A single interactive advisor helps with repo setup and architecture decisions. Guide agent makes advisory beads. Brainstorm agent handles project inception — turning raw ideas into structured KB facts and scaffold. No feedback loops. See the [Inception operator guide](inception.md) for the end-to-end workflow and API reference.
 
 | Agent | Mode | Template |
 |-------|------|----------|

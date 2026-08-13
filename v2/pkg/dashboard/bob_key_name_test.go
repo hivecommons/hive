@@ -235,3 +235,89 @@ func TestBobConfig_KeyNameOmitemptyRoundTrip(t *testing.T) {
 		t.Errorf("KeyName after round-trip = %q, want %q", back.KeyName, "Team key")
 	}
 }
+
+// Boundary: a name at exactly bobKeyNameMaxLen is accepted; one char over is
+// rejected. This pins the off-by-one boundary the oversized test alone cannot
+// catch.
+func TestHandleGovernorBobKey_ExactMaxLenNameAccepted(t *testing.T) {
+	pointBobKeyAtTempDir(t)
+	s := newBobTestServer(t)
+
+	maxName := strings.Repeat("a", bobKeyNameMaxLen) // exactly 128
+	body := `{"apiKey":"` + bobTestKey + `","keyName":"` + maxName + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/bob", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
+	s.handleGovernorBobKey(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a name at exactly max len (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := s.deps.Config.Governor.Bob.KeyName; got != maxName {
+		t.Errorf("stored KeyName len = %d, want %d", len(got), bobKeyNameMaxLen)
+	}
+}
+
+// When an admin pointed api_key_file at a custom path (not the writable PVC
+// file), clear removes the PVC file but keeps the config pointer and the name
+// — the key is still supplied by the admin path and the label still describes
+// it. This exercises the "else" branch of the conditional in
+// handleGovernorBobKeyClear.
+func TestHandleGovernorBobKeyClear_CustomPathPreservesName(t *testing.T) {
+	pointBobKeyAtTempDir(t)
+	s := newBobTestServer(t)
+
+	// Write a PVC key so clearBobKeyFile has something to remove.
+	if err := writeBobKeyFile(bobTestKey); err != nil {
+		t.Fatal(err)
+	}
+	// Point the config at a DIFFERENT path (admin-managed), not writableBobKeyFile.
+	customPath := "/secrets/admin-bob-key"
+	s.deps.Config.Governor.Bob.APIKeyFile = customPath
+	s.deps.Config.Governor.Bob.KeyName = "admin key"
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/config/governor/bob", nil)
+	rec := httptest.NewRecorder()
+	markOwnerRequest(req)
+	s.handleGovernorBobKeyClear(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	// The name must survive because the admin-managed key is still in place.
+	if got := s.deps.Config.Governor.Bob.KeyName; got != "admin key" {
+		t.Errorf("KeyName = %q, want preserved for custom api_key_file path", got)
+	}
+	if got := s.deps.Config.Governor.Bob.APIKeyFile; got != customPath {
+		t.Errorf("APIKeyFile = %q, want custom path preserved", got)
+	}
+}
+
+// The status endpoint with no key name set returns an empty keyName string —
+// never null or absent — so the dashboard can unconditionally read it.
+func TestHandleGovernorBobStatus_EmptyKeyNameWhenUnset(t *testing.T) {
+	path := pointBobKeyAtTempDir(t)
+	s := newBobTestServer(t)
+
+	if err := writeBobKeyFile(bobTestKey); err != nil {
+		t.Fatal(err)
+	}
+	s.deps.Config.Governor.Bob.APIKeyFile = path
+	// KeyName deliberately left empty (zero value).
+
+	rec := httptest.NewRecorder()
+	s.handleGovernorBobStatus(rec, httptest.NewRequest(http.MethodGet, "/api/config/governor/bob", nil))
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	// Must be present as "" (not null, not absent) for backwards compat.
+	keyName, ok := resp["keyName"]
+	if !ok {
+		t.Fatal("status response missing keyName field entirely")
+	}
+	if keyName != "" {
+		t.Errorf("status keyName = %v, want empty string when no name is set", keyName)
+	}
+}
