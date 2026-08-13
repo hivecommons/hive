@@ -12977,9 +12977,25 @@ const dashboardHTML = `<!DOCTYPE html>
         // blue glowing/slow-blinking "upgrading" dot (see .online-dot.upgrading) —
         // it outranks the normal online/offline health dot so an upgrade reads at
         // a glance and is never mistaken for the ok/degraded/critical/unknown state.
+        // The OFFLINE dot (grey, no heartbeat) previously carried no tooltip, so
+        // an operator hovering a dead row learned nothing \u2014 not even which
+        // Kubernetes namespace the hive lives in. healthBadge() already gives the
+        // ONLINE dot a rich hover (status + ns: + heartbeat age); this mirrors the
+        // reference facts an operator needs to go find the offline hive on the
+        // cluster. Built defensively \u2014 every part is skipped when its field is
+        // empty \u2014 and escaped with escAttr since it lands inside a quoted title.
+        var offlineDotTitle = (function() {
+          var parts = ['Offline'];
+          var ns = hiveNamespace(h);            // 'hive-hosted-<id>' or '' for local
+          if (ns) parts.push('ns: ' + ns);
+          var cluster = h.clusterName || h.clusterId || '';
+          if (cluster) parts.push('cluster: ' + cluster);
+          if (h.lastHeartbeat) parts.push('last seen: ' + fmtUserTS(h.lastHeartbeat));
+          return parts.join('\n');
+        })();
         var dot = h.upgrading
           ? '<span class="online-dot upgrading" title="Upgrading \u2014 a rollout is in progress"></span>'
-          : (h.online ? healthBadge(h) : '<span class="online-dot off"></span>');
+          : (h.online ? healthBadge(h) : '<span class="online-dot off" title="' + escAttr(offlineDotTitle) + '" style="cursor:help"></span>');
         var rp = repoPath(h);
         // Link on the hive's own GitHub instance (github_host) so a GHE repo
         // points at github.ibm.com, not 404 on github.com.
