@@ -840,7 +840,22 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	// know. Success is tracked separately, further down, on hub acceptance.
 	recordHeartbeatAttempt()
 
-	payload := collect()
+	// Bound collect() so a wedged collector cannot freeze the loop. collect()
+	// reads the agent manager and governor state, and those reads take locks
+	// (e.g. Manager.AllStatuses -> m.mu.RLock). If some other goroutine holds
+	// m.mu.Lock() while blocked in an uninterruptible NFS write to the RWX
+	// /data PVC (stale locks: "no locks available"), collect() blocks with no
+	// timeout of its own. Because the heartbeat loop runs sendHeartbeat
+	// synchronously in its for-select, a stuck collect() means sendHeartbeat
+	// never returns, the loop never reaches its next tick, and
+	// recordHeartbeatAttempt() stops advancing — after livezHeartbeatStallMax
+	// (6 min) /api/livez reports the loop as stalled and kubelet kills a pod
+	// that is actually alive (the NFS server is stuck, which a restart cannot
+	// fix), producing a fleet-wide liveness crash-loop. The attempt above is
+	// already recorded, so timing collect() out lets the loop keep ticking and
+	// keeps liveness green while the process is genuinely alive; the beat is
+	// simply skipped this cycle and retried on the next tick.
+	payload := collectWithTimeout(ctx, collect, heartbeatTimeout, logger)
 	if payload == nil {
 		return nil
 	}
@@ -918,6 +933,54 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return &hbResp
 	}
 	return nil
+}
+
+// collectWithTimeout runs collect() with an upper bound so a collector wedged
+// on a lock held by a blocked NFS write (see the call site in sendHeartbeat)
+// cannot stall the heartbeat loop. It returns the payload if collect finishes
+// within timeout, or nil (skip this beat) if it does not.
+//
+// A Go goroutine blocked in an uninterruptible syscall or on a held mutex
+// cannot be cancelled, so a timed-out collect goroutine necessarily keeps
+// running until its blocker clears — this cannot be avoided, only contained.
+// It is contained here: the goroutine sends on a buffered (cap 1) channel, so
+// the eventual send never blocks even though sendHeartbeat has already
+// returned, and the late payload is simply dropped (GC'd with the channel).
+// No double-record occurs: recordHeartbeatAttempt already ran in the caller,
+// and this helper never records anything itself. If collect panics, the panic
+// is recovered and reported as a nil (skipped) payload rather than crashing
+// the heartbeat goroutine.
+func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout time.Duration, logger *slog.Logger) *HeartbeatPayload {
+	// Buffered so the collect goroutine can always complete its send and exit
+	// even after we have stopped waiting — prevents a permanent goroutine leak
+	// once the blocker (NFS) finally releases.
+	done := make(chan *HeartbeatPayload, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if logger != nil {
+					logger.Warn("hub heartbeat collect panicked", "recover", r)
+				}
+				done <- nil
+			}
+		}()
+		done <- collect()
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case payload := <-done:
+		return payload
+	case <-timer.C:
+		if logger != nil {
+			logger.Warn("hub heartbeat collect timed out — skipping this beat; loop keeps ticking so liveness stays green",
+				"timeout", timeout.String())
+		}
+		return nil
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func publicURLSelfCheckFor(ctx context.Context, rawURL string, logger *slog.Logger) *PublicURLSelfCheck {

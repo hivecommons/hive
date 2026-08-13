@@ -24,6 +24,18 @@ import (
 	"syscall"
 	"time"
 
+	// automaxprocs sets GOMAXPROCS to match the container's CPU quota (Linux
+	// CFS) at init. Without it the Go runtime sizes its P count to the whole
+	// NODE's core count, so on a many-core IKS worker a pod limited to a few
+	// CPUs spawns far more runnable Ps than its CFS quota can service; when the
+	// quota is exhausted mid-period EVERY goroutine — including the netpoller
+	// that answers the :3002 liveness probe and the heartbeat loop — is
+	// throttled until the next CFS period, which stacks on top of the NFS
+	// stalls to push probe latency past the kubelet timeout. Matching GOMAXPROCS
+	// to the quota removes that self-inflicted throttling. Blank import: its
+	// only job is the init-time side effect.
+	_ "go.uber.org/automaxprocs"
+
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	gh "github.com/google/go-github/v72/github"
