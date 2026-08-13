@@ -604,7 +604,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 	if err != nil || cookie.Value == "" {
 		return impersonationGrant{}, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.keyGenerations, cookie.Value, time.Now())
 	if !ok || !isHubAdmin(grant.Admin) {
 		return impersonationGrant{}, false
 	}
@@ -870,7 +870,7 @@ func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string
 	if err != nil || cookie.Value == "" {
 		return realUser, realUser, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.keyGenerations, cookie.Value, time.Now())
 	if !ok {
 		return realUser, realUser, false
 	}
@@ -1292,7 +1292,7 @@ func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	value := mintImpersonateCookieValue(s.impersonateKey(), admin, target, time.Now())
+	value := mintImpersonateCookieValueForGeneration(s.keyGenerations, admin, target, time.Now())
 	if value == "" {
 		writeJSONError(w, http.StatusInternalServerError, "cannot start impersonation")
 		return

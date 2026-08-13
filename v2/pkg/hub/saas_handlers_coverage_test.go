@@ -79,8 +79,14 @@ func setPathValue(r *http.Request, key, val string) *http.Request {
 
 func newHandlerHub() *HubServer {
 	return &HubServer{
-		logger:             slog.Default(),
-		hubSecret:          testHubSecret,
+		logger:    slog.Default(),
+		hubSecret: testHubSecret,
+		// Mirror NewHubServer: a real hub ALWAYS has a generation set holding
+		// its master (legacyGenerationSet). Without this the impersonation
+		// verifier — the first adopter of hub_generations.go — sees a nil set
+		// and fails closed, which is correct behavior but not the behavior
+		// these handler tests are exercising.
+		keyGenerations:     legacyGenerationSet(testHubSecret),
 		hubBanners:         make(map[string]*HubBannerEntry),
 		heartbeatSwitchTag: make(map[string]string),
 		heartbeatUpgrade:   make(map[string]string),

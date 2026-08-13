@@ -794,6 +794,13 @@ type HubServer struct {
 	hubGitHash   string
 	hubGitBranch string
 	hubSecret    string
+	// keyGenerations is the ordered set of master generations this hub accepts
+	// (hub_generations.go). Until a rotation happens it holds exactly ONE
+	// generation whose secret IS hubSecret, so every derived key is
+	// byte-identical to the single-master behavior and dual acceptance
+	// degenerates to single acceptance. It is set once in NewHubServer and read
+	// without a lock; a rotation endpoint that replaces it will need one.
+	keyGenerations *generationSet
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
 	// in flight. See the auto-upgrade block in the SHA-poll loop. It also marks
@@ -1122,13 +1129,16 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Info("generated hub secret", "path", "/data/saas/hub-secret.key")
 	}
 	s := &HubServer{
-		mux:                     http.NewServeMux(),
-		logger:                  logger,
-		saveCh:                  make(chan struct{}, 1),
-		registryPath:            registryPath,
-		hubGitHash:              gitHash,
-		hubGitBranch:            gitBranch,
-		hubSecret:               secret,
+		mux:          http.NewServeMux(),
+		logger:       logger,
+		saveCh:       make(chan struct{}, 1),
+		registryPath: registryPath,
+		hubGitHash:   gitHash,
+		hubGitBranch: gitBranch,
+		hubSecret:    secret,
+		// One generation, holding the existing master. No migration step and no
+		// behavior change: see legacyGenerationSet.
+		keyGenerations:          legacyGenerationSet(secret),
 		clusters:                loadClusters(logger),
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade:        make(map[string]string),
