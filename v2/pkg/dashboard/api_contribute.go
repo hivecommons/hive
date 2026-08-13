@@ -7488,11 +7488,29 @@ func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
 	return (&net.Resolver{}).LookupHost(resolveCtx, host)
 }
 
+// privateURLTestExemptHostPorts lets tests treat specific loopback host:port
+// pairs (httptest servers, which always bind 127.0.0.1) as public, so SSRF
+// behaviour can be exercised end-to-end without weakening the guard.
+//
+// It is EMPTY in production and only ever populated by test helpers, so real
+// traffic sees the unmodified check. Entries are host:port, never a bare host,
+// so an exemption cannot widen to all of loopback.
+var privateURLTestExemptHostPorts map[string]struct{}
+
 func isPrivateURL(ctx context.Context, rawURL string) bool {
 	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
 		if strings.HasPrefix(rawURL, scheme) {
 			rawURL = strings.TrimPrefix(rawURL, scheme)
 			break
+		}
+	}
+	if len(privateURLTestExemptHostPorts) > 0 {
+		hostPort := rawURL
+		if idx := strings.IndexAny(hostPort, "/"); idx >= 0 {
+			hostPort = hostPort[:idx]
+		}
+		if _, ok := privateURLTestExemptHostPorts[strings.ToLower(hostPort)]; ok {
+			return false
 		}
 	}
 	host := rawURL
