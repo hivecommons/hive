@@ -30,7 +30,9 @@ import (
 // probes for a skills registry. The skills registry (pkg/skillreg) is not yet
 // wired into the runtime, so this is a best-effort, optional load: an absent
 // directory reports "not configured" rather than an error.
-const skillsConventionalDir = dataVolumePath + "/skills"
+//
+// It is a var, not a const, purely so tests can point it at a temp dir.
+var skillsConventionalDir = dataVolumePath + "/skills"
 
 const defaultLookbackHours = 24
 
