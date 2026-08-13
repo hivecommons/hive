@@ -206,14 +206,17 @@ _run_test_env_only() {
 
   local output rc=0
   rm -f "${WORK_DIR}/contributor-marker"
+  touch "${WORK_DIR}/untrusted-contributor-marker"
   output="$(env \
     HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_MODE_MARKER="${WORK_DIR}/untrusted-contributor-marker" \
     HIVE_AGENT="scanner" \
     HIVE_AGENT_DISPLAY_NAME="scanner" \
     HIVE_AGENT_ID="scanner" \
     MOCK_GH_LOGIN="${MOCK_GH_LOGIN:-test-bot[bot]}" \
     GH_TOKEN="test-token-mock" \
     bash "$TEST_WRAPPER" "$@" 2>&1)" || rc=$?
+  rm -f "${WORK_DIR}/untrusted-contributor-marker"
 
   if [[ "$rc" != "$expected_rc" ]]; then
     echo "FAIL: $desc"
@@ -356,7 +359,7 @@ MOCK_GH_LOGIN="test-contributor" _run_test_contributor 0 "issue list contributor
 echo ""
 echo "=== Marker trust boundary regression tests ==="
 
-_run_test_env_only 1 "issue list with HIVE_CONTRIBUTOR_MODE=true but no marker (blocked, env var ignored)" \
+_run_test_env_only 1 "issue list with env mode and agent-selected marker (blocked, env vars ignored)" \
   issue list --repo test/repo
 
 _run_test_marker_only 0 "issue list with marker present and no env var (allowed, marker alone grants contributor mode)" \
