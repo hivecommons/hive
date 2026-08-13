@@ -941,9 +941,22 @@ func TestStartSelfAuthoredAutoMergeSweepNilClient(t *testing.T) {
 	nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6)
 }
 
+// testTrustedMergers are the logins the sweep fixtures treat as holding the
+// merger tier. "bob" is the queuer in every fixture that is EXPECTED to merge,
+// so granting it here preserves each existing test's original intent (a
+// legitimate queued merge lands) now that the sweep enforces the trusted-merger
+// gate (audit F3). Anyone NOT listed is untrusted and must not merge.
+var testTrustedMergers = map[string]bool{"bob": true, "carol": true}
+
 func newAutoMergeSweepClient(apiURL string) *Client {
 	c := NewClient("token", "acme", []string{"widget"}, nil, apiURL)
 	c.SetAppBotLogin(testHiveAppBotLogin)
+	// Audit F3: the sweep fails CLOSED without an authorizer, so every test
+	// exercising the merge path must install one. Tests that assert the
+	// fail-closed behaviour itself build their client without this helper.
+	c.SetMergerAuthorizer(func(login string) bool {
+		return testTrustedMergers[strings.ToLower(strings.TrimSpace(login))]
+	})
 	return c
 }
 

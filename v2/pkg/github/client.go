@@ -62,6 +62,13 @@ type Client struct {
 	// MergeRequestAuthorizer / F4). nil fails closed. Set by
 	// StartMergeRequestWatcher.
 	mergeAuthz MergeRequestAuthorizer
+	// mergerAuthz gates the label-queued auto-merge sweep on WHO queued the
+	// merge: it reports whether a login holds at least config.RoleMerger (audit
+	// F3). nil fails closed — SweepQueuedAutoMerges merges nothing. Guarded
+	// because config reload re-installs it while the sweep goroutine reads it.
+	// Set by SetMergerAuthorizer.
+	mergerAuthzMu sync.RWMutex
+	mergerAuthz   MergerAuthorizer
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning

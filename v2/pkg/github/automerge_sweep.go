@@ -26,9 +26,14 @@ const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
 	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
+	autoMergeReasonUntrustedMerger            = "untrusted-merger"
+	autoMergeReasonNoMergerAuthz              = "no-merger-authorizer"
 	autoMergeWarnNoAppBotLogin                = "automerge sweep disabled: no GitHub App bot login configured"
 	autoMergeWarnUntrustedQueueApproval       = "rejected untrusted Hive auto-merge queue approval"
+	autoMergeWarnUntrustedMerger              = "rejected Hive auto-merge queued by an untrusted actor"
+	autoMergeWarnNoMergerAuthz                = "automerge sweep disabled: no trusted-merger authorizer configured"
 	autoMergeNoAppBotLoginOperatorRemediation = "Hive has no usable GitHub App, so App-authorship cannot be verified and auto-merge is disabled"
+	autoMergeNoMergerAuthzRemediation         = "Hive cannot classify who queued the merge, so auto-merge is disabled (fail-closed)"
 )
 
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
@@ -36,6 +41,49 @@ var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) fo
 type AutoMergeSweepOptions struct {
 	MaxMerges int
 	Audit     func(AutoMergeSweepEvent)
+}
+
+// MergerAuthorizer reports whether login is trusted to QUEUE a merge — i.e.
+// holds at least config.RoleMerger in the hive's authorized-users allowlist.
+//
+// SECURITY (audit F3). The queue-time role check lives in the dashboard handler
+// (requireMergerOrOwnerRole), but the sweep is a SEPARATE authority that runs a
+// minute later off nothing but the label and the App-authored approval body. It
+// re-derives the queuer's login from that body and used to merge on it
+// unconditionally, so anything that could get the merger-queue label applied
+// got its PR merged regardless of who asked. Re-verifying the role HERE is what
+// makes the merger tier real at the point the merge actually happens.
+//
+// Returns false for an unknown/unclassifiable login: a nil authorizer or an
+// unresolvable actor must never merge (fail CLOSED).
+type MergerAuthorizer func(login string) bool
+
+// SetMergerAuthorizer installs the trusted-merger gate consulted by
+// SweepQueuedAutoMerges. nil fails closed — the sweep merges nothing.
+func (c *Client) SetMergerAuthorizer(fn MergerAuthorizer) {
+	if c == nil {
+		return
+	}
+	c.mergerAuthzMu.Lock()
+	defer c.mergerAuthzMu.Unlock()
+	c.mergerAuthz = fn
+}
+
+// isTrustedMerger reports whether login may queue a merge. Fails CLOSED.
+func (c *Client) isTrustedMerger(login string) (allowed, configured bool) {
+	if c == nil {
+		return false, false
+	}
+	c.mergerAuthzMu.RLock()
+	fn := c.mergerAuthz
+	c.mergerAuthzMu.RUnlock()
+	if fn == nil {
+		return false, false
+	}
+	if strings.TrimSpace(login) == "" {
+		return false, true
+	}
+	return fn(login), true
 }
 
 type AutoMergeSweepEvent struct {
@@ -61,8 +109,10 @@ type hiveQueueApproval struct {
 
 // SweepQueuedAutoMerges consumes the configured Hive merger-queue label. It
 // only squashes open, labelled, non-draft PRs in managed repos after GitHub
-// reports them mergeable, commit statuses/check-runs are green, and the latest
-// Hive App-authored queue approval proves the queuer is not the PR author.
+// reports them mergeable, commit statuses/check-runs are green, the latest
+// Hive App-authored queue approval proves the queuer is not the PR author, and
+// the queuer is a TRUSTED merger (audit F3 — see MergerAuthorizer). Without an
+// authorizer installed the sweep fails closed and merges nothing.
 func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
 	if c == nil {
 		return nil, ErrNoGitHubClient
@@ -74,6 +124,7 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 	label := c.AutoMergeLabel()
 	result := &AutoMergeSweepResult{}
 	noAppBotLoginWarned := false
+	noMergerAuthzWarned := false
 
 	for _, repo := range c.getRepos() {
 		if len(result.Merged) >= maxMerges {
@@ -102,6 +153,14 @@ func (c *Client) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 				if !noAppBotLoginWarned {
 					c.warn(autoMergeWarnNoAppBotLogin, "repo", repo, "pr", issue.GetNumber(), "reason", reason, "cause", autoMergeNoAppBotLoginOperatorRemediation)
 					noAppBotLoginWarned = true
+				}
+				result.Skipped++
+				continue
+			}
+			if reason == autoMergeReasonNoMergerAuthz {
+				if !noMergerAuthzWarned {
+					c.warn(autoMergeWarnNoMergerAuthz, "repo", repo, "pr", issue.GetNumber(), "reason", reason, "cause", autoMergeNoMergerAuthzRemediation)
+					noMergerAuthzWarned = true
 				}
 				result.Skipped++
 				continue
@@ -438,6 +497,21 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	queuedBy := approval.QueuedBy
 	if strings.EqualFold(author, queuedBy) {
 		return AutoMergeSweepEvent{}, "self-merge-ban", nil
+	}
+	// SECURITY (audit F3): the self-merge ban above only proves queuer !=
+	// author. It is defeated by a sockpuppet — a second account queues and
+	// approves the first account's work — and on its own it lets ANY actor who
+	// can get the merger-queue label applied merge anything. Re-verify the
+	// merger tier here, at the point the merge actually happens, rather than
+	// trusting the queue-time check in the dashboard handler.
+	trusted, configured := c.isTrustedMerger(queuedBy)
+	if !configured {
+		return AutoMergeSweepEvent{}, autoMergeReasonNoMergerAuthz, nil
+	}
+	if !trusted {
+		c.warn(autoMergeWarnUntrustedMerger, "owner", owner, "repo", repo, "pr", number,
+			"queued_by", queuedBy, "author", author)
+		return AutoMergeSweepEvent{}, autoMergeReasonUntrustedMerger, nil
 	}
 
 	mergeable := mergeableFromState(pr.GetMergeableState(), pr.Mergeable)

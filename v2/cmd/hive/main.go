@@ -1359,6 +1359,15 @@ func main() {
 		ghClient.SetMergeReEngageHook(mergeReEngageHook(cfg))
 		ghClient.StartMergeRequestWatcher(ctx, bindMergeAuthz(agentMgr.AuthorizeMerge), nil)
 
+		// SECURITY (audit F3): re-verify the merger tier inside the sweep. The
+		// dashboard's queue endpoint gates on requireMergerOrOwnerRole, but the
+		// sweep merges a minute later off the label + App-authored approval body
+		// alone, so without this ANY actor who can get the label applied merges
+		// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
+		// against the SAME allowlist the dashboard uses so there is one notion of
+		// trust; read through cfg on every call so a config reload takes effect.
+		ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg))
+
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
 		// directly over the REST API, without a human "Approved ... for Hive
 		// auto-merge" queue review and without waiting on tide. Prow forbids
@@ -5709,11 +5718,34 @@ func runEscalationSweep(
 // hammering the GitHub API on short eval intervals.
 const autoMergeSweepInterval = time.Minute
 
+// trustedMergerFunc resolves a GitHub login against the hive's authorized-users
+// allowlist and reports whether it holds at least config.RoleMerger — the same
+// bar requireMergerOrOwnerRole enforces on the dashboard queue endpoint (audit
+// F3).
+//
+// Fails CLOSED: a nil config or a login absent from the allowlist is NOT
+// trusted, so an unclassifiable actor can never merge. cfg is read on every
+// call so a config reload that grants or revokes the merger tier takes effect
+// without a restart.
+func trustedMergerFunc(cfg *config.Config) github.MergerAuthorizer {
+	return func(login string) bool {
+		if cfg == nil || strings.TrimSpace(login) == "" {
+			return false
+		}
+		role, ok := cfg.Dashboard.AuthorizedRole(login)
+		if !ok {
+			return false
+		}
+		return config.RoleAtLeast(role, config.RoleMerger)
+	}
+}
+
 // runAutoMergeSweepIfDue drains the label-queued auto-merge queue (the human
 // "Approved ... for Hive auto-merge" path) at most once per
 // autoMergeSweepInterval. All merge-eligibility decisions — queue-approval
-// trust, check verification, tier gates — live inside SweepQueuedAutoMerges;
-// this function is only the scheduler and the dashboard audit sink.
+// trust, the trusted-merger tier gate (SetMergerAuthorizer), check
+// verification — live inside SweepQueuedAutoMerges; this function is only the
+// scheduler and the dashboard audit sink.
 func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
 	if ghClient == nil {
 		return
