@@ -228,9 +228,34 @@ func TestLiteEnrollRouteRequiresAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/lite/enroll", strings.NewReader(`{"owner":"o","repo":"r","installation_id":1}`))
 	req.Header.Set("Content-Type", "application/json")
+	// AUDIT F4: a JSON Content-Type with no Origin no longer passes the CSRF
+	// gate (it fails closed), and requireAuth checks CSRF before identity — so
+	// without an Origin this returns 403 and stops proving anything about AUTH,
+	// which is what the test is named for. Supplying a legitimate same-origin
+	// header keeps the request past the CSRF gate so the 401 assertion still
+	// tests the thing it was written to test.
+	req.Header.Set("Origin", "https://hive.kubestellar.io")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s, want 401", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLiteEnrollRouteRefusesHeaderlessMutation is the F4 companion: the same
+// route, same unauthenticated caller, but with NO Origin/Referer. Before the fix
+// the JSON Content-Type alone carried it past the CSRF gate. It must now be
+// refused at that gate, BEFORE any identity resolution.
+func TestLiteEnrollRouteRefusesHeaderlessMutation(t *testing.T) {
+	s, cleanup := newLiteTestHub(t)
+	defer cleanup()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/saas/lite/enroll", s.requireAuth(s.handleLiteEnroll))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/saas/lite/enroll", strings.NewReader(`{"owner":"o","repo":"r","installation_id":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s, want 403 (CSRF fails closed)", rec.Code, rec.Body.String())
 	}
 }
 

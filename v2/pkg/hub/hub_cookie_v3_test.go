@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,18 +269,44 @@ func TestF10_EitherLaneIsAdditive(t *testing.T) {
 	}
 }
 
-// TestF10_MintingHasNotFlipped is the anti-outage assertion. This PR ships the
-// VERIFIER only. If someone flips the minter to v3 before the whole fleet
-// verifies v3, /terminal breaks fleet-wide (incident #2773). This test is the
-// tripwire — when minting legitimately flips, this test is updated in the SAME
-// PR, which forces the change to be seen.
-func TestF10_MintingHasNotFlipped(t *testing.T) {
-	value := mintHubUserCookieValueV2(f10TestSeed, "alice")
-	if hubCookieIsV3(value) {
-		t.Fatal("the production minter now emits v3 — do not land this until every spoke verifies v3")
+// TestF10_MintingHasFlippedToV3 — INVERTED, by this test's own instructions.
+//
+// It was TestF10_MintingHasNotFlipped, the anti-outage tripwire for the PR that
+// shipped the v3 VERIFIER only: flipping the minter before the whole fleet
+// verified v3 would have broken /terminal fleet-wide (incident #2773). Its
+// comment said "when minting legitimately flips, this test is updated in the
+// SAME PR, which forces the change to be seen." This is that PR. The fleet is
+// v4 and v2/proxy/server.js verifies v3 → v2 → legacy, so the precondition is
+// met and the tripwire becomes its opposite: a guard that minting does not
+// silently fall BACK to the non-revocable format.
+//
+// Note it also had a real defect worth not reproducing: it called
+// mintHubUserCookieValueV2 directly, so it asserted what that function does,
+// not what PRODUCTION mints — it could never have detected the flip it existed
+// to catch. It now goes through mintSessionCookies, the actual login path.
+func TestF10_MintingHasFlippedToV3(t *testing.T) {
+	s := f10f15Server(t)
+	mkUser(t, "alice")
+
+	rec := httptest.NewRecorder()
+	if !s.mintSessionCookies(rec, "github:alice") {
+		t.Fatal("mintSessionCookies failed")
 	}
-	if !hubCookieIsV2(value) {
-		t.Fatal("the production minter no longer emits v2")
+	var value string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "hive_hub_user" {
+			value = c.Value
+		}
+	}
+	if value == "" {
+		t.Fatal("no session cookie minted")
+	}
+	if !hubCookieIsV3(value) {
+		t.Fatal("the production minter no longer emits v3 — sessions would again have " +
+			"no signed expiry and no revocable id (F10)")
+	}
+	if hubCookieIsV2(value) {
+		t.Fatal("the production minter fell back to v2")
 	}
 }
 

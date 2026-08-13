@@ -21,6 +21,16 @@ const (
 	oauthTimeout     = 10 * time.Second
 	cookieMaxAgeDays = 7 // login session cookie lifetime
 
+	// cookieSessionTTL is the SIGNED lifetime baked into a v3 session cookie
+	// (audit F10). Derived from cookieMaxAgeDays so the enforced expiry and the
+	// browser's MaxAge hint can never drift apart — the two must agree, or a
+	// session either dies early in the browser or outlives its signature.
+	//
+	// This is the value that actually bounds a stolen cookie: MaxAge is advisory
+	// and an attacker replaying a captured value ignores it entirely, whereas exp
+	// is inside the signature and checked by every verifier.
+	cookieSessionTTL = time.Duration(cookieMaxAgeDays) * 24 * time.Hour
+
 	// oauthRedirectURI is the single OAuth/OIDC callback registered on every
 	// provider's side. All providers share one callback path; the state parameter
 	// carries which provider to complete against.
@@ -666,13 +676,44 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 // must never be emitted.
 //
 // The value is a signed, tamper-evident token so it cannot be forged.
-// N2: minted ASYMMETRICALLY (mintHubUserCookieValueV2). The hub holds the
-// Ed25519 private seed; spokes receive only the public key, so a spoke
-// operator can verify this cookie but can no longer forge one (notably an
-// admin cookie). The signer signs an opaque string, so a canonical
-// "provider:subject" identity rides through with no format change.
+// N2: minted ASYMMETRICALLY. The hub holds the Ed25519 private seed; spokes
+// receive only the public key, so a spoke operator can verify this cookie but
+// can no longer forge one (notably an admin cookie). The signer signs an opaque
+// string, so a canonical "provider:subject" identity rides through with no
+// format change.
+//
+// AUDIT F10: production now mints V3, not V2.
+//
+// V2 carries only the username. Its lifetime lives entirely in the cookie's
+// MaxAge attribute — a CLIENT-side hint the browser is free to ignore and an
+// attacker who captured the value simply discards — and it has no session ID, so
+// there is nothing for logout to revoke. Concretely: a stolen V2 cookie is valid
+// forever, and /api/auth/logout was a no-op against it.
+//
+// V3 moves both facts inside the signature: a signed `exp` the verifier enforces
+// regardless of what the client claims, and a random `sid` the hub records at
+// logout so the verifier rejects it on demand (hub_session_revocation.go).
+//
+// WHY IT IS SAFE TO FLIP NOW. The V3 minting function has carried a comment
+// saying nothing calls it in production, deliberately, because a spoke that
+// cannot parse the shape breaks /terminal fleet-wide — incident #2773, the
+// v2-hub/v4-spoke split. That condition no longer holds: the fleet is v4, and
+// the spoke-side verifier in v2/proxy/server.js tries lanes v3 → v2 → legacy
+// (verifyHubUserCookieEither), so a spoke accepts a V3 cookie today. This is
+// therefore the verify-both/mint-new cutover the N2 change already rehearsed,
+// with the verifier side shipped well ahead of the minter — not a flag day.
+//
+// The TTL matches the cookie's MaxAge, so the signed expiry and the browser hint
+// agree and nothing changes about how long a session lasts. The difference is
+// only that the signed one is now the ENFORCED one.
+//
+// Note the residual on spokes: the proxy enforces signature and signed expiry
+// but has no revocation store, so a revoked session can still reach a spoke
+// until its expiry. Closing that requires the spoke to ask the hub on the
+// terminal path; it is tracked separately and called out in hub_session_revocation.go.
 func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string) bool {
-	cookieValue := mintHubUserCookieValueV2(s.sessionSigningSeed(), canonicalID)
+	cookieValue, _ := mintHubUserCookieValueV3(
+		s.sessionSigningSeed(), canonicalID, time.Now(), cookieSessionTTL)
 	if cookieValue == "" {
 		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", canonicalID)
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
@@ -825,13 +866,38 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// AUDIT F10: deleting the browser's copy is not logging out. Anyone who
 	// captured the cookie value keeps a working session until its own expiry.
 	// Record the session ID server-side so the verifier rejects it from now on.
+	// Now load-bearing: minting emits v3 (see mintSessionCookies).
 	//
-	// This is a no-op today because minting still emits v2, which carries no
-	// session ID — that is the point of this PR being verifier-only. It becomes
-	// load-bearing the moment minting flips to v3, with no further change to
-	// this handler.
+	// AUDIT F15: this route is deliberately unauthenticated — logout must work
+	// even when the session is already broken, and requiring auth to log out is
+	// its own denial of service. But it used to pass the RAW cookie value
+	// straight to revokeHubSessionCookie, and revocation writes to a persisted
+	// store. An anonymous attacker could POST arbitrary attacker-chosen values
+	// and grow that store without bound: every entry lands on the PVC, is
+	// rewritten in full on each revocation, and is loaded on every hub start. The
+	// entries were also stored until the *cookie's own claimed* expiry, which is
+	// attacker-supplied, so a forged far-future exp pinned an entry for as long
+	// as the attacker liked.
+	//
+	// The fix is to verify BEFORE revoking. verifyHubUserCookie checks the
+	// Ed25519 signature, so a session ID can only enter the store if the hub
+	// itself minted the cookie — the store is now bounded by sessions the hub
+	// actually issued, not by requests an attacker can send. A caller presenting
+	// a real cookie is not an attacker; they are the owner of that session,
+	// logging out.
+	//
+	// The browser's copy is cleared unconditionally regardless, below: a client
+	// with a corrupt or expired cookie must still be able to clear it.
 	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
-		s.revokeHubSessionCookie(c.Value)
+		if _, ok := s.verifyHubUserCookie(c.Value); ok {
+			s.revokeHubSessionCookie(c.Value)
+		} else {
+			// Not an error path worth surfacing to the client — an expired or
+			// already-revoked cookie logging out is entirely normal — but it is
+			// worth counting, because a spike is what an enumeration attempt
+			// against this route looks like.
+			s.logger.Debug("logout: unverifiable session cookie, nothing to revoke")
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "hive_hub_user",
