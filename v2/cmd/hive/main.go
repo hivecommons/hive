@@ -1019,7 +1019,7 @@ func main() {
 	appAuthState := ghAuth.State
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-		ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+		ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 	}
 	// The user write-token client (userGHClient) was removed: every GitHub write
 	// — issues, PRs, comments, merges, and the advisory digest — now goes through
@@ -1539,7 +1539,7 @@ func main() {
 			ghClient.SetRepos(cfg.Project.Repos)
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-				ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+				ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
 			logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", cfg.Project.Repos)
@@ -2196,7 +2196,7 @@ func main() {
 			newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-				newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
 
 			ghClient = newClient
@@ -2597,7 +2597,7 @@ func main() {
 					newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-						newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 					}
 					ghClient = newClient
 					appAuth = newAppAuth
@@ -3704,7 +3704,7 @@ func main() {
 				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-					newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
@@ -4002,6 +4002,7 @@ func main() {
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
 	defer ticker.Stop()
+	var lastAutoMergeSweep time.Time
 
 	var agentTicker *time.Ticker
 	if cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -4027,6 +4028,7 @@ func main() {
 	gov.ClearLastKicks()
 	logger.Info("cleared last kicks for startup — all eligible agents will be kicked on first eval")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
+	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 
 	agentTickCh := func() <-chan time.Time {
@@ -4067,6 +4069,7 @@ func main() {
 				}
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, restarted, logger)
+			runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 			// Trajectory review runs after the eval cycle (so kicks/intents are
 			// current) on its own cadence, gated by Due().
 			if trajLane != nil && trajLane.Due(time.Now()) {
@@ -5700,6 +5703,48 @@ func runEscalationSweep(
 	return escalated
 }
 
+// autoMergeSweepInterval is the minimum spacing between label-queued
+// auto-merge sweeps. The sweep piggybacks on the governor eval tick, which can
+// fire much more often than once a minute; this floor keeps the sweep from
+// hammering the GitHub API on short eval intervals.
+const autoMergeSweepInterval = time.Minute
+
+// runAutoMergeSweepIfDue drains the label-queued auto-merge queue (the human
+// "Approved ... for Hive auto-merge" path) at most once per
+// autoMergeSweepInterval. All merge-eligibility decisions — queue-approval
+// trust, check verification, tier gates — live inside SweepQueuedAutoMerges;
+// this function is only the scheduler and the dashboard audit sink.
+func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < autoMergeSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepQueuedAutoMerges(ctx, github.AutoMergeSweepOptions{
+		MaxMerges: github.DefaultAutoMergeSweepMaxMerges,
+		Audit: func(event github.AutoMergeSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, queued_by=%s, label=%s, head_sha=%s, merge_sha=%s",
+				event.Repo, event.Number, event.Author, event.QueuedBy, event.Label, event.HeadSHA, event.MergeSHA)
+			dashSrv.AuditLog("system", "automerge-sweep-merged", detail, "")
+		},
+	})
+	if err != nil {
+		logger.Warn("automerge sweep failed", "error", err)
+		return
+	}
+	if len(result.Merged) > 0 || result.Seen > 0 {
+		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
+	}
+}
+
 // mergeEligiblePath is a var (not a const) only so tests can point
 // mergeTargetEligible at a temp file; production never reassigns it.
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
@@ -6469,6 +6514,19 @@ func persistReviewDispatchState(plan review.DispatchPlan, delivered []review.Dis
 	if err := review.WriteDispatchState("", state); err != nil {
 		logger.Warn("failed to persist review dispatch state", "error", err)
 	}
+}
+
+// normalizedAutoMergeLabel resolves the configured queue label, falling back
+// to the shared default when the value is blank. Client.SetAutoMergeLabel
+// ignores blank input (keeping whatever was set before) and
+// Client.AutoMergeLabel falls back on read, but the cmd layer normalizes
+// eagerly too so a partially-populated config can never propagate an unnamed
+// label to a fresh client.
+func normalizedAutoMergeLabel(label string) string {
+	if label = strings.TrimSpace(label); label != "" {
+		return label
+	}
+	return github.AutoMergeQueuedLabel
 }
 
 func atomicWrite(path string, data []byte) {
