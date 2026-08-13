@@ -72,9 +72,10 @@ func TestStart_RunningAgentStillRejectedBeforeGuard(t *testing.T) {
 	}
 }
 
-// TestStart_UnknownAgentReturnsError keeps the not-found path covered under the
-// restructured Phase-1 critical section (it now unlocks explicitly).
-func TestStart_UnknownAgentReturnsError(t *testing.T) {
+// TestStart_LaunchGuard_UnknownAgentReturnsError keeps the not-found path
+// covered under the restructured Phase-1 critical section (it now unlocks
+// explicitly). Named distinctly from manager_test.go's TestStart_UnknownAgentReturnsError.
+func TestStart_LaunchGuard_UnknownAgentReturnsError(t *testing.T) {
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	m := NewManager(map[string]config.AgentConfig{
 		"cxa": {Backend: "claude"},
