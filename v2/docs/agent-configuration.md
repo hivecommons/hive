@@ -210,6 +210,8 @@ Two rules of thumb:
 - **CLI methods are subscriptions.** You log in once per method from the dashboard, and every agent using that method shares the login.
 - **Inference methods are endpoints.** You configure a base URL and a key *reference* (env var name or key-file path — the value goes in `/data/secrets/`, never in YAML). Agents on `vllm`/`llm-d`/`litellm` launch the Claude CLI routed through hive's inference translator, so there is no separate login.
 
+Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
+
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
 
 Agents can inspect peer panes with `hive-panes [lines]` when the deployment includes `v2/deploy/hive-panes.sh`. It reads pluk JSONL logs from `/var/run/pluk/logs`, skips the calling agent named by `HIVE_PROXY_AGENT`, strips terminal escapes, and prints the last N raw-output lines for every other agent. Use it for situational awareness; it is read-only and does not attach to another agent's tmux session.

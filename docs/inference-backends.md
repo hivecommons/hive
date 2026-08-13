@@ -10,6 +10,8 @@ The agent still launches Claude Code in bare mode. Hive writes Claude settings t
 
 Use the dashboard's **Governor Config → Model Gateways** UI, or YAML. A gateway needs a name, kind, endpoint, optional key reference, and optional default model. Agents can then set `backend:` to either the built-in kind (`vllm`, `llm-d`, `litellm`, `watsonx`) or to a configured gateway name such as `openrouter`.
 
+Each gateway also accepts an optional `key_name` — a human-chosen LABEL for the configured key ("Team inference key", "andy personal", …). It is safe-to-show metadata, not a secret: it records WHICH key a gateway is set to use so operators can tell keys apart without ever seeing the value. The dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set. `key_name` mirrors the bob backend's `KeyName` field and is optional on every gateway kind (litellm / openrouter / watsonx / vllm); omitting it keeps existing gateways byte-identical in `hive.yaml`.
+
 LiteLLM also has a dedicated config block:
 
 ```yaml
@@ -56,6 +58,7 @@ governor:
       endpoint: https://openrouter.ai/api/v1
       api_key_file: /data/secrets/gateway_openrouter_api_key
       default_model: deepseek/deepseek-chat
+      key_name: openrouter-prod-key  # optional: audit label shown in the dashboard, not a secret
 
 agents:
   guide:

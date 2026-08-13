@@ -262,6 +262,22 @@ governor:
   #   local_proxy: false                      # run the bundled litellm binary locally
   #                                           # (config at /data/litellm/config.yaml)
 
+  # Named Model Gateways (optional) — configure one or more OpenAI-compatible
+  # gateways at once (e.g. OpenRouter for public models plus a private LiteLLM
+  # proxy for internal ones); each agent picks one by naming it as its
+  # backend. When this list is empty, a single implicit gateway named
+  # "litellm" is synthesized from the litellm block above, so existing hives
+  # keep working with zero config change.
+  # gateways:
+  #   - name: openrouter                        # unique gateway id; agents set backend: <name>
+  #     kind: openrouter                        # openrouter | litellm | vllm | llm-d | watsonx | custom
+  #     endpoint: https://openrouter.ai/api/v1  # OpenAI-compatible base URL
+  #     api_key_env: OPENROUTER_API_KEY         # env var NAME holding the key (or use api_key_file)
+  #     default_model: deepseek/deepseek-chat   # model used when an agent has none selected
+  #     key_name: openrouter-prod-key           # optional: human LABEL for the configured key,
+  #                                             # shown in the dashboard as "Using key: <name>"
+  #                                             # (or "(unnamed)"); safe-to-show, NOT a secret
+
   # IBM bobshell ("bob") backend credentials. REQUIRED for agents with
   # backend: bob — bob's default IBMid/W3ID auth opens a browser and waits on a
   # localhost callback, which no pod can satisfy, so it fails after a 3-minute
@@ -273,6 +289,9 @@ governor:
   # bob:
   #   api_key_env: HIVE_BOB_API_KEY       # env var NAME holding the key (default)
   #   api_key_file: /secrets/bob_api_key  # or a mounted key file (default path)
+  #   key_name: bob-shared-key            # optional: human LABEL for the configured key,
+  #                                       # shown in the dashboard as "Using key: <name>"
+  #                                       # (or "(unnamed)"); safe-to-show, NOT a secret
 
 # GitHub authentication — use ONE of these methods
 github:
