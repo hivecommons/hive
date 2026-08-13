@@ -182,7 +182,11 @@ jobs:
           }
           trap cleanup EXIT
           timeout --signal=TERM --kill-after=10s 60s \
-            docker run --rm --name "$name" --network none hive:test --version
+            # --cap-add NET_ADMIN mirrors the production contract: the pod spec
+          # grants it (SCC hive-netadmin) and the image binary carries
+          # cap_net_admin+ep file caps (SO_MARK egress attribution), so exec
+          # under docker's default cap set fails EPERM by design, not by bug.
+          docker run --rm --name "$name" --network none --cap-add NET_ADMIN hive:test --version
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
