@@ -13329,7 +13329,7 @@ const dashboardHTML = `<!DOCTYPE html>
              spinner, label and title always agree. Only a target on a DIFFERENT
              branch is a switch; a plain-SHA (auto-upgrade) target always reads
              "Upgrading", even if a stale switch sentinel lingers. */
-          var upgradeState = hiveUpgradeState(h, branchName);
+          var upgradeState = hiveSwitchState(h, branchName);
           var isSwitching = upgradeState.isSwitching;
           var targetBranch = upgradeState.targetBranch;
           /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
@@ -14161,7 +14161,7 @@ const dashboardHTML = `<!DOCTYPE html>
        from the branch the hive currently reports. A plain-SHA target — an
        auto-upgrade — yields no target branch and is therefore an upgrade, never
        a switch, regardless of any sticky sentinel. */
-    function hiveUpgradeState(h, branchName) {
+    function hiveSwitchState(h, branchName) {
       var sentinel = _upgradingHives[h.id];
       var hasSwitchSentinel = typeof sentinel === 'string'
         && sentinel.indexOf(SWITCH_SENTINEL_PREFIX) === 0;
