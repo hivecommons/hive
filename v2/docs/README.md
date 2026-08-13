@@ -43,6 +43,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Custom dashboard stylesheets](custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Portable AgentDefinition format](../AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
 - [Knowledge curator](knowledge-curator.md) — automatic fact extraction and promotion knobs.
+- [Strategy Lab (Nous)](strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [GitHub App setup](github-app-setup.md) — app creation, permissions, Setup URL, and `/gh-setup`.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [ACMM policy fragments](../../examples/acmm/README.md) — per-level ACMM policy references.
