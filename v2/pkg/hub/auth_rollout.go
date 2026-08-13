@@ -24,6 +24,13 @@ import (
 // lingered indefinitely — which is how a temporary compatibility path becomes
 // permanent. This records which format each spoke actually presents, so the
 // decision is made on evidence.
+//
+// STATUS: the N1/F2 heartbeat lane is DELETED — verifyHeartbeatBearer now
+// accepts only the per-hive bearer, so PerHiveBearer is necessarily true for
+// every hive that authenticates at all. This file is retained because (a) the
+// N2 session-cookie lane is still mid-rollout and (b) GET
+// /api/saas/admin/auth-rollout remains the operator's post-cutover view: a hive
+// that vanishes from the heartbeat totals is one that is now failing auth.
 
 // authRolloutEntry is the last-seen credential format for one hive.
 type authRolloutEntry struct {

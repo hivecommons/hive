@@ -196,42 +196,41 @@ func (s *HubServer) heartbeatKeyFor(hiveID string) string {
 }
 
 // verifyHeartbeatBearer authenticates a heartbeat and BINDS it to the claimed
-// hive (audit N1).
+// hive (audit N1/F2).
 //
-// Accepts either:
+// The ONLY accepted credential is the per-hive bearer for exactly this hiveID:
+// HMAC(master, infoHeartbeatKey || 0x00 || hiveID). Because the hub re-derives
+// it from the hive ID the caller claims, presenting it proves the caller is THAT
+// hive — the claimed identity is self-authenticating.
 //
-//  1. the per-hive bearer for exactly this hiveID — the post-fix path, which
-//     makes the claimed identity self-authenticating; or
-//  2. the legacy fleet-wide bearer — every spoke currently in the field holds
-//     this and will keep holding it until the hub re-provisions it.
+// A fleet-wide lane used to be accepted alongside it: deriveDomainKey(master,
+// infoHeartbeatKey), a pure function of the single hub master and therefore
+// stamped identically into every spoke. Possession proved "some provisioned
+// spoke" and never "THIS hive", and handleHeartbeat trusts the body-supplied
+// hive_id, so any spoke could beat as any victim and be handed the victim's key
+// material. That lane is DELETED (F2). It was retained only to avoid a flag-day
+// cutover; the precondition for removal has since been met — every spoke either
+// holds an injected per-hive bearer or self-derives one from the master plus its
+// own HIVE_ID (SpokeHeartbeatKey), which needs no hub-side re-provisioning.
 //
-// Lane 2 is a DELIBERATE, TEMPORARY compatibility path and it does NOT bind
-// identity — a spoke presenting the legacy key can still claim any hive_id, so
-// the N1 IDOR remains open for spokes that have not rolled. It exists because a
-// flag-day cutover would break every heartbeat in the fleet simultaneously,
-// which is the failure mode #2773 already documented for the v2-hub/v4-spoke
-// split. Remove it once the fleet has re-provisioned; the callers that consume
-// the identity are hardened independently, so the window is bounded by rollout
-// rather than by trust in the legacy key.
-//
-// Both comparisons are constant-time. Order matters only for the returned
-// telemetry, not for security: a caller holding the legacy key is accepted
-// regardless of which branch runs first.
+// Fails closed: an empty bearer, or an empty hiveID (which makes the per-hive
+// derivation return ""), authenticates nothing. The comparison is constant-time.
 func (s *HubServer) verifyHeartbeatBearer(presented, hiveID string) bool {
 	if presented == "" {
 		return false
 	}
-	if perHive := s.heartbeatKeyFor(hiveID); perHive != "" && secureCompareHub(presented, perHive) {
-		return true
-	}
-	// Legacy fleet-wide bearer — accepted during rollout only.
-	return secureCompareHub(presented, s.heartbeatKey())
+	perHive := s.heartbeatKeyFor(hiveID)
+	return perHive != "" && secureCompareHub(presented, perHive)
 }
 
-// heartbeatBearerIsPerHive reports whether the presented bearer is the modern,
-// identity-bound one. Used for rollout telemetry so an operator can see when the
-// fleet has fully migrated and the legacy lane in verifyHeartbeatBearer can be
-// deleted.
+// heartbeatBearerIsPerHive reports whether the presented bearer is the
+// identity-bound one. Retained after the F2 deletion because it still backs the
+// live GET /api/saas/admin/auth-rollout telemetry (noteHeartbeatAuthPath →
+// AuthRolloutStatus), which now serves a different purpose: rather than gating
+// the deletion, it lets an operator SEE which hives are authenticating and
+// confirm none regressed. Post-F2 a bearer that is not per-hive no longer
+// verifies at all, so callers observe this only for bearers that already passed
+// verifyHeartbeatBearer.
 func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
 	perHive := s.heartbeatKeyFor(hiveID)
 	return perHive != "" && secureCompareHub(presented, perHive)

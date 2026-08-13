@@ -1230,8 +1230,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// "I am a provisioned spoke" but cannot sign a session/SSO/impersonation value.
 	// The bearer is captured here but VERIFIED below, after the body is parsed:
 	// the per-hive bearer (N1) can only be checked once the claimed hive_id is
-	// known. The legacy fleet-wide key is still accepted during the rollout —
-	// see verifyHeartbeatBearer.
+	// known. It is now the ONLY accepted credential — the fleet-wide lane was
+	// deleted (F2). See verifyHeartbeatBearer.
 	presentedBearer := ""
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
@@ -1279,9 +1279,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// #3234: record WHICH format authenticated, so an operator can tell when
-		// every spoke has re-provisioned and the legacy compat lane — which does
-		// not bind identity — can finally be deleted.
+		// #3234: record WHICH format authenticated. The fleet-wide compat lane is
+		// now DELETED (F2), so this can only ever record the per-hive format; it is
+		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
+		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	// Normalize the reported SHA to the canonical short length up front so every
@@ -2432,9 +2433,10 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// #3234: record WHICH format authenticated, so an operator can tell when
-		// every spoke has re-provisioned and the legacy compat lane — which does
-		// not bind identity — can finally be deleted.
+		// #3234: record WHICH format authenticated. The fleet-wide compat lane is
+		// now DELETED (F2), so this can only ever record the per-hive format; it is
+		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
+		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	for i, lb := range payload.Leaderboard {

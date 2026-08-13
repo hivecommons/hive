@@ -205,19 +205,27 @@ func TestSendHeartbeatWithSecret(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("HIVE_HUB_SECRET", "test-secret-123")
+	// F2: the spoke self-derives its PER-HIVE bearer from the master plus its own
+	// HIVE_ID. Without HIVE_ID it would fall back to the fleet-wide value, which
+	// the hub no longer accepts — so this env var is what a real spoke relies on.
+	t.Setenv(EnvHiveID, "test")
 
 	ctx := context.Background()
 	sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
 		return &HeartbeatPayload{HiveID: "test"}
 	}, slog.Default())
 
-	// C2 domain separation: the spoke must present the DERIVED heartbeat sub-key,
-	// NOT the raw master. Sending "Bearer test-secret-123" here would mean the
-	// spoke still leaks the master — the whole vulnerability. Assert the derived
-	// value and, defensively, that the master itself never appears on the wire.
-	wantAuth := heartbeatBearer("test-secret-123")
+	// C2 domain separation: the spoke must present a DERIVED sub-key, NOT the raw
+	// master. Sending "Bearer test-secret-123" here would mean the spoke still
+	// leaks the master — the whole vulnerability. F2 narrows this further: the
+	// derived value must be the PER-HIVE one, bound to the hive_id it claims.
+	wantAuth := heartbeatBearer("test-secret-123", "test")
 	if gotAuth != wantAuth {
 		t.Errorf("Authorization header = %q, want %q", gotAuth, wantAuth)
+	}
+	if gotAuth == "Bearer "+deriveDomainKey("test-secret-123", infoHeartbeatKey) {
+		t.Error("F2: the spoke presented the FLEET-WIDE bearer — the hub will 401 it, and " +
+			"were it accepted the spoke could beat as any hive")
 	}
 	if gotAuth == "Bearer test-secret-123" {
 		t.Error("spoke leaked the master HIVE_HUB_SECRET as the heartbeat bearer")

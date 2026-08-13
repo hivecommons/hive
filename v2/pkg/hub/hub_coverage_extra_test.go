@@ -1211,7 +1211,7 @@ func TestHandleHeartbeatSaaSHivePrefix(t *testing.T) {
 	payload := `{"hive_id":"saas-test-nosaas"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", heartbeatBearer(secret))
+	req.Header.Set("Authorization", heartbeatBearer(secret, "saas-test-nosaas"))
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 

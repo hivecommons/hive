@@ -39,12 +39,16 @@ func testAuthCookie(username string) *http.Cookie {
 	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValueV2(seed, username)}
 }
 
-// heartbeatBearer returns the derived HEARTBEAT-domain bearer for a given master
-// secret (C2 domain separation). The hub verifies /api/heartbeat and
-// /api/task-status against this sub-key, NOT the raw master, so tests that hit
-// those handlers with an explicit hubSecret must send this value.
-func heartbeatBearer(master string) string {
-	return "Bearer " + deriveDomainKey(master, infoHeartbeatKey)
+// heartbeatBearer returns the PER-HIVE heartbeat bearer for a given master
+// secret and hive ID. The hub verifies /api/heartbeat and /api/task-status
+// against HMAC(master, infoHeartbeatKey || 0x00 || hiveID) and nothing else.
+//
+// This used to mint the fleet-wide sub-key, deriveDomainKey(master,
+// infoHeartbeatKey) — the F2 lane, one value shared by every spoke, which the
+// hub no longer accepts. hiveID MUST match the hive_id in the request body, or
+// the heartbeat is (correctly) refused as an impersonation attempt.
+func heartbeatBearer(master, hiveID string) string {
+	return "Bearer " + derivePerHiveKey(master, infoHeartbeatKey, hiveID)
 }
 
 // mkUser writes a SaaS user to the temp dir so getAuthUser resolves the cookie.
