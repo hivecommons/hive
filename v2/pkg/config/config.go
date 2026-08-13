@@ -4567,6 +4567,35 @@ func (a AutoMergeConfig) SelfAuthoredEnabled() bool {
 	return a.SelfAuthored == nil || *a.SelfAuthored
 }
 
+// SelfMergeMinACMMLevel is the lowest ACMM level at which the App is allowed
+// to self-merge its own PRs. examples/acmm/l5.md is explicit that L5 does NOT
+// grant merge authority ("Merge pull requests — no; L5 PRs remain hold-gated
+// for human review"), and examples/acmm/l4.md is even more explicit ("DO NOT
+// merge pull requests — L4 is not an auto-merge level"). examples/acmm/l6.md
+// is the first level whose Responsibilities include "Merge PRs when CI
+// passes". So the gate sits at L6, not L5: an L4 (or L5) hive must never run
+// the self-authored auto-merge sweep, regardless of the auto_merge.self_authored
+// flag below. This was the root cause of ks/hive (acmm_level: 4) wrongly
+// self-merging its own PR — the sweep previously had no ACMM check at all.
+const SelfMergeMinACMMLevel = 6
+
+// SelfAuthoredAutoMergeAllowed reports whether the App-self-merge sweep may
+// run at all for this hive, given its ACMM level. Both conditions must hold:
+// the auto_merge.self_authored flag must be ON (SelfAuthoredEnabled) AND the
+// hive's ACMM level must be at or above SelfMergeMinACMMLevel. A nil/unset
+// ACMM level is treated as NOT high enough (fail closed) — an operator who
+// has not explicitly opted a hive into a high ACMM level never gets
+// self-merge by accident.
+func (a AutoMergeConfig) SelfAuthoredAutoMergeAllowed(acmmLevel *int) bool {
+	if !a.SelfAuthoredEnabled() {
+		return false
+	}
+	if acmmLevel == nil {
+		return false
+	}
+	return *acmmLevel >= SelfMergeMinACMMLevel
+}
+
 // DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated
 // here (a constant, checked by test) to avoid a config→escalation import.
 const DefaultEscalationThreshold = 3

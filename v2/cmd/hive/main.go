@@ -1380,10 +1380,13 @@ func main() {
 		// SweepSelfAuthoredAutoMerges for the full rationale and the safety
 		// properties preserved (green required checks, head-SHA re-verified
 		// immediately before merge, squash method, all tiers included).
-		// Default ON; `auto_merge.self_authored: false` disables it.
-		if cfg.AutoMerge.SelfAuthoredEnabled() {
-			ghClient.StartSelfAuthoredAutoMergeSweep(ctx, cfg.AutoMerge.MaxMerges)
-		}
+		// Default ON; `auto_merge.self_authored: false` disables it. ALSO
+		// gated on ACMM level (config.SelfMergeMinACMMLevel): l4.md/l5.md
+		// both forbid the App merging its own PRs, so an L4/L5 hive must
+		// never start this loop regardless of the flag above — see
+		// AutoMergeConfig.SelfAuthoredAutoMergeAllowed. StartSelfAuthoredAutoMergeSweep
+		// itself no-ops (with a one-time INFO log) when acmmAllowed is false.
+		ghClient.StartSelfAuthoredAutoMergeSweep(ctx, cfg.AutoMerge.MaxMerges, cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel), cfg.ACMMLevel)
 	}
 
 	// Opt-in mint credential: when mint.enabled, build a Minter from the config

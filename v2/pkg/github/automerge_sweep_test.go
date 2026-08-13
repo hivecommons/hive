@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 const testHiveAppBotLogin = "kubestellar-hive[bot]"
@@ -877,6 +878,67 @@ func TestSweepSelfAuthoredAutoMergesNilClient(t *testing.T) {
 	if _, err := nilClient.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != ErrNoGitHubClient {
 		t.Fatalf("nil sweep error = %v, want ErrNoGitHubClient", err)
 	}
+}
+
+// TestStartSelfAuthoredAutoMergeSweepDisabledBelowMinACMMLevel reproduces the
+// ks/hive bug: an ACMM L4 hive (acmm_level: 4) must never start the
+// self-authored auto-merge loop, even though the auto_merge.self_authored
+// config flag defaults to ON. l4.md is explicit: "DO NOT merge pull requests
+// — L4 is not an auto-merge level." The starter must no-op (no goroutine, no
+// HTTP calls) and log once explaining why.
+func TestStartSelfAuthoredAutoMergeSweepDisabledBelowMinACMMLevel(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number: 1, author: testHiveAppBotLogin, mergeableState: "clean",
+		statusState: "success", checkStatus: "completed", checkConclusion: "success",
+	}}, &merged)
+	defer api.Close()
+
+	c := NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	c.SetAppBotLogin(testHiveAppBotLogin)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	l4 := 4
+	c.StartSelfAuthoredAutoMergeSweep(ctx, 0, false, &l4)
+
+	if !strings.Contains(logs.String(), "self-authored auto-merge sweep disabled") {
+		t.Fatalf("logs = %q, want disabled-sweep INFO log", logs.String())
+	}
+	if len(merged) != 0 {
+		t.Fatalf("merged = %v, want no merges at ACMM L4 (below config.SelfMergeMinACMMLevel)", merged)
+	}
+}
+
+// TestStartSelfAuthoredAutoMergeSweepEnabledAtMinACMMLevel is the positive
+// case: at config.SelfMergeMinACMMLevel (L6, matching console) the loop
+// starts and logs its normal startup message, not the disabled message.
+func TestStartSelfAuthoredAutoMergeSweepEnabledAtMinACMMLevel(t *testing.T) {
+	var logs bytes.Buffer
+	c := NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), "http://127.0.0.1:0")
+	c.SetAppBotLogin(testHiveAppBotLogin)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	l6 := config.SelfMergeMinACMMLevel
+	c.StartSelfAuthoredAutoMergeSweep(ctx, 0, true, &l6)
+	cancel()
+
+	if strings.Contains(logs.String(), "self-authored auto-merge sweep disabled") {
+		t.Fatalf("logs = %q, want no disabled-sweep log at min ACMM level", logs.String())
+	}
+	if !strings.Contains(logs.String(), "self-authored automerge sweep started") {
+		t.Fatalf("logs = %q, want normal startup log at min ACMM level", logs.String())
+	}
+}
+
+// TestStartSelfAuthoredAutoMergeSweepNilClient guards the nil-client no-op
+// path still holds with the new acmmAllowed/acmmLevel parameters.
+func TestStartSelfAuthoredAutoMergeSweepNilClient(t *testing.T) {
+	var nilClient *Client
+	l6 := config.SelfMergeMinACMMLevel
+	nilClient.StartSelfAuthoredAutoMergeSweep(context.Background(), 0, true, &l6)
 }
 
 func newAutoMergeSweepClient(apiURL string) *Client {

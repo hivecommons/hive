@@ -1108,3 +1108,37 @@ func TestEffectiveOTel_LegacyTracingFallback(t *testing.T) {
 		t.Errorf("default service name = %q", got.ServiceNameOrDefault())
 	}
 }
+
+// TestSelfAuthoredAutoMergeAllowed guards the bug fix: the self-authored
+// auto-merge sweep must be OFF at ACMM L4 (examples/acmm/l4.md: "DO NOT merge
+// pull requests — L4 is not an auto-merge level") and at L5 (l5.md: "Merge
+// pull requests — no; L5 PRs remain hold-gated for human review"), and ON
+// only at SelfMergeMinACMMLevel (L6, l6.md: "Merge PRs when CI passes") and
+// above — matching console, which runs at L6 and must be unaffected. Both the
+// auto_merge.self_authored flag AND the ACMM level must independently allow
+// it.
+func TestSelfAuthoredAutoMergeAllowed(t *testing.T) {
+	l4, l5, l6, l7 := 4, 5, 6, 7
+	cases := []struct {
+		name  string
+		cfg   AutoMergeConfig
+		level *int
+		want  bool
+	}{
+		{"nil acmm level fails closed even with flag on", AutoMergeConfig{SelfAuthored: boolPtr(true)}, nil, false},
+		{"nil acmm level fails closed with default flag", AutoMergeConfig{}, nil, false},
+		{"L4 hive (ks/hive bug repro) stays disabled despite default-on flag", AutoMergeConfig{}, &l4, false},
+		{"L4 hive stays disabled with explicit flag on", AutoMergeConfig{SelfAuthored: boolPtr(true)}, &l4, false},
+		{"L5 hive stays disabled: L5 is hold-gated, not auto-merge", AutoMergeConfig{}, &l5, false},
+		{"L6 hive (console) is enabled by default", AutoMergeConfig{}, &l6, true},
+		{"L6 hive with flag explicitly off stays disabled", AutoMergeConfig{SelfAuthored: boolPtr(false)}, &l6, false},
+		{"L7 (above minimum) stays enabled", AutoMergeConfig{}, &l7, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.SelfAuthoredAutoMergeAllowed(tc.level); got != tc.want {
+				t.Errorf("SelfAuthoredAutoMergeAllowed(%v) = %v, want %v", tc.level, got, tc.want)
+			}
+		})
+	}
+}

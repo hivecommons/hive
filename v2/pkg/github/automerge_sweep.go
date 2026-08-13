@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 const DefaultAutoMergeSweepMaxMerges = 3
@@ -203,8 +204,25 @@ func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 // DefaultAutoMergeSweepMaxMerges there). Mirrors
 // StartMergeRequestWatcher/StartPRRequestWatcher's own-ticker-goroutine
 // pattern so all three App-identity-dependent watchers share one shape.
-func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int) {
+//
+// acmmAllowed is the caller-computed
+// config.AutoMergeConfig.SelfAuthoredAutoMergeAllowed(acmmLevel) result (both
+// the auto_merge.self_authored flag AND the hive's ACMM level gate self-merge
+// authority — see config.SelfMergeMinACMMLevel). When false the loop is never
+// started at all: an ACMM L4/L5 hive (l4.md/l5.md both forbid the App
+// merging its own PRs) must not self-merge, matching console's L6 hive which
+// is unaffected and keeps self-merging as before.
+func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) {
 	if c == nil {
+		return
+	}
+	if !acmmAllowed {
+		level := "unset"
+		if acmmLevel != nil {
+			level = fmt.Sprintf("%d", *acmmLevel)
+		}
+		c.info("self-authored auto-merge sweep disabled: acmm_level below minimum (or auto_merge.self_authored is off)",
+			"acmm_level", level, "min_acmm_level", config.SelfMergeMinACMMLevel)
 		return
 	}
 	go func() {
