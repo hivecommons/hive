@@ -1476,10 +1476,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// existing-entry preservation below uses this to decide whether to carry the
 	// prior Owner forward for non-SaaS (local) hives.
 	hasSaaSRecord := false
+	// saasVisibility carries the SaaS store's authoritative is_public for this
+	// hive when a SaaSHive record exists. handleToggleVisibility persists the
+	// operator's choice there (meta.json) as the source of truth, so it — not the
+	// spoke's self-report — is what entry.IsPublic must reflect. nil means "no
+	// SaaS record" (a bare/BYO spoke), in which case the spoke's own report stands.
+	var saasVisibility *bool
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		hasSaaSRecord = true
 		clusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
+		isPub := sh.IsPublic
+		saasVisibility = &isPub
 		// The SaaS store is authoritative for the operator-editable display name
 		// (handleRenameHive persists it here), so overlay it onto the registry
 		// entry the dashboard renders. The spoke never reports this, so a blank
@@ -1500,6 +1508,18 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// self-hosted/BYO hive keeps Namespace empty rather than being wrongly
 		// labelled with a namespace it does not run in.
 		entry.Namespace = hostedNamespaceForHive(sh)
+	}
+	// The SaaS store's is_public is authoritative over the spoke's self-report.
+	// Apply it here so BOTH the update path (existing registry entry) and the
+	// first-heartbeat path (new entry, no previous registry row to preserve
+	// from) reflect the operator's choice rather than the spoke's provisioning
+	// default. Without this, an available placeholder — which keeps reporting
+	// is_public: true every heartbeat — reverted the operator's PRIVATE setting
+	// back to public on the next beat, and the authoritative-visibility push to
+	// the spoke (gated on entry.IsPublic != payload.IsPublic below) never fired
+	// because the two had been made equal.
+	if saasVisibility != nil {
+		entry.IsPublic = *saasVisibility
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1568,9 +1588,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if !hasSaaSRecord {
 				entry.Owner = h.Owner
 			}
-			// Preserve hub-side visibility: if the hub set this hive
-			// to public, don't let the spoke's heartbeat revert it.
-			if h.IsPublic && !payload.IsPublic {
+			// Preserve hub-side visibility. When the hive has a SaaS record its
+			// is_public was already applied above (authoritative in BOTH
+			// directions). This fallback covers a bare/BYO spoke with no SaaS
+			// record: keep a hub-set PUBLIC from being reverted by a spoke that
+			// reports private.
+			if saasVisibility == nil && h.IsPublic && !payload.IsPublic {
 				entry.IsPublic = h.IsPublic
 			}
 			// Carry the last known fleet-stat counts forward when this
