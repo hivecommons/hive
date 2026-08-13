@@ -106,6 +106,15 @@ type AgentProcess struct {
 	tmuxSocket        string
 	cancel            context.CancelFunc
 	forceRelaunch     bool
+	// launching is set true under m.mu while Start runs this agent's launch
+	// with m.mu RELEASED (so a slow /data NFS write or a hung MITM-proxy token
+	// mint during launch cannot block AllStatuses()/the heartbeat collect() and
+	// flap /api/livez). It is cleared under m.mu when the launch finishes on
+	// every path (success, error, or panic — via a deferred clear). It exists
+	// solely to serialize concurrent Start(sameName): with m.mu no longer held
+	// across the launch, a second Start would otherwise race the first one's
+	// tmux launch and its guarded-field writes. Guarded by m.mu.
+	launching         bool
 	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
 	LastError         string    // captured from bare copilot diagnostic launch
 	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
@@ -812,22 +821,31 @@ func (m *Manager) ResolveAgent(nameOrID string) string {
 }
 
 func (m *Manager) Start(ctx context.Context, name string) error {
+	// PHASE 1 — brief critical section: map lookup, the pure in-memory
+	// decisions (running/sandbox), and claiming the per-agent launch guard.
+	// Nothing here does /data NFS I/O or a subprocess/outbound call, so m.mu is
+	// held only for microseconds.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	agent, ok := m.agents[name]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
 
 	if agent.State == StateRunning {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s already running", name)
 	}
 
 	if m.agentSandboxEnabledLocked(agent) {
+		// Sandbox agents never launch a CLI here — this branch only sets
+		// in-memory state and does no I/O, so it completes entirely inside the
+		// Phase-1 lock and never claims the launch guard.
 		if agent.Paused {
 			agent.State = StatePaused
 			m.logger.Info("sandbox agent starting paused", "name", agent.Name, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
+			m.mu.Unlock()
 			return nil
 		}
 		now := time.Now()
@@ -836,9 +854,39 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		agent.HasLaunched = true
 		agent.LaunchedMode = m.agentMode(agent)
 		m.logger.Info("audit: sandbox agent ready", "name", name)
+		m.mu.Unlock()
 		return nil
 	}
 
+	// Serialize concurrent Start(sameName). Once we release m.mu for the
+	// out-of-lock launch below, this guard is the only thing preventing a
+	// second Start from racing this one's tmux launch and guarded-field writes
+	// (m.mu no longer covers the whole method). Refuse the second caller fast.
+	if agent.launching {
+		m.mu.Unlock()
+		return fmt.Errorf("agent %s launch already in progress", name)
+	}
+	agent.launching = true
+	m.mu.Unlock()
+
+	// Clear the guard on EVERY exit from here down (error, park-and-return,
+	// success, or panic). Phase 1's returns above happen before the guard is
+	// set, so they neither set nor need to clear it.
+	defer func() {
+		m.mu.Lock()
+		agent.launching = false
+		m.mu.Unlock()
+	}()
+
+	// PHASE 2 — launch preparation with m.mu RELEASED. sanitizeGitRemotes walks
+	// /data/agents/<name> and runs git subprocesses; ensureTmuxSession does
+	// os.MkdirAll("/data/agents/<name>") + a tmux subprocess. On the NFS RWX
+	// PVC these can block in uninterruptible D-state when the server has stale
+	// locks — but no longer WHILE HOLDING m.mu, so AllStatuses()/the heartbeat
+	// collect() keep taking the RLock, the heartbeat-attempt clock keeps
+	// advancing, and /api/livez stays 200. Neither call mutates m.mu-guarded
+	// AgentProcess fields (they read only immutable Name/UID/tmuxSession/
+	// tmuxSocket and Config), so running them lock-free is race-free.
 	m.sanitizeGitRemotes(agent)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -877,16 +925,27 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// strategist stayed paused, which is what exposed this).
 		operatorPaused := agent.Config.Paused || agent.PausedTrigger == "dashboard-api"
 		if IsInferenceBackend(backend) && !operatorPaused {
+			// agent.Paused is an m.mu-guarded field; brief re-lock around the
+			// write so it stays atomic against AllStatuses()/setters.
+			m.mu.Lock()
 			agent.Paused = false
+			m.mu.Unlock()
 			m.logger.Info("auto-unpaused inference agent (transient pause, not operator)", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
 		} else {
+			m.mu.Lock()
 			agent.State = StatePaused
+			m.mu.Unlock()
 			m.logger.Info("agent starting paused", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
 			return nil
 		}
 	}
 
 	if m.appAuth != nil && agent.UID > 0 {
+		// Runs with m.mu RELEASED: WriteAgentToken mints a scoped token via an
+		// outbound GitHub API call (through the MITM egress proxy, which the
+		// production incident showed can hang), and issueAgentMintToken can do
+		// the same. Neither writes an m.mu-guarded AgentProcess field, so a hang
+		// here no longer stalls AllStatuses()/the heartbeat while holding m.mu.
 		tier := m.agentMode(agent).TokenTier()
 		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 			// Be precise about the blast radius. Since audit H3 the shared-cache
@@ -905,6 +964,38 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		m.issueAgentMintToken(agent.Name, tier, agent.UID)
 	}
 
+	// PHASE 3 — launchInTmux. It was written to be called WITH m.mu held: it
+	// mutates m.mu-guarded AgentProcess fields (State, StartedAt, HasLaunched,
+	// LaunchedMode, LastKick/LastKickMessage/KickHistory, LastError, cancel,
+	// launchGen, forceRelaunch, awaitingBobKey, ...) directly with no internal
+	// locking. Re-acquire m.mu for the duration so those writes stay race-free
+	// against AllStatuses()/snapshot() and the model/backend/pause setters —
+	// preserving its original contract exactly (the function is unchanged).
+	//
+	// The launch's own /data reads/writes (ensureTmuxSession has already run
+	// lock-free above; the remaining /data touch is ensureBobAuthSettings on
+	// /data/home for bob agents) are NOT hoisted here — pulling launchInTmux's
+	// deeply interleaved guarded-field writes and NFS I/O apart is a larger,
+	// riskier refactor left for a separate maintainer decision. The three
+	// biggest and most common NFS/proxy blockers (sanitizeGitRemotes,
+	// ensureTmuxSession, WriteAgentToken/mint) are already off the lock above,
+	// which is what breaks the observed fleet-wide liveness flap; a bob-only
+	// /data/home stall under the lock remains a narrower residual.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Re-verify under the re-acquired lock: while m.mu was released for Phase 2,
+	// a concurrent Stop/Remove could have deleted this agent from the map or a
+	// racing path could have started it. The launching guard prevents a second
+	// concurrent Start of THIS agent, but not a Stop/delete, so re-check both
+	// before mutating launch state. (agent still points at the same struct; the
+	// map re-lookup is what detects a delete.)
+	if cur, ok := m.agents[name]; !ok || cur != agent {
+		return fmt.Errorf("agent %s removed during launch", name)
+	}
+	if agent.State == StateRunning {
+		// Another path won the launch race while we were unlocked; nothing to do.
+		return nil
+	}
 	return m.launchInTmux(ctx, agent)
 }
 
@@ -1398,8 +1489,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// auth block BEFORE bob starts. A persisted selectedType beats
 		// BOBSHELL_DEFAULT_AUTH_TYPE, so without this one agent that ever picked
 		// SSO leaves every bob agent on the hive stuck at the auth prompt.
-		// Pure filesystem work on locals only — takes no locks, so it is safe on
-		// this m.mu-holding path.
+		//
+		// NOTE: this writes /data/home/.bob/settings.json, which is on the NFS
+		// RWX PVC — NOT "locals" as an earlier comment claimed. It takes no
+		// Manager lock of its own, but Start still calls launchInTmux with m.mu
+		// held (Phase 3), so an NFS stall here CAN block AllStatuses() for the
+		// NFS timeout. This is the narrower residual left after the Phase-2
+		// hoist (ensureTmuxSession/sanitizeGitRemotes/token writes are already
+		// off the lock); moving bob's /data/home pre-flight off the lock too is
+		// a follow-up for a separate maintainer decision.
 		m.ensureBobAuthSettings(agent.Name, bobSharedHome)
 		// The key resolved above was read by the HIVE process as dev. bob will
 		// read it as the AGENT UID, which is a different question — and the one
