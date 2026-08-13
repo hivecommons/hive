@@ -26,3 +26,12 @@ updates:
     labels:
       - "dependencies"
     open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/v2/proxy"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5
