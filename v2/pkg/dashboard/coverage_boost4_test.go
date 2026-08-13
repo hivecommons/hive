@@ -706,6 +706,7 @@ func TestHandleContributorTrust_UserNotFound(t *testing.T) {
 	req := httptest.NewRequest("PUT", "/api/contribute/trust", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hive-Role", "owner") // mutation gate fails closed on a missing role (C5)
+	req.Header.Set(ownerRoleVerifiedHeader, "true") // requireOwnerRole needs the verified marker too (F14)
 	w := httptest.NewRecorder()
 	srv.handleContributorTrust(w, req)
 

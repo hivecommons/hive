@@ -326,6 +326,7 @@ func TestH2_RevokeDisconnectsLiveSessionAndDeniesReconnect(t *testing.T) {
 	// Admin revokes via the real endpoint.
 	revReq := httptest.NewRequest(http.MethodPost, "/api/contributors/"+reg["contributor_id"]+"/revoke", nil)
 	revReq.Header.Set("X-Hive-Role", "owner")
+	revReq.Header.Set(ownerRoleVerifiedHeader, "true")
 	revW := httptest.NewRecorder()
 	s.mux.ServeHTTP(revW, revReq)
 	if revW.Code != http.StatusOK {
