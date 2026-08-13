@@ -62,6 +62,17 @@ type ApplyPackResult struct {
 // config for a level. It preserves operator governor customizations on a pure
 // merge — see ApplyPackForce for the explicit-level-change variant that must
 // re-derive the cadences from the new pack.
+// isCLIBackend reports whether name is one of the built-in CLI backends —
+// as opposed to a custom model-gateway backend the operator configured.
+func isCLIBackend(name string) bool {
+	for _, b := range config.CLIBackends {
+		if name == b {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 	return s.applyPack(level, false)
 }
@@ -140,7 +151,17 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 				// example, Codex with a Copilot-only Claude model). Preserve an
 				// explicitly pinned CLI, but otherwise reconcile backend and
 				// model together.
-				reconcileBackend := !existing.CLIPinned && !existing.BackendIsOperatorOwned()
+				// Reconcile scope: an existing backend follows the pack when it is
+				// empty, pack-owned, a standard CLI backend (claude/copilot/…), or
+				// the operator forced an explicit level change. A CUSTOM backend —
+				// a configured model-gateway name the operator chose — is never
+				// clobbered by a pack apply, even without recorded ownership: the
+				// pack cannot know the gateway exists, and silently flipping an
+				// agent off its gateway is exactly the surprise this guards.
+				reconcileBackend := !existing.CLIPinned && !existing.BackendIsOperatorOwned() &&
+					(forceLevel || existing.Backend == "" ||
+						existing.BackendOwner == config.FieldOwnerPack ||
+						isCLIBackend(existing.Backend))
 				if reconcileBackend && pa.Backend != "" && existing.Backend != pa.Backend {
 					existing.Backend = pa.Backend
 					existing.BackendOwner = config.FieldOwnerPack
@@ -357,6 +378,9 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
+		// Pack agents skipped because the operator deleted them (tombstoned):
+		// always present so the UI can distinguish "none" from "not reported".
+		"tombstoned": result.Tombstoned,
 	})
 }
 
