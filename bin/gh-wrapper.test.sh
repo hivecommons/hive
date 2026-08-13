@@ -47,6 +47,12 @@ cp "$WRAPPER" "$TEST_WRAPPER"
 chmod +x "$TEST_WRAPPER"
 
 export GH_TOKEN="test-token-mock"
+# The production wrapper fails closed without its per-agent scoped token file.
+# Exercise the author gate behind that boundary instead of accidentally passing
+# cases because the earlier token-delivery guard rejected every invocation.
+TOKEN_CACHE="${WORK_DIR}/scoped-token"
+printf '%s\n' "test-token-mock" >"$TOKEN_CACHE"
+export HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE"
 # All _run_test* invocations inherit this, so the wrapper resolves REAL_GH to the
 # mock instead of the real /opt/hive/bin/gh-real (absent in CI).
 export HIVE_GH_WRAPPER_REAL_GH="${MOCK_GH}"
