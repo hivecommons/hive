@@ -1491,13 +1491,13 @@ func TestDashboardMutationBoundariesPublishAtomicGovernorSnapshot(t *testing.T) 
 	for name, publish := range boundaries {
 		t.Run(name, func(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-			initialGovernor := config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}
+			initialGovernor := config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}
 			initialAgents := map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "allow"}}}}}
 			gov := governor.New(initialGovernor, initialAgents, logger)
 			cfg := &config.Config{Governor: initialGovernor, Agents: initialAgents}
 			server := &Server{deps: &Dependencies{Config: cfg, Governor: gov}}
 
-			cfg.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "2m"}}}}
+			cfg.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "2m"}}}}
 			cfg.Agents = map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "deny"}}}}}
 			if err := publish(server); err != nil {
 				t.Fatal(err)

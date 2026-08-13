@@ -13,29 +13,6 @@ import (
 	"time"
 )
 
-func TestMain(m *testing.M) {
-	startHubBackgroundWorkers = func(*HubServer) {}
-	dispatchHiveProvision = func(func()) {}
-	root, err := os.MkdirTemp("", "hive-hub-tests-")
-	if err != nil {
-		panic(err)
-	}
-	saasUsersDir = filepath.Join(root, "users")
-	saasHivesDir = filepath.Join(root, "hives")
-	hmacKeyPath = filepath.Join(root, "hmac.key")
-	provisionRequestsDir = filepath.Join(root, "provision-requests")
-	hubAutoUpgradePath = filepath.Join(root, "hub-auto-upgrade")
-	latestSHAsPath = filepath.Join(root, "latest-shas.json")
-	for _, path := range []string{saasUsersDir, saasHivesDir, provisionRequestsDir} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			panic(err)
-		}
-	}
-	code := m.Run()
-	_ = os.RemoveAll(root)
-	os.Exit(code)
-}
-
 // helperSetupTempDirs sets up temp directories for SaaS data and returns a cleanup func.
 func helperSetupTempDirs(t *testing.T) func() {
 	t.Helper()

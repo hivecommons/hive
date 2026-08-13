@@ -21,7 +21,7 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	deviceScope    = "repo workflow"
+	deviceScope    = "repo"
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.

@@ -12,7 +12,7 @@ import (
 
 func TestAdmitWorkUsesNormalGovernorStateAndRecordsReasons(t *testing.T) {
 	governor := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := WorkAdmissionRequest{
 		SourceExternalRef: "visual-hive://owner/repo/" + strings.Repeat("a", 64), PacketDigest: strings.Repeat("b", 64),
@@ -40,7 +40,7 @@ func TestAdmitWorkUsesNormalGovernorStateAndRecordsReasons(t *testing.T) {
 
 func TestBindAdmissionRequestClearsCadenceWhenCurrentModeIsUnconfigured(t *testing.T) {
 	gov := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
-		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}},
 	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	admitted := gov.BindAdmissionRequest(WorkAdmissionRequest{Role: "quality"})
 	if admitted.ConfiguredCadence != "1m" {
@@ -64,7 +64,7 @@ func TestGovernorAgentSnapshotAndAdmissionDigestAreDeeplyImmutable(t *testing.T)
 		Connections:  []config.ConnectionConfig{{Name: "evidence", Type: "filesystem", Auth: &config.ConnectionAuth{Type: "env", EnvVar: "TOKEN"}, Options: map[string]string{"root": "evidence"}}},
 		StatsDisplay: []config.StatsDisplayEntry{{Key: "visual", Label: "Visual"}},
 	}}
-	gov := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}, agents, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gov := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "1m"}}}}, agents, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := WorkAdmissionRequest{Role: "quality"}
 	before := gov.BindAdmissionRequest(request)
 	*agents["quality"].IncludeRepos = false
@@ -108,7 +108,7 @@ func TestGovernorAgentSnapshotAndAdmissionDigestAreDeeplyImmutable(t *testing.T)
 	if afterSecondCallerMutation.RoleConfigSHA256 != afterUpdate.RoleConfigSHA256 || afterSecondCallerMutation.RoleConfigured != afterUpdate.RoleConfigured {
 		t.Fatalf("caller mutation after UpdateAgents changed Governor snapshot: updated=%+v mutated=%+v", afterUpdate, afterSecondCallerMutation)
 	}
-	gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "2m"}}}}, agents)
+	gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"quality": "2m"}}}}, agents)
 	afterAtomicUpdate := gov.BindAdmissionRequest(request)
 	if afterAtomicUpdate.RoleConfigSHA256 == afterUpdate.RoleConfigSHA256 || afterAtomicUpdate.ConfiguredCadence != "2m" {
 		t.Fatalf("atomic config and agent snapshot update was not reflected: before=%+v after=%+v", afterUpdate, afterAtomicUpdate)
@@ -126,7 +126,7 @@ func TestGovernorAgentSnapshotAndAdmissionDigestAreDeeplyImmutable(t *testing.T)
 func TestGovernorConfigSnapshotIsDeeplyImmutableAtEveryBoundary(t *testing.T) {
 	newConfig := func(prefix, cadence string) config.GovernorConfig {
 		return config.GovernorConfig{
-			Modes:  map[string]config.ModeConfig{"idle": {Threshold: 1, Cadences: map[string]string{"quality": cadence}}},
+			Modes:  map[string]config.ModeConfig{"idle": {Threshold: 1, Cadences: map[string]config.Cadence{"quality": config.Cadence(cadence)}}},
 			Labels: config.LabelsConfig{Exempt: []string{prefix + "-label"}},
 			Sensing: config.SensingConfig{
 				GHRatePatterns: []string{prefix + "-rate"}, CLIExcludePatterns: []string{prefix + "-cli"}, LoginPatterns: []string{prefix + "-login"},
@@ -149,7 +149,7 @@ func TestGovernorConfigSnapshotIsDeeplyImmutableAtEveryBoundary(t *testing.T) {
 		gov.mu.RLock()
 		defer gov.mu.RUnlock()
 		mode := gov.cfg.Modes["idle"]
-		if bound.ConfiguredCadence != cadence || mode.Threshold != 1 || mode.Cadences["quality"] != cadence ||
+		if bound.ConfiguredCadence != cadence || mode.Threshold != 1 || mode.Cadences["quality"] != config.Cadence(cadence) ||
 			len(gov.cfg.Labels.Exempt) != 1 || gov.cfg.Labels.Exempt[0] != prefix+"-label" ||
 			len(gov.cfg.Sensing.GHRatePatterns) != 1 || gov.cfg.Sensing.GHRatePatterns[0] != prefix+"-rate" ||
 			len(gov.cfg.Sensing.CLIExcludePatterns) != 1 || gov.cfg.Sensing.CLIExcludePatterns[0] != prefix+"-cli" ||

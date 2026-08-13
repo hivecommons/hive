@@ -1904,13 +1904,12 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// clobber the owner's token/client with their own identity. Viewers still
 	// get a per-user session below, they just don't become the hive's actor.
 	if role == config.RoleOwner {
-		tokenPath := s.resolvedUserTokenPath()
-		tmpTokenPath := tokenPath + ".tmp"
+		tmpTokenPath := userTokenPath + ".tmp"
 		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
 			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to save token: " + err.Error()})
 			return
 		}
-		if err := os.Rename(tmpTokenPath, tokenPath); err != nil {
+		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
 			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to persist token: " + err.Error()})
 			return
 		}
@@ -2188,7 +2187,7 @@ func (s *Server) restoreGHUserSession() {
 		return
 	}
 
-	tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
+	tokenData, err := os.ReadFile(userTokenPath)
 	if err != nil {
 		return // no saved token — nothing to restore
 	}
@@ -2201,7 +2200,7 @@ func (s *Server) restoreGHUserSession() {
 	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
-		os.Remove(s.resolvedUserTokenPath())
+		os.Remove(userTokenPath)
 		return
 	}
 

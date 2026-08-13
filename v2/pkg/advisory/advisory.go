@@ -482,20 +482,6 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	return NeutralizeMentions(b.String())
 }
 
-// writeRecentlyResolved renders the "Recently Resolved" digest section. Shared
-// by the normal and the zero-findings ("all clear") digest renderings.
-func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo string) {
-	if len(d.RecentlyResolved) == 0 {
-		return
-	}
-	b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
-	for _, r := range d.RecentlyResolved {
-		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
-		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
-	}
-	b.WriteString("\n")
-}
-
 // findingSortKey orders every rendered field so an unchanged advisory set
 // produces byte-identical markdown even when bead-store iteration order changes
 // across process restarts. Timestamp is intentionally excluded because it is not
@@ -509,6 +495,20 @@ func findingSortKey(f Finding) string {
 		strconv.Itoa(f.Line),
 		f.Detail,
 	}, "\x00")
+}
+
+// writeRecentlyResolved renders the "Recently Resolved" digest section. Shared
+// by the normal and the zero-findings ("all clear") digest renderings.
+func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo string) {
+	if len(d.RecentlyResolved) == 0 {
+		return
+	}
+	b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
+	for _, r := range d.RecentlyResolved {
+		loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
+		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
+	}
+	b.WriteString("\n")
 }
 
 // SetLatestDigest stores the most recent digest for dashboard access.
