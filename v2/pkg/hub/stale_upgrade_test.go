@@ -443,3 +443,98 @@ func TestSweepUnwedgesZeroStartTimestamp(t *testing.T) {
 		t.Errorf("the un-wedged hive must be re-armed for delivery, got %q", got)
 	}
 }
+
+// TestSweepConvergedClearsLatchWithoutBudgetSpend is the integration test for
+// the converged path through sweepOrphanedUpgrades. When a hive's GitHash
+// matches its UpgradeTarget (i.e. the upgrade landed but the latch was never
+// cleared by the heartbeat path — the z-mlz-manager wedge), the sweep must:
+//
+//  1. Clear Upgrading
+//  2. Reset UpgradeTarget (so no path re-delivers an already-landed upgrade)
+//  3. Zero UpgradeStartedAt
+//  4. Reset OrphanedUpgradeSweeps so prior sweeps don't count toward the fault budget
+//  5. Clear any previous UpgradeFailed / UpgradeError (a prior cycle may have armed them)
+//  6. Delete heartbeatUpgrade (no re-arm — the hive is already there)
+//
+// This is distinct from TestSweepDoesNotReRollFloatingTagAtLatest, which
+// covers convergence via branch-latest != UpgradeTarget. This test covers the
+// direct GitHash == UpgradeTarget path.
+func TestSweepConvergedClearsLatchWithoutBudgetSpend(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	// Simulate a hive that upgraded successfully — GitHash matches UpgradeTarget —
+	// but the heartbeat path never cleared the latch (the z-mlz-manager scenario).
+	// Give it a prior sweep count to prove convergence resets it. Note:
+	// UpgradeFailed must NOT be pre-set — evaluateOrphanedUpgrade early-returns
+	// on UpgradeFailed=true, so the converged path never fires in that case.
+	s.heartbeatUpgrade["converged-hive"] = "fc32ae4"
+	s.registry.Hives = []RegistryEntry{{
+		ID:                    "converged-hive",
+		Upgrading:             true,
+		UpgradeStartedAt:      time.Now().Add(-68 * time.Minute),
+		GitHash:               "fc32ae4",
+		UpgradeTarget:         "fc32ae4",
+		LastHeartbeat:         rfc3339(time.Now().Add(-30 * time.Second)),
+		OrphanedUpgradeSweeps: 2, // prior orphaned sweeps from a different upgrade
+	}}
+
+	s.sweepOrphanedUpgrades()
+
+	h := s.registry.Hives[0]
+	if h.Upgrading {
+		t.Error("converged hive must have Upgrading cleared")
+	}
+	if h.UpgradeTarget != "" {
+		t.Errorf("converged hive must have UpgradeTarget cleared, got %q", h.UpgradeTarget)
+	}
+	if !h.UpgradeStartedAt.IsZero() {
+		t.Error("converged hive must have UpgradeStartedAt zeroed")
+	}
+	if h.OrphanedUpgradeSweeps != 0 {
+		t.Errorf("converged hive must reset OrphanedUpgradeSweeps, got %d", h.OrphanedUpgradeSweeps)
+	}
+	if h.UpgradeFailed {
+		t.Error("converged hive must not set UpgradeFailed — the upgrade succeeded")
+	}
+	if h.UpgradeError != "" {
+		t.Errorf("converged hive must not set UpgradeError, got %q", h.UpgradeError)
+	}
+	if _, armed := s.heartbeatUpgrade["converged-hive"]; armed {
+		t.Error("converged hive must NOT be re-armed — the upgrade already landed")
+	}
+}
+
+// TestSweepConvergedIsIdempotent ensures that running the sweep twice on a
+// converged hive does not re-count it or flip any state back.
+func TestSweepConvergedIsIdempotent(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:               "idempotent-hive",
+		Upgrading:        true,
+		UpgradeStartedAt: time.Now().Add(-68 * time.Minute),
+		GitHash:          "fc32ae4",
+		UpgradeTarget:    "fc32ae4",
+		LastHeartbeat:    rfc3339(time.Now().Add(-30 * time.Second)),
+	}}
+
+	s.sweepOrphanedUpgrades()
+	// First sweep clears everything.
+	if s.registry.Hives[0].Upgrading {
+		t.Fatal("first sweep must clear Upgrading")
+	}
+
+	// Second sweep on the already-cleared hive must be a no-op.
+	s.sweepOrphanedUpgrades()
+	h := s.registry.Hives[0]
+	if h.Upgrading {
+		t.Error("second sweep must not re-latch Upgrading")
+	}
+	if h.OrphanedUpgradeSweeps != 0 {
+		t.Error("second sweep must not accrue budget on a cleared hive")
+	}
+}
