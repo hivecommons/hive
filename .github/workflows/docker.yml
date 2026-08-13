@@ -347,6 +347,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             GIT_HASH=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
           cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
