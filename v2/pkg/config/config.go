@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -4499,34 +4500,28 @@ func (c *Config) savePersistenceBytes(data []byte) error {
 	// The overlay applies an extra scrub pass on top of the frozen payload:
 	// env-derived GitHub/dashboard tokens are re-templated or cleared so raw
 	// secret values never land in the PVC overlay (v4 security invariant).
-	if overlay, err := c.dashboardOverlayBytes(); err != nil {
-		log.Printf("[config] warning: failed to marshal dashboard overlay (dashboard saves will not survive pod restarts): %v", err)
-	} else {
-		c.saveDashboardOverlay(overlay)
-	}
+	c.saveDashboardOverlay(scrubOverlayPayload(data))
 	return nil
 }
 
-// dashboardOverlayBytes marshals the config with env-derived secret VALUES
-// replaced by their env templates (or cleared), so the PVC overlay never
-// stores a raw token. The frozen-payload provenance restoration and the
-// header redaction both still apply — this is a strictly stricter variant
-// of the payload written to the primary config file.
-func (c *Config) dashboardOverlayBytes() ([]byte, error) {
-	// Shallow copy: top-level fields are struct values, so mutating the
-	// copy's GitHub/Dashboard sections leaves the live config untouched
-	// (the shared Agents map is not modified).
-	cp := *c
-	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" && cp.GitHub.Token == tok {
-		cp.GitHub.Token = "${HIVE_GITHUB_TOKEN}"
+// scrubOverlayPayload applies the overlay's extra scrub to the frozen payload
+// ITSELF rather than re-serializing the live config: env-derived GitHub and
+// dashboard token VALUES are re-templated or cleared textually. The overlay
+// therefore stays byte-identical to the primary persistence bytes — dd's
+// frozen-payload provenance and operator env templates survive verbatim —
+// except where a raw secret value would otherwise land on the PVC overlay
+// (the v4 security invariant this scrub exists for).
+func scrubOverlayPayload(payload []byte) []byte {
+	out := payload
+	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" {
+		out = bytes.ReplaceAll(out, []byte(tok), []byte("${HIVE_GITHUB_TOKEN}"))
 	}
 	for _, env := range []string{"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN"} {
-		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
-			cp.Dashboard.AuthToken = ""
-			break
+		if v := os.Getenv(env); v != "" {
+			out = bytes.ReplaceAll(out, []byte(v), []byte(""))
 		}
 	}
-	return cp.redactedForPersist().persistenceBytes()
+	return out
 }
 
 // RuntimeConfigFile is where Save() persists the full runtime config on the

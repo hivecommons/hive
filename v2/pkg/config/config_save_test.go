@@ -629,17 +629,18 @@ func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
 	}
 }
 
-func TestDashboardOverlayBytes_RedactsOTelHeaders(t *testing.T) {
+func TestOverlayPayload_RedactsOTelHeaders(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_TOKEN", "short7")
 	cfg := &Config{
 		OTel:    OTelConfig{Headers: map[string]string{"authorization": "Bearer short7"}},
 		Tracing: OTelConfig{Headers: map[string]string{"x-api-key": "short7"}},
 	}
 
-	data, err := cfg.dashboardOverlayBytes()
+	payload, err := cfg.redactedForPersist().persistenceBytes()
 	if err != nil {
-		t.Fatalf("dashboardOverlayBytes() error = %v", err)
+		t.Fatalf("persistenceBytes() error = %v", err)
 	}
+	data := scrubOverlayPayload(payload)
 	body := string(data)
 	if strings.Contains(body, "short7") {
 		t.Fatalf("overlay leaked OTLP header secret: %s", body)
