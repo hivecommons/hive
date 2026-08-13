@@ -444,8 +444,8 @@ func TestHandleCreateHiveAppAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleCreateHive(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 (status is owner-only; read grant does not suffice), got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
@@ -606,8 +606,8 @@ func TestHandleHiveStatusWithAccess(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 (status is owner-only; read grant does not suffice), got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
