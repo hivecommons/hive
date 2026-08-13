@@ -1368,6 +1368,18 @@ func main() {
 		// trust; read through cfg on every call so a config reload takes effect.
 		ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg))
 
+		// commitGreen's required-checks gate (self-merge sweep, see
+		// automerge_sweep.go): install the operator-declared
+		// auto_merge.required_checks list, if any, so gating does not depend
+		// on GitHub's branch-protection API — the Hive App token lacks
+		// administration:read, so that API call reliably errors and would
+		// otherwise fail closed to the coarser isMetaCheck/isIgnorableCICheck
+		// allowlist. Unset/empty leaves the API/allowlist fallback chain
+		// intact (SetRequiredChecks(nil) is a safe no-op).
+		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+			ghClient.SetRequiredChecks(set)
+		}
+
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
 		// directly over the REST API, without a human "Approved ... for Hive
 		// auto-merge" queue review and without waiting on tide. Prow forbids
@@ -2207,6 +2219,9 @@ func main() {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
+			if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+				newClient.SetRequiredChecks(set)
+			}
 
 			ghClient = newClient
 			appAuth = newAppAuth
@@ -2607,6 +2622,9 @@ func main() {
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
+					}
+					if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+						newClient.SetRequiredChecks(set)
 					}
 					ghClient = newClient
 					appAuth = newAppAuth
@@ -3714,6 +3732,9 @@ func main() {
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
+				}
+				if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+					newClient.SetRequiredChecks(set)
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
