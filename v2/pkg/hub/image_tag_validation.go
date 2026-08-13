@@ -90,6 +90,13 @@ func validateImageTag(tag string) error {
 	if imageTagChannelPattern.MatchString(tag) {
 		return nil
 	}
+	// A release channel IS the tag verbatim ("stable"/"candidate"/"edge") —
+	// a closed set validated by membership, not shape. Without this, the
+	// switch handler builds the correct channel tag via upgradeTargetTag and
+	// then refuses its own work ("branch does not map to a valid image tag").
+	if isReleaseChannel(tag) {
+		return nil
+	}
 	return fmt.Errorf(
 		"refusing to patch deployment image: tag %q is neither a %d-%d char hex git SHA nor a %q channel tag "+
 			"(an unresolvable tag silently strands the component on its old ReplicaSet)",

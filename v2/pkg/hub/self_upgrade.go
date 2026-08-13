@@ -131,7 +131,16 @@ func imageTagIsMutable(image string) bool {
 	if idx < 0 || strings.Contains(image[idx+1:], "/") {
 		return false // no tag at all — implicitly :latest, but don't guess
 	}
-	return strings.HasSuffix(image[idx+1:], mutableTagSuffix)
+	tag := image[idx+1:]
+	// Release-channel tags ("stable"/"candidate"/"edge") are retagged digests —
+	// mutable by definition, even though they carry no "-latest" suffix.
+	// Without this, a channel-tracking hive classifies as an immutable pin and
+	// a delivered upgrade rewrites its image to a SHA tag, silently un-tracking
+	// the channel in-cluster.
+	if isReleaseChannel(tag) {
+		return true
+	}
+	return strings.HasSuffix(tag, mutableTagSuffix)
 }
 
 // UpgradeSelfToSHA moves this pod onto targetSHA and returns whether a restart
