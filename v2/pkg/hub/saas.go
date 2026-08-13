@@ -442,6 +442,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	// Daily image-pulls sparkline series (external adoption gauge). requireAuth,
+	// not requireAdmin: any signed-in hub user sees the same public-adoption
+	// number, and the underlying data is scraped from the PUBLIC package page.
+	s.mux.HandleFunc("GET /api/hub/image-pulls", s.requireAuth(s.handleImagePulls))
 	// Token attribution rollups. requireAuth (not requireAdmin) because a
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
@@ -4851,6 +4855,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Record the per-release image-pulls snapshot (external-adoption chart). The
+	// call is internally guarded to snapshot only when the v2 release SHA advances,
+	// so ticking it alongside the frequent SHA poll is cheap — no separate
+	// scheduler. See image_pulls.go.
+	s.maybeSnapshotImagePulls(ctx, time.Now())
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -4873,6 +4882,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -8392,6 +8402,14 @@ const dashboardHTML = `<!DOCTYPE html>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
+        <!-- Image-pulls sparkline: 30-day daily-delta of container-image PULLS
+             of the public spoke image (ghcr.io/kubestellar/hive:v2). Gauges
+             external adoption beyond the hosted fleet. Derived from GitHub's
+             cumulative "Total downloads" counter — it is pulls/day, NOT unique
+             downloads (uniqueness is not measurable). Populated by
+             loadImagePulls(). Hidden until there is data to show. -->
+        <div id="image-pulls-spark" style="display:none;margin-top:8px"
+             title="Container-image pulls per v2 release: the pulls that landed while each of the last ~10 v2 SHAs was the newest release, of the public hive image (ghcr.io/kubestellar/hive:v2). Derived from GitHub's cumulative download counter — pulls, not unique downloads."></div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
@@ -12558,6 +12576,7 @@ const dashboardHTML = `<!DOCTYPE html>
         renderAdminProvisionRequests(data.provision_requests || []);
         loadPublicHives(data.hives || []);
         loadUsage();
+        loadImagePulls();
       } catch(e) {
         /* Surface EVERY failure in the load→render path, not just fetch errors.
            The old guard only painted a message when _allDashHives was empty —
@@ -12573,6 +12592,80 @@ const dashboardHTML = `<!DOCTYPE html>
       } finally {
         _hivesLoading = false;
       }
+    }
+
+    /* loadImagePulls fetches the per-RELEASE pull series (pulls that landed while
+       each of the last ~10 v2 SHAs was the newest release) and paints a small
+       inline-SVG bar chart near the header — one bar per release, newest on the
+       right. Gauges external adoption of the public spoke image
+       (ghcr.io/kubestellar/hive:v2) beyond the hosted fleet. Honest labelling:
+       derived from GitHub's cumulative download counter (pulls, NOT unique
+       downloads). Cold start (fewer than two release snapshots → no window can be
+       closed yet) shows "collecting…". */
+    async function loadImagePulls() {
+      var host = document.getElementById('image-pulls-spark');
+      if (!host) return;
+      var data;
+      try {
+        var resp = await fetch('/api/hub/image-pulls');
+        if (!resp.ok) { host.style.display = 'none'; return; }
+        data = await resp.json();
+      } catch (e) {
+        /* Adoption chart is non-critical chrome — never let it break the
+           dashboard. Just leave it hidden on any failure. */
+        host.style.display = 'none';
+        return;
+      }
+      var points = (data && data.points) || [];
+      host.style.display = 'block';
+
+      /* Cold start: needs at least two release snapshots to close one window. */
+      if ((data && data.collecting) || points.length < 1) {
+        host.innerHTML = '<div style="font-size:0.7rem;color:var(--muted)">Image pulls per v2 release: <span style="opacity:0.7">collecting… (a bar appears once a second release is published)</span></div>';
+        return;
+      }
+
+      /* Bar-chart geometry. Named so there are no bare magic numbers below. */
+      var BAR_W = 14;      // px, per-release bar width
+      var BAR_GAP = 3;     // px, gap between bars
+      var BAR_H = 30;      // px, drawing height
+      var BAR_PAD = 2;     // px, top breathing room so the tallest bar isn't clipped
+
+      var vals = points.map(function(p) { return Math.max(0, Number(p.pulls) || 0); });
+      var maxV = Math.max.apply(null, vals);
+      if (maxV <= 0) maxV = 1; // avoid divide-by-zero on an all-zero window
+      var chartW = points.length * BAR_W + (points.length - 1) * BAR_GAP;
+      var usableH = BAR_H - BAR_PAD;
+
+      var bars = '';
+      points.forEach(function(p, i) {
+        var v = vals[i];
+        var h = Math.max(1, (v / maxV) * usableH); // min 1px so a zero-pull release is still visible
+        var x = i * (BAR_W + BAR_GAP);
+        var y = BAR_H - h;
+        var sha = esc(String(p.sha || ''));
+        var tip = sha + ': ' + v + ' pulls' + (p.date ? ' (since ' + esc(String(p.date)) + ')' : '');
+        // The newest bar (last) is highlighted; older ones muted.
+        var fill = (i === points.length - 1) ? '#60a5fa' : 'rgba(96,165,250,0.45)';
+        bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + BAR_W + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + fill + '"><title>' + tip + '</title></rect>';
+      });
+
+      var svg =
+        '<svg width="' + chartW + '" height="' + BAR_H + '" viewBox="0 0 ' + chartW + ' ' + BAR_H + '" ' +
+        'style="display:block;overflow:visible">' + bars + '</svg>';
+
+      var latest = (data && Number(data.latest)) || 0;
+      var total = (data && Number(data.total_window)) || 0;
+      var newestSHA = points.length ? esc(String(points[points.length - 1].sha || '')) : '';
+      host.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">Pulls per v2 release</div>' +
+          svg +
+          '<div style="font-size:0.7rem;color:var(--muted);white-space:nowrap">' +
+            '<span style="color:#60a5fa;font-weight:600">' + esc(String(latest)) + '</span> on ' + newestSHA +
+            ' &middot; ' + esc(String(total)) + ' over last ' + points.length + ' releases' +
+          '</div>' +
+        '</div>';
     }
 
     /* renderHivesError replaces the eternal spinner with an actionable message.
