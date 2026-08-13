@@ -174,6 +174,18 @@ jobs:
           # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
           REF_NAME='${{ github.ref_name }}'
           echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
+          # always resolve to the newest good build of the RELEASE branch (v4).
+          # They are emitted here, in the same imagetools create that publishes
+          # <branch>-latest, so a channel is a RETAG of the digest we just built —
+          # never a rebuild, and never a manual promotion step that can be
+          # forgotten. Empty on every other branch, so a feature branch can never
+          # move a channel out from under production.
+          if [ "$REF_NAME" = "v4" ]; then
+            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_channels=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create manifest list and push
         if: steps.head-check.outputs.stale != 'true'
@@ -187,6 +199,7 @@ jobs:
           fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.branch_tag }}-latest \
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive:%s ' "$c"; done) \\
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
 
@@ -291,6 +304,18 @@ jobs:
           # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
           REF_NAME='${{ github.ref_name }}'
           echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
+          # always resolve to the newest good build of the RELEASE branch (v4).
+          # They are emitted here, in the same imagetools create that publishes
+          # <branch>-latest, so a channel is a RETAG of the digest we just built —
+          # never a rebuild, and never a manual promotion step that can be
+          # forgotten. Empty on every other branch, so a feature branch can never
+          # move a channel out from under production.
+          if [ "$REF_NAME" = "v4" ]; then
+            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_channels=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create contributor manifest list and push
         if: steps.head-check.outputs.stale != 'true'
@@ -305,6 +330,7 @@ jobs:
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-contributor:latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.branch_tag }}-latest \
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-contributor:%s ' "$c"; done) \\
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
 
@@ -412,6 +438,18 @@ jobs:
           # sanitize '/' -> '-' so feat/x becomes tag feat-x-latest.
           REF_NAME='${{ github.ref_name }}'
           echo "branch_tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+          # RELEASE CHANNELS. stable/candidate/edge are moving pointers that must
+          # always resolve to the newest good build of the RELEASE branch (v4).
+          # They are emitted here, in the same imagetools create that publishes
+          # <branch>-latest, so a channel is a RETAG of the digest we just built —
+          # never a rebuild, and never a manual promotion step that can be
+          # forgotten. Empty on every other branch, so a feature branch can never
+          # move a channel out from under production.
+          if [ "$REF_NAME" = "v4" ]; then
+            echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_channels=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create hub manifest list and push
         if: steps.head-check.outputs.stale != 'true'
@@ -426,5 +464,6 @@ jobs:
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-hub:latest \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.branch_tag }}-latest \
+            $(for c in ${{ steps.meta.outputs.release_channels }}; do printf -- '-t ghcr.io/kubestellar/hive-hub:%s ' "$c"; done) \\
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' "${digests[@]}")
