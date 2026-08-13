@@ -44,6 +44,14 @@ const (
 	infoSSOKey         = "hive-sso-v1"
 	infoImpersonateKey = "hive-impersonate-v1"
 
+	// infoInviteKey derives the PER-HIVE HMAC key that signs contributor invite
+	// tokens (dashboard.inviteSigningSecret). Invite tokens carry attribution, not
+	// access, so this is the lowest-value key in the set — but it was the LAST
+	// spoke-side consumer of the raw master HIVE_HUB_SECRET, which is why it gets
+	// its own derived lane. Per-hive rather than fleet-wide because an invite
+	// minted on one tenant's hive has no business verifying on another's.
+	infoInviteKey = "hive-invite-v1"
+
 	// infoSSOEd25519Seed derives the SSO signing SEED for the C2 follow-up: SSO is
 	// now ASYMMETRIC. deriveDomainKey(master, infoSSOEd25519Seed) yields a 32-byte
 	// (hex) value used verbatim as the Ed25519 seed (ed25519.SeedSize == 32, and a
@@ -188,6 +196,22 @@ func provisionHeartbeatKey(hiveID string) string {
 	return derivePerHiveKey(provisionMasterSecret(), infoHeartbeatKey, hiveID)
 }
 
+// provisionInviteKey returns the PER-HIVE contributor-invite signing key injected
+// into a spoke as HIVE_INVITE_KEY.
+//
+// Mirrors provisionTerminalKey exactly: the token is both minted and verified on
+// the same spoke (dashboard/api_contribute.go), so a symmetric key is the right
+// shape, and binding it to the hive ID means an invite link from one tenant is
+// meaningless on another.
+//
+// The point of this var is removing the last spoke-side READER of the raw master:
+// inviteSigningSecret() used HIVE_HUB_SECRET itself as the HMAC key, so the invite
+// lane was the one place a spoke still needed the master to function. With this
+// injected it does not.
+func provisionInviteKey(hiveID string) string {
+	return derivePerHiveKey(provisionMasterSecret(), infoInviteKey, hiveID)
+}
+
 // heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
 // hiveID. Mirror of provisionHeartbeatKey, resolved against the running hub's
 // own master rather than the provisioning-time lookup.
@@ -268,6 +292,10 @@ const (
 	// re-provisions them with the public key.
 	EnvSSOPublicKey = "HIVE_SSO_PUBLIC_KEY"
 	EnvSSOKeyLegacy = "HIVE_SSO_KEY"
+	// EnvInviteKey carries the per-hive contributor-invite signing key. The spoke
+	// both mints and verifies invite tokens with it, so it is symmetric; it exists
+	// so inviteSigningSecret() no longer has to read the raw master.
+	EnvInviteKey = "HIVE_INVITE_KEY"
 )
 
 // spokeDomainKey resolves a domain sub-key for spoke-side code. It prefers the

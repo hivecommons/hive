@@ -1942,6 +1942,12 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// both mints and verifies this key locally, so symmetric is correct;
 		// only the sharing was wrong.
 		"TerminalKey": provisionTerminalKey(h.ID),
+		// The per-hive contributor-invite signing key. inviteSigningSecret() used
+		// the raw master as its HMAC key, making invites the LAST spoke-side
+		// consumer that actually needed HIVE_HUB_SECRET to function. With this
+		// injected it no longer does. Minted and verified on the same spoke, so
+		// symmetric; per-hive so an invite link cannot travel between tenants.
+		"InviteKey": provisionInviteKey(h.ID),
 		// Cluster-aware fields.
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
@@ -2669,6 +2675,16 @@ spec:
         # on an arbitrary hive. Both resolvers already prefer this var.
         - name: HIVE_TERMINAL_KEY
           value: "{{.TerminalKey}}"
+        # The per-hive contributor-invite signing key. inviteSigningSecret() on
+        # the spoke used the raw master HIVE_HUB_SECRET as its HMAC key — the
+        # last spoke-side code that USED the master rather than merely falling
+        # back to it. Injecting this removes that need. Invite tokens carry
+        # attribution, not access, so the blast radius is small; the point is
+        # that the master no longer has to be present for invites to work.
+        # NOTE: a hive that gains this var re-keys once, invalidating any
+        # in-flight invite links. Nothing else is affected.
+        - name: HIVE_INVITE_KEY
+          value: "{{.InviteKey}}"
 {{- if .IsNginxIngress}}
         # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
         # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every

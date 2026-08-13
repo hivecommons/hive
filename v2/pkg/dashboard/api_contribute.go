@@ -25,6 +25,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 )
 
 const (
@@ -63,13 +64,31 @@ var (
 )
 
 // inviteSigningSecret returns the HMAC key used to sign/verify invite tokens.
-// It prefers the operator-configured HIVE_HUB_SECRET (already the cross-hive
-// shared secret) so invites are consistent across a federated deployment; if
-// that is unset it lazily generates and persists a per-instance random secret
-// beside the contributor store. Either way the secret never leaves the server —
-// the token the client sees is opaque.
+//
+// Resolution order, most to least identity-bound:
+//
+//  1. HIVE_INVITE_KEY — the hub-injected PER-HIVE key (hub.provisionInviteKey,
+//     HMAC(master, "hive-invite-v1" || 0x00 || hiveID)). Preferred, and the reason
+//     this var exists: it lets a hosted spoke sign invites without ever holding
+//     the master.
+//  2. HIVE_HUB_SECRET — the raw master, the historical lane. Kept for spokes on an
+//     older Deployment that predates HIVE_INVITE_KEY, and for self-hosted hives
+//     whose operator legitimately holds the master. Using the master AS the HMAC
+//     key is exactly what we are moving away from; this fallback is transitional
+//     and is removed once the fleet has re-provisioned.
+//  3. A lazily generated, persisted per-instance random secret beside the
+//     contributor store, when neither var is set.
+//
+// Either way the secret never leaves the server — the token the client sees is
+// opaque. NOTE: invite tokens are signed with this key, so a hive whose key
+// CHANGES invalidates in-flight invite links (see the PR body); a spoke that
+// gains HIVE_INVITE_KEY re-keys exactly once.
 func inviteSigningSecret() []byte {
 	inviteSecretOnce.Do(func() {
+		if v := strings.TrimSpace(os.Getenv(hub.EnvInviteKey)); v != "" {
+			inviteSecretCache = []byte(v)
+			return
+		}
 		if v := strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")); v != "" {
 			inviteSecretCache = []byte(v)
 			return
