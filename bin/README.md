@@ -83,3 +83,4 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `contributor-agent.test.sh` | Contributor-agent regression for knowledge export handling. |
 | `contributor-relay.test.js` | Contributor relay task/restart/headless behavior; loads `contributor-relay.sh` as JavaScript with stubs. |
 | `gh-wrapper.test.sh` | `gh-wrapper.sh` author-gate and restriction regressions using a mock `gh` binary. |
+| `kick-agents-gh-auth.test.sh` | `kick-agents.sh` GH AUTH instruction (#1861): kicks must point each agent at its own tier-scoped token file, never the shared full-privilege App token cache. |

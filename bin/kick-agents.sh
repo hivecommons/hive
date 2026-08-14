@@ -831,7 +831,26 @@ if policy_changed "scanner"; then
 else
   _SCANNER_POLICY_INSTR="Policy unchanged since last kick — skip CLAUDE.md re-read, continue with standing instructions."
 fi
-_GH_AUTH_INSTR="⚙ GH AUTH: ALWAYS prefix gh commands with: GH_TOKEN=\$(cat /var/run/hive-metrics/gh-app-token.cache) gh ... — this uses the GitHub App token (15k/hr). NEVER use a PAT or hardcode tokens. NEVER set GH_TOKEN from env vars or hosts.yml. The App token file is refreshed automatically."
+# _gh_auth_instr <agent> — the GH AUTH line embedded in that agent's kick.
+#
+# SECURITY (kubestellar/hive#1861, audit H3 / CWE-522,732): this deliberately
+# does NOT name /var/run/hive-metrics/gh-app-token.cache. That file holds the
+# FULL, unscoped installation token; reading it skips the credential helper's
+# UID/mode gate and hands any agent full privilege, which is the exact
+# escalation #1861 exists to close. It is now 0600, so the old instruction can
+# no longer succeed for a non-root agent — but telling agents to reach for it
+# still teaches the anti-pattern, and an agent that learns the path will try it
+# on other tools (curl, git) where no wrapper is in the way.
+#
+# The per-agent file named here is 0600, owned by the agent's own UID, and
+# scoped to the agent's trust tier, so it preserves both enforcement layers
+# (tier-scoped token + proxy mode inspection). This wording is kept in step with
+# the v2 scheduler's ghAuthInstructions (v2/pkg/scheduler/scheduler.go), which
+# has told agents the right thing since per-agent tokens landed in #1860 — the
+# two kick lanes were contradicting each other until now.
+_gh_auth_instr() {
+  printf '%s' "⚙ GH AUTH: run gh normally — where the hive's gh wrapper is installed it injects your per-agent token automatically. If a command reports no token, export it yourself first: export GH_TOKEN=\$(cat /var/run/hive-metrics/agent-tokens/gh-token-$1.cache) — that file is YOUR tier-scoped App token (15k/hr) and is refreshed automatically. NEVER read another agent's token file, and NEVER read the shared gh-app-token.cache: it holds an unscoped full-privilege token and using it defeats per-agent scoping. NEVER use a PAT or hardcode tokens. NEVER set GH_TOKEN from HIVE_GITHUB_TOKEN or hosts.yml."
+}
 
 _CLUSTER_SECTION=""
 if [ -n "$_CLUSTERS_INLINE" ]; then
@@ -840,7 +859,7 @@ CLUSTERS (bundle into 1 agent each):
 ${_CLUSTERS_INLINE}"
 fi
 SCANNER_MSG="[agent:scanner] [KICK] git pull /tmp/hive. ${_SCANNER_POLICY_INSTR}
-${_GH_AUTH_INSTR}
+$(_gh_auth_instr scanner)
 YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):
 ${_WORK_LIST}${_CLUSTER_SECTION}${_MERGE_INLINE}$([ -n "$_FAILING_INLINE" ] && printf '\nCI-FAILING PRs (fix these — the ERROR lines are the RAW CI evidence, start from them, do NOT guess):\n%s' "$_FAILING_INLINE")$([ -n "$_ESCALATED_INLINE" ] && printf '\n🛑 ESCALATED (fix loop breaker tripped — do NOT open or push more fix PRs for these; a human owns them until the needs-human label is removed):\n%s' "$_ESCALATED_INLINE")
 ⛔ NEVER run gh issue list, gh pr list, gh search issues, or gh search prs — the work list above is your ONLY source. You may use gh issue view, gh pr view, gh pr merge, gh pr create on individual items.
@@ -910,7 +929,7 @@ GA4: ${_GA4_SUMMARY}"
   fi
 fi
 CI_MAINTAINER_MSG="[agent:ci-maintainer] [KICK] ${_HEALTH_PREAMBLE}git pull /tmp/hive. ${_REVIEWER_POLICY_INSTR}${_GA4_PREAMBLE}${_COPILOT_PREAMBLE}
-${_GH_AUTH_INSTR}
+$(_gh_auth_instr ci-maintainer)
 Fix REDs (NOT Playwright — file issues only, scanner owns Playwright fixes), merge green PRs. Copilot comments and GA4 data above are pre-computed — do NOT re-query. Read /var/run/hive-metrics/copilot-comments.json and /var/run/hive-metrics/ga4-anomalies.json for full details. Beads: ~/ci-maintainer-beads"
 
 if policy_changed "architect"; then
@@ -919,7 +938,7 @@ else
   _ARCHITECT_POLICY_INSTR="Policy unchanged since last kick — skip CLAUDE.md re-read, continue with standing instructions."
 fi
 ARCHITECT_MSG="[agent:architect] [KICK] git pull /tmp/hive. ${_ARCHITECT_POLICY_INSTR}
-${_GH_AUTH_INSTR}
+$(_gh_auth_instr architect)
 Full architect pass — refactor/perf scan. Beads: ~/architect-beads"
 
 if policy_changed "outreach"; then
@@ -950,7 +969,7 @@ _OUTREACH_SECTION=""
 [ -n "$_OUTREACH_PREAMBLE" ] && _OUTREACH_SECTION="
 ${_OUTREACH_PREAMBLE}"
 OUTREACH_MSG="[agent:outreach] [KICK] git pull /tmp/hive. ${_OUTREACH_POLICY_INSTR}${_OUTREACH_SECTION}
-${_GH_AUTH_INSTR}
+$(_gh_auth_instr outreach)
 Full outreach pass. PR counts above are pre-computed — do NOT re-query with gh search. Read /var/run/hive-metrics/outreach-prs.json for full details. Check blocked_orgs before opening new PRs. Beads: ~/outreach-beads"
 
 # ── Governor model integration ──────────────────────────────────────
@@ -1135,7 +1154,7 @@ else
   _SUPERVISOR_POLICY_INSTR="Policy unchanged since last kick — skip CLAUDE.md re-read, continue with standing instructions."
 fi
 SUPERVISOR_MSG="[agent:supervisor] [KICK] MONITORING PASS ${_now_et}. ${_SUPERVISOR_POLICY_INSTR}
-${_GH_AUTH_INSTR}
+$(_gh_auth_instr supervisor)
 Check all agent panes, merge green PRs, unstick idle agents. Beads: ~/supervisor-beads"
 
 case "$TARGET" in

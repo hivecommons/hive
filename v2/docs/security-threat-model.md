@@ -96,6 +96,24 @@ the threats they reduce.
   by the proxy, but agents still have network paths for allowed GitHub reads,
   model backends, and opaque `github.com` tunneling. #2804 proposes a stricter
   no-network sandbox with the MITM proxy retained as an outer layer.
+- **Proxy agent identity is not yet authoritative.** The MITM proxy resolves the
+  calling agent by reading the socket owner's UID from `/proc/net/tcp`
+  (unforgeable), but falls back to the client-supplied `Proxy-Authorization`
+  header when that lookup returns nothing — which is every request when no UID
+  map is present, since agents then share the `dev` UID
+  (`pkg/proxy/github_proxy.go`, `identifyAgentFromReq` / `extractAgentName`).
+  An agent that sets that header can therefore present another agent's name to
+  the proxy. Impact today is bounded to the proxy's *mode* decision: tokens are
+  per-agent files at `0600` owned by the agent's own UID, so a spoofed name does
+  not yield another agent's credential, and an unidentified caller fails closed
+  to `ADVISORY`. This gap is the stated reason the proxy-side token **injection**
+  in [#1861](https://github.com/kubestellar/hive/issues/1861) is deferred:
+  minting a tier-scoped token for whoever the proxy believes is calling would
+  promote a name-spoofing weakness into a token-minting one. Closing it is
+  tracked as N7 of [#2172](https://github.com/kubestellar/hive/issues/2172), and
+  is expected to reuse the per-spoke keypair/attestation from the master-delivery
+  work ([#3833](https://github.com/kubestellar/hive/issues/3833)) rather than
+  inventing a second identity story.
 - **ioscan semantic classification is optional and fail-open.** Deterministic
   rules, Unicode normalization, base64 rescans, canaries, output redaction, and
   fail-closed semantics are the dependable floor. The model-based classifier
