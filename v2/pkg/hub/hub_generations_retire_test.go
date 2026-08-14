@@ -56,13 +56,29 @@ func newRetireTestHub(t *testing.T, gens []keyGeneration, current int) *HubServe
 // seedObservations installs Deployment-sourced spoke observations, which is
 // what PerHiveEnvSnapshot counts. Deliberately NOT heartbeat-sourced: a paused
 // spoke still has a Deployment and must still block readiness.
+// seedObservations stands in for a completed sweep, so it must seed what a
+// sweep records: the observations AND the selection accounting. Considered is
+// set to the number of hives observed with zero unreachable — i.e. a FULLY
+// observed fleet — because that is the only state in which the readiness
+// signals are permitted to say "yes". Tests that want a partially-observed
+// fleet use seedObservationsWithUnreachable.
 func seedObservations(s *HubServer, onGeneration map[string]int) {
+	seedObservationsWithUnreachable(s, onGeneration, 0, nil)
+}
+
+// seedObservationsWithUnreachable seeds a sweep that could not read
+// unreachable hives on the named clusters, on top of the ones it did observe.
+func seedObservationsWithUnreachable(s *HubServer, onGeneration map[string]int, unreachable int, clusters []string) {
 	s.perHiveEnvMu.Lock()
 	defer s.perHiveEnvMu.Unlock()
 	s.perHiveEnvSeen = map[string]perHiveEnvObservation{}
 	for id, gen := range onGeneration {
 		s.perHiveEnvSeen[id] = perHiveEnvObservation{Generation: gen}
 	}
+	s.perHiveEnvConsidered = len(onGeneration) + unreachable
+	s.perHiveEnvSkippedByStatus = 0
+	s.perHiveEnvUnreachable = unreachable
+	s.perHiveEnvUnreachableClusters = append([]string(nil), clusters...)
 }
 
 // TestRetireExpiredGenerationsIsPositiveControl is the two-directional positive

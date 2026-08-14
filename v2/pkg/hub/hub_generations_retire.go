@@ -3,6 +3,7 @@ package hub
 import (
 	"errors"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -347,6 +348,22 @@ func (s *HubServer) sweepGenerationRetirement(now time.Time) {
 	// shows up in this alert; it cannot fall out of the denominator by going
 	// quiet and make a stranding look like a convergence.
 	snap := s.PerHiveEnvSnapshot()
+
+	// An UNREACHABLE spoke is a stranding candidate the pin alert cannot see:
+	// evaluateGenerationPin reasons over observed counts, and an unread spoke
+	// contributes to none of them. It is not merely absent from the alert — it
+	// is the spoke most likely to be stranded, because nothing is converging
+	// it. Retirement is unconditional on the wall clock, so say this plainly
+	// and separately rather than letting a clean pin alert imply a clean fleet.
+	if snap.UnreachableHives > 0 && s.logger != nil {
+		s.logger.Warn("master generation retirement is running against a PARTIALLY OBSERVED fleet — "+
+			"these spokes cannot be read, so their generation is unknown and the convergence lane "+
+			"cannot repair them; retirement will not wait for them",
+			"unreachable_hives", snap.UnreachableHives,
+			"unreachable_clusters", strings.Join(snap.UnreachableClusters, ","),
+			"observed_hives", snap.ObservedHives,
+			"safe_to_retire_previous", snap.KeyGenerations.SafeToRetirePrevious)
+	}
 
 	for _, g := range gs.Generations {
 		alert := evaluateGenerationPin(

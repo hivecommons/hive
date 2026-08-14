@@ -379,6 +379,10 @@ func TestPerHiveEnvReconcileThrottle(t *testing.T) {
 // that is the exact failure mode authRolloutStaleAfter has and this must not.
 func TestPerHiveEnvSnapshotMixedFleet(t *testing.T) {
 	s := &HubServer{}
+	// Stand in for a sweep that admitted these four hives and READ all four:
+	// convergence is gated on full observation, so a fixture without this
+	// would report not-converged for a reason this test is not about.
+	s.perHiveEnvConsidered = 4
 
 	// Converged, beating normally.
 	s.recordPerHiveEnvObservation("hive-good", perHiveEnvObservation{

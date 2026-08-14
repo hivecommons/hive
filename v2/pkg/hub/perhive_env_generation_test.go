@@ -420,8 +420,17 @@ func TestPerHiveEnvSafeToRetireIsGated(t *testing.T) {
 	expired := legacyGenerationSet(perHiveGenSecretA).
 		rotate(perHiveGenSecretB, now.Add(-2*defaultVerifyWindow), defaultVerifyWindow)
 
+	// perHiveEnvConsidered mirrors what a sweep that read every admitted hive
+	// would record, with perHiveEnvUnreachable left at zero: a FULLY observed
+	// fleet. Retirement readiness is gated on that, so a fixture that omitted
+	// it would report "not retirable" for reasons unrelated to what each
+	// subtest is actually asserting.
 	newHub := func(gs *generationSet, seen map[string]perHiveEnvObservation) *HubServer {
-		return &HubServer{keyGenerations: gs, perHiveEnvSeen: seen}
+		return &HubServer{
+			keyGenerations:       gs,
+			perHiveEnvSeen:       seen,
+			perHiveEnvConsidered: len(seen),
+		}
 	}
 	allOnCurrent := map[string]perHiveEnvObservation{
 		"c1": {Generation: expired.Current, Observed: now},

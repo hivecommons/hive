@@ -933,7 +933,16 @@ type HubServer struct {
 	// converged fleet. Guarded by perHiveEnvMu with perHiveEnvSeen.
 	perHiveEnvConsidered      int
 	perHiveEnvSkippedByStatus int
-	perHiveEnvMu              sync.RWMutex
+	// perHiveEnvUnreachable / perHiveEnvUnreachableClusters record the LAST
+	// sweep's hives that were admitted by status but could not be READ at all —
+	// pull-only cluster, no registry entry, or inside the unreachable-cluster
+	// breaker window. Without these the sweep's skip paths left no trace, so an
+	// unreachable spoke was indistinguishable from one that does not exist and
+	// the surface reported a partially-observed fleet as converged. Guarded by
+	// perHiveEnvMu with perHiveEnvSeen.
+	perHiveEnvUnreachable         int
+	perHiveEnvUnreachableClusters []string
+	perHiveEnvMu                  sync.RWMutex
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
