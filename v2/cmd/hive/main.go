@@ -2190,6 +2190,14 @@ func main() {
 		Logger:           logger,
 		Ctx:              ctx,
 		RefreshFunc:      refreshDashboard,
+		// #3768: give the contribute queue read access to the duplicate-PR
+		// claim ledger, so an issue any open PR (hive-authored or a human
+		// contributor's) already claims to fix is never offered to another
+		// contributor. Lazy: the ledger loads on first use, same as the
+		// eval-cycle guard.
+		IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
+			return getClaimLedger(logger).Lookup(repo, number)
+		},
 		PersistFunc: func() {
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 		},
@@ -6024,6 +6032,20 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	ledger := getClaimLedger(logger)
+	if ledger == nil {
+		return
+	}
+	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+}
+
+// getClaimLedger lazily loads the persisted claim ledger on first use (and
+// keeps a usable empty ledger on a load failure), so a missing or corrupt
+// /data ledger can never block the hive from booting. It is shared by the
+// eval-cycle guard above and by the dashboard's IssueClaimed hook (#3768); the
+// sync.Once publication makes the pointer safe to read from either goroutine,
+// and the ledger itself is internally locked.
+func getClaimLedger(logger *slog.Logger) *github.ClaimLedger {
 	claimLedgerOnce.Do(func() {
 		ledger, err := github.LoadClaimLedger(github.ClaimLedgerPath, logger)
 		if err != nil {
@@ -6034,10 +6056,7 @@ func applyDuplicatePRGuard(
 		}
 		claimLedger = ledger
 	})
-	if claimLedger == nil {
-		return
-	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	return claimLedger
 }
 
 // claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR
