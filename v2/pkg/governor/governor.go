@@ -850,21 +850,28 @@ func (g *Governor) SeedQueueState(issues, prs, hold, slaViolations int) {
 	g.state.SLAViolations = slaViolations
 }
 
+// SeedLastKicks restores persisted last-kick timestamps from the state
+// snapshot. Restored values gate the first eval after a pod boot exactly
+// like live values gate any other eval — #2573: a pod boot must NOT bypass
+// cadence (startup used to wipe these via a ClearLastKicks call so every
+// eligible agent was kicked on the first eval; on hosted hives, where hub-
+// managed auto-upgrades roll the Deployment into a NEW pod, that re-kicked
+// 4h/6h-cadence agents at roll frequency and burned backend tokens far
+// beyond any configured cadence).
+//
+// A timestamp in the future — node clock skew or a corrupt snapshot —
+// is clamped to now, so a bad value can never hold an agent past one full
+// cadence interval from the current wall clock.
 func (g *Governor) SeedLastKicks(kicks map[string]time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	now := g.now()
 	for k, v := range kicks {
+		if v.After(now) {
+			v = now
+		}
 		g.state.LastKick[k] = v
 	}
-}
-
-// ClearLastKicks resets all LastKick timestamps so every agent is "due"
-// on the next eval cycle. Paused and on-demand agents are still skipped
-// by agentsDueForKick() — this just clears the timing gate.
-func (g *Governor) ClearLastKicks() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.state.LastKick = make(map[string]time.Time)
 }
 
 func (g *Governor) SeedKickHistory(records []KickRecord) {
