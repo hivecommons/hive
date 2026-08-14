@@ -70,7 +70,7 @@ fi
 
 # Read mode from file first (hot-reloadable), fallback to env var
 MODE_FILE="/tmp/.hive-mode-${AGENT}"
-if [ -f "$MODE_FILE" ]; then
+if [ -f "$MODE_FILE" ] && [ -r "$MODE_FILE" ]; then
   AGENT_MODE="$(cat "$MODE_FILE")"
 else
   AGENT_MODE="${HIVE_AGENT_MODE:-}"
