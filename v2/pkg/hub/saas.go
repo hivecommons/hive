@@ -14584,6 +14584,13 @@ const dashboardHTML = `<!DOCTYPE html>
       var targetBranch = '';
       if (isBranchTarget) {
         targetBranch = upgradeTarget.slice(0, -BRANCH_TARGET_SUFFIX.length);
+      } else if (upgradeTarget && (_releaseChannels || []).indexOf(upgradeTarget) !== -1) {
+        /* A channel switch arms the CHANNEL NAME as the target ("stable"),
+           not a "-latest" tag, so the suffix parse above never sees it —
+           after a page refresh (client sentinel gone) the "Switching to
+           stable" indicator silently vanished while the switch was still
+           running server-side. */
+        targetBranch = upgradeTarget;
       } else if (hasSwitchSentinel) {
         targetBranch = sentinel.slice(SWITCH_SENTINEL_PREFIX.length);
       }
