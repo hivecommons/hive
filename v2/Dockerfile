@@ -378,9 +378,13 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
 # HOW NET_ADMIN REACHES hive INSTEAD (see v2/deploy/entrypoint.sh)
 # The entrypoint reads its own CapBnd (bounding set) at the privilege-drop point
 # and, ONLY when CAP_NET_ADMIN is present (managed OKE/OpenShift spokes grant it
-# via SCC/PSA), drops to `dev` with `setpriv --ambient-caps +net_admin` so hive
-# inherits NET_ADMIN in its EFFECTIVE+AMBIENT set — SO_MARK works exactly as
-# before. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
+# via SCC/PSA), drops to `dev` with
+# `setpriv --inh-caps +net_admin --ambient-caps +net_admin` so hive inherits
+# NET_ADMIN in its EFFECTIVE+AMBIENT set — SO_MARK works exactly as before.
+# BOTH flags are required (#3874): the kernel only permits an ambient bit that
+# is also in the INHERITABLE set, and setpriv applies --ambient-caps AFTER the
+# UID change (when pI is already zeroed), so `--ambient-caps` alone exits 0
+# while silently leaving CapAmb=0x0. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
 # does NOT attempt the raise (setpriv would error) and falls back to plain
 # `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
 # SO_MARK path degrades gracefully (v2/pkg/proxy/github_proxy.go logs once and
