@@ -407,8 +407,8 @@ async function main() {
     // a static page:
     //   1. /api/gh-auth is not on the dashboard's public-path allowlist, so
     //      an anonymous snapshot visitor's fetch gets a 401 JSON error body
-    //      with no "ok" field. checkGhAuth()'s `if (data.ok) {...} else
-    //      {mark #gh-auth-alert active}` then reads that 401 as "GitHub API
+    //      with no "ok" field. checkGhAuth()'s if (data.ok) {...} else
+    //      {mark #gh-auth-alert active} then reads that 401 as "GitHub API
     //      authentication failed" even when the hive's real GitHub auth
     //      (already captured correctly in the baked status above) is fine.
     //   2. checkGHAuth() correctly reports the anonymous viewer as not
