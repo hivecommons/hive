@@ -1215,18 +1215,30 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// cannot tell which generation is current. In that case it must not keep
 	// the provisional legacy set either: that set is the SUPERSEDED master, and
 	// installing it is the silent un-rotation this finding is about.
+	// AUDIT 8 / F19. Each arm below ALSO installs the set into the package-level
+	// pointer the spoke-bound derivation path reads (setLiveGenerations). Before
+	// this, provisionGenerationSet() ignored everything decided here and
+	// unconditionally rebuilt generation 1 from the raw hub-secret.key, so the
+	// hub minted on one set and provisioned the fleet from another. The two must
+	// come from the same load or a rotation never reaches a spoke.
 	switch gs, rotatedAt, outcome := loadGenerations(secret, logger); outcome {
 	case generationsLoaded:
 		s.keyGenerations = gs
 		// Restore the rotation timestamp too, or the cooldown would reset on
 		// every hub roll and stop guarding anything.
 		s.lastKeyRotation = rotatedAt
+		setLiveGenerations(gs, false)
 	case generationsNeverRotated:
 		// Legitimate fallback: keep the provisional legacy set built from
 		// hub-secret.key. This is the state of every hub in the fleet today.
 		if gs != nil {
 			s.keyGenerations = gs
 		}
+		// Install it on the derivation side too. On a never-rotated hub this is
+		// byte-identical to the pre-F19 legacyGenerationSet(provisionMasterSecret())
+		// whenever HIVE_HUB_SECRET and hub-secret.key agree, which is the whole
+		// fleet today — so this arm is a no-op in effect, by construction.
+		setLiveGenerations(gs, false)
 	case generationsUntrusted:
 		// FAIL CLOSED. Drop the provisional legacy set rather than serve on it.
 		//
@@ -1259,6 +1271,15 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// refused outright by rotateMasterSecret, so the cleared cooldown can
 		// no longer be used to strand anyone. See generationsUntrusted.
 		s.keyGenerations = nil
+		// AUDIT 8 / F19 + F20. Latch the untrusted state on the derivation side
+		// too, and note this is NOT the same as installing nil there: nil means
+		// "no hub in this process" and falls back to the legacy set, which is
+		// exactly the re-derivation from superseded material that must not
+		// happen here. The explicit flag makes provisionGenerationSet() return
+		// nil, so desiredPerHiveEnv's empty-master guard skips every hive and the
+		// sweep patches nothing rather than pushing the fleet backwards onto
+		// generation 1.
+		setLiveGenerations(nil, true)
 		logger.Error("hub master generation state is UNTRUSTED — minting and rotation are DISABLED until an operator resolves the generations file; "+
 			"existing spokes continue to authenticate on the single-master path",
 			"path", hubGenerationsPath)

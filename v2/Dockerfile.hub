@@ -27,7 +27,13 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
 # alongside `builder`. Busting only `builder` rebuilt a fresh /hive but let
 # BuildKit serve the final-stage `COPY --from=builder /hive` layer from the
 # branch-scoped GHA cache, shipping the OLD binary. See docker.yml.
-FROM alpine:3.24 AS runtime
+# Digest-pinned (#3843): a bare `alpine:3.24` tag is mutable — Alpine re-pushes
+# the patch tag on every CVE respin, so the trusted computing base of the hub
+# image could change with no diff in this repo. Every other FROM here was
+# already digest-pinned; this was the last tag-only one. Digest resolved from
+# docker.io/library/alpine:3.24 (an OCI index, so it stays multi-arch — the
+# amd64/arm64 hub builds both still work).
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.36.3
 ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336

@@ -157,9 +157,18 @@ func TestSpokePauseBlocksStaleRecovery(t *testing.T) {
 	// SHAs deliberately share no prefix: sameCommit matches short-vs-full by
 	// prefix, so "old"/"oldtarget" would read as already-at-target and clear
 	// the latch before the recovery branch this test exercises.
+	//
+	// LastHeartbeat must be fresh (#3851): stale-recovery only re-arms a hive
+	// that can actually COLLECT the instruction on its next heartbeat. A hive
+	// with no LastHeartbeat is an unassigned placeholder that never checked
+	// in — triggerAutoUpgrades correctly abandons its latch instead of
+	// re-arming forever (see pullonly_upgrade.go:upgradeCollectible). This
+	// test exercises the pause switch on a LIVE, recoverable hive, so the
+	// fixture must model one: a hive that recently heartbeated.
 	s.registry.Hives = []RegistryEntry{{
 		ID: "h1", GitBranch: "v2", GitHash: "aaa1111", Upgrading: true,
 		UpgradeTarget: "bbb2222", UpgradeStartedAt: started,
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
 	}}
 
 	pauseSpokes(t, s, true)

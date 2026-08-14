@@ -1948,7 +1948,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// generation set through the same helper. Before any rotation exists
 		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		"SessionKey":   deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		// RESIDUAL-2: PER-HIVE, matching desiredPerHiveEnv. This MUST move in
+		// lockstep with the reconcile sweep — the two derivations fighting is
+		// exactly the "roll a pod every cycle forever" failure the comment
+		// above warns about.
+		"SessionKey":   provisionSessionKey(h.ID),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
 		// hive_hub_user with this and cannot mint one — unlike SessionKey below,

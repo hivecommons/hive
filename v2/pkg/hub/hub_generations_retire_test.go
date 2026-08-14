@@ -50,6 +50,16 @@ func newRetireTestHub(t *testing.T, gens []keyGeneration, current int) *HubServe
 		t.Fatalf("fixture: newGenerationSet(%d, %d gens) returned nil", current, len(gens))
 	}
 	s.keyGenerations = gs
+	// AUDIT 8 / F19+F21. Declare a fully observed fleet so tests that go on to
+	// ROTATE off this fixture are not refused by the stranding interlock.
+	//
+	// This does NOT weaken anything these tests assert. Retirement is
+	// deliberately unconditional on convergence (see the file header rationale)
+	// and never reads these fields, so every retirement assertion is unaffected;
+	// only rotateMasterSecret consults them. The tests that seed real
+	// observation state call seedObservations, which overwrites these.
+	s.perHiveEnvConsidered = 1
+	s.perHiveEnvUnreachable = 0
 	return s
 }
 

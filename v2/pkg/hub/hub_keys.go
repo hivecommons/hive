@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -166,6 +167,54 @@ func (s *HubServer) sessionPublicKey() string {
 // to provisionMasterSecret().
 func provisionSessionPublicKey() string {
 	return ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSessionEd25519Seed))
+}
+
+// provisionSessionKey returns the PER-HIVE value injected into a spoke as
+// HIVE_SESSION_KEY (audit RESIDUAL-2).
+//
+// Measured live before this change: 1 distinct value across all 70 spokes,
+// 0 converged — not sweep drift, but derivation by design. desiredPerHiveEnv
+// derived this var with deriveDomainKey, which takes no hiveID, while its
+// neighbours two lines away used derivePerHiveKey. Uniformity was the intended
+// output of the old formula, so no rotation could ever have made these
+// per-hive: a rotation moves all 70 in lockstep. That is why this is a code
+// change and not a convergence problem.
+//
+// WHY THIS IS SAFE TO MAKE PER-HIVE — the value is no longer a comparand.
+// Every lane that once VERIFIED against this key is already deleted:
+//
+//   - F1 removed the Go legacy symmetric cookie lane
+//     (hub_cookie.go verifyHubUserCookieEitherAt, `_ = legacySecret`).
+//   - N3 stopped the terminal key falling through to it (terminal_assertion.go).
+//   - F23 removed the Node proxy's copy (proxy/server.js
+//     verifyHubUserCookieAcrossKeys, `void legacySecret`).
+//
+// What remains on the spoke reads this var for its PRESENCE, never its value:
+// the proxy's IS_HOSTED boot signal is `SESSION_KEY !== ”`. SpokeSessionKey()
+// has zero non-test Go callers. So no party compares a value derived here
+// against a value derived anywhere else, and changing the formula cannot make
+// two honest parties disagree.
+//
+// THE SELF-DERIVE FALLBACK IS THEREFORE HARMLESS, and this is the one thing
+// worth being explicit about, because it is the obvious way a change like this
+// breaks a fleet. A spoke that lacks the env var self-derives it, and both
+// spoke-side resolvers — Go spokeDomainKey(EnvSessionKey, infoSessionKey) and
+// the proxy's deriveSessionKey() — self-derive the FLEET-WIDE value from
+// HIVE_HUB_SECRET, because neither mixes in the hive ID. Once the hub injects a
+// per-hive value the two disagree by construction, and during the roll the
+// fleet holds a mix of both. That is fine here, and only here, precisely
+// because nothing verifies with it: a disagreement over a value no one compares
+// has no observable effect. Both surviving readers are emptiness checks, and a
+// per-hive value is exactly as non-empty as a fleet-wide one, so IS_HOSTED is
+// unchanged for every spoke in every state.
+//
+// Deliberately NOT changing the self-derive fallbacks to match. Making them
+// per-hive would be dead code on both sides today, and on the spoke it would
+// hand a wrong answer to a spoke that has no HIVE_ID — flipping IS_HOSTED to
+// false and silently converting a hosted hive to the self-hosted identity
+// model. The fallbacks stay as they are until the var is dropped outright.
+func provisionSessionKey(hiveID string) string {
+	return derivePerHiveKey(provisionCurrentSecret(), infoSessionKey, hiveID)
 }
 
 // provisionTerminalKey returns the PER-HIVE terminal signing key injected into a
@@ -602,38 +651,167 @@ func provisionMasterSecret() string {
 // forever. Making them both resolve their master through THIS function means a
 // rotation cannot move one side without the other.
 //
-// TODAY THIS IS EXACTLY legacyGenerationSet(provisionMasterSecret()). There is
-// no persisted generations file yet and no endpoint that can create a second
-// generation (that is follow-on PR #4), so currentSecret() is always the same
-// string provisionMasterSecret() returns and every derived value is
-// byte-identical to what this code produced before generations existed. This
-// change is a READ-PATH change in effect: it re-expresses where the master
-// comes from without changing which master it is.
+// AUDIT 8 / F19 — THIS FUNCTION USED TO BE INERT.
+//
+// It previously read:
+//
+//	if gs := provisionGenerationsOverride; gs != nil { return gs }
+//	return legacyGenerationSet(provisionMasterSecret())
+//
+// and provisionGenerationsOverride was written by NOTHING but a test helper. So
+// in production it unconditionally returned generation 1 built from the raw
+// /data/saas/hub-secret.key — a file rotateMasterSecret never rewrites. The
+// hub's MINTING and VERIFYING side used the real persisted set
+// (s.keyGenerations); this, the entire SPOKE-BOUND derivation side, used a set
+// nothing could ever advance. The two were disjoint, so a rotation changed what
+// the hub minted but never what the fleet held: the sweep computed "desired"
+// from generation 1, saw no drift against what spokes already had, and patched
+// nothing. Every one of the seven rotation PRs was dead on arrival.
+//
+// THE FIX is the package-level pointer below, installed by NewHubServer from
+// the same load that populates s.keyGenerations. Now one set feeds both sides
+// and a rotation moves them together.
+//
+// THREE STATES, and the third is the F20 handoff:
+//
+//   - INSTALLED (liveGenerations non-nil): return the hub's live set. After a
+//     rotation this is the new current generation, which is the whole point.
+//
+//   - NOT INSTALLED (liveGenerations nil, liveGenerationsUntrusted false): no
+//     HubServer has been constructed in this process. This is the state of
+//     every unit test that derives keys without building a hub, and of any
+//     provisioning helper invoked before NewHubServer runs. Fall back to
+//     legacyGenerationSet(provisionMasterSecret()) — byte-identical to the
+//     pre-F19 behaviour, which is what keeps this a no-op on an un-rotated hub.
+//
+//   - UNTRUSTED (liveGenerationsUntrusted true): NewHubServer could not
+//     establish which generation is current (F20's generationsUntrusted). REFUSE
+//     — return nil, do not re-derive our own notion from the raw master file.
+//     Falling back here would be the exact silent un-rotation F20 fixed on the
+//     minting side, reintroduced on the derivation side: the master file holds
+//     SUPERSEDED generation-1 material once a rotation has happened, and writing
+//     keys derived from it onto live Deployments would push the whole fleet
+//     BACKWARDS onto a retired generation. nil propagates as "" through
+//     currentSecret(), which desiredPerHiveEnv's empty-master guard already
+//     turns into "skip this hive, patch nothing".
 //
 // Returns nil for an empty master, and currentSecret() on a nil set returns ""
 // — so the fail-closed contract every caller already relies on (deriveDomainKey
 // and derivePerHiveKey both return "" for an empty master) is preserved through
 // the nil case rather than needing a new one.
 func provisionGenerationSet() *generationSet {
+	// The test seam still wins, so the ROTATED case stays drivable without
+	// standing up a HubServer. See provisionGenerationsOverride.
 	if gs := provisionGenerationsOverride; gs != nil {
+		return gs
+	}
+	liveGenerationsMu.RLock()
+	gs, untrusted := liveGenerations, liveGenerationsUntrusted
+	liveGenerationsMu.RUnlock()
+	if untrusted {
+		// FAIL CLOSED. Never re-derive from the raw master here — see above.
+		return nil
+	}
+	if gs != nil && generationSetDescendsFrom(gs, provisionMasterSecret()) {
 		return gs
 	}
 	return legacyGenerationSet(provisionMasterSecret())
 }
 
+// generationSetDescendsFrom reports whether gs is a set this process's ambient
+// master could legitimately have produced — i.e. whether SOME generation in it
+// holds that master.
+//
+// WHY THE INSTALLED SET IS NOT UNCONDITIONALLY AUTHORITATIVE. liveGenerations is
+// process-global, but provisionMasterSecret() is re-read from the environment
+// (HIVE_HUB_SECRET) or the file on every call. Those can disagree, and when they
+// do the installed set is STALE — it descends from a master this process is no
+// longer configured with. Deriving from a stale set would hand spokes keys that
+// verify against nothing.
+//
+// The invariant that makes the check sound: rotation only ever ADDS a
+// generation and demotes the outgoing one (generationSet.rotate carries the
+// previous current forward), so on a correctly-installed hub the ambient master
+// is still present in the set as either the current or the previous generation.
+// A set that contains it is therefore a legitimate descendant; one that does not
+// belongs to a different master entirely.
+//
+// This is what keeps the un-rotated fallback honest and is load-bearing for
+// TestPerHiveEnvGenerationIsAReadPathChangeToday and friends: a test that builds
+// a HubServer pins the global to that hub's master, and a LATER test using a
+// different master must not silently derive from the earlier one. In production
+// it covers the same shape — a second NewHubServer, or an operator changing
+// HIVE_HUB_SECRET without the generations file following.
+//
+// Returns false for a nil set or an empty master so both fall through to the
+// legacy path, which is itself nil-for-empty. Comparison is a plain string
+// equality on secrets already held in memory by this process; it is not a
+// verification of attacker-supplied input, so constant time is not required.
+func generationSetDescendsFrom(gs *generationSet, master string) bool {
+	if gs == nil || master == "" {
+		return false
+	}
+	for _, g := range gs.Generations {
+		if g.Secret == master {
+			return true
+		}
+	}
+	return false
+}
+
+// liveGenerations is the hub's live generation set as seen by the spoke-bound
+// derivation path, installed by NewHubServer and replaced by rotateMasterSecret.
+//
+// WHY A PACKAGE-LEVEL POINTER AND NOT A RECEIVER. Every caller in the
+// derivation chain — desiredPerHiveEnv, provisionHeartbeatKey,
+// provisionTerminalKey, provisionInviteKey, provisionSessionPublicKey, and
+// saas_provision.go's template map — is a free function, and several are called
+// from template expansion that has no HubServer in scope. Threading a receiver
+// through all of them is the larger refactor; the audit explicitly sanctions
+// either shape. This is the smaller change and it makes the two sides share one
+// object rather than two copies that can drift.
+//
+// A generation set is only ever REPLACED, never mutated (see
+// currentGenerations), so a reader that takes this pointer holds a
+// self-consistent snapshot for as long as it needs it.
+var (
+	liveGenerationsMu sync.RWMutex
+	liveGenerations   *generationSet
+	// liveGenerationsUntrusted latches the F20 generationsUntrusted outcome.
+	//
+	// It is a SEPARATE flag rather than a sentinel value of liveGenerations
+	// because nil has to keep meaning "no hub in this process" for the unit
+	// tests that never build one. Collapsing "untrusted" into "nil" would make
+	// every such test take the refuse path and derive nothing.
+	liveGenerationsUntrusted bool
+)
+
+// setLiveGenerations installs the set the spoke-bound derivation path reads.
+//
+// Called by NewHubServer with the loaded set, and by rotateMasterSecret with
+// the newly rotated one — the latter is what makes a rotation actually reach
+// the fleet, which is the F19 fix. untrusted latches the fail-closed state and
+// is only ever set from the generationsUntrusted branch.
+func setLiveGenerations(gs *generationSet, untrusted bool) {
+	liveGenerationsMu.Lock()
+	defer liveGenerationsMu.Unlock()
+	liveGenerations = gs
+	liveGenerationsUntrusted = untrusted
+}
+
 // provisionGenerationsOverride replaces the resolved generation set.
 //
-// It exists so a test can drive the ROTATED case, which is otherwise
-// unreachable: there is no persisted generations file and no endpoint that can
-// create a second generation until follow-on PR #4, so without this seam
-// "derives from the current generation" and "derives from the raw master" are
-// indistinguishable and no test could tell them apart. That is precisely the
-// kind of test-that-passes-for-the-wrong-reason this seam prevents.
+// RETAINED DELIBERATELY after F19 wired provisionGenerationSet() to the live
+// set. It is still the only way to drive the derivation path from an explicit
+// set without constructing a whole HubServer, and the tests that use it
+// (perhive_env_generation_test.go) are the ones that distinguish "derives from
+// the CURRENT generation" from "derives from the raw master" — the exact
+// test-that-passes-for-the-wrong-reason this seam prevents. Removing it would
+// delete that coverage, so it stays.
 //
 // nil in production, set only via withProvisionGenerations in tests. Read
 // without a lock because it is only ever written before the code under test
-// runs, from that test's own goroutine — the same discipline as
-// HubServer.keyGenerations, which is set once in NewHubServer.
+// runs, from that test's own goroutine.
 var provisionGenerationsOverride *generationSet
 
 // provisionCurrentSecret is the MINTING master at provision/reconcile time: the

@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -327,6 +330,61 @@ var errRotationTooSoon = errors.New("previous rotation has not converged")
 // whose generation state could not be established at startup (audit 8, F20).
 var errGenerationsUntrusted = errors.New("hub generation state is untrusted")
 
+// errRotationWouldStrandSpokes is returned when the last reconcile sweep did
+// not observe the entire fleet (audit 8, F19/F21). Distinct from
+// errRotationTooSoon because the remedy is different: the cooldown clears on its
+// own with time, this one does not clear until the fleet becomes observable.
+var errRotationWouldStrandSpokes = errors.New("rotation would strand unobserved spokes")
+
+// fleetObservationSummary is the evidence-completeness slice of the reconcile
+// sweep's state — the only part the rotation interlock needs.
+type fleetObservationSummary struct {
+	Considered          int
+	Unreachable         int
+	UnreachableClusters []string
+	// FullyObserved mirrors PerHiveEnvStatus.FleetFullyObserved EXACTLY, and is
+	// asserted equal to it by TestRotationInterlockMatchesFleetFullyObserved.
+	// Two expressions of one predicate is one more than ideal; the test exists
+	// so they cannot drift, which is the same discipline the four VerifyUntil
+	// readers are held to.
+	FullyObserved bool
+}
+
+// fleetObservation reports what the last per-hive env sweep managed to observe.
+//
+// It reads the same four fields PerHiveEnvSnapshot does, under the same
+// perHiveEnvMu, but deliberately does NOT call PerHiveEnvSnapshot: that function
+// also reads s.keyGenerations, and rotateMasterSecret calls this while holding
+// keyGenerationsMu for write. Snapshotting only the observation counters keeps
+// the interlock free of any second lock order and avoids an unsynchronised read
+// of the very field the caller is about to replace.
+func (s *HubServer) fleetObservation() fleetObservationSummary {
+	out := fleetObservationSummary{}
+	if s == nil {
+		// A nil hub has observed nothing, and "nothing observed" is not
+		// "everything observed" — fail closed, same as a zero-hive sweep.
+		return out
+	}
+	s.perHiveEnvMu.RLock()
+	defer s.perHiveEnvMu.RUnlock()
+	out.Considered = s.perHiveEnvConsidered
+	out.Unreachable = s.perHiveEnvUnreachable
+	out.UnreachableClusters = append([]string(nil), s.perHiveEnvUnreachableClusters...)
+	sort.Strings(out.UnreachableClusters)
+	out.FullyObserved = out.Considered > 0 && out.Unreachable == 0
+	return out
+}
+
+// unreachableClusterSuffix renders cluster IDs for an operator-facing message.
+// Cluster IDs are non-secret registry identifiers (e.g. "vllm-d"); no key
+// material, hive name, or env value passes through here.
+func unreachableClusterSuffix(clusters []string) string {
+	if len(clusters) == 0 {
+		return ""
+	}
+	return ", unreachable clusters: " + strings.Join(clusters, ",")
+}
+
 // rotationCooldown is how long after a rotation a SECOND rotation is refused
 // without an explicit force.
 //
@@ -483,6 +541,57 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 		}, errGenerationsUntrusted
 	}
 
+	// AUDIT 8 / F19 + F21. THE STRANDING INTERLOCK.
+	//
+	// F19 wires the derivation path to the live set, which means a rotation now
+	// actually reaches the fleet. F21 measured that 44 of the 70 hosted spokes
+	// sit on pull_only clusters (vllm-d, a-ks-wec2) that the reconcile sweep
+	// structurally cannot read or patch — by design, and that is not changing
+	// until the Option D wrapped-master delivery path lands. Those two facts
+	// together are dangerous in a way neither is alone: before F19 a rotation
+	// was a silent no-op, and after F19 without this gate it would converge the
+	// 26 reachable spokes, leave 44 on the outgoing generation, and strand them
+	// when retirement fires unconditionally at verify_until seven days later.
+	// The audit's phrase for it is "converts a silent no-op into a 7-day-delayed
+	// outage", and it is the reason F21 was named a precondition of F19.
+	//
+	// So: refuse to rotate unless the last sweep OBSERVED THE ENTIRE FLEET.
+	// FleetFullyObserved is (ConsideredHives > 0 && UnreachableHives == 0), and
+	// a pull-only cluster increments UnreachableHives for every hive on it, so
+	// this is false on the production hub today and will stay false until every
+	// spoke is reachable by whatever delivery mechanism ships. That is the
+	// intended effect: the wiring lands now, and the ability to fire it unlocks
+	// only when the thing that makes it safe exists.
+	//
+	// WHY HERE AND NOT IN THE HANDLER. This is the single choke point every
+	// rotation passes through; a gate in handleRotateMasterKey could be bypassed
+	// by any future internal caller. It sits BEFORE evaluateRotation so an
+	// operator sees the stranding reason rather than a cooldown message.
+	//
+	// WHY NOT force. force overrides the convergence COOLDOWN — a "the current
+	// generation is compromised, accept the cost" switch. This is not that: with
+	// 44 spokes structurally unreachable the cost is not "some spokes lag", it
+	// is "44 spokes hard-fail heartbeat in 7 days with no path to converge
+	// them". There is no in-band way to accept that responsibly, so force does
+	// not reach it. An operator who genuinely must rotate a compromised master
+	// ahead of Option D has to make the fleet observable first.
+	//
+	// NOTE the deliberate asymmetry with retirement, which is unconditional and
+	// must stay that way (hub_generations_retire.go:42-60): gating RETIREMENT on
+	// convergence would let one unreachable spoke pin a superseded secret live
+	// forever. Gating the START of a rotation strands nobody — nothing has been
+	// demoted yet — so the two gates point in opposite directions correctly.
+	if obs := s.fleetObservation(); !obs.FullyObserved {
+		return nil, rotationDecision{
+			Allowed: false,
+			Reason: fmt.Sprintf("refusing to rotate: the last reconcile sweep did not observe the whole fleet "+
+				"(%d hives considered, %d unreachable%s). Rotating now would converge only the reachable spokes and "+
+				"strand the rest when the previous generation retires at verify_until. Make every spoke reachable "+
+				"by the convergence lane first; force does not override this.",
+				obs.Considered, obs.Unreachable, unreachableClusterSuffix(obs.UnreachableClusters)),
+		}, errRotationWouldStrandSpokes
+	}
+
 	decision := evaluateRotation(s.lastKeyRotation, now, force)
 	if !decision.Allowed {
 		return nil, decision, errRotationTooSoon
@@ -504,5 +613,17 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	}
 	s.keyGenerations = next
 	s.lastKeyRotation = now
+	// AUDIT 8 / F19. Install into the package-level pointer the SPOKE-BOUND
+	// derivation path reads, in the same critical section that installs the
+	// minting set. This single line is what makes a rotation observable to
+	// desiredPerHiveEnv and therefore to the reconcile sweep; without it the
+	// sweep keeps computing "desired" from the pre-rotation generation, sees no
+	// drift, and patches nothing — the inertness this finding is about.
+	//
+	// Deliberately inside the keyGenerationsMu critical section so the two can
+	// never disagree, even transiently. setLiveGenerations takes a DIFFERENT
+	// mutex (liveGenerationsMu) and nothing that holds liveGenerationsMu ever
+	// reaches for keyGenerationsMu, so this cannot deadlock.
+	setLiveGenerations(next, false)
 	return next, decision, nil
 }
