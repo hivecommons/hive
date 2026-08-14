@@ -3452,7 +3452,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 		base = v
 	}
 	if base == "" && (strings.HasPrefix(id, "hosted-") || strings.HasPrefix(id, "saas-")) {
-		base = "https://" + id + ".hive.kubestellar.io"
+		base = s.placeholderHostURL(id)
 	}
 	if base == "" {
 		http.Error(w, `{"error":"hive has no reachable dashboard URL yet"}`, http.StatusConflict)
@@ -7292,6 +7292,35 @@ func claimedVanityURL(h *SaaSHive) string {
 		return ""
 	}
 	return h.VanityURL
+}
+
+// placeholderHostURL builds the "<hiveID>.<domain>" placeholder URL for a hive
+// that has not yet reported a dashboard URL, using the domain of the cluster
+// the hive actually lives on.
+//
+// The domain MUST come from the hive's own cluster rather than the hub's
+// hardcoded hive.kubestellar.io. That constant is the wildcard fronting the
+// HUB's router, so using it for a spoke on any other cluster produces a name
+// that resolves to the hub and 503s — the exact defect this path exhibited on
+// the OpenShift pool. Deriving it per-cluster is also what keeps this correct
+// for clusters added in future, without naming any of them here.
+//
+// Returns "" when the cluster (or its domain) is unknown, so the caller reports
+// "no reachable dashboard URL yet" instead of inventing an unreachable host.
+func (s *HubServer) placeholderHostURL(hiveID string) string {
+	// A hive with no meta record yet (mid-provision, or a registry-only entry)
+	// still resolves through clusterForHive, which falls back to the default
+	// cluster. That is the correct answer for it: with nothing recorded about
+	// where it lives, the hub's own pool is the only defensible guess, and it
+	// is the pool such a hive is in fact provisioned into.
+	cluster := s.clusterForHive(&SaaSHive{ID: hiveID})
+	if h := loadSaaSHive(hiveID); h != nil {
+		cluster = s.clusterForHive(h)
+	}
+	if cluster == nil || cluster.Domain == "" {
+		return ""
+	}
+	return "https://" + hiveID + "." + strings.Trim(strings.TrimSpace(cluster.Domain), ".")
 }
 
 // curAPIURL is the GitHub API base URL the spoke reports it is CURRENTLY using

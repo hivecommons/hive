@@ -2324,6 +2324,51 @@ subjects:
 {{- end}}
   namespace: {{.Namespace}}
 ---
+# hive-route-reader lets the spoke discover the external hostname its OWN
+# Route/Ingress serves, which it reports to the hub as dashboard_url (see
+# SpokeServedHost). Without it the spoke falls back to synthesising
+# "<hiveID>.<hub host>" — correct only for spokes fronted by the hub's wildcard
+# domain, and a guaranteed 503 anywhere else, because that wildcard sends the
+# name to the HUB's router which has no backend for it.
+#
+# The spoke is the only party that CAN read this on a pull-only cluster, where
+# the hub has no kubectl path by design. Strictly read-only and namespace-scoped:
+# list/get, no write verbs, so a compromised spoke learns only its own hostname
+# — which it already advertises — and can neither create nor retarget routing.
+# Routes are included unconditionally rather than under RequiresSCC: a cluster
+# can serve Routes without requiring an SCC, and a Role naming a CRD-backed
+# resource is inert on clusters where that API is absent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-route-reader
+  namespace: {{.Namespace}}
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-route-reader
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-route-reader
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
