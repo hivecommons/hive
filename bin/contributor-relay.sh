@@ -480,7 +480,9 @@ function runHeadlessTask(task) {
     const reason = `backend '${BACKEND}' has no headless (non-interactive) mode; supported: ${Object.keys(HEADLESS_BACKENDS).join(', ')}`;
     console.error(`Headless dispatch refused: ${reason}`);
     writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });
-    failCurrentTask(reason, { permanent: true });
+    // environment: this relay's configured backend has no headless entry point;
+    // the work item itself is unjudged.
+    failCurrentTask(reason, { permanent: true, kind: 'environment' });
     return;
   }
 
@@ -746,7 +748,8 @@ function armCLIReadyWait() {
     // contributor silently working on someone else's issue.
     pendingTask = null;
     if (currentTask) {
-      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true });
+      // environment: the agent CLI never reached its prompt on this host.
+      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true, kind: 'environment' });
     }
     // Keep waiting. The CLI may still come up (a slow login, an operator
     // attaching to clear a prompt we don't recognize), and when it does the
@@ -1178,14 +1181,26 @@ function restartBackoffMs(attempt) {
   return Math.min(TASK_RESTART_BASE_BACKOFF_MS * Math.pow(2, attempt - 1), TASK_RESTART_MAX_BACKOFF_MS);
 }
 
+// failCurrentTask reports the active task as failed.
+//
+// opts.kind (kubestellar/hive#2547) optionally states WHY: 'environment' when
+// this client's own runtime could not run the work (the CLI never started, it
+// crashed, the backend has no headless mode) versus 'task' when the work was
+// attempted and failed on its merits. Omit it when the cause is genuinely
+// ambiguous — the hub normalizes absent to 'unspecified', and guessing would be
+// worse than saying nothing, since an operator reads this to attribute failures.
+//
+// It is advisory: the hub records and displays it and does not route, gate, or
+// change the work item's failure cooldown on it. Older hubs ignore the field.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
+  const kind = (opts && opts.kind) || undefined;
   const taskId = currentTask.task_id;
   const taskGen = currentTask.task_gen;
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}: ${reason}`);
-  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, tmux_output: tmuxLines });
+  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}${kind ? ` [${kind}]` : ''}: ${reason}`);
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, failure_kind: kind, tmux_output: tmuxLines });
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1268,7 +1283,8 @@ function progressTick() {
       } catch (e) {
         console.error('Failed to restart CLI:', e.message);
       }
-      failCurrentTask('CLI process exited — restarted');
+      // environment: the agent CLI process died; nothing was judged about the work.
+      failCurrentTask('CLI process exited — restarted', { kind: 'environment' });
       return;
     }
   } catch (_) {}
