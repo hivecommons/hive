@@ -7186,7 +7186,21 @@ func (s *Server) handleHivesHeartbeat(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"ok": true})
 }
 
+// handleHivesDelete removes an entry from the federation registry.
+//
+// OWNER-ONLY (audit F25, 2026-08-14). Deletion is the destructive end of the
+// hive lifecycle: register/heartbeat are self-service actions a peer hive
+// performs for ITSELF, but delete removes ANOTHER hive from the discovery
+// list, so it is an administrative action on shared state rather than a
+// contributor one. Un-gated, any authenticated write-tier session could
+// unregister peers. Impact is bounded — the registry is a discovery list and
+// handleHivesRegister can re-add entries — but the gate matches the owner-only
+// convention the other destructive dashboard mutations follow (F14's
+// handleContributorDelete, handleAgentDelete).
 func (s *Server) handleHivesDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	reg := loadFederationRegistry()
 	for i := range reg.Hives {
