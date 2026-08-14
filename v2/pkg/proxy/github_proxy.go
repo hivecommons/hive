@@ -435,14 +435,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		if _, err := upstream.Write(fullBuf); err != nil {
 			return
 		}
-		done := make(chan struct{})
-		go func() {
-			io.Copy(upstream, conn)
-			upstream.(*net.TCPConn).CloseWrite()
-			close(done)
-		}()
-		io.Copy(conn, upstream)
-		<-done
+		relayTunnel(conn, upstream)
 		return
 	}
 
@@ -1065,15 +1058,58 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 
 	fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
+	relayTunnel(conn, upstream)
+}
+
+// tunnelHalfCloseDrain bounds how long one direction of an opaque tunnel may
+// keep waiting for bytes AFTER the other direction has already finished. It is
+// a var, not a const, for the same reason as waitForReadyPollInterval in
+// pkg/hub: tests need a relay that unwedges in milliseconds. Production keeps
+// the default.
+//
+// 30s is deliberately generous: the only legitimate traffic still in flight
+// once one side has hung up is a response tail already on the wire, which
+// arrives in RTTs, not tens of seconds.
+var tunnelHalfCloseDrain = 30 * time.Second
+
+// relayTunnel shuttles bytes both ways between the proxied client conn and the
+// upstream until BOTH directions have finished, bounding each direction once
+// the other has ended.
+//
+// WHY THE BOUNDS EXIST (measured live, 2026-08-14): the previous inline copies
+// waited on each other unboundedly. On spokes whose forge host
+// (github.ibm.com) sits behind a SYN-accepting firewall, the upstream TCP
+// connect succeeds but no byte ever comes back and no FIN is ever sent. The
+// client (the daemon's own JWT mints, agents' CLIs) gives up at its TLS
+// handshake timeout and closes — the client→upstream copy finishes and
+// half-closes the upstream — but io.Copy(conn, upstream) stayed blocked in
+// upstream.Read() FOREVER. Every attempt leaked two sockets (the FIN_WAIT2 /
+// CLOSE_WAIT piles), the goroutine, and the splice pipe pair io.Copy holds for
+// a TCP↔TCP copy on Linux: ~300k fds and ~11 burned cores per affected spoke.
+//
+// SetReadDeadline is documented to interrupt Reads that are ALREADY blocked,
+// which is exactly what arms the escape hatch here: each side arms the OTHER
+// side's deadline only at the moment its own direction completes, so a
+// healthy long-lived tunnel (git smart HTTP, device-flow polling) is never
+// cut while both directions are still live.
+func relayTunnel(conn, upstream net.Conn) {
 	done := make(chan struct{})
 	go func() {
 		io.Copy(upstream, conn)
 		if tc, ok := upstream.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
+		// Client side is done (EOF or error — a dead client looks the same).
+		// A live upstream answers or closes within RTTs; a blackholed one
+		// never would, so bound the remaining upstream→client read.
+		upstream.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 		close(done)
 	}()
 	io.Copy(conn, upstream)
+	// Mirror image: upstream finished (or errored) but the client may sit
+	// half-open without ever sending EOF; bound the client-side read so
+	// <-done cannot wedge this handler.
+	conn.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 	<-done
 }
 
