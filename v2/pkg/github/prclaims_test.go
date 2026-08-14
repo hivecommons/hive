@@ -277,6 +277,24 @@ func TestFilterClaimedIssues(t *testing.T) {
 			wantRemaining:  []int{100},
 		},
 		{
+			// #3768 invariant preserved: an EXTERNAL claim (a contributor's PR)
+			// never suppresses agent work — only the contribute queue honours
+			// it. The hive-claim cases above are the positive control proving
+			// suppression still works when the claim IS hive-authored.
+			name:  "external claim never suppresses agent work",
+			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
+			claims: []IssueClaim{{
+				Repo: "spyre-inference", Issue: 100,
+				PRNumber: 900, PRRepo: "spyre-inference",
+				PRURL:          "https://github.com/torch-spyre/spyre-inference/pull/900",
+				PRAuthor:       "outside-dev",
+				ObservedAt:     time.Now(),
+				ExternalAuthor: true,
+			}},
+			wantSuppressed: 0,
+			wantRemaining:  []int{100},
+		},
+		{
 			name: "SLA violations are recounted after suppression",
 			items: []Issue{
 				{Repo: "spyre-inference", Number: 100, AgeMinutes: slaThresholdMinutes + 1},
@@ -592,30 +610,40 @@ func TestFetchClaims(t *testing.T) {
 		prs        []map[string]any
 		identity   HiveIdentity
 		wantIssues []int
+		// wantExternal[i] is claim[i]'s expected ExternalAuthor flag (#3768):
+		// false for a hive-authored PR, true for anyone else's.
+		wantExternal []bool
 	}{
 		{
-			name:       "hive-authored PR with Fixes claims the issue",
-			prs:        []map[string]any{pr(423, "clubanderson", "fix the thing", "Fixes #100")},
-			identity:   HiveIdentity{AIAuthor: "clubanderson"},
-			wantIssues: []int{100},
+			name:         "hive-authored PR with Fixes claims the issue",
+			prs:          []map[string]any{pr(423, "clubanderson", "fix the thing", "Fixes #100")},
+			identity:     HiveIdentity{AIAuthor: "clubanderson"},
+			wantIssues:   []int{100},
+			wantExternal: []bool{false},
 		},
 		{
-			name:       "claim in the title is honoured",
-			prs:        []map[string]any{pr(424, "clubanderson", "Closes #101 — fix the thing", "")},
-			identity:   HiveIdentity{AIAuthor: "clubanderson"},
-			wantIssues: []int{101},
+			name:         "claim in the title is honoured",
+			prs:          []map[string]any{pr(424, "clubanderson", "Closes #101 — fix the thing", "")},
+			identity:     HiveIdentity{AIAuthor: "clubanderson"},
+			wantIssues:   []int{101},
+			wantExternal: []bool{false},
 		},
 		{
-			name:       "PR authored by the app bot claims too",
-			prs:        []map[string]any{pr(425, "kubestellar-hive[bot]", "t", "Resolves #102")},
-			identity:   HiveIdentity{AppLogin: "kubestellar-hive[bot]"},
-			wantIssues: []int{102},
+			name:         "PR authored by the app bot claims too",
+			prs:          []map[string]any{pr(425, "kubestellar-hive[bot]", "t", "Resolves #102")},
+			identity:     HiveIdentity{AppLogin: "kubestellar-hive[bot]"},
+			wantIssues:   []int{102},
+			wantExternal: []bool{false},
 		},
 		{
-			name:       "PR from a human contributor never claims",
-			prs:        []map[string]any{pr(426, "outside-dev", "t", "Fixes #103")},
-			identity:   HiveIdentity{AIAuthor: "clubanderson"},
-			wantIssues: nil,
+			// #3768: a human contributor's PR now claims its issue too — marked
+			// external so FilterClaimedIssues can keep ignoring it for agent
+			// work while the contribute queue honours it.
+			name:         "PR from a human contributor claims, marked external",
+			prs:          []map[string]any{pr(426, "outside-dev", "t", "Fixes #103")},
+			identity:     HiveIdentity{AIAuthor: "clubanderson"},
+			wantIssues:   []int{103},
+			wantExternal: []bool{true},
 		},
 		{
 			name:       "PR with no issue reference claims nothing (the #443 gap)",
@@ -630,8 +658,9 @@ func TestFetchClaims(t *testing.T) {
 				pr(426, "outside-dev", "b", "Fixes #200"),
 				pr(427, "clubanderson", "c", "Closes #101"),
 			},
-			identity:   HiveIdentity{AIAuthor: "clubanderson"},
-			wantIssues: []int{100, 101},
+			identity:     HiveIdentity{AIAuthor: "clubanderson"},
+			wantIssues:   []int{100, 200, 101},
+			wantExternal: []bool{false, true, false},
 		},
 		{
 			name:       "no open PRs at all",
@@ -659,6 +688,10 @@ func TestFetchClaims(t *testing.T) {
 				}
 				if claims[i].PRURL == "" {
 					t.Errorf("claim[%d] missing PRURL — suppression logs would be undebuggable", i)
+				}
+				if i < len(tt.wantExternal) && claims[i].ExternalAuthor != tt.wantExternal[i] {
+					t.Errorf("claim[%d].ExternalAuthor = %v, want %v (author %q)",
+						i, claims[i].ExternalAuthor, tt.wantExternal[i], claims[i].PRAuthor)
 				}
 			}
 		})
@@ -831,5 +864,93 @@ func TestFilterClaimedIssues_NilRedStalePreservesSuppression(t *testing.T) {
 	}
 	if result.Issues.Count != 0 {
 		t.Fatalf("claimed issue must be suppressed with nil predicate; got %+v", result.Issues.Items)
+	}
+}
+
+// TestClaimLedgerHivePrecedence: when the same issue is claimed by both a
+// hive-authored PR and an external contributor's PR (#3768), the hive claim
+// must win the ledger slot in EITHER arrival order — otherwise an external PR
+// racing the map insert would blind FilterClaimedIssues (which honours only
+// hive claims) and re-open the very duplicate-PR hole the guard exists for.
+func TestClaimLedgerHivePrecedence(t *testing.T) {
+	hive := IssueClaim{
+		Repo: "r", Issue: 1, PRNumber: 10, PRRepo: "r",
+		PRURL: "hive-pr", PRAuthor: "clubanderson", ObservedAt: time.Now(),
+	}
+	external := IssueClaim{
+		Repo: "r", Issue: 1, PRNumber: 20, PRRepo: "r",
+		PRURL: "ext-pr", PRAuthor: "outside-dev", ObservedAt: time.Now(),
+		ExternalAuthor: true,
+	}
+
+	t.Run("authoritative, hive first", func(t *testing.T) {
+		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+		l.Reconcile([]IssueClaim{hive, external}, true)
+		got, ok := l.Lookup("r", 1)
+		if !ok || got.ExternalAuthor || got.PRNumber != 10 {
+			t.Fatalf("hive claim must win, got %+v (ok=%v)", got, ok)
+		}
+	})
+	t.Run("authoritative, external first", func(t *testing.T) {
+		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+		l.Reconcile([]IssueClaim{external, hive}, true)
+		got, ok := l.Lookup("r", 1)
+		if !ok || got.ExternalAuthor || got.PRNumber != 10 {
+			t.Fatalf("hive claim must win regardless of order, got %+v (ok=%v)", got, ok)
+		}
+	})
+	t.Run("non-authoritative refresh cannot demote a hive claim", func(t *testing.T) {
+		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+		l.Reconcile([]IssueClaim{hive}, true)
+		l.Reconcile([]IssueClaim{external}, false)
+		got, ok := l.Lookup("r", 1)
+		if !ok || got.ExternalAuthor || got.PRNumber != 10 {
+			t.Fatalf("partial fetch must not replace a hive claim with an external one, got %+v (ok=%v)", got, ok)
+		}
+	})
+	t.Run("external-only claim is still recorded", func(t *testing.T) {
+		l := NewClaimLedger(filepath.Join(t.TempDir(), "l.json"), testLogger())
+		l.Reconcile([]IssueClaim{external}, true)
+		got, ok := l.Lookup("r", 1)
+		if !ok || !got.ExternalAuthor || got.PRNumber != 20 {
+			t.Fatalf("external claim must be present for the contribute queue, got %+v (ok=%v)", got, ok)
+		}
+	})
+}
+
+// TestClaimLedgerBackCompatPreThreeSevenSixEight: a ledger written before
+// #3768 has no external_author field. Every entry it holds was by definition
+// hive-authored (the old FetchClaims recorded nothing else), so it must load
+// as hive-authored (ExternalAuthor=false) and KEEP suppressing agent work
+// across the upgrade — positive control included.
+func TestClaimLedgerBackCompatPreThreeSevenSixEight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pr-claims.json")
+	oldFormat := fmt.Sprintf(`{
+  "saved_at": %[1]q,
+  "claims": [
+    {"repo": "r", "issue": 1, "pr_number": 10, "pr_repo": "r",
+     "pr_url": "u", "pr_author": "clubanderson", "observed_at": %[1]q}
+  ]
+}`, time.Now().Format(time.RFC3339Nano))
+	if err := os.WriteFile(path, []byte(oldFormat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := LoadClaimLedger(path, testLogger())
+	if err != nil {
+		t.Fatalf("old-format ledger must load cleanly: %v", err)
+	}
+	claim, ok := l.Lookup("r", 1)
+	if !ok {
+		t.Fatal("old-format claim must survive the load")
+	}
+	if claim.ExternalAuthor {
+		t.Fatal("pre-#3768 claim must read as hive-authored, not external")
+	}
+
+	// Positive control: it must still suppress agent work after the upgrade.
+	result := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{{Repo: "r", Number: 1}}}}
+	if got := FilterClaimedIssues(result, l, nil, testLogger()); got != 1 {
+		t.Fatalf("upgraded ledger stopped suppressing: got %d, want 1", got)
 	}
 }

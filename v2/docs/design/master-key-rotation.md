@@ -261,7 +261,7 @@ The other six domains are deliberately untouched. See below.
 | 2 | Heartbeat bearer bounded trial verification against both generations | M | No — hub-side verify only |
 | 3 | `desiredPerHiveEnv` derives from current generation; per-generation counts in `PerHiveEnvStatus` | S | No — read path until #4 |
 | 4 | Admin rotate endpoint + persistence of the generation file | S | No — arms the rest | ✅ landed
-| 5 | Terminal + invite key dual acceptance (spoke-side, symmetric) | M | **Yes** — rolls pods via reconcile |
+| 5 | ~~Terminal + invite key dual acceptance (spoke-side, symmetric)~~ → **per-hive terminal + invite keys; no dual acceptance (see as-built)** | M | **Yes** — rolls pods via reconcile |
 | 6 | SSO/session Ed25519 public key rotation, incl. `proxy/server.js` accepting two public keys | L | **Yes** — Node proxy contract |
 | 7 | Retire generation automatically past `verify_until`; alert if a generation is pinned open | S | No |
 
@@ -357,3 +357,92 @@ Worth keeping in view rather than fixing: the three spoke-side sites bypass
 correct today (a spoke has no hub PVC) but it means the two resolution orders
 are similar enough to be mistaken for each other and different in a way that
 is not stated at either site.
+
+## As-built notes for PR #5
+
+The design filed the terminal and invite keys under "CANNOT carry a marker →
+use bounded trial verification". Implementing it established that **the first
+half is right and the second half does not apply**, so PR #5 is smaller and
+differently shaped than this document anticipated. The row above should be read
+with this section.
+
+**A spoke has no generation set, and cannot be given one.** Trial verification
+means "derive from each live generation and compare". A spoke holds exactly ONE
+master (`HIVE_HUB_SECRET`) and ONE injected value per key; nothing in
+`saas_provision.go` puts generation material into a Deployment, and nothing
+should — shipping the generation set to 66 spokes would hand every tenant
+operator the previous master as well as the current one. So on the spoke there
+is nothing to trial against, and the machinery the row implies cannot be built
+there.
+
+**Nor is it needed, because these two keys are mint-and-verify on the SAME
+spoke.** The terminal assertion is minted by `dashboard/session.go` and verified
+by `proxy/server.js` in the same pod; the invite token is minted and verified by
+the same process. Both sides resolve the key from the same env at the same
+instant, so minter and verifier can never disagree about which generation is in
+force. Dual acceptance exists to bridge a gap between two parties that rotate at
+different times — for these keys there is no such gap. Contrast the heartbeat
+bearer (PR #2), where the spoke mints and the HUB verifies: there the two rotate
+hours apart and trial verification is exactly right.
+
+What rotation costs here is therefore bounded and self-healing: when the
+reconcile lane patches a spoke's `HIVE_TERMINAL_KEY`, in-flight terminal
+assertions become invalid and users re-acquire one at their next login — the
+assertion's TTL is 15 minutes. In-flight invite links break once; an invalid
+invite already degrades to "no attribution", never to an error.
+
+**What PR #5 actually had to fix.** Auditing the two resolvers for rotation
+readiness surfaced two live defects, both of which would have made a rotation
+incorrect rather than merely inconvenient:
+
+- `TerminalSigningKey()` still carried both FLEET-UNIFORM fallback lanes that
+  audit N3 was believed to have closed. N3 closed the gap in PROVISIONING (by
+  injecting a per-hive `HIVE_TERMINAL_KEY` so lane 1 wins) but left the lanes in
+  the resolver: `HIVE_SESSION_KEY` (measured live: 65/65 spokes, ONE distinct
+  value) and `deriveTerminalKeyFrom(master)` (the master is likewise fleet-
+  uniform, and that derivation takes no hive ID). Either one resolving means an
+  assertion minted on one tenant's spoke verifies on every other — the exact N3
+  forgery lane, one absent env var away from being live, which is precisely the
+  state a re-provision or manifest reapply produces (see
+  `perhive_env_reconcile.go`'s header on the fleet's out-of-band posture). Both
+  are deleted; the fallback now SELF-DERIVES the per-hive key from the master
+  plus `HIVE_ID`, mirroring `SpokeHeartbeatKey`'s lane 2 (audit F2) so no
+  re-provision is required for a spoke to become correct.
+- `inviteSigningSecret()` used the RAW MASTER as its HMAC key, and measured live
+  that was the lane in force on 65/65 spokes: `HIVE_INVITE_KEY` is emitted by
+  the provisioning template but was NOT carried by the reconcile sweep, so no
+  live spoke has ever received it. Every spoke signed invites with an identical
+  key, and the per-hive binding `provisionInviteKey` exists to provide was in
+  force nowhere. Now routed through `hub.SpokeInviteKey()`, which is per-hive in
+  both lanes.
+
+**The reconcile lane gained a sixth var.** `EnvInviteKey` was missing from
+`desiredPerHiveEnv`/`perHiveEnvNames`, which is why the fleet never got it and
+also means a rotation would never have converged the invite key. Adding it is
+what makes the invite key rotate at all.
+
+**Fleet effect when this merges.** One pod roll per spoke, rate-limited by the
+existing lane at 3 per 15-minute cycle (~6h for the fleet), caused by the newly
+reconciled `HIVE_INVITE_KEY`. `HIVE_TERMINAL_KEY` is already present and correct
+on 65/65 spokes, so the terminal key is NOT re-keyed by this PR — the resolver
+change only alters which key a spoke would compute if that var were ever absent.
+
+**`proxy/server.js`'s terminal lane IS in scope, and is changed here.** PR #6
+landed first and explicitly deferred it ("The terminal key path in server.js is
+untouched (PR #5's scope)"), which is correct: `TERMINAL_SIGNING_KEY` mirrors
+`hub.TerminalSigningKey` and the two must stay in lockstep, so deleting the
+fleet-uniform lanes on the Go side while leaving them in Node would leave the
+N3 forgery lane live in the verifier — the half that actually decides whether a
+shell opens. Both fallbacks are removed there too and replaced with the same
+per-hive self-derivation, using `HIVE_ID`, which the proxy already read.
+
+The two derivations are asserted equal byte-for-byte (`HMAC(master, info || 0x00
+|| hiveID)`; the 0x00 separator must match exactly, since hive IDs are
+attacker-influenced and plain concatenation would be ambiguous).
+
+Note this strengthens the wrong-hive tests in a way worth recording: with a
+per-hive key, an assertion minted for hive X and presented on hive Y now fails
+on the SIGNATURE rather than only on the payload's `h` claim. The tests that
+specifically exercise the `h`-claim check therefore pin the signing hive
+explicitly, so they keep testing the claim check rather than silently becoming
+duplicates of the signature test.

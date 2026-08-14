@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,52 +131,165 @@ func TestTerminalAssertionRejectsForeignVersion(t *testing.T) {
 	}
 }
 
-// The terminal signing key is a DEDICATED symmetric sub-key, distinct from the
-// master and from the SSO material.
-func TestDeriveTerminalKeyIsDomainSeparated(t *testing.T) {
+// The terminal signing key is a DEDICATED, PER-HIVE symmetric sub-key: distinct
+// from the master, from the SSO material, and — the N3 property — from every
+// other hive's terminal key.
+func TestDeriveTerminalKeyIsDomainSeparatedAndPerHive(t *testing.T) {
 	master := "master-secret"
-	got := deriveTerminalKeyFrom(master)
+	got := derivePerHiveKey(master, infoTerminalKey, "hive-1")
 	if got == "" {
 		t.Fatal("expected a derived key")
 	}
 	if got == master {
 		t.Fatal("derived key must not equal the master")
 	}
-	// Deterministic and equal to the documented formula: HMAC-SHA256(master, info) hex.
+	// Deterministic and equal to the documented formula:
+	// HMAC-SHA256(master, info || 0x00 || hiveID) hex.
 	mac := hmac.New(sha256.New, []byte(master))
 	mac.Write([]byte(infoTerminalKey))
+	mac.Write([]byte{0})
+	mac.Write([]byte("hive-1"))
 	if want := hex.EncodeToString(mac.Sum(nil)); got != want {
 		t.Fatalf("derived key = %q, want %q", got, want)
 	}
-	if deriveTerminalKeyFrom("") != "" {
+	// N3: a DIFFERENT hive under the SAME master must get a different key.
+	if other := derivePerHiveKey(master, infoTerminalKey, "hive-2"); other == got {
+		t.Fatal("terminal key must differ per hive — this is audit N3")
+	}
+	// Fail closed on either missing input.
+	if derivePerHiveKey("", infoTerminalKey, "hive-1") != "" {
 		t.Fatal("empty master must derive to empty (fail closed)")
+	}
+	if derivePerHiveKey(master, infoTerminalKey, "") != "" {
+		t.Fatal("empty hive ID must derive to empty (fail closed) — never a shared key")
 	}
 }
 
-// TerminalSigningKey resolution order: HIVE_TERMINAL_KEY > HIVE_SESSION_KEY >
-// derive(HIVE_HUB_SECRET). Ensures the spoke picks the least-privilege key
-// available and still works pre-#2761 (master only) and post-#2761 (session key).
+// TerminalSigningKey resolution order: HIVE_TERMINAL_KEY > self-derived per-hive
+// key from HIVE_HUB_SECRET + HIVE_ID. Every lane is per-hive; there is no lane
+// that yields a fleet-uniform value.
 func TestTerminalSigningKeyResolutionOrder(t *testing.T) {
 	t.Setenv(EnvTerminalKey, "")
-	t.Setenv(envSessionKey, "")
 	t.Setenv(envHubSecret, "")
+	t.Setenv(EnvHiveID, "")
 	if TerminalSigningKey() != "" {
 		t.Fatal("no key sources → empty (fail closed)")
 	}
 
+	// Master present but NO identity: must stay empty rather than fall back to
+	// any shared value.
 	t.Setenv(envHubSecret, "master")
-	if got, want := TerminalSigningKey(), deriveTerminalKeyFrom("master"); got != want {
-		t.Fatalf("hub-secret fallback: got %q want derived %q", got, want)
+	if got := TerminalSigningKey(); got != "" {
+		t.Fatalf("master without HIVE_ID must not resolve a key, got %q", got)
 	}
 
-	t.Setenv(envSessionKey, "session-subkey")
-	if TerminalSigningKey() != "session-subkey" {
-		t.Fatal("session key must win over hub-secret derivation")
+	t.Setenv(EnvHiveID, "hive-1")
+	if got, want := TerminalSigningKey(), derivePerHiveKey("master", infoTerminalKey, "hive-1"); got != want {
+		t.Fatalf("self-derive lane: got %q want per-hive %q", got, want)
 	}
 
 	t.Setenv(EnvTerminalKey, "dedicated-terminal-key")
 	if TerminalSigningKey() != "dedicated-terminal-key" {
 		t.Fatal("dedicated terminal key must win over all")
+	}
+}
+
+// !! AUDIT N3 REGRESSION GATE !!
+//
+// The terminal key must NEVER resolve to HIVE_SESSION_KEY. That var is
+// byte-identical across all 65 spokes (verified live), so any lane that returns
+// it re-creates a fleet-wide forgery lane: an assertion minted on one tenant's
+// spoke would verify on every other tenant's spoke.
+//
+// This asserts the invariant TWICE — behaviourally (the resolver ignores the var
+// entirely) and structurally (the source does not mention it) — because a
+// behavioural test alone passes if some future refactor reads the var under a
+// condition this test does not happen to hit.
+func TestN3_TerminalKeyNeverFallsThroughToSessionKey(t *testing.T) {
+	const fleetUniform = "fleet-uniform-session-key"
+
+	// Behavioural: HIVE_SESSION_KEY set and nothing else — must NOT be adopted.
+	t.Setenv(EnvTerminalKey, "")
+	t.Setenv(envHubSecret, "")
+	t.Setenv(EnvHiveID, "")
+	t.Setenv("HIVE_SESSION_KEY", fleetUniform)
+	if got := TerminalSigningKey(); got != "" {
+		t.Fatalf("N3 REGRESSION: HIVE_SESSION_KEY was adopted as the terminal key (got %q)", got)
+	}
+
+	// Behavioural: even alongside a valid self-derive, the session key must not win.
+	t.Setenv(envHubSecret, "master")
+	t.Setenv(EnvHiveID, "hive-1")
+	got := TerminalSigningKey()
+	if got == fleetUniform {
+		t.Fatal("N3 REGRESSION: HIVE_SESSION_KEY won over the per-hive derivation")
+	}
+	if want := derivePerHiveKey("master", infoTerminalKey, "hive-1"); got != want {
+		t.Fatalf("expected per-hive key %q, got %q", want, got)
+	}
+
+	// Structural: the resolver's source must not reference the session key at
+	// all. Positive control below proves this assertion can fail.
+	src, err := os.ReadFile("terminal_assertion.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	fn := terminalSigningKeyFuncBody(t, string(src))
+	if strings.Contains(fn, "HIVE_SESSION_KEY") || strings.Contains(fn, "envSessionKey") {
+		t.Fatal("N3 REGRESSION: TerminalSigningKey's body references the fleet-uniform session key")
+	}
+	// Positive control: the extracted body is really the function we think it
+	// is, so the check above is not vacuously passing on an empty string.
+	if !strings.Contains(fn, "EnvTerminalKey") || !strings.Contains(fn, "derivePerHiveKey") {
+		t.Fatalf("positive control failed: extracted body is not TerminalSigningKey:\n%s", fn)
+	}
+}
+
+// terminalSigningKeyFuncBody extracts the source text of TerminalSigningKey so
+// the structural assertion above inspects the RESOLVER rather than the whole
+// file (whose comments legitimately discuss the deleted lane by name).
+func terminalSigningKeyFuncBody(t *testing.T, src string) string {
+	t.Helper()
+	const sig = "func TerminalSigningKey() string {"
+	i := strings.Index(src, sig)
+	if i < 0 {
+		t.Fatal("TerminalSigningKey not found in source")
+	}
+	rest := src[i:]
+	end := strings.Index(rest, "\n}")
+	if end < 0 {
+		t.Fatal("could not find end of TerminalSigningKey")
+	}
+	return rest[:end]
+}
+
+// N3 identity isolation (the F2-style property): a terminal assertion minted by
+// hive A must NOT verify on hive B, under any key-resolution lane. This is the
+// property that the fleet-uniform lanes destroyed.
+func TestN3_TerminalAssertionDoesNotCrossHives(t *testing.T) {
+	const master = "shared-fleet-master"
+	now := time.Now()
+
+	keyA := derivePerHiveKey(master, infoTerminalKey, "hive-a")
+	keyB := derivePerHiveKey(master, infoTerminalKey, "hive-b")
+	if keyA == "" || keyB == "" {
+		t.Fatal("expected derived keys")
+	}
+	if keyA == keyB {
+		t.Fatal("N3: two hives under one master must not share a terminal key")
+	}
+
+	tok := MintTerminalAssertion(keyA, "alice", "admin", "hive-a", now)
+	if tok == "" {
+		t.Fatal("expected a minted assertion")
+	}
+	// Positive control: it DOES verify on its own hive with its own key.
+	if _, _, err := VerifyTerminalAssertion(keyA, tok, "hive-a", now); err != nil {
+		t.Fatalf("positive control failed: assertion must verify on its own hive: %v", err)
+	}
+	// The property: hive B's key rejects it.
+	if _, _, err := VerifyTerminalAssertion(keyB, tok, "hive-b", now); err == nil {
+		t.Fatal("N3 REGRESSION: hive A's assertion verified under hive B's key")
 	}
 }
 

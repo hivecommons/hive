@@ -12,7 +12,7 @@ import (
 //
 // THE GAP THIS CLOSES. The C2/N1/N2/N3 work moved every spoke off the shared
 // master onto derived, per-hive sub-keys, and the provisioning template
-// (saas_provision.go) renders all five vars. But that template is `kubectl
+// (saas_provision.go) renders all six vars. But that template is `kubectl
 // apply`ed ONLY inside provisionHive — at provision/assign time. Hives
 // provisioned BEFORE those vars entered the template never received them, and
 // nothing re-asserts them afterwards.
@@ -107,13 +107,13 @@ const (
 // container env list. Only name/value matter here: a var sourced from a
 // secretKeyRef/fieldRef has no literal .value, and we deliberately treat that
 // as "not the value we expect" rather than trying to chase the reference —
-// none of the five vars is ever provisioned as a reference.
+// none of the six vars is ever provisioned as a reference.
 type deploymentEnvVar struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-// desiredPerHiveEnv returns the five security env vars a spoke for hiveID must
+// desiredPerHiveEnv returns the six security env vars a spoke for hiveID must
 // carry, derived EXACTLY as the v4 provisioning template derives them
 // (saas_provision.go, the HeartbeatKey/SessionKey/SSOPublicKey/
 // SessionPublicKey/TerminalKey block). Provision-time and reconcile-time
@@ -161,8 +161,16 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 		return nil
 	}
 	want := map[string]string{
-		EnvHeartbeatKey:     provisionHeartbeatKey(hiveID),
-		EnvTerminalKey:      provisionTerminalKey(hiveID),
+		EnvHeartbeatKey: provisionHeartbeatKey(hiveID),
+		EnvTerminalKey:  provisionTerminalKey(hiveID),
+		// EnvInviteKey is reconciled for the same reason as EnvTerminalKey, and
+		// its absence here is why no live spoke has ever held it: the
+		// provisioning template emits HIVE_INVITE_KEY, but this sweep is what
+		// actually puts vars on the fleet, and it did not carry this one. So
+		// inviteSigningSecret fell through to the raw master on every spoke.
+		// Without it in this list a rotation would also never converge the
+		// invite key, leaving it derived from a generation the hub has retired.
+		EnvInviteKey:        provisionInviteKey(hiveID),
 		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
@@ -181,7 +189,7 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 	// PREVIOUS-GENERATION PUBLIC KEYS (rotation follow-on #6).
 	//
 	// Added AFTER the empty-value guard above, deliberately, because these two
-	// are the only reconciled vars that are legitimately ABSENT. The five vars
+	// are the only reconciled vars that are legitimately ABSENT. The six vars
 	// above must always be present and non-empty; these two exist only while a
 	// previous generation is live, so "" here means "omit", not "fail".
 	//
@@ -204,12 +212,13 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 	return want
 }
 
-// perHiveEnvNames lists the five ALWAYS-PRESENT reconciled vars in a stable
+// perHiveEnvNames lists the six ALWAYS-PRESENT reconciled vars in a stable
 // order, for deterministic patches and log lines.
 func perHiveEnvNames() []string {
 	return []string{
 		EnvHeartbeatKey,
 		EnvTerminalKey,
+		EnvInviteKey,
 		EnvSessionKey,
 		EnvSSOPublicKey,
 		envSessionPublicKey,
@@ -224,7 +233,7 @@ func perHiveEnvNames() []string {
 // They are kept OUT of perHiveEnvNames because that list encodes "must be
 // present and non-empty", and these two must not be. Separating them is what
 // lets perHiveEnvDrift express the third state these vars can be in, which the
-// mandatory five never are: PRESENT WHEN IT SHOULD BE ABSENT. That state is
+// mandatory six never are: PRESENT WHEN IT SHOULD BE ABSENT. That state is
 // reached the moment a previous generation expires, and if the sweep could not
 // see it the retired generation's public key would stay on all 65 spokes
 // forever — the exact "unversioned, permanent compat lane" failure the
@@ -309,7 +318,7 @@ func perHiveEnvDrift(live []deploymentEnvVar, want map[string]string) []string {
 func perHiveEnvPatchJSON(live []deploymentEnvVar, want map[string]string) (string, error) {
 	// Vars this lane is allowed to REMOVE: only the optional previous-generation
 	// keys, and only when they are not wanted. Every other live var — including
-	// the mandatory five and every var this lane knows nothing about — is
+	// the mandatory six and every var this lane knows nothing about — is
 	// preserved untouched, which is the property that keeps a whole-array
 	// replace safe.
 	removable := make(map[string]bool, len(perHiveEnvOptionalNames()))
@@ -339,7 +348,7 @@ func perHiveEnvPatchJSON(live []deploymentEnvVar, want map[string]string) (strin
 			merged = append(merged, deploymentEnvVar{Name: name, Value: want[name]})
 		}
 	}
-	// Optional vars are appended only when wanted, after the mandatory five, so
+	// Optional vars are appended only when wanted, after the mandatory six, so
 	// a converged Deployment still produces a byte-identical array on the next
 	// sweep and the no-patch-loop property holds in both the rotated and the
 	// un-rotated state.
@@ -411,7 +420,7 @@ func perHiveEnvPatchAllowed(patchedThisCycle int) bool {
 //
 // Only "provisioning" is excluded: the namespace and Deployment are still
 // being applied, so a read would fail anyway and the provisioning template
-// renders all five vars correctly at creation. This is a cheap-cycle
+// renders all six vars correctly at creation. This is a cheap-cycle
 // optimisation, not a safety gate — the sweep already handles a missing
 // Deployment safely (a failed `kubectl get` logs Debug and continues WITHOUT
 // recording an observation, so an unread hive can never count as converged).
@@ -423,7 +432,7 @@ func perHiveEnvSweepEligible(status string) bool {
 // was derived from, by re-deriving the per-hive heartbeat key under each
 // acceptable generation and comparing.
 //
-// WHY THE HEARTBEAT KEY IS THE PROBE. Of the five reconciled vars it is the one
+// WHY THE HEARTBEAT KEY IS THE PROBE. Of the six reconciled vars it is the one
 // that is BOTH per-hive and a direct HMAC of the master, so a match identifies
 // the generation AND the hive — two spokes on the same generation produce
 // different values, so a stale-hive-ID drift can never be misread as a
@@ -516,7 +525,7 @@ type PerHiveEnvStatus struct {
 	// unreachable cluster is not evidence of anything either way.
 	ObservedHives int `json:"observed_hives"`
 	// MissingPerHiveEnv is how many observed hives are missing (or carry a
-	// wrong value for) at least one of the five reconciled security vars.
+	// wrong value for) at least one of the six reconciled security vars.
 	// Convergence means this reaches zero and STAYS zero across a full sweep.
 	MissingPerHiveEnv int `json:"missing_per_hive_env"`
 	// MissingHives names those laggards so an operator can go look at them
@@ -586,7 +595,7 @@ type KeyGenerationStatus struct {
 	SafeToRetirePrevious bool `json:"safe_to_retire_previous"`
 }
 
-// PerHiveEnvSnapshot reports fleet convergence for the five per-hive security
+// PerHiveEnvSnapshot reports fleet convergence for the six per-hive security
 // env vars.
 //
 // WHY THIS IS NOT SOURCED FROM HEARTBEAT RECENCY. The sibling signal in this
@@ -712,7 +721,7 @@ func (s *HubServer) reconcilePerHiveEnvIfDue() {
 }
 
 // reconcilePerHiveEnv sweeps every hub-managed hosted hive, records its live
-// env posture, and patches in the five security vars where they are absent or
+// env posture, and patches in the six security vars where they are absent or
 // wrong — at most perHiveEnvMaxPatchesPerCycle per cycle.
 //
 // Idempotent: a converged hive produces no patch and therefore no rollout.

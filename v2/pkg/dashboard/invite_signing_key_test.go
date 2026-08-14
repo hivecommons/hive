@@ -3,18 +3,26 @@ package dashboard
 import (
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/hub"
 )
 
 // Invite tokens are HMAC-signed with inviteSigningSecret(). Historically that key
-// was the RAW master HIVE_HUB_SECRET, which made the invite lane the last
-// spoke-side consumer that actually needed the master to function. These tests
-// pin the new resolution order — HIVE_INVITE_KEY, then HIVE_HUB_SECRET, then a
-// persisted per-instance random file — and pin that the lanes are cryptographically
-// distinct, so a token signed under one does not verify under another.
+// was the RAW master HIVE_HUB_SECRET — used directly AS the HMAC key — which made
+// the invite lane the last spoke-side consumer that actually needed the master,
+// and which (because the master is fleet-uniform) meant every spoke signed
+// invites with an identical key.
+//
+// That lane is now DELETED. These tests pin the new resolution order —
+// HIVE_INVITE_KEY, then the SELF-DERIVED per-hive key from HIVE_HUB_SECRET +
+// HIVE_ID, then a persisted per-instance random file — and pin that the lanes are
+// cryptographically distinct, so a token signed under one does not verify under
+// another.
 
 const (
 	testInviteKey    = "per-hive-invite-key-aaaaaaaaaaaaaaaa"
 	testInviteMaster = "master-hub-secret-bbbbbbbbbbbbbbbb"
+	testInviteHiveID = "hive-under-test"
 )
 
 // inviteTestNow is a fixed instant well inside inviteTokenTTL, so expiry never
@@ -35,17 +43,51 @@ func TestInviteSigningSecretPrefersInviteKey(t *testing.T) {
 	}
 }
 
-// TestInviteSigningSecretFallsBackToMaster pins the transitional lane: a spoke on
-// an older Deployment that has no HIVE_INVITE_KEY must keep signing with the
-// master, so existing hives are not broken by this change.
-func TestInviteSigningSecretFallsBackToMaster(t *testing.T) {
+// TestInviteSigningSecretSelfDerivesPerHive pins the in-place cutover lane: a
+// spoke with no HIVE_INVITE_KEY but holding the master and its own HIVE_ID
+// derives the CORRECT per-hive invite key itself, with no hub action and no
+// re-provision. This is what makes deleting the raw-master lane safe.
+func TestInviteSigningSecretSelfDerivesPerHive(t *testing.T) {
 	t.Setenv("HIVE_INVITE_KEY", "")
 	t.Setenv("HIVE_HUB_SECRET", testInviteMaster)
+	t.Setenv("HIVE_ID", testInviteHiveID)
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
 	resetInviteSecretForTest(t)
 
-	if got := string(inviteSigningSecret()); got != testInviteMaster {
-		t.Fatalf("inviteSigningSecret() = %q, want the HIVE_HUB_SECRET fallback %q", got, testInviteMaster)
+	got := string(inviteSigningSecret())
+	want := hub.SpokeInviteKey()
+	if got != want {
+		t.Fatalf("inviteSigningSecret() = %q, want the self-derived per-hive key %q", got, want)
+	}
+	// The RAW MASTER must never be the signing key.
+	if got == testInviteMaster {
+		t.Fatal("REGRESSION: the raw master is being used directly as the invite HMAC key")
+	}
+	// Per-hive: a different HIVE_ID under the same master yields a different key.
+	t.Setenv("HIVE_ID", testInviteHiveID+"-other")
+	resetInviteSecretForTest(t)
+	if other := string(inviteSigningSecret()); other == got {
+		t.Fatal("invite key must differ per hive under the same master")
+	}
+}
+
+// TestInviteSigningSecretNoIdentityFallsToFile pins that a spoke holding the
+// master but UNABLE to identify itself does not fall back to any shared key: it
+// gets the per-instance generated secret instead. derivePerHiveKey returns "" for
+// an empty hive ID precisely so this case is detected rather than assumed away.
+func TestInviteSigningSecretNoIdentityFallsToFile(t *testing.T) {
+	t.Setenv("HIVE_INVITE_KEY", "")
+	t.Setenv("HIVE_HUB_SECRET", testInviteMaster)
+	t.Setenv("HIVE_ID", "")
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	resetInviteSecretForTest(t)
+
+	got := string(inviteSigningSecret())
+	if got == "" {
+		t.Fatal("expected a generated secret")
+	}
+	if got == testInviteMaster {
+		t.Fatal("REGRESSION: fell back to the raw fleet-uniform master with no hive identity")
 	}
 }
 
@@ -84,14 +126,16 @@ func TestInviteTokenRoundTripUnderEachLane(t *testing.T) {
 		name      string
 		inviteKey string
 		master    string
+		hiveID    string
 	}{
-		{name: "invite key lane", inviteKey: testInviteKey, master: ""},
-		{name: "master fallback lane", inviteKey: "", master: testInviteMaster},
-		{name: "generated file lane", inviteKey: "", master: ""},
+		{name: "invite key lane", inviteKey: testInviteKey, master: "", hiveID: ""},
+		{name: "self-derive per-hive lane", inviteKey: "", master: testInviteMaster, hiveID: testInviteHiveID},
+		{name: "generated file lane", inviteKey: "", master: "", hiveID: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HIVE_INVITE_KEY", tc.inviteKey)
 			t.Setenv("HIVE_HUB_SECRET", tc.master)
+			t.Setenv("HIVE_ID", tc.hiveID)
 			t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
 			resetInviteSecretForTest(t)
 
@@ -112,9 +156,10 @@ func TestInviteTokenRoundTripUnderEachLane(t *testing.T) {
 func TestInviteTokenDoesNotVerifyAcrossKeys(t *testing.T) {
 	const inviter = "octocat"
 
-	// Sign under the master lane.
+	// Sign under the self-derived per-hive lane.
 	t.Setenv("HIVE_INVITE_KEY", "")
 	t.Setenv("HIVE_HUB_SECRET", testInviteMaster)
+	t.Setenv("HIVE_ID", testInviteHiveID)
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
 	resetInviteSecretForTest(t)
 	masterToken := mintInviteToken(inviter, inviteTestNow)

@@ -293,27 +293,51 @@ const TERMINAL_ASSERTION_VERSION = 'hive-terminal-v1';
 // convention (HMAC-SHA256(master, info) as lowercase hex).
 const INFO_TERMINAL_KEY = 'hive-terminal-v1';
 
-// deriveTerminalKeyFrom mirrors the Go deriveTerminalKeyFrom: the hex
-// HMAC-SHA256(master, INFO_TERMINAL_KEY), or '' for an empty master.
-function deriveTerminalKeyFrom(master) {
-  if (!master) return '';
-  return crypto.createHmac('sha256', master).update(INFO_TERMINAL_KEY).digest('hex');
+// derivePerHiveTerminalKey mirrors the Go derivePerHiveKey(master,
+// INFO_TERMINAL_KEY, hiveID): hex HMAC-SHA256 over info || 0x00 || hiveID.
+//
+// The 0x00 separator is load-bearing and must match Go byte for byte. Plain
+// concatenation would be ambiguous — ("hive-terminal-v1", "a|b") and
+// ("hive-terminal-v1|a", "b") would hash identically — and hive IDs are
+// attacker-influenced.
+//
+// Returns '' when EITHER input is missing, so a spoke that cannot identify
+// itself derives nothing rather than silently sharing a key.
+function derivePerHiveTerminalKey(master, hiveID) {
+  if (!master || !hiveID) return '';
+  return crypto
+    .createHmac('sha256', master)
+    .update(INFO_TERMINAL_KEY)
+    .update(Buffer.from([0]))
+    .update(hiveID)
+    .digest('hex');
 }
 
 // TERMINAL_SIGNING_KEY resolves the symmetric key the proxy verifies terminal
-// assertions with, mirroring Go hub.TerminalSigningKey's order EXACTLY:
-//   1. HIVE_TERMINAL_KEY   — a dedicated derived sub-key, if provisioned.
-//   2. HIVE_SESSION_KEY    — the session sub-key a C2-provisioned spoke already
-//                            holds (normal post-#2761 hosted path; the spoke no
-//                            longer receives the master).
-//   3. derive from HIVE_HUB_SECRET — self-hosted / pre-#2761 hosted spokes that
-//                            still hold the master.
+// assertions with, mirroring Go hub.TerminalSigningKey's order EXACTLY.
+// EVERY lane is PER-HIVE:
+//   1. HIVE_TERMINAL_KEY — the hub-injected per-hive sub-key. Present on every
+//      spoke in the fleet today, so this is the lane in force in production.
+//   2. Self-derived per-hive key from HIVE_HUB_SECRET + HIVE_ID.
+//
+// !! AUDIT N3 MUST NOT REGRESS: no lane may resolve to a FLEET-UNIFORM value. !!
+//
+// Two lanes used to sit here and both are DELETED in lockstep with the Go side:
+//   - HIVE_SESSION_KEY, which is byte-identical across all 65 spokes. An
+//     assertion minted on one tenant's spoke verified on every other, so any
+//     tenant operator could forge a shell grant for an arbitrary user on an
+//     arbitrary hive.
+//   - deriveTerminalKeyFrom(HIVE_HUB_SECRET), which took no hive ID and so
+//     derived ONE key for the whole fleet from a fleet-uniform master.
+//
 // Empty when none is configured → no assertion ever verifies → the terminal gate
 // falls back to the #2756 static allowlist. Computed ONCE at startup like HUB_SECRET.
 const TERMINAL_SIGNING_KEY =
   (process.env.HIVE_TERMINAL_KEY || '').trim() ||
-  (process.env.HIVE_SESSION_KEY || '').trim() ||
-  deriveTerminalKeyFrom((process.env.HIVE_HUB_SECRET || '').trim());
+  derivePerHiveTerminalKey(
+    (process.env.HIVE_HUB_SECRET || '').trim(),
+    (process.env.HIVE_ID || '').trim(),
+  );
 
 // TERMINAL_ASSERTION_COOKIE is where the spoke deposits the assertion (see
 // dashboard setTerminalAssertionCookie). Path=/terminal-scoped, HttpOnly.

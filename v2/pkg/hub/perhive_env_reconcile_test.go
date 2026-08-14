@@ -65,6 +65,7 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 		EnvTerminalKey:      provisionTerminalKey(hiveID),
+		EnvInviteKey:        provisionInviteKey(hiveID),
 	}
 	for name, v := range expect {
 		if v == "" {
@@ -78,7 +79,7 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 		t.Errorf("desiredPerHiveEnv returned %d vars, want %d", len(want), len(expect))
 	}
 
-	// The two PER-HIVE keys must actually differ between hives — otherwise the
+	// The PER-HIVE keys must actually differ between hives — otherwise the
 	// reconcile would be re-installing the fleet-uniform sharing N1/N3 removed.
 	other := desiredPerHiveEnv("hive-bravo")
 	if other[EnvHeartbeatKey] == want[EnvHeartbeatKey] {
@@ -87,11 +88,14 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 	if other[EnvTerminalKey] == want[EnvTerminalKey] {
 		t.Error("terminal key is identical across hives — not per-hive")
 	}
+	if other[EnvInviteKey] == want[EnvInviteKey] {
+		t.Error("invite key is identical across hives — not per-hive")
+	}
 }
 
 // TestPerHiveEnvDriftMissingAll covers the four spokes found running purely on
 // master fallbacks: a Deployment with the pre-cutover env shape and none of the
-// five reconciled vars. All five must be reported as drift.
+// six reconciled vars. All six must be reported as drift.
 func TestPerHiveEnvDriftMissingAll(t *testing.T) {
 	withTestMaster(t, perHiveEnvTestMaster)
 	want := desiredPerHiveEnv("hive-alpha")
@@ -106,8 +110,8 @@ func TestPerHiveEnvDriftMissingAll(t *testing.T) {
 	)
 
 	drift := perHiveEnvDrift(live, want)
-	if len(drift) != 5 {
-		t.Fatalf("drift = %v (%d), want all 5 vars reported missing", drift, len(drift))
+	if len(drift) != len(perHiveEnvNames()) {
+		t.Fatalf("drift = %v (%d), want all %d vars reported missing", drift, len(drift), len(perHiveEnvNames()))
 	}
 	for _, name := range perHiveEnvNames() {
 		found := false

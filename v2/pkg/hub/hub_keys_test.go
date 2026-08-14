@@ -111,3 +111,74 @@ func TestSpokeKeyResolutionPrefersExplicitEnv(t *testing.T) {
 		t.Error("spoke bearer must never equal the raw master secret")
 	}
 }
+
+// SpokeInviteKey resolution: HIVE_INVITE_KEY, then the SELF-DERIVED per-hive key
+// from HIVE_HUB_SECRET + HIVE_ID. Both lanes are per-hive; the RAW MASTER is
+// never returned.
+//
+// The raw-master lane it replaces was not a theoretical concern: measured on the
+// live fleet, HIVE_INVITE_KEY is absent on 65/65 spokes (the provisioning
+// template emits it but the reconcile sweep did not carry it), so every spoke
+// was signing invites with the fleet-uniform master itself.
+func TestSpokeInviteKeyResolution(t *testing.T) {
+	const master = "fleet-uniform-master"
+
+	t.Setenv(EnvInviteKey, "")
+	t.Setenv("HIVE_HUB_SECRET", "")
+	t.Setenv(EnvHiveID, "")
+	if got := SpokeInviteKey(); got != "" {
+		t.Fatalf("no sources → empty (fail closed), got %q", got)
+	}
+
+	// Master but no identity: must NOT resolve to anything shared.
+	t.Setenv("HIVE_HUB_SECRET", master)
+	if got := SpokeInviteKey(); got != "" {
+		t.Fatalf("master without HIVE_ID must not resolve a key, got %q", got)
+	}
+
+	// Self-derive lane.
+	t.Setenv(EnvHiveID, "hive-a")
+	got := SpokeInviteKey()
+	if want := derivePerHiveKey(master, infoInviteKey, "hive-a"); got != want {
+		t.Fatalf("self-derive lane = %q, want per-hive %q", got, want)
+	}
+	if got == master {
+		t.Fatal("REGRESSION: the raw master must never be the invite key")
+	}
+
+	// Per-hive isolation: hive B under the SAME master gets a different key.
+	t.Setenv(EnvHiveID, "hive-b")
+	if other := SpokeInviteKey(); other == got {
+		t.Fatal("invite key must differ per hive — an invite must not travel between tenants")
+	}
+
+	// Injected key wins over the derivation.
+	t.Setenv(EnvInviteKey, "injected-invite-key")
+	if SpokeInviteKey() != "injected-invite-key" {
+		t.Fatal("injected HIVE_INVITE_KEY must win")
+	}
+}
+
+// The invite key must be domain-separated from every other spoke-side key
+// derived from the same master and hive ID. If it collided with the terminal or
+// heartbeat key, holding one would grant the other.
+func TestSpokeInviteKeyIsDomainSeparated(t *testing.T) {
+	const master = "master-under-test"
+	const hiveID = "hive-1"
+
+	invite := derivePerHiveKey(master, infoInviteKey, hiveID)
+	terminal := derivePerHiveKey(master, infoTerminalKey, hiveID)
+	heartbeat := derivePerHiveKey(master, infoHeartbeatKey, hiveID)
+
+	for name, v := range map[string]string{"invite": invite, "terminal": terminal, "heartbeat": heartbeat} {
+		if v == "" {
+			t.Fatalf("%s key derived empty", name)
+		}
+		if v == master {
+			t.Fatalf("%s key equals the raw master", name)
+		}
+	}
+	if invite == terminal || invite == heartbeat || terminal == heartbeat {
+		t.Fatal("per-hive sub-keys must be pairwise distinct under one master+hive")
+	}
+}

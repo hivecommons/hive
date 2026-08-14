@@ -499,6 +499,50 @@ func SpokeHeartbeatKey() string {
 // `hive_hub_user` session/terminal cookie. It signs nothing on the spoke.
 func SpokeSessionKey() string { return spokeDomainKey(EnvSessionKey, infoSessionKey) }
 
+// SpokeInviteKey returns the PER-HIVE key a spoke both mints and verifies
+// contributor invite tokens with (dashboard.inviteSigningSecret).
+//
+// Resolution order mirrors TerminalSigningKey exactly, because the two keys have
+// exactly the same shape — symmetric, spoke-local, minted and verified by the
+// same process:
+//
+//  1. HIVE_INVITE_KEY — the hub-injected per-hive key (provisionInviteKey).
+//  2. Self-derived per-hive key from HIVE_HUB_SECRET + HIVE_ID.
+//
+// Returns "" when neither resolves, so the caller keeps its existing fail-closed
+// fallback (a persisted per-instance random secret) rather than signing with an
+// empty key.
+//
+// WHY THIS EXISTS. inviteSigningSecret's lane 2 used the RAW MASTER as the HMAC
+// key — not a key derived from it, the master itself. Measured on the live fleet
+// that is the lane in use on 65/65 spokes, because HIVE_INVITE_KEY is emitted by
+// the provisioning template but is NOT carried by the reconcile sweep, so no live
+// spoke has ever received it. Two consequences, both fixed by routing through
+// here:
+//
+//   - The master is fleet-uniform, so every spoke signed invites with the SAME
+//     key: an invite minted on one tenant verified on every other, defeating the
+//     per-hive binding provisionInviteKey was introduced to provide.
+//   - Using the master directly as an HMAC key gives the invite lane no domain
+//     separation at all — a signing oracle over attacker-influenced input keyed
+//     by the master that also protects heartbeats, sessions and SSO.
+//
+// ROTATION (master-key-rotation.md PR #5): as with the terminal key there is no
+// trial verification and none is possible — a spoke holds one master, never a
+// generation set. Rotation re-keys invites once; in-flight invite links become
+// invalid, which the invite flow already tolerates (verifyInviteToken returning
+// "" means "no attribution", never an error).
+func SpokeInviteKey() string {
+	if v := strings.TrimSpace(os.Getenv(EnvInviteKey)); v != "" {
+		return v
+	}
+	return derivePerHiveKey(
+		strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")),
+		infoInviteKey,
+		strings.TrimSpace(os.Getenv(EnvHiveID)),
+	)
+}
+
 // SpokeSSOPublicKey returns the Ed25519 PUBLIC key a spoke uses to VERIFY a
 // hub-minted SSO handoff token (C2 follow-up: SSO is asymmetric). It signs nothing
 // on the spoke and — unlike the old symmetric key — cannot be used to mint a token

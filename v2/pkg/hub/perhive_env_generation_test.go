@@ -64,6 +64,7 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 	fromCurrent := map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretB, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretB, infoTerminalKey, hiveID),
+		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretB, infoInviteKey, hiveID),
 		EnvSessionKey:       deriveDomainKey(perHiveGenSecretB, infoSessionKey),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSessionEd25519Seed)),
@@ -71,9 +72,26 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 	fromPrevious := map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretA, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretA, infoTerminalKey, hiveID),
+		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretA, infoInviteKey, hiveID),
 		EnvSessionKey:       deriveDomainKey(perHiveGenSecretA, infoSessionKey),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSessionEd25519Seed)),
+	}
+
+	// COUNT FLOOR. The loop below iterates perHiveEnvNames(), so a change that
+	// DROPS a var from that list would also drop it from every assertion and
+	// this test would pass while the var silently stopped being rotated. Pin the
+	// expected set explicitly against the fixture so narrowing the list is a
+	// failure rather than a no-op. (Observed: removing EnvInviteKey from the
+	// reconcile made this test pass until this guard was added.)
+	if len(fromCurrent) != len(perHiveEnvNames()) {
+		t.Fatalf("perHiveEnvNames() has %d vars but the fixture covers %d — a reconciled var is unasserted",
+			len(perHiveEnvNames()), len(fromCurrent))
+	}
+	for name := range fromCurrent {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%s: absent from desiredPerHiveEnv — it would never converge after a rotation", name)
+		}
 	}
 
 	for _, name := range perHiveEnvNames() {
@@ -93,6 +111,9 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 	}
 	if provisionTerminalKey(hiveID) != fromCurrent[EnvTerminalKey] {
 		t.Error("provisionTerminalKey did not follow the current generation")
+	}
+	if provisionInviteKey(hiveID) != fromCurrent[EnvInviteKey] {
+		t.Error("provisionInviteKey did not follow the current generation")
 	}
 	if provisionSessionPublicKey() != fromCurrent[envSessionPublicKey] {
 		t.Error("provisionSessionPublicKey did not follow the current generation")
