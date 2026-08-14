@@ -106,7 +106,12 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(newSecret, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(newSecret, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(newSecret, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(newSecret, infoSessionKey),
+		// PER-HIVE since audit RESIDUAL-2 (#3858): HIVE_SESSION_KEY was
+		// deriveDomainKey(secret, infoSessionKey) — fleet-uniform — and is now
+		// derivePerHiveKey(secret, infoSessionKey, hiveID). Reconciled through
+		// provisionSessionKey exactly like its heartbeat/terminal/invite
+		// neighbours, so it must be pinned the same per-hive way here.
+		EnvSessionKey:       derivePerHiveKey(newSecret, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSessionEd25519Seed)),
 	}
@@ -157,15 +162,21 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 	}
 }
 
-// rawMasterDerivation reproduces the PRE-generation expressions literally, the
-// same way TestPerHiveEnvGenerationIsAReadPathChangeToday does. Used as the
-// byte-identity reference in both directions.
+// rawMasterDerivation reproduces the derivation expressions literally, the same
+// way TestPerHiveEnvGenerationIsAReadPathChangeToday does, so it can serve as
+// the byte-identity reference in both directions independently of the code under
+// test. HIVE_SESSION_KEY is per-hive here since audit RESIDUAL-2 (#3858); every
+// mandatory var except the two Ed25519 public keys is now identity-bound.
 func rawMasterDerivation(master, hiveID string) map[string]string {
 	return map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(master, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
+		// PER-HIVE since audit RESIDUAL-2 (#3858) — see wantAfter above. This is
+		// the byte-identity reference in BOTH directions (un-rotated positive
+		// control and post-rotation), so it must track the production formula in
+		// desiredPerHiveEnv, which now derives HIVE_SESSION_KEY per-hive.
+		EnvSessionKey:       derivePerHiveKey(master, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}
