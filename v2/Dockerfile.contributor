@@ -34,7 +34,7 @@ RUN mkdir -p /etc/apt/keyrings \
 # diff, mirroring the cleanup already done for the bobshell install below.
 ARG CLAUDE_CODE_VERSION=2.1.226
 ARG COPILOT_VERSION=1.0.59
-RUN npm install -g \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @github/copilot@${COPILOT_VERSION} \
     @openai/codex@0.146.0 \
