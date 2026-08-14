@@ -75,6 +75,37 @@ const (
 	// fullLogCaptureLines so the full-log endpoint can return the entire
 	// retained buffer.
 	defaultTmuxHistoryLimit = fullLogCaptureLines
+
+	// tmuxPaneWidthEnv overrides the column count agent tmux sessions are
+	// created with (see newSessionCommands).
+	tmuxPaneWidthEnv = "HIVE_TMUX_PANE_WIDTH"
+
+	// defaultTmuxPaneWidth is the column count agent tmux panes are created
+	// with (#3878). tmux gives a DETACHED session (new-session -d, which is how
+	// every agent session is created) a default pane of 80x24, because there is
+	// no attached client whose terminal size it could adopt. The agent CLI
+	// renders its tool-call lines — "Bash(git log --oneline …)" — to fit the
+	// pane it sees, TRUNCATING with an ellipsis rather than wrapping. That
+	// truncation happens at render time, inside the CLI, before any byte
+	// reaches the scrollback: capture-pane -J rejoins wrapped lines but cannot
+	// recover characters the CLI never emitted. So an 80-column pane means long
+	// bash commands are permanently unrecoverable from the log, which is
+	// exactly the debugging wall reported in #3878.
+	//
+	// 500 columns is chosen to sit well beyond the longest tool invocations
+	// observed in practice (multi-flag kubectl/gh/git pipelines run 200-300
+	// columns) while staying a bounded, sane terminal geometry. It costs
+	// nothing at rest: tmux allocates scrollback per line by actual content
+	// length, not by pane width, so a wide pane does not inflate memory for
+	// short lines.
+	defaultTmuxPaneWidth = 500
+
+	// defaultTmuxPaneHeight is the row count agent tmux panes are created with.
+	// It only needs to exceed a normal terminal screenful — scrollback depth is
+	// governed by history-limit, not by pane height — but tmux requires -y
+	// whenever -x is given, so it is pinned here rather than left to the 24-row
+	// default.
+	defaultTmuxPaneHeight = 50
 )
 
 var defaultTmuxSocket string
@@ -1036,6 +1067,20 @@ func tmuxHistoryLimit() int {
 	return defaultTmuxHistoryLimit
 }
 
+// tmuxPaneWidth returns the column count agent tmux panes are created with:
+// HIVE_TMUX_PANE_WIDTH when set to a positive integer, defaultTmuxPaneWidth
+// otherwise. Operators who need even wider panes (or who want to reproduce the
+// old 80-column rendering) can set the env var; see defaultTmuxPaneWidth for
+// why the default is wide.
+func tmuxPaneWidth() int {
+	if v := os.Getenv(tmuxPaneWidthEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultTmuxPaneWidth
+}
+
 // newSessionCommands returns the tmux command sequence (after the base
 // socket args) that creates a detached agent session with a deep scrollback
 // buffer.
@@ -1050,10 +1095,17 @@ func tmuxHistoryLimit() int {
 // auto-starts the server if needed, applies the global option, then creates
 // the session — before the server's exit-empty logic could tear down a
 // sessionless server and discard the option.
+//
+// The same creation-time reasoning applies to pane GEOMETRY (#3878): a
+// detached session has no attached client to size itself from, so tmux would
+// default the pane to 80x24 and the agent CLI would truncate every long tool
+// invocation to fit. -x/-y must therefore be passed to new-session itself —
+// resizing later cannot restore text the CLI already elided.
 func newSessionCommands(session, dir string) []string {
 	return []string{
 		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
 		"new-session", "-d", "-s", session, "-c", dir,
+		"-x", strconv.Itoa(tmuxPaneWidth()), "-y", strconv.Itoa(defaultTmuxPaneHeight),
 	}
 }
 
