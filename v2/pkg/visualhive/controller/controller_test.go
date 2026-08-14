@@ -693,6 +693,37 @@ func TestVisualWorkControllerHeldRepairReevaluatesWithoutCountingItselfAsWIP(t *
 	}
 }
 
+func TestVisualActiveWIPIgnoresOrdinaryHiveWorkAndCountsControllerWork(t *testing.T) {
+	store, err := beads.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary, err := store.Create("ordinary quality work", beads.TypeBug, beads.PriorityHigh, "quality", "src/App.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	visual, err := store.Create("visual finding", beads.TypeBug, beads.PriorityHigh, "quality", "visual-hive://owner/repo/finding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(visual.ID, func(value *beads.Bead) {
+		if value.Metadata == nil {
+			value.Metadata = make(map[string]interface{})
+		}
+		value.Metadata["visual_hive_controller_owned"] = true
+		value.Metadata["visual_hive_admission_state"] = "admitted_dispatch_pending"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := visualActiveWIP(store, ""); got != 1 {
+		t.Fatalf("active Visual Hive WIP = %d, want 1; ordinary bead %s must not consume the controller budget", got, ordinary.ID)
+	}
+	if got := visualActiveWIP(store, visual.ID); got != 0 {
+		t.Fatalf("active Visual Hive WIP excluding current bead = %d, want 0", got)
+	}
+}
+
 func TestVisualWorkControllerSynchronizesIssueAndDeniesVerifiedOutOfPolicyRepairFiles(t *testing.T) {
 	store, err := beads.NewStore(filepath.Join(t.TempDir(), "quality"))
 	if err != nil {

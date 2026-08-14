@@ -1152,19 +1152,7 @@ func (controller *Controller) resumeAppliedWork(
 		}
 		safeExecution := evidenceErr == nil && validationReady
 		repairReady := safeExecution && !manualLifecycleHold && len(policyDeniedFiles) == 0 && treeErr == nil && baseTreeSHA != "" && len(allowedPaths) > 0 && len(work.ValidationCommands) > 0
-		activeWIP := 0
-		if store != nil {
-			for _, candidate := range store.List(beads.ListFilter{}) {
-				if candidate.ID == bead.ID {
-					continue
-				}
-				candidateStage := visualBeadAdmissionState(candidate)
-				if candidate.Status == beads.StatusOpen || candidate.Status == beads.StatusInProgress ||
-					candidateStage == "admitted_awaiting_issue" || candidateStage == "admitted_dispatch_pending" || candidateStage == "admitted_repair_held" || candidateStage == "admitted_manual_review_held" {
-					activeWIP++
-				}
-			}
-		}
+		activeWIP := visualActiveWIP(store, bead.ID)
 		runtimePaused := controller.roles != nil && controller.roles.IsPaused(work.Role)
 		request := governor.WorkAdmissionRequest{
 			SourceExternalRef: work.SourceExternalRef, PacketDigest: packet.PacketDigest,
@@ -1805,6 +1793,32 @@ func visualBeadAdmissionState(bead *beads.Bead) string {
 	}
 	state, _ := bead.Metadata["visual_hive_admission_state"].(string)
 	return strings.TrimSpace(state)
+}
+
+// visualActiveWIP counts only work owned by the Visual Hive controller. The
+// installed max_active_issues limit bounds this controller's issue/repair
+// lifecycle; ordinary Hive advisory and agent work can share the same role
+// store, but must not consume that independent budget.
+func visualActiveWIP(store *beads.Store, excludeID string) int {
+	if store == nil {
+		return 0
+	}
+	active := 0
+	for _, candidate := range store.List(beads.ListFilter{}) {
+		if candidate == nil || candidate.ID == excludeID || candidate.Metadata == nil {
+			continue
+		}
+		owned, _ := candidate.Metadata["visual_hive_controller_owned"].(bool)
+		if !owned {
+			continue
+		}
+		stage := visualBeadAdmissionState(candidate)
+		if candidate.Status == beads.StatusOpen || candidate.Status == beads.StatusInProgress ||
+			stage == "admitted_awaiting_issue" || stage == "admitted_dispatch_pending" || stage == "admitted_repair_held" || stage == "admitted_manual_review_held" {
+			active++
+		}
+	}
+	return active
 }
 
 func visualBeadAdmissionDecision(bead *beads.Bead) (governor.WorkAdmissionDecision, bool) {

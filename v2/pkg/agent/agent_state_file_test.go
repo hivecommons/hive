@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// N15 (CWE-367/732/20): per-agent control state in the pod-shared /tmp must be
-// owner-only and must not follow symlinks.
+// N15 (CWE-367/732/20): per-agent control state in pod-shared /tmp must never
+// be writable by an agent and must not follow symlinks.
 //
 // Two files matter, both at paths derived from the agent NAME (guessable):
 //
 //   - /tmp/.hive-mode-<name>       — bin/gh-wrapper.sh takes its enforcement mode
-//     from this file IN PREFERENCE to the trustworthy env var, so planting it
-//     un-gates the victim agent (that half is the N15A fail-closed fix).
+//     from this file. It is Hive-owned, target-agent-group-readable, and not
+//     writable by any agent.
 //   - /tmp/.hive-bootstrap-<name>.txt — goose is launched with the contents as
 //     its first instruction, so planting it injects an attacker-chosen prompt
 //     that runs with the victim's credentials at message zero.
@@ -33,7 +33,7 @@ import (
 
 func TestWriteAgentStateFileIsOwnerOnly(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".hive-mode-victim")
+	path := filepath.Join(dir, ".hive-bootstrap-victim.txt")
 
 	if err := writeAgentStateFile(path, []byte("ISSUES_ONLY")); err != nil {
 		t.Fatalf("writeAgentStateFile: %v", err)
@@ -57,7 +57,7 @@ func TestWriteAgentStateFileIsOwnerOnly(t *testing.T) {
 // permissive mode would survive every rewrite.
 func TestWriteAgentStateFileTightensExistingMode(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".hive-mode-legacy")
+	path := filepath.Join(dir, ".hive-bootstrap-legacy.txt")
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestWriteAgentStateFileRefusesSymlink(t *testing.T) {
 		t.Fatalf("seed victim: %v", err)
 	}
 
-	link := filepath.Join(dir, ".hive-mode-planted")
+	link := filepath.Join(dir, ".hive-bootstrap-planted.txt")
 	if err := os.Symlink(victim, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestWriteAgentStateFileRefusesSymlink(t *testing.T) {
 	}
 }
 
-// TestWriteAgentStateFileChmodsViaDescriptor pins the #3175 fix at source
+// TestWriteAgentControlFileChmodsViaDescriptor pins the #3175 fix at source
 // level: the mode-tightening step must go through the open descriptor
 // (f.Chmod), never through the pathname after Close. O_NOFOLLOW only proves
 // the path is not a symlink at OPEN time; a path-based os.Chmod issued in the
@@ -112,7 +112,7 @@ func TestWriteAgentStateFileRefusesSymlink(t *testing.T) {
 // in shared /tmp. The runtime tests above are the positive control that the
 // tightening still happens; this asserts HOW it happens, which no runtime
 // probe can observe reliably (the race window is microseconds).
-func TestWriteAgentStateFileChmodsViaDescriptor(t *testing.T) {
+func TestWriteAgentControlFileChmodsViaDescriptor(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -122,21 +122,21 @@ func TestWriteAgentStateFileChmodsViaDescriptor(t *testing.T) {
 		t.Fatalf("read manager.go: %v", err)
 	}
 	text := string(body)
-	start := strings.Index(text, "func writeAgentStateFile(")
+	start := strings.Index(text, "func writeAgentControlFile(")
 	if start < 0 {
-		t.Fatal("writeAgentStateFile not found in manager.go")
+		t.Fatal("writeAgentControlFile not found in manager.go")
 	}
 	end := strings.Index(text[start:], "\n}\n")
 	if end < 0 {
-		t.Fatal("could not delimit writeAgentStateFile body")
+		t.Fatal("could not delimit writeAgentControlFile body")
 	}
 	fn := text[start : start+end]
-	if !strings.Contains(fn, "f.Chmod(agentStateFileMode)") {
-		t.Fatal("writeAgentStateFile must tighten the mode via the open descriptor (f.Chmod) — " +
+	if !strings.Contains(fn, "f.Chmod(mode)") {
+		t.Fatal("writeAgentControlFile must apply the requested mode via the open descriptor (f.Chmod) — " +
 			"see #3175: a path-based chmod after Close can be symlink-swapped")
 	}
 	if strings.Contains(fn, "os.Chmod(") {
-		t.Fatal("writeAgentStateFile must not use path-based os.Chmod — " +
+		t.Fatal("writeAgentControlFile must not use path-based os.Chmod — " +
 			"the close→chmod window is symlink-swappable in shared /tmp (#3175)")
 	}
 }
@@ -146,7 +146,7 @@ func TestWriteAgentStateFileChmodsViaDescriptor(t *testing.T) {
 // the hardening must not be O_EXCL.
 func TestWriteAgentStateFileOverwritesRegularFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".hive-mode-rewrite")
+	path := filepath.Join(dir, ".hive-bootstrap-rewrite.txt")
 
 	if err := writeAgentStateFile(path, []byte("ISSUES_ONLY")); err != nil {
 		t.Fatalf("first write: %v", err)
@@ -157,5 +157,51 @@ func TestWriteAgentStateFileOverwritesRegularFile(t *testing.T) {
 	b, err := os.ReadFile(path)
 	if err != nil || string(b) != "NO_GITHUB" {
 		t.Fatalf("content = %q err=%v, want NO_GITHUB (truncating rewrite)", b, err)
+	}
+}
+
+func TestWriteAgentModeFileIsGroupReadableButNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".hive-mode-quality")
+	if err := writeAgentModeFile(path, []byte("ISSUES_AND_PRS")); err != nil {
+		t.Fatalf("writeAgentModeFile: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o640 {
+		t.Fatalf("mode = %o, want 640 so isolated agent UIDs can read policy while only Hive can write it", got)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		t.Fatalf("mode file is group/world writable: %o", fi.Mode().Perm())
+	}
+}
+
+func TestWriteAgentModeFileRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, ".hive-mode-quality")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := writeAgentModeFile(link, []byte("ISSUES_AND_PRS")); err == nil {
+		t.Fatal("writing a mode through a planted symlink succeeded")
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != "ORIGINAL" {
+		t.Fatalf("symlink target changed: content=%q err=%v", got, err)
+	}
+}
+
+func TestWriteModeFileForAgentRejectsUnknownGroup(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root may chown to arbitrary numeric groups")
+	}
+	path := filepath.Join(t.TempDir(), ".hive-mode-quality")
+	if err := writeModeFileForAgent(path, []byte("ISSUES_AND_PRS"), 2147483646); err == nil {
+		t.Fatal("isolated mode writer accepted an unavailable agent group")
 	}
 }

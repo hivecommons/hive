@@ -5832,11 +5832,15 @@ func (m *Manager) ClearAllModeOverrides() {
 	}
 }
 
-// agentStateFileMode is owner-only. These files sit in the pod-shared /tmp and
-// carry per-agent CONTROL state — the enforcement mode the gh wrapper reads, and
-// the bootstrap prompt goose is launched with — so anything group- or
-// world-writable lets one agent steer another.
+// Bootstrap prompt files sit in the pod-shared /tmp and remain owner-only.
 const agentStateFileMode = 0o600
+
+// Mode files are policy, not credentials. The Hive process owns and rewrites
+// them while isolated agent UIDs and the in-process GitHub proxy both need to
+// read the current value. Hosted agents share the non-privileged node group,
+// so group-read (never group-write) preserves hot reload without allowing an
+// agent to steer another agent. Bootstrap prompts remain owner-only above.
+const agentModeFileMode = 0o640
 
 // writeAgentStateFile writes per-agent control state to a shared-/tmp path
 // without following symlinks.
@@ -6092,24 +6096,55 @@ func writeInferenceConfigFile(path string, data []byte) error {
 }
 
 func writeAgentStateFile(path string, data []byte) error {
+	return writeAgentControlFile(path, data, agentStateFileMode, -1)
+}
+
+func writeAgentModeFile(path string, data []byte) error {
+	return writeAgentControlFile(path, data, agentModeFileMode, -1)
+}
+
+func writeModeFileForAgent(path string, data []byte, agentUID int) error {
+	// The hosted entrypoint assigns each isolated agent a primary group whose
+	// numeric GID equals its UID, and adds the Hive process to that group. Bind
+	// the mode file to that one group so only Hive can write it and only the
+	// intended agent can read it. UID 0 is the shared-UID/local fallback.
+	agentGID := -1
+	if agentUID > 0 {
+		agentGID = agentUID
+	}
+	return writeAgentControlFile(path, data, agentModeFileMode, agentGID)
+}
+
+func writeAgentControlFile(path string, data []byte, mode os.FileMode, groupID int) error {
 	f, err := os.OpenFile(path,
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
 		agentStateFileMode)
 	if err != nil {
 		return err
 	}
+	// O_CREATE honours its mode only for a new file. Tighten an existing file
+	// before writing or changing its group so an upgrade cannot briefly expose
+	// new policy bytes through a legacy permissive mode. Keep all mutation on
+	// the no-followed descriptor so another UID cannot swap the predictable
+	// /tmp path between verification and chmod/chown.
+	if err := f.Chmod(agentStateFileMode); err != nil {
+		f.Close()
+		return err
+	}
+	if groupID >= 0 {
+		if err := f.Chown(-1, groupID); err != nil {
+			f.Close()
+			return err
+		}
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
-	// O_CREATE honours the mode only when the file did not already exist, so an
-	// existing 0644 file from a previous release keeps its old mode without
-	// this. Chmod through the still-open descriptor: O_NOFOLLOW only proved the
-	// path was not a symlink at OPEN time, so a path-based os.Chmod after Close
-	// left a window in shared /tmp where the pathname could be swapped for a
-	// symlink and the mode change applied to the link target (TOCTOU, #3175).
-	// f.Chmod acts on the inode we opened, closing that window.
-	if err := f.Chmod(agentStateFileMode); err != nil {
+	// Apply the requested final mode through the still-open descriptor. This
+	// preserves the upstream TOCTOU fix while allowing mode files to become
+	// group-readable and keeping bootstrap state owner-only.
+	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}
@@ -6137,7 +6172,7 @@ func (m *Manager) SyncModeFiles(level int) {
 		// Per-agent path (specialists keep theirs under the agent workdir) but
 		// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
 		modeFile := m.agentModeFile(agent)
-		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
+		if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
 	}
@@ -6461,7 +6496,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// Per-agent path (specialists keep theirs under the agent workdir) but
 	// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
 	modeFile := m.agentModeFile(agent)
-	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
+	if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
 	// Plain proxy URL without userinfo — Claude Code's native binary fails
@@ -6618,7 +6653,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 func (m *Manager) specialistAgentEnvironmentPairs(agent *AgentProcess, backend, model, displayName string) []agentEnvPair {
 	mode := m.agentMode(agent)
 	modeFile := m.agentModeFile(agent)
-	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o600); err != nil {
+	if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 		m.logger.Warn("specialist mode file write failed", "file", modeFile, "error", err)
 	}
 	isolationRoot := filepath.Join(m.workDir, ".hive-specialist-isolation", agent.Name)
