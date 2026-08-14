@@ -47,7 +47,30 @@ async function fetchJson(endpoint, fallback = '{}') {
     }
     const res = await fetch(`${dashboardUrl}${endpoint}`, { signal: controller.signal, headers });
     clearTimeout(timer);
-    return await res.text();
+    const body = await res.text();
+    // Every payload here is interpolated RAW into the snapshot's inline script
+    // (var _snapAudit = BODY;). A non-JSON body therefore becomes invalid
+    // JavaScript that throws a PARSE-time SyntaxError — which aborts the ENTIRE
+    // <script>, leaving render() and all render functions undefined and every
+    // panel (Governor/Repos/Beads/Agents/Tokens/Cost/ACMM) blank. This is not
+    // hypothetical: a privilege-gated endpoint such as /api/audit answers a 401/
+    // 403 with a plaintext body like "insufficient access", not JSON, so
+    // `var _snapAudit = insufficient access;` broke the whole page. The
+    // try/catch around each baked block cannot save it — a SyntaxError is raised
+    // at parse time, before any try runs. Validate here: only return a body we
+    // have confirmed parses as JSON; on anything else fall back to the safe JSON
+    // literal so the script stays well-formed and the rest of the page renders.
+    try {
+      JSON.parse(body);
+      return body;
+    } catch {
+      if (res.status >= 400 || body.trim() === '') {
+        console.warn(`WARNING: ${endpoint} returned non-JSON (status ${res.status}); using fallback so the snapshot script stays valid.`);
+      } else {
+        console.warn(`WARNING: ${endpoint} returned a non-JSON 2xx body; using fallback so the snapshot script stays valid.`);
+      }
+      return fallback;
+    }
   } catch {
     return fallback;
   }
