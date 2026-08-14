@@ -296,6 +296,16 @@ func (s *HubServer) retireExpiredGenerations(now time.Time) ([]int, error) {
 		return nil, err
 	}
 	s.keyGenerations = next
+	// AUDIT 8 / F19. Keep the spoke-bound derivation set in lockstep with the
+	// minting set here too. Retirement does not change the CURRENT generation —
+	// retirableGenerations always keeps gs.Current — so the six mandatory
+	// per-hive vars are unaffected. What it does change is the set of PREVIOUS
+	// generations, which is what provisionSSOPublicKeyPrevious and
+	// provisionSessionPublicKeyPrevious read to emit the two _PREV public keys.
+	// Without this line the sweep would keep advertising a _PREV public key for
+	// a generation the hub has just stopped accepting, and the removal path in
+	// perHiveEnvPatchJSON would never fire.
+	setLiveGenerations(next, false)
 	return retired, nil
 }
 

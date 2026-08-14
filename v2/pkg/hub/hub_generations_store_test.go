@@ -55,6 +55,20 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// newRotationTestHub builds a hub that is ALLOWED to rotate.
+//
+// AUDIT 8 / F19+F21. rotateMasterSecret now refuses unless the last reconcile
+// sweep observed the ENTIRE fleet, because with 44 of 70 spokes on pull-only
+// clusters a rotation would converge the reachable ones and strand the rest
+// when the previous generation retires. So a hub with no sweep state — which is
+// what this fixture used to be — is refused with errRotationWouldStrandSpokes.
+//
+// This fixture therefore declares a fully observed fleet: one hive considered,
+// none unreachable. That is the PRECONDITION under test elsewhere, not the
+// subject of the tests using this helper; they assert rotation mechanics
+// (demotion, persistence, cooldown, double-submit) and would otherwise all fail
+// for one unrelated reason. The interlock itself is asserted directly, in both
+// directions, by TestRotationRefusedWhileFleetNotFullyObserved.
 func newRotationTestHub(t *testing.T, master string) *HubServer {
 	t.Helper()
 	return &HubServer{
@@ -62,6 +76,12 @@ func newRotationTestHub(t *testing.T, master string) *HubServer {
 		hubSecret:       master,
 		keyGenerations:  legacyGenerationSet(master),
 		lastKeyRotation: time.Time{},
+		// A fully observed fleet: considered > 0 and unreachable == 0.
+		perHiveEnvConsidered:  1,
+		perHiveEnvUnreachable: 0,
+		perHiveEnvSeen: map[string]perHiveEnvObservation{
+			"hive-observed": {Generation: legacyGenerationID, Observed: time.Now()},
+		},
 	}
 }
 
