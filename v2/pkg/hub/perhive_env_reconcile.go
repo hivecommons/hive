@@ -170,8 +170,14 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 		// inviteSigningSecret fell through to the raw master on every spoke.
 		// Without it in this list a rotation would also never converge the
 		// invite key, leaving it derived from a generation the hub has retired.
-		EnvInviteKey:        provisionInviteKey(hiveID),
-		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
+		EnvInviteKey: provisionInviteKey(hiveID),
+		// AUDIT RESIDUAL-2: per-hive, was deriveDomainKey(master,
+		// infoSessionKey) — fleet-uniform by construction, measured as 1
+		// distinct value across all 70 spokes. Nothing verifies with this key
+		// any more (F1/N3/F23 deleted every lane), so the change is
+		// defence-in-depth; see provisionSessionKey for why the spoke-side
+		// self-derive fallback disagreeing during the roll is harmless.
+		EnvSessionKey:       provisionSessionKey(hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 	}

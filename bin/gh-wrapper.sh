@@ -193,6 +193,94 @@ for arg in "${args[@]}"; do
   esac
 done
 
+# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840, F6/F7 residual) ────────────────
+#
+# Everything below this point is a DENYLIST: each gate names a specific thing an
+# agent must not do (`pr merge`, `issue create`, mutating `gh api`, ...) and the
+# script ends in a bare `exec "$REAL_GH" "$@"`. So any subcommand nobody thought
+# to enumerate reached real GitHub with the App token attached. That is the same
+# failure shape as the mode `case` with no default arm (fixed in ce9d19aa):
+# unenumerated input takes the permissive branch.
+#
+# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8, EVERY
+# one of these reached gh with rc=0 — including in NO_GITHUB mode, the most
+# restrictive mode there is, because the mode gates only ever inspect
+# `subcmd = issue|pr`:
+#
+#   NO_GITHUB     gh auth token                 → reached gh  (exfiltrates the token)
+#   NO_GITHUB     gh secret set FOO --body bar  → reached gh  (writes Actions secrets)
+#   NO_GITHUB     gh ssh-key add /tmp/k.pub     → reached gh  (persistent account access)
+#   NO_GITHUB     gh variable set X --body y    → reached gh
+#   ISSUES_ONLY   gh repo delete owner/repo     → reached gh  (destroys the repo)
+#   ISSUES_ONLY   gh release create v9.9.9      → reached gh  (publishes artifacts)
+#   ISSUES_ONLY   gh gist create /etc/passwd    → reached gh  (exfiltrates file content)
+#   ADVISORY      gh workflow run deploy.yml    → reached gh  (arbitrary CI execution)
+#
+# So we deny by default and enumerate what agents legitimately do. The permitted
+# set below was derived from actual usage in this repo — the agent policies
+# (v2/policies/*.md, examples/kubestellar/agents/**) and bin/*.sh — NOT invented,
+# so the allowlist cannot quietly break the fleet. Ordering matters: this runs
+# BEFORE the mode/ACMM gates, so it only decides whether a verb is on the map at
+# all. Everything it admits is still subject to every gate below — `pr merge`
+# passes here and is then held by the merge-eligibility allowlist.
+#
+# Adding a verb here is a deliberate security decision: it must be something an
+# agent genuinely needs, and it must be safe for a prompt-injected agent to run.
+_gh_surface_allowed() {
+  local s="$1" a="$2"
+  case "$s" in
+    # Core work surface. Per-action so a new destructive action on an existing
+    # subcommand (e.g. a future `gh pr delete`) is denied until reviewed, rather
+    # than inherited for free by allowing the whole subcommand.
+    issue)
+      case "$a" in
+        list|view|create|edit|comment|close|reopen|status|develop) return 0 ;;
+      esac ;;
+    pr)
+      case "$a" in
+        list|view|create|edit|comment|close|reopen|status|diff|checks| \
+        merge|review|ready|checkout) return 0 ;;
+      esac ;;
+    # Read-only discovery.
+    search)
+      case "$a" in issues|prs|repos|code|commits) return 0 ;; esac ;;
+    run)
+      case "$a" in list|view|watch) return 0 ;; esac ;;
+    release)
+      case "$a" in list|view) return 0 ;; esac ;;
+    cache)
+      case "$a" in list) return 0 ;; esac ;;
+    label)
+      # The wrapper itself calls `gh label create` to ensure agent/hive labels
+      # exist before tagging (see _ensure_labels below).
+      case "$a" in list|create) return 0 ;; esac ;;
+    repo)
+      # fork/clone/view are the contributor flow (contribute_ws.go:3207 issues
+      # `gh repo fork <r> --clone=true`). `delete`, `archive`, `rename`,
+      # `edit` and `deploy-key` are deliberately NOT here.
+      case "$a" in view|list|fork|clone) return 0 ;; esac ;;
+    # `gh api` has its own read/write split gate further down, which is finer
+    # grained than anything expressible here (it distinguishes GET from an
+    # implicit POST). Admit the subcommand and let that gate do the work.
+    api) return 0 ;;
+    # No-network local helpers.
+    help|version|--version|--help|status) return 0 ;;
+  esac
+  return 1
+}
+
+# `gh` with no arguments prints help — harmless, and denying it produces a
+# confusing error for an agent that is just probing.
+if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
+  echo "⛔ BLOCKED: 'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands." >&2
+  echo "The wrapper denies by default: only commands agents are known to need are permitted," >&2
+  echo "so a subcommand nobody reviewed cannot reach GitHub with the App token attached (#3840)." >&2
+  echo "Permitted: issue/pr (list view create edit comment close reopen ...), search, run list|view|watch," >&2
+  echo "           release list|view, label list|create, repo view|list|fork|clone, api, help, version." >&2
+  echo "If this command is genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh." >&2
+  exit 1
+fi
+
 # ── Helpers: author validation for the list gate ──
 
 # Extract the --author value from the args array. Returns the value on stdout
