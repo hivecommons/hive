@@ -68,10 +68,14 @@ fi
 
 # ── Mode-based enforcement: block git push for agents without push capability ──
 
-# Read mode from file first (hot-reloadable), fallback to env var
+# Read mode from file first (hot-reloadable), fallback to env var.
+# -r as well as -f: this script runs under `set -e`, so a mode file that exists
+# but is unreadable by the agent UID (umask-filtered perms, #3882) would kill
+# the helper mid-script and block every push with no credential and no error.
+# Fall back to the env var instead — same guard as gh-wrapper.sh (#3681).
 MODE_FILE="/tmp/.hive-mode-${AGENT}"
-if [ -f "$MODE_FILE" ]; then
-  AGENT_MODE="$(cat "$MODE_FILE")"
+if [ -f "$MODE_FILE" ] && [ -r "$MODE_FILE" ]; then
+  AGENT_MODE="$(cat "$MODE_FILE" 2>/dev/null || true)"
 else
   AGENT_MODE="${HIVE_AGENT_MODE:-}"
 fi
