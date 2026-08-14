@@ -40,7 +40,16 @@ fail=0
 # checks run against CODE so that an explanatory comment mentioning e.g.
 # `chmod u+s` (describing the OLD insecure build) is not itself flagged — only a
 # real instruction would be. The positive checks run against the raw file.
+#
+# CODE is materialized to a temp file so every forbidden-pattern check greps a
+# FILE, never `printf | grep -q`. Under `set -o pipefail` a `grep -q` that
+# matches exits and closes the pipe before the writer finishes, giving the
+# writer EPIPE ("write error: Broken pipe") and making the pipeline exit
+# non-zero — which previously flipped a passing check to FAIL (issue #3760 fix).
 CODE="$(grep -vE '^[[:space:]]*#' "$DOCKERFILE")"
+CODE_TMP="$(mktemp)"
+trap 'rm -f "$CODE_TMP"' EXIT
+printf '%s\n' "$CODE" > "$CODE_TMP"
 
 check() {
   local desc="$1" pattern="$2"
@@ -54,7 +63,7 @@ check() {
 
 check_absent() {
   local desc="$1" pattern="$2"
-  if printf '%s\n' "$CODE" | grep -qE "$pattern"; then
+  if grep -qE "$pattern" "$CODE_TMP"; then
     echo "  FAIL: ${desc} (found forbidden pattern in a build instruction: ${pattern})"
     fail=1
   else
@@ -121,8 +130,9 @@ check "dev is a member of hive-launch" \
 # set allows it, and degrades gracefully (best-effort SO_MARK) where it does not.
 #
 # CONTRACT: NO binary in the image may carry a file capability. `setcap` must
-# not appear in the Dockerfile at all.
-if printf '%s\n' "$CODE" | grep -qE '(^|[^[:alnum:]_])setcap[[:space:]]'; then
+# not appear in a build instruction. CODE_TMP has comment lines stripped, so a
+# `setcap` mentioned in a comment is not flagged — only a real instruction.
+if grep -qE '(^|[^[:alnum:]_])setcap[[:space:]]' "$CODE_TMP"; then
   echo "  FAIL: the Dockerfile runs setcap — no binary may carry a file capability (issue #3760: a file cap absent from the container bounding set makes execve fail with EPERM). Grant NET_ADMIN as an ambient cap in the entrypoint instead."
   fail=1
 else
@@ -130,10 +140,15 @@ else
 fi
 
 # The runtime ambient-capability grant must be present in the entrypoint so the
-# proxy egress exemption still works on platforms that grant NET_ADMIN.
-ENTRYPOINT_SRC="$(cat "$(dirname "$0")/../deploy/entrypoint.sh" 2>/dev/null || true)"
-if printf '%s\n' "$ENTRYPOINT_SRC" | grep -qE -- '--ambient-caps[[:space:]]+\+net_admin' \
-   && printf '%s\n' "$ENTRYPOINT_SRC" | grep -qE -- 'setpriv'; then
+# proxy egress exemption still works on platforms that grant NET_ADMIN. Grep the
+# entrypoint file directly (no pipe). The entrypoint builds the setpriv drop
+# across two physical lines and may use either `--ambient-caps +net_admin` or
+# `--ambient-caps=+net_admin`, so match `ambient-caps`, `net_admin`, and
+# `setpriv` independently rather than pinning one exact flag spelling.
+ENTRYPOINT_FILE="$(dirname "$0")/../deploy/entrypoint.sh"
+if [[ -f "$ENTRYPOINT_FILE" ]] \
+   && grep -qE -- 'ambient-caps[=[:space:]]+\+?net_admin' "$ENTRYPOINT_FILE" \
+   && grep -qE -- '(^|[^[:alnum:]_])setpriv([^[:alnum:]_]|$)' "$ENTRYPOINT_FILE"; then
   echo "  ok: entrypoint grants CAP_NET_ADMIN as an ambient capability (setpriv --ambient-caps +net_admin)"
 else
   echo "  FAIL: entrypoint does not grant CAP_NET_ADMIN via setpriv --ambient-caps +net_admin — the proxy SO_MARK egress exemption will never work"
