@@ -38,6 +38,44 @@ if [[ -f "$HIVE_CONFIG" ]]; then
 elif [[ -f /usr/local/bin/hive-config.sh ]]; then
   source /usr/local/bin/hive-config.sh
 fi
+
+# N14 (#3842) follow-up: a native/systemd install (kick-agents.sh, no Go
+# AgentManager) never sets HIVE_AGENT_TOKEN_CACHE — that per-agent scoped
+# cache is minted only by the container-hosted model (v2/pkg/agent/manager.go).
+# Without it, neither of this codebase's two SAFE gh-auth mechanisms apply:
+# gh-wrapper.sh isn't installed as `gh` for native installs (install.sh ships
+# it under its own name), and git-credential-hive.sh refuses without a
+# per-agent cache by design (audit H3). The only way a native agent could
+# authenticate `gh` at all was kick-agents.sh's prompt instruction to `cat`
+# the shared cache and prefix every gh call with it — putting the raw,
+# fleet-wide, full-privilege token into the AGENT'S OWN reasoning/output,
+# one prompt injection away from exfiltration (the exact anti-pattern H3
+# removed from the wrapper, just reintroduced at the prompt-text layer).
+#
+# Fix: authenticate `gh`'s OWN persistent credential store here, ONCE, from a
+# value this launcher script reads directly — never typed by the agent. `gh
+# auth login --with-token` writes to ~/.config/gh/hosts.yml; every later `gh`
+# call the agent runs authenticates from that stored config with no env var
+# and no explicit token handling. GH_TOKEN itself stays unset in the agent's
+# environment exactly as before (Copilot CLI overloads that name for its own
+# API auth — see above), so this changes what `gh` can do, not what the agent
+# can see.
+#
+# Gated on HIVE_AGENT_TOKEN_CACHE being ABSENT so this never fires for the
+# container-hosted model, where gh-wrapper.sh already handles auth correctly
+# per invocation and an additional `gh auth login` here would be redundant.
+# Same privilege boundary as before for native installs (the whole fleet
+# already shared this one token via the prompt instruction) — this closes the
+# "raw secret text reaches the agent's own context" exposure without changing
+# who is trusted with what.
+if [[ -z "${HIVE_AGENT_TOKEN_CACHE:-}" && -n "${HIVE_GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+  if printf '%s' "$HIVE_GITHUB_TOKEN" | gh auth login --with-token >/dev/null 2>&1; then
+    echo "[agent-launch] gh CLI pre-authenticated from the shared token cache (native install, no per-agent scope available — N14/#3842)"
+  else
+    echo "[agent-launch] WARN: gh auth login --with-token failed — gh calls in this session may be unauthenticated" >&2
+  fi
+fi
+
 unset GH_TOKEN
 unset HIVE_GITHUB_TOKEN
 

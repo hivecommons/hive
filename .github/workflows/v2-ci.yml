@@ -73,6 +73,18 @@ jobs:
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
 
+      # N14 (#3842): kick-agents.sh (the native/systemd-install path — no Go
+      # AgentManager, no per-agent scoped token) used to instruct every kicked
+      # agent to `cat` the shared, fleet-wide, full-privilege App token cache
+      # and prefix gh calls with it — putting a live credential into
+      # agent-controlled text, one prompt injection from exfiltration. Source-
+      # asserts the instruction is gone and agent-launch.sh authenticates gh's
+      # own credential store instead, so a future edit can't reintroduce it
+      # quietly.
+      - name: gh-auth native-install guard (#3842)
+        working-directory: .
+        run: bash bin/test_gh_auth_native_no_cat.sh
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
