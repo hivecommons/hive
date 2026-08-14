@@ -1193,14 +1193,63 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
 	// that came back on generation 1 after a rotation would reject every
 	// artifact minted since it and quietly re-mint on the old key — strictly
-	// worse than never having rotated. Falls back to the single-generation
-	// legacy set on a missing or unusable file, which is correct because
-	// hub-secret.key is authoritative for generation 1 and is never rewritten.
-	if gs, rotatedAt := loadGenerations(secret, logger); gs != nil {
+	// worse than never having rotated.
+	//
+	// AUDIT 8 / F20. Three outcomes, and the third is the fix. An ABSENT file
+	// means no rotation has ever been persisted, so the provisional legacy set
+	// assigned above is already correct and generation 1 really is current. An
+	// UNTRUSTED file — unreadable after retries, unparseable, or carrying no
+	// minting generation — means a rotation MAY have been recorded and the hub
+	// cannot tell which generation is current. In that case it must not keep
+	// the provisional legacy set either: that set is the SUPERSEDED master, and
+	// installing it is the silent un-rotation this finding is about.
+	switch gs, rotatedAt, outcome := loadGenerations(secret, logger); outcome {
+	case generationsLoaded:
 		s.keyGenerations = gs
 		// Restore the rotation timestamp too, or the cooldown would reset on
 		// every hub roll and stop guarding anything.
 		s.lastKeyRotation = rotatedAt
+	case generationsNeverRotated:
+		// Legitimate fallback: keep the provisional legacy set built from
+		// hub-secret.key. This is the state of every hub in the fleet today.
+		if gs != nil {
+			s.keyGenerations = gs
+		}
+	case generationsUntrusted:
+		// FAIL CLOSED. Drop the provisional legacy set rather than serve on it.
+		//
+		// WHY THIS SHAPE OF FAIL-CLOSED, and not the two alternatives:
+		//
+		//   - Not "refuse to start". The hub rolls several times a day and a
+		//     crash-loop on a transient PVC fault would take SSO and the
+		//     dashboard down fleet-wide — an availability failure strictly
+		//     worse than the confidentiality one being fixed, and the hub
+		//     cannot re-read the file if it is not running.
+		//
+		//   - Not "keep the last known in-memory set". At NewHubServer there is
+		//     no last known set; the only thing in the field is the provisional
+		//     legacy one, which IS the superseded material.
+		//
+		// So: nil the generation set. Every consumer of it is already
+		// fail-closed on nil by contract — currentGeneration returns
+		// (zero,false), currentSecret returns "", deriveDomainKey returns "" for
+		// an empty master, and acceptableGenerations returns nil — so nothing
+		// mints on a key the hub cannot vouch for. Heartbeat verification and
+		// session verification both fall through to their documented
+		// single-master paths (hub_keys.go:287, hub_session_revocation.go:434),
+		// which key off s.hubSecret and are untouched here, so EXISTING SPOKES
+		// KEEP AUTHENTICATING while the rotation-dependent lanes are held. That
+		// is the deliberate trade: hold what could downgrade, keep what keeps
+		// the fleet up.
+		//
+		// lastKeyRotation is left at its zero value only because nothing has
+		// been loaded to set it from — and with keyGenerations nil, rotation is
+		// refused outright by rotateMasterSecret, so the cleared cooldown can
+		// no longer be used to strand anyone. See generationsUntrusted.
+		s.keyGenerations = nil
+		logger.Error("hub master generation state is UNTRUSTED — minting and rotation are DISABLED until an operator resolves the generations file; "+
+			"existing spokes continue to authenticate on the single-master path",
+			"path", hubGenerationsPath)
 	}
 
 	s.loadRegistry()

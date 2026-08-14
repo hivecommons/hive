@@ -98,6 +98,28 @@ hub-secret.key>}`. So an un-rotated hub behaves byte-identically to today, and
 "has never been rotated" and "has been rotated back to one generation" are the
 same state. There is no migration step.
 
+**"Absent" and "unreadable" are opposites, not synonyms** (audit 8, F20). The
+fallback above is licensed by ENOENT and by nothing else: the file is created
+only by `saveGenerations`, so its non-existence is a POSITIVE fact — no rotation
+has ever been persisted, and generation 1 really is current. Every other failure
+to establish the file's contents (an unretryable read error, bytes that do not
+parse, a parsed set with no minting generation) means a rotation MAY have
+happened and the hub cannot tell which generation is current. Falling back to
+the legacy set there would re-install SUPERSEDED material as the minting
+generation, drop the post-rotation generation out of the accepted set entirely,
+and — because `rotated_at` goes with it — clear the anti-stranding cooldown.
+
+So those cases fail closed to NO set at all. The hub keeps `hubSecret` and
+therefore keeps authenticating existing spokes on the documented single-master
+verify path, but it mints nothing it cannot vouch for and `rotateMasterSecret`
+refuses outright (`force` does not override it — `force` beats the convergence
+cooldown, not "I do not know what generation I am on"). The read is retried a
+bounded number of times first, because the fault this guards against is
+transient by construction and a crash-loop on a PVC blip is a worse failure than
+the one being fixed. This is the same philosophy as `VerifyUntil.IsZero()`
+meaning ALREADY EXPIRED: a generation set that cannot be trusted must never
+quietly widen what is accepted or revert what is current.
+
 ### Dual acceptance, and how it ends
 
 Verifiers try the current generation first, then each unexpired previous

@@ -363,7 +363,7 @@ func TestRetirementSurvivesRestart(t *testing.T) {
 	}
 
 	// Simulate the restart: read the file back the way loadGenerations does.
-	reloaded, rotatedAt := loadGenerations(retSecretA, quietLogger())
+	reloaded, rotatedAt, _ := loadGenerations(retSecretA, quietLogger())
 	if reloaded == nil {
 		t.Fatal("reload returned nil set")
 	}
