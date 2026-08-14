@@ -254,6 +254,10 @@ jobs:
           # containerd ships on GitHub ubuntu runners; ensure it is up and using
           # the overlayfs snapshotter (its default) — that is what makes the
           # metacopy redirect observable.
+          # shellcheck disable=SC2024 # /tmp is world-writable, so the non-root
+          # shell can open this redirect; it is a throwaway debug log nothing
+          # asserts on. The suggested `| sudo tee` would add a pipe to a
+          # backgrounded fallback under `pipefail` and change its exit semantics.
           sudo systemctl start containerd 2>/dev/null || sudo containerd >/tmp/containerd.log 2>&1 &
           for _ in $(seq 1 30); do
             if sudo ctr version >/dev/null 2>&1; then break; fi
