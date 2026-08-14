@@ -1,6 +1,6 @@
 ARG VISUAL_HIVE_REF=1de3765924043ba87d46f200e8883b9233d94a18
 
-FROM node:22.23.1-bookworm-slim AS visual-hive-builder
+FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS visual-hive-builder
 ARG VISUAL_HIVE_REF
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
