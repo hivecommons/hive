@@ -816,6 +816,19 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("loading embedded static files: %w", err)
 	}
+	// The SPA document gets a dedicated handler with startup-precomputed gzip
+	// and a strong ETag (see static_index.go): http.FileServer would serve the
+	// ~1.3 MB inline document uncompressed with no cache validators (embed.FS
+	// has a zero ModTime, so not even Last-Modified), forcing a full re-download
+	// on every visit. "/{$}" matches the root path exactly; every other static
+	// path falls through to the plain file server below.
+	if rawIndex, err := fs.ReadFile(staticContent, "index.html"); err == nil {
+		idx := newIndexDocument(rawIndex)
+		s.mux.Handle("GET /{$}", idx)
+		s.mux.Handle("GET /index.html", idx)
+	} else {
+		s.logger.Warn("embedded index.html unavailable; falling back to plain file serving", "error", err)
+	}
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
 
 	// authenticate is outermost so the identity headers it injects from a
