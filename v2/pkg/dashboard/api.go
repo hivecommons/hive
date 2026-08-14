@@ -1944,8 +1944,17 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// sign. SpokeSSOPublicKey falls back to deriving the public key from
 	// HIVE_HUB_SECRET for self-hosted/legacy spokes that still hold the master, so
 	// verification succeeds against the hub-minted token either way.
-	pubKey := hub.SpokeSSOPublicKey()
-	if pubKey == "" {
+	// ROTATION (master-key-rotation.md follow-on #6): a spoke may hold TWO hub
+	// public keys during a master rotation — the current generation's and the
+	// outgoing one's — because the hub starts minting under the new generation
+	// immediately while the reconcile lane takes ~6h to walk the fleet. Trying
+	// only the primary key would 401 every SSO handoff into a not-yet-reconciled
+	// spoke for those hours. SpokeSSOPublicKeys returns current-then-previous,
+	// and returns exactly ONE key — byte-identical to SpokeSSOPublicKey — when
+	// HIVE_SSO_PUBLIC_KEY_PREV is absent, which is its state on every spoke
+	// today and on every spoke that has never seen a rotation.
+	pubKeys := hub.SpokeSSOPublicKeys()
+	if len(pubKeys) == 0 {
 		// No verification key → SSO cannot be verified. Terminate with an
 		// explanation. Redirecting to "/" here is what produced the historical
 		// infinite bounce: "/" is auth-gated, sends the user back to the hub
@@ -1969,7 +1978,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		hiveID = s.deps.Config.HiveID
 	}
 
-	username, tokenRole, err := hub.VerifySSOToken(pubKey, token, hiveID, time.Now())
+	username, tokenRole, _, err := hub.VerifySSOTokenAcrossKeys(pubKeys, token, hiveID, time.Now())
 	if err != nil {
 		if s.deps != nil && s.deps.Logger != nil {
 			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())
