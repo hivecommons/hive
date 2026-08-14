@@ -178,11 +178,34 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 			return nil
 		}
 	}
+	// PREVIOUS-GENERATION PUBLIC KEYS (rotation follow-on #6).
+	//
+	// Added AFTER the empty-value guard above, deliberately, because these two
+	// are the only reconciled vars that are legitimately ABSENT. The five vars
+	// above must always be present and non-empty; these two exist only while a
+	// previous generation is live, so "" here means "omit", not "fail".
+	//
+	// Omitting rather than emitting "" is the same distinction the guard above
+	// makes for the mandatory vars, and it matters for the same reason: the
+	// spoke-side resolvers treat an empty var exactly like an absent one, so an
+	// empty _PREV would add a var to every Deployment in the fleet that says
+	// nothing, drift-checks as present, and rolls 65 pods to deliver it.
+	//
+	// TODAY BOTH ARE EMPTY. There is one generation, so previousPublicKeys
+	// returns nothing, so this block adds no keys and `want` is byte-identical
+	// to what it was before this change — no drift, no patch, no pod roll. See
+	// hub_pubkey_generations.go for why that no-op property is load-bearing.
+	if prev := provisionSSOPublicKeyPrevious(); prev != "" {
+		want[EnvSSOPublicKeyPrevious] = prev
+	}
+	if prev := provisionSessionPublicKeyPrevious(); prev != "" {
+		want[envSessionPublicKeyPrevious] = prev
+	}
 	return want
 }
 
-// perHiveEnvNames lists the five reconciled vars in a stable order, for
-// deterministic patches and log lines.
+// perHiveEnvNames lists the five ALWAYS-PRESENT reconciled vars in a stable
+// order, for deterministic patches and log lines.
 func perHiveEnvNames() []string {
 	return []string{
 		EnvHeartbeatKey,
@@ -190,6 +213,27 @@ func perHiveEnvNames() []string {
 		EnvSessionKey,
 		EnvSSOPublicKey,
 		envSessionPublicKey,
+	}
+}
+
+// perHiveEnvOptionalNames lists the reconciled vars that are legitimately
+// ABSENT when no previous master generation is live — which is the state of
+// every hub that has never been rotated, and of every hub again once a
+// rotation's verify window closes.
+//
+// They are kept OUT of perHiveEnvNames because that list encodes "must be
+// present and non-empty", and these two must not be. Separating them is what
+// lets perHiveEnvDrift express the third state these vars can be in, which the
+// mandatory five never are: PRESENT WHEN IT SHOULD BE ABSENT. That state is
+// reached the moment a previous generation expires, and if the sweep could not
+// see it the retired generation's public key would stay on all 65 spokes
+// forever — the exact "unversioned, permanent compat lane" failure the
+// generations design exists to prevent, reintroduced as a stale env var rather
+// than as an if-branch.
+func perHiveEnvOptionalNames() []string {
+	return []string{
+		EnvSSOPublicKeyPrevious,
+		envSessionPublicKeyPrevious,
 	}
 }
 
@@ -219,6 +263,32 @@ func perHiveEnvDrift(live []deploymentEnvVar, want map[string]string) []string {
 			drift = append(drift, name)
 		}
 	}
+	// The OPTIONAL previous-generation keys drift in BOTH directions, which the
+	// loop above cannot express because it assumes every name it checks belongs
+	// in `want`.
+	//
+	//   wanted, absent or wrong  -> drift (a rotation just happened)
+	//   not wanted, present      -> drift (the previous generation expired, and
+	//                               its public key must come OFF the spoke)
+	//   not wanted, absent       -> converged; this is every spoke today
+	//
+	// The second case is the one worth being explicit about. Without it, the
+	// var would be written once at rotation and never removed, so every spoke
+	// would accumulate the public key of a generation the hub has already
+	// stopped accepting. Nothing would break — a retired key simply never
+	// verifies anything the hub now mints — but "which keys is the fleet
+	// carrying" would stop having an answer that converges, and the finiteness
+	// the design promises would hold only on the hub and not on the fleet.
+	for _, name := range perHiveEnvOptionalNames() {
+		got, present := have[name]
+		wantVal, wanted := want[name]
+		switch {
+		case wanted && (!present || got != wantVal):
+			drift = append(drift, name)
+		case !wanted && present:
+			drift = append(drift, name)
+		}
+	}
 	return drift
 }
 
@@ -237,9 +307,27 @@ func perHiveEnvDrift(live []deploymentEnvVar, want map[string]string) []string {
 // perHiveEnvNames order, so a converged Deployment produces a byte-identical
 // array on the next sweep and perHiveEnvDrift stays empty — no patch loop.
 func perHiveEnvPatchJSON(live []deploymentEnvVar, want map[string]string) (string, error) {
+	// Vars this lane is allowed to REMOVE: only the optional previous-generation
+	// keys, and only when they are not wanted. Every other live var — including
+	// the mandatory five and every var this lane knows nothing about — is
+	// preserved untouched, which is the property that keeps a whole-array
+	// replace safe.
+	removable := make(map[string]bool, len(perHiveEnvOptionalNames()))
+	for _, name := range perHiveEnvOptionalNames() {
+		if _, wanted := want[name]; !wanted {
+			removable[name] = true
+		}
+	}
+
 	merged := make([]deploymentEnvVar, 0, len(live)+len(want))
 	seen := make(map[string]bool, len(want))
 	for _, e := range live {
+		if removable[e.Name] {
+			// Drop it: the generation it verified for has expired out of the
+			// hub's acceptable set, so leaving it would strand a retired public
+			// key on the spoke indefinitely.
+			continue
+		}
 		if v, ok := want[e.Name]; ok {
 			e.Value = v
 			seen[e.Name] = true
@@ -249,6 +337,15 @@ func perHiveEnvPatchJSON(live []deploymentEnvVar, want map[string]string) (strin
 	for _, name := range perHiveEnvNames() {
 		if !seen[name] {
 			merged = append(merged, deploymentEnvVar{Name: name, Value: want[name]})
+		}
+	}
+	// Optional vars are appended only when wanted, after the mandatory five, so
+	// a converged Deployment still produces a byte-identical array on the next
+	// sweep and the no-patch-loop property holds in both the rotated and the
+	// un-rotated state.
+	for _, name := range perHiveEnvOptionalNames() {
+		if v, wanted := want[name]; wanted && !seen[name] {
+			merged = append(merged, deploymentEnvVar{Name: name, Value: v})
 		}
 	}
 	patch := []map[string]any{{
