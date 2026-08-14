@@ -69,6 +69,15 @@ type proxyTrustPool struct {
 	caModTime  time.Time
 	caSize     int64
 	lastReload time.Time
+
+	// transport is the process-wide shared HTTP transport for every
+	// JWT/token-mint client, rebuilt only when the RootCAs pool itself is
+	// rebuilt. transportPool records which pool the cached transport carries
+	// so a pool rebuild (CA appearing/rotating) invalidates it. See
+	// sharedTransport for why sharing (rather than a transport per call) is
+	// load-bearing and not merely an optimization (#3875).
+	transport     *http.Transport
+	transportPool *x509.CertPool
 }
 
 // certPool returns a RootCAs pool trusting the system roots plus the proxy CA
@@ -100,7 +109,15 @@ func (t *proxyTrustPool) certPool() *x509.CertPool {
 			// became briefly unreadable; do not downgrade an established trust.
 			return t.pool
 		}
-		return systemOnlyPool()
+		// Cache the system-only fallback so callers see a STABLE pool pointer
+		// while the CA is absent — sharedTransport keys transport reuse on
+		// pool identity, and a fresh clone per call would rebuild the
+		// transport (and drop its keep-alive pool) on every advisory-mode
+		// mint. The stat-succeeds path above still rebuilds the moment the CA
+		// file appears, because caModTime/caSize have never been recorded for
+		// it.
+		t.pool = systemOnlyPool()
+		return t.pool
 	}
 
 	// Rebuild only when the file actually changed since we last loaded it.
@@ -149,19 +166,37 @@ func systemOnlyPool() *x509.CertPool {
 // per call.
 var sharedProxyTrust = &proxyTrustPool{}
 
-// proxyTrustingHTTPClient returns an *http.Client whose TLS RootCAs trust the
-// system roots plus the in-process proxy CA (lazily reloaded from disk). This
-// is the client the App-JWT / installation-token mint calls use so a fresh-PVC
-// boot trusts the proxy CA from the FIRST mint attempt, independent of
-// SSL_CERT_FILE or the entrypoint's launch ordering.
+// sharedTransport returns the process-wide *http.Transport carrying the
+// current (system roots + proxy CA) pool, building a new one only when the
+// pool itself has been rebuilt (the CA appearing on first boot, or rotating).
+// The superseded transport gets CloseIdleConnections so its pooled sockets are
+// reclaimed immediately instead of lingering until the peer or the idle reaper
+// gets around to them.
 //
-// The transport clones http.DefaultTransport (preserving proxy/keep-alive/
-// timeout defaults) and installs the RootCAs pool. crypto/tls has no
-// per-handshake roots hook, so the pool is captured at client construction —
-// but a fresh client is built for each short-lived mint call, so the pool is
-// re-read (subject to certPool's own reload interval) each time, and a CA that
-// appears after process start is trusted on the next mint.
-func proxyTrustingHTTPClient(timeout time.Duration) *http.Client {
+// Sharing ONE transport across mint calls is load-bearing, not an
+// optimization (#3875): the previous shape — a freshly cloned Transport per
+// call — meant every mint/token call dialed a brand-new connection and then
+// orphaned it in a single-use idle pool that no future call could ever reuse
+// and nothing ever explicitly closed. Under a retry loop against a slow
+// GitHub, that manufactured sockets at the exact moment the process could
+// least afford them. With a shared transport, keep-alive reuse actually
+// happens, and Go's idle-pool accounting (IdleConnTimeout, per-host caps,
+// inherited from http.DefaultTransport) governs one pool instead of one pool
+// per historical call.
+//
+// crypto/tls has no per-handshake roots hook, so the pool is captured at
+// transport construction; certPool()'s own reload interval keeps it fresh, and
+// a CA that appears after process start yields a new pool pointer — which is
+// exactly the signal used here to rebuild the transport for the next mint.
+func (t *proxyTrustPool) sharedTransport() *http.Transport {
+	pool := t.certPool()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.transport != nil && t.transportPool == pool {
+		return t.transport
+	}
+
 	var transport *http.Transport
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = base.Clone()
@@ -173,11 +208,30 @@ func proxyTrustingHTTPClient(timeout time.Duration) *http.Client {
 	} else {
 		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
 	}
-	// certPool returns (system roots + proxy CA), or a system-only pool while
-	// the CA does not yet exist. nil would also mean "system roots", so the
+	// pool is (system roots + proxy CA), or a system-only pool while the CA
+	// does not yet exist. nil also means "system roots" to crypto/tls, so the
 	// direct-HTTPS (advisory mode) path is never broken.
-	transport.TLSClientConfig.RootCAs = sharedProxyTrust.certPool()
-	return &http.Client{Transport: transport, Timeout: timeout}
+	transport.TLSClientConfig.RootCAs = pool
+
+	if old := t.transport; old != nil {
+		old.CloseIdleConnections()
+	}
+	t.transport = transport
+	t.transportPool = pool
+	return transport
+}
+
+// proxyTrustingHTTPClient returns an *http.Client whose TLS RootCAs trust the
+// system roots plus the in-process proxy CA (lazily reloaded from disk). This
+// is the client the App-JWT / installation-token mint calls use so a fresh-PVC
+// boot trusts the proxy CA from the FIRST mint attempt, independent of
+// SSL_CERT_FILE or the entrypoint's launch ordering.
+//
+// The client wrapper is per-call (it only carries the timeout); the transport
+// underneath — the part that owns sockets — is shared and reaped, see
+// sharedTransport.
+func proxyTrustingHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Transport: sharedProxyTrust.sharedTransport(), Timeout: timeout}
 }
 
 // newJWTClient builds a go-github client authenticated with an App JWT whose

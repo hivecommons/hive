@@ -3177,6 +3177,12 @@ func main() {
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
+				// FD gauge (#3875): a socket leak reached 92,962 FDs and
+				// self-DoSed spokes with nothing surfacing it. Report the count
+				// and its rlimit every beat so the next leak is a climbing
+				// number on the hub, not a manual /proc excavation.
+				OpenFDs:     hub.OpenFDCount(),
+				FDSoftLimit: hub.FDSoftLimit(),
 				// Reporter names THIS process (the pod) so the hub can tell two
 				// instances reporting as one hive apart — the pod name is the
 				// hostname inside the container.

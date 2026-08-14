@@ -475,6 +475,16 @@ type HeartbeatPayload struct {
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
 	StartedAt string `json:"started_at,omitempty"`
+	// OpenFDs is the spoke process's open file-descriptor count at beat time,
+	// with FDSoftLimit the RLIMIT_NOFILE soft cap it is burning toward. They
+	// exist because #3875's leak — tens of thousands of CLOSE_WAIT sockets to
+	// GitHub — reached 92,962 FDs and total self-DoS with NOTHING surfacing
+	// it; it took a manual /proc inspection to find. A gauge in the beat makes
+	// the next FD leak a visible climbing number instead of an outage
+	// forensics exercise. Zero means "could not be read / old spoke" and must
+	// be treated as UNKNOWN, never as "no descriptors open".
+	OpenFDs     int    `json:"open_fds,omitempty"`
+	FDSoftLimit uint64 `json:"fd_soft_limit,omitempty"`
 	// Reporter identifies the spoke PROCESS that sent this beat as
 	// "<pod-name>/<pid>" (hostname/PID; older spokes send the bare hostname).
 	// It exists because two spoke instances can report as the same hive_id —
