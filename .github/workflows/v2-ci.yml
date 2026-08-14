@@ -255,7 +255,7 @@ jobs:
           # the overlayfs snapshotter (its default) — that is what makes the
           # metacopy redirect observable.
           sudo systemctl start containerd 2>/dev/null || sudo containerd >/tmp/containerd.log 2>&1 &
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if sudo ctr version >/dev/null 2>&1; then break; fi
             sleep 1
           done
