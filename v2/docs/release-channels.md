@@ -26,7 +26,7 @@ From the hub dashboard's **My Hives** list, click the blue version pill on a hiv
 
 Under the hood this is the same endpoint as a branch switch — the channel name goes in the `branch` field verbatim:
 
-```
+```text
 POST /api/saas/hives/{id}/switch-branch
 {"branch": "stable"}
 ```
