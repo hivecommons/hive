@@ -377,6 +377,10 @@ func (s *Server) saveConfig() error {
 	}
 	if s.deps.Governor != nil {
 		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
+		// Re-tune auto-scaled mode thresholds (#3498) whenever config is saved
+		// from the dashboard — covers the repo list changing via this path, not
+		// just a file-level reload.
+		s.deps.Governor.SetRepoCount(len(s.deps.Config.Project.Repos))
 	}
 	return nil
 }
@@ -3804,7 +3808,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		agents = append(agents, name)
 	}
 
-	// Extract thresholds from modes (exclude idle which is always 0)
+	// Extract thresholds from modes (exclude idle which is always 0). These
+	// are the RAW configured values (0 = unset, using the default) — the edit
+	// form's source of truth. See effectiveThresholds below for what the
+	// governor is actually evaluating against right now.
 	thresholds := map[string]int{}
 	for modeName, mode := range cfg.Governor.Modes {
 		if modeName != "idle" {
@@ -3846,13 +3853,26 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		primaryRepo = org + "/" + primaryRepo
 	}
 
+	// effectiveThresholds (#3498) is what the governor is ACTUALLY evaluating
+	// the queue against right now: an explicit threshold above where set,
+	// otherwise the repo-count-scaled (or flat, if opted out) default. Falls
+	// back to the raw configured/default values (repo-count-unaware) when no
+	// live Governor is wired — e.g. in tests that build the dashboard server
+	// standalone.
+	effectiveThresholds := thresholds
+	if s.deps.Governor != nil {
+		effectiveThresholds = s.deps.Governor.EffectiveThresholds()
+	}
+
 	jsonResponse(w, map[string]interface{}{
-		"agents":      agents,
-		"thresholds":  thresholds,
-		"labels":      cfg.Governor.Labels.Exempt,
-		"holdLabels":  github.HoldLabels,
-		"repos":       repos,
-		"primaryRepo": primaryRepo,
+		"agents":              agents,
+		"thresholds":          thresholds,
+		"effectiveThresholds": effectiveThresholds,
+		"autoScaleThresholds": cfg.Governor.AutoScaleThresholdsEnabled(),
+		"labels":              cfg.Governor.Labels.Exempt,
+		"holdLabels":          github.HoldLabels,
+		"repos":               repos,
+		"primaryRepo":         primaryRepo,
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,

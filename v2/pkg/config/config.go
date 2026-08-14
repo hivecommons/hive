@@ -621,6 +621,16 @@ type GovernorConfig struct {
 	// so turning this off never removes the operator's ability to answer "which
 	// backend/model produced this PR?".
 	AttributionTrailer *bool `yaml:"attribution_trailer,omitempty"`
+	// AutoScaleThresholds controls whether a mode's DEFAULT threshold (one with
+	// no explicit governor.modes.<mode>.threshold set) is scaled by the
+	// configured repo count (len(project.repos)) instead of used as a flat
+	// absolute number. Default ON: a hive that says nothing gets scaled
+	// defaults. Set `governor.auto_scale_thresholds: false` to keep the flat
+	// historical defaults (surge=20, busy=10, quiet=2) regardless of repo
+	// count. An explicit threshold always wins over both the scaled and the
+	// flat default, so a hive that hand-tunes its thresholds is unaffected
+	// either way. See Governor.thresholdFor in pkg/governor.
+	AutoScaleThresholds *bool `yaml:"auto_scale_thresholds,omitempty"`
 }
 
 // AttributionTrailerEnabled reports whether the visible attribution trailer on
@@ -630,6 +640,13 @@ type GovernorConfig struct {
 // by this.
 func (g *GovernorConfig) AttributionTrailerEnabled() bool {
 	return g.AttributionTrailer == nil || *g.AttributionTrailer
+}
+
+// AutoScaleThresholdsEnabled reports whether DEFAULT (unset) mode thresholds
+// should be scaled by the hive's configured repo count. Default ON — see
+// AutoScaleThresholds's doc comment.
+func (g *GovernorConfig) AutoScaleThresholdsEnabled() bool {
+	return g.AutoScaleThresholds == nil || *g.AutoScaleThresholds
 }
 
 // GatewayConfig is one named, OpenAI-compatible model gateway. A hive may

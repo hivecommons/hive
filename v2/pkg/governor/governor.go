@@ -187,6 +187,16 @@ type Governor struct {
 	mu     sync.RWMutex
 	logger *slog.Logger
 
+	// repoCount is the configured project repo count (len(config.Project.Repos)),
+	// set at construction and re-synced on every config reload via
+	// SetRepoCount. thresholdFor uses it to scale a mode's DEFAULT threshold
+	// (see AutoScaleThresholds's doc comment in pkg/config) — it never affects
+	// an explicit governor.modes.<mode>.threshold. Zero until the first
+	// SetRepoCount call, which thresholdFor treats the same as "1 repo" (no
+	// scaling), so a Governor built without it (e.g. most unit tests) keeps
+	// the flat historical defaults.
+	repoCount int
+
 	modeHistory []ModeChange
 	evalHistory []EvalSnapshot
 	kickHistory []KickRecord
@@ -239,6 +249,17 @@ func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cfg = cfg
+}
+
+// SetRepoCount updates the repo count thresholdFor scales default mode
+// thresholds by (see AutoScaleThresholds in pkg/config). Callers should invoke
+// it alongside UpdateConfig — at construction and on every config reload —
+// with len(config.Project.Repos), so a hive that adds or archives repos gets
+// re-tuned thresholds without an operator having to hand-edit them.
+func (g *Governor) SetRepoCount(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.repoCount = n
 }
 
 func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
@@ -357,6 +378,17 @@ func (g *Governor) thresholdFor(modeName string) int {
 	if mode, ok := g.cfg.Modes[modeName]; ok && mode.Threshold > 0 {
 		return mode.Threshold
 	}
+	base := baseThreshold(modeName)
+	if !g.cfg.AutoScaleThresholdsEnabled() {
+		return base
+	}
+	return scaledThreshold(base, g.repoCount)
+}
+
+// baseThreshold is the flat, pre-scaling default for a mode — the value
+// thresholdFor returned before #3498, and still what it returns for a hive
+// that opts out of auto-scaling (governor.auto_scale_thresholds: false).
+func baseThreshold(modeName string) int {
 	switch modeName {
 	case "surge":
 		return 20
@@ -367,6 +399,37 @@ func (g *Governor) thresholdFor(modeName string) int {
 	default:
 		return 0
 	}
+}
+
+// scaledThreshold scales a mode's base threshold by the hive's configured
+// repo count (#3498). The queue depth a mode ladder gates on scales with how
+// many repos a hive watches — a 39-repo hive naturally carries a queue in the
+// hundreds — so a flat threshold sized for a handful of repos leaves a
+// large-fleet hive stuck in SURGE almost permanently, running the most
+// aggressive (and most expensive) cadences even when its PER-REPO backlog is
+// small.
+//
+// The scaling is linear and floored at the base value: max(base, base *
+// repoCount). repoCount <= 1 (including the zero value a Governor has before
+// its first SetRepoCount call) is a deliberate no-op, not "scale by zero" —
+// base*0 would be a NEGATIVE change (every non-empty queue would surge,
+// exactly the failure mode thresholdFor's zero-threshold guard above already
+// exists to prevent), and base*1 is base, so short-circuiting is only an
+// optimization there, not a correctness requirement.
+//
+// A "surge" queue-depth positive control: at 39 repos, base=20 scales to 780,
+// so the ~210-deep queue observed live in #3498 (which sat in SURGE against
+// the flat default) now clears SURGE and BUSY (both scaled well above it) and
+// lands in QUIET — proportionate to a per-repo backlog of ~5, not the
+// absolute number.
+func scaledThreshold(base, repoCount int) int {
+	if repoCount <= 1 {
+		return base
+	}
+	if scaled := base * repoCount; scaled > base {
+		return scaled
+	}
+	return base
 }
 
 // updateCadences recomputes every agent's effective cadence for the current
@@ -599,6 +662,23 @@ func (g *Governor) RecordKick(agentName string) {
 	now := g.now()
 	g.state.LastKick[agentName] = now
 	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName})
+}
+
+// EffectiveThresholds returns the surge/busy/quiet thresholds computeMode is
+// actually evaluating the queue against right now: an explicit
+// governor.modes.<mode>.threshold where set, otherwise the repo-count-scaled
+// (or flat, if opted out) default (#3498). For dashboard display only —
+// computeMode/thresholdFor remain the single source of truth for mode
+// selection; this just exposes their result so a hive with many repos isn't
+// left guessing why a small configured surge=20 is behaving like 780.
+func (g *Governor) EffectiveThresholds() map[string]int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return map[string]int{
+		"surge": g.thresholdFor("surge"),
+		"busy":  g.thresholdFor("busy"),
+		"quiet": g.thresholdFor("quiet"),
+	}
 }
 
 func (g *Governor) GetState() State {
