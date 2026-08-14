@@ -89,6 +89,15 @@ func upgradeHarness(t *testing.T) string {
 		"var _latestSHAs = {};",
 		"var _upgradingHives = {};",
 		"var _switchStartedAt = {};",
+		// hiveSwitchState reads the release-channel list to recognize a
+		// channel-name target ("stable") as a switch that survives a page
+		// refresh (added in #3771 for durable channel switches). In the
+		// browser _releaseChannels is declared at page scope and seeded from
+		// the dashboard poll; here the extracted function closes over it too,
+		// so the harness must declare it or node throws ReferenceError before
+		// any predicate runs. None of these fixtures targets a channel, so the
+		// empty list is the correct default — the switch branch is not taken.
+		"var _releaseChannels = [];",
 		jsFunc(t, "sameShaJS"),
 		jsFunc(t, "hiveSwitchState"),
 		jsFunc(t, "hiveIsUpgradingNow"),
