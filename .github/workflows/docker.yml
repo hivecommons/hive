@@ -102,7 +102,18 @@ jobs:
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
-          no-cache-filters: builder
+          # STALE-BINARY FIX (unblocks the #3760 fix in the SHIPPED image).
+          # The GHA cache scope below is keyed on the platform slug only
+          # (linux-amd64 / linux-arm64), NOT the commit — so it persists across
+          # every commit on the branch. `no-cache-filters: builder` alone rebuilt
+          # a fresh /hive in the `builder` stage but let BuildKit serve the FINAL
+          # (`runtime`) stage's `COPY --from=builder /hive` layer AND the
+          # subsequent fresh-inode rewrite RUN from that persistent cache — so the
+          # rebuilt binary was thrown away and the OLD binary (e.g. commit
+          # 4d9c11c) shipped even though the manifest digest advanced. Listing the
+          # `runtime` stage too forces those binary-bearing layers to re-run every
+          # build, so the published /usr/local/bin/hive always matches HEAD.
+          no-cache-filters: builder,runtime
           # #3760: DO NOT attach provenance/SBOM attestations. build-push-action
           # adds them by DEFAULT, and an attestation can only be carried by an
           # OCI image *index* — so the per-arch digest we push becomes
@@ -393,6 +404,12 @@ jobs:
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
+          # STALE-BINARY FIX (see the main build step). The hub image also does
+          # `COPY --from=builder /hive` into a `runtime` final stage, and its GHA
+          # cache scope (hub-<slug>) is likewise branch-persistent — so without
+          # busting `runtime` the hub could ship an old hive that self-upgrades
+          # against the wrong SHA. Bust both binary-bearing stages.
+          no-cache-filters: builder,runtime
           # #3760: no default provenance/SBOM attestations → plain image
           # manifests, not an OCI index. See the note on the main build above.
           provenance: false

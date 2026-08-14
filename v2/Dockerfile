@@ -72,7 +72,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pinned to the same node:26-slim digest as the tmux-builder stage above —
 # refresh both FROM lines together.
-FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503
+#
+# The final stage is NAMED `runtime` so the CI build steps can list it in
+# `no-cache-filters` alongside `builder`. Busting ONLY `builder` rebuilt a fresh
+# /hive but let BuildKit serve the final-stage `COPY --from=builder /hive` layer
+# (and the rewrite RUN below) from the branch-scoped GHA cache — so a fresh
+# binary was rebuilt and then discarded, and the OLD binary shipped. See the
+# stale-binary note in .github/workflows/docker.yml.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS runtime
 
 # --- Layer 1: system packages (rarely changes) ---
 # util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an

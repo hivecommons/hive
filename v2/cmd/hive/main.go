@@ -4217,8 +4217,20 @@ func main() {
 		return
 	}
 
-	gov.ClearLastKicks()
-	logger.Info("cleared last kicks for startup — all eligible agents will be kicked on first eval")
+	// #2573: startup must NOT clear persisted last-kick timestamps. It used to
+	// (gov.ClearLastKicks) so that every eligible agent was kicked on the first
+	// eval — "one kick per agent per pod boot, by design". But on hosted hives
+	// the hub rolls the Deployment for every auto-upgrade, and each roll is a
+	// brand-new pod with container restart count 0, so agents on 4h/6h cadences
+	// were re-kicked at roll frequency — burning backend tokens ("Bob coins")
+	// far beyond any configured cadence, while "next run" (recomputed from the
+	// wiped timestamps) showed sooner than the cadence implied. LastKick state
+	// is persisted to /data (PVC) after every eval and restored above via
+	// SeedLastKicks, so this first eval kicks exactly the agents whose cadence
+	// has actually elapsed — including everything after downtime longer than an
+	// interval. A hive with no persisted state (fresh install) has no LastKick
+	// entries, and every cadenced agent is still kicked here, unchanged.
+	logger.Info("startup honors persisted cadence state — first eval kicks only agents whose cadence has elapsed")
 	runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, nil, logger)
 	runAutoMergeSweepIfDue(ctx, ghClient, dashSrv, &lastAutoMergeSweep, logger)
 	persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
