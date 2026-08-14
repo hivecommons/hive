@@ -260,7 +260,7 @@ The other six domains are deliberately untouched. See below.
 | 1 | Session cookie (HMAC + Ed25519) dual acceptance, marker in payload | M | No — hub-side verify only |
 | 2 | Heartbeat bearer bounded trial verification against both generations | M | No — hub-side verify only |
 | 3 | `desiredPerHiveEnv` derives from current generation; per-generation counts in `PerHiveEnvStatus` | S | No — read path until #4 |
-| 4 | Admin rotate endpoint + persistence of the generation file | S | No — arms the rest |
+| 4 | Admin rotate endpoint + persistence of the generation file | S | No — arms the rest | ✅ landed
 | 5 | Terminal + invite key dual acceptance (spoke-side, symmetric) | M | **Yes** — rolls pods via reconcile |
 | 6 | SSO/session Ed25519 public key rotation, incl. `proxy/server.js` accepting two public keys | L | **Yes** — Node proxy contract |
 | 7 | Retire generation automatically past `verify_until`; alert if a generation is pinned open | S | No |
@@ -268,6 +268,66 @@ The other six domains are deliberately untouched. See below.
 PRs 1–4 are hub-internal and can land without any spoke rolling. Only 5 and 6
 touch the fleet, and both go through the existing rate-limited reconcile lane
 rather than a re-provision.
+
+## As-built notes for PR #4
+
+Two decisions were made during implementation that the design above did not
+pin down.
+
+**Double rotation is REFUSED, not warned about, with `force` as the override.**
+`maxLiveGenerations` is 2 and `rotate()` carries forward only the outgoing
+current, so a second rotation DROPS the generation from two rotations ago —
+which is the one most of the fleet is still on, because the reconcile lane
+walks spokes at 3 patches per 15-minute cycle. A second rotation an hour into
+the first would leave ~54 of 66 spokes holding material the hub no longer
+accepts: heartbeat 401s until the sweep reaches them, hours later. That is the
+flag day this design exists to prevent, reintroduced through the front door.
+
+A warning on a response body is not a control. The operator most likely to
+double-rotate is the one who did not realise the first rotation was still in
+flight — precisely the operator who will not read it. So the endpoint returns
+409 with a `retry_after_seconds`, and `force: true` is required to override.
+
+`force` is honoured rather than omitted because there is a real case for it: if
+the NEW generation is itself compromised, rotating again immediately is correct
+even at the cost of stranding spokes for a few hours. A guard with no override
+would turn the cooldown into a window of known-compromised material.
+
+`rotationCooldown` is 8 hours — sized to CONVERGENCE (66 spokes at 3 per
+15-minute cycle is ~5.5h, plus margin for cycles lost to unreachable clusters),
+deliberately NOT to `defaultVerifyWindow`. Waiting for the previous generation
+to expire before permitting another rotation would block emergency re-rotation
+for a week, and the hazard being guarded is unconverged spokes, not the old key
+still being accepted. A test asserts `rotationCooldown < defaultVerifyWindow`.
+
+**Double-submit is guarded by the same mechanism, not a separate one.**
+`rotateMasterSecret` holds the generation write lock across
+evaluate-generate-persist-install, so two concurrent POSTs cannot both observe a
+pre-rotation `lastKeyRotation`; the second is refused by the cooldown. The
+cooldown IS the idempotency guard.
+
+**Persistence.** `/data/saas/hub-generations.json`, a sibling of
+`hub-secret.key` on the hub PVC, at mode 0600 (not the 0644 its JSON neighbours
+use — this file holds master secrets in plaintext). `hub-secret.key` is never
+rewritten, so a hub that rolls back to pre-rotation code finds exactly what it
+expects. `rotated_at` is persisted alongside the set, because otherwise the
+cooldown would reset on every hub roll — several times a day — and stop
+guarding anything.
+
+The set is persisted BEFORE it is installed in memory: a failed write leaves
+the hub on the old set and returns an error, rather than minting on a key it
+forgets at its next roll.
+
+A corrupt generations file is quarantined and the loader falls back to the
+legacy single-generation set — it is NOT discarded and replaced with a fresh
+rotation, which would mint material the fleet has never seen while forgetting
+the generation the fleet is actually on. This differs deliberately from the
+alert-acks precedent, where starting fresh is the safe direction.
+
+Expiry is NOT filtered at load time. An expired previous generation is loaded
+and then excluded by `acceptableGenerations` at every verify, so the wall clock
+is the only thing that closes the window — filtering at load would make expiry
+depend on when the hub last restarted.
 
 ## Note: the empty-master readers
 

@@ -798,9 +798,23 @@ type HubServer struct {
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
 	// byte-identical to the single-master behavior and dual acceptance
-	// degenerates to single acceptance. It is set once in NewHubServer and read
-	// without a lock; a rotation endpoint that replaces it will need one.
-	keyGenerations *generationSet
+	// degenerates to single acceptance.
+	//
+	// GUARDED BY keyGenerationsMu. The admin rotate endpoint replaces this
+	// pointer while heartbeat and cookie verifiers are concurrently reading it,
+	// so every access goes through currentGenerations() / setGenerations()
+	// rather than touching the field. The field itself is only ever REPLACED,
+	// never mutated in place — generationSet.rotate is pure and returns a new
+	// set — so a reader that grabbed the old pointer keeps a consistent,
+	// immutable snapshot and simply verifies against the pre-rotation set for
+	// the remainder of its request. That is correct, not a race: the outgoing
+	// generation is still acceptable.
+	keyGenerationsMu sync.RWMutex
+	keyGenerations   *generationSet
+	// lastKeyRotation is when the current generation was minted, used ONLY by
+	// the double-rotation cooldown (evaluateRotation). It is never consulted to
+	// decide whether a key is acceptable — VerifyUntil alone does that.
+	lastKeyRotation time.Time
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
 	// in flight. See the auto-upgrade block in the SHA-poll loop. It also marks
@@ -1136,8 +1150,10 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		hubGitHash:   gitHash,
 		hubGitBranch: gitBranch,
 		hubSecret:    secret,
-		// One generation, holding the existing master. No migration step and no
-		// behavior change: see legacyGenerationSet.
+		// Provisional single generation holding the existing master. Replaced
+		// immediately below by loadGenerations, which reads any persisted
+		// rotation off the PVC. It is set here too so the field is never nil
+		// between struct construction and that load.
 		keyGenerations:          legacyGenerationSet(secret),
 		clusters:                loadClusters(logger),
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
@@ -1155,6 +1171,19 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		alerts:                  newAlertState(),
 		revokedSessions:         newRevokedSessions(),
 		urlHealth:               newURLHealthState(),
+	}
+
+	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
+	// that came back on generation 1 after a rotation would reject every
+	// artifact minted since it and quietly re-mint on the old key — strictly
+	// worse than never having rotated. Falls back to the single-generation
+	// legacy set on a missing or unusable file, which is correct because
+	// hub-secret.key is authoritative for generation 1 and is never rewritten.
+	if gs, rotatedAt := loadGenerations(secret, logger); gs != nil {
+		s.keyGenerations = gs
+		// Restore the rotation timestamp too, or the cooldown would reset on
+		// every hub roll and stop guarding anything.
+		s.lastKeyRotation = rotatedAt
 	}
 
 	s.loadRegistry()

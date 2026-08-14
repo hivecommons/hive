@@ -505,6 +505,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
+	// Master-secret rotation (v2/docs/design/master-key-rotation.md). Both are
+	// requireAdmin, which enforces isCSRFSafe BEFORE resolving identity — an
+	// ambient hub session cookie would otherwise make a cross-site POST able to
+	// rotate the fleet's master key. The rotate route is a POST for that reason
+	// too: isCSRFSafe exempts safe methods.
+	s.mux.HandleFunc("GET /api/saas/admin/key-generations", s.requireAdmin(s.handleKeyGenerations))
+	s.mux.HandleFunc("POST /api/saas/admin/rotate-master-key", s.requireAdmin(s.handleRotateMasterKey))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
 	// Admin read-only "View as user" impersonation. Enter is admin-only and
@@ -604,7 +611,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 	if err != nil || cookie.Value == "" {
 		return impersonationGrant{}, false
 	}
-	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.keyGenerations, cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.currentGenerations(), cookie.Value, time.Now())
 	if !ok || !isHubAdmin(grant.Admin) {
 		return impersonationGrant{}, false
 	}
@@ -870,7 +877,7 @@ func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string
 	if err != nil || cookie.Value == "" {
 		return realUser, realUser, false
 	}
-	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.keyGenerations, cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.currentGenerations(), cookie.Value, time.Now())
 	if !ok {
 		return realUser, realUser, false
 	}
@@ -1292,7 +1299,7 @@ func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	value := mintImpersonateCookieValueForGeneration(s.keyGenerations, admin, target, time.Now())
+	value := mintImpersonateCookieValueForGeneration(s.currentGenerations(), admin, target, time.Now())
 	if value == "" {
 		writeJSONError(w, http.StatusInternalServerError, "cannot start impersonation")
 		return
