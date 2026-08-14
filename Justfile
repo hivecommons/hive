@@ -30,11 +30,11 @@ check-version skip="false":
     #!/usr/bin/env bash
     if [[ "{{skip}}" == "true" || "${HIVE_SKIP_VERSION_CHECK:-}" == "true" ]]; then exit 0; fi
     LOCAL=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    git fetch origin v2 --quiet 2>/dev/null || true
-    REMOTE=$(git rev-parse --short origin/v2 2>/dev/null || echo "unknown")
+    git fetch origin v4 --quiet 2>/dev/null || true
+    REMOTE=$(git rev-parse --short origin/v4 2>/dev/null || echo "unknown")
     if [[ "$LOCAL" != "$REMOTE" && "$REMOTE" != "unknown" ]]; then
       echo "✗ Version check failed (local: ${LOCAL}, latest: ${REMOTE})"
-      echo "  Run: git pull origin v2"
+      echo "  Run: git pull origin v4"
       echo "  Or skip: export HIVE_SKIP_VERSION_CHECK=true"
       exit 1
     fi
@@ -813,7 +813,7 @@ contribute-stop:
 # Usage: just contribute-k8s                          (default namespace: hive-contributor)
 #        just contribute-k8s my-namespace              (custom namespace)
 #        just contribute-k8s my-namespace out.yaml     (write to file instead of stdout)
-#        just contribute-k8s my-namespace "" v2        (pin a specific image tag, #2549)
+#        just contribute-k8s my-namespace "" v4        (pin a specific image tag, #2549)
 #
 # Unlike the earlier config-only generator, this now ALSO emits a Deployment that
 # actually RUNS the contributor relay in HEADLESS mode (kubestellar/hive#2660,
@@ -822,7 +822,7 @@ contribute-stop:
 # into). Applying the output results in a running contributor, not three inert
 # config objects. Like before, it PRINTS YAML (or writes a file) and prints an
 # apply instruction — it never invokes kubectl itself.
-contribute-k8s namespace="hive-contributor" outfile="" image_tag="v2":
+contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     #!/usr/bin/env bash
     set -euo pipefail
 
