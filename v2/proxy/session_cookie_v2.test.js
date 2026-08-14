@@ -16,6 +16,7 @@
 
 import crypto from 'crypto';
 import assert from 'assert';
+import { readFileSync } from 'fs';
 
 const INFO_SESSION_ED25519_SEED = 'hive-session-ed25519-v1';
 const INFO_SESSION_KEY = 'hive-session-v1';
@@ -81,8 +82,12 @@ function verifyHubUserCookie(secret, value) {
   return username;
 }
 
+// AUDIT F23: kept in lockstep with server.js — the legacy symmetric lane is
+// GONE. legacySecret is accepted and ignored, mirroring the real function, so
+// this copy cannot drift back into verifying symmetric material.
 function verifyHubUserCookieEither(pubHex, legacySecret, value) {
-  return verifyHubUserCookieV2(pubHex, value) || verifyHubUserCookie(legacySecret, value);
+  void legacySecret;
+  return verifyHubUserCookieV2(pubHex, value);
 }
 
 // --- tests ------------------------------------------------------------------
@@ -134,15 +139,51 @@ test('garbage and malformed values fail closed', () => {
   assert.strictEqual(verifyHubUserCookieV2('abcd', mintV2(SEED, 'alice')), '', 'accepted a short public key');
 });
 
-test('ROLLOUT: legacy HMAC cookies still verify alongside v2', () => {
+// AUDIT F23 — INVERTED. This test previously asserted "legacy HMAC cookies still
+// verify alongside v2", i.e. it asserted the vulnerability. The legacy lane is
+// symmetric and fleet-uniform, so verify-capable implied mint-capable: any spoke
+// operator could forge `clubanderson.<sig>`. It is inverted rather than deleted
+// so the file keeps documenting the decision and a re-added lane fails here.
+test('F23: a correctly-HMACd legacy cookie is REJECTED even with the right secret', () => {
   const legacyCookie = 'bob.' + crypto.createHmac('sha256', LEGACY).update('bob').digest('base64url');
-  assert.strictEqual(verifyHubUserCookieEither(PUB, LEGACY, legacyCookie), 'bob',
-    'a live browser session would break at deploy');
-  assert.strictEqual(verifyHubUserCookieEither(PUB, LEGACY, mintV2(SEED, 'alice')), 'alice');
-  // With the legacy lane withdrawn (the follow-up removal), legacy stops working
-  // and v2 keeps working.
+
+  // PRECONDITION: the legacy primitive itself is still well-formed and the
+  // secret is the CORRECT one — so a rejection below is the lane being gone,
+  // not a typo'd fixture. This is the mirror of the Go-side
+  // TestF1LegacyLaneRejectsEvenTheCorrectSecret.
+  assert.strictEqual(verifyHubUserCookie(LEGACY, legacyCookie), 'bob',
+    'precondition: the legacy HMAC primitive must still compute — otherwise this test proves nothing');
+
+  // THE ASSERTION: the live verify path refuses it, even handed the correct secret.
+  assert.strictEqual(verifyHubUserCookieEither(PUB, LEGACY, legacyCookie), '',
+    'F23 REGRESSION: the legacy symmetric lane still verifies — a spoke can forge an admin cookie');
   assert.strictEqual(verifyHubUserCookieEither(PUB, '', legacyCookie), '');
+
+  // POSITIVE CONTROL: v2 must STILL verify. Without this, a verifier that
+  // rejected everything would satisfy the assertions above while breaking every
+  // hosted sign-in.
+  assert.strictEqual(verifyHubUserCookieEither(PUB, LEGACY, mintV2(SEED, 'alice')), 'alice',
+    'positive control FAILED: v2 cookies must still verify');
   assert.strictEqual(verifyHubUserCookieEither(PUB, '', mintV2(SEED, 'alice')), 'alice');
+});
+
+// AUDIT F23 SOURCE GUARD. The behavioural tests above exercise a COPY of the
+// verifier kept in this file, and the end-to-end tests in server.test.js only
+// catch a lane that is REACHED. heartbeatBearerOK (F24) showed that a
+// dead-but-armed acceptor is invisible to both. This asserts the symmetric
+// verifier has not returned to the shipped server.js at all.
+test('F23: server.js contains no symmetric cookie-verification lane', () => {
+  const src = readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+
+  // Positive control: the tombstone naming the finding must be present, so a
+  // wholesale rewrite cannot make this assertion vacuously true.
+  assert.ok(src.includes('AUDIT F23 TOMBSTONE'),
+    'positive control FAILED: the F23 tombstone is missing from server.js');
+
+  assert.ok(!/function\s+verifyHubUserCookie\s*\(\s*secret\s*,\s*value\s*\)/.test(src),
+    'F23 REGRESSION: the symmetric verifier verifyHubUserCookie has been reintroduced in server.js');
+  assert.ok(!/return\s+verifyHubUserCookie\s*\(\s*legacySecret\s*,\s*value\s*\)/.test(src),
+    'F23 REGRESSION: a legacy symmetric fallback has been reintroduced in server.js');
 });
 
 test('INTEROP: the public key derived here matches the Go hub byte-for-byte', () => {

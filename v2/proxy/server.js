@@ -14,10 +14,14 @@ const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
-// C2 domain separation: the proxy verifies the hub-minted `hive_hub_user`
-// session/terminal cookie, which is HMAC'd with the derived SESSION sub-key —
-// NOT the master hub secret. A hub-hosted hive is injected HIVE_SESSION_KEY and
-// never the master, so a spoke operator cannot forge a session cookie.
+// SESSION_KEY was the symmetric key the `hive_hub_user` cookie used to be
+// verified with. AUDIT F23 DELETED THAT LANE — see verifyHubUserCookieEither.
+// The cookie is now verified ONLY against the Ed25519 SESSION_PUBLIC_KEY below,
+// so this spoke can verify a hub-minted cookie but cannot mint one.
+//
+// SESSION_KEY is still resolved because it remains the IS_HOSTED boot signal
+// (a self-hosted operator legitimately holds the master). It must NOT be
+// reintroduced as a signature-verification comparand.
 //
 // SESSION_KEY resolution mirrors the Go SpokeSessionKey() helper:
 //   1. HIVE_SESSION_KEY (modern least-privilege provisioning) if set, else
@@ -42,10 +46,13 @@ const SESSION_KEY = deriveSessionKey();
 //
 // SESSION_KEY above is symmetric, so a spoke able to verify was equally able to
 // mint — any spoke operator could read it from the pod env and forge
-// `clubanderson.<sig>`, a hub ADMIN cookie honoured on ~21 admin routes. Both
-// are read during the rollout window: this spoke may be running an older image
-// than the hub, or vice versa. Once the fleet has rolled, HIVE_SESSION_KEY (and
-// the legacy branch in verifyHubUserCookieEither) go away.
+// `clubanderson.<sig>`, a hub ADMIN cookie honoured on ~21 admin routes.
+//
+// AUDIT F23: that verification lane is now DELETED. SESSION_KEY is no longer a
+// signature-verification comparand anywhere in this file; cookies verify ONLY
+// against SESSION_PUBLIC_KEY through the asymmetric v3/v2 lanes, so a spoke can
+// verify but can no longer mint. SESSION_KEY is retained solely as the IS_HOSTED
+// boot signal (see below).
 //
 // Derived from HIVE_HUB_SECRET as a fallback for self-hosted spokes whose
 // operator legitimately holds the master. The info string MUST stay byte-for-byte
@@ -574,34 +581,22 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// verifyHubUserCookie mirrors verifyHubUserCookieValue in v2/pkg/hub/hub_cookie.go
-// EXACTLY. The `hive_hub_user` cookie value is `<username>.<sig>` where sig is
-// base64url-unpadded HMAC-SHA256(key=SESSION_KEY, msg=username). The proxy holds
-// no other secret and must not merely check that the cookie is non-empty (that
-// was CWE-345: any `Cookie: hive_hub_user=x` yielded a shell in a
-// credential-holding container). We recompute the HMAC and constant-time-compare
-// the signature; a forged, edited, or legacy-unsigned cookie fails closed.
+// AUDIT F23 TOMBSTONE — verifyHubUserCookie (the legacy symmetric HMAC verifier)
+// WAS HERE AND IS DELETED. Do not reintroduce it.
 //
-// Returns the verified username on success, or '' when the signature does not
-// verify / the secret is unset / the value is malformed.
-function verifyHubUserCookie(secret, value) {
-  if (!secret || !value) return '';
-  // SplitN from the right: the final segment is the signature.
-  const idx = value.lastIndexOf('.');
-  if (idx <= 0 || idx === value.length - 1) return '';
-  const username = value.slice(0, idx);
-  const sig = value.slice(idx + 1);
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(username)
-    .digest('base64url'); // base64url is unpadded, matching Go's RawURLEncoding
-  const suppliedBuf = Buffer.from(sig);
-  const expectedBuf = Buffer.from(expected);
-  if (suppliedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(suppliedBuf, expectedBuf)) {
-    return '';
-  }
-  return username;
-}
+// It verified `<username>.<base64url(HMAC-SHA256(SESSION_KEY, username))>`.
+// SESSION_KEY is symmetric and fleet-uniform, so any party able to VERIFY was
+// equally able to MINT. The Go hub deleted its twin in F1 (#3725); this is the
+// Node half, and with it the last consumer of SESSION_KEY as a verification
+// input.
+//
+// Only the ASYMMETRIC lanes remain — verifyHubUserCookieV3 (F10, signed expiry)
+// and verifyHubUserCookieV2 (Ed25519). A spoke holds only the PUBLIC key, so a
+// spoke operator can verify a hub-minted cookie but can no longer forge one.
+//
+// SESSION_KEY itself is intentionally still resolved above: it remains the
+// IS_HOSTED signal and the self-hosted boot check. What died is its use as a
+// signature-verification comparand, not the variable.
 
 // HUB_COOKIE_V2_MARKER separates the username from an Ed25519 signature. It must
 // stay byte-identical to hubCookieV2Marker in v2/pkg/hub/hub_cookie.go. A legacy
@@ -696,32 +691,44 @@ function verifyHubUserCookieV3(pubHex, value, nowSeconds) {
   }
 }
 
-// verifyHubUserCookieEither accepts a v3 (F10: signed lifetime), a v2 (Ed25519)
-// cookie or, during the rollout window only, a legacy HMAC one — mirroring the Go
-// helper of the same name. Lanes are tried v3 → v2 → legacy.
+// verifyHubUserCookieEither accepts a v3 (F10: signed lifetime) or a v2
+// (Ed25519) cookie — mirroring the Go helper of the same name. Lanes are tried
+// v3 → v2. Both are ASYMMETRIC: this spoke holds only the PUBLIC key, so it can
+// verify but cannot mint.
 //
-// The v2 and legacy branches are STRICTLY additive compatibility paths. Removing
-// either one 401s every part of the fleet that has not rolled. The legacy branch
-// is additionally the N2 vulnerability (verify-capable implies mint-capable) and
-// is removed once the fleet has rolled and existing cookies have aged out.
+// AUDIT F23 (Medium): the legacy symmetric HMAC lane is GONE, in lockstep with
+// the Go hub's F1 deletion (hub_cookie.go, PR #3725). It verified the cookie
+// against SESSION_KEY, which is byte-identical across the whole hosted fleet —
+// measured live at 1 distinct value across 48/48 reachable spokes. Symmetric
+// material means verify-capable implies MINT-capable, so any spoke operator who
+// could read the pod env could forge `clubanderson.<sig>` and have it accepted
+// by EVERY other tenant's proxy. That is a genuine cross-tenant forgery
+// primitive, not a theoretical one.
+//
+// legacySecret is retained in the signature but is deliberately unused: callers
+// still pass it, and accepting-and-ignoring is safer than a signature change a
+// future merge could mis-resolve into re-enabling the lane. That is precisely
+// how F14 and F18 regressed on the Go side.
 function verifyHubUserCookieEither(pubHex, legacySecret, value) {
   const v3 = verifyHubUserCookieV3(pubHex, value);
   if (v3) return v3;
   const v2 = verifyHubUserCookieV2(pubHex, value);
   if (v2) return v2;
-  return verifyHubUserCookie(legacySecret, value);
+  void legacySecret;
+  return '';
 }
 
 // verifyHubUserCookieAcrossKeys is BOUNDED TRIAL VERIFICATION of a session
 // cookie against every public key this spoke holds, current-then-previous.
 //
 // This adds a second KEY, not a second FORMAT and not a second LANE. Each
-// candidate runs the identical verifyHubUserCookieEither the single-key path
-// runs, so the v3/v2/legacy lane structure, the expiry enforcement and the
-// signature checks are unchanged. In particular the legacy symmetric HMAC lane
-// is passed `legacySecret` exactly once and is NOT multiplied across keys —
-// SESSION_KEY is symmetric material with no generation plurality here, and
-// giving it any would be re-opening a lane the hub side (F1) has deleted.
+// candidate runs the identical v3/v2 verification the single-key path runs, so
+// the lane structure, the expiry enforcement and the signature checks are
+// unchanged.
+//
+// AUDIT F23: the trailing legacy symmetric lane is DELETED (see
+// verifyHubUserCookieEither). `legacySecret` is accepted and ignored so callers
+// need no change and no merge can silently restore a symmetric fallback here.
 //
 // BOUNDED BY CONFIGURATION, NOT BY INPUT. `pubKeys` comes from
 // sessionPublicKeys(), which is at most two entries because the hub holds at
@@ -735,9 +742,10 @@ function verifyHubUserCookieEither(pubHex, legacySecret, value) {
 // aborts the loop. So a garbage HIVE_SESSION_PUBLIC_KEY_PREV costs nothing but
 // a skipped entry.
 //
-// An empty list verifies nothing through the Ed25519 lanes and falls through to
-// the legacy symmetric lane alone — which is the pre-existing behaviour for a
-// spoke with no public key at all, preserved rather than changed.
+// An empty list verifies NOTHING and returns '' — fail-closed. Before F23 it
+// fell through to the symmetric lane, so a spoke with no public key still
+// authenticated users; now such a spoke authenticates nobody through this path,
+// which is the correct posture for a spoke that holds no verification material.
 function verifyHubUserCookieAcrossKeys(pubKeys, legacySecret, value) {
   if (!value) return '';
   const keys = Array.isArray(pubKeys) ? pubKeys : [];
@@ -747,11 +755,8 @@ function verifyHubUserCookieAcrossKeys(pubKeys, legacySecret, value) {
     const v2 = verifyHubUserCookieV2(pubHex, value);
     if (v2) return v2;
   }
-  // Legacy symmetric lane, tried once and only once after every public key has
-  // been tried. Kept last so an Ed25519-signed cookie is never evaluated
-  // against symmetric material, and kept OUTSIDE the loop so the number of HMAC
-  // computations does not scale with the number of public keys.
-  return verifyHubUserCookie(legacySecret, value);
+  void legacySecret;
+  return '';
 }
 
 // snapshotFrameAncestors (v2 #3032): resolves the per-hive allowlist for framing

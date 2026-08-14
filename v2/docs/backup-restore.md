@@ -8,12 +8,12 @@ Hive has two backup paths with different scopes.
 
 - hub SaaS state under `/data/saas/**`;
 - `/data/hub-registry.json`;
-- required hub Kubernetes Secrets (`hive-hub-secrets`, `oci-api-key`, `hive-hub-kubeconfigs`, and `hive-hub-tls` when present);
+- required hub Kubernetes Secrets — a missing `hive-hub-secrets`, `oci-api-key`, or `hive-hub-kubeconfigs` **fails the backup**, while a missing `hive-hub-tls` only warns (cert-manager can reissue it);
 - each spoke's authoritative config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or legacy `hive.yaml.bak`, `hive-id`) and GitHub App key files.
 
 It deliberately excludes regenerable bulk state such as hub `nous/`, `home/`, `beads/`, and `logs/` so a nightly fleet backup stays small and restorable.
 
-`HIVE_BACKUP_KEY` is required and must be a 64-character hex AES-256 key. Escrow it outside the cluster; a backup encrypted by a key that only exists in the lost cluster is not recoverable.
+`HIVE_BACKUP_KEY` is required and must be an AES-256 key, 64-character hex or base64 encoded (deliberately independent of `/data/saas/hmac.key`, which is itself backup payload). Escrow it outside the cluster; a backup encrypted by a key that only exists in the lost cluster is not recoverable.
 
 ```bash
 openssl rand -hex 32   # generate the value to store as HIVE_BACKUP_KEY
@@ -36,17 +36,18 @@ Environment:
 | `HIVE_BACKUP_RETENTION` | Archive count to retain; default `30`. |
 | `HIVE_HUB_NAMESPACE` | Hub namespace for Secret collection; default `hive-hub`. |
 | `HIVE_KUBECONFIG_DIR` | Mounted kubeconfig directory for remote spoke clusters; default `/etc/hive/kubeconfigs`. |
+| `HIVE_BACKUP_OCI_ENDPOINT` | OCI Object Storage endpoint override; defaults to the regional endpoint. |
 
 `extract` decrypts into a directory and verifies hashes. It does **not** mutate a live cluster. A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Any `spoke_errors` in the manifest are honest gaps: those spokes were not captured and need separate recovery.
 
 ## Kubernetes CronJob
 
-`v2/deploy/k8s/backup-cronjob.yaml` wires the hub DR path into Kubernetes. It creates:
+`v2/deploy/k8s/backup-cronjob.yaml` wires the hub DR path into Kubernetes. It is **not deployed by default** — it is absent from `v2/deploy/k8s/kustomization.yaml` and nothing in the install path applies it; deployment is an explicit `kubectl apply -f`, gated on the operator having escrowed `HIVE_BACKUP_KEY` first. It creates:
 
 - ServiceAccount `hive-hub-backup` in namespace `hive-hub`;
-- a ClusterRole/Binding that can read Secrets/namespaces/pods and exec into spoke pods to read their PVC state;
-- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline;
-- ConfigMap `hive-hub-backup-config` with object-storage bucket and retention.
+- a namespaced Role granting `get` (only) on exactly four named Secrets — `hive-hub-secrets`, `oci-api-key`, `hive-hub-kubeconfigs`, `hive-hub-tls` — plus a ClusterRole limited to `pods [get,list]` and `pods/exec [create]` for reading spoke PVC state (hardened in [#3719](https://github.com/kubestellar/hive/pull/3719) and [#3810](https://github.com/kubestellar/hive/pull/3810); the unused `namespaces` grant was removed — spoke namespaces derive as `hive-hosted-<id>` from the registry);
+- a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/kubestellar/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/kubestellar/hive/pull/3810));
+- ConfigMap `hive-hub-backup-config` with object-storage bucket (default `hive-hub-backups`, inherited silently if you don't edit it) and retention.
 
 Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment.
 

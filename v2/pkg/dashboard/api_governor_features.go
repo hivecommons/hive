@@ -35,7 +35,20 @@ const (
 // their runtime behavior. saveConfig() persists a secret-free overlay to the
 // PVC that the entrypoint merges on restart, so a hosted hive picks the change
 // up on its next boot.
+//
+// OWNER-ONLY (audit F22, 2026-08-14). The body carries OTelEndpoint,
+// OTelHeaders, OTelInsecure and TracingEndpoint, which feed a live OTLP
+// exporter (pkg/tracing/tracing.go WithEndpointURL/WithHeaders/WithInsecure).
+// Un-gated, any read-write or merger member could redirect the hive's entire
+// trace stream — spans carry hive.agent, issue refs, model names and token
+// counts (pkg/tracing/semconv.go) — to an attacker-controlled collector, and
+// flip OTelInsecure to strip TLS off it. Eleven of the twelve governor-config
+// writers already called requireOwnerRole; this one was the lone outlier,
+// exactly the asymmetry that established F16.
 func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		IoscanEnabled *bool `json:"ioscanEnabled"`
 

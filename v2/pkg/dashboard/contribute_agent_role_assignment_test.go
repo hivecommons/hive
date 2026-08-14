@@ -64,13 +64,42 @@ func TestContributorAgentRoleAssignmentValidationAndPersistence(t *testing.T) {
 		t.Fatalf("supervisor got %d, want 400", rec.Code)
 	}
 
+	// Issue #3011: this block used to assert the AUTO-GRANT — it expected 200
+	// and a profile that had silently acquired the ci-maintainer grant
+	// ("assignment did not persist with auto-grant"). That behaviour WAS the
+	// vulnerability, so the assertions are INVERTED rather than deleted.
+	// ci-maintainer is in roleClaimNeedsGrant, and alice holds no grant, so the
+	// assignment must now be REFUSED and must write nothing.
+	rec = putAssignedRole(t, s, "c-alice", "ci-maintainer")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("assign ci-maintainer without a grant got %d, want 400 — the auto-grant "+
+			"bypass is back (issue #3011); body: %s", rec.Code, rec.Body.String())
+	}
+	p = findContributor("c-alice")
+	if hasAgentRoleGrant(p, "ci-maintainer") {
+		t.Fatalf("refused the assignment but still wrote the grant to the profile: %+v", p)
+	}
+	if p.AssignedAgentRole == "ci-maintainer" {
+		t.Fatalf("refused the assignment but still assigned the role: %+v", p)
+	}
+
+	// The legitimate path: an owner grants the role explicitly, and only then
+	// can it be assigned.
+	grantReq := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":["ci-maintainer"]}`))
+	grantReq.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(grantReq)
+	grantRec := httptest.NewRecorder()
+	s.mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusOK {
+		t.Fatalf("explicit grant got %d, want 200: %s", grantRec.Code, grantRec.Body.String())
+	}
 	rec = putAssignedRole(t, s, "c-alice", "ci-maintainer")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("assign ci-maintainer got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		t.Fatalf("assign ci-maintainer after an explicit grant got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
 	p = findContributor("c-alice")
 	if p.AssignedAgentRole != "ci-maintainer" || !hasAgentRoleGrant(p, "ci-maintainer") {
-		t.Fatalf("assignment did not persist with auto-grant: %+v", p)
+		t.Fatalf("granted assignment did not persist: %+v", p)
 	}
 	req := httptest.NewRequest(http.MethodPut, "/api/contributors/c-alice/agent-role-grants", strings.NewReader(`{"agent_role_grants":[]}`))
 	req.Header.Set("Content-Type", "application/json")

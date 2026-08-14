@@ -12,6 +12,10 @@ kubectl apply -f deploy/k8s/dashboard-route-rbac.yaml
 
 It grants the `hive` ServiceAccount permission to list same-namespace `networking.k8s.io` Ingresses and OpenShift `route.openshift.io` Routes. Without this RBAC, the spoke reports route existence as `unknown` with an RBAC error; Hive treats unknown as non-fatal.
 
+> **This manifest is for self-hosted spokes only.** **Hosted** hives provisioned by the hub get an equivalent Role automatically — `hive-route-reader`, emitted by the provisioning template. Do not apply this manifest into a hosted hive's namespace: it hardcodes namespace `hive` and ServiceAccount `hive`, neither of which matches a hosted spoke (namespace `hive-hosted-<id>`, ServiceAccount `hive-sa` on SCC clusters or `default` elsewhere). The two Roles grant the same same-namespace read access to the same two resources; only the names and subjects differ. See [Provisioning a Hosted Hive](manual-provisioning.md#hive-route-reader--why-the-dashboard-link-503s-without-it).
+
+> **The `unknown` above is non-fatal, but a second consequence is not.** The same read backs `SpokeServedHost`, which is how the spoke learns the external hostname its own Route/Ingress actually serves and reports it to the hub as `dashboard_url`. Denied that read, the spoke falls back to synthesising `<hiveID>.<hub host>` — correct only for spokes fronted by the hub's own wildcard domain, and a guaranteed **503** anywhere else, because the wildcard hands the name to the hub's router, which has no backend for a spoke on another cluster. The dashboard link breaks silently: DNS resolves, so nothing looks wrong until someone clicks it.
+
 ## Heartbeat fields
 
 Each heartbeat may include:

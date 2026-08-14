@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -117,6 +118,28 @@ func (s *HubServer) handleRotateMasterKey(w http.ResponseWriter, r *http.Request
 			Error:             decision.Reason,
 			RetryAfterSeconds: retry,
 			Current:           s.currentGenerations().Current,
+		})
+		return
+	}
+	// AUDIT 8 / F19 + F21. The fleet is not fully observed, so a rotation would
+	// converge the reachable spokes and strand the rest at verify_until. This is
+	// a 409 like the cooldown — the request is well-formed and the hub is
+	// healthy, the FLEET is not in a state where rotating is safe — but it
+	// carries no RetryAfter, because unlike the cooldown it does not clear on
+	// its own. It clears when every spoke becomes reachable by the convergence
+	// lane.
+	if errors.Is(err, errRotationWouldStrandSpokes) {
+		obs := s.fleetObservation()
+		s.logger.Warn("master key rotation REFUSED — fleet not fully observed, rotating would strand spokes",
+			"by", s.getRealAuthUser(r),
+			"considered_hives", obs.Considered,
+			"unreachable_hives", obs.Unreachable,
+			"unreachable_clusters", strings.Join(obs.UnreachableClusters, ","),
+			"current", s.currentGenerations().Current)
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(rotateRefusedResponse{
+			Error:   decision.Reason,
+			Current: s.currentGenerations().Current,
 		})
 		return
 	}

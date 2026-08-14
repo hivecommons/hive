@@ -117,6 +117,110 @@ else
   pass "no compose service uses a :latest image tag"
 fi
 
+# --- 5. NodeSource GPG key must be pinned by SHA-256 before use --------------
+# issue #3821: the key used to be curl | gpg --dearmor with no verification, so
+# a compromised deb.nodesource.com or a build-network MITM could swap in a
+# trusted signing key silently. Guard both that the ARG is a real 64-hex-char
+# digest (not blank/placeholder) and that the RUN step actually verifies it
+# with sha256sum -c before dearmoring -- pinning the ARG alone without wiring
+# the check into the RUN would regress silently back to "trust on first use".
+nodesource_arg="$(grep -E '^[[:space:]]*ARG[[:space:]]+NODESOURCE_KEY_SHA256[[:space:]]*=' "$DOCKERFILE_CONTRIB" | head -1 || true)"
+if [ -z "$nodesource_arg" ]; then
+  fail "NODESOURCE_KEY_SHA256 is present and pinned" "no ARG NODESOURCE_KEY_SHA256 found in $DOCKERFILE_CONTRIB"
+else
+  nodesource_value="$(echo "${nodesource_arg#*=}" | tr -d ' "'"'"'')"
+  if echo "$nodesource_value" | grep -qE '^[0-9a-f]{64}$'; then
+    pass "NODESOURCE_KEY_SHA256 is pinned to a 64-hex-char digest"
+  else
+    fail "NODESOURCE_KEY_SHA256 is pinned to a 64-hex-char digest" "got: '$nodesource_value'"
+  fi
+fi
+
+if grep -A2 'NODESOURCE_KEY_SHA256}  /tmp/nodesource.key' "$DOCKERFILE_CONTRIB" | grep -q 'sha256sum -c'; then
+  pass "nodesource key fetch is verified with sha256sum -c before dearmoring"
+else
+  fail "nodesource key fetch is verified with sha256sum -c before dearmoring" \
+       "expected an 'echo \"\$NODESOURCE_KEY_SHA256  /tmp/nodesource.key\" | sha256sum -c -' step in $DOCKERFILE_CONTRIB"
+fi
+
+# --- 6. Every FROM must be digest-pinned (#3843) ------------------------------
+# A tag is mutable. `alpine:3.24` was the last tag-only base here, and Alpine
+# re-pushes patch tags on every CVE respin — so the hub image's whole trusted
+# computing base could change with no diff in this repo.
+#
+# This is written as a SWEEP over every FROM in every v2 Dockerfile rather than
+# a named check for alpine, deliberately: a named check would pass forever while
+# a NEW tag-pinned base was added next to it. The failure mode being guarded is
+# "someone adds an unpinned FROM", which only a sweep catches.
+#
+# `FROM x AS y` and `COPY --from=<stage>` refer to build STAGES, not registry
+# images, and have no digest — so stage names defined earlier in the same file
+# are excluded from the requirement.
+for df in "$DOCKERFILE" "$DOCKERFILE_CONTRIB" "$V2_DIR/Dockerfile.hub"; do
+  rel="${df#"$(dirname "$V2_DIR")"/}"
+  if [ ! -f "$df" ]; then
+    fail "$rel exists for FROM digest sweep" "file not found"
+    continue
+  fi
+
+  # Collect stage aliases (the `AS <name>` on each FROM) so intra-file stage
+  # references are not mistaken for unpinned registry images.
+  stages="$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$df" \
+            | sed -nE 's/.*[[:space:]][aA][sS][[:space:]]+([A-Za-z0-9_.-]+).*/\1/p')"
+
+  unpinned=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    # Image reference is the first token after FROM, skipping --platform=... flags.
+    img="$(printf '%s\n' "$line" | sed -E 's/^[[:space:]]*[fF][rR][oO][mA-Za-z]*[[:space:]]+//; s/^(--[a-z-]+(=[^ ]+)?[[:space:]]+)*//' | awk '{print $1}')"
+    [ -z "$img" ] && continue
+    # Skip references to a stage declared in this same file.
+    if printf '%s\n' "$stages" | grep -qxF "$img"; then continue; fi
+    # Skip scratch, which has no digest by definition.
+    [ "$img" = "scratch" ] && continue
+    if ! printf '%s\n' "$img" | grep -qE '@sha256:[0-9a-f]{64}$'; then
+      unpinned="${unpinned}${img} "
+    fi
+  done <<EOF
+$(grep -iE '^[[:space:]]*FROM[[:space:]]' "$df")
+EOF
+
+  if [ -n "$unpinned" ]; then
+    fail "$rel: every FROM is digest-pinned" "tag-pinned (mutable): $unpinned"
+  else
+    pass "$rel: every FROM is digest-pinned"
+  fi
+done
+
+# --- 7. Nous must install from a pinned COMMIT, not a branch (#3843) ---------
+# The Nous framework is `git clone`d and pip-installed with `-e`. Cloning
+# without a checkout would track the default branch, so the content behind a
+# fixed Dockerfile line could change on any upstream push — a supply-chain
+# injection with no diff here. Guard BOTH halves: the ARG must be a full 40-hex
+# commit SHA (a branch name or short SHA is not good enough — a short SHA is
+# ambiguous and a branch moves), AND the RUN must actually `git checkout` it.
+# Pinning the ARG without wiring the checkout would regress silently to
+# "whatever the default branch says", which is exactly the shape of the
+# PI_VERSION regression this file was written for.
+nous_arg="$(grep -E '^[[:space:]]*ARG[[:space:]]+NOUS_COMMIT[[:space:]]*=' "$DOCKERFILE" | head -1 || true)"
+if [ -z "$nous_arg" ]; then
+  fail "NOUS_COMMIT is present and pinned" "no ARG NOUS_COMMIT found in $DOCKERFILE"
+else
+  nous_value="$(echo "${nous_arg#*=}" | tr -d ' "'"'"'')"
+  if echo "$nous_value" | grep -qE '^[0-9a-f]{40}$'; then
+    pass "NOUS_COMMIT is pinned to a full 40-hex commit SHA"
+  else
+    fail "NOUS_COMMIT is pinned to a full 40-hex commit SHA" "got: '$nous_value'"
+  fi
+fi
+
+if grep -qE 'git -C /opt/nous checkout "\$\{NOUS_COMMIT\}"' "$DOCKERFILE"; then
+  pass "nous clone is checked out at the pinned NOUS_COMMIT"
+else
+  fail "nous clone is checked out at the pinned NOUS_COMMIT" \
+       "expected a 'git -C /opt/nous checkout \"\${NOUS_COMMIT}\"' step in $DOCKERFILE"
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

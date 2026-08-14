@@ -50,19 +50,45 @@ func newRetireTestHub(t *testing.T, gens []keyGeneration, current int) *HubServe
 		t.Fatalf("fixture: newGenerationSet(%d, %d gens) returned nil", current, len(gens))
 	}
 	s.keyGenerations = gs
+	// AUDIT 8 / F19+F21. Declare a fully observed fleet so tests that go on to
+	// ROTATE off this fixture are not refused by the stranding interlock.
+	//
+	// This does NOT weaken anything these tests assert. Retirement is
+	// deliberately unconditional on convergence (see the file header rationale)
+	// and never reads these fields, so every retirement assertion is unaffected;
+	// only rotateMasterSecret consults them. The tests that seed real
+	// observation state call seedObservations, which overwrites these.
+	s.perHiveEnvConsidered = 1
+	s.perHiveEnvUnreachable = 0
 	return s
 }
 
 // seedObservations installs Deployment-sourced spoke observations, which is
 // what PerHiveEnvSnapshot counts. Deliberately NOT heartbeat-sourced: a paused
 // spoke still has a Deployment and must still block readiness.
+// seedObservations stands in for a completed sweep, so it must seed what a
+// sweep records: the observations AND the selection accounting. Considered is
+// set to the number of hives observed with zero unreachable — i.e. a FULLY
+// observed fleet — because that is the only state in which the readiness
+// signals are permitted to say "yes". Tests that want a partially-observed
+// fleet use seedObservationsWithUnreachable.
 func seedObservations(s *HubServer, onGeneration map[string]int) {
+	seedObservationsWithUnreachable(s, onGeneration, 0, nil)
+}
+
+// seedObservationsWithUnreachable seeds a sweep that could not read
+// unreachable hives on the named clusters, on top of the ones it did observe.
+func seedObservationsWithUnreachable(s *HubServer, onGeneration map[string]int, unreachable int, clusters []string) {
 	s.perHiveEnvMu.Lock()
 	defer s.perHiveEnvMu.Unlock()
 	s.perHiveEnvSeen = map[string]perHiveEnvObservation{}
 	for id, gen := range onGeneration {
 		s.perHiveEnvSeen[id] = perHiveEnvObservation{Generation: gen}
 	}
+	s.perHiveEnvConsidered = len(onGeneration) + unreachable
+	s.perHiveEnvSkippedByStatus = 0
+	s.perHiveEnvUnreachable = unreachable
+	s.perHiveEnvUnreachableClusters = append([]string(nil), clusters...)
 }
 
 // TestRetireExpiredGenerationsIsPositiveControl is the two-directional positive
@@ -363,7 +389,7 @@ func TestRetirementSurvivesRestart(t *testing.T) {
 	}
 
 	// Simulate the restart: read the file back the way loadGenerations does.
-	reloaded, rotatedAt := loadGenerations(retSecretA, quietLogger())
+	reloaded, rotatedAt, _ := loadGenerations(retSecretA, quietLogger())
 	if reloaded == nil {
 		t.Fatal("reload returned nil set")
 	}

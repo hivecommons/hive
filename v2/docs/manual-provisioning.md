@@ -126,6 +126,24 @@ PVC and records it in `meta.json` (`oci_file_system_id`, `oci_export_id`). The
 manual path uses an in-cluster RWX PVC directly and has no OCI export. This is
 the main structural difference between the two `meta.json` shapes.
 
+### A.3 RBAC the template emits
+
+The provisioning template creates the namespace RBAC for you, including the
+namespace-scoped read-only **`hive-route-reader`** Role and RoleBinding
+(`get`/`list` on `networking.k8s.io/ingresses` and `route.openshift.io/routes`).
+
+It is **not** unused. The spoke reads its own Route/Ingress through it to learn
+the hostname it actually serves, and reports that to the hub as `dashboard_url`.
+Remove it and the hub falls back to synthesising `<hiveID>.<hub host>`, which
+503s for any spoke not fronted by the hub's wildcard domain — see
+[`hive-route-reader`](#hive-route-reader--why-the-dashboard-link-503s-without-it)
+under the manual path for the full rationale, the YAML, and the
+ServiceAccount-derivation caveat.
+
+The template binds `hive-sa` on `RequiresSCC` (OpenShift) clusters and `default`
+elsewhere. Namespaces provisioned **before** this Role was added do not have it
+and need it applied retroactively.
+
 ---
 
 ## Path B — Manual provisioning (vllm-d)
@@ -135,8 +153,9 @@ The hub cannot reach vllm-d, so every object is applied by hand with
 
 1. Namespace
 2. ServiceAccount (`hive-sa`)
-3. RBAC — two Roles (`hive-secrets-writer`, `hive-self-upgrade`) and three
-   RoleBindings (the two above **plus** `hive-anyuid`)
+3. RBAC — three Roles (`hive-secrets-writer`, `hive-self-upgrade`,
+   `hive-route-reader`) and four RoleBindings (the three above **plus**
+   `hive-anyuid`)
 4. PVC (`hive-data`, RWX cephfs, 50Gi)
 5. ConfigMap (`hive-config`) — the first-boot config **seed**
 6. Secret (`hive-secrets`) — dashboard token, GitHub App key, LiteLLM key
@@ -195,6 +214,17 @@ rules:
   verbs: ["get","list","watch","delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: hive-route-reader, namespace: ${NS} }
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get","list"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get","list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: hive-secrets-writer, namespace: ${NS} }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: hive-secrets-writer }
@@ -205,6 +235,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: { name: hive-self-upgrade, namespace: ${NS} }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: hive-self-upgrade }
+subjects:
+- { kind: ServiceAccount, name: hive-sa, namespace: ${NS} }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: hive-route-reader, namespace: ${NS} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: hive-route-reader }
 subjects:
 - { kind: ServiceAccount, name: hive-sa, namespace: ${NS} }
 ---
@@ -228,6 +265,67 @@ YAML
 > kubectl --context "$CTX" -n "$NS" get rolebinding hive-anyuid \
 >   -o jsonpath='{.subjects[0].namespace}'   # must equal $NS
 > ```
+
+#### `hive-route-reader` — why the dashboard link 503s without it
+
+The spoke discovers the external hostname its **own** Route/Ingress actually
+serves and reports it to the hub as `dashboard_url` (`SpokeServedHost`, called
+from the heartbeat path). `hive-route-reader` is what lets it read them.
+
+Without the Role, that lookup returns "no answer" and the spoke falls back to
+synthesising `<hiveID>.<hub host>`. That is correct **only** for spokes fronted
+by the hub's own wildcard domain. Anywhere else it is a guaranteed **503**: the
+wildcard resolves, so DNS looks healthy, but it sends the name to the **hub's**
+router, which has no backend for a hive living on another cluster. This was a
+live user-visible outage on the vllm-d pool — the hub minted links at
+`<id>.hive.kubestellar.io` while the spoke's Route served
+`<id>.apps.fmaas-vllm-d.fmaas.res.ibm.com`.
+
+The spoke is the only party that **can** answer this on a heartbeat-only
+cluster, since the hub has no `kubectl` path there by design.
+
+Notes on the shape of the Role:
+
+- **Read-only and namespace-scoped.** `get`/`list`, no write verbs. A
+  compromised spoke learns only its own hostname — which it already advertises
+  — and can neither create nor retarget routing.
+- **Routes are listed unconditionally**, not gated on OpenShift. A cluster can
+  serve Routes without requiring an SCC, and a Role naming a CRD-backed
+  resource is inert where that API is absent.
+- **Ingress is consulted before Route**, matching the traffic path, so a
+  cluster carrying both resolves to the same object.
+
+> **Gotcha — derive the ServiceAccount, do not assume it.** The subject is
+> **not** uniform across the fleet. OpenShift/SCC spokes bind `hive-sa`; others
+> bind `default`. Measured live: hive-oke is 22× `default`; vllm-d is 2×
+> `default` **and** 41× `hive-sa`; a-ks-wec2 is 5× `hive-sa`. Binding the wrong
+> one fails silently — the pod runs, the lookup is denied, and you get the 503
+> fallback with no error anywhere obvious. Read it off the Deployment:
+>
+> ```bash
+> kubectl --context "$CTX" -n "$NS" get deploy hive \
+>   -o jsonpath='{.spec.template.spec.serviceAccountName}'
+> ```
+>
+> An **empty** result means the Deployment does not set one, which is Kubernetes
+> for `default` — bind `default`, not the empty string. The manifests in B.2
+> above use `hive-sa` because this manual path creates it in B.1; substitute
+> whatever the command returns if you are patching an existing namespace.
+
+> **Retrofit — namespaces provisioned before this change do not have it.**
+> The Role/RoleBinding is emitted by the provisioning template, so **new**
+> hosted hives get it automatically. Every namespace created before it was
+> added needs it applied retroactively, or its dashboard link keeps 503ing.
+> Check the fleet:
+>
+> ```bash
+> kubectl --context "$CTX" get rolebinding -A \
+>   --field-selector metadata.name=hive-route-reader
+> ```
+>
+> The spoke also has to be running a build new enough to perform the lookup, so
+> a namespace that already has the RBAC may still need a `rollout restart` to
+> start reporting.
 
 ### B.3 PVC
 
@@ -932,6 +1030,7 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | Dashboard banner: "GitHub App private key could not be loaded from ..." | A real `app_id` + `installation_id`, but no readable PEM at the resolved path | The banner names the exact path tried and the resolution order (`$GH_APP_KEY_FILE` → `github.key_file` → PVC `/data/gh-app-key.pem` → provisioning mount `/secrets/gh-app-key.pem`). Write the PEM to that path, or point `github.key_file` at one |
 | Dashboard sign-in redirect loop (vllm-d) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |
 | Hive online but **Upgrade** → `hive not found` | No `meta.json` on the hub | Create `/data/saas/hives/<id>/meta.json` |
+| Hive online, but **My Hives → Dashboard** returns a branded **503**; the link reads `<hive-id>.<hub-host>` instead of the spoke cluster's own domain | Missing `hive-route-reader` RBAC, so the spoke can't read its own Route/Ingress and the hub falls back to the hub-wildcard host, which has no backend for a hive on another cluster | Apply the `hive-route-reader` Role + RoleBinding, binding the SA the hive Deployment actually uses (see [B.2](#hive-route-reader--why-the-dashboard-link-503s-without-it)), then `rollout restart deploy/hive` |
 | Not visible in My Hives | No `meta.json`, or `owner` doesn't match | Create/patch `meta.json` with the right `owner` |
 | ConfigMap edits have no effect | PVC overlay is authoritative | Edit `/data/hive.yaml.dashboard`, not the ConfigMap |
 | User has `read-write` in Manage Access but login fails with `device-flow login rejected: user not authorized` | Grant written to `/data/hive.yaml.dashboard` after the pod booted; the running authorizer only rebuilds `authorized_users` at startup (common right after provisioning / cross-cluster migration onto a fresh PVC) | Confirm the user is in the pod's `/etc/hive/hive.yaml`, then `rollout restart deploy/hive` so the authorizer rebuilds |

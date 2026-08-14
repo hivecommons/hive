@@ -93,6 +93,19 @@ hub:
 > `hub.dashboard_url` is unset on the spoke, hand-editing the hub registry
 > gets silently overwritten within ~5 minutes by the next heartbeat.
 
+> **Gotcha — a migrated namespace needs the `hive-route-reader` RBAC.** When
+> `hub.dashboard_url` is unset, the spoke discovers the host by reading its
+> **own** Route/Ingress, which requires the namespace-scoped read-only
+> `hive-route-reader` Role and RoleBinding. Migration is exactly when this
+> bites: the served host changes with the cluster, and a namespace recreated
+> from an older template — or hand-built by copying manifests — may not carry
+> the Role. Without it the spoke reports the synthesised `<hive-id>.<hub host>`
+> and the **Dashboard** button 503s. Apply it as shown in
+> [Provisioning a Hosted Hive → B.2](manual-provisioning.md#hive-route-reader--why-the-dashboard-link-503s-without-it),
+> **binding the ServiceAccount the hive Deployment actually uses** (`hive-sa`
+> on SCC clusters, `default` elsewhere — read it off the Deployment, do not
+> assume).
+
 > **Gotcha — old `copy-config` init containers invert config precedence.**
 > Deployments provisioned from older templates ship a `copy-config` init
 > container that prefers the PVC backup over the ConfigMap:

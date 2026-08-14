@@ -1120,7 +1120,19 @@ func TestHivesDelete(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 
+	// Audit F25 (2026-08-14): this test used to send a bare DELETE with no role
+	// headers and assert 200 — i.e. it ENCODED the missing gate as correct
+	// behaviour. It is inverted rather than deleted: the un-gated call must now
+	// be REFUSED, and the owner call must still succeed.
+	reqUngated := httptest.NewRequest(http.MethodDelete, "/api/hives/hive-del-org-del", nil)
+	wUngated := httptest.NewRecorder()
+	s.mux.ServeHTTP(wUngated, reqUngated)
+	if wUngated.Code != http.StatusForbidden {
+		t.Fatalf("un-gated DELETE /api/hives/{id} got %d, want 403 — the owner gate is missing (audit F25)", wUngated.Code)
+	}
+
 	req2 := httptest.NewRequest(http.MethodDelete, "/api/hives/hive-del-org-del", nil)
+	markOwnerRequest(req2)
 	w2 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusOK {
@@ -1129,6 +1141,7 @@ func TestHivesDelete(t *testing.T) {
 
 	// 404 for already deleted
 	req3 := httptest.NewRequest(http.MethodDelete, "/api/hives/hive-del-org-del", nil)
+	markOwnerRequest(req3)
 	w3 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusNotFound {

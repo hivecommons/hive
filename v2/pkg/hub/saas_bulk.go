@@ -12,8 +12,8 @@ import (
 // Bulk fleet operations for the hub dashboard's "My Hives" list.
 //
 // Every bulk action is a thin fan-out over the SAME logic the single-hive
-// handlers use (handleUpgradeHive, handleToggleAutoUpgrade, handleSwitchBranch,
-// rolloutRestartHive). The rules that make this safe to expose:
+// handlers use (handleUpgradeHive, handleToggleAutoUpgrade, handleSwitchBranch).
+// The rules that make this safe to expose:
 //
 //  1. Authorization is re-derived PER HIVE from the hub's own store. The
 //     client-supplied ID list is treated as untrusted input: every ID is
@@ -73,9 +73,11 @@ type BulkHiveRequest struct {
 }
 
 // BulkHiveResult is the outcome for ONE hive in a bulk request. Ok=false always
-// carries a human-readable Error; Via records the delivery path actually used
-// ("kubectl" or "heartbeat") so the UI can explain why a firewalled cluster's
-// hive reports success without an immediate rollout.
+// carries a human-readable Error; Via records the delivery path actually used.
+// Under the pull model this is "heartbeat" for every cluster action ("store" for
+// ones that only write hub-side state), which is also the honest signal to the
+// UI that success means "queued for the spoke's next check-in", not "already
+// rolled".
 type BulkHiveResult struct {
 	HiveID string `json:"hive_id"`
 	Ok     bool   `json:"ok"`
@@ -85,7 +87,8 @@ type BulkHiveResult struct {
 
 // Delivery paths reported in BulkHiveResult.Via.
 const (
-	bulkViaKubectl   = "kubectl"
+	// bulkViaKubectl was removed with the push path: no bulk action shells out
+	// to a spoke cluster any more, so no result can be delivered "via kubectl".
 	bulkViaHeartbeat = "heartbeat"
 	bulkViaStore     = "store"
 )
@@ -157,6 +160,18 @@ func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request)
 	default:
 		writeBulkError(w, http.StatusBadRequest, "unknown bulk action")
 		return
+	}
+
+	// Admin kill switch: bulk upgrade / branch-switch are the same image-change
+	// deliveries the single-hive handlers refuse while spoke upgrades are
+	// paused, so they get the same explicit 409 — for the whole batch, before
+	// any hive is touched. Auto-upgrade preference changes and plain restarts
+	// (no image target) pass through.
+	if body.Action == bulkActionUpgrade || body.Action == bulkActionSwitchBranch {
+		if sw, paused := s.spokeUpgradesPaused(); paused {
+			writeBulkError(w, http.StatusConflict, upgradePauseRefusal("spoke", sw))
+			return
+		}
 	}
 
 	// De-duplicate while preserving the client's order: a repeated ID would
@@ -279,19 +294,18 @@ func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiv
 	return BulkHiveResult{HiveID: id, Ok: false, Error: "unknown bulk action"}
 }
 
-// bulkRestartOrUpgrade restarts one hive's deployment. This is the same
-// operation handleUpgradeHive performs (`kubectl rollout restart
-// deployment/hive`), but routed through rolloutRestartHive so it inherits the
-// bounded timeout and the unreachable-cluster cache — without that, a batch
-// containing hives on a firewalled cluster (vllm-d) would stall for the full
-// kubectl timeout per hive.
+// bulkRestartOrUpgrade restarts or upgrades one hive, PULL ONLY — the hub never
+// kubectls into the spoke's cluster.
 //
-// When kubectl cannot deliver (firewalled cluster, or one already known
-// unreachable), the heartbeat fallback is armed exactly as the single-hive
-// paths do: s.heartbeatUpgrade[id] is set to the branch's latest SHA and the
-// registry is marked Upgrading, so the spoke self-restarts on its next
-// check-in. That is the ONLY delivery path for unreachable clusters, so it is
-// reported as success with Via="heartbeat", not as an error.
+// An upgrade arms s.heartbeatUpgrade[id] with the branch's latest SHA and marks
+// the registry Upgrading; a restart arms the durable RequestedRestartAt, which
+// the heartbeat path turns into resp.RestartSpoke. Either way the spoke applies
+// the change to its own Deployment on its next check-in, so this is reported as
+// success with Via="heartbeat".
+//
+// This is the same mechanism that was previously the "fallback" for firewalled
+// clusters; it is now the only path, on every cluster. Delivery is therefore
+// bounded by the heartbeat interval rather than immediate.
 func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action string) BulkHiveResult {
 	cluster := s.clusterForHive(h)
 	if cluster == nil {
@@ -315,7 +329,22 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 	}
 	latestSHA := getLatestSHAForBranch(branch)
 
-	delivered := s.rolloutRestartHive(cluster, id)
+	// PULL ONLY — no kubectl push. An upgrade is delivered by arming
+	// heartbeatUpgrade below; a plain restart is delivered by arming the
+	// durable RequestedRestartAt, which the heartbeat path turns into
+	// resp.RestartSpoke and the spoke applies to itself. Neither needs the hub
+	// to hold write access into the spoke's cluster.
+	delivered := false
+	if action == bulkActionRestart {
+		if rh := loadSaaSHive(id); rh != nil {
+			rh.RequestedRestartAt = time.Now().UTC().Format(time.RFC3339)
+			if err := saveSaaSHive(rh); err != nil {
+				s.logger.Warn("bulk restart: failed to arm spoke restart", "hive", id, "error", err)
+			} else {
+				delivered = true
+			}
+		}
+	}
 
 	s.mu.Lock()
 	for i := range s.registry.Hives {
@@ -329,17 +358,22 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 		}
 		break
 	}
-	if !delivered && action == bulkActionUpgrade && latestSHA != "" {
+	// Unconditional under the pull model: arming the heartbeat IS the delivery
+	// for an upgrade, not a fallback for when a push failed.
+	if action == bulkActionUpgrade && latestSHA != "" {
 		s.heartbeatUpgrade[id] = latestSHA
+		delivered = true
 	}
 	s.mu.Unlock()
 
 	if !delivered && action == bulkActionRestart {
-		// A restart has no SHA to hand the spoke, so there is nothing the
-		// heartbeat path can carry — say so instead of reporting success.
-		s.logger.Warn("bulk restart could not reach cluster", "hive", id, "cluster", cluster.ID)
+		// Arming the durable RequestedRestartAt is the only thing that can fail
+		// here now (a store write), and it is a real error rather than an
+		// unreachable-cluster report: the pull path does not depend on the hub
+		// being able to reach the cluster at all.
+		s.logger.Warn("bulk restart could not be armed", "hive", id, "cluster", cluster.ID)
 		return BulkHiveResult{HiveID: id, Ok: false,
-			Error: "cluster unreachable from the hub — restart could not be delivered"}
+			Error: "could not arm the restart for delivery over the heartbeat"}
 	}
 	if !delivered {
 		s.logger.Info("audit: bulk upgrade queued via heartbeat",
@@ -347,7 +381,8 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 		return BulkHiveResult{HiveID: id, Ok: true, Via: bulkViaHeartbeat}
 	}
 	s.logger.Info("audit: bulk hive "+action, "hive_id", id, "by", username, "cluster", cluster.ID)
-	return BulkHiveResult{HiveID: id, Ok: true, Via: bulkViaKubectl}
+	// Pull only — the spoke applies this on its next check-in.
+	return BulkHiveResult{HiveID: id, Ok: true, Via: bulkViaHeartbeat}
 }
 
 // bulkSetAutoUpgrade mirrors handleToggleAutoUpgrade's persistence: the SaaS
@@ -382,21 +417,14 @@ func (s *HubServer) bulkSwitchBranch(h *SaaSHive, id, username, branch string) B
 	imageTag := branchToTag(branch) + "-latest"
 	image := bulkHiveImageRepo + ":" + imageTag
 
+	// PULL ONLY — no `kubectl set image` push. heartbeatSwitchTag armed below
+	// is the delivery: the spoke holds the hive-self-upgrade RBAC to patch its
+	// own Deployment and applies the new tag on its next check-in, which the
+	// doc comment above already describes as the mechanism. Dropping the push
+	// removes the last reason for the hub to hold write-capable kubeconfigs
+	// into spoke clusters.
+	_ = image
 	delivered := false
-	if !s.clusterRecentlyUnreachable(cluster.ID) {
-		ns := hiveHostedNamespacePrefix + id
-		cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			s.markClusterUnreachable(cluster.ID)
-			s.logger.Warn("bulk branch switch kubectl failed, using heartbeat fallback",
-				"hive", id, "branch", branch, "output", string(out))
-		} else {
-			s.markClusterReachable(cluster.ID)
-			delivered = true
-			// Restart so the new image is pulled — same as the single-hive path.
-			s.rolloutRestartHive(cluster, id)
-		}
-	}
 
 	s.mu.Lock()
 	if !delivered {
@@ -410,10 +438,9 @@ func (s *HubServer) bulkSwitchBranch(h *SaaSHive, id, username, branch string) B
 	}
 	s.mu.Unlock()
 
-	via := bulkViaKubectl
-	if !delivered {
-		via = bulkViaHeartbeat
-	}
+	// Pull only: the switch is delivered by heartbeatSwitchTag, never by a push.
+	via := bulkViaHeartbeat
+	_ = delivered
 	s.logger.Info("audit: bulk hive branch switched",
 		"hive_id", id, "branch", branch, "image", image, "by", username, "via", via)
 	return BulkHiveResult{HiveID: id, Ok: true, Via: via}

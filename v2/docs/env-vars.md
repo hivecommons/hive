@@ -26,7 +26,8 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_SHA` | No | build SHA | Passed to launched agents and used in hub upgrade/status paths. |
 | `HIVE_ADVISORY_ISSUE` | No | none | Passed to launched agents so advisory findings can target a configured issue. |
 | `HIVE_TTYD_PORT` | No | `7681` | Web terminal port used by the entrypoint and terminal proxy. |
-| `HIVE_METRICS_ENABLED` | No | disabled | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. |
+| `HIVE_METRICS_ENABLED` | No | disabled | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`. Requires `HIVE_METRICS_TOKEN` — enabled-but-tokenless returns 403 ([#3804](https://github.com/kubestellar/hive/pull/3804)). |
+| `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token for `/metrics` (`Authorization: Bearer <token>`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; the cost/agent series are never served without it. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
 | `HIVE_PROXY_PROOF_REQUIRED` | No | `false` | Requires the internal proxy proof header when set to `true`. |
@@ -43,6 +44,9 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_PROXY_PORT` | No | `3001` | Node reverse-proxy/front-door port used by `v2/deploy/entrypoint.sh`. |
 | `HIVE_STATIC_DIR` | No | `/opt/hive/proxy/public` | Static asset directory for the Node proxy. |
 | `HIVE_PROXY_EGRESS_MARK` | No | `0x1112` | Packet mark exempted from the MITM egress redirect. |
+| `HIVE_PROXY_ADVISORY_OK` | No | `false` | Allows the spoke to start when the forced-proxy egress redirect cannot be installed (no `CAP_NET_ADMIN`/iptables). Enforcement becomes advisory-only — agents can bypass the proxy. See [security-model.md](security-model.md#forced-proxy-egress-f5-and-cap_net_admin). |
+| `HIVE_TMUX_HISTORY_LIMIT` | No | `50000` | tmux scrollback depth applied when an agent session is created (positive integer; the authoritative knob for terminal scrollback and full-log capture). |
+| `HIVE_TTYD_HISTORY_LIMIT` | No | `50000` | Defense-in-depth history-limit raise applied at browser attach time; only affects panes created after attach. |
 | `HIVE_WIKI_GIT_URL` | No | none | Optional wiki vault URL cloned into `/data/vaults/hive-wiki` on first boot. |
 
 ## Inference, CLI backends, and agents
@@ -99,6 +103,23 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `OCI_AVAILABILITY_DOMAIN` | Required for OCI FSS provisioning | none | OCI availability domain. |
 | `OCI_MOUNT_TARGET_ID` | Required for OCI FSS provisioning | none | OCI mount target OCID. |
 | `OCI_EXPORT_SET_ID` | Required for OCI FSS provisioning | none | OCI export set OCID. |
+
+### Hub login providers
+
+`HIVE_HUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` enable **GitHub** login. Additional human-login providers are OIDC-based and each is enabled by setting its client id ([#3664](https://github.com/kubestellar/hive/pull/3664)). Per provider `<P>` in `GOOGLE`, `IBMID`, `REDHAT`, `MICROSOFT`, `CUSTOM`:
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_HUB_OIDC_<P>_CLIENT_ID` | Enables the provider | none | Provider is absent from the login picker until set. |
+| `HIVE_HUB_OIDC_<P>_CLIENT_SECRET` | Yes when enabled | none | OIDC client secret. |
+| `HIVE_HUB_OIDC_<P>_ISSUER` | Required for `IBMID` and `CUSTOM` | Google/Red Hat/Microsoft have built-in issuers | OIDC issuer URL (discovery + JWKS). |
+| `HIVE_HUB_OIDC_<P>_SCOPES` | No | `openid email profile` | Space- or comma-separated scope override. |
+| `HIVE_HUB_OIDC_<P>_DISPLAY` | No | provider name | Login button label override. |
+| `HIVE_HUB_OIDC_<P>_SUBJECT_CLAIM` | No | `sub` (IBMid: `uid`) | Claim used as the stable subject. |
+| `HIVE_HUB_OIDC_MICROSOFT_TENANT` | No | `organizations` | Entra tenant segment of the issuer URL. |
+| `HIVE_HUB_OIDC_MICROSOFT_ALLOWED_TENANTS` | No | none | Restricts accepted Entra tenants. |
+
+With two or more providers configured, `/login` renders a provider picker; with exactly one it redirects straight into it. A provider with a client id but missing/invalid issuer is **silently skipped** so it cannot take down login for the others — check the `hub login enabled providers=` startup log line when a button is missing.
 
 ## Kubernetes downward API and platform variables
 

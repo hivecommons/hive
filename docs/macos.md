@@ -2,7 +2,7 @@
 
 > **Legacy v1/launchd documentation.** This page maps the original
 > systemd-style supervised agent workflow to macOS launchd. It does not describe
-> the current v2 Docker/Go deployment. For v2, start with
+> the current containerized Go deployment (branch `v4`; code under `v2/`). For that, start with
 > [`v2/docs/README.md`](../v2/docs/README.md), plus
 > [`v2/docs/operator-reference.md`](../v2/docs/operator-reference.md) and
 > [`v2/docs/deployment-scripts.md`](../v2/docs/deployment-scripts.md).

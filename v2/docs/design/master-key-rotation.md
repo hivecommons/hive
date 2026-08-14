@@ -98,6 +98,28 @@ hub-secret.key>}`. So an un-rotated hub behaves byte-identically to today, and
 "has never been rotated" and "has been rotated back to one generation" are the
 same state. There is no migration step.
 
+**"Absent" and "unreadable" are opposites, not synonyms** (audit 8, F20). The
+fallback above is licensed by ENOENT and by nothing else: the file is created
+only by `saveGenerations`, so its non-existence is a POSITIVE fact — no rotation
+has ever been persisted, and generation 1 really is current. Every other failure
+to establish the file's contents (an unretryable read error, bytes that do not
+parse, a parsed set with no minting generation) means a rotation MAY have
+happened and the hub cannot tell which generation is current. Falling back to
+the legacy set there would re-install SUPERSEDED material as the minting
+generation, drop the post-rotation generation out of the accepted set entirely,
+and — because `rotated_at` goes with it — clear the anti-stranding cooldown.
+
+So those cases fail closed to NO set at all. The hub keeps `hubSecret` and
+therefore keeps authenticating existing spokes on the documented single-master
+verify path, but it mints nothing it cannot vouch for and `rotateMasterSecret`
+refuses outright (`force` does not override it — `force` beats the convergence
+cooldown, not "I do not know what generation I am on"). The read is retried a
+bounded number of times first, because the fault this guards against is
+transient by construction and a crash-loop on a PVC blip is a worse failure than
+the one being fixed. This is the same philosophy as `VerifyUntil.IsZero()`
+meaning ALREADY EXPIRED: a generation set that cannot be trusted must never
+quietly widen what is accepted or revert what is current.
+
 ### Dual acceptance, and how it ends
 
 Verifiers try the current generation first, then each unexpired previous
@@ -446,3 +468,108 @@ on the SIGNATURE rather than only on the payload's `h` claim. The tests that
 specifically exercise the `h`-claim check therefore pin the signing hive
 explicitly, so they keep testing the claim check rather than silently becoming
 duplicates of the signature test.
+
+## As-built notes for F19 (audit 8): wiring the derivation path
+
+The eighth security audit found that the entire rotation wave was **inert**, and
+this note records why, because the shape of the mistake is more instructive than
+the fix.
+
+`provisionGenerationSet()` — the single function every spoke-bound derivation
+flows through — resolved to `legacyGenerationSet(provisionMasterSecret())` in
+production. Its only other branch read a package-level override that **nothing
+but a test helper ever wrote**. So:
+
+- the hub's MINTING and VERIFYING side used the real persisted set
+  (`s.keyGenerations`), which `rotateMasterSecret` correctly advanced;
+- the hub's SPOKE-BOUND side rebuilt generation 1 from `/data/saas/hub-secret.key`,
+  a file rotation never rewrites.
+
+The two were disjoint. After a rotation the hub minted under generation N+1 while
+the reconcile sweep computed "desired" per-hive env from generation 1, compared it
+against what the spokes already held, found no drift, and patched nothing. Step 3
+of the rotation procedure above silently did not happen.
+
+**Why no test caught it.** Coverage existed on both halves and was split across two
+files that never referenced each other: `hub_generations_store_test.go` drove
+`rotateMasterSecret`, `perhive_env_generation_test.go` drove `desiredPerHiveEnv`
+through the test-only seam. Each half passed. The join — "a real rotation changes
+what a spoke would be handed" — was the only thing that was false, and it was the
+one thing nobody asserted. `TestRotationReachesDesiredPerHiveEnv` is that test,
+and it deliberately asserts `provisionGenerationsOverride == nil` so it can never
+decay back into testing the seam instead of the wiring.
+
+### What the fix is
+
+A package-level `liveGenerations` pointer, installed by `NewHubServer` from the
+same `loadGenerations` call that populates `s.keyGenerations`, and replaced by
+`rotateMasterSecret` and `retireExpiredGenerations` inside their existing
+critical sections. Package-level rather than threaded through a receiver because
+every caller in the chain (`desiredPerHiveEnv`, the four `provision*Key`
+helpers, the provisioning template map) is a free function, several invoked from
+template expansion with no `HubServer` in scope.
+
+Three states, not two:
+
+| State | Meaning | Behaviour |
+|---|---|---|
+| installed | a hub is running | derive from the live set |
+| nil, not untrusted | no hub in this process | fall back to legacy — byte-identical to pre-F19 |
+| untrusted | F20's `generationsUntrusted` | **refuse**; return nil, derive nothing |
+
+The third is the handoff F20 left open. When the loader cannot establish which
+generation is current, the derivation path must not re-derive its own notion from
+the raw master file — after a rotation that file holds SUPERSEDED generation-1
+material, and writing keys from it onto live Deployments would drag the fleet
+backwards onto a retired generation. That is F20's silent un-rotation reappearing
+on the side F20 did not cover. "Untrusted" is a separate flag rather than a
+sentinel nil because nil must keep meaning "no hub constructed".
+
+### Staleness: the installed set is not unconditionally authoritative
+
+`liveGenerations` is process-global but `provisionMasterSecret()` is re-read from
+the environment or the file on every call, so the two can disagree — a second
+`NewHubServer`, or an operator changing `HIVE_HUB_SECRET` without the generations
+file following. `generationSetDescendsFrom` requires the ambient master to still
+be present in the installed set before trusting it. That is sound because rotation
+only ever ADDS a generation and demotes the outgoing one, so on a correctly
+installed hub the ambient master is still there as current or previous.
+
+### The stranding interlock, and why rotation is gated shut today
+
+F21 measured that **44 of 70 hosted spokes** sit on `pull_only` clusters
+(`vllm-d`, `a-ks-wec2`) that the reconcile sweep structurally cannot read or
+patch. That is by design and is not changing until the Option D wrapped-master
+delivery path lands.
+
+Wiring F19 without addressing that would be actively worse than leaving it inert:
+a rotation would converge the 26 reachable spokes, leave 44 on the outgoing
+generation, and strand them when retirement fires **unconditionally** at
+`verify_until` seven days later. The audit's phrase is "converts a silent no-op
+into a 7-day-delayed outage".
+
+So `rotateMasterSecret` now refuses unless `FleetFullyObserved` — the last sweep
+saw every admitted hive with none unreachable. A pull-only cluster increments
+`UnreachableHives` for every hive on it, so this is **false on the production hub
+today and stays false** until every spoke is reachable. The wiring lands now; the
+ability to fire it unlocks only when the thing that makes it safe exists.
+
+Three deliberate choices:
+
+- **In `rotateMasterSecret`, not the handler.** It is the single choke point every
+  rotation passes through; a handler gate could be bypassed by a future internal
+  caller.
+- **`force` does not override it.** `force` exists to override the convergence
+  COOLDOWN — "the current generation is compromised, accept the cost". With 44
+  spokes structurally unreachable the cost is not lag, it is a guaranteed outage
+  with no in-band way to avert it. An operator who must rotate a compromised
+  master ahead of Option D has to make the fleet observable first.
+- **Retirement is NOT gated the same way, and must never be.** Gating retirement
+  on convergence would let one unreachable spoke pin a superseded master live
+  forever — the failure mode explicit finiteness exists to prevent. Gating the
+  START of a rotation strands nobody, because nothing has been demoted yet. The
+  two gates correctly point in opposite directions.
+
+Step 4 of the rotation procedure above ("operator watches `safe_to_retire_previous`")
+is therefore now enforced at the front of the procedure rather than being advisory
+at the back.

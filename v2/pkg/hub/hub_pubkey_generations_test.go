@@ -583,3 +583,222 @@ func TestPrivateSeedsNeverLeaveTheHub(t *testing.T) {
 		t.Fatalf("%s is not the public half of the previous generation's session seed", envSessionPublicKeyPrevious)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Direct unit tests for the internal helpers (#3784).
+//
+// The tests above exercise these helpers only THROUGH the exported surface
+// (SpokeSSOPublicKeys, VerifySSOTokenAcrossKeys, desiredPerHiveEnv). That
+// indirection means a helper's contract could drift — say, validPublicKeys
+// starting to return malformed entries that a caller happens to re-filter — and
+// nothing here would notice until the second caller appeared. These helpers sit
+// on the key-rotation path, so each one gets its contract pinned directly, with
+// the same positive-control discipline as the rest of the file: every rejection
+// assertion is paired with an acceptance assertion on the same fixture.
+//
+// All key material below is derived from the fixed test masters at the top of
+// this file; nothing is a production value.
+// ---------------------------------------------------------------------------
+
+// malformedPublicKeys is the shared rejection corpus for validPublicKeys and
+// appendDistinctPublicKey. Each entry must be DROPPED by validation: an
+// unvalidated wrong-length key would reach ed25519.Verify, which PANICS.
+func malformedPublicKeys(t *testing.T, curPub, prevPub string) []struct{ name, key string } {
+	t.Helper()
+	if len(curPub) != 64 || len(prevPub) != 64 {
+		t.Fatalf("fixture: want 64-hex-char keys, got %d and %d", len(curPub), len(prevPub))
+	}
+	return []struct{ name, key string }{
+		{"empty", ""},
+		{"whitespace only", " \t "},
+		{"not hex", strings.Repeat("z", 64)},
+		{"odd length", curPub[:63]},
+		{"too short", curPub[:62]},
+		{"too long", curPub + "ab"},
+		{"0x prefix", "0x" + curPub[:62]},
+		// The delimited-list encoding the PR rejected: must be dropped whole,
+		// never truncated to its first key the way Node's Buffer.from would.
+		{"comma-joined pair", curPub + "," + prevPub},
+	}
+}
+
+// TestFirstOrEmpty pins the accessor both provision helpers stand on. If it
+// ever returned a later element, the _PREV vars would silently carry the wrong
+// generation's key.
+func TestFirstOrEmpty(t *testing.T) {
+	if got := firstOrEmpty(nil); got != "" {
+		t.Fatalf("nil slice: got %q, want empty", got)
+	}
+	if got := firstOrEmpty([]string{}); got != "" {
+		t.Fatalf("empty slice: got %q, want empty", got)
+	}
+	// POSITIVE CONTROL: a populated slice yields its FIRST element — the
+	// most-recent previous generation, per previousPublicKeys' ordering.
+	if got := firstOrEmpty([]string{"first"}); got != "first" {
+		t.Fatalf("one-element slice: got %q, want first", got)
+	}
+	if got := firstOrEmpty([]string{"first", "second"}); got != "first" {
+		t.Fatalf("two-element slice: got %q, want the FIRST element", got)
+	}
+}
+
+// TestValidPublicKeysFiltering pins validPublicKeys' contract directly: keep
+// well-formed 32-byte hex Ed25519 keys in order, trim whitespace, drop
+// everything else.
+func TestValidPublicKeysFiltering(t *testing.T) {
+	now := time.Now()
+	gs := rotatedPubKeySet(t, now)
+	gens := gs.acceptableGenerations(now)
+	curPub := ssoPublicKeyForGeneration(gens[0])
+	prevPub := ssoPublicKeyForGeneration(gens[1])
+
+	// POSITIVE CONTROL first: well-formed keys pass through unchanged, in
+	// order. Without this, a filter that drops EVERYTHING would pass every
+	// rejection case below.
+	if got := validPublicKeys(curPub, prevPub); len(got) != 2 || got[0] != curPub || got[1] != prevPub {
+		t.Fatalf("two valid keys: got %v-element result, want [current, previous] in order", len(got))
+	}
+	// Zero input yields zero output, not nil-dereference or a phantom entry.
+	if got := validPublicKeys(); len(got) != 0 {
+		t.Fatalf("no input: got %d keys, want 0", len(got))
+	}
+	// Surrounding whitespace is TRIMMED, not rejected: the env var is operator-
+	// written, and the trimmed form is what callers compare against.
+	if got := validPublicKeys("  " + curPub + "\t"); len(got) != 1 || got[0] != curPub {
+		t.Fatalf("whitespace-wrapped key: got %d keys, want exactly the trimmed key", len(got))
+	}
+
+	for _, m := range malformedPublicKeys(t, curPub, prevPub) {
+		t.Run(m.name, func(t *testing.T) {
+			if got := validPublicKeys(m.key); len(got) != 0 {
+				t.Fatalf("malformed key %q survived validation (%d keys)", m.name, len(got))
+			}
+			// POSITIVE CONTROL on the same fixture: the malformed entry is
+			// dropped while its valid neighbours survive, in order — so the
+			// rejection above cannot be the work of a filter that rejects all.
+			got := validPublicKeys(curPub, m.key, prevPub)
+			if len(got) != 2 || got[0] != curPub || got[1] != prevPub {
+				t.Fatalf("mixed list with %q: got %d keys, want the two valid neighbours in order", m.name, len(got))
+			}
+		})
+	}
+}
+
+// TestAppendDistinctPublicKey pins the dedup helper SpokeSSOPublicKeys uses to
+// merge _PREV into the key list: append when well-formed and new, no-op when
+// duplicate or malformed.
+func TestAppendDistinctPublicKey(t *testing.T) {
+	now := time.Now()
+	gs := rotatedPubKeySet(t, now)
+	gens := gs.acceptableGenerations(now)
+	curPub := ssoPublicKeyForGeneration(gens[0])
+	prevPub := ssoPublicKeyForGeneration(gens[1])
+
+	// POSITIVE CONTROL: a distinct well-formed candidate is appended AFTER the
+	// existing keys — current-then-previous is the trial-verification order.
+	if got := appendDistinctPublicKey([]string{curPub}, prevPub); len(got) != 2 || got[0] != curPub || got[1] != prevPub {
+		t.Fatalf("distinct candidate: got %d keys, want [current, previous]", len(got))
+	}
+	// Appending to an empty list works: this is what SpokeSSOPublicKeys hits
+	// when the primary var is unset but _PREV is present.
+	if got := appendDistinctPublicKey(nil, prevPub); len(got) != 1 || got[0] != prevPub {
+		t.Fatalf("append to nil: got %d keys, want exactly the candidate", len(got))
+	}
+
+	// A duplicate is NOT re-appended — the state right after a rotation writes
+	// the var but before the generations actually differ. Doubling here would
+	// double the Ed25519 work on the hottest hosted path.
+	if got := appendDistinctPublicKey([]string{curPub}, curPub); len(got) != 1 || got[0] != curPub {
+		t.Fatalf("duplicate candidate: got %d keys, want 1", len(got))
+	}
+	// Dedup must compare the VALIDATED (trimmed) form, or a space-padded
+	// duplicate would sneak past the string compare.
+	if got := appendDistinctPublicKey([]string{curPub}, "  "+curPub+" "); len(got) != 1 {
+		t.Fatalf("whitespace-wrapped duplicate: got %d keys, want 1", len(got))
+	}
+
+	// Malformed candidates leave the list UNTOUCHED — a garbage _PREV must cost
+	// nothing, not corrupt the primary. The acceptance control for each of
+	// these is the distinct-candidate append at the top of the test.
+	for _, m := range malformedPublicKeys(t, curPub, prevPub) {
+		t.Run(m.name, func(t *testing.T) {
+			got := appendDistinctPublicKey([]string{curPub}, m.key)
+			if len(got) != 1 || got[0] != curPub {
+				t.Fatalf("malformed candidate %q changed the list: got %d keys", m.name, len(got))
+			}
+		})
+	}
+}
+
+// TestProvisionPublicKeyPreviousFollowsGenerations pins the two provisioning
+// entry points directly: empty with one generation (so desiredPerHiveEnv omits
+// the vars and no spoke rolls), the previous generation's DOMAIN-SEPARATED
+// public key after a rotation, and empty again once the window closes.
+func TestProvisionPublicKeyPreviousFollowsGenerations(t *testing.T) {
+	now := time.Now()
+
+	// SINGLE GENERATION — production today. Both helpers must return "" so the
+	// caller omits the vars entirely rather than shipping value: "".
+	withProvisionGenerations(t, legacyGenerationSet(pubGenSecretA))
+	if got := provisionSSOPublicKeyPrevious(); got != "" {
+		t.Fatalf("single generation: SSO _PREV = %d chars, want empty", len(got))
+	}
+	if got := provisionSessionPublicKeyPrevious(); got != "" {
+		t.Fatalf("single generation: session _PREV = %d chars, want empty", len(got))
+	}
+
+	// ROTATED — POSITIVE CONTROL for the empties above: each helper now returns
+	// exactly the PREVIOUS generation's public key for ITS domain.
+	rotated := rotatedPubKeySet(t, now)
+	withProvisionGenerations(t, rotated)
+	gens := rotated.acceptableGenerations(now)
+	gotSSO := provisionSSOPublicKeyPrevious()
+	gotSess := provisionSessionPublicKeyPrevious()
+	if want := ssoPublicKeyFromSeed(deriveDomainKey(gens[1].Secret, infoSSOEd25519Seed)); gotSSO != want {
+		t.Fatal("rotated: SSO _PREV is not the previous generation's SSO public key")
+	}
+	if want := ssoPublicKeyFromSeed(deriveDomainKey(gens[1].Secret, infoSessionEd25519Seed)); gotSess != want {
+		t.Fatal("rotated: session _PREV is not the previous generation's session public key")
+	}
+	if gotSSO == ssoPublicKeyForGeneration(gens[0]) {
+		t.Fatal("rotated: SSO _PREV equals the CURRENT generation's key — provisioning would offer no previous key at all")
+	}
+	if gotSSO == gotSess {
+		t.Fatal("rotated: SSO and session _PREV values are identical — domain separation lost")
+	}
+
+	// WIRE NAMES: desiredPerHiveEnv must publish exactly these helper values
+	// under exactly these var names — the spelling the spoke resolvers read.
+	withTestMaster(t, pubGenSecretA)
+	env := desiredPerHiveEnv("hive-alpha")
+	if env == nil {
+		t.Fatal("desiredPerHiveEnv returned nil on a rotated set")
+	}
+	if env[EnvSSOPublicKeyPrevious] != gotSSO {
+		t.Fatalf("%s does not carry provisionSSOPublicKeyPrevious()'s value", EnvSSOPublicKeyPrevious)
+	}
+	if env[envSessionPublicKeyPrevious] != gotSess {
+		t.Fatalf("%s does not carry provisionSessionPublicKeyPrevious()'s value", envSessionPublicKeyPrevious)
+	}
+
+	// GENERATION BOUNDARY: a previous generation with a ZERO VerifyUntil is
+	// ALREADY EXPIRED, so both helpers return "" again — the self-clearing
+	// property, exercised through the provision entry points themselves. (The
+	// helpers read time.Now() internally, so the boundary is driven with the
+	// zero-VerifyUntil rule rather than an advanced clock; the wall-clock
+	// expiry path is covered by TestPreviousPublicKeysExcludesExpiredGeneration.)
+	zeroed := &generationSet{
+		Current: rotated.Current,
+		Generations: []keyGeneration{
+			rotated.Generations[0],
+			{ID: rotated.Generations[1].ID, Secret: rotated.Generations[1].Secret}, // no VerifyUntil
+		},
+	}
+	withProvisionGenerations(t, zeroed)
+	if got := provisionSSOPublicKeyPrevious(); got != "" {
+		t.Fatalf("zero VerifyUntil: SSO _PREV = %d chars, want empty (zero must mean already expired)", len(got))
+	}
+	if got := provisionSessionPublicKeyPrevious(); got != "" {
+		t.Fatalf("zero VerifyUntil: session _PREV = %d chars, want empty (zero must mean already expired)", len(got))
+	}
+}

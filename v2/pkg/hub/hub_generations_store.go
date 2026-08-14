@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,11 +65,35 @@ const hubGenerationsFileMode = 0o600
 // starts fresh, because losing an ack merely un-silences an alert — the safe
 // direction. A corrupt GENERATIONS file must NOT be discarded and replaced with
 // a fresh rotation: that would mint new material the fleet has never seen while
-// forgetting the generation the fleet is actually on. So the loader falls back
-// to the legacy single-generation set (which is always correct, because
-// hub-secret.key is authoritative for generation 1) and leaves the bad bytes on
-// disk. Fail closed, then let an operator look.
+// forgetting the generation the fleet is actually on. The bad bytes are left on
+// disk under this suffix so an operator can look.
+//
+// AUDIT 8 / F20. What this file used to do next was fall back to the legacy
+// single-generation set, on the argument that hub-secret.key is authoritative
+// for generation 1 so "unreadable" and "never rotated" resolve identically.
+// That argument is true before the first rotation and FALSE after it: once a
+// rotation has happened, generation 1 is SUPERSEDED material carrying a
+// VerifyUntil, and re-installing it as the current minting generation is a
+// silent un-rotation. The file's own presence is the discriminator — see
+// generationsLoadOutcome.
 const hubGenerationsQuarantineSuffix = ".corrupt"
+
+// generationsReadAttempts is how many times a non-ENOENT read is retried before
+// the loader gives up and fails closed.
+//
+// The hazard this fix closes is a TRANSIENT fault — a PVC remount, an NFS blip,
+// an EIO — so the first thing to do about it is simply to try again. Failing
+// closed is the correct end state but it is not a cheap one: it takes the hub
+// out of minting, so it should be reached only after the transient explanation
+// has been ruled out. Three attempts over ~300ms costs nothing on the happy
+// path (where the first read succeeds) and converts the overwhelmingly likely
+// fault — a blip lasting milliseconds — back into a normal startup.
+const generationsReadAttempts = 3
+
+// generationsReadRetryDelay is the pause between read attempts. Deliberately
+// short: this runs on the hub's startup path, and a hub that takes seconds
+// longer to come up is its own availability problem.
+const generationsReadRetryDelay = 100 * time.Millisecond
 
 // hubGenerationsFileMu serialises writers, for the reason alertAcksFileMu
 // documents: two concurrent saves writing the same tmp path interleave their
@@ -144,23 +171,67 @@ func saveGenerations(gs *generationSet, rotatedAt time.Time) error {
 	return nil
 }
 
-// loadGenerations reads the persisted set, falling back to the legacy
-// single-generation set built from `master`.
+// generationsLoadOutcome names what the loader was able to establish about the
+// hub's rotation state. It exists because the two degraded cases that used to
+// be collapsed into one return value are opposites (audit 8, F20).
+type generationsLoadOutcome int
+
+const (
+	// generationsLoaded: the file was read and parsed and yielded a usable set.
+	generationsLoaded generationsLoadOutcome = iota
+	// generationsNeverRotated: the file is ABSENT (ENOENT). This is the state
+	// of every hub in the fleet today and it is a POSITIVE fact, not an
+	// absence of information: the file is created only by saveGenerations, so
+	// its non-existence proves no rotation has ever been persisted. The legacy
+	// single-generation set built from hub-secret.key is therefore exactly
+	// right, and generation 1 is the CURRENT generation rather than a
+	// superseded one.
+	generationsNeverRotated
+	// generationsUntrusted: the file exists (or its existence could not even
+	// be determined) but its contents could not be established — an
+	// unretryable read error, or bytes that do not parse, or a parsed set with
+	// no minting generation.
+	//
+	// THIS IS THE CASE THAT MUST NOT FALL BACK TO LEGACY. The hub knows a
+	// rotation may have happened and cannot tell which generation is current.
+	// Installing legacy here re-mints on superseded material, drops the
+	// post-rotation generation out of the accepted set entirely, and — because
+	// RotatedAt goes with it — clears the anti-stranding cooldown so the next
+	// rotation can strand a fleet that is still converging. Every one of those
+	// is a widening or a reversion, which is precisely what the design
+	// forbids.
+	generationsUntrusted
+)
+
+// loadGenerations reads the persisted set.
 //
-// FAILS CLOSED IN EVERY DEGRADED CASE, and always to the same place: the legacy
-// set. That fallback is safe precisely because hub-secret.key is authoritative
-// for generation 1 and is never rewritten, so "I could not read the generations
-// file" and "this hub has never rotated" resolve identically.
+// THE LOAD-BEARING DISTINCTION IS "ABSENT" vs "UNREADABLE", and it is the whole
+// of this function. Both used to return the legacy set. They must not:
 //
-//   - Missing file: normal. Every hub in the fleet is in this state today.
-//   - Unparseable: quarantined, legacy set returned. NOT replaced with a fresh
-//     rotation — see hubGenerationsQuarantineSuffix.
+//   - Missing file (ENOENT): normal, and the state of every hub in the fleet
+//     today. Returns the legacy single-generation set with
+//     generationsNeverRotated. Correct because hub-secret.key is authoritative
+//     for generation 1 and the generations file is only ever created by
+//     saveGenerations, so "no file" IS "no rotation".
+//
+//   - Unretryable read error (EACCES, EIO, a stat that itself fails): the file
+//     may exist and may record a rotation. Returns (nil, zero,
+//     generationsUntrusted). NO legacy fallback — that would be a silent
+//     un-rotation to superseded material.
+//
+//   - Unparseable bytes: quarantined for inspection, then
+//     generationsUntrusted. A truncated write of a ROTATED file parses as
+//     nothing; treating it as "empty" would be indistinguishable from treating
+//     it as "never rotated", which is the same downgrade by another route.
+//
 //   - Parseable but with no generation matching Current: newGenerationSet
-//     returns nil (a set with no minting key is unusable, not degraded), so the
-//     legacy set is returned.
-//   - Any generation with an empty secret is dropped by newGenerationSet, which
-//     is what stops a hand-edited file from making verification compare against
-//     empty keys.
+//     returns nil. A set with no minting key is unusable, not degraded — and,
+//     critically, it is evidence a rotation WAS written, so it is untrusted
+//     rather than absent.
+//
+// This is the same philosophy as VerifyUntil.IsZero() meaning ALREADY EXPIRED
+// rather than "never expires": when the file cannot be trusted, the hub must
+// never quietly WIDEN what it accepts or REVERT what it mints.
 //
 // Note what is deliberately NOT validated here: an expired VerifyUntil. An
 // expired previous generation is loaded into the set and then excluded by
@@ -176,26 +247,30 @@ func saveGenerations(gs *generationSet, rotatedAt time.Time) error {
 func loadGenerations(master string, logger interface {
 	Warn(msg string, args ...any)
 	Info(msg string, args ...any)
-}) (*generationSet, time.Time) {
-	legacy := legacyGenerationSet(master)
-
-	data, err := os.ReadFile(hubGenerationsPath)
+}) (*generationSet, time.Time, generationsLoadOutcome) {
+	data, err := readGenerationsFile()
 	if err != nil {
-		if !os.IsNotExist(err) && logger != nil {
-			logger.Warn("could not read hub generations file; falling back to the single-generation master",
-				"path", hubGenerationsPath, "error", err)
+		if os.IsNotExist(err) {
+			// The one legitimate fallback. No rotation has ever been
+			// persisted, so generation 1 is genuinely current.
+			return legacyGenerationSet(master), time.Time{}, generationsNeverRotated
 		}
-		return legacy, time.Time{}
+		if logger != nil {
+			logger.Warn("hub generations file could not be read after retries — REFUSING to fall back to the single-generation master, "+
+				"because a rotation may have been recorded in it and falling back would silently re-mint on superseded key material",
+				"path", hubGenerationsPath, "attempts", generationsReadAttempts, "error", err)
+		}
+		return nil, time.Time{}, generationsUntrusted
 	}
 
 	var p persistedGenerations
 	if err := json.Unmarshal(data, &p); err != nil {
 		if logger != nil {
-			logger.Warn("hub generations file is not parseable — quarantining and falling back to the single-generation master; NOT rotating",
+			logger.Warn("hub generations file is not parseable — quarantining and REFUSING to fall back to the single-generation master; NOT rotating",
 				"path", hubGenerationsPath, "error", err)
 		}
 		_ = os.Rename(hubGenerationsPath, hubGenerationsPath+hubGenerationsQuarantineSuffix)
-		return legacy, time.Time{}
+		return nil, time.Time{}, generationsUntrusted
 	}
 
 	gs := newGenerationSet(p.Current, p.Generations)
@@ -203,16 +278,46 @@ func loadGenerations(master string, logger interface {
 		if logger != nil {
 			// Never log the file's contents — it holds master secrets. Counts
 			// and the current ID only.
-			logger.Warn("hub generations file has no usable current generation — falling back to the single-generation master",
+			logger.Warn("hub generations file has no usable current generation — REFUSING to fall back to the single-generation master",
 				"path", hubGenerationsPath, "current", p.Current, "entries", len(p.Generations))
 		}
-		return legacy, time.Time{}
+		return nil, time.Time{}, generationsUntrusted
 	}
 	if logger != nil {
 		logger.Info("loaded hub master generations",
 			"current", gs.Current, "live_generations", len(gs.Generations))
 	}
-	return gs, p.RotatedAt
+	return gs, p.RotatedAt, generationsLoaded
+}
+
+// readGenerationsFile reads the generations file, retrying a non-ENOENT error a
+// bounded number of times.
+//
+// WHY RETRY AT ALL. The fault this whole path guards against is transient by
+// construction — a PVC remount, an NFS blip, a device-mapper hiccup. Failing
+// closed is the right END state but a costly one (the hub stops minting), so it
+// must not be reached on a fault that would have cleared on the next syscall.
+// A missing file is returned IMMEDIATELY without retry: ENOENT is not a fault,
+// it is the fleet's normal steady state, and retrying it would add 300ms to
+// every hub start for nothing.
+//
+// Returns the raw error so the caller can still test it with os.IsNotExist.
+func readGenerationsFile() ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < generationsReadAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(generationsReadRetryDelay)
+		}
+		data, err := os.ReadFile(hubGenerationsPath)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
 }
 
 // Rotation.
@@ -220,6 +325,65 @@ func loadGenerations(master string, logger interface {
 // errRotationTooSoon is returned when a second rotation would strand spokes
 // that are still converging onto the first.
 var errRotationTooSoon = errors.New("previous rotation has not converged")
+
+// errGenerationsUntrusted is returned when a rotation is attempted on a hub
+// whose generation state could not be established at startup (audit 8, F20).
+var errGenerationsUntrusted = errors.New("hub generation state is untrusted")
+
+// errRotationWouldStrandSpokes is returned when the last reconcile sweep did
+// not observe the entire fleet (audit 8, F19/F21). Distinct from
+// errRotationTooSoon because the remedy is different: the cooldown clears on its
+// own with time, this one does not clear until the fleet becomes observable.
+var errRotationWouldStrandSpokes = errors.New("rotation would strand unobserved spokes")
+
+// fleetObservationSummary is the evidence-completeness slice of the reconcile
+// sweep's state — the only part the rotation interlock needs.
+type fleetObservationSummary struct {
+	Considered          int
+	Unreachable         int
+	UnreachableClusters []string
+	// FullyObserved mirrors PerHiveEnvStatus.FleetFullyObserved EXACTLY, and is
+	// asserted equal to it by TestRotationInterlockMatchesFleetFullyObserved.
+	// Two expressions of one predicate is one more than ideal; the test exists
+	// so they cannot drift, which is the same discipline the four VerifyUntil
+	// readers are held to.
+	FullyObserved bool
+}
+
+// fleetObservation reports what the last per-hive env sweep managed to observe.
+//
+// It reads the same four fields PerHiveEnvSnapshot does, under the same
+// perHiveEnvMu, but deliberately does NOT call PerHiveEnvSnapshot: that function
+// also reads s.keyGenerations, and rotateMasterSecret calls this while holding
+// keyGenerationsMu for write. Snapshotting only the observation counters keeps
+// the interlock free of any second lock order and avoids an unsynchronised read
+// of the very field the caller is about to replace.
+func (s *HubServer) fleetObservation() fleetObservationSummary {
+	out := fleetObservationSummary{}
+	if s == nil {
+		// A nil hub has observed nothing, and "nothing observed" is not
+		// "everything observed" — fail closed, same as a zero-hive sweep.
+		return out
+	}
+	s.perHiveEnvMu.RLock()
+	defer s.perHiveEnvMu.RUnlock()
+	out.Considered = s.perHiveEnvConsidered
+	out.Unreachable = s.perHiveEnvUnreachable
+	out.UnreachableClusters = append([]string(nil), s.perHiveEnvUnreachableClusters...)
+	sort.Strings(out.UnreachableClusters)
+	out.FullyObserved = out.Considered > 0 && out.Unreachable == 0
+	return out
+}
+
+// unreachableClusterSuffix renders cluster IDs for an operator-facing message.
+// Cluster IDs are non-secret registry identifiers (e.g. "vllm-d"); no key
+// material, hive name, or env value passes through here.
+func unreachableClusterSuffix(clusters []string) string {
+	if len(clusters) == 0 {
+		return ""
+	}
+	return ", unreachable clusters: " + strings.Join(clusters, ",")
+}
 
 // rotationCooldown is how long after a rotation a SECOND rotation is refused
 // without an explicit force.
@@ -361,6 +525,73 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	s.keyGenerationsMu.Lock()
 	defer s.keyGenerationsMu.Unlock()
 
+	// AUDIT 8 / F20. A nil set here means the loader could not establish what
+	// this hub's current generation is (generationsUntrusted). Rotating from
+	// that state is the worst available move: rotate() on a nil receiver
+	// carries nothing forward, so it would mint a brand-new generation 1 and
+	// declare the fleet's actual current generation to have never existed —
+	// stranding every spoke with no verify window at all. Refuse, loudly,
+	// regardless of force. force exists to override the CONVERGENCE cooldown,
+	// not to override not knowing what the state is.
+	if s.keyGenerations == nil {
+		return nil, rotationDecision{
+			Allowed: false,
+			Reason: "the hub's generation state is untrusted — the generations file could not be read or parsed at startup. " +
+				"Rotating now would discard the generation the fleet is actually on. Resolve the file on the hub PVC and restart the hub.",
+		}, errGenerationsUntrusted
+	}
+
+	// AUDIT 8 / F19 + F21. THE STRANDING INTERLOCK.
+	//
+	// F19 wires the derivation path to the live set, which means a rotation now
+	// actually reaches the fleet. F21 measured that 44 of the 70 hosted spokes
+	// sit on pull_only clusters (vllm-d, a-ks-wec2) that the reconcile sweep
+	// structurally cannot read or patch — by design, and that is not changing
+	// until the Option D wrapped-master delivery path lands. Those two facts
+	// together are dangerous in a way neither is alone: before F19 a rotation
+	// was a silent no-op, and after F19 without this gate it would converge the
+	// 26 reachable spokes, leave 44 on the outgoing generation, and strand them
+	// when retirement fires unconditionally at verify_until seven days later.
+	// The audit's phrase for it is "converts a silent no-op into a 7-day-delayed
+	// outage", and it is the reason F21 was named a precondition of F19.
+	//
+	// So: refuse to rotate unless the last sweep OBSERVED THE ENTIRE FLEET.
+	// FleetFullyObserved is (ConsideredHives > 0 && UnreachableHives == 0), and
+	// a pull-only cluster increments UnreachableHives for every hive on it, so
+	// this is false on the production hub today and will stay false until every
+	// spoke is reachable by whatever delivery mechanism ships. That is the
+	// intended effect: the wiring lands now, and the ability to fire it unlocks
+	// only when the thing that makes it safe exists.
+	//
+	// WHY HERE AND NOT IN THE HANDLER. This is the single choke point every
+	// rotation passes through; a gate in handleRotateMasterKey could be bypassed
+	// by any future internal caller. It sits BEFORE evaluateRotation so an
+	// operator sees the stranding reason rather than a cooldown message.
+	//
+	// WHY NOT force. force overrides the convergence COOLDOWN — a "the current
+	// generation is compromised, accept the cost" switch. This is not that: with
+	// 44 spokes structurally unreachable the cost is not "some spokes lag", it
+	// is "44 spokes hard-fail heartbeat in 7 days with no path to converge
+	// them". There is no in-band way to accept that responsibly, so force does
+	// not reach it. An operator who genuinely must rotate a compromised master
+	// ahead of Option D has to make the fleet observable first.
+	//
+	// NOTE the deliberate asymmetry with retirement, which is unconditional and
+	// must stay that way (hub_generations_retire.go:42-60): gating RETIREMENT on
+	// convergence would let one unreachable spoke pin a superseded secret live
+	// forever. Gating the START of a rotation strands nobody — nothing has been
+	// demoted yet — so the two gates point in opposite directions correctly.
+	if obs := s.fleetObservation(); !obs.FullyObserved {
+		return nil, rotationDecision{
+			Allowed: false,
+			Reason: fmt.Sprintf("refusing to rotate: the last reconcile sweep did not observe the whole fleet "+
+				"(%d hives considered, %d unreachable%s). Rotating now would converge only the reachable spokes and "+
+				"strand the rest when the previous generation retires at verify_until. Make every spoke reachable "+
+				"by the convergence lane first; force does not override this.",
+				obs.Considered, obs.Unreachable, unreachableClusterSuffix(obs.UnreachableClusters)),
+		}, errRotationWouldStrandSpokes
+	}
+
 	decision := evaluateRotation(s.lastKeyRotation, now, force)
 	if !decision.Allowed {
 		return nil, decision, errRotationTooSoon
@@ -382,5 +613,17 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	}
 	s.keyGenerations = next
 	s.lastKeyRotation = now
+	// AUDIT 8 / F19. Install into the package-level pointer the SPOKE-BOUND
+	// derivation path reads, in the same critical section that installs the
+	// minting set. This single line is what makes a rotation observable to
+	// desiredPerHiveEnv and therefore to the reconcile sweep; without it the
+	// sweep keeps computing "desired" from the pre-rotation generation, sees no
+	// drift, and patches nothing — the inertness this finding is about.
+	//
+	// Deliberately inside the keyGenerationsMu critical section so the two can
+	// never disagree, even transiently. setLiveGenerations takes a DIFFERENT
+	// mutex (liveGenerationsMu) and nothing that holds liveGenerationsMu ever
+	// reaches for keyGenerationsMu, so this cannot deadlock.
+	setLiveGenerations(next, false)
 	return next, decision, nil
 }

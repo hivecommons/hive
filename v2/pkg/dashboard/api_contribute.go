@@ -624,6 +624,43 @@ func (s *Server) handleContributorDossierPage(w http.ResponseWriter, r *http.Req
 	s.handleContributeLanding(w, r)
 }
 
+// jsStringLiteral renders v as a complete, self-quoting JavaScript string
+// literal that is safe to emit inside an inline <script> element (#3315).
+//
+// Two distinct escapes are required and neither alone is sufficient:
+//
+//   - json.Marshal handles the JavaScript string grammar — quotes, backslashes,
+//     newlines and other control characters — so the value cannot terminate the
+//     literal. HTML escaping does NOT do this job: inside <script> the parser is
+//     in script data state, so "&#39;" is NOT decoded back to a quote and an
+//     html.EscapeString'd value is not protected at all.
+//   - JSON does not escape "/", so a value containing "</script>" would close
+//     the enclosing element before the JS parser ever sees the string. Breaking
+//     that byte sequence with "<\/" keeps the HTML tokenizer inside the script
+//     element while remaining the identical string value to JavaScript.
+//
+// The result INCLUDES its surrounding quotes, so callers must interpolate it
+// bare (var x=%s), never inside quotes of their own (var x='%s').
+func jsStringLiteral(v string) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		// json.Marshal only fails here for un-encodable types; a string is
+		// always encodable. Fail closed with an empty literal rather than
+		// emitting anything unescaped.
+		return `""`
+	}
+	out := string(b)
+	// Case-insensitively neutralize any "</script" and the HTML comment opener,
+	// both of which end script data state regardless of JS quoting.
+	out = scriptCloseRe.ReplaceAllString(out, `<\/$1`)
+	out = strings.ReplaceAll(out, "<!--", `<\!--`)
+	return out
+}
+
+// scriptCloseRe matches the "</" that begins a script-element end tag, in any
+// letter case, so it can be neutralized inside a JS string literal.
+var scriptCloseRe = regexp.MustCompile(`(?i)</(script)`)
+
 func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	projectName := ""
@@ -737,6 +774,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
 		}
 	}
+
+	// SECURITY (#3315): encode the two values that land in a JS string context
+	// AT THE SINK. json.Marshal yields a complete, quoted JS string literal with
+	// quotes, backslashes, newlines and control characters escaped, so neither a
+	// hostile Host header nor a hostile project name can terminate the literal.
+	// Additionally neutralize "</script" (JSON does not escape "/"), which would
+	// otherwise close the enclosing <script> element regardless of JS quoting.
+	hubURLJS := jsStringLiteral(hubURL)
+	projectNameJS := jsStringLiteral(projectName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -1849,8 +1895,15 @@ var modeSel=document.getElementById('mode-select');
 var runtimeSel=document.getElementById('runtime-select');
 var runtimeGroup=document.getElementById('runtime-group');
 var cmds=document.getElementById('copy-cmds');
-var hubURL='%s';
-var ccProjectName='%s';
+// SECURITY (#3315): both values are JSON-encoded at the sink (they arrive as
+// complete JS string literals, quotes included) rather than being dropped raw
+// into '...' quotes. hubURL derives from X-Forwarded-Host/r.Host and
+// ccProjectName from operator config; both were previously kept safe only by
+// sanitizers ~1200 lines away (a charset filter and html.EscapeString), so a
+// change to either of those would silently have opened a script-literal
+// break-out here. HTML escaping is NOT sufficient in a script data context.
+var hubURL=%s;
+var ccProjectName=%s;
 // Shared with the second script block's IIFE (the dossier renderer lives there
 // and needs the project name for its masthead). Without this the bare reference
 // in renderMeCard resolves to nothing and every dossier render throws.
@@ -5834,7 +5887,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, projectName, tierTableRows, customStyleNoticeHTML)
+</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
@@ -6805,8 +6858,34 @@ func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http
 	jsonResponse(w, map[string]any{"ok": true, "agent_role_grants": grants, "grantable_roles": grantable})
 }
 
+// handleContributorAgentRole assigns a contributor's agent role.
+//
+// OWNER-ONLY (issue #3011, High). This was gated on requireContributorWrite,
+// which admits any caller whose role is not "read" — so a read-write
+// contributor could assign privileged agent roles. Its sibling
+// handleContributorAgentRoleGrants was moved to requireOwnerRole by F16; this
+// half of #3011 was left behind. Role assignment is an operator action.
+//
+// The handler also used to PRE-POPULATE its probe profile with the very grant
+// it was about to check:
+//
+//	probeProfile := *p
+//	if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(&probeProfile, role) {
+//	    probeProfile.AgentRoleGrants = append(probeProfile.AgentRoleGrants, role)
+//	}
+//
+// which made roleClaimAllowed's "requires an operator grant" check pass
+// trivially, and then wrote that grant to the REAL profile — auto-granting
+// sec-check/architect/ci-maintainer as a side effect of assigning them. That
+// is removed: the probe is now the unmodified profile, so a role needing a
+// grant is REFUSED unless the target already holds it. Grant issuance stays a
+// separate explicit owner action (handleContributorAgentRoleGrants).
+//
+// Assignment is additionally checked against the server-side assignable
+// allowlist, so a role outside contributorAgentRoleAssignableRoles cannot be
+// assigned even when roleClaimAllowed would tolerate it.
 func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6831,11 +6910,27 @@ func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Reque
 	if role == "" || role == "none" {
 		p.AssignedAgentRole = "none"
 	} else {
-		probeProfile := *p
-		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(&probeProfile, role) {
-			probeProfile.AgentRoleGrants = append(probeProfile.AgentRoleGrants, role)
+		// Server-side allowlist: only roles the hive actually exposes as
+		// assignable may be assigned (issue #3011 recommendation 3).
+		var allowCfg *config.Config
+		if s.deps != nil {
+			allowCfg = s.deps.Config
 		}
-		probe := &ContributorConnection{profile: &probeProfile}
+		assignable := false
+		for _, candidate := range contributorAgentRoleAssignableRoles(allowCfg) {
+			if candidate == role {
+				assignable = true
+				break
+			}
+		}
+		if !assignable {
+			jsonError(w, fmt.Sprintf("agent role %q is not assignable", role), http.StatusBadRequest)
+			return
+		}
+
+		// Probe with the profile AS IT IS. Pre-seeding the grant here was the
+		// #3011 bypass: it made the grant check below tautological.
+		probe := &ContributorConnection{profile: p}
 		if s.contributeHub == nil {
 			s.contributeHub = NewContributeWSHub(s.logger, s)
 		}
@@ -6843,9 +6938,13 @@ func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Reque
 			jsonError(w, reason, http.StatusBadRequest)
 			return
 		}
+		// Belt and braces: roleClaimAllowed returns early for the no-config
+		// hubs used by unit tests and legacy deployments, so re-assert the
+		// grant requirement here unconditionally. No grant is ever WRITTEN by
+		// this handler — that is handleContributorAgentRoleGrants' job.
 		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(p, role) {
-			p.AgentRoleGrants = append(p.AgentRoleGrants, role)
-			p.AgentRoleGrants = normalizeUniqueAgentRoles(p.AgentRoleGrants)
+			jsonError(w, fmt.Sprintf("agent role %q requires an operator grant", role), http.StatusBadRequest)
+			return
 		}
 		p.AssignedAgentRole = role
 	}
@@ -7186,7 +7285,21 @@ func (s *Server) handleHivesHeartbeat(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"ok": true})
 }
 
+// handleHivesDelete removes an entry from the federation registry.
+//
+// OWNER-ONLY (audit F25, 2026-08-14). Deletion is the destructive end of the
+// hive lifecycle: register/heartbeat are self-service actions a peer hive
+// performs for ITSELF, but delete removes ANOTHER hive from the discovery
+// list, so it is an administrative action on shared state rather than a
+// contributor one. Un-gated, any authenticated write-tier session could
+// unregister peers. Impact is bounded — the registry is a discovery list and
+// handleHivesRegister can re-add entries — but the gate matches the owner-only
+// convention the other destructive dashboard mutations follow (F14's
+// handleContributorDelete, handleAgentDelete).
 func (s *Server) handleHivesDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	reg := loadFederationRegistry()
 	for i := range reg.Hives {

@@ -81,6 +81,7 @@ run_wrapper() {
   [[ "$out" == *"unrecognized agent mode"* ]] && gate=mode-default
   [[ "$out" == *"NOT in merge-eligible.json"* || "$out" == *"cannot verify merge eligibility"* ]] && gate=eligibility
   [[ "$out" == *"needs an explicit PR number or URL"* ]] && gate=no-identifier
+  [[ "$out" == *"is not on the hive's allowlist"* ]] && gate=surface
 
   echo "exit=${rc} stub=${reached} gate=${gate}"
   # Surface wrapper output only when debugging a failure.
@@ -197,6 +198,82 @@ assert_blocked "PR URL is normalized and reaches the eligibility gate" \
   "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge https://github.com/owner/repo/pull/123)" eligibility
 assert_blocked "-R form reaches the eligibility gate (not a parse denial)" \
   "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123 -R owner/repo)" eligibility
+
+# ── #3840: general command surface is an ALLOWLIST, not a denylist ───────────
+# Before the fix the script ended in a bare `exec "$REAL_GH" "$@"`, so any
+# subcommand no gate named reached GitHub with the App token attached. Each of
+# these was verified reaching gh with rc=0 on v4 @ c9ea2cc8 — several in
+# NO_GITHUB mode, because the mode gates only ever inspect `issue`/`pr`.
+#
+# These assert on `gate=surface` specifically. Without that pin a test could go
+# green off some unrelated gate (NO_GITHUB blocks pr/issue, ADVISORY blocks
+# creates) and keep passing even if the allowlist were deleted entirely.
+echo "-- general surface denies by default (#3840) --"
+assert_blocked "gh auth token cannot exfiltrate the App token (NO_GITHUB)" \
+  "$(run_wrapper "NO_GITHUB" 5 -- auth token)" surface
+assert_blocked "gh secret set is denied (NO_GITHUB)" \
+  "$(run_wrapper "NO_GITHUB" 5 -- secret set FOO --body bar)" surface
+assert_blocked "gh ssh-key add is denied (NO_GITHUB)" \
+  "$(run_wrapper "NO_GITHUB" 5 -- ssh-key add /tmp/k.pub)" surface
+assert_blocked "gh variable set is denied (NO_GITHUB)" \
+  "$(run_wrapper "NO_GITHUB" 5 -- variable set X --body y)" surface
+assert_blocked "gh repo delete is denied (ISSUES_ONLY)" \
+  "$(run_wrapper "ISSUES_ONLY" 5 -- repo delete owner/repo --yes)" surface
+assert_blocked "gh release create is denied (ISSUES_ONLY)" \
+  "$(run_wrapper "ISSUES_ONLY" 5 -- release create v9.9.9)" surface
+assert_blocked "gh gist create is denied (ISSUES_ONLY)" \
+  "$(run_wrapper "ISSUES_ONLY" 5 -- gist create /etc/passwd)" surface
+assert_blocked "gh workflow run is denied (ADVISORY)" \
+  "$(run_wrapper "ADVISORY" 5 -- workflow run deploy.yml)" surface
+# Denial is per-ACTION, not per-subcommand: an allowed subcommand must not carry
+# a destructive action through with it.
+assert_blocked "an unlisted action on an allowed subcommand is denied (repo archive)" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- repo archive owner/repo)" surface
+assert_blocked "an unlisted action on an allowed subcommand is denied (release delete)" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- release delete v1)" surface
+# The N7 flag parser feeds this gate, so the reorder trick must not smuggle a
+# denied verb past it either.
+assert_blocked "flag-reordered denied verb is still denied" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- secret --repo owner/repo set FOO)" surface
+
+# ── POSITIVE CONTROL: the allowlist must not be "deny everything" ────────────
+# This is the control that makes the block-assertions above meaningful. If these
+# fail, the fix has broken real agent workflows — which is a worse outcome than
+# the vulnerability, and exactly how a "security fix" gets reverted wholesale.
+# Every command here is one agents actually run per v2/policies/*.md,
+# examples/kubestellar/agents/** and bin/*.sh.
+echo "-- allowlist preserves the operations agents actually perform --"
+assert_reached "issue view reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- issue view 1 --repo owner/repo)"
+assert_reached "pr view reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr view 1 --repo owner/repo)"
+assert_reached "pr diff reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr diff 1 --repo owner/repo)"
+assert_reached "pr checks reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr checks 1 --repo owner/repo)"
+assert_reached "search issues reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- search issues --repo owner/repo)"
+assert_reached "search prs reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- search prs --repo owner/repo)"
+assert_reached "run list reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- run list --repo owner/repo)"
+assert_reached "run view reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- run view 123 --repo owner/repo)"
+assert_reached "release list reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- release list --repo owner/repo)"
+assert_reached "repo view reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- repo view owner/repo)"
+assert_reached "repo fork (contributor flow) reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- repo fork owner/repo --clone=false)"
+assert_reached "read-only gh api reaches gh" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- api repos/owner/repo/pulls)"
+
+# The allowlist admits `pr merge` as a VERB; the merge-eligibility allowlist is
+# what actually decides it. Asserting gate=eligibility here proves the surface
+# gate did not swallow the merge path — if it had, the eligibility gate would
+# never run and this would report gate=surface.
+assert_blocked "pr merge passes the surface gate and is held by eligibility" \
+  "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123)" eligibility
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="

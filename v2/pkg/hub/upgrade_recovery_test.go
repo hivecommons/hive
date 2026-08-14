@@ -110,6 +110,11 @@ func TestTriggerAutoUpgradesRecoversStaleManualUpgrade(t *testing.T) {
 	s.registry.Hives = []RegistryEntry{{
 		ID: "manual-1", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
 		UpgradeTarget: "fc32ae4", UpgradeStartedAt: time.Now().Add(-30 * time.Minute),
+		// Alive: recovery re-arms delivery for a spoke that will COLLECT the
+		// instruction on its next beat. A hive that never heartbeated is
+		// abandoned instead, which is a different case (see
+		// pullonly_upgrade_test.go).
+		LastHeartbeat: time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
 	}}
 
 	s.triggerAutoUpgrades()
@@ -168,6 +173,9 @@ func TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule(t *testing.
 	s.registry.Hives = []RegistryEntry{{
 		ID: "daily-1", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
 		UpgradeTarget: "fc32ae4", UpgradeStartedAt: time.Now().Add(-30 * time.Minute),
+		// Alive, so the assertion stays on the schedule-gate behaviour rather
+		// than on heartbeat collectability.
+		LastHeartbeat: time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
 	}}
 
 	s.triggerAutoUpgrades()

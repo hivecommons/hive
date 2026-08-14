@@ -3366,6 +3366,21 @@ func main() {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL
 					}
+					// Prefer the host our OWN Route/Ingress actually serves.
+					//
+					// The synthesised "<hiveID>.<hub host>" below is only
+					// correct when this spoke is fronted by the hub's wildcard
+					// domain, i.e. co-located with the hub. On any other
+					// cluster that name resolves — via that same wildcard — to
+					// the HUB's router, which has no backend for it and returns
+					// 503, so the hub linked users at a hostname that could
+					// never work while our real Route served fine. Reading the
+					// live object is the only source that is right on every
+					// cluster, and on a pull-only cluster the hub cannot read
+					// it, so the spoke must report it.
+					if host := hub.SpokeServedHost(ctx); host != "" {
+						return "https://" + host
+					}
 					if cfg.HiveID != "" && cfg.Hub.URL != "" {
 						if u, err := url.Parse(cfg.Hub.URL); err == nil && u.Host != "" {
 							return fmt.Sprintf("https://%s.%s", cfg.HiveID, u.Host)

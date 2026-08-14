@@ -477,6 +477,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
 	s.mux.HandleFunc("PUT /api/saas/hub/auto-upgrade", s.requireAdmin(s.handleHubAutoUpgrade))
+	// Admin upgrade kill switch (upgrade_pause.go): pause hub self-upgrades
+	// and/or ALL automatic spoke image changes, fleet-wide.
+	s.mux.HandleFunc("GET /api/saas/upgrade-pause", s.requireAdmin(s.handleGetUpgradePause))
+	s.mux.HandleFunc("POST /api/saas/upgrade-pause", s.requireAdmin(s.handleSetUpgradePause))
 	s.mux.HandleFunc("GET /api/saas/auth-check", s.handleSaaSAuthCheck)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
@@ -3057,6 +3061,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"channel_targets":          getChannelTargets(getDisplaySHAs(), s.logger),
 		"hub_auto_upgrade":         isHubAutoUpgrade(),
 		"hub_upgrade_state":        s.hubUpgradeState(),
+		// Kill-switch state rides the top-level payload (NOT the hive-row
+		// shape, so no HIVES_CACHE_VERSION bump): the dashboard shows a
+		// prominent banner while anything is paused, and admins get toggles.
+		"upgrade_pause": s.upgradePauseSnapshot(),
 		"show_my_hives":            true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
@@ -3452,7 +3460,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 		base = v
 	}
 	if base == "" && (strings.HasPrefix(id, "hosted-") || strings.HasPrefix(id, "saas-")) {
-		base = "https://" + id + ".hive.kubestellar.io"
+		base = s.placeholderHostURL(id)
 	}
 	if base == "" {
 		http.Error(w, `{"error":"hive has no reachable dashboard URL yet"}`, http.StatusConflict)
@@ -3626,8 +3634,18 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 	os.WriteFile(hubAutoUpgradePath, []byte(val), 0644)
 	s.logger.Info("audit: hub auto-upgrade toggled", "enabled", body.AutoUpgrade, "by", s.getAuthUser(r))
 
-	// If enabling and hub is behind, trigger immediately
+	// If enabling and hub is behind, trigger immediately. The kill switch does
+	// NOT block saving the preference — only the immediate rollout: with hub
+	// upgrades paused the poller stays suppressed too, and the preference takes
+	// effect when an admin resumes.
 	if body.AutoUpgrade {
+		if sw, paused := s.hubUpgradesPaused(); paused {
+			s.logger.Info("hub auto-upgrade initial trigger suppressed — hub upgrades are paused",
+				"paused_by", sw.By, "paused_at", sw.At)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
+			return
+		}
 		latestSHA := getLatestHubSHAForBranch(s.hubGitBranch)
 		if latestSHA != "" && !sameCommit(latestSHA, s.hubGitHash) {
 			s.logger.Info("audit: hub auto-upgrade initial trigger", "from", s.hubGitHash, "to", latestSHA)
@@ -3826,6 +3844,15 @@ func (s *HubServer) hubUpgradeState() string {
 
 func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
+	// Admin kill switch: while hub upgrades are paused, a manual trigger is
+	// refused loudly — never queued — so the operator learns the state and who
+	// set it instead of waiting on a rollout that will not come.
+	if sw, paused := s.hubUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("hub", sw)})
+		return
+	}
 	target := getLatestHubSHAForBranch(s.hubGitBranch)
 	s.logger.Info("audit: hub self-upgrade triggered", "by", username, "to", target)
 	if err := s.rolloutHubToSHA(target); err != nil {
@@ -3860,36 +3887,45 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
+	// Admin kill switch: refuse loudly rather than arm anything — a request
+	// accepted here would either restart the pod now or sit silently in
+	// heartbeatUpgrade, both of which the pause exists to prevent.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
+		return
+	}
 	cluster := s.clusterForHive(h)
 	if cluster == nil {
 		http.Error(w, `{"error":"no cluster config for this hive"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// kubectl is attempt one; the heartbeat fallback below is the ONLY path
-	// that works for a cluster the hub cannot route to (the spoke pulls, the
-	// hub answers). rolloutRestartHive bounds the attempt and honours the
-	// unreachable-cluster cache, so a firewalled cluster costs seconds here,
-	// not a gateway timeout.
-	delivered := s.rolloutRestartHive(cluster, id)
+	// PULL ONLY — no kubectl push. The manual Upgrade button now does exactly
+	// what auto-upgrade does: record the target and arm the heartbeat. The
+	// spoke collects it on its next beat and patches its own Deployment.
+	//
+	// UX CONSEQUENCE, DELIBERATE: the click no longer produces an immediate
+	// pod roll. Delivery is bounded by the heartbeat interval, so "clicked
+	// Upgrade, nothing visible yet" is now normal and must not be mistaken for
+	// the wedge this PR fixes. The hive is latched Upgrading with a target the
+	// moment the request returns, which is what the dashboard renders.
 
 	s.mu.Lock()
 	var latestSHA string
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
-			branch := s.registry.Hives[i].GitBranch
-			if branch == "" {
-				branch = "v2"
-			}
+			branch := s.upgradeBranchOrDefault(s.registry.Hives[i].GitBranch)
 			latestSHA = getLatestSHAForBranch(branch)
 			s.beginUpgrade(i, latestSHA)
 			break
 		}
 	}
-	if !delivered && latestSHA != "" {
-		// Arm the durable fallback: the spoke self-restarts onto the target
-		// when its next heartbeat carries UpgradeTo. The stale-upgrade sweep
-		// re-arms this if the spoke misses it, so the request cannot be lost.
+	if latestSHA != "" {
+		// Arm delivery: the spoke self-restarts onto the target when its next
+		// heartbeat carries UpgradeTo. The stale-upgrade sweep re-arms this if
+		// the spoke misses it, so the request cannot be lost.
 		if s.heartbeatUpgrade == nil {
 			s.heartbeatUpgrade = make(map[string]string)
 		}
@@ -3897,20 +3933,19 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	if !delivered && latestSHA == "" {
-		// kubectl failed AND no build target is known for the branch — there is
-		// nothing a heartbeat could deliver. This is the only remaining
-		// hard-failure case.
-		s.logger.Warn("upgrade failed: cluster unreachable and no build target known",
+	if latestSHA == "" {
+		// No build target is known for this hive's branch, so there is nothing
+		// the heartbeat could carry. This is the only hard-failure case left.
+		s.logger.Warn("upgrade failed: no build target known for this hive's branch",
 			"hive", id, "cluster", cluster.ID)
-		http.Error(w, `{"error":"upgrade failed — cluster unreachable and no build target known"}`, http.StatusBadGateway)
+		http.Error(w, `{"error":"upgrade failed — no build target known for this hive's branch"}`, http.StatusBadGateway)
 		return
 	}
 
-	mode := "kubectl"
-	if !delivered {
-		mode = "heartbeat"
-	}
+	// Always "heartbeat" now: the push path is retired, so every upgrade is
+	// collected by the spoke on its next beat. The UI uses this to say "queued"
+	// rather than implying an immediate roll.
+	const mode = "heartbeat"
 	s.logger.Info("audit: hosted hive upgrade requested",
 		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
 	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
@@ -3947,6 +3982,15 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
+		return
+	}
+	// Admin kill switch: a branch/channel switch while spoke upgrades are
+	// paused gets an explicit 409 naming who paused and when — never a silent
+	// queue into heartbeatSwitchTag.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
 		return
 	}
 	var body struct {
@@ -4369,7 +4413,16 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	// (autoUpgradeDailyHour, currently 13:00 / 1pm ET). The
 	// operator who wants it now still has the explicit Upgrade button, which
 	// goes through handleUpgradeHive and is never gated by mode.
-	if body.AutoUpgrade && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
+	// The kill switch does not block saving the PREFERENCE (auto-upgrade
+	// on/off is configuration, not delivery) — only the immediate trigger
+	// below. While paused, triggerAutoUpgrades stays suppressed anyway, and
+	// the hive upgrades after an admin resumes.
+	spokePauseSw, spokesPaused := s.spokeUpgradesPaused()
+	if body.AutoUpgrade && spokesPaused {
+		s.logger.Info("auto-upgrade initial trigger suppressed — spoke upgrades are paused",
+			"hive_id", id, "paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+	}
+	if body.AutoUpgrade && !spokesPaused && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
 		s.mu.RLock()
 		var currentSHA, branch string
 		for _, reg := range s.registry.Hives {
@@ -4380,9 +4433,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		s.mu.RUnlock()
-		if branch == "" {
-			branch = "v2"
-		}
+		branch = s.upgradeBranchOrDefault(branch)
 		latestSHA := getLatestSHAForBranch(branch)
 		if latestSHA != "" && currentSHA != "" && !sameCommit(currentSHA, latestSHA) {
 			s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
@@ -5088,7 +5139,16 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.hubUpgradeMu.Lock()
 		debounced := time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce
 		s.hubUpgradeMu.Unlock()
-		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) && debounced {
+		// Admin kill switch: while hub upgrades are paused the hub stays on its
+		// current build regardless of new tags — the auto-trigger below never
+		// fires. Checked every cycle (like the trigger itself), so flipping the
+		// switch takes effect on the next poll without a restart.
+		if hubPauseSw, hubPaused := s.hubUpgradesPaused(); hubPaused {
+			if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) {
+				s.logger.Debug("hub auto-upgrade suppressed — hub upgrades are paused",
+					"behind", hubBranchSHA, "paused_by", hubPauseSw.By, "paused_at", hubPauseSw.At)
+			}
+		} else if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) && debounced {
 			s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
 			// rolloutHubToSHA verifies the hub image exists (skips a doomed roll
 			// when the hive-hub build for this SHA failed) and pins the SHA so a
@@ -5149,39 +5209,43 @@ func (s *HubServer) markClusterReachable(clusterID string) {
 	delete(s.clusterUnreachableUntil, clusterID)
 }
 
-// rolloutRestartHive issues the auto-upgrade `kubectl rollout restart` for one
-// hive under a bounded timeout, honouring and maintaining the unreachable-cluster
-// cache. It returns false when kubectl did not deliver the restart — the caller
-// must then arm the heartbeat fallback, which is the ONLY path that works for
-// firewalled clusters. Skipping is reported as a plain failure (not an error) so
-// callers treat "known unreachable" and "just failed" identically.
-func (s *HubServer) rolloutRestartHive(cluster *ClusterConfig, hiveID string) bool {
-	if s.clusterRecentlyUnreachable(cluster.ID) {
-		s.logger.Debug("auto-upgrade kubectl skipped — cluster known unreachable, using heartbeat",
-			"hive", hiveID, "cluster", cluster.ID)
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
-	defer cancel()
-	ns := "hive-hosted-" + hiveID
-	cmd := kubectlForClusterContext(ctx, cluster, "rollout", "restart", "deployment/hive", "-n", ns)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.markClusterUnreachable(cluster.ID)
-		s.logger.Warn("auto-upgrade kubectl failed, falling back to heartbeat",
-			"hive", hiveID, "cluster", cluster.ID,
-			"timeout", upgradeKubectlTimeout, "output", strings.TrimSpace(string(out)))
-		return false
-	}
-	s.markClusterReachable(cluster.ID)
-	return true
-}
+// PUSH PATH RETIRED. rolloutRestartHive() used to live here and issued
+// `kubectl rollout restart deployment/hive` into a spoke's cluster. Every
+// caller has been converted to the pull model — the hub records a target and
+// the spoke collects it on its own outbound heartbeat — so the function is
+// gone rather than left dormant.
+//
+// WHY DELETED RATHER THAN FLAG-DISABLED. A disabled flag would keep the hub's
+// need for write-capable kubeconfigs alive in the code, which is precisely the
+// standing blast radius this change exists to remove: compromise the hub and
+// you inherit write access into every reachable spoke cluster. A flag also
+// leaves two live delivery models with no stated direction, and the dormant
+// one inevitably rots — it would be the untested path on the day someone
+// flipped it back. Deleting it makes the direction unambiguous and lets the
+// operator drop or downgrade those kubeconfigs to read-only.
+//
+// The cost is real and accepted: delivery is now bounded by the heartbeat
+// interval instead of being immediate. Nothing is lost in reliability — the
+// heartbeat was already the only path that worked for firewalled clusters, and
+// the spoke-side self-upgrade is mature (retry budget, per-target attempt
+// marker, terminal failure reported back to the hub).
 
 func (s *HubServer) triggerAutoUpgrades() {
+	// Admin kill switch: while spoke upgrades are paused this entire reconciler
+	// is a no-op — it must start no new upgrades, issue no kubectl restarts,
+	// and (critically) not re-arm heartbeatUpgrade through its stale-recovery
+	// path, which otherwise re-delivers in-flight targets every cycle. The
+	// registry latches and armed targets are left untouched so resuming picks
+	// up exactly where the fleet paused.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		s.logger.Debug("auto-upgrade reconciler suppressed — spoke upgrades are paused",
+			"paused_by", sw.By, "paused_at", sw.At)
+		return
+	}
 	hives := listSaaSHives()
 	for _, h := range hives {
 		s.mu.RLock()
-		var currentSHA, branch, upgradeTarget, imageRef string
+		var currentSHA, branch, upgradeTarget, imageRef, lastHeartbeat string
 		var alreadyUpgrading bool
 		var upgradeStartedAt time.Time
 		for _, reg := range s.registry.Hives {
@@ -5192,13 +5256,16 @@ func (s *HubServer) triggerAutoUpgrades() {
 				upgradeTarget = reg.UpgradeTarget
 				upgradeStartedAt = reg.UpgradeStartedAt
 				imageRef = reg.ImageRef
+				lastHeartbeat = reg.LastHeartbeat
 				break
 			}
 		}
 		s.mu.RUnlock()
-		if branch == "" {
-			branch = "v2"
-		}
+		// Resolve against the hub's own branch when the hive has not reported
+		// one, never a hardcoded "v2" — see upgradeBranchOrDefault. A hardcoded
+		// v2 is what armed 0b78dc0 (a v2-only commit) at placeholders on a v4
+		// hub.
+		branch = s.upgradeBranchOrDefault(branch)
 		if alreadyUpgrading {
 			// Floating-tag convergence. A hive whose Deployment tracks a MUTABLE
 			// tag (…-latest) has no stable target commit: a restart re-pulls the
@@ -5269,6 +5336,41 @@ func (s *HubServer) triggerAutoUpgrades() {
 			isStale := upgradeStartedAt.IsZero() || upgradeAge > staleUpgradeTimeout
 
 			if isStale {
+				// UNCOLLECTIBLE: abandon, do not re-arm. This is the branch that
+				// produced the measured wedge — 26 hives re-arming, stale_minutes
+				// climbing past 146 and still rising — because re-arming an
+				// instruction nothing will ever pick up reproduces the identical
+				// no-op every staleUpgradeTimeout, forever, while beginUpgrade()
+				// preserves the original start clock so the elapsed only ever
+				// grows. The retry budget in sweepOrphanedUpgrades() cannot bound
+				// it: these hives never heartbeated, so evaluateOrphanedUpgrade()
+				// bails on the liveness test and the budget is never spent.
+				//
+				// Clearing the latch outright is what stops staleness
+				// accumulating. The hive stays on its old SHA — truthful and
+				// visible — instead of misreporting as perpetually "Upgrading"
+				// while reading offline. Nothing is lost: the instruction was
+				// never being collected, so dropping it forfeits nothing. If the
+				// spoke later starts heartbeating, the normal arming path picks
+				// it up on the next poll.
+				if !upgradeCollectible(lastHeartbeat, time.Now()) {
+					reason := uncollectibleUpgradeReason(lastHeartbeat)
+					s.logger.Warn("abandoning stale upgrade — hive cannot collect it, not re-arming",
+						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
+						"target", upgradeTarget, "last_heartbeat", orDash(lastHeartbeat),
+						"reason", reason)
+					s.mu.Lock()
+					for i := range s.registry.Hives {
+						if s.registry.Hives[i].ID == h.ID {
+							s.clearUpgradeLatch(i)
+							break
+						}
+					}
+					delete(s.heartbeatUpgrade, h.ID)
+					s.mu.Unlock()
+					s.noteUncollectibleUpgrade(h.ID, upgradeTarget, reason)
+					continue
+				}
 				// Upgrade has been stuck longer than staleUpgradeTimeout.
 				// Recover it. Two things can be wrong: (a) the target SHA
 				// contains a crashing bug a newer commit fixes — advance the
@@ -5323,16 +5425,12 @@ func (s *HubServer) triggerAutoUpgrades() {
 					}
 					s.heartbeatUpgrade[h.ID] = recoverTarget
 					s.mu.Unlock()
-					hiveCluster := s.clusterForHive(&h)
-					if hiveCluster != nil && !hiveCluster.InCluster {
-						// Failure here is expected when the hub can't reach the
-						// hive's cluster; the heartbeat fallback armed above is
-						// what actually delivers the upgrade. rolloutRestartHive
-						// bounds the attempt and skips it entirely for clusters
-						// already known unreachable, so this recovery path can't
-						// re-introduce the per-hive timeout stall either.
-						s.rolloutRestartHive(hiveCluster, h.ID)
-					}
+					// PULL ONLY — the heartbeat armed above IS the delivery, as
+					// the previous comment here already conceded ("the heartbeat
+					// fallback armed above is what actually delivers the
+					// upgrade"). The kubectl push that followed it was pure
+					// latency optimisation and is deliberately gone; see the
+					// push-path retirement note in pullonly_upgrade.go.
 					continue
 				}
 			}
@@ -5401,6 +5499,35 @@ func (s *HubServer) triggerAutoUpgrades() {
 			s.logger.Warn("auto-upgrade skipped — no cluster config", "hive_id", h.ID, "cluster_id", h.ClusterID)
 			continue
 		}
+		// Do not ARM an upgrade this hive cannot COLLECT. Delivery is PULL: the
+		// spoke reads UpgradeTo off its own outbound heartbeat response and then
+		// patches its own Deployment with its own ServiceAccount. A hive that
+		// never heartbeats therefore never picks the instruction up, while
+		// Upgrading=true latches on the hub: the stale-recovery branch above
+		// re-arms every staleUpgradeTimeout, beginUpgrade() preserves the
+		// original start clock, and the elapsed grows without bound. The orphan
+		// sweep's retry budget cannot rescue it — a hive that never heartbeated
+		// fails evaluateOrphanedUpgrade()'s liveness test, so the budget is never
+		// spent and exhaustion never converts it to a visible failure. See
+		// pullonly_upgrade.go for the full measured loop.
+		//
+		// This is deliberately NOT gated on cluster reachability. The hub's
+		// kubectl path is only a fast-path optimisation, so a pull-only cluster
+		// is irrelevant here; gating on it would silently disable auto-upgrade
+		// for the 40+ pull-only spokes that heartbeat perfectly well.
+		//
+		// Refused LOUDLY, never silently: a hive with auto_upgrade=true that
+		// simply never upgrades is indistinguishable from one already at latest,
+		// which is how this stayed unnoticed.
+		if !upgradeCollectible(lastHeartbeat, time.Now()) {
+			reason := uncollectibleUpgradeReason(lastHeartbeat)
+			s.logger.Warn("auto-upgrade not armed — hive cannot collect the instruction",
+				"hive_id", h.ID, "cluster", hiveCluster.ID, "branch", branch,
+				"from", currentSHA, "would_have_targeted", latestSHA,
+				"last_heartbeat", orDash(lastHeartbeat), "reason", reason)
+			s.noteUncollectibleUpgrade(h.ID, latestSHA, reason)
+			continue
+		}
 		// Record the day's fire BEFORE kicking the rollout. Persisting first
 		// means a hub crash between here and the restart cannot cause a second
 		// upgrade for the same ET day; at worst the hive waits for tomorrow's
@@ -5419,6 +5546,9 @@ func (s *HubServer) triggerAutoUpgrades() {
 					"hive_id", h.ID, "date", decision.FireDate, "error", err)
 			}
 		}
+		// The hive is deliverable again — drop any suppressed-refusal memory so a
+		// future undeliverable episode is reported afresh rather than swallowed.
+		forgetUncollectibleUpgrade(h.ID)
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode))
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
@@ -5430,15 +5560,21 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.Unlock()
-		if !s.rolloutRestartHive(hiveCluster, h.ID) {
-			// kubectl can't reach the cluster — fall back to heartbeat-based
-			// upgrade (path 3). The next heartbeat from this hive will include
-			// UpgradeTo, causing the spoke to self-restart.
-			s.mu.Lock()
-			s.heartbeatUpgrade[h.ID] = latestSHA
-			// Keep Upgrading=true so the dashboard shows the correct state.
-			s.mu.Unlock()
-		}
+		// PULL ONLY — no kubectl push. Arming the heartbeat is the delivery:
+		// the spoke reads UpgradeTo off its next heartbeat response and patches
+		// its own Deployment with its own ServiceAccount (cmd/hive/main.go →
+		// self_upgrade.go). The former `rolloutRestartHive` call here was only a
+		// latency optimisation, and it is deliberately gone: keeping it would
+		// require the hub to hold write-capable kubeconfigs into every spoke
+		// cluster, which is a large standing blast radius for a few seconds of
+		// speed. See the push-path retirement note in pullonly_upgrade.go.
+		//
+		// The trade is real and accepted: delivery is now bounded by the
+		// heartbeat interval rather than being immediate.
+		s.mu.Lock()
+		s.heartbeatUpgrade[h.ID] = latestSHA
+		// Keep Upgrading=true so the dashboard shows the correct state.
+		s.mu.Unlock()
 	}
 }
 
@@ -7292,6 +7428,35 @@ func claimedVanityURL(h *SaaSHive) string {
 		return ""
 	}
 	return h.VanityURL
+}
+
+// placeholderHostURL builds the "<hiveID>.<domain>" placeholder URL for a hive
+// that has not yet reported a dashboard URL, using the domain of the cluster
+// the hive actually lives on.
+//
+// The domain MUST come from the hive's own cluster rather than the hub's
+// hardcoded hive.kubestellar.io. That constant is the wildcard fronting the
+// HUB's router, so using it for a spoke on any other cluster produces a name
+// that resolves to the hub and 503s — the exact defect this path exhibited on
+// the OpenShift pool. Deriving it per-cluster is also what keeps this correct
+// for clusters added in future, without naming any of them here.
+//
+// Returns "" when the cluster (or its domain) is unknown, so the caller reports
+// "no reachable dashboard URL yet" instead of inventing an unreachable host.
+func (s *HubServer) placeholderHostURL(hiveID string) string {
+	// A hive with no meta record yet (mid-provision, or a registry-only entry)
+	// still resolves through clusterForHive, which falls back to the default
+	// cluster. That is the correct answer for it: with nothing recorded about
+	// where it lives, the hub's own pool is the only defensible guess, and it
+	// is the pool such a hive is in fact provisioned into.
+	cluster := s.clusterForHive(&SaaSHive{ID: hiveID})
+	if h := loadSaaSHive(hiveID); h != nil {
+		cluster = s.clusterForHive(h)
+	}
+	if cluster == nil || cluster.Domain == "" {
+		return ""
+	}
+	return "https://" + hiveID + "." + strings.Trim(strings.TrimSpace(cluster.Domain), ".")
 }
 
 // curAPIURL is the GitHub API base URL the spoke reports it is CURRENTLY using
@@ -12883,6 +13048,7 @@ const dashboardHTML = `<!DOCTYPE html>
         _latestBuildStarted = data.latest_sha_build_started || {};
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
+        if (data.upgrade_pause) _upgradePause = data.upgrade_pause;
         var shaEl = document.getElementById('latest-image-sha');
         if (shaEl) {
           var lines = '';
@@ -12996,6 +13162,12 @@ const dashboardHTML = `<!DOCTYPE html>
             var hubAutoCheck = '';
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
+              /* Upgrade kill switches (admin-only): checked = paused. Titles
+                 carry who/when; the dashboard banner repeats it prominently. */
+              hubAutoCheck += upgradePauseToggleHTML('hub', 'pause hub upgrades',
+                'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed') +
+                upgradePauseToggleHTML('spokes', 'pause spoke upgrades',
+                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed');
             }
             var hubStatusIcon = hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
@@ -13030,6 +13202,7 @@ const dashboardHTML = `<!DOCTYPE html>
            never be cached, or the next page load would replay the same crash
            from localStorage before the network could correct it. */
         writeHivesCache(data.hives || []);
+        renderUpgradePauseBanner();
         renderPendingBanner(data.hives || []);
         renderUserAccessBanner();
         renderProvisionRequestBanner(data.my_provision_request || null);
@@ -14462,6 +14635,59 @@ const dashboardHTML = `<!DOCTYPE html>
         _hubUpgrading = true;
         hiveToast('Hub upgrade started — page will refresh when ready', 'success');
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    /* Admin upgrade kill switch. _upgradePause mirrors the server's persisted
+       state ({hub:{paused,by,at}, spokes:{...}}); it rides the my-hives
+       top-level payload. Checked = PAUSED. */
+    var _upgradePause = {hub: {paused: false}, spokes: {paused: false}};
+    function upgradePauseToggleHTML(target, label, title) {
+      var sw = (_upgradePause && _upgradePause[target]) || {paused: false};
+      var t = title + (sw.paused ? ' — paused by ' + (sw.by || '?') + ' since ' + (sw.at || '?') : '');
+      return ' <label style="margin-left:6px;font-size:0.6rem;color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';cursor:pointer;white-space:nowrap;font-weight:' + (sw.paused ? '700' : '400') + '" title="' + escAttr(t) + '"><input type="checkbox" ' + (sw.paused ? 'checked' : '') + ' onchange="toggleUpgradePause(\'' + target + '\', this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">' + esc(label) + '</label>';
+    }
+    async function toggleUpgradePause(target, paused) {
+      try {
+        var resp = await fetch('/api/saas/upgrade-pause', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target: target, paused: paused})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Failed to update upgrade pause', 'error'); loadHives(); return; }
+        if (data.state) _upgradePause = data.state;
+        hiveToast((target === 'hub' ? 'Hub' : 'Spoke') + ' upgrades ' + (paused ? 'PAUSED' : 'resumed'), 'success');
+        renderUpgradePauseBanner();
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+    /* renderUpgradePauseBanner paints a prominent banner above the hive list
+       while EITHER kill switch is engaged, so a paused fleet is impossible to
+       miss. Same placement/styling family as renderPendingBanner. */
+    function renderUpgradePauseBanner() {
+      var existing = document.getElementById('upgrade-pause-banner');
+      if (existing) existing.remove();
+      var hubSw = (_upgradePause && _upgradePause.hub) || {};
+      var spokeSw = (_upgradePause && _upgradePause.spokes) || {};
+      if (!hubSw.paused && !spokeSw.paused) return;
+      var container = document.getElementById('hives-container');
+      if (!container || !container.parentNode) return;
+      var line = function(sw, label, detail) {
+        return '<div style="display:flex;align-items:center;gap:10px">' +
+          '<span style="font-size:1.1rem">&#x23F8;&#xFE0F;</span>' +
+          '<span style="font-size:0.85rem;color:var(--text)"><strong>' + label + '</strong> ' + detail +
+          ' — paused by <strong>' + esc(sw.by || 'an admin') + '</strong>' +
+          (sw.at ? ' since <span style="font-family:monospace;font-size:0.8rem">' + esc(sw.at) + '</span>' : '') +
+          '</span></div>';
+      };
+      var html = '';
+      if (hubSw.paused) html += line(hubSw, 'Hub upgrades are PAUSED', '(the hub stays on its current build)');
+      if (spokeSw.paused) html += line(spokeSw, 'Spoke upgrades are PAUSED fleet-wide', '(no automatic image changes reach any hive)');
+      var banner = document.createElement('div');
+      banner.id = 'upgrade-pause-banner';
+      banner.style.cssText = 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px';
+      banner.innerHTML = html;
+      container.parentNode.insertBefore(banner, container);
     }
 
     var _upgradingHives = {};
