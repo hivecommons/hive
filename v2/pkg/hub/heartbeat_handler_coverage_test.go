@@ -69,7 +69,7 @@ func TestHandleHeartbeatUnauthorized(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	s := newHeartbeatHub()
-	s.hubSecret = "top-secret"
+	s.setHubSecret("top-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", strings.NewReader(`{"hive_id":"h1"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -82,7 +82,7 @@ func TestHandleHeartbeatUnauthorized(t *testing.T) {
 	// With the correct bearer token it should succeed.
 	req = httptest.NewRequest(http.MethodPost, "/api/heartbeat", strings.NewReader(`{"hive_id":"h1"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", heartbeatBearer("top-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("top-secret", "h1"))
 	rec = httptest.NewRecorder()
 	s.handleHeartbeat(rec, req)
 	if rec.Code != http.StatusOK {

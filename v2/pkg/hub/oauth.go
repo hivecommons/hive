@@ -712,8 +712,24 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 // until its expiry. Closing that requires the spoke to ask the hub on the
 // terminal path; it is tracked separately and called out in hub_session_revocation.go.
 func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string) bool {
-	cookieValue, _ := mintHubUserCookieValueV3(
-		s.sessionSigningSeed(), canonicalID, time.Now(), cookieSessionTTL)
+	// ROTATION (master-key-rotation.md, follow-on PR #1): mint under the CURRENT
+	// generation and stamp its ID into the signed claims, so the verifier can
+	// select one key instead of trying each and so telemetry can see which key
+	// a live session is on. Minting is current-ONLY — dual acceptance is a
+	// property of the verifier alone, and a minter that also used a previous
+	// generation would mean a rotation never converged.
+	//
+	// On a hub that has never rotated this is the same seed and the same bytes
+	// as before, minus a `g:1` claim the Node proxy ignores. keyGenerations is
+	// nil only in hand-built test servers, which stay on the unmarked mint.
+	var cookieValue string
+	if s.keyGenerations != nil {
+		cookieValue, _ = mintHubUserCookieValueV3ForGeneration(
+			s.keyGenerations, canonicalID, time.Now(), cookieSessionTTL)
+	} else {
+		cookieValue, _ = mintHubUserCookieValueV3(
+			s.sessionSigningSeed(), canonicalID, time.Now(), cookieSessionTTL)
+	}
 	if cookieValue == "" {
 		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", canonicalID)
 		http.Error(w, "session unavailable", http.StatusInternalServerError)

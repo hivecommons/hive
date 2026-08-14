@@ -99,7 +99,36 @@ GET /api/saas/admin/auth-rollout
 }
 ```
 
-## Stage 3 — deletion (a separate PR, NOT this one)
+## Stage 3 — deletion — **DONE**
+
+The lane is deleted. `verifyHeartbeatBearer` now accepts only
+`heartbeatKeyFor(hiveID)`; presenting the fleet-wide value authenticates
+nothing, for any claimed `hive_id`.
+
+Precondition as measured at deletion time (all three clusters, comparing each
+Deployment's injected `HIVE_HEARTBEAT_KEY` against both derivations computed
+from the live master):
+
+| | spokes |
+|---|---|
+| per-hive bearer injected | 67 |
+| fleet-wide bearer injected | **0** |
+| no key injected → self-derives (holds both `HIVE_HUB_SECRET` and `HIVE_ID`) | 3 |
+
+Two of the three self-derivers run v4 with the merged self-derivation
+(`c2286f45`) and show 0 heartbeat auth errors in production.
+
+**Accepted casualty:** `daviddiaz0317-visual-hive--1jos` runs `dd-latest`, which
+does not contain `c2286f45`. It presents the fleet-wide bearer and will 401
+until its fork is topped up from v4 and it rolls. This was accepted knowingly
+rather than softening the deletion.
+
+`heartbeatKey()` was NOT dropped: it still has callers (`heartbeatBearerOK`, and
+the telemetry/tests that must be able to construct the rejected value in order
+to assert it is rejected).
+
+<details>
+<summary>Original Stage 3 plan (kept for the record)</summary>
 
 ### Hard precondition
 
@@ -140,6 +169,8 @@ removed early.
 The lane is one line. If heartbeats 401 after deletion, restore it and the fleet
 recovers on the next beat (~1 min). Nothing is persisted, so there is no
 migration to undo.
+
+</details>
 
 ## Residual risk not addressed here
 

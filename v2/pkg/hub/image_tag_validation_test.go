@@ -52,6 +52,13 @@ func TestValidateImageTagAcceptsValid(t *testing.T) {
 		"mk-latest",
 		"dd-latest",
 		"feat-vanity-url-latest", // branchToTag("feat/vanity-url") + "-latest"
+		// Release channels ARE the tag verbatim — the regression behind the
+		// live "branch does not map to a valid image tag" toast on channel
+		// switches: upgradeTargetTag returned "stable" and this validator,
+		// which predates channels, refused it.
+		"stable",
+		"candidate",
+		"edge",
 	}
 	for _, tag := range good {
 		if err := validateImageTag(tag); err != nil {

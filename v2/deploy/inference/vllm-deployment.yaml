@@ -42,16 +42,34 @@ spec:
             - -c
             - |
               echo "[model-download] Downloading Qwen2.5-0.5B-Instruct GGUF..."
+              # URL is pinned to a specific HF repo revision (commit 9217f5d) rather than
+              # "main" so the artifact cannot change out from under the checksum below.
               curl -L -o /models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-                "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+                "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf"
               ls -lh /models/
+              echo "[model-download] Verifying checksum..."
+              # Expected SHA-256 sourced from the HF LFS metadata (lfs.oid) for this file
+              # at the pinned revision above. To refresh: bump the revision commit and
+              # update this hash from
+              #   curl -s https://huggingface.co/api/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/main
+              echo "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db  /models/qwen2.5-0.5b-instruct-q4_k_m.gguf" | sha256sum -c - || {
+                echo "[model-download] Checksum verification FAILED, deleting corrupted file." >&2
+                rm -f /models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+                exit 1
+              }
               echo "[model-download] Done."
           volumeMounts:
             - name: models
               mountPath: /models
       containers:
         - name: llama-server
-          image: ghcr.io/ggml-org/llama.cpp:server
+          # Pinned by digest for supply-chain integrity (the "server" tag is mutable
+          # and moves on every llama.cpp release). To refresh after a deliberate bump:
+          #   TOK=$(curl -s "https://ghcr.io/token?scope=repository:ggml-org/llama.cpp:pull" | jq -r .token)
+          #   curl -sI -H "Authorization: Bearer $TOK" \
+          #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+          #     "https://ghcr.io/v2/ggml-org/llama.cpp/manifests/server" | grep -i docker-content-digest
+          image: ghcr.io/ggml-org/llama.cpp:server@sha256:c88223e4bd7b7791aac2bb6945dd9b6d6dccdf191b5cabc3a73cee67ffc966ff
           args:
             - "--model"
             - "/models/qwen2.5-0.5b-instruct-q4_k_m.gguf"

@@ -230,8 +230,13 @@ func TestCovDF_GHUserAuthPoll_EmptyAuthTokenStillMintsSession(t *testing.T) {
 	s.authToken = ""
 	// Give the terminal-assertion mint a signing key and a hive identity so the
 	// C3 cookie is observable (it is a no-op without both).
+	//
+	// HIVE_ID is required as well as the master: TerminalSigningKey's fallback
+	// lane now SELF-DERIVES the PER-HIVE key (audit N3) rather than deriving a
+	// fleet-uniform one, so a master alone no longer resolves to any key.
 	deps.Config.HiveID = testHiveID
 	t.Setenv("HIVE_HUB_SECRET", testHubSecret)
+	t.Setenv("HIVE_ID", testHiveID)
 
 	doPost(s, "/api/gh-user-auth/start", nil)
 

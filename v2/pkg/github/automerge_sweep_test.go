@@ -849,6 +849,134 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 	}
 }
 
+// TestCommitGreenConfigRequiredChecksTakesPrecedence locks in that a
+// config-declared required-checks set (SetRequiredChecks, mirroring
+// config.AutoMergeConfig.RequiredCheckSet) is consulted BEFORE the
+// branch-protection API — the primary path now that the Hive App token
+// lacks administration:read. The mock server's protection endpoint is left
+// unregistered (any request to it fails the test) to prove commitGreen never
+// even calls it when a config set is installed.
+func TestCommitGreenConfigRequiredChecksTakesPrecedence(t *testing.T) {
+	tests := []struct {
+		name           string
+		requiredChecks map[string]bool
+		checks         []struct{ name, status, conclusion string }
+		wantGreen      bool
+		wantReason     string
+	}{
+		{
+			name:           "build-gate success + non-required cancelled check is green",
+			requiredChecks: map[string]bool{"build-gate": true},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Detect untested files", "completed", "cancelled"},
+			},
+			wantGreen: true,
+		},
+		{
+			name:           "build-gate failure blocks even though it's the only required check",
+			requiredChecks: map[string]bool{"build-gate": true},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "failure"},
+			},
+			wantReason: "check-failure",
+		},
+		{
+			name:           "non-required CodeQL failure never blocks",
+			requiredChecks: map[string]bool{"build-gate": true},
+			checks: []struct{ name, status, conclusion string }{
+				{"build-gate", "completed", "success"},
+				{"Analyze (python)", "completed", "failure"},
+			},
+			wantGreen: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+					t.Fatalf("commitGreen must not call the branch-protection API when a config required-checks set is installed")
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+					json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+					runs := []map[string]string{}
+					for _, c := range tt.checks {
+						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
+					}
+					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.SetRequiredChecks(tt.requiredChecks)
+			green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+			if err != nil {
+				t.Fatalf("commitGreen returned error: %v", err)
+			}
+			if green != tt.wantGreen || reason != tt.wantReason {
+				t.Fatalf("commitGreen = (%v,%q), want (%v,%q)", green, reason, tt.wantGreen, tt.wantReason)
+			}
+		})
+	}
+}
+
+// TestCommitGreenNoConfigRequiredChecksFallsBackToAPIThenAllowlist confirms
+// the full precedence chain when no config set is installed
+// (SetRequiredChecks never called / installed with an empty map): commitGreen
+// falls through to the branch-protection API exactly as before #this-change,
+// and if that is also unavailable, to the isMetaCheck/isIgnorableCICheck
+// allowlist.
+func TestCommitGreenNoConfigRequiredChecksFallsBackToAPIThenAllowlist(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+			w.WriteHeader(http.StatusInternalServerError)
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "check_runs": []map[string]string{
+				{"name": "build-gate", "status": "completed", "conclusion": "success"},
+				{"name": "Playwright", "status": "completed", "conclusion": "cancelled"},
+			}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	// Deliberately do NOT call SetRequiredChecks: config did not declare a
+	// list, so this must fall through to the API (which errors here) and
+	// then to the allowlist fallback (Playwright is on it, so this stays
+	// green).
+	green, reason, err := c.commitGreen(context.Background(), "acme", "widget", "main", "sha")
+	if err != nil {
+		t.Fatalf("commitGreen returned error: %v", err)
+	}
+	if !green || reason != "" {
+		t.Fatalf("commitGreen = (%v,%q), want (true,\"\")", green, reason)
+	}
+}
+
+func TestSetRequiredChecksEmptyMapIsNotDeclared(t *testing.T) {
+	c := newAutoMergeSweepClient("http://unused.invalid")
+	c.SetRequiredChecks(map[string]bool{})
+	if set, ok := c.configRequiredChecks(); ok || set != nil {
+		t.Fatalf("configRequiredChecks() after SetRequiredChecks(empty) = (%v,%v), want (nil,false)", set, ok)
+	}
+	c.SetRequiredChecks(map[string]bool{"build-gate": true})
+	if set, ok := c.configRequiredChecks(); !ok || !set["build-gate"] {
+		t.Fatalf("configRequiredChecks() after SetRequiredChecks(build-gate) = (%v,%v), want ({build-gate:true},true)", set, ok)
+	}
+	c.SetRequiredChecks(nil)
+	if set, ok := c.configRequiredChecks(); ok || set != nil {
+		t.Fatalf("configRequiredChecks() after SetRequiredChecks(nil) = (%v,%v), want (nil,false)", set, ok)
+	}
+}
+
 func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	var base string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

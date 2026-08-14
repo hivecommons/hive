@@ -431,7 +431,10 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 			CertIssuer:   "letsencrypt-prod",
 			Domain:       "hive.kubestellar.io",
 			Arch:         "arm64",
-			ImageTag:     "v2-latest",
+			// v4 is the ONLY image a hosted spoke can run: audit F2 deleted the
+			// fleet-wide heartbeat lane, and a v2 spoke has no SpokeHeartbeatKey
+			// self-derive path, so it cannot authenticate to this hub at all.
+			ImageTag: "v4-latest",
 		}
 		return clusters
 	}
@@ -582,6 +585,25 @@ type SaaSHive struct {
 	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
+
+	// TrackedChannel is the release channel ("stable", "candidate", "edge")
+	// this hive's image is pinned to, or "" for a hive on a plain branch.
+	//
+	// WHY THE REGISTRY CANNOT CARRY THIS: a channel image IS a build of some
+	// release branch, so the spoke heartbeats the binary's baked-in branch —
+	// a "stable" retag of a v4 build reports git_branch="v4" — and
+	// RegistryEntry.GitBranch is rewritten from that payload every beat.
+	// Within one heartbeat of a channel switch the registry has forgotten the
+	// channel entirely (the exact adopt-stale-value class RequestedGitHubHost
+	// documents above). The selection therefore lives here, on the hub-owned
+	// record, which no heartbeat path writes.
+	//
+	// Written ONLY by handleSwitchBranch: set when the requested switch target
+	// is a release channel, cleared when it is a plain branch. Overlaid onto
+	// the My Hives payload at read time (enrichFromSaaSMeta) so the version
+	// pill renders the channel — "stable (v4)" — while GitBranch keeps
+	// reporting the code branch actually running.
+	TrackedChannel string `json:"tracked_channel,omitempty"`
 
 	// Forge names the forge FAMILY this hive runs against: "" / "github" /
 	// "github-enterprise" (the GitHub App path), or "gitlab" / "gitea" (the
@@ -1842,10 +1864,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		imagePullPolicy = "Always"
 	}
 
-	// Determine image tag from cluster config, falling back to v2-latest.
+	// Determine image tag from cluster config, falling back to v4-latest.
+	//
+	// AUDIT F2 FOLLOW-UP: this fallback MUST NOT be v2. verifyHeartbeatBearer no
+	// longer accepts the fleet-wide bearer, and the per-hive bearer reaches a
+	// spoke either by injection or by SpokeHeartbeatKey() self-deriving it — a
+	// path that exists only in the v4 tree. A v2-tagged spoke therefore cannot
+	// heartbeat against this hub, so defaulting to v2-latest silently provisions
+	// a hive that is dead on arrival.
 	imageTag := cluster.ImageTag
 	if imageTag == "" {
-		imageTag = "v2-latest"
+		imageTag = "v4-latest"
 	}
 
 	data := map[string]any{
@@ -1926,9 +1955,16 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// "some provisioned spoke", so the hub had to trust body-supplied
 		// hive_id — and three key-delivery lanes read off that claimed ID.
 		// Binding the bearer to the hive makes the claim self-authenticating.
+		//
+		// All five resolve against provisionCurrentSecret() — the CURRENT
+		// generation's master (hub_keys.go). Provisioning and the
+		// perhive_env_reconcile sweep MUST derive identically or they would
+		// fight and roll a pod every cycle forever, so both sides read the
+		// generation set through the same helper. Before any rotation exists
+		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
-		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
+		"SessionKey":   deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
 		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
 		// which is symmetric and therefore let any spoke forge a hub ADMIN cookie.
@@ -1942,6 +1978,12 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// both mints and verifies this key locally, so symmetric is correct;
 		// only the sharing was wrong.
 		"TerminalKey": provisionTerminalKey(h.ID),
+		// The per-hive contributor-invite signing key. inviteSigningSecret() used
+		// the raw master as its HMAC key, making invites the LAST spoke-side
+		// consumer that actually needed HIVE_HUB_SECRET to function. With this
+		// injected it no longer does. Minted and verified on the same spoke, so
+		// symmetric; per-hive so an invite link cannot travel between tenants.
+		"InviteKey": provisionInviteKey(h.ID),
 		// Cluster-aware fields.
 		"DashboardHost":      dashboardHost,
 		"DashboardURL":       dashboardURL,
@@ -2669,6 +2711,16 @@ spec:
         # on an arbitrary hive. Both resolvers already prefer this var.
         - name: HIVE_TERMINAL_KEY
           value: "{{.TerminalKey}}"
+        # The per-hive contributor-invite signing key. inviteSigningSecret() on
+        # the spoke used the raw master HIVE_HUB_SECRET as its HMAC key — the
+        # last spoke-side code that USED the master rather than merely falling
+        # back to it. Injecting this removes that need. Invite tokens carry
+        # attribution, not access, so the blast radius is small; the point is
+        # that the master no longer has to be present for invites to work.
+        # NOTE: a hive that gains this var re-keys once, invalidating any
+        # in-flight invite links. Nothing else is affected.
+        - name: HIVE_INVITE_KEY
+          value: "{{.InviteKey}}"
 {{- if .IsNginxIngress}}
         # HIVE_INGRESS_AUTHZ tells the Node proxy that an nginx ingress
         # auth-proxy sits IN FRONT of this pod and per-hive-authorizes every

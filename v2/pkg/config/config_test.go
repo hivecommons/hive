@@ -1174,3 +1174,41 @@ func TestSelfAuthoredAutoMergeAllowed(t *testing.T) {
 		})
 	}
 }
+
+func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
+	cases := []struct {
+		name     string
+		checks   []string
+		wantSet  map[string]bool
+		wantKnow bool
+	}{
+		{"unset returns not-declared", nil, nil, false},
+		{"empty slice returns not-declared", []string{}, nil, false},
+		{"all-blank entries return not-declared", []string{"  ", ""}, nil, false},
+		{"single entry", []string{"build-gate"}, map[string]bool{"build-gate": true}, true},
+		{"multiple entries, whitespace trimmed", []string{" build-gate ", "lint"}, map[string]bool{"build-gate": true, "lint": true}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := AutoMergeConfig{RequiredChecks: tc.checks}
+			got, know := cfg.RequiredCheckSet()
+			if know != tc.wantKnow {
+				t.Fatalf("RequiredCheckSet() requiredKnown = %v, want %v", know, tc.wantKnow)
+			}
+			if !know {
+				if got != nil {
+					t.Fatalf("RequiredCheckSet() set = %v, want nil when not declared", got)
+				}
+				return
+			}
+			if len(got) != len(tc.wantSet) {
+				t.Fatalf("RequiredCheckSet() set = %v, want %v", got, tc.wantSet)
+			}
+			for k, v := range tc.wantSet {
+				if got[k] != v {
+					t.Errorf("RequiredCheckSet()[%q] = %v, want %v", k, got[k], v)
+				}
+			}
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -78,6 +79,16 @@ type IssueClaim struct {
 	// ObservedAt is when this claim was last confirmed by a live API call.
 	// It is the basis for TTL expiry.
 	ObservedAt time.Time `json:"observed_at"`
+	// ExternalAuthor marks a claim whose PR was opened by an account that is
+	// NOT this hive (kubestellar/hive#3768). External claims exist so the
+	// contribute queue can stop offering an issue that a human contributor's
+	// open PR already fixes; they deliberately do NOT suppress agent work in
+	// FilterClaimedIssues, preserving the original guard's rule that a
+	// stranger's PR can never freeze the hive's own pipeline. The field is
+	// omitempty-false so ledgers written before #3768 — which only ever
+	// recorded hive-authored claims — unmarshal as hive-authored (false),
+	// keeping their agent-side suppression intact across the upgrade.
+	ExternalAuthor bool `json:"external_author,omitempty"`
 }
 
 // Key identifies the issue a claim covers.
@@ -224,9 +235,13 @@ func (h HiveIdentity) IsZero() bool {
 	return h.AIAuthor == "" && h.AppLogin == ""
 }
 
-// FetchClaims lists open PRs authored by this hive across the client's
-// configured repos and returns the issue claims parsed from their titles and
-// bodies.
+// FetchClaims lists open PRs across the client's configured repos and returns
+// the issue claims parsed from their titles and bodies. Claims from PRs the
+// hive did not author are included and marked ExternalAuthor
+// (kubestellar/hive#3768): the contribute queue needs them to stop re-offering
+// an issue a human contributor's open PR already fixes, while
+// FilterClaimedIssues continues to honour only hive-authored claims for agent
+// work.
 //
 // A per-repo API failure is reported via err but the successfully-scanned repos
 // are still returned, so the caller can merge partial results into the ledger
@@ -265,9 +280,11 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 					continue
 				}
 				author := safeGetLogin(pr.GetUser())
-				if !identity.Matches(author) {
-					continue
-				}
+				// #3768: claims are no longer restricted to hive-authored PRs.
+				// A human contributor's open PR claims its issue too — marked
+				// ExternalAuthor below so the agent-side filter can keep
+				// ignoring it while the contribute queue honours it.
+				external := !identity.Matches(author)
 				// Title and body are both scanned: `Fixes #N` conventionally
 				// lives in the body, but many agents put it in the title.
 				text := pr.GetTitle() + "\n" + pr.GetBody()
@@ -287,13 +304,14 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 
 				for _, ref := range refs {
 					claims = append(claims, IssueClaim{
-						Repo:       ref.Repo,
-						Issue:      ref.Issue,
-						PRNumber:   pr.GetNumber(),
-						PRRepo:     repo,
-						PRURL:      pr.GetHTMLURL(),
-						PRAuthor:   author,
-						ObservedAt: now,
+						Repo:           ref.Repo,
+						Issue:          ref.Issue,
+						PRNumber:       pr.GetNumber(),
+						PRRepo:         repo,
+						PRURL:          pr.GetHTMLURL(),
+						PRAuthor:       author,
+						ObservedAt:     now,
+						ExternalAuthor: external,
 					})
 				}
 			}
@@ -314,6 +332,10 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 type ClaimLedger struct {
 	path   string
 	logger *slog.Logger
+	// mu guards claims. The ledger was single-goroutine (the eval cycle) until
+	// #3768 gave the contribute WS hub a read path into it, so reads now happen
+	// concurrently with the eval cycle's Reconcile/Save writes.
+	mu sync.RWMutex
 	// claims is keyed by "repo#issue".
 	claims map[string]IssueClaim
 	// ttl bounds entry lifetime; overridable for tests.
@@ -372,9 +394,23 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		if c.ObservedAt.Before(cutoff) {
 			continue
 		}
-		l.claims[c.Key()] = c
+		l.insertLocked(c)
 	}
 	return l, nil
+}
+
+// insertLocked adds a claim to the map, resolving key collisions with
+// hive-precedence: when the same issue is claimed by both a hive-authored PR
+// and an external one (#3768), the hive-authored claim wins, so the agent-side
+// filter — which honours only hive claims — can never be blinded by an
+// external PR racing it to the map. Callers must hold l.mu (or own the ledger
+// exclusively, as LoadClaimLedger does before publishing it).
+func (l *ClaimLedger) insertLocked(c IssueClaim) {
+	key := c.Key()
+	if existing, ok := l.claims[key]; ok && !existing.ExternalAuthor && c.ExternalAuthor {
+		return
+	}
+	l.claims[key] = c
 }
 
 // SetTTL overrides the entry lifetime. Intended for tests.
@@ -382,6 +418,8 @@ func (l *ClaimLedger) SetTTL(d time.Duration) {
 	if l == nil || d <= 0 {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.ttl = d
 }
 
@@ -390,6 +428,8 @@ func (l *ClaimLedger) SetClock(fn func() time.Time) {
 	if l == nil || fn == nil {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.now = fn
 }
 
@@ -398,10 +438,12 @@ func (l *ClaimLedger) Claims() []IssueClaim {
 	if l == nil {
 		return nil
 	}
+	l.mu.RLock()
 	out := make([]IssueClaim, 0, len(l.claims))
 	for _, c := range l.claims {
 		out = append(out, c)
 	}
+	l.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Repo != out[j].Repo {
 			return out[i].Repo < out[j].Repo
@@ -411,11 +453,23 @@ func (l *ClaimLedger) Claims() []IssueClaim {
 	return out
 }
 
+// Len reports the number of claims currently held.
+func (l *ClaimLedger) Len() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.claims)
+}
+
 // Lookup returns the claim covering the given issue, if any.
 func (l *ClaimLedger) Lookup(repo string, issue int) (IssueClaim, bool) {
 	if l == nil {
 		return IssueClaim{}, false
 	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	c, ok := l.claims[claimKey(repo, issue)]
 	return c, ok
 }
@@ -435,29 +489,31 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 	if l == nil {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if authoritative {
-		next := make(map[string]IssueClaim, len(live))
+		l.claims = make(map[string]IssueClaim, len(live))
 		for _, c := range live {
 			if c.Issue <= 0 || c.Repo == "" {
 				continue
 			}
-			next[c.Key()] = c
+			l.insertLocked(c)
 		}
-		l.claims = next
 		return
 	}
 	for _, c := range live {
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
-		l.claims[c.Key()] = c
+		l.insertLocked(c)
 	}
-	l.prune()
+	l.pruneLocked()
 }
 
-// prune drops entries older than the TTL. It runs on the non-authoritative
-// path so a permanently-failing API cannot pin a stale claim forever.
-func (l *ClaimLedger) prune() {
+// pruneLocked drops entries older than the TTL. It runs on the
+// non-authoritative path so a permanently-failing API cannot pin a stale claim
+// forever. Callers must hold l.mu.
+func (l *ClaimLedger) pruneLocked() {
 	cutoff := l.now().Add(-l.ttl)
 	for k, c := range l.claims {
 		if c.ObservedAt.Before(cutoff) {
@@ -510,7 +566,7 @@ type RedStaleFunc func(prRepo string, prNumber int) bool
 // and returns the number of issues suppressed. A nil result or nil ledger is a
 // no-op, so callers need no extra guards.
 func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, logger *slog.Logger) int {
-	if result == nil || ledger == nil || len(ledger.claims) == 0 {
+	if result == nil || ledger == nil || ledger.Len() == 0 {
 		return 0
 	}
 	kept := make([]Issue, 0, len(result.Issues.Items))
@@ -518,6 +574,15 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 	for _, issue := range result.Issues.Items {
 		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
 		if !ok {
+			kept = append(kept, issue)
+			continue
+		}
+		// #3768: an EXTERNAL claim (a PR the hive did not author) never
+		// suppresses agent work — that is the guard's original rule, kept
+		// intact so a stranger's junk PR cannot freeze the hive's own
+		// pipeline. External claims exist for the contribute queue, which
+		// consults the ledger directly (dashboard selectTask).
+		if claim.ExternalAuthor {
 			kept = append(kept, issue)
 			continue
 		}
@@ -593,7 +658,7 @@ func ApplyDuplicatePRGuard(
 	if err != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: claim fetch failed, falling back to persisted ledger (fail closed)",
 			"error", err,
-			"cached_claims", len(ledger.claims),
+			"cached_claims", ledger.Len(),
 		)
 	}
 	ledger.Reconcile(live, authoritative)
@@ -605,7 +670,7 @@ func ApplyDuplicatePRGuard(
 	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
 	if logger != nil {
 		logger.Info("duplicate-PR guard applied",
-			"claims", len(ledger.claims),
+			"claims", ledger.Len(),
 			"suppressed", suppressed,
 			"authoritative", authoritative,
 		)

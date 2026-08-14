@@ -772,7 +772,7 @@ func TestHandleAuthUserKnownButNotInFile(t *testing.T) {
 
 func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Set latest SHA
 	latestSHAMu.Lock()
@@ -803,7 +803,7 @@ func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 
 func TestHandleHeartbeatAutoUpgradeNoUpgradeNeeded(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "current", Message: "current"}
@@ -829,7 +829,7 @@ func TestHandleHeartbeatAutoUpgradeNoUpgradeNeeded(t *testing.T) {
 
 func TestHandleHeartbeatAutoUpgradeEmptyGitHash(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "target2", Message: "latest"}
@@ -856,7 +856,7 @@ func TestHandleHeartbeatAutoUpgradeEmptyGitHash(t *testing.T) {
 
 func TestHandleHeartbeatDefaultBranch(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// No git_branch → defaults to "v2"
 	payload := `{"hive_id":"default-branch"}`

@@ -61,9 +61,21 @@ const (
 	// CaptureFullLog). tmux's -S - captures the entire scrollback, but a wedged
 	// agent that has spammed for hours can hold a very large buffer; this caps the
 	// number of lines pulled back from the tail so the endpoint stays bounded.
-	// It is deliberately far larger than the tmux history-limit tmux is usually
-	// started with, so in practice it returns the WHOLE retained session.
+	// It matches defaultTmuxHistoryLimit — the history-limit agent sessions are
+	// created with — so in practice it returns the WHOLE retained session.
 	fullLogCaptureLines = 50000
+
+	// tmuxHistoryLimitEnv overrides the scrollback depth (in lines) that agent
+	// tmux sessions are created with (see newSessionCommands).
+	tmuxHistoryLimitEnv = "HIVE_TMUX_HISTORY_LIMIT"
+
+	// defaultTmuxHistoryLimit is the history-limit applied when creating an
+	// agent's tmux session. tmux's own default is only 2000 lines, which capped
+	// both browser copy-mode scrollback (#3694) and the "full log" capture
+	// (#3693) at ~2000 lines no matter how deep CaptureFullLog reached. Matches
+	// fullLogCaptureLines so the full-log endpoint can return the entire
+	// retained buffer.
+	defaultTmuxHistoryLimit = fullLogCaptureLines
 )
 
 var defaultTmuxSocket string
@@ -107,6 +119,15 @@ type AgentProcess struct {
 	tmuxSocket        string
 	cancel            context.CancelFunc
 	forceRelaunch     bool
+	// launching is set true under m.mu while Start runs this agent's launch
+	// with m.mu RELEASED (so a slow /data NFS write or a hung MITM-proxy token
+	// mint during launch cannot block AllStatuses()/the heartbeat collect() and
+	// flap /api/livez). It is cleared under m.mu when the launch finishes on
+	// every path (success, error, or panic — via a deferred clear). It exists
+	// solely to serialize concurrent Start(sameName): with m.mu no longer held
+	// across the launch, a second Start would otherwise race the first one's
+	// tmux launch and its guarded-field writes. Guarded by m.mu.
+	launching         bool
 	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
 	LastError         string    // captured from bare copilot diagnostic launch
 	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
@@ -844,22 +865,31 @@ func (m *Manager) ResolveAgent(nameOrID string) string {
 }
 
 func (m *Manager) Start(ctx context.Context, name string) error {
+	// PHASE 1 — brief critical section: map lookup, the pure in-memory
+	// decisions (running/sandbox), and claiming the per-agent launch guard.
+	// Nothing here does /data NFS I/O or a subprocess/outbound call, so m.mu is
+	// held only for microseconds.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	agent, ok := m.agents[name]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
 
 	if agent.State == StateRunning {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s already running", name)
 	}
 
 	if m.agentSandboxEnabledLocked(agent) {
+		// Sandbox agents never launch a CLI here — this branch only sets
+		// in-memory state and does no I/O, so it completes entirely inside the
+		// Phase-1 lock and never claims the launch guard.
 		if agent.Paused {
 			agent.State = StatePaused
 			m.logger.Info("sandbox agent starting paused", "name", agent.Name, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
+			m.mu.Unlock()
 			return nil
 		}
 		now := time.Now()
@@ -868,9 +898,15 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		agent.HasLaunched = true
 		agent.LaunchedMode = m.agentMode(agent)
 		m.logger.Info("audit: sandbox agent ready", "name", name)
+		m.mu.Unlock()
 		return nil
 	}
 
+	// dd's backend resolution + validation. Pure in-memory (map lookup on the
+	// backend table, one guarded State write), so it stays inside PHASE 1's
+	// critical section. NOTE: v4 replaced `defer m.mu.Unlock()` with explicit
+	// unlocks, so this early return must unlock by hand — under dd's old defer
+	// it did not, and carrying it over verbatim would deadlock every caller.
 	backend := agent.Config.Backend
 	if agent.BackendOverride != "" {
 		backend = agent.BackendOverride
@@ -878,9 +914,39 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if _, known := backendCommand(backend); !known {
 		agent.State = StateFailed
 		m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", "unknown backend")
+		m.mu.Unlock()
 		return nil
 	}
 
+	// Serialize concurrent Start(sameName). Once we release m.mu for the
+	// out-of-lock launch below, this guard is the only thing preventing a
+	// second Start from racing this one's tmux launch and guarded-field writes
+	// (m.mu no longer covers the whole method). Refuse the second caller fast.
+	if agent.launching {
+		m.mu.Unlock()
+		return fmt.Errorf("agent %s launch already in progress", name)
+	}
+	agent.launching = true
+	m.mu.Unlock()
+
+	// Clear the guard on EVERY exit from here down (error, park-and-return,
+	// success, or panic). Phase 1's returns above happen before the guard is
+	// set, so they neither set nor need to clear it.
+	defer func() {
+		m.mu.Lock()
+		agent.launching = false
+		m.mu.Unlock()
+	}()
+
+	// PHASE 2 — launch preparation with m.mu RELEASED. sanitizeGitRemotes walks
+	// /data/agents/<name> and runs git subprocesses; ensureTmuxSession does
+	// os.MkdirAll("/data/agents/<name>") + a tmux subprocess. On the NFS RWX
+	// PVC these can block in uninterruptible D-state when the server has stale
+	// locks — but no longer WHILE HOLDING m.mu, so AllStatuses()/the heartbeat
+	// collect() keep taking the RLock, the heartbeat-attempt clock keeps
+	// advancing, and /api/livez stays 200. Neither call mutates m.mu-guarded
+	// AgentProcess fields (they read only immutable Name/UID/tmuxSession/
+	// tmuxSocket and Config), so running them lock-free is race-free.
 	m.sanitizeGitRemotes(agent)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -915,16 +981,29 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// strategist stayed paused, which is what exposed this).
 		operatorPaused := agent.Config.Paused || agent.PausedTrigger == "dashboard-api"
 		if IsInferenceBackend(backend) && !operatorPaused {
+			// agent.Paused is an m.mu-guarded field; brief re-lock around the
+			// write so it stays atomic against AllStatuses()/setters.
+			m.mu.Lock()
 			agent.Paused = false
+			m.mu.Unlock()
 			m.logger.Info("auto-unpaused inference agent (transient pause, not operator)", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
 		} else {
+			m.mu.Lock()
 			agent.State = StatePaused
+			m.mu.Unlock()
 			m.logger.Info("agent starting paused", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
 			return nil
 		}
 	}
 
+	// dd's `!agent.specialistReady` guard is preserved: a specialist that has
+	// already been provisioned must not re-mint its token on restart.
 	if m.appAuth != nil && agent.UID > 0 && !agent.specialistReady {
+		// Runs with m.mu RELEASED: WriteAgentToken mints a scoped token via an
+		// outbound GitHub API call (through the MITM egress proxy, which the
+		// production incident showed can hang), and issueAgentMintToken can do
+		// the same. Neither writes an m.mu-guarded AgentProcess field, so a hang
+		// here no longer stalls AllStatuses()/the heartbeat while holding m.mu.
 		tier := m.agentMode(agent).TokenTier()
 		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 			// Be precise about the blast radius. Since audit H3 the shared-cache
@@ -943,6 +1022,38 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		m.issueAgentMintToken(agent.Name, tier, agent.UID)
 	}
 
+	// PHASE 3 — launchInTmux. It was written to be called WITH m.mu held: it
+	// mutates m.mu-guarded AgentProcess fields (State, StartedAt, HasLaunched,
+	// LaunchedMode, LastKick/LastKickMessage/KickHistory, LastError, cancel,
+	// launchGen, forceRelaunch, awaitingBobKey, ...) directly with no internal
+	// locking. Re-acquire m.mu for the duration so those writes stay race-free
+	// against AllStatuses()/snapshot() and the model/backend/pause setters —
+	// preserving its original contract exactly (the function is unchanged).
+	//
+	// The launch's own /data reads/writes (ensureTmuxSession has already run
+	// lock-free above; the remaining /data touch is ensureBobAuthSettings on
+	// /data/home for bob agents) are NOT hoisted here — pulling launchInTmux's
+	// deeply interleaved guarded-field writes and NFS I/O apart is a larger,
+	// riskier refactor left for a separate maintainer decision. The three
+	// biggest and most common NFS/proxy blockers (sanitizeGitRemotes,
+	// ensureTmuxSession, WriteAgentToken/mint) are already off the lock above,
+	// which is what breaks the observed fleet-wide liveness flap; a bob-only
+	// /data/home stall under the lock remains a narrower residual.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Re-verify under the re-acquired lock: while m.mu was released for Phase 2,
+	// a concurrent Stop/Remove could have deleted this agent from the map or a
+	// racing path could have started it. The launching guard prevents a second
+	// concurrent Start of THIS agent, but not a Stop/delete, so re-check both
+	// before mutating launch state. (agent still points at the same struct; the
+	// map re-lookup is what detects a delete.)
+	if cur, ok := m.agents[name]; !ok || cur != agent {
+		return fmt.Errorf("agent %s removed during launch", name)
+	}
+	if agent.State == StateRunning {
+		// Another path won the launch race while we were unlocked; nothing to do.
+		return nil
+	}
 	return m.launchInTmux(ctx, agent)
 }
 
@@ -957,6 +1068,39 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 		return []string{"tmux", "-L", defaultTmuxSocket}
 	}
 	return []string{"tmux"}
+}
+
+// tmuxHistoryLimit returns the scrollback depth (in lines) agent tmux sessions
+// are created with: HIVE_TMUX_HISTORY_LIMIT when set to a positive integer,
+// defaultTmuxHistoryLimit otherwise.
+func tmuxHistoryLimit() int {
+	if v := os.Getenv(tmuxHistoryLimitEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultTmuxHistoryLimit
+}
+
+// newSessionCommands returns the tmux command sequence (after the base
+// socket args) that creates a detached agent session with a deep scrollback
+// buffer.
+//
+// Ordering is the whole point (#3694, #3693): tmux reads history-limit at PANE
+// creation time, so it must be raised BEFORE new-session forks the session's
+// first pane. Raising it on an existing pane — as the ttyd attach wrapper does
+// on attach — never deepens a buffer that was created shallow; with tmux's
+// 2000-line default that capped both browser copy-mode scrollback and the
+// "full log" capture at ~2000 lines. Both commands run in ONE client
+// invocation ("; " is tmux's command separator in argv): the client
+// auto-starts the server if needed, applies the global option, then creates
+// the session — before the server's exit-empty logic could tear down a
+// sessionless server and discard the option.
+func newSessionCommands(session, dir string) []string {
+	return []string{
+		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
+		"new-session", "-d", "-s", session, "-c", dir,
+	}
 }
 
 func (m *Manager) agentExecUserSpec(agent *AgentProcess) string {
@@ -1043,11 +1187,11 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	var cmd *exec.Cmd
 	if agent.UID > 0 {
 		suExecArgs := []string{"su-exec", m.agentExecUserSpec(agent)}
-		tmuxArgs := append(m.tmuxBaseArgs(agent), "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		tmuxArgs := append(m.tmuxBaseArgs(agent), newSessionCommands(agent.tmuxSession, agentDir)...)
 		cmd = exec.Command(suExecArgs[0], append(suExecArgs[1:], tmuxArgs...)...)
 	} else {
 		base := m.tmuxBaseArgs(agent)
-		tmuxArgs := append(base[1:], "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		tmuxArgs := append(base[1:], newSessionCommands(agent.tmuxSession, agentDir)...)
 		cmd = exec.Command(base[0], tmuxArgs...)
 	}
 	cmd.Env = m.filteredEnv(agent)
@@ -1497,8 +1641,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// auth block BEFORE bob starts. A persisted selectedType beats
 		// BOBSHELL_DEFAULT_AUTH_TYPE, so without this one agent that ever picked
 		// SSO leaves every bob agent on the hive stuck at the auth prompt.
-		// Pure filesystem work on locals only — takes no locks, so it is safe on
-		// this m.mu-holding path.
+		//
+		// NOTE: this writes /data/home/.bob/settings.json, which is on the NFS
+		// RWX PVC — NOT "locals" as an earlier comment claimed. It takes no
+		// Manager lock of its own, but Start still calls launchInTmux with m.mu
+		// held (Phase 3), so an NFS stall here CAN block AllStatuses() for the
+		// NFS timeout. This is the narrower residual left after the Phase-2
+		// hoist (ensureTmuxSession/sanitizeGitRemotes/token writes are already
+		// off the lock); moving bob's /data/home pre-flight off the lock too is
+		// a follow-up for a separate maintainer decision.
 		m.ensureBobAuthSettings(agent.Name, bobSharedHome)
 		// The key resolved above was read by the HIVE process as dev. bob will
 		// read it as the AGENT UID, which is a different question — and the one
@@ -5946,14 +6097,18 @@ func writeAgentStateFile(path string, data []byte) error {
 		f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
 	// O_CREATE honours the mode only when the file did not already exist, so an
 	// existing 0644 file from a previous release keeps its old mode without
-	// this. Chmod on the path is acceptable here because O_NOFOLLOW above has
-	// already established it is not a symlink.
-	return os.Chmod(path, agentStateFileMode)
+	// this. Chmod through the still-open descriptor: O_NOFOLLOW only proved the
+	// path was not a symlink at OPEN time, so a path-based os.Chmod after Close
+	// left a window in shared /tmp where the pathname could be swapped for a
+	// symlink and the mode change applied to the link target (TOCTOU, #3175).
+	// f.Chmod acts on the inode we opened, closing that window.
+	if err := f.Chmod(agentStateFileMode); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // SyncModeFiles rewrites /tmp/.hive-mode-* for all running agents to reflect the given ACMM level.

@@ -24,6 +24,13 @@ import (
 // lingered indefinitely — which is how a temporary compatibility path becomes
 // permanent. This records which format each spoke actually presents, so the
 // decision is made on evidence.
+//
+// STATUS: the N1/F2 heartbeat lane is DELETED — verifyHeartbeatBearer now
+// accepts only the per-hive bearer, so PerHiveBearer is necessarily true for
+// every hive that authenticates at all. This file is retained because (a) the
+// N2 session-cookie lane is still mid-rollout and (b) GET
+// /api/saas/admin/auth-rollout remains the operator's post-cutover view: a hive
+// that vanishes from the heartbeat totals is one that is now failing auth.
 
 // authRolloutEntry is the last-seen credential format for one hive.
 type authRolloutEntry struct {
@@ -75,6 +82,27 @@ type AuthRolloutStatus struct {
 	// also have aged out (cookieMaxAgeDays, currently 7). Removing that lane
 	// early logs every active user out rather than breaking a spoke.
 	HeartbeatLaneReady bool `json:"heartbeat_lane_ready"`
+
+	// PerHiveEnv is the Deployment-SOURCED convergence view for the five
+	// per-hive security env vars (perhive_env_reconcile.go).
+	//
+	// It is embedded here rather than served from a new endpoint so an operator
+	// has ONE readiness page — but the two halves of this response are sourced
+	// differently on purpose, and the difference matters for the master-secret
+	// cutover this gates.
+	//
+	// Everything above comes from heartbeat observations and is subject to
+	// authRolloutStaleAfter: a hive that has not beaten in 24h simply leaves
+	// the totals, and as the constant's own comment records, this signal cannot
+	// distinguish "hive absent" from "hive never existed". A paused spoke
+	// therefore drops silently out of the denominator and the fleet reads ready
+	// while that spoke is unconverged.
+	//
+	// PerHiveEnv is immune to that: its counts come from the hub reading each
+	// spoke's Deployment itself. A paused hive still has a Deployment, so it is
+	// still read, still counted, and still blocks convergence. Gate the
+	// master-secret removal on THESE numbers, not on the heartbeat totals.
+	PerHiveEnv PerHiveEnvStatus `json:"per_hive_env"`
 }
 
 // authRolloutStaleAfter bounds how old an observation may be and still count.
@@ -108,21 +136,28 @@ func (s *HubServer) AuthRolloutReadiness() AuthRolloutStatus {
 		return out
 	}
 	cutoff := time.Now().Add(-authRolloutStaleAfter)
-	s.authRolloutMu.RLock()
-	defer s.authRolloutMu.RUnlock()
-	for id, e := range s.authRolloutSeen {
-		if e.LastSeen.Before(cutoff) {
-			continue
+	// Scoped, NOT deferred: PerHiveEnvSnapshot below takes a different mutex
+	// (perHiveEnvMu), and holding two hub locks at once — even in a consistent
+	// order today — is how a future caller acquires them the other way round
+	// and deadlocks the readiness endpoint. Release this one first.
+	func() {
+		s.authRolloutMu.RLock()
+		defer s.authRolloutMu.RUnlock()
+		for id, e := range s.authRolloutSeen {
+			if e.LastSeen.Before(cutoff) {
+				continue
+			}
+			out.TotalHives++
+			if e.PerHiveBearer {
+				out.PerHiveBearer++
+			} else {
+				out.LegacyBearer++
+				out.LegacyHives = append(out.LegacyHives, id)
+			}
 		}
-		out.TotalHives++
-		if e.PerHiveBearer {
-			out.PerHiveBearer++
-		} else {
-			out.LegacyBearer++
-			out.LegacyHives = append(out.LegacyHives, id)
-		}
-	}
+	}()
 	out.HeartbeatLaneReady = out.TotalHives > 0 && out.LegacyBearer == 0
+	out.PerHiveEnv = s.PerHiveEnvSnapshot()
 	return out
 }
 

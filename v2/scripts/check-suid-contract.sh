@@ -24,27 +24,46 @@
 #   - the SHA256 of the pinned source is verified before compiling.
 #   - the installed helper is chmod 4750 and owned by root:hive-launch.
 #
-# Usage: v2/scripts/check-suid-contract.sh [path-to-Dockerfile]
+# NET_ADMIN invariant (#3760 — asserted against Dockerfile + entrypoint):
+#   - NO `setcap` file capability on the hive binary (a file cap EPERMs on exec
+#     wherever the runtime bounding set lacks the cap — the #3760 crash-loop).
+#   - the entrypoint instead raises NET_ADMIN as an AMBIENT capability, gated on
+#     the CAP_NET_ADMIN bounding-set bit, via `setpriv --ambient-caps +net_admin`,
+#     with a `gosu dev` fallback when the cap is unavailable.
+#
+# Usage: v2/scripts/check-suid-contract.sh [path-to-Dockerfile] [path-to-entrypoint]
 set -euo pipefail
 
 DOCKERFILE="${1:-v2/Dockerfile}"
+ENTRYPOINT="${2:-v2/deploy/entrypoint.sh}"
 
 if [[ ! -f "$DOCKERFILE" ]]; then
   echo "ERROR: Dockerfile not found at ${DOCKERFILE}" >&2
   exit 1
 fi
+if [[ ! -f "$ENTRYPOINT" ]]; then
+  echo "ERROR: entrypoint not found at ${ENTRYPOINT}" >&2
+  exit 1
+fi
 
 fail=0
 
-# CODE holds the Dockerfile with comment lines stripped. The forbidden-pattern
-# checks run against CODE so that an explanatory comment mentioning e.g.
-# `chmod u+s` (describing the OLD insecure build) is not itself flagged — only a
-# real instruction would be. The positive checks run against the raw file.
-CODE="$(grep -vE '^[[:space:]]*#' "$DOCKERFILE")"
+# CODE_FILE holds the Dockerfile with comment lines stripped, written to a temp
+# file. The forbidden-pattern checks grep this FILE directly (never a
+# `printf | grep -q` pipe — grep -q closes the pipe on first match and the
+# writing printf takes SIGPIPE, which under `set -o pipefail` made the check
+# spuriously fail; see #3774). An explanatory comment mentioning e.g. `setcap`
+# (describing the OLD file-cap build) is thus not itself flagged — only a real
+# build instruction would be. Positive checks grep the raw file.
+CODE_FILE="$(mktemp)"
+trap 'rm -f "$CODE_FILE"' EXIT
+grep -vE '^[[:space:]]*#' "$DOCKERFILE" > "$CODE_FILE" || true
 
 check() {
-  local desc="$1" pattern="$2"
-  if grep -qE "$pattern" "$DOCKERFILE"; then
+  local desc="$1" pattern="$2" file="${3:-$DOCKERFILE}"
+  # `-e -- ` so a pattern that begins with `--` (e.g. --reuid) is not parsed as
+  # a grep option.
+  if grep -qE -e "$pattern" -- "$file"; then
     echo "  ok: ${desc}"
   else
     echo "  FAIL: ${desc} (expected to find pattern: ${pattern})"
@@ -53,8 +72,8 @@ check() {
 }
 
 check_absent() {
-  local desc="$1" pattern="$2"
-  if printf '%s\n' "$CODE" | grep -qE "$pattern"; then
+  local desc="$1" pattern="$2" file="${3:-$CODE_FILE}"
+  if grep -qE -e "$pattern" -- "$file"; then
     echo "  FAIL: ${desc} (found forbidden pattern in a build instruction: ${pattern})"
     fail=1
   else
@@ -106,40 +125,66 @@ check "hive-launch launcher group is created" \
 check "dev is a member of hive-launch" \
   'useradd.*-G[[:space:]]+hive-launch'
 
-# ── File-capability contract (audit F5-egress, refs #2674/#2678) ──────────────
+# ── NET_ADMIN contract: NO file capability, ambient grant instead (#3760) ─────
 #
-# The hive binary carries cap_net_admin+ep so the MITM proxy can stamp SO_MARK
-# on its own upstream dials and be exempted from the forced-egress iptables
-# REDIRECT. Without it, on OpenShift (no xt_owner, so the owner-UID exemptions
-# silently fail to load) the proxy redirects its OWN traffic into itself and
-# every forge request 502s — observed live on vllm-d.
+# The hive process needs CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can
+# stamp SO_MARK on its own upstream dials and be exempted from the forced-egress
+# iptables REDIRECT (on OpenShift/OVN, where xt_owner is absent, SO_MARK is the
+# ONLY exemption that works — refs #2674/#2678, observed live on vllm-d).
 #
-# The capability is SAFE only because it cannot reach an agent:
-#   - file caps are recomputed at exec, and agents exec their own binaries
-#   - agents cannot exec su-exec (4750 root:hive-launch, asserted above)
-# If either invariant breaks, this capability becomes an escalation path — hence
-# both are asserted in the same contract.
-check "hive binary carries cap_net_admin" \
-  'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'
-check "the capability is verified at build time" \
+# It USED to carry this as a FILE capability (setcap cap_net_admin+ep). That is
+# now FORBIDDEN: the kernel refuses execve of a file-capped binary whenever the
+# runtime BOUNDING set lacks the cap (default docker/podman/containerd — every
+# self-hosted k3s/rootless spoke), producing the #3760 exec-EPERM crash-loop. A
+# file capability and "execs everywhere" are incompatible. Instead the entrypoint
+# raises NET_ADMIN as an AMBIENT capability, gated on the bounding set having it.
+#
+# (a) FORBID any file capability on the binary — no setcap on it, and the binary
+#     must ship with no security.capability xattr. A getcap-based build-time
+#     verification (which only makes sense alongside a setcap) is also forbidden.
+check_absent "NO setcap file capability on the hive binary (#3760: EPERMs on exec where bounding set lacks the cap)" \
+  'setcap[[:space:]]+[^#]*cap_net_admin[^#]*/usr/local/bin/hive'
+check_absent "NO getcap build-time verification of a hive file capability" \
   'getcap[[:space:]]+/usr/local/bin/hive'
 
-# No OTHER binary may be given a capability. Agents run their own binaries; a
-# capability on any of them would hand NET_ADMIN straight to an agent process.
-if printf '%s\n' "$CODE" | grep -oE 'setcap[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+' \
-   | grep -qvE 'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'; then
-  echo "  FAIL: a setcap targets something other than /usr/local/bin/hive"
+# No binary at all may be given a file capability — agents run their own
+# binaries, and a file cap on any of them would (a) hand NET_ADMIN straight to an
+# agent process and (b) reintroduce the exec-EPERM class of bug. Any `setcap` in
+# a real build instruction is a failure.
+if grep -qE '^[[:space:]]*(RUN[[:space:]].*)?setcap[[:space:]]' "$CODE_FILE"; then
+  echo "  FAIL: a setcap file capability is present in a build instruction (forbidden — grant NET_ADMIN at runtime via the entrypoint's ambient cap, not a file cap)"
   fail=1
 else
-  echo "  ok: no capability is granted to any binary except /usr/local/bin/hive"
+  echo "  ok: no setcap file capability is granted to any binary"
 fi
+
+# (b) REQUIRE the entrypoint's bounding-set-gated ambient-cap grant. The
+#     entrypoint must: read the bounding set (CapBnd), test the CAP_NET_ADMIN bit
+#     (bit 12 → mask 0x1000), and — only when present — drop to dev via setpriv
+#     +net_admin. Assert each element so the mechanism can't be silently dropped.
+check "entrypoint reads the bounding set (CapBnd)" \
+  'CapBnd' "$ENTRYPOINT"
+check "entrypoint tests the CAP_NET_ADMIN bounding-set bit (bit 12 / 0x1000)" \
+  '0x1000' "$ENTRYPOINT"
+check "entrypoint raises NET_ADMIN as an ambient capability via setpriv" \
+  'setpriv[[:space:]]+--ambient-caps[[:space:]]+\+net_admin' "$ENTRYPOINT"
+# The setpriv identity (--reuid dev) may live in a shell variable reused by both
+# the probe and the exec, so assert it appears in the file rather than adjacent
+# to --ambient-caps. A missing --reuid dev would leave the drop-to-dev broken.
+check "entrypoint drops the ambient-cap path to the dev user (--reuid dev)" \
+  '--reuid[[:space:]]+dev' "$ENTRYPOINT"
+check "entrypoint keeps a gosu fallback when the cap is unavailable" \
+  'exec[[:space:]]+gosu[[:space:]]+dev' "$ENTRYPOINT"
 
 if [[ "$fail" -ne 0 ]]; then
   echo ""
-  echo "SUID helper contract check FAILED — a world-exec or unpinned setuid-root"
-  echo "binary must never ship (security finding C6, CWE-250/269)."
+  echo "SUID/NET_ADMIN contract check FAILED. Either a world-exec or unpinned"
+  echo "setuid-root binary would ship (security finding C6, CWE-250/269), OR the"
+  echo "NET_ADMIN contract regressed: a file capability was re-added to the hive"
+  echo "binary (EPERMs on exec where the bounding set lacks NET_ADMIN — #3760), or"
+  echo "the entrypoint's bounding-set-gated ambient-cap grant was removed."
   exit 1
 fi
 
 echo ""
-echo "SUID helper contract check passed."
+echo "SUID/NET_ADMIN contract check passed."
