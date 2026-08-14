@@ -1,6 +1,13 @@
 services:
   gateway:
-    image: nginx:alpine
+    # Pinned to nginx:alpine as of 2026-08-14 by BOTH tag AND digest.
+    # The gateway terminates TLS for all dashboard traffic; a compromised image
+    # can intercept credentials and tokens. Pin by digest following the same
+    # supply-chain hardening applied to the watchtower service.
+    # Bump deliberately: verify the release, then update both tag and digest
+    # (compute with: docker inspect --format='{{index .RepoDigests 0}}' nginx:alpine
+    #  or use: crane digest nginx:alpine).
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
     container_name: hive-gateway
     restart: unless-stopped
     ports:
