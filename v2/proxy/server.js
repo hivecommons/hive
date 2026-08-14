@@ -75,11 +75,88 @@ function deriveSessionPublicKey() {
   }
 }
 const SESSION_PUBLIC_KEY = deriveSessionPublicKey();
+
+// ROTATION (v2/docs/design/master-key-rotation.md, follow-on #6): during a hub
+// master rotation this spoke may hold TWO session public keys.
+//
+// The hub mints session cookies under the CURRENT generation the instant an
+// operator rotates, but the reconcile lane walks the fleet at 3 patches per
+// 15-minute cycle — about six hours for 65 spokes. For those hours a spoke that
+// knows only one public key cannot verify any cookie the hub is now minting, so
+// every hosted terminal session on that spoke fails its cookie check. Holding
+// both keys and trying each is what removes that window.
+//
+// WHY A SECOND VAR RATHER THAN A DELIMITED LIST IN HIVE_SESSION_PUBLIC_KEY.
+// Because the same value is read by an independently written Go verifier
+// (hub.SpokeSSOPublicKey / VerifySSOToken), and the two languages do NOT agree
+// on what "<hex>,<hex>" means:
+//
+//   Node  Buffer.from(v,'hex')  -> 32 bytes; silently truncates at the comma.
+//   Go    hex.DecodeString(v)   -> error; the verifier fails closed.
+//
+// A list would therefore keep working here by accident and break SSO outright
+// on any spoke still running the older Go image — which is the whole fleet for
+// the first reconcile cycle. An extra var has a defined meaning to old readers:
+// they do not read it, so they cannot misread it.
+//
+// ABSENT TODAY AND ABSENT UNTIL SOMEONE ROTATES. HIVE_SESSION_PUBLIC_KEY_PREV
+// is set on no spoke in the fleet, so SESSION_PUBLIC_KEYS below is a
+// one-element array whose single element is SESSION_PUBLIC_KEY, and every
+// verification does exactly the one Ed25519 operation it does today. The
+// legacy single-value configuration is not a compatibility branch here; it is
+// the zero-previous case of the general one.
+const SESSION_PUBLIC_KEY_PREV = (process.env.HIVE_SESSION_PUBLIC_KEY_PREV || '').trim();
+
+// isValidEd25519PublicKeyHex rejects anything that is not exactly 32 bytes of
+// hex.
+//
+// The length check cannot be skipped and cannot be done with Buffer alone:
+// Buffer.from('zz','hex') returns an EMPTY buffer rather than throwing, and
+// Buffer.from('<64 hex>,<64 hex>','hex') returns the FIRST 32 bytes rather than
+// throwing — Node truncates silently at the first non-hex character. So a
+// malformed value reaches crypto.createPublicKey looking plausible. Testing the
+// string against a strict pattern first is what makes "malformed" mean
+// malformed here and in Go alike.
+function isValidEd25519PublicKeyHex(v) {
+  return typeof v === 'string' && /^[0-9a-fA-F]{64}$/.test(v);
+}
+
+// sessionPublicKeys resolves the ordered list of public keys to try, current
+// first. Malformed and duplicate entries are DROPPED rather than passed through.
+//
+// Dropping a malformed _PREV is the invariant that makes this safe to ship: a
+// bad second key must cost one skipped candidate and must never prevent the
+// FIRST key from being tried. Filtering here — rather than letting each verify
+// call throw and be swallowed — also keeps the candidate count, and therefore
+// the work done, a property of configuration rather than of the cookie.
+function sessionPublicKeys() {
+  const out = [];
+  for (const k of [SESSION_PUBLIC_KEY, SESSION_PUBLIC_KEY_PREV]) {
+    const v = (k || '').trim();
+    if (!isValidEd25519PublicKeyHex(v)) continue;
+    if (out.includes(v)) continue; // before the first rotation both can be equal
+    out.push(v);
+  }
+  return out;
+}
+const SESSION_PUBLIC_KEYS = sessionPublicKeys();
+
 // Boot-time "am I hub-hosted?" signal. Either the injected session key (modern)
 // or a master secret (legacy) proves hosted mode, where identity comes from the
 // hub cookie rather than a shared dashboard token.
 // N2: either key proves hosted mode. A freshly provisioned spoke may hold only
 // the public key once HIVE_SESSION_KEY is dropped after the rollout.
+//
+// ROTATION: this deliberately keys off SESSION_PUBLIC_KEY — the PRIMARY key —
+// exactly as before, NOT off SESSION_PUBLIC_KEYS. Two reasons, both about not
+// moving a boundary this PR has no business moving. First, a spoke is never
+// handed a _PREV without a primary, so the plural form could not make this true
+// where the singular is false; switching to it would be a change with no effect
+// that a later reader would have to re-derive. Second, and decisively, the
+// plural form applies validation the singular does not, so keying off it would
+// flip a spoke whose HIVE_SESSION_PUBLIC_KEY is malformed from hosted to
+// SELF-HOSTED — silently swapping the whole identity model from hub cookies to
+// a shared dashboard token. Hosted/self-hosted detection stays byte-identical.
 const IS_HOSTED = SESSION_KEY !== '' || SESSION_PUBLIC_KEY !== '';
 
 // Snapshot frame-ancestors allowlist (v2 #3032). Additive to the v4 C2/session
@@ -216,27 +293,51 @@ const TERMINAL_ASSERTION_VERSION = 'hive-terminal-v1';
 // convention (HMAC-SHA256(master, info) as lowercase hex).
 const INFO_TERMINAL_KEY = 'hive-terminal-v1';
 
-// deriveTerminalKeyFrom mirrors the Go deriveTerminalKeyFrom: the hex
-// HMAC-SHA256(master, INFO_TERMINAL_KEY), or '' for an empty master.
-function deriveTerminalKeyFrom(master) {
-  if (!master) return '';
-  return crypto.createHmac('sha256', master).update(INFO_TERMINAL_KEY).digest('hex');
+// derivePerHiveTerminalKey mirrors the Go derivePerHiveKey(master,
+// INFO_TERMINAL_KEY, hiveID): hex HMAC-SHA256 over info || 0x00 || hiveID.
+//
+// The 0x00 separator is load-bearing and must match Go byte for byte. Plain
+// concatenation would be ambiguous — ("hive-terminal-v1", "a|b") and
+// ("hive-terminal-v1|a", "b") would hash identically — and hive IDs are
+// attacker-influenced.
+//
+// Returns '' when EITHER input is missing, so a spoke that cannot identify
+// itself derives nothing rather than silently sharing a key.
+function derivePerHiveTerminalKey(master, hiveID) {
+  if (!master || !hiveID) return '';
+  return crypto
+    .createHmac('sha256', master)
+    .update(INFO_TERMINAL_KEY)
+    .update(Buffer.from([0]))
+    .update(hiveID)
+    .digest('hex');
 }
 
 // TERMINAL_SIGNING_KEY resolves the symmetric key the proxy verifies terminal
-// assertions with, mirroring Go hub.TerminalSigningKey's order EXACTLY:
-//   1. HIVE_TERMINAL_KEY   — a dedicated derived sub-key, if provisioned.
-//   2. HIVE_SESSION_KEY    — the session sub-key a C2-provisioned spoke already
-//                            holds (normal post-#2761 hosted path; the spoke no
-//                            longer receives the master).
-//   3. derive from HIVE_HUB_SECRET — self-hosted / pre-#2761 hosted spokes that
-//                            still hold the master.
+// assertions with, mirroring Go hub.TerminalSigningKey's order EXACTLY.
+// EVERY lane is PER-HIVE:
+//   1. HIVE_TERMINAL_KEY — the hub-injected per-hive sub-key. Present on every
+//      spoke in the fleet today, so this is the lane in force in production.
+//   2. Self-derived per-hive key from HIVE_HUB_SECRET + HIVE_ID.
+//
+// !! AUDIT N3 MUST NOT REGRESS: no lane may resolve to a FLEET-UNIFORM value. !!
+//
+// Two lanes used to sit here and both are DELETED in lockstep with the Go side:
+//   - HIVE_SESSION_KEY, which is byte-identical across all 65 spokes. An
+//     assertion minted on one tenant's spoke verified on every other, so any
+//     tenant operator could forge a shell grant for an arbitrary user on an
+//     arbitrary hive.
+//   - deriveTerminalKeyFrom(HIVE_HUB_SECRET), which took no hive ID and so
+//     derived ONE key for the whole fleet from a fleet-uniform master.
+//
 // Empty when none is configured → no assertion ever verifies → the terminal gate
 // falls back to the #2756 static allowlist. Computed ONCE at startup like HUB_SECRET.
 const TERMINAL_SIGNING_KEY =
   (process.env.HIVE_TERMINAL_KEY || '').trim() ||
-  (process.env.HIVE_SESSION_KEY || '').trim() ||
-  deriveTerminalKeyFrom((process.env.HIVE_HUB_SECRET || '').trim());
+  derivePerHiveTerminalKey(
+    (process.env.HIVE_HUB_SECRET || '').trim(),
+    (process.env.HIVE_ID || '').trim(),
+  );
 
 // TERMINAL_ASSERTION_COOKIE is where the spoke deposits the assertion (see
 // dashboard setTerminalAssertionCookie). Path=/terminal-scoped, HttpOnly.
@@ -336,8 +437,8 @@ function parseCookies(header) {
 // Fails closed: an absent, expired, wrong-hive or badly-signed assertion with no
 // valid hub cookie yields null and the caller denies.
 function resolveTerminalIdentity(cookies) {
-  const hubUser = verifyHubUserCookieEither(
-    SESSION_PUBLIC_KEY, SESSION_KEY, cookies['hive_hub_user']);
+  const hubUser = verifyHubUserCookieAcrossKeys(
+    SESSION_PUBLIC_KEYS, SESSION_KEY, cookies['hive_hub_user']);
   if (hubUser) return hubUser;
 
   const claim = verifyTerminalAssertion(
@@ -608,6 +709,48 @@ function verifyHubUserCookieEither(pubHex, legacySecret, value) {
   if (v3) return v3;
   const v2 = verifyHubUserCookieV2(pubHex, value);
   if (v2) return v2;
+  return verifyHubUserCookie(legacySecret, value);
+}
+
+// verifyHubUserCookieAcrossKeys is BOUNDED TRIAL VERIFICATION of a session
+// cookie against every public key this spoke holds, current-then-previous.
+//
+// This adds a second KEY, not a second FORMAT and not a second LANE. Each
+// candidate runs the identical verifyHubUserCookieEither the single-key path
+// runs, so the v3/v2/legacy lane structure, the expiry enforcement and the
+// signature checks are unchanged. In particular the legacy symmetric HMAC lane
+// is passed `legacySecret` exactly once and is NOT multiplied across keys —
+// SESSION_KEY is symmetric material with no generation plurality here, and
+// giving it any would be re-opening a lane the hub side (F1) has deleted.
+//
+// BOUNDED BY CONFIGURATION, NOT BY INPUT. `pubKeys` comes from
+// sessionPublicKeys(), which is at most two entries because the hub holds at
+// most maxLiveGenerations == 2 live generations and provisions at most one
+// _PREV var. A cookie cannot lengthen this list, so it cannot be used as an
+// asymmetric-cost lever.
+//
+// A MALFORMED SECOND KEY CANNOT DISABLE THE FIRST. Malformed entries never
+// reach here — sessionPublicKeys() drops them — and a candidate that simply
+// fails to verify is treated as a failed candidate, never as an error that
+// aborts the loop. So a garbage HIVE_SESSION_PUBLIC_KEY_PREV costs nothing but
+// a skipped entry.
+//
+// An empty list verifies nothing through the Ed25519 lanes and falls through to
+// the legacy symmetric lane alone — which is the pre-existing behaviour for a
+// spoke with no public key at all, preserved rather than changed.
+function verifyHubUserCookieAcrossKeys(pubKeys, legacySecret, value) {
+  if (!value) return '';
+  const keys = Array.isArray(pubKeys) ? pubKeys : [];
+  for (const pubHex of keys) {
+    const v3 = verifyHubUserCookieV3(pubHex, value);
+    if (v3) return v3;
+    const v2 = verifyHubUserCookieV2(pubHex, value);
+    if (v2) return v2;
+  }
+  // Legacy symmetric lane, tried once and only once after every public key has
+  // been tried. Kept last so an Ed25519-signed cookie is never evaluated
+  // against symmetric material, and kept OUTSIDE the loop so the number of HMAC
+  // computations does not scale with the number of public keys.
   return verifyHubUserCookie(legacySecret, value);
 }
 

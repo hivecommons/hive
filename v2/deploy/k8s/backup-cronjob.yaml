@@ -15,29 +15,43 @@ metadata:
   name: hive-hub-backup
   namespace: hive-hub
 ---
-# Least-privilege RBAC (see #3708). The backup reads Secrets ONLY in its own
-# namespace (hive-hub) and execs into spoke pods that live in per-spoke
-# namespaces across the cluster.
+# Least-privilege RBAC (see #3708), scoped to exactly the API calls the backup
+# binary makes (pkg/hubbackup/collect.go):
+#
+#   kubectl get secret <name> -n hive-hub -o json     # 4 named Secrets, GET only
+#   kubectl get pods -n hive-hosted-<id> ...          # per-spoke pod lookup
+#   kubectl exec    -n hive-hosted-<id> -c hive ...   # per-spoke config read
 #
 # Secrets access is intentionally NOT cluster-wide: it is granted through a
-# namespaced Role + RoleBinding scoped to hive-hub, so a compromised backup pod
-# cannot enumerate or read Secrets in any other namespace.
+# namespaced Role + RoleBinding scoped to hive-hub, pinned by resourceNames to
+# the four Secrets the backup archives, so a compromised backup pod cannot
+# enumerate or read any other Secret — in this namespace or any other.
 #
-# pods, pods/exec, and namespaces remain in a ClusterRole because spoke pods
-# live in arbitrary per-spoke namespaces (e.g. vllm-d) that cannot be
-# enumerated ahead of time, and `namespaces` is itself a cluster-scoped
-# resource. This ClusterRole no longer grants any secrets access.
+# pods and pods/exec remain in a ClusterRole because spoke namespaces
+# (hive-hosted-<id>) are created dynamically per spoke: they cannot be
+# enumerated in a static manifest for per-namespace RoleBindings, and RBAC
+# cannot express "pods in namespaces matching hive-hosted-*". That ClusterRole
+# grants no secrets access and no namespace enumeration.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: hive-hub-backup
   namespace: hive-hub
 rules:
-  # Read the four out-of-PVC Secrets that live in hive-hub (backup key is
-  # injected via env; these are the Secrets the backup archives directly).
+  # The backup performs only named GETs of the four out-of-PVC Secrets
+  # (DefaultHubSecrets in pkg/hubbackup/collect.go); it never LISTs Secrets.
+  # The grant is therefore pinned to exactly those names with the single verb
+  # the code uses — resourceNames cannot constrain "list", which is one more
+  # reason list is omitted. The backup key itself is injected via env, and the
+  # kubeconfigs Secret volume is mounted by the kubelet, not read via this SA.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
+    resourceNames:
+      - hive-hub-secrets # GitHub OAuth client secret
+      - oci-api-key # OCI credentials for FSS + Object Storage
+      - hive-hub-kubeconfigs # kubeconfigs for remote spoke clusters
+      - hive-hub-tls # TLS cert (cert-manager can reissue, kept for speed)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -54,9 +68,14 @@ subjects:
     namespace: hive-hub
 ---
 # Minimal ClusterRole: only what genuinely must reach across namespaces.
-# Spoke pods live in per-spoke namespaces, so listing pods and creating
-# pod/exec sessions requires cluster scope, as does listing namespaces to
-# discover spokes. No secrets access here (moved to the namespaced Role above).
+#
+# The collector derives every spoke namespace as hive-hosted-<id> from
+# hub-registry.json — it never enumerates namespaces — so the previous
+# "namespaces: get,list" grant was unused and has been removed. What remains
+# is exactly the per-spoke read path: finding the Running spoke pod and
+# exec'ing into it. Spoke namespaces are created dynamically, so this cannot
+# be narrowed to per-namespace RoleBindings from a static manifest; that is
+# the only reason a ClusterRole remains at all.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -68,9 +87,6 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -110,11 +126,18 @@ spec:
           restartPolicy: Never
           containers:
             - name: backup
-              # Digest-pinned (see #3709) so a mutable-tag poisoning attack on
-              # v4-latest cannot silently deliver a hostile backup container.
-              # Recompute the digest deliberately at each release, matching the
-              # Watchtower pinning pattern.
-              image: ghcr.io/kubestellar/hive:v4-latest@sha256:e3f9ee8fd3852499f732414cd9b85d9278103e3e8ac7fb8629cf14488b90ec23
+              # `stable` is the operator-blessed release channel (see #3709).
+              # The original v2-latest tag belonged to the retired v2 branch —
+              # a dead tag that would have gone permanently stale once that
+              # branch stopped building — and a frozen one-off digest pin rots
+              # the same way as releases roll unless someone remembers to
+              # recompute it. Tracking the stable channel keeps the backup
+              # binary in lockstep with the release the fleet actually runs.
+              image: ghcr.io/kubestellar/hive:stable
+              # `stable` is a moving tag: without Always, each node keeps
+              # running whatever the tag resolved to on first pull and channel
+              # promotions are silently ignored.
+              imagePullPolicy: Always
               command: ["/usr/local/bin/hive-backup", "run"]
               env:
                 # AES-256 key for the archive. MUST be escrowed outside the

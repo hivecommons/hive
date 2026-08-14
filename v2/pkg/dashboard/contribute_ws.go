@@ -23,6 +23,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kubestellar/hive/v2/pkg/config"
+	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
 )
 
 const (
@@ -3318,6 +3319,34 @@ func (h *ContributeWSHub) resumeGateReason(c *ContributorConnection) string {
 	return ""
 }
 
+// issueClaimedByOpenPR reports whether ANY open PR already claims to fix the
+// given issue (kubestellar/hive#3768), via the Dependencies.IssueClaimed hook
+// into the governor's duplicate-PR claim ledger. Unlike the agent-side
+// FilterClaimedIssues — which deliberately honours only hive-authored claims —
+// the contribute queue must honour EVERY claim: a human contributor's open PR
+// is exactly the "someone is already on it" signal whose absence let the same
+// issue be handed to contributor after contributor.
+//
+// The ledger keys claims by the repo spelling used in the hive config, which
+// FrontendRepo.Name preserves; repo.Full is the org-qualified form and is tried
+// first since cross-repo `owner/repo#N` closing references key on it. A hub
+// with no hook wired (tests, or a hive booted without GitHub credentials)
+// reports no claims and selection proceeds exactly as before.
+func (h *ContributeWSHub) issueClaimedByOpenPR(repoFull, repoName string, number int) (ghpkg.IssueClaim, bool) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueClaimed == nil {
+		return ghpkg.IssueClaim{}, false
+	}
+	if claim, ok := h.server.deps.IssueClaimed(repoFull, number); ok {
+		return claim, true
+	}
+	if repoName != "" && repoName != repoFull {
+		if claim, ok := h.server.deps.IssueClaimed(repoName, number); ok {
+			return claim, true
+		}
+	}
+	return ghpkg.IssueClaim{}, false
+}
+
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.selectMu.Lock()
 	defer h.selectMu.Unlock()
@@ -3589,6 +3618,23 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				continue
 			}
 			if activeIssues[fmt.Sprintf("%s#%d", repo.Full, number)] {
+				continue
+			}
+			// #3768: skip an issue that an open PR — from ANYONE, hive agent or
+			// human contributor — already claims to fix. The activeIssues guard
+			// above only covers tasks held by LIVE connections, and the
+			// completion cooldown only starts when the relay reports a verified
+			// task_complete; a contributor who opens a PR but whose completion
+			// report is missed (relay scrape failure, disconnect, verification
+			// downgrade) left the issue re-offerable after the short 4h no-PR
+			// cooldown, so projectbluefin/dakota#353 accumulated one duplicate
+			// PR per window. The claim ledger sees the open PR itself on the
+			// next eval cycle, which closes that hole regardless of what the
+			// relay managed to report.
+			if claim, claimed := h.issueClaimedByOpenPR(repo.Full, repo.Name, number); claimed {
+				h.logger.Info("[contribute-ws] skip: issue already claimed by an open PR",
+					"repo", repo.Full, "number", number,
+					"pr_url", claim.PRURL, "pr_author", claim.PRAuthor)
 				continue
 			}
 			// Yank self-exclusion: an issue this SAME clanker was just yanked off is

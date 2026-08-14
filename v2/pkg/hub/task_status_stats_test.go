@@ -76,8 +76,9 @@ func TestHandleTaskStatus_HiveNotFound(t *testing.T) {
 
 	body := `{"hive_id":"h1","leaderboard":[],"contributors":{"active":1,"registered":5}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/task-status", strings.NewReader(body))
-	// v4 accepts only the derived heartbeat sub-key, not the master secret.
-	req.Header.Set("Authorization", "Bearer "+s.heartbeatKey())
+	// Post-F2 the hub accepts ONLY the per-hive bearer, bound to the hive_id in the
+	// body — the fleet-wide sub-key is no longer a credential.
+	req.Header.Set("Authorization", "Bearer "+s.heartbeatKeyFor("h1"))
 	rr := httptest.NewRecorder()
 	s.handleTaskStatus(rr, req)
 
@@ -103,8 +104,9 @@ func TestHandleTaskStatus_Success(t *testing.T) {
 	}
 	data, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/task-status", bytes.NewReader(data))
-	// v4 accepts only the derived heartbeat sub-key, not the master secret.
-	req.Header.Set("Authorization", "Bearer "+s.heartbeatKey())
+	// Post-F2 the hub accepts ONLY the per-hive bearer, bound to the hive_id in the
+	// body — the fleet-wide sub-key is no longer a credential.
+	req.Header.Set("Authorization", "Bearer "+s.heartbeatKeyFor("h1"))
 	rr := httptest.NewRecorder()
 	s.handleTaskStatus(rr, req)
 
@@ -147,8 +149,9 @@ func TestHandleTaskStatus_SanitizesLeaderboardUsername(t *testing.T) {
 	}
 	data, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/task-status", bytes.NewReader(data))
-	// v4 accepts only the derived heartbeat sub-key, not the master secret.
-	req.Header.Set("Authorization", "Bearer "+s.heartbeatKey())
+	// Post-F2 the hub accepts ONLY the per-hive bearer, bound to the hive_id in the
+	// body — the fleet-wide sub-key is no longer a credential.
+	req.Header.Set("Authorization", "Bearer "+s.heartbeatKeyFor("h1"))
 	rr := httptest.NewRecorder()
 	s.handleTaskStatus(rr, req)
 

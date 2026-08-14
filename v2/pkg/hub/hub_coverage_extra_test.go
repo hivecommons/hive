@@ -677,7 +677,7 @@ func TestHandleDenyRequestHiveNotFound(t *testing.T) {
 
 func TestHandleHeartbeatUpdateExistingWithSparkline(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Pre-populate a hive with sparkline data from 20 minutes ago
 	oldTime := time.Now().Add(-20 * time.Minute).Unix()
@@ -723,7 +723,7 @@ func TestHandleHeartbeatUpdateExistingWithSparkline(t *testing.T) {
 
 func TestHandleHeartbeatUpgradeCompleted(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -762,7 +762,7 @@ func TestHandleHeartbeatUpgradeCompleted(t *testing.T) {
 
 func TestHandleHeartbeatUpgradeInProgress(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -805,7 +805,7 @@ func TestHandleHeartbeatUpgradeInProgress(t *testing.T) {
 
 func TestHandleHeartbeatResponseAutoUpgrade(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Set up a latestSHA for v2
 	latestSHAMu.Lock()
@@ -848,7 +848,7 @@ func TestHandleHeartbeatResponseAutoUpgrade(t *testing.T) {
 
 func TestHandleHeartbeatStoresClusterHealth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := HeartbeatPayload{
 		HiveID:    "health-store-hive",
@@ -1048,7 +1048,7 @@ func TestDecryptTokenWithBadCiphertext(t *testing.T) {
 
 func TestHandleHeartbeatTriggersRegistrySave(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{"hive_id":"save-trigger-hive"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -1211,7 +1211,7 @@ func TestHandleHeartbeatSaaSHivePrefix(t *testing.T) {
 	payload := `{"hive_id":"saas-test-nosaas"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", heartbeatBearer(secret))
+	req.Header.Set("Authorization", heartbeatBearer(secret, "saas-test-nosaas"))
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1222,7 +1222,7 @@ func TestHandleHeartbeatSaaSHivePrefix(t *testing.T) {
 
 func TestHandleHeartbeatUpgradingFlag(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{"hive_id":"upgrading-flag-test","upgrading":true,"upgrade_target_sha":"7a41e01"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -1285,7 +1285,7 @@ func TestGetLatestSHAForBranchNotFound(t *testing.T) {
 
 func TestHandleHeartbeatHiveTypeExplicit(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{"hive_id":"explicit-type","hive_type":"custom-type"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -1310,7 +1310,7 @@ func TestHandleHeartbeatHiveTypeExplicit(t *testing.T) {
 
 func TestHandleHeartbeatMaxAgents(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Create 60 agents to test the max agents cap (50)
 	agents := make([]AgentSummary, 60)
@@ -1345,7 +1345,7 @@ func TestHandleHeartbeatMaxAgents(t *testing.T) {
 
 func TestHandleHeartbeatSnapshotURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// First heartbeat with snapshot
 	payload1 := `{"hive_id":"snapshot-hive","snapshot_url":"https://snap.example.com/1"}`

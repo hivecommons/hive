@@ -69,6 +69,17 @@ type Client struct {
 	// Set by SetMergerAuthorizer.
 	mergerAuthzMu sync.RWMutex
 	mergerAuthz   MergerAuthorizer
+	// requiredChecks is the operator-declared config.AutoMergeConfig.RequiredChecks
+	// set (see config.AutoMergeConfig.RequiredCheckSet), consulted by
+	// commitGreen/requiredStatusCheckContexts BEFORE the branch-protection
+	// API — the Hive App token lacks administration:read, so that API call
+	// always errors, and this config-declared set is the scope-free source
+	// of truth for which status checks actually gate self-merge. nil means
+	// "not config-declared", so callers fall through to the API, then the
+	// allowlist. Guarded because config reload re-installs it while the
+	// sweep goroutine reads it. Set by SetRequiredChecks.
+	requiredChecksMu sync.RWMutex
+	requiredChecks   map[string]bool
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning

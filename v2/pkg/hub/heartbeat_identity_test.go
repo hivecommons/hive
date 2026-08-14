@@ -48,24 +48,38 @@ func TestHeartbeatBearerIsPerHive(t *testing.T) {
 	}
 }
 
-// TestHeartbeatLegacyFleetBearerStillAccepted pins the deliberate rollout
-// compatibility path. Every spoke in the field currently holds the fleet-wide
-// bearer and will keep holding it until the hub re-provisions it; rejecting it
-// outright would break every heartbeat in the fleet at once (the failure mode
-// documented for the v2-hub/v4-spoke split in #2773).
-func TestHeartbeatLegacyFleetBearerStillAccepted(t *testing.T) {
+// TestHeartbeatLegacyFleetBearerNowRejected is the INVERSION of the former
+// TestHeartbeatLegacyFleetBearerStillAccepted, which asserted that the
+// fleet-wide bearer MUST be accepted. That assertion encoded the vulnerability:
+// while it held, any spoke could beat as any hive. It is inverted rather than
+// deleted so this file keeps documenting that the lane is deliberately refused,
+// and so a re-introduction of the lane fails CI instead of passing it.
+func TestHeartbeatLegacyFleetBearerNowRejected(t *testing.T) {
 	s := n1Hub(t)
 	legacy := s.heartbeatKey()
 
-	if !s.verifyHeartbeatBearer(legacy, "hive-alpha") {
-		t.Fatal("legacy fleet bearer rejected — this would break every spoke that has " +
-			"not yet re-provisioned")
+	if legacy == "" {
+		t.Fatal("test setup: fleet-wide derivation returned empty, so the rejection " +
+			"below would pass for the wrong reason")
 	}
-	// And it is correctly reported as NOT the modern, identity-bound path, so
-	// rollout telemetry can tell an operator when the legacy lane is safe to cut.
+
+	// Positive control: the hub still authenticates a legitimate heartbeat. Without
+	// this, a verifier that rejected EVERYTHING would satisfy the assertion below
+	// while taking the whole fleet down.
+	if !s.verifyHeartbeatBearer(s.heartbeatKeyFor("hive-alpha"), "hive-alpha") {
+		t.Fatal("positive control failed: the per-hive bearer was rejected for its own " +
+			"hive, so the rejection below proves nothing")
+	}
+
+	// F2: the fleet-wide bearer is no longer a credential.
+	if s.verifyHeartbeatBearer(legacy, "hive-alpha") {
+		t.Fatal("F2: the fleet-wide bearer still authenticates — possession proves only " +
+			"'some provisioned spoke', so any spoke can beat as any victim hive")
+	}
+	// It is still correctly reported as NOT identity-bound by the retained
+	// auth-rollout telemetry.
 	if s.heartbeatBearerIsPerHive(legacy, "hive-alpha") {
-		t.Error("legacy bearer misreported as per-hive — an operator would remove the " +
-			"compatibility lane while spokes still depend on it")
+		t.Error("fleet-wide bearer misreported as per-hive")
 	}
 	if !s.heartbeatBearerIsPerHive(s.heartbeatKeyFor("hive-alpha"), "hive-alpha") {
 		t.Error("per-hive bearer not reported as per-hive")
@@ -91,10 +105,14 @@ func TestHeartbeatBearerFailsClosedWithoutIdentity(t *testing.T) {
 	if got := s.heartbeatKeyFor(""); got != "" {
 		t.Errorf("empty hiveID derived %q, want \"\"", got)
 	}
-	// With no identity the per-hive branch cannot match, so only the legacy
-	// bearer can authenticate — never an empty or arbitrary string.
+	// With no identity the per-hive derivation returns "" and, post-F2, there is no
+	// other lane — so an identity-less caller authenticates with NOTHING, not even
+	// the former fleet-wide bearer.
 	if s.verifyHeartbeatBearer("anything", "") {
 		t.Error("verifyHeartbeatBearer accepted an arbitrary bearer for an empty hive ID")
+	}
+	if s.verifyHeartbeatBearer(s.heartbeatKey(), "") {
+		t.Error("verifyHeartbeatBearer accepted the fleet-wide bearer for an empty hive ID")
 	}
 }
 

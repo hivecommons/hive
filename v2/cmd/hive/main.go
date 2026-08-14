@@ -24,6 +24,18 @@ import (
 	"syscall"
 	"time"
 
+	// automaxprocs sets GOMAXPROCS to match the container's CPU quota (Linux
+	// CFS) at init. Without it the Go runtime sizes its P count to the whole
+	// NODE's core count, so on a many-core IKS worker a pod limited to a few
+	// CPUs spawns far more runnable Ps than its CFS quota can service; when the
+	// quota is exhausted mid-period EVERY goroutine — including the netpoller
+	// that answers the :3002 liveness probe and the heartbeat loop — is
+	// throttled until the next CFS period, which stacks on top of the NFS
+	// stalls to push probe latency past the kubelet timeout. Matching GOMAXPROCS
+	// to the quota removes that self-inflicted throttling. Blank import: its
+	// only job is the init-time side effect.
+	_ "go.uber.org/automaxprocs"
+
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	gh "github.com/google/go-github/v72/github"
@@ -818,6 +830,15 @@ func singletonLockPath() string {
 const spokeRestartMinUptime = 10 * time.Minute
 
 func main() {
+	// --version fast path, before any flag parsing or startup work: the CI
+	// smoke test (and operators) probe the binary with `hive --version`; the
+	// standard flag set would reject it ("flag provided but not defined").
+	// dd's full CLI dispatcher handles this via a version subcommand; this is
+	// the minimal equivalent for the v4 line.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Printf("hive 3.0.0 (commit %s, branch %s)\n", gitShort, gitBranch)
+		return
+	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {
@@ -834,6 +855,10 @@ func main() {
 	}
 	dashboard.SetGitVersion(gitHash, gitShort)
 	dashboard.SetGitBranch(gitBranch)
+	// Channel-delivered spokes ("stable" retag of a v4 build) label their
+	// version badge with the channel; "" outside a cluster or on branch/SHA
+	// tags, in which case the badge stays branch-only.
+	dashboard.SetReleaseChannel(hub.SelfImageReleaseChannel())
 
 	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
@@ -1367,6 +1392,18 @@ func main() {
 		// against the SAME allowlist the dashboard uses so there is one notion of
 		// trust; read through cfg on every call so a config reload takes effect.
 		ghClient.SetMergerAuthorizer(trustedMergerFunc(cfg))
+
+		// commitGreen's required-checks gate (self-merge sweep, see
+		// automerge_sweep.go): install the operator-declared
+		// auto_merge.required_checks list, if any, so gating does not depend
+		// on GitHub's branch-protection API — the Hive App token lacks
+		// administration:read, so that API call reliably errors and would
+		// otherwise fail closed to the coarser isMetaCheck/isIgnorableCICheck
+		// allowlist. Unset/empty leaves the API/allowlist fallback chain
+		// intact (SetRequiredChecks(nil) is a safe no-op).
+		if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+			ghClient.SetRequiredChecks(set)
+		}
 
 		// Self-authored auto-merge: the App merges its OWN open, CI-green PRs
 		// directly over the REST API, without a human "Approved ... for Hive
@@ -2153,6 +2190,14 @@ func main() {
 		Logger:           logger,
 		Ctx:              ctx,
 		RefreshFunc:      refreshDashboard,
+		// #3768: give the contribute queue read access to the duplicate-PR
+		// claim ledger, so an issue any open PR (hive-authored or a human
+		// contributor's) already claims to fix is never offered to another
+		// contributor. Lazy: the ledger loads on first use, same as the
+		// eval-cycle guard.
+		IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
+			return getClaimLedger(logger).Lookup(repo, number)
+		},
 		PersistFunc: func() {
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 		},
@@ -2206,6 +2251,9 @@ func main() {
 			if len(cfg.Governor.Labels.Exempt) > 0 {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
+			}
+			if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+				newClient.SetRequiredChecks(set)
 			}
 
 			ghClient = newClient
@@ -2607,6 +2655,9 @@ func main() {
 					if len(cfg.Governor.Labels.Exempt) > 0 {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
+					}
+					if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+						newClient.SetRequiredChecks(set)
 					}
 					ghClient = newClient
 					appAuth = newAppAuth
@@ -3714,6 +3765,9 @@ func main() {
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
+				}
+				if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
+					newClient.SetRequiredChecks(set)
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
@@ -5978,6 +6032,20 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	ledger := getClaimLedger(logger)
+	if ledger == nil {
+		return
+	}
+	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+}
+
+// getClaimLedger lazily loads the persisted claim ledger on first use (and
+// keeps a usable empty ledger on a load failure), so a missing or corrupt
+// /data ledger can never block the hive from booting. It is shared by the
+// eval-cycle guard above and by the dashboard's IssueClaimed hook (#3768); the
+// sync.Once publication makes the pointer safe to read from either goroutine,
+// and the ledger itself is internally locked.
+func getClaimLedger(logger *slog.Logger) *github.ClaimLedger {
 	claimLedgerOnce.Do(func() {
 		ledger, err := github.LoadClaimLedger(github.ClaimLedgerPath, logger)
 		if err != nil {
@@ -5988,10 +6056,7 @@ func applyDuplicatePRGuard(
 		}
 		claimLedger = ledger
 	})
-	if claimLedger == nil {
-		return
-	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	return claimLedger
 }
 
 // claimingPRRedStale builds the Fix #3 release predicate: given a claiming PR

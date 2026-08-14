@@ -4585,6 +4585,51 @@ type AutoMergeConfig struct {
 	// AutoMergeSweepOptions.MaxMerges for the human queue sweep. Zero means
 	// DefaultAutoMergeSweepMaxMerges.
 	MaxMerges int `yaml:"max_merges,omitempty" json:"max_merges,omitempty"`
+	// RequiredChecks is the operator-declared list of status-check
+	// contexts/check-run names that the self-merge sweep's commitGreen must
+	// gate on, e.g. ["build-gate"]. This is the scope-free alternative to
+	// asking GitHub's branch-protection API (Repositories.GetRequiredStatusChecks)
+	// which one, and only one, of these checks are actually required: that
+	// API needs administration:read, a scope the Hive GitHub App does not
+	// hold, so the call errors and the sweep used to fail closed to the old
+	// isMetaCheck/isIgnorableCICheck allowlist — which still blocked on
+	// non-required checks like "Detect untested files" (cancelled) or
+	// "Analyze (python)" (CodeQL failure). Declaring the branch's actual
+	// required set here removes the dependency on that scope entirely.
+	//
+	// Unset/empty means "not config-declared" (RequiredCheckSet returns
+	// requiredKnown=false) — callers then fall back to the branch-protection
+	// API, and if that also cannot determine the set, to the allowlist. There
+	// is deliberately no hardcoded default here: the required-checks set is
+	// per-repo (e.g. console's main branch requires only "build-gate"), so
+	// the operator must declare it per-hive in `auto_merge.required_checks`.
+	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+}
+
+// RequiredCheckSet returns the config-declared required-status-check set as a
+// membership map, and whether the config actually declared one. An
+// empty/unset RequiredChecks list returns (nil, false) — "not config-declared"
+// — so callers can distinguish that from a genuinely empty required set (e.g.
+// an unprotected branch) and fall through to their next source (the
+// branch-protection API, then the allowlist fallback). A non-empty list
+// always returns requiredKnown=true; entries are matched by exact string
+// equality against status-context / check-run names.
+func (a AutoMergeConfig) RequiredCheckSet() (map[string]bool, bool) {
+	if len(a.RequiredChecks) == 0 {
+		return nil, false
+	}
+	set := make(map[string]bool, len(a.RequiredChecks))
+	for _, name := range a.RequiredChecks {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		set[name] = true
+	}
+	if len(set) == 0 {
+		return nil, false
+	}
+	return set, true
 }
 
 // SelfAuthoredEnabled reports whether the App-self-merge sweep is on for this

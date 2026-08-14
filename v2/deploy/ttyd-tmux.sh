@@ -43,10 +43,17 @@ CURRENT_UID=$(id -u)
 # on attach, which left wheel events untranslated: scrolling up did not page
 # back through history, it merely reflowed a few lines at the bottom of the
 # viewport (the reported symptom). Enable mouse mode instead so the wheel drives
-# copy-mode and scrolls back through the pane's history normally, and give the
-# pane a generous history-limit so there is meaningful scrollback to reach.
+# copy-mode and scrolls back through the pane's history normally, and raise the
+# session history-limit so panes created later in the session get a deep buffer.
 # Both are per-session options restored to their previous values on detach so
 # an agent CLI that manages mouse mode itself is not permanently altered.
+#
+# NOTE: tmux reads history-limit at PANE creation, so the raise below CANNOT
+# deepen the pane that already exists when the browser attaches. The
+# authoritative deep-scrollback setting is applied at session creation by the
+# agent manager (newSessionCommands in v2/pkg/agent/manager.go, default 50000,
+# override HIVE_TMUX_HISTORY_LIMIT). The attach-time raise is only defense in
+# depth for sessions created outside the manager.
 #
 # HIVE_TTYD_HISTORY_LIMIT overrides the scrollback depth applied on attach.
 TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"

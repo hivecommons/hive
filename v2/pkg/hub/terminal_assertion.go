@@ -3,7 +3,6 @@ package hub
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -60,18 +59,18 @@ const (
 	// terminal key can only ever sign/verify terminal assertions.
 	infoTerminalKey = "hive-terminal-v1"
 
-	// EnvTerminalKey is the dedicated spoke-side env var a least-privilege
-	// provisioning path may inject (mirrors C2's EnvSessionKey / EnvHeartbeatKey).
-	// When unset, terminalSigningKey falls back to the session sub-key the spoke
-	// already holds, then to deriving from HIVE_HUB_SECRET — see terminalSigningKey.
+	// EnvTerminalKey is the dedicated spoke-side env var carrying the PER-HIVE
+	// terminal signing key (provisionTerminalKey). It is the preferred lane and,
+	// measured on the live fleet, the one every spoke actually uses. When unset,
+	// TerminalSigningKey SELF-DERIVES the same per-hive value from the master
+	// plus HIVE_ID — it never falls back to a fleet-uniform key. See
+	// TerminalSigningKey for why both former fallbacks were deleted (audit N3).
 	EnvTerminalKey = "HIVE_TERMINAL_KEY"
 
-	// envSessionKey / envHubSecret are the fallbacks terminalSigningKey resolves
-	// against. Named as string literals here (not imported from hub_keys.go, which
-	// lives only on the C2 branch) so this file compiles on its own base and after
-	// the C2 merge alike.
-	envSessionKey = "HIVE_SESSION_KEY"
-	envHubSecret  = "HIVE_HUB_SECRET"
+	// envHubSecret is the raw master, still present on every spoke today. It is
+	// read ONLY as the input to the per-hive self-derivation lane, never as a
+	// terminal key in its own right.
+	envHubSecret = "HIVE_HUB_SECRET"
 )
 
 // terminalSign returns the URL-safe base64 HMAC-SHA256 of body under key. This is
@@ -84,44 +83,88 @@ func terminalSign(key, body string) string {
 	return ssoB64.EncodeToString(mac.Sum(nil))
 }
 
-// deriveTerminalKeyFrom returns the domain-separated terminal sub-key of master,
-// as lowercase hex — HMAC-SHA256(master, infoTerminalKey). Same formula as C2's
-// deriveDomainKey, kept local (under a distinct name) so it neither depends on
-// nor collides with hub_keys.go's deriveDomainKey when both land. Returns "" for
-// an empty master so an unset secret can never derive a usable key (fail closed).
-func deriveTerminalKeyFrom(master string) string {
-	if master == "" {
-		return ""
-	}
-	mac := hmac.New(sha256.New, []byte(master))
-	mac.Write([]byte(infoTerminalKey))
-	return hex.EncodeToString(mac.Sum(nil))
-}
+// deriveTerminalKeyFrom is DELETED (audit N3).
+//
+// It returned HMAC-SHA256(master, infoTerminalKey) with NO hive ID. Because the
+// master is fleet-uniform — measured live: present on 65/65 spokes with exactly
+// ONE distinct value — that expression derived a single terminal key for the
+// entire fleet, so an assertion minted on any spoke verified on every other.
+// Domain separation does not help when the keying input is shared by every
+// tenant; only binding the hive ID does.
+//
+// The replacement is derivePerHiveKey(master, infoTerminalKey, hiveID), used
+// inline by TerminalSigningKey's self-derive lane. Nothing may reintroduce a
+// hiveID-less terminal derivation: a helper that exists is a helper that gets
+// called, which is how this lane survived the original N3 fix.
 
 // TerminalSigningKey resolves the symmetric key the spoke mints — and the proxy
-// verifies — terminal assertions with. Resolution order (most-to-least specific),
-// matching the spoke-side least-privilege story and surviving the C2 cutover:
+// verifies — terminal assertions with.
 //
-//  1. HIVE_TERMINAL_KEY — a dedicated derived sub-key, if a future provisioning
-//     path injects one (most privilege-minimal).
-//  2. HIVE_SESSION_KEY — the session sub-key a C2-provisioned spoke ALREADY holds
-//     (the spoke both mints and verifies terminal grants, so reusing the
-//     spoke-local session key is a legitimate symmetric use). This is the normal
-//     post-#2761 hosted path: the spoke no longer receives the master.
-//  3. deriveTerminalKeyFrom(HIVE_HUB_SECRET) — self-hosted / pre-#2761 hosted
-//     spokes still hold the master; derive the terminal sub-key from it.
+// Resolution order, most-to-least specific. EVERY lane is PER-HIVE:
 //
-// Returns "" only when none is configured, preserving fail-closed behavior (no
-// key → no assertion minted → proxy falls back to the #2756 static allowlist).
-// The Node proxy's terminalSigningKey() mirrors this order EXACTLY.
+//  1. HIVE_TERMINAL_KEY — the hub-injected per-hive sub-key
+//     (provisionTerminalKey: HMAC(master, infoTerminalKey || 0x00 || hiveID)).
+//     This is the normal hosted path; measured on the live fleet it is present
+//     and 65-distinct on every spoke.
+//  2. Self-derived per-hive key, from HIVE_HUB_SECRET + HIVE_ID. This mirrors
+//     SpokeHeartbeatKey's lane 2 (audit F2) and exists for the same reason: the
+//     per-hive key is a pure function of two things the spoke ALREADY HOLDS, so
+//     a spoke can become identity-bound with no hub action and no re-provision.
+//
+// !! AUDIT N3 MUST NOT REGRESS: there is deliberately NO lane that resolves to a
+// FLEET-UNIFORM value. !!
+//
+// Two such lanes used to sit here and both are DELETED by this change:
+//
+//   - HIVE_SESSION_KEY. Measured live: present on 65/65 spokes and byte-IDENTICAL
+//     across all of them. An assertion minted on spoke A verified on spoke B, so
+//     any tenant operator could forge a shell grant for an arbitrary user on an
+//     arbitrary hive. N3 closed this in PROVISIONING (by injecting
+//     HIVE_TERMINAL_KEY so lane 1 wins), but the lane itself was left in the
+//     resolver — so it was one absent env var away from being live again, which
+//     is exactly the state of a re-provisioned or manifest-reapplied spoke (see
+//     perhive_env_reconcile.go's header: the fleet's posture is held by an
+//     out-of-band patch no controller maintained).
+//   - deriveTerminalKeyFrom(HIVE_HUB_SECRET), i.e. deriveDomainKey with NO hiveID.
+//     The master is fleet-uniform (measured: 65/65 spokes, 1 distinct value), so
+//     this derived exactly ONE key for the entire fleet. It was the same forgery
+//     lane wearing domain separation: separating the DOMAIN does nothing when the
+//     input is shared by every tenant.
+//
+// Lane 2 replaces the second of those in place: same inputs, same no-hub-action
+// property, but binding the hive ID makes the result unforgeable across tenants.
+// derivePerHiveKey returns "" for an empty hive ID rather than silently falling
+// back to a shared key, so a spoke that cannot identify itself mints nothing.
+//
+// Returns "" when nothing resolves, preserving fail-closed behavior (no key → no
+// assertion minted → the proxy falls back to the #2756 static allowlist, which
+// is a degradation in convenience, not in safety).
+//
+// ROTATION (master-key-rotation.md, follow-on PR #5). There is deliberately NO
+// trial verification here, and none is possible: a spoke holds ONE master and
+// ONE injected key, never a generation set — the hub never provisions generation
+// material to a spoke. Terminal assertions are also minted AND verified on the
+// same spoke from this same resolver, so minter and verifier hold an identical
+// value at every instant and dual acceptance has nothing to reconcile. Rotation
+// converges here through the reconcile lane re-patching HIVE_TERMINAL_KEY, at
+// the cost of invalidating in-flight assertions — which self-heal within their
+// 15-minute TTL. See the design doc's PR #5 note for why that is the whole job.
+//
+// The Node proxy's TERMINAL_SIGNING_KEY mirrors this order EXACTLY
+// (v2/proxy/server.js) — the two MUST stay in lockstep, and PR #6 carries the
+// matching proxy change.
 func TerminalSigningKey() string {
 	if v := strings.TrimSpace(os.Getenv(EnvTerminalKey)); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(os.Getenv(envSessionKey)); v != "" {
-		return v
-	}
-	return deriveTerminalKeyFrom(strings.TrimSpace(os.Getenv(envHubSecret)))
+	// Lane 2: self-derive the PER-HIVE key from the master the spoke already
+	// holds plus its own identity. Never deriveTerminalKeyFrom(master) — that is
+	// fleet-uniform and is the N3 forgery lane.
+	return derivePerHiveKey(
+		strings.TrimSpace(os.Getenv(envHubSecret)),
+		infoTerminalKey,
+		strings.TrimSpace(os.Getenv(EnvHiveID)),
+	)
 }
 
 // MintTerminalAssertion creates a short-lived, HMAC-signed assertion binding

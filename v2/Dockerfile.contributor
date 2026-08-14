@@ -1,6 +1,16 @@
 # Contributor image for ClankeR, the contributor relay: a CLI agent plus the
 # WebSocket client that pulls tasks from a Hive hub.
-FROM debian:bookworm-slim
+#
+# Base image is pinned by digest (multi-arch index, covers amd64+arm64) for
+# supply-chain safety (issue #3746) so a compromised/republished bookworm-slim
+# tag cannot silently change what CI builds. To refresh after a legitimate
+# Debian security update, resolve the current index digest with:
+#   TOK=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/debian:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $TOK" \
+#     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+#     https://registry-1.docker.io/v2/library/debian/manifests/bookworm-slim | grep -i docker-content-digest
+# and swap it in below, keeping the tag for readability.
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
 ARG NODE_MAJOR=24
 
@@ -34,7 +44,7 @@ RUN mkdir -p /etc/apt/keyrings \
 # diff, mirroring the cleanup already done for the bobshell install below.
 ARG CLAUDE_CODE_VERSION=2.1.226
 ARG COPILOT_VERSION=1.0.59
-RUN npm install -g \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     @github/copilot@${COPILOT_VERSION} \
     @openai/codex@0.146.0 \

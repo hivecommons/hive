@@ -45,6 +45,14 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
+      # #3760: the hive binary ships with NO file capability (a file cap EPERMs
+      # on exec wherever the bounding set lacks NET_ADMIN); the entrypoint grants
+      # NET_ADMIN as a bounding-set-gated AMBIENT cap instead. This unit-tests the
+      # CapBnd bit-check (bit 12 / 0x1000) with positive+negative controls and
+      # asserts the entrypoint keeps the ambient-cap grant + gosu fallback.
+      - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
+        run: bash deploy/test_entrypoint_netadmin_ambient.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
@@ -145,7 +153,113 @@ jobs:
         run: docker build -f v2/Dockerfile -t hive:test .
 
       - name: Smoke test
-        run: docker run --rm hive:test --help || true
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="hive-v2-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f -v "$name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          # #3760: the binary carries NO file capability anymore, so it must exec
+          # under docker's DEFAULT cap set (no --cap-add) — a self-hosted spoke
+          # has exactly that bounding set. NET_ADMIN, when present, is raised by
+          # the entrypoint as an ambient cap; the raw `--version` here needs none.
+          # The old `--help || true` form could not fail and asserted nothing.
+          timeout --signal=TERM --kill-after=10s 60s \
+            docker run --rm --name "$name" --network none hive:test --version
+
+  # #3760 REGRESSION GUARD — overlayfs/containerd in-place exec.
+  #
+  # The `docker` smoke above builds with plain `docker build` and runs under
+  # docker/runc. That combination does NOT reproduce #3760: the crash-loop is a
+  # BuildKit metacopy redirect that only manifests when (a) the image is pushed
+  # in the OCI-index/attestation form the real pipeline produces AND (b) it is
+  # run on the overlayfs snapshotter (containerd/k3s, rootless podman). This job
+  # exercises exactly that path: build with buildx like docker.yml does, export
+  # an OCI archive, import into CONTAINERD, and assert that
+  # `/usr/local/bin/hive --version` execs AT ITS IMAGE PATH (no copy, caps
+  # dropped) under the containerd overlayfs snapshotter — the runtime the
+  # reporter confirmed fails. If the metacopy redirect ever returns (e.g. a
+  # future re-enable of provenance/SBOM or removal of the in-stage rewrite), the
+  # binary EPERMs here and the PR is blocked.
+  overlayfs-exec-guard:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # Build a single-arch image the SAME way docker.yml builds the shipped
+      # image — buildx (BuildKit), attestations OFF (provenance:false/sbom:false
+      # as in the #3760 fix) — and export it as an OCI archive so containerd
+      # imports the real BuildKit layer layout (not the docker daemon's).
+      - name: Build image via buildx (OCI archive, no attestations)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: v2/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
+          build-args: |
+            GIT_HASH=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
+
+      - name: Run under containerd/overlayfs and assert in-place exec
+        shell: bash
+        run: |
+          set -euo pipefail
+          # containerd ships on GitHub ubuntu runners; ensure it is up and using
+          # the overlayfs snapshotter (its default) — that is what makes the
+          # metacopy redirect observable.
+          sudo systemctl start containerd 2>/dev/null || sudo containerd >/tmp/containerd.log 2>&1 &
+          for i in $(seq 1 30); do
+            if sudo ctr version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          sudo ctr version
+          # Confirm the overlayfs snapshotter is present (the failing runtime).
+          sudo ctr plugins ls | grep -i overlayfs || {
+            echo "overlayfs snapshotter not available on this runner" >&2; exit 1; }
+
+          IMG="hive-3760-guard:test"
+          # Import the OCI archive BuildKit produced into containerd. Resolve
+          # the linux/amd64 platform (the archive is single-arch, but pin it so
+          # the run below has a concrete manifest to unpack).
+          sudo ctr images import --platform linux/amd64 --index-name "$IMG" /tmp/hive-oci.tar \
+            || sudo ctr images import --index-name "$IMG" /tmp/hive-oci.tar
+          sudo ctr images ls | grep "$IMG"
+
+          # The assertion: exec /usr/local/bin/hive AT ITS IMAGE PATH, no copy,
+          # under containerd's overlayfs snapshotter. --net-host keeps the run
+          # simple; we deliberately do NOT add NET_ADMIN — a self-hosted spoke
+          # has the docker/containerd default bounding set. Override the
+          # entrypoint so we test the raw binary exec (the #3760 symptom is a
+          # bare EPERM at execve of the binary, not an entrypoint failure).
+          set +e
+          out=$(sudo timeout 90s ctr run --rm --snapshotter overlayfs \
+                  --net-host \
+                  "$IMG" hive-3760-inplace \
+                  /usr/local/bin/hive --version 2>&1)
+          rc=$?
+          set -e
+          echo "----- hive --version (in-place, containerd/overlayfs) -----"
+          echo "$out"
+          echo "exit=$rc"
+          if [ $rc -ne 0 ]; then
+            echo "::error::#3760 regression: /usr/local/bin/hive failed to exec IN PLACE under containerd/overlayfs (rc=$rc). This is the BuildKit metacopy-redirect crash-loop — a plain build-side attestation/OCI-index change or a removed in-stage binary rewrite has reintroduced it." >&2
+            exit 1
+          fi
+          case "$out" in
+            *"Operation not permitted"*|*EPERM*)
+              echo "::error::#3760 regression: hive execve returned Operation not permitted at its image path under containerd/overlayfs." >&2
+              exit 1 ;;
+          esac
+          echo "OK: hive execs in-place under containerd/overlayfs (no copy, no NET_ADMIN)."
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
@@ -174,9 +288,15 @@ jobs:
           file: v2/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          # #3760: no default provenance/SBOM attestations → plain image
+          # manifests, not an OCI index (which is what ships the overlayfs
+          # metacopy redirect that makes /usr/local/bin/hive non-exec-able at
+          # its image path under containerd/rootless-podman). See docker.yml.
+          provenance: false
+          sbom: false
           tags: |
-            ghcr.io/${{ github.repository }}/hive:nightly
-            ghcr.io/${{ github.repository }}/hive:nightly-${{ github.sha }}
+            ghcr.io/${{ github.repository }}:nightly
+            ghcr.io/${{ github.repository }}:nightly-${{ github.sha }}
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_SHORT=${{ github.sha }}

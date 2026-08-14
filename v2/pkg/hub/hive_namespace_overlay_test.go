@@ -36,7 +36,7 @@ func TestHeartbeatOverlaysHostedNamespace(t *testing.T) {
 
 	t.Run("hosted hive with a SaaSHive record gets hive-hosted-<id>", func(t *testing.T) {
 		srv := NewHubServer(0, slog.Default(), "test", "v2")
-		srv.hubSecret = ""
+		srv.setHubSecret("")
 
 		const hiveID = "hosted-available-oke-07-placeholder-a1b2"
 		if err := saveSaaSHive(&SaaSHive{
@@ -63,7 +63,7 @@ func TestHeartbeatOverlaysHostedNamespace(t *testing.T) {
 
 	t.Run("hive with no SaaSHive record keeps Namespace empty", func(t *testing.T) {
 		srv := NewHubServer(0, slog.Default(), "test", "v2")
-		srv.hubSecret = ""
+		srv.setHubSecret("")
 
 		// No saveSaaSHive: this is a self-hosted/BYO spoke the hub did not
 		// provision, so it does not run in a hive-hosted-<id> namespace and the

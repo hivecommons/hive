@@ -14,7 +14,7 @@ import (
 // My Hives token column.
 func TestHeartbeatStoresTokenTotal(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	const wantTokens = int64(1234567)
 	payload := `{
@@ -50,7 +50,7 @@ func TestHeartbeatStoresTokenTotal(t *testing.T) {
 // maximum so a corrupt/hostile spoke cannot inject an absurd value.
 func TestHeartbeatTokenTotalClamped(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{
 		"hive_id":"clamphive",

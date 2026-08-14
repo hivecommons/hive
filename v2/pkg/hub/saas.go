@@ -505,6 +505,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	// #3234: fleet readiness for removing the N1/N2 legacy compatibility lanes.
 	s.mux.HandleFunc("GET /api/saas/admin/auth-rollout", s.requireAdmin(s.handleAuthRollout))
+	// Master-secret rotation (v2/docs/design/master-key-rotation.md). Both are
+	// requireAdmin, which enforces isCSRFSafe BEFORE resolving identity — an
+	// ambient hub session cookie would otherwise make a cross-site POST able to
+	// rotate the fleet's master key. The rotate route is a POST for that reason
+	// too: isCSRFSafe exempts safe methods.
+	s.mux.HandleFunc("GET /api/saas/admin/key-generations", s.requireAdmin(s.handleKeyGenerations))
+	s.mux.HandleFunc("POST /api/saas/admin/rotate-master-key", s.requireAdmin(s.handleRotateMasterKey))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
 	// Admin read-only "View as user" impersonation. Enter is admin-only and
@@ -604,7 +611,7 @@ func (s *HubServer) activeImpersonationGrant(r *http.Request) (impersonationGran
 	if err != nil || cookie.Value == "" {
 		return impersonationGrant{}, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.currentGenerations(), cookie.Value, time.Now())
 	if !ok || !isHubAdmin(grant.Admin) {
 		return impersonationGrant{}, false
 	}
@@ -870,7 +877,7 @@ func (s *HubServer) resolveIdentity(r *http.Request) (effective, realUser string
 	if err != nil || cookie.Value == "" {
 		return realUser, realUser, false
 	}
-	grant, ok := verifyImpersonateCookieValue(s.impersonateKey(), cookie.Value, time.Now())
+	grant, _, ok := verifyImpersonateCookieValueWithGenerations(s.currentGenerations(), cookie.Value, time.Now())
 	if !ok {
 		return realUser, realUser, false
 	}
@@ -1292,7 +1299,7 @@ func (s *HubServer) handleImpersonateStart(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	value := mintImpersonateCookieValue(s.impersonateKey(), admin, target, time.Now())
+	value := mintImpersonateCookieValueForGeneration(s.currentGenerations(), admin, target, time.Now())
 	if value == "" {
 		writeJSONError(w, http.StatusInternalServerError, "cannot start impersonation")
 		return
@@ -2475,6 +2482,15 @@ type MyHiveEntry struct {
 	ProvError   string `json:"provError,omitempty"`
 	ProvStatus  string `json:"provStatus,omitempty"`
 	AutoUpgrade bool   `json:"autoUpgrade"`
+	// TrackedChannel is the release channel this hive's image is pinned to
+	// ("stable", "candidate", "edge"), or "" for a plain-branch hive. Overlaid
+	// at read time from the hub-owned SaaSHive record — deliberately NOT from
+	// the registry, whose GitBranch the spoke rewrites every beat with the
+	// image's baked-in branch (a channel retag of a v4 build heartbeats "v4").
+	// When set, the dashboard's version pill and picker treat it as the
+	// current selection (rendered via versionLabel as "stable (v4)") while
+	// gitBranch keeps driving everything about the code actually running.
+	TrackedChannel string `json:"trackedChannel,omitempty"`
 	// AutoUpgradeMode is always sent NORMALIZED (never empty when autoUpgrade is
 	// on) so the dashboard can render the effective mode without re-deriving the
 	// legacy empty-means-instant rule in JavaScript.
@@ -2663,6 +2679,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry.ProvStatus = sh.Status
+		// The tracked release channel comes from meta, never the registry: the
+		// spoke's heartbeat rewrites GitBranch with the image's baked-in branch
+		// every beat, which is exactly how the channel selection was being
+		// forgotten. Read-time overlay also means the pill flips to the channel
+		// on the very next poll after the switch, without waiting for a beat.
+		entry.TrackedChannel = sh.TrackedChannel
 		// Overlay the hosted namespace at read time too, so a placeholder or a
 		// hive whose live registry entry predates the field still shows
 		// "hive-hosted-<id>" in My Hives. Derived from the SaaSHive record, same
@@ -3992,6 +4014,26 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"no published image for that branch (deprecated branch, or its image build has not completed)"}`, http.StatusBadRequest)
 		return
 	}
+	// Persist WHAT the operator selected before delivering it, on the hub-owned
+	// hive record. The registry cannot remember a channel selection: the spoke
+	// heartbeats the image's baked-in branch (a "stable" retag of a v4 build
+	// reports git_branch="v4") and overwrites GitBranch every beat, so within
+	// one beat of the switch the dashboard's pill fell back to the branch. Set
+	// on a channel switch, cleared on a plain-branch switch, written by no
+	// other path — heartbeats never touch it. Done after every validation gate
+	// above (so a refused switch records nothing) and before the two delivery
+	// paths below (so kubectl-vs-heartbeat delivery cannot diverge on it). A
+	// save failure only downgrades the pill to the reported branch; it must
+	// not block the switch itself.
+	if isChannel {
+		h.TrackedChannel = body.Branch
+	} else {
+		h.TrackedChannel = ""
+	}
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Warn("branch switch: failed to persist tracked channel — the version pill will fall back to the spoke-reported branch",
+			"hive", id, "target", body.Branch, "error", err)
+	}
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
 	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
@@ -4978,6 +5020,20 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// netAdminReconcileInterval — this poller ticks far more often than the
 	// static drift needs re-checking. See netadmin_reconcile.go / issue #2674.
 	s.reconcileNetAdminIfDue()
+	// Ensure the five per-hive security env vars are present and correct on
+	// every hosted spoke. Nothing else re-asserts them after provision time, so
+	// without this the fleet's key posture survives only as an out-of-band
+	// manual patch. Throttled internally to perHiveEnvReconcileInterval and
+	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
+	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
+	s.reconcilePerHiveEnvIfDue()
+	// Drop master generations whose verify window has closed, and warn when one
+	// is closing while spokes still carry it. Throttled internally to
+	// generationRetireInterval. This lane PERSISTS the drop and ALERTS; it is
+	// not what enforces expiry — acceptableGenerations already refuses an
+	// expired generation at every verify, on the wall clock, whether or not
+	// this ever runs. See hub_generations_retire.go.
+	s.retireExpiredGenerationsIfDue()
 	// Record the per-release image-pulls snapshot (external-adoption chart). The
 	// call is internally guarded to snapshot only when the v2 release SHA advances,
 	// so ticking it alongside the frequent SHA poll is cheap — no separate
@@ -5005,6 +5061,8 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepOrphanedUpgrades()
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
+		s.reconcilePerHiveEnvIfDue()
+		s.retireExpiredGenerationsIfDue()
 		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
@@ -10173,6 +10231,35 @@ const dashboardHTML = `<!DOCTYPE html>
       var hex = d.indexOf(':') >= 0 ? d.slice(d.indexOf(':') + 1) : d;
       return hex.length > 7 ? hex.slice(0, 7) : hex;
     }
+
+    /* Version label for the My Hives version pill and the picker's CHANNELS
+       entries. A release channel is a moving tag, so its bare name ("stable")
+       tells the operator nothing about what code the hive is actually
+       tracking; append the branch the channel CURRENTLY resolves to —
+       "stable (v4)". The association comes from _channelTargets, the server's
+       digest-derived mapping (release_channels.go matches each channel tag's
+       registry digest against the tracked branches' "<branch>-latest"
+       digests on the hub's poll cadence) — deliberately NOT a hardcoded
+       channel->branch table, so when CI re-points a channel the label follows
+       with no hub code change. Never guesses: a channel resolved to a digest
+       no tracked branch owns shows the short digest instead, and a channel
+       with no resolution yet shows "(?)". Branch names pass through
+       untouched. DISPLAY-ONLY: every selection and comparison still uses the
+       bare channel name — only the rendered text changes. */
+    function versionLabel(v) {
+      for (var i = 0; i < _channelTargets.length; i++) {
+        var t = _channelTargets[i];
+        if (t && t.channel === v) {
+          if (t.branch) return v + ' (' + t.branch + ')';
+          if (t.digest) return v + ' (' + shortDigest(t.digest) + ')';
+          return v + ' (?)';
+        }
+      }
+      /* A channel the payload names but the resolver has no row for (e.g. a
+         cold channel cache) — still mark it as unresolved, never bare. */
+      if (_releaseChannels.indexOf(v) >= 0) return v + ' (?)';
+      return v;
+    }
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
@@ -10199,8 +10286,11 @@ const dashboardHTML = `<!DOCTYPE html>
        Reads NEVER throw: storage can be disabled, full, or hold junk, and none
        of that may block the network path. */
     var LS_HIVES_CACHE = 'hive-my-hives-cache';
-    /* Bump on ANY change to the hive row shape consumed by renderHives(). */
-    var HIVES_CACHE_VERSION = 1;
+    /* Bump on ANY change to the hive row shape consumed by renderHives().
+       v2: rows carry trackedChannel (the hub-persisted release-channel
+       selection the version pill renders); a v1 cache would repaint a
+       channel-pinned hive as its bare branch for the pre-network paint. */
+    var HIVES_CACHE_VERSION = 2;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -10405,13 +10495,71 @@ const dashboardHTML = `<!DOCTYPE html>
       var sentinel = _upgradingHives[h.id];
       var sha = h.gitHash || '';
       if (sentinel && sha === sentinel) return true;
-      /* Hub-reported. Suppressed when the hive is ALREADY at latest (the latch
-         is stale — exactly the server-side bug this pairs with) or when latest
-         is unresolved, because the row suppresses the spinner in both cases and
-         the pill must match. */
+      /* Hub-reported. Suppressed when latest is unresolved, because the row
+         suppresses the spinner then too and the pill must match.
+
+         NOT suppressed merely because the hive reads as "current". The fleet
+         runs floating TAGS (v4-latest) while the hub tracks progress by git
+         SHA, so 'isCurrent' is a SHA comparison against the branch tip and a
+         spoke can sit behind the tip for many minutes with its tag unchanged
+         and zero Kubernetes-visible drift. Suppressing on isCurrent was only
+         ever a client-side patch over the stale server latch that the
+         stale_upgrade.go convergence sweep now clears at the source; keeping it
+         here would re-hide genuinely in-flight upgrades. */
       var latestUnknown = !branchLatest;
-      var isCurrent = !!branchLatest && sameShaJS(sha, branchLatest);
-      return !!(h.upgrading && !isCurrent && !latestUnknown);
+      if (latestUnknown) return false;
+      if (h.upgrading) return true;
+      /* Behind the branch tip with a target ALREADY armed by the hub. The hub
+         has instructed this SHA and is waiting for the spoke to report it, so
+         the rollout is in flight even before 'upgrading' latches — this is the
+         window that made the pill under-report against a moving tag. A hive
+         that is behind with NO armed target is not upgrading; it is "queued"
+         (auto-upgrade on) or simply out of date, and both are other states. */
+      var isCurrent = sameShaJS(sha, branchLatest);
+      if (!isCurrent && h.upgradeTarget && !h.autoUpgrade &&
+          !sameShaJS(sha, h.upgradeTarget)) {
+        return true;
+      }
+      return false;
+    }
+
+    /* normalizeUpgradeState expires the client-side sentinels for ONE hive.
+       It is the only writer of _upgradingHives during a render.
+
+       This has to run over the whole list BEFORE anything filters, counts or
+       draws, because _upgradingHives is global mutable state that
+       hiveIsUpgradingNow reads. While expiry lived inside the row loop, the
+       facet counter and applyDashFilters — both of which run first, over every
+       hive — saw a different map than the rows did, so the pill and the badge
+       could disagree even though they now call the same predicate. Sharing a
+       function only guarantees agreement if it is also given the same inputs.
+
+       Returns nothing; callers re-read _upgradingHives through the predicate. */
+    function normalizeUpgradeState(h) {
+      if (!h) return;
+      var branchName = h.gitBranch || 'v2';
+      var st = hiveSwitchState(h, branchName);
+      /* A switch sentinel that no longer resolves to a switch (the target
+         became a same-branch SHA) is stale and must not force upgrading. */
+      if (st.switchSentinelStale) {
+        delete _upgradingHives[h.id];
+        delete _switchStartedAt[h.id];
+        return;
+      }
+      if (st.isSwitching) return;
+      /* The hive has moved off the SHA it carried when Upgrade was clicked, so
+         the click has landed and the sentinel has done its job. */
+      var sentinel = _upgradingHives[h.id];
+      if (sentinel && (h.gitHash || '') !== sentinel) {
+        delete _upgradingHives[h.id];
+        delete _switchStartedAt[h.id];
+      }
+    }
+
+    /* normalizeUpgradeStates applies the above across the fleet. Called at the
+       top of renderHives, ahead of every filter, facet count and row. */
+    function normalizeUpgradeStates(hives) {
+      for (var i = 0; i < (hives || []).length; i++) normalizeUpgradeState(hives[i]);
     }
 
     function hiveUpgradeState(h) {
@@ -10463,6 +10611,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var HIVE_GROUP_OWNER = 'owner';
     var HIVE_GROUP_ACMM = 'acmm';
     var HIVE_GROUP_BRANCH = 'branch';
+    var HIVE_GROUP_UPGRADE_STATE = 'upgradeState';
 
     /* Label shown for a hive whose grouping field is empty/unreported. Kept as
        one constant so every dimension buckets blanks identically. */
@@ -10535,8 +10684,54 @@ const dashboardHTML = `<!DOCTYPE html>
         var na = _acmmGroupOrder(a), nb = _acmmGroupOrder(b);
         return na - nb;
       }},
-      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }}
+      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }},
+      {key: HIVE_GROUP_UPGRADE_STATE, label: 'Upgrade state', of: function(h) {
+        /* Reuse hiveUpgradeState(h) — the SAME predicate the row's Upgrading
+           pill and the upgrade-state filter facet use (it routes through
+           hiveIsUpgradingNow) — so the group a hive lands in can never disagree
+           with the badge the operator already sees. Do NOT re-derive the states
+           here or the grouping would drift from the pill.
+
+           hiveUpgradeState returns:
+             'upgrading' — a rollout is in flight (h.upgrading / armed target /
+                           branch switch / just-clicked sentinel).
+             'queued'    — behind latest, auto-upgrade ON, hub has not instructed
+                           the rollout yet (ready, not yet triggered). This is
+                           the operator's target bucket.
+             ''          — neither: up to date, or behind with auto-upgrade off
+                           and no pending action.
+           Map each to a human-readable header. '' is rendered as its own
+           "Up to date" group rather than falling through to Unspecified, since
+           for this dimension "no pending upgrade" is a meaningful, expected
+           bucket rather than missing data. */
+        var st = hiveUpgradeState(h);
+        if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
+        if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
+        return HIVE_UPGRADE_GROUP_UPTODATE;
+      }, sort: function(a, b) {
+        /* Queued first — it is why this dimension exists (systems READY for an
+           upgrade that have not triggered) — then Upgrading (in flight), then
+           Up to date. Any unexpected label sorts last. */
+        return _upgradeGroupOrder(a) - _upgradeGroupOrder(b);
+      }}
     ];
+
+    /* Header labels for the Upgrade-state dimension. Named constants so the
+       of() grouper and the sort comparator can never drift on a string typo. */
+    var HIVE_UPGRADE_GROUP_QUEUED = 'Queued (ready, not yet upgrading)';
+    var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
+    var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
+
+    /* Sort weight for an upgrade-state group header. Queued (the actionable
+       "ready but not triggered" bucket) sorts first, then Upgrading, then Up to
+       date; anything else sorts last. */
+    var UPGRADE_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
+    function _upgradeGroupOrder(label) {
+      if (label === HIVE_UPGRADE_GROUP_QUEUED) return 0;
+      if (label === HIVE_UPGRADE_GROUP_UPGRADING) return 1;
+      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 2;
+      return UPGRADE_GROUP_UNKNOWN_ORDER;
+    }
 
     /* Sort weight for an ACMM group label. "Level N" → N; anything else (the
        Unspecified bucket) sorts after every real level. */
@@ -11355,6 +11550,10 @@ const dashboardHTML = `<!DOCTYPE html>
       var parts = [
         h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
         h.role, h.gitBranch, h.gitHash, h.dashboardUrl,
+        /* The tracked release channel is what the version pill shows for a
+           channel-pinned hive, so "stable" has to find those rows even though
+           their gitBranch reports the underlying release branch. */
+        h.trackedChannel,
         /* The GitHub host is shown as a pill in the Location column, so it has
            to be searchable too — "github.ibm.com" is how an admin narrows to
            the GHE fleet. Absent means public GitHub, which is what the pill
@@ -13350,8 +13549,25 @@ const dashboardHTML = `<!DOCTYPE html>
         '<div style="margin-top:10px;text-align:left;max-height:220px;overflow:auto">' + failedRows + '</div>', true);
     }
 
+    /* True while any row's branch/channel dropdown is open. renderHives
+       rebuilds the row DOM, which would destroy the open menu mid-click —
+       the fleet heartbeats change some hive field on nearly every poll, so
+       without this guard the dropdown closed itself within seconds of
+       opening. */
+    function branchMenuOpen() {
+      var menus = document.querySelectorAll('[id^="branch-menu-"]');
+      for (var i = 0; i < menus.length; i++) {
+        if (menus[i].style.display !== 'none') return true;
+      }
+      return false;
+    }
     function renderHives(allHives, force) {
       allHives = allHives || [];
+      /* Defer the whole render while a branch/channel menu is open. Skipping
+         BEFORE the signature is stored means the change is not swallowed: the
+         next render call (poll tick, or the catch-up fired when the menu
+         closes) sees a stale _lastHivesJSON and repaints normally. */
+      if (branchMenuOpen()) return;
       /* The signature must include EVERY piece of render-affecting view state,
          otherwise changing it while the hive data is unchanged is silently a
          no-op — toggling a chip, drilling into an alert type, expanding the
@@ -13382,6 +13598,11 @@ const dashboardHTML = `<!DOCTYPE html>
       for (var _si = 0; _si < allHives.length; _si++) {
         (isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll).push(allHives[_si]);
       }
+      /* Expire client-side upgrade sentinels ONCE, before anything reads them.
+         Filtering, facet counting and row drawing are all pure readers of
+         _upgradingHives from here on, so they cannot observe each other's
+         mutations and the pill can no longer disagree with the badge. */
+      normalizeUpgradeStates(assignedAll);
       var hives = applyDashFilters(assignedAll).concat(unassignedAll);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
@@ -13564,6 +13785,18 @@ const dashboardHTML = `<!DOCTYPE html>
         var versionCell = '';
         if (sha) {
           var branchName = h.gitBranch || 'v2';
+          /* Effective version SELECTION, distinct from the running branch. A
+             hive following a release channel heartbeats the channel image's
+             baked-in branch (a "stable" retag of a v4 build reports
+             gitBranch "v4"), so gitBranch alone forgets the channel within
+             one beat of the switch — the pill read "v4" on a stable hive.
+             trackedChannel is the hub-persisted selection
+             (SaaSHive.TrackedChannel: written only by a branch/channel
+             switch, never by heartbeats). When set it is what the pill shows
+             and what the picker treats as currently selected; branchName
+             keeps driving everything about the code actually running
+             (latest/behind, drift, upgrade state). */
+          var versionSel = h.trackedChannel || branchName;
           var branchLatest = _latestSHAs[branchName] || _latestSHA;
           var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
           if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
@@ -13579,14 +13812,20 @@ const dashboardHTML = `<!DOCTYPE html>
           if (canSwitchBranch) {
             for (var bi = 0; bi < _trackedBranches.length; bi++) {
               var tb = _trackedBranches[bi];
-              if (tb !== branchName) {
+              /* Compared against the SELECTION, not the running branch: a hive
+                 tracking "stable" (currently a v4 image) must still offer v4
+                 here — picking it is a real action, un-tracking the channel. */
+              if (tb !== versionSel) {
                 branchOptions += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
               }
             }
             var chOpts = '';
             for (var cbi = 0; cbi < _releaseChannels.length; cbi++) {
               var cb = _releaseChannels[cbi];
-              if (cb === branchName) continue;
+              /* The channel the hive already tracks is the current selection —
+                 omit it exactly as the running branch is omitted above. Keyed
+                 on versionSel so "stable" reads as selected, not "v4". */
+              if (cb === versionSel) continue;
               /* Name what the channel resolves to RIGHT NOW in the hover, so
                  the operator is not picking a word with no visible meaning.
                  Falls back to the channel's own description when unresolved. */
@@ -13597,16 +13836,26 @@ const dashboardHTML = `<!DOCTYPE html>
               var cbTitle = cbT && cbT.branch
                 ? 'Currently ' + cbT.branch + ' ' + (cbT.sha || '') + ' — the hive follows this channel as it is re-pointed'
                 : 'Moving release channel — the hive follows it as it is re-pointed';
-              chOpts += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(cb) + '\',this)" title="' + escAttr(cbTitle) + '" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#4ade80;border-radius:4px" onmouseover="this.style.background=\'rgba(34,197,94,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(cb) + '</div>';
+              /* Label carries the channel's CURRENT branch — "stable (v4)" —
+                 while the switch VALUE stays the bare channel name: the hive
+                 is pinned to the moving tag, not to the branch it happens to
+                 resolve to today. */
+              chOpts += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(cb) + '\',this)" title="' + escAttr(cbTitle) + '" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#4ade80;border-radius:4px" onmouseover="this.style.background=\'rgba(34,197,94,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(versionLabel(cb)) + '</div>';
             }
             if (chOpts) {
               branchOptions += '<div style="border-top:1px solid #30363d;margin:4px 0"></div>' +
                 '<div style="padding:2px 10px;font-size:0.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Channels</div>' + chOpts;
             }
           }
+          /* Pill text is the SELECTION (versionSel) through versionLabel, so
+             a hive tracking a channel reads "stable (v4)" — the channel plus
+             the branch it currently resolves to — and keeps reading that
+             after the spoke heartbeats its baked-in branch. A plain-branch
+             hive renders unchanged. Display-only: versionSel/branchName stay
+             bare values, and every switch payload sends the bare name. */
           var branch = canSwitchBranch
-            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
-            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(branchName) + '</span>';
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(versionLabel(versionSel)) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(versionLabel(versionSel)) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
@@ -13619,16 +13868,19 @@ const dashboardHTML = `<!DOCTYPE html>
           var upgradeState = hiveSwitchState(h, branchName);
           var isSwitching = upgradeState.isSwitching;
           var targetBranch = upgradeState.targetBranch;
-          /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
-             stops forcing the upgrading state on later auto-upgrades. */
-          if (upgradeState.switchSentinelStale) delete _upgradingHives[h.id];
-          var sentinel = _upgradingHives[h.id];
+          /* Sentinel expiry used to happen HERE, mid-render. That is what kept
+             the pill and the badge disagreeing even after they were given a
+             shared predicate: applyDashFilters (and the facet counter) run over
+             the whole list BEFORE this loop body executes for any row, so the
+             pill read the pre-expiry sentinel map while the row read the
+             post-expiry one — and on the next paint the pill read a map mutated
+             by the PREVIOUS render. Same function, different inputs, different
+             answers. Expiry now happens in normalizeUpgradeState(), once, ahead
+             of filtering; this loop is a pure reader. */
           /* ONE predicate, shared with the filter pill (hiveUpgradeState ->
              hiveIsUpgradingNow), so a spinning row is always matched by the
              "Upgrading" facet and vice versa. */
           var isUpgrading = hiveIsUpgradingNow(h, branchName, branchLatest);
-          if (sentinel && sha !== sentinel && !isSwitching) { delete _upgradingHives[h.id]; delete _switchStartedAt[h.id]; }
-          if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
           var status = latestUnknown
@@ -14460,6 +14712,13 @@ const dashboardHTML = `<!DOCTYPE html>
       var targetBranch = '';
       if (isBranchTarget) {
         targetBranch = upgradeTarget.slice(0, -BRANCH_TARGET_SUFFIX.length);
+      } else if (upgradeTarget && (_releaseChannels || []).indexOf(upgradeTarget) !== -1) {
+        /* A channel switch arms the CHANNEL NAME as the target ("stable"),
+           not a "-latest" tag, so the suffix parse above never sees it —
+           after a page refresh (client sentinel gone) the "Switching to
+           stable" indicator silently vanished while the switch was still
+           running server-side. */
+        targetBranch = upgradeTarget;
       } else if (hasSwitchSentinel) {
         targetBranch = sentinel.slice(SWITCH_SENTINEL_PREFIX.length);
       }
@@ -14506,6 +14765,10 @@ const dashboardHTML = `<!DOCTYPE html>
           if (!e.target.closest('#branch-pill-' + hiveId)) {
             menu.style.display = 'none';
             document.removeEventListener('click', closeHandler);
+            /* Catch up on the renders the open menu deferred (see
+               renderHives guard) so the rows reflect current data
+               immediately instead of waiting for the next poll. */
+            renderHives(sortedDashHives(), true);
           }
         };
         setTimeout(function() { document.addEventListener('click', closeHandler); }, 0);
