@@ -60,9 +60,21 @@ const (
 	// CaptureFullLog). tmux's -S - captures the entire scrollback, but a wedged
 	// agent that has spammed for hours can hold a very large buffer; this caps the
 	// number of lines pulled back from the tail so the endpoint stays bounded.
-	// It is deliberately far larger than the tmux history-limit tmux is usually
-	// started with, so in practice it returns the WHOLE retained session.
+	// It matches defaultTmuxHistoryLimit — the history-limit agent sessions are
+	// created with — so in practice it returns the WHOLE retained session.
 	fullLogCaptureLines = 50000
+
+	// tmuxHistoryLimitEnv overrides the scrollback depth (in lines) that agent
+	// tmux sessions are created with (see newSessionCommands).
+	tmuxHistoryLimitEnv = "HIVE_TMUX_HISTORY_LIMIT"
+
+	// defaultTmuxHistoryLimit is the history-limit applied when creating an
+	// agent's tmux session. tmux's own default is only 2000 lines, which capped
+	// both browser copy-mode scrollback (#3694) and the "full log" capture
+	// (#3693) at ~2000 lines no matter how deep CaptureFullLog reached. Matches
+	// fullLogCaptureLines so the full-log endpoint can return the entire
+	// retained buffer.
+	defaultTmuxHistoryLimit = fullLogCaptureLines
 )
 
 var defaultTmuxSocket string
@@ -1012,6 +1024,39 @@ func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	return []string{"tmux"}
 }
 
+// tmuxHistoryLimit returns the scrollback depth (in lines) agent tmux sessions
+// are created with: HIVE_TMUX_HISTORY_LIMIT when set to a positive integer,
+// defaultTmuxHistoryLimit otherwise.
+func tmuxHistoryLimit() int {
+	if v := os.Getenv(tmuxHistoryLimitEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultTmuxHistoryLimit
+}
+
+// newSessionCommands returns the tmux command sequence (after the base
+// socket args) that creates a detached agent session with a deep scrollback
+// buffer.
+//
+// Ordering is the whole point (#3694, #3693): tmux reads history-limit at PANE
+// creation time, so it must be raised BEFORE new-session forks the session's
+// first pane. Raising it on an existing pane — as the ttyd attach wrapper does
+// on attach — never deepens a buffer that was created shallow; with tmux's
+// 2000-line default that capped both browser copy-mode scrollback and the
+// "full log" capture at ~2000 lines. Both commands run in ONE client
+// invocation ("; " is tmux's command separator in argv): the client
+// auto-starts the server if needed, applies the global option, then creates
+// the session — before the server's exit-empty logic could tear down a
+// sessionless server and discard the option.
+func newSessionCommands(session, dir string) []string {
+	return []string{
+		"set-option", "-g", "history-limit", strconv.Itoa(tmuxHistoryLimit()), ";",
+		"new-session", "-d", "-s", session, "-c", dir,
+	}
+}
+
 func (m *Manager) agentExecUserSpec(agent *AgentProcess) string {
 	if agent.UID <= 0 {
 		return ""
@@ -1096,11 +1141,11 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	var cmd *exec.Cmd
 	if agent.UID > 0 {
 		suExecArgs := []string{"su-exec", m.agentExecUserSpec(agent)}
-		tmuxArgs := append(m.tmuxBaseArgs(agent), "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		tmuxArgs := append(m.tmuxBaseArgs(agent), newSessionCommands(agent.tmuxSession, agentDir)...)
 		cmd = exec.Command(suExecArgs[0], append(suExecArgs[1:], tmuxArgs...)...)
 	} else {
 		base := m.tmuxBaseArgs(agent)
-		tmuxArgs := append(base[1:], "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
+		tmuxArgs := append(base[1:], newSessionCommands(agent.tmuxSession, agentDir)...)
 		cmd = exec.Command(base[0], tmuxArgs...)
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {

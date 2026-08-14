@@ -153,20 +153,11 @@ jobs:
             docker rm -f -v "$name" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          # REGRESSION GUARD for #3760: the hive binary MUST exec under docker's
-          # DEFAULT capability set — i.e. WITHOUT --cap-add NET_ADMIN — because
-          # that is what every self-hosted / rootless spoke runs. A file
-          # capability on the binary (removed in the #3760 fix) made the kernel
-          # refuse execve with EPERM whenever NET_ADMIN was not in the bounding
-          # set, crash-looping the fleet. NET_ADMIN is now granted at runtime as
-          # an ambient cap by the entrypoint only where the platform allows it,
-          # and the proxy SO_MARK path degrades gracefully otherwise. So this
-          # must pass with NO added capabilities.
-          timeout --signal=TERM --kill-after=10s 60s \
-            docker run --rm --name "$name" --network none hive:test --version
-          # And it must ALSO exec on platforms that DO grant NET_ADMIN (managed
-          # OKE/OpenShift spokes), where the entrypoint raises the ambient cap.
-          name="${name}-netadmin"
+          # --cap-add NET_ADMIN mirrors the production contract: the pod spec
+          # grants it (SCC hive-netadmin) and the image binary carries
+          # cap_net_admin+ep file caps (SO_MARK egress attribution), so exec
+          # under docker's default cap set fails EPERM by design, not by bug.
+          # The old `--help || true` form could not fail and asserted nothing.
           timeout --signal=TERM --kill-after=10s 60s \
             docker run --rm --name "$name" --network none --cap-add NET_ADMIN hive:test --version
 

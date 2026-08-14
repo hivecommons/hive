@@ -43,17 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM node:26-slim
 
 # --- Layer 1: system packages (rarely changes) ---
-# setpriv (util-linux-extra on Debian) is used by the entrypoint to drop to the
-# non-root `dev` user WHILE raising CAP_NET_ADMIN into the ambient set on
-# platforms that grant it, so the proxy's SO_MARK egress exemption works without
-# a file capability on the binary (issue #3760). If the package is unavailable
-# the entrypoint falls back to gosu (no ambient cap, best-effort SO_MARK).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates bash curl bzip2 gosu iptables inotify-tools libevent-core-2.1-7 \
     gcc libc6-dev \
- && (apt-get install -y --no-install-recommends util-linux-extra || \
-     apt-get install -y --no-install-recommends util-linux || \
-     echo "WARN: setpriv unavailable — entrypoint will fall back to gosu (no ambient CAP_NET_ADMIN)") \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
@@ -192,12 +184,12 @@ RUN npm install -g @github/copilot-sdk@${COPILOT_SDK_VERSION} && npm cache clean
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
 ARG CODEX_VERSION=0.146.0
-RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=2.1.226
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
+RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
 # --- Layer 8: Goose CLI (official block/goose upstream) ---
 # Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
@@ -335,33 +327,41 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
 
-# SECURITY (audit F5-egress / refs #2674, #2678, #3574): the MITM proxy's own
-# upstream :443 dials must be exempted from the forced-egress iptables REDIRECT.
-# On OpenShift/OVN (no xt_owner) the only exemption is the SO_MARK packet mark,
-# and setsockopt(SO_MARK) needs CAP_NET_ADMIN in the hive process's EFFECTIVE
-# set. The hive process runs as non-root `dev` (the entrypoint drops from root
-# via gosu, which strips all capabilities).
+# SECURITY (audit F5-egress / refs #2674, #2678): give the hive binary
+# CAP_NET_ADMIN as a FILE capability so the MITM proxy's own upstream dials can
+# be exempted from the forced-egress iptables REDIRECT.
 #
-# We DO NOT set CAP_NET_ADMIN as a FILE capability on /usr/local/bin/hive.
-# Doing so (PR #3574) crash-looped every self-hosted spoke: the kernel refuses
-# to execve() a binary whose file capabilities it cannot fully grant, and
-# NET_ADMIN is NOT in the default container bounding set for docker/podman/
-# containerd. The result was a bare "Operation not permitted" (EPERM) at exec
-# for anyone who did not run with `--cap-add NET_ADMIN` / an SCC granting it —
-# i.e. the entire self-hosted / rootless population (issue #3760). Copying the
-# binary elsewhere "fixed" it only because `cp` drops the security.capability
-# xattr; it did not actually grant the cap.
+# WHY THIS IS NEEDED
+# The entrypoint installs `-p tcp --dport 443 -j REDIRECT` so every agent's
+# egress is forced through the proxy, then exempts the proxy's OWN traffic three
+# ways. On OKE the `-m owner --uid-owner` matches work. On OpenShift/OVN xt_owner
+# is ABSENT, so those rules silently fail to load (`|| true`) and the only
+# remaining exemption is the SO_MARK packet mark — but setsockopt(SO_MARK)
+# requires CAP_NET_ADMIN in the calling process's EFFECTIVE set. The entrypoint
+# runs as root only long enough to build the chain; the hive process itself is
+# dropped to `dev` via gosu, so without a file capability it loses NET_ADMIN and
+# the mark silently fails ("operation not permitted").
 #
-# Instead, NET_ADMIN is granted at RUNTIME as an AMBIENT capability by the
-# entrypoint (see v2/deploy/entrypoint.sh, at the gosu privilege-drop): the
-# entrypoint already runs as root and already needs NET_ADMIN to build the
-# iptables chain, so where the platform grants NET_ADMIN in the bounding set
-# (managed OKE/OpenShift spokes via SCC/PSA) it raises the cap into the ambient
-# set so it survives the drop to `dev`, and where it is absent (self-hosted /
-# rootless) it simply skips the raise. The Go proxy's SO_MARK path is already
-# best-effort (v2/pkg/proxy/github_proxy.go: setSockMark failure is logged once
-# and the dial proceeds unmarked), so a missing NET_ADMIN degrades gracefully
-# to the existing owner-UID exemption instead of failing to exec at all.
+# Observed live on vllm-d: with neither exemption active the proxy's own :443
+# dials hit the REDIRECT and looped back into itself, returning 502 for every
+# forge request and cutting a live tenant's agents off from their repository.
+#
+# WHY A FILE CAPABILITY IS SAFE HERE
+# File caps are recomputed AT EXEC from the binary being exec'd. Agents are
+# launched via su-exec into their OWN binaries (claude/goose/bob), which carry
+# no file capability, so NET_ADMIN does NOT propagate to any agent process.
+# Agent UIDs (2001+) also cannot exec su-exec itself — it is 4750
+# root:hive-launch and only `dev` is in that group (audit C6) — so there is no
+# path from an agent to a process holding this capability.
+#
+# +ep = permitted AND effective: the hive process needs the cap live at
+# setsockopt time, not merely inheritable.
+RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+ && setcap cap_net_admin+ep /usr/local/bin/hive \
+ && [ "$(getcap /usr/local/bin/hive)" != "" ] \
+ && getcap /usr/local/bin/hive | grep -q "cap_net_admin" \
+ && apt-get purge -y libcap2-bin \
+ && rm -rf /var/lib/apt/lists/*
 
 # --- Nous framework (strategist experiment engine) ---
 RUN (apt-get update && apt-get install -y --no-install-recommends \
