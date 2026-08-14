@@ -15,9 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux python3 ca-certificates gnupg openssh-client \
   && rm -rf /var/lib/apt/lists/*
 
+# Pin the NodeSource GPG key by SHA-256 so a compromised key-server or
+# MITM cannot substitute a malicious key. Bump NODESOURCE_KEY_SHA256
+# whenever the key rotates (verify against https://github.com/nodesource/distributions
+# and the PGP fingerprint 6F71 F525 2828 41EE DAF8  51B4 2F59 B5F9 9B1B E0B4).
+ARG NODESOURCE_KEY_SHA256=b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d
 RUN mkdir -p /etc/apt/keyrings \
   && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+       -o /tmp/nodesource.key \
+  && echo "${NODESOURCE_KEY_SHA256}  /tmp/nodesource.key" | sha256sum -c - \
+  && gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.key \
+  && rm /tmp/nodesource.key \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update && apt-get install -y nodejs \
