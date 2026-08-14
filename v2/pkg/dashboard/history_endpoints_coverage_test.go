@@ -52,8 +52,12 @@ func TestHandleMetricsWithCollector(t *testing.T) {
 	deps.Tokens = tokens.NewCollector(t.TempDir(),
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 
+	// A bearer token is mandatory (#3785) — handleMetrics fails closed without it.
+	t.Setenv("HIVE_METRICS_TOKEN", "cov-metrics-token")
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer cov-metrics-token")
 	rec := httptest.NewRecorder()
-	s.handleMetrics(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	s.handleMetrics(rec, req)
 	if rec.Code != http.StatusOK && rec.Code != 0 {
 		t.Fatalf("metrics status = %d", rec.Code)
 	}

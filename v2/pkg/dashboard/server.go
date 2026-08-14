@@ -779,11 +779,15 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
-	// Prometheus scrape endpoint for estimated LLM cost — opt-in, since it
-	// exposes cost data unauthenticated (Prometheus can't do device-flow auth).
-	// Enabled only when HIVE_METRICS_ENABLED is truthy; see isPublicPath.
+	// Prometheus scrape endpoint for estimated LLM cost — opt-in via
+	// HIVE_METRICS_ENABLED, and the handler additionally requires the
+	// HIVE_METRICS_TOKEN bearer token (fails closed with 403 when the token is
+	// unset, #3785) since the series expose cost/agent data. See isPublicPath.
 	if metricsEnabled() {
 		s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+		if metricsToken() == "" && s.logger != nil {
+			s.logger.Warn("HIVE_METRICS_ENABLED is set but HIVE_METRICS_TOKEN is not; /metrics will refuse every request (403) until a token is configured — set HIVE_METRICS_TOKEN and the scraper's bearer_token to match")
+		}
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
@@ -1092,8 +1096,11 @@ func isPublicPath(path string) bool {
 	case path == "/api/auth/token":
 		return true
 	case path == "/metrics" && metricsEnabled():
-		// Prometheus scrape target — public only when explicitly enabled via
-		// HIVE_METRICS_ENABLED. Prometheus cannot authenticate via device flow.
+		// Prometheus scrape target — bypasses dashboard auth only when
+		// explicitly enabled via HIVE_METRICS_ENABLED (Prometheus cannot
+		// authenticate via device flow). NOT actually open: handleMetrics
+		// requires the HIVE_METRICS_TOKEN bearer token and fails closed (403)
+		// when no token is configured (#3785).
 		return true
 	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
 		return true
