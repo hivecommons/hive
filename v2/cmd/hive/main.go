@@ -32,9 +32,17 @@ import (
 	// that answers the :3002 liveness probe and the heartbeat loop — is
 	// throttled until the next CFS period, which stacks on top of the NFS
 	// stalls to push probe latency past the kubelet timeout. Matching GOMAXPROCS
-	// to the quota removes that self-inflicted throttling. Blank import: its
-	// only job is the init-time side effect.
-	_ "go.uber.org/automaxprocs"
+	// to the quota removes that self-inflicted throttling.
+	//
+	// This is called explicitly rather than via the package's blank import
+	// because that import's init writes a line to the default logger (stderr)
+	// unconditionally. `hive` re-execs itself as a Git transport shim, and the
+	// setup path captures a child's stdout and stderr into a single buffer to
+	// parse (e.g. `symbolic-ref --short origin/HEAD`), so an init-time banner
+	// is indistinguishable from Git's answer and corrupts the parsed branch
+	// name. Setting it with a no-op logger keeps the GOMAXPROCS behaviour and
+	// drops the banner.
+	"go.uber.org/automaxprocs/maxprocs"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -828,6 +836,15 @@ func singletonLockPath() string {
 // multi-minute window so all instances hear it; without this guard the
 // restarted process would come back inside the same window and restart again.
 const spokeRestartMinUptime = 10 * time.Minute
+
+// init applies the container CPU quota to GOMAXPROCS with a silent logger. See
+// the go.uber.org/automaxprocs/maxprocs import comment for why the banner the
+// blank import would print is not acceptable in this binary. A failure here is
+// deliberately ignored: it only means GOMAXPROCS keeps the Go default, which is
+// the pre-existing behaviour and must never block startup.
+func init() {
+	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...interface{}) {}))
+}
 
 func main() {
 	// --version fast path, before any flag parsing or startup work: the CI
