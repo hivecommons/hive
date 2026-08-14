@@ -284,6 +284,31 @@ COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
 COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 
+# #3760 — defeat the BuildKit/overlayfs metacopy redirect on the cross-stage
+# COPY above. When BuildKit builds these images it can emit a layer where a
+# file brought in by `COPY --from` is stored as an overlay *metacopy redirect*
+# (a size-0 upper entry with a trusted.overlay.redirect / metacopy xattr that
+# points at the lower data). On the CI runner's docker/runc this execs fine,
+# but on the fleet's runtimes — containerd/k3s and rootless podman, both on the
+# overlayfs snapshotter — the kernel presents the redirected file as
+# NON-EXECUTABLE at its image path (bare EPERM at execve) until it is copied up
+# to the writable upper layer. That is precisely why the reporter saw
+# `cp /usr/local/bin/hive /tmp/hx && /tmp/hx --version` succeed while running it
+# in place failed: the `cp` forces a copy-up that materializes the real bytes.
+#
+# Rewriting the binary here — a plain read+write to a NEW inode in THIS stage —
+# lands the full bytes freshly on this stage's own top layer, so the shipped
+# layer contains real file data with no cross-stage overlay redirect. The exec
+# bit is reasserted for good measure. This is robust regardless of buildx
+# attestation/OCI-index flags; the workflow-side `provenance:false / sbom:false`
+# change (which stops the OCI-index form that enables the metacopy layout in the
+# first place) and this rewrite are independent, belt-and-suspenders defenses.
+RUN for b in hive bd hive-backup; do \
+      cp --remove-destination "/usr/local/bin/$b" "/usr/local/bin/$b.fresh" && \
+      mv -f "/usr/local/bin/$b.fresh" "/usr/local/bin/$b" && \
+      chmod 0755 "/usr/local/bin/$b"; \
+    done
+
 COPY v2/proxy/ /opt/hive/proxy/
 
 COPY v2/pkg/dashboard/static/index.html /opt/hive/proxy/public/

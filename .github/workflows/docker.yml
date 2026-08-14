@@ -103,10 +103,25 @@ jobs:
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
           no-cache-filters: builder
+          # #3760: DO NOT attach provenance/SBOM attestations. build-push-action
+          # adds them by DEFAULT, and an attestation can only be carried by an
+          # OCI image *index* — so the per-arch digest we push becomes
+          # application/vnd.oci.image.index.v1+json instead of a plain image
+          # manifest. That is exactly the OCI-index form the reporter measured on
+          # the crash-looping image (his working fork build, same v4 code, is a
+          # plain gzip-layer manifest and execs everywhere). The attestation/OCI-
+          # index build path is what lets a COPY --from layer ship an overlayfs
+          # metacopy redirect for /usr/local/bin/hive, which containerd/k3s and
+          # rootless podman present as non-executable at the image path until
+          # copy-up (a plain `cp` to any other path clears it). Forcing plain
+          # image manifests removes that trigger. See the in-final-stage rewrite
+          # in v2/Dockerfile for the belt-and-suspenders defense.
+          provenance: false
+          sbom: false
           # Push the per-arch digest only for long-lived branches; on a PR
           # branch build without pushing so the image is still validated (CI
           # gate) but nothing lands on GHCR.
-          outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
+          outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=${{ steps.slug.outputs.slug }},mode=max
 
@@ -240,7 +255,11 @@ jobs:
           context: .
           file: v2/Dockerfile.contributor
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/kubestellar/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
+          # #3760: no default provenance/SBOM attestations → plain image
+          # manifests, not an OCI index. See the note on the main build above.
+          provenance: false
+          sbom: false
+          outputs: type=image,name=ghcr.io/kubestellar/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=contributor-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=contributor-${{ steps.slug.outputs.slug }},mode=max
 
@@ -374,7 +393,11 @@ jobs:
           build-args: |
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
-          outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
+          # #3760: no default provenance/SBOM attestations → plain image
+          # manifests, not an OCI index. See the note on the main build above.
+          provenance: false
+          sbom: false
+          outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
 
