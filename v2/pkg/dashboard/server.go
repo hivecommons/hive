@@ -851,8 +851,20 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		// SECURITY (#3315): script-src still carries 'unsafe-inline' because the
+		// dashboard is server-rendered HTML with ~400 inline on*= handlers and
+		// several inline <script> blocks (static/index.html, api_contribute.go,
+		// the device-flow login page below). Dropping it today would blank the
+		// UI, so it is staged behind a nonce/handler refactor — see #3315.
+		//
+		// What IS enforced here: the secret that 'unsafe-inline' used to expose
+		// is gone. The dashboard token is never rendered into the page (see
+		// serveIndex in proxy/server.js and handleAuthToken in api.go), so an
+		// inline-script XSS has no token to steal from the served HTML.
+		// form-action 'self' is added to stop an injected <form> from posting
+		// credentials off-origin, which does NOT depend on inline scripts.
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors "+frameAncestors)
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})

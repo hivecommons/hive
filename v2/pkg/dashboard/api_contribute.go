@@ -624,6 +624,43 @@ func (s *Server) handleContributorDossierPage(w http.ResponseWriter, r *http.Req
 	s.handleContributeLanding(w, r)
 }
 
+// jsStringLiteral renders v as a complete, self-quoting JavaScript string
+// literal that is safe to emit inside an inline <script> element (#3315).
+//
+// Two distinct escapes are required and neither alone is sufficient:
+//
+//   - json.Marshal handles the JavaScript string grammar — quotes, backslashes,
+//     newlines and other control characters — so the value cannot terminate the
+//     literal. HTML escaping does NOT do this job: inside <script> the parser is
+//     in script data state, so "&#39;" is NOT decoded back to a quote and an
+//     html.EscapeString'd value is not protected at all.
+//   - JSON does not escape "/", so a value containing "</script>" would close
+//     the enclosing element before the JS parser ever sees the string. Breaking
+//     that byte sequence with "<\/" keeps the HTML tokenizer inside the script
+//     element while remaining the identical string value to JavaScript.
+//
+// The result INCLUDES its surrounding quotes, so callers must interpolate it
+// bare (var x=%s), never inside quotes of their own (var x='%s').
+func jsStringLiteral(v string) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		// json.Marshal only fails here for un-encodable types; a string is
+		// always encodable. Fail closed with an empty literal rather than
+		// emitting anything unescaped.
+		return `""`
+	}
+	out := string(b)
+	// Case-insensitively neutralize any "</script" and the HTML comment opener,
+	// both of which end script data state regardless of JS quoting.
+	out = scriptCloseRe.ReplaceAllString(out, `<\/$1`)
+	out = strings.ReplaceAll(out, "<!--", `<\!--`)
+	return out
+}
+
+// scriptCloseRe matches the "</" that begins a script-element end tag, in any
+// letter case, so it can be neutralized inside a JS string literal.
+var scriptCloseRe = regexp.MustCompile(`(?i)</(script)`)
+
 func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	projectName := ""
@@ -737,6 +774,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 			customStyleNoticeHTML = `<div class="lb-custom-style-note lb-custom-style-note--warn" id="leaderboard-custom-style-note" role="status">Custom style could not be loaded — using default <button type="button" onclick="this.parentElement.remove()">Dismiss</button></div>`
 		}
 	}
+
+	// SECURITY (#3315): encode the two values that land in a JS string context
+	// AT THE SINK. json.Marshal yields a complete, quoted JS string literal with
+	// quotes, backslashes, newlines and control characters escaped, so neither a
+	// hostile Host header nor a hostile project name can terminate the literal.
+	// Additionally neutralize "</script" (JSON does not escape "/"), which would
+	// otherwise close the enclosing <script> element regardless of JS quoting.
+	hubURLJS := jsStringLiteral(hubURL)
+	projectNameJS := jsStringLiteral(projectName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -1849,8 +1895,15 @@ var modeSel=document.getElementById('mode-select');
 var runtimeSel=document.getElementById('runtime-select');
 var runtimeGroup=document.getElementById('runtime-group');
 var cmds=document.getElementById('copy-cmds');
-var hubURL='%s';
-var ccProjectName='%s';
+// SECURITY (#3315): both values are JSON-encoded at the sink (they arrive as
+// complete JS string literals, quotes included) rather than being dropped raw
+// into '...' quotes. hubURL derives from X-Forwarded-Host/r.Host and
+// ccProjectName from operator config; both were previously kept safe only by
+// sanitizers ~1200 lines away (a charset filter and html.EscapeString), so a
+// change to either of those would silently have opened a script-literal
+// break-out here. HTML escaping is NOT sufficient in a script data context.
+var hubURL=%s;
+var ccProjectName=%s;
 // Shared with the second script block's IIFE (the dossier renderer lives there
 // and needs the project name for its masthead). Without this the bare reference
 // in renderMeCard resolves to nothing and every dossier render throws.
@@ -5834,7 +5887,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, projectName, tierTableRows, customStyleNoticeHTML)
+</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
