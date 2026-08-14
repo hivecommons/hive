@@ -734,31 +734,27 @@ func secureCompareHub(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// heartbeatBearerOK reports whether the Authorization header carries a valid
-// heartbeat bearer, accepting EITHER scheme so this v2 hub authenticates old and
-// new spokes at once (dual-path, additive — never one instead of the other):
+// AUDIT F24 TOMBSTONE — heartbeatBearerOK WAS HERE AND IS DELETED.
+// Do not reintroduce it, and do not "restore" it from history.
 //
-//   - the legacy RAW master s.hubSecret, presented by the 33 existing spokes; and
-//   - the DERIVED heartbeatKey() (HMAC-SHA256(master, "hive-heartbeat-v1")),
-//     presented by a v4 spoke that self-derived it from the same HIVE_HUB_SECRET.
+// It was a complete F2/N1 lane: it accepted the RAW fleet master (s.hubSecret)
+// as a bearer, and the fleet-wide heartbeatKey() = HMAC(master,
+// "hive-heartbeat-v1"). Neither comparand binds a hive identity, so any spoke
+// presenting either token could claim ANY hive_id — the original N1 IDOR. It was
+// the only place in the hub tree where the raw master was an authentication
+// comparand.
 //
-// Both comparisons are constant-time via secureCompareHub. The caller keeps its
-// outer `if s.hubSecret != ""` guard, so an unconfigured hub still authenticates
-// nothing here — this only widens WHICH bearer a configured hub accepts, and only
-// ever adds the new scheme alongside the old one.
-func (s *HubServer) heartbeatBearerOK(auth string) bool {
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
-	}
-	tok := strings.TrimPrefix(auth, "Bearer ")
-	if secureCompareHub(tok, s.hubSecret) {
-		return true
-	}
-	if hk := s.heartbeatKey(); hk != "" && secureCompareHub(tok, hk) {
-		return true
-	}
-	return false
-}
+// It had zero non-test callers when deleted, so removal is behaviour-preserving.
+// It is removed rather than left dead because its tests ASSERTED THE VULNERABLE
+// BEHAVIOUR ("heartbeatBearerOK must accept raw master secret"), which would
+// have made a future refactor that re-wired it look verified-correct against a
+// green suite. Those tests are INVERTED, not deleted, in
+// server_handlers_coverage_test.go — they now assert the fleet-wide and
+// raw-master bearers are REJECTED, so this cannot come back silently.
+//
+// The live, correct path is verifyHeartbeatBearer (hub_keys.go), which is
+// per-hive-only: derivePerHiveKey(master_g, infoHeartbeatKey, hiveID) for every
+// live generation, with no deriveDomainKey fleet-wide branch anywhere (F2).
 
 // heartbeatHealthStaleness is the maximum age of heartbeat-reported health
 // data before it is considered stale and displayed with a warning.

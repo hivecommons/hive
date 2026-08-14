@@ -248,21 +248,63 @@ const HOSTED_HOST = `${HIVE_B_ID}.hive.kubestellar.io`;
 
 let hiveBTtyd, hiveBProxy;
 
-// mintCookie mirrors mintHubUserCookieValue / verifyHubUserCookie:
-// `<username>.<base64url(HMAC-SHA256(key=SESSION_KEY, msg=username))>`.
+// mintCookie mints the cookie format PRODUCTION ACTUALLY ISSUES: v3 (F10),
+// Ed25519-signed with a signed expiry. It mirrors the Go hub's
+// mintHubUserCookieValueV3.
 //
-// C2 domain separation (#2758): the proxy no longer verifies the cookie with the
-// master HIVE_HUB_SECRET but with the derived SESSION sub-key —
-// HMAC-SHA256(master, "hive-session-v1"). We are started with HIVE_HUB_SECRET
-// (the legacy derivation lane), so mint through the SAME derivation the proxy's
-// deriveSessionKey() uses, keeping the info string byte-for-byte identical.
+// AUDIT F23: this helper used to mint the LEGACY SYMMETRIC format —
+// `<user>.<HMAC(SESSION_KEY, user)>`. That lane is now deleted from server.js,
+// so a helper still minting it would exercise a dead path and every test below
+// would pass or fail for the wrong reason. More importantly the symmetric key is
+// fleet-uniform, which is exactly the forgery primitive F23 removes.
+//
+// The proxy self-derives its session PUBLIC key from HIVE_HUB_SECRET via
+// deriveDomainKey(master, "hive-session-ed25519-v1"); we derive the matching
+// PRIVATE seed from the same master, so these cookies verify through the real
+// asymmetric lane.
+const INFO_SESSION_ED25519_SEED = 'hive-session-ed25519-v1';
+const COOKIE_TTL_SECONDS = 3600;
+
+function sessionSeedFromMaster(secret) {
+  return crypto.createHmac('sha256', secret).update(INFO_SESSION_ED25519_SEED).digest('hex');
+}
+
+function privFromSeed(seedHex) {
+  const pkcs8 = Buffer.concat([
+    Buffer.from('302e020100300506032b657004220420', 'hex'),
+    Buffer.from(seedHex, 'hex'),
+  ]);
+  return crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+}
+
+// mintCookieV3 builds `<base64url(json{u,iat,exp,sid})>.v3.<base64url(ed25519 sig)>`.
+function mintCookieV3(secret, username, { ttlSec = COOKIE_TTL_SECONDS, iatOffsetSec = 0 } = {}) {
+  const iat = Math.floor(Date.now() / 1000) + iatOffsetSec;
+  const claims = {
+    u: username,
+    iat,
+    exp: iat + ttlSec,
+    sid: crypto.randomBytes(32).toString('hex'),
+  };
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const sig = crypto.sign(null, Buffer.from(body), privFromSeed(sessionSeedFromMaster(secret)));
+  return `${body}.v3.${sig.toString('base64url')}`;
+}
+
+// mintCookieLegacy mints the DELETED symmetric format. It exists only so the
+// F23 rejection tests can present a correctly-HMAC'd legacy cookie and prove it
+// is refused. Nothing else may use it.
 function deriveSessionKey(secret) {
   return crypto.createHmac('sha256', secret).update('hive-session-v1').digest('hex');
 }
-function mintCookie(secret, username) {
+function mintCookieLegacy(secret, username) {
   const sessionKey = deriveSessionKey(secret);
   const sig = crypto.createHmac('sha256', sessionKey).update(username).digest('base64url');
   return `${username}.${sig}`;
+}
+
+function mintCookie(secret, username) {
+  return mintCookieV3(secret, username);
 }
 
 // mintTerminalAssertion mirrors Go hub.MintTerminalAssertion / the proxy's
@@ -455,6 +497,73 @@ async function testC3_ForgedSigStillRejected() {
   const resp = await terminalHTTP(cookie, HOSTED_HOST);
   assert.equal(resp.status, 401, `forged-signature cookie must be 401, got ${resp.status}`);
   console.log('  ✓ forged-signature cookie (even for allowlisted name) → 401');
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT F23 (Medium): the legacy symmetric session-cookie lane is DELETED.
+//
+// SESSION_KEY is derived from the master (or injected) and is BYTE-IDENTICAL
+// across the whole hosted fleet — measured live at 1 distinct value across
+// 48/48 reachable spokes. Symmetric material means verify-capable implies
+// MINT-capable, so any operator who could read one spoke's pod env could forge
+// `<user>.<HMAC>` and have EVERY other tenant's proxy accept it. The Go hub
+// deleted its half in F1 (#3725); these prove the Node half is gone too.
+//
+// These tests run against the REAL server.js over HTTP and WS — not an in-file
+// copy of the verifier — so they cannot pass while the shipped proxy still
+// honours the lane.
+//
+// NOTE ON WHY EACH FAILS FOR ITS OWN REASON: `alice` is ON hive B's static
+// allowlist. That is deliberate and is the opposite of the `dave` fixture's
+// weakness elsewhere in this file. If the legacy lane were still live, alice's
+// legacy cookie would authenticate AND authorize, giving 200. So a 401 here is
+// attributable to the cookie lane alone — authorization cannot be what denies
+// her, because authorization would have let her through.
+// ---------------------------------------------------------------------------
+
+async function testF23_LegacyCookieRejectedHTTP() {
+  // POSITIVE CONTROL FIRST: the very same allowlisted user, with the cookie
+  // format production actually mints (v3), MUST reach the terminal. Without
+  // this, a proxy that rejected every cookie would "pass" the rejection test
+  // below while breaking all sign-in.
+  const good = mintCookie(HIVE_B_SECRET, 'alice');
+  const okResp = await terminalHTTP(good, HOSTED_HOST);
+  assert.equal(okResp.status, 200,
+    `positive control FAILED: a v3 cookie for allowlisted alice must be 200, got ${okResp.status}`);
+
+  // THE ASSERTION: the same user, correctly HMAC'd with the CORRECT fleet
+  // session key, is refused. This is the exact cookie a spoke operator could
+  // mint from pod env.
+  const legacy = mintCookieLegacy(HIVE_B_SECRET, 'alice');
+  const resp = await terminalHTTP(legacy, HOSTED_HOST);
+  assert.equal(resp.status, 401,
+    `F23 REGRESSION: a correctly-signed LEGACY symmetric cookie was accepted (got ${resp.status}) — a spoke can forge cross-tenant`);
+  console.log('  ✓ F23: legacy symmetric cookie (correct secret, allowlisted user) → 401; v3 → 200');
+}
+
+async function testF23_LegacyCookieRejectedWS() {
+  // Fixing only the HTTP gate would be security theatre — the WS upgrade reaches
+  // the same ttyd. Positive control first, same reasoning as above.
+  const good = mintCookie(HIVE_B_SECRET, 'alice');
+  const { opened: goodOpened } = await terminalWS(good, HOSTED_HOST);
+  assert.ok(goodOpened, 'positive control FAILED: a v3 cookie for allowlisted alice must open the WS');
+
+  const legacy = mintCookieLegacy(HIVE_B_SECRET, 'alice');
+  const { opened } = await terminalWS(legacy, HOSTED_HOST);
+  assert.ok(!opened,
+    'F23 REGRESSION: a correctly-signed LEGACY symmetric cookie opened the WS terminal');
+  console.log('  ✓ F23: legacy symmetric cookie → WS closed; v3 → WS opens');
+}
+
+async function testF23_ForgedAdminLegacyCookieRejected() {
+  // The finding's actual attack: forge the HUB ADMIN username. `clubanderson`
+  // is not on this hive's allowlist, so this asserts the cookie lane refuses to
+  // AUTHENTICATE the forged identity at all.
+  const forgedAdmin = mintCookieLegacy(HIVE_B_SECRET, 'clubanderson');
+  const resp = await terminalHTTP(forgedAdmin, HOSTED_HOST);
+  assert.equal(resp.status, 401,
+    `F23 REGRESSION: a forged legacy ADMIN cookie was accepted (got ${resp.status})`);
+  console.log('  ✓ F23: forged legacy admin cookie (clubanderson) → 401');
 }
 
 // ---------------------------------------------------------------------------
@@ -893,11 +1002,14 @@ try {
   await testC3_ForeignUserHTTP_PortSuffixHost();
   await testC3_ForeignUserHTTP_TrailingDotHost();
   await testC3_ForgedSigStillRejected();
+  await testF23_LegacyCookieRejectedHTTP();
+  await testF23_ForgedAdminLegacyCookieRejected();
 
   console.log('\nWebSocket terminal gate:');
   await testC3_AuthorizedUserWS();
   await testC3_ForeignUserWS();
   await testC3_ForeignUserWS_PortSuffixHost();
+  await testF23_LegacyCookieRejectedWS();
 
   console.log('\nSigned terminal assertion (C3 follow-up):');
   await testC3F_ValidAssertionAdmitsNonAllowlistedUser();
