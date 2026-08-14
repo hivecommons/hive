@@ -275,6 +275,14 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			if active[fmt.Sprintf("%s#%d", repo.Full, number)] {
 				continue
 			}
+			decision := h.evaluateContributorNeutralAdmission(contributorAdmissionCandidate{
+				repoFull: repo.Full,
+				repoName: repo.Name,
+				number:   number,
+			})
+			if !decision.admitted {
+				continue
+			}
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)

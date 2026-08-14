@@ -40,3 +40,17 @@ jobs:
 
       - name: Run SUID + NET_ADMIN static contract check
         run: bash v2/scripts/check-suid-contract.sh v2/Dockerfile v2/deploy/entrypoint.sh
+
+  # RUNTIME assertion (#3874). The static check above cannot catch the bug that
+  # caused the fleet-wide outage: `setpriv --ambient-caps +net_admin` EXITS 0 but
+  # leaves CapAmb=0x0 unless --inh-caps is raised in the same call. Only actually
+  # performing the privilege drop and reading /proc/self/status proves it.
+  # This runs the real setpriv from the real base image, with NET_ADMIN in the
+  # bounding set (--cap-add), and asserts bit 12 survives the drop to dev.
+  ambient-cap-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Assert ambient CAP_NET_ADMIN survives the privilege drop
+        run: bash v2/deploy/test_ambient_cap_runtime.sh

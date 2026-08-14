@@ -3204,6 +3204,20 @@ func main() {
 		// fixed interval comfortably under that 5-min threshold so every hive,
 		// regardless of ACMM level, stays fresh on the hub.
 		const heartbeatSendInterval = 2 * time.Minute
+		// Publish the collect-independent identity BEFORE the loop starts, so
+		// this spoke can report liveness even if its very first collects time
+		// out. collect() below reaches api.github.com (owner-token validation,
+		// and it shares the pass that enumerates issues/PRs for MTTR), which on
+		// a hive with real repos routinely exceeds the collect budget right
+		// after a restart. Without this, such a spoke sent NOTHING and read
+		// OFFLINE on the hub while being perfectly healthy.
+		hub.PublishHeartbeatIdentity(
+			cfg.HiveID,
+			cfg.Project.Org,
+			reporterName,
+			processStartedAt.UTC().Format(time.RFC3339),
+			gitShort,
+		)
 		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
 			if !cfg.Hub.Enabled && envHub == "" {
 				return nil
@@ -3256,6 +3270,12 @@ func main() {
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
+				// FD gauge (#3875): a socket leak reached 92,962 FDs and
+				// self-DoSed spokes with nothing surfacing it. Report the count
+				// and its rlimit every beat so the next leak is a climbing
+				// number on the hub, not a manual /proc excavation.
+				OpenFDs:     hub.OpenFDCount(),
+				FDSoftLimit: hub.FDSoftLimit(),
 				// Reporter names THIS process (the pod) so the hub can tell two
 				// instances reporting as one hive apart — the pod name is the
 				// hostname inside the container.

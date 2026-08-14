@@ -435,14 +435,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		if _, err := upstream.Write(fullBuf); err != nil {
 			return
 		}
-		done := make(chan struct{})
-		go func() {
-			io.Copy(upstream, conn)
-			upstream.(*net.TCPConn).CloseWrite()
-			close(done)
-		}()
-		io.Copy(conn, upstream)
-		<-done
+		relayTunnel(conn, upstream)
 		return
 	}
 
@@ -934,13 +927,16 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			}
 			upstream.SetWriteDeadline(time.Time{})
 			client.SetReadDeadline(time.Time{})
-			done := make(chan struct{})
-			go func() {
-				io.Copy(upstream, client)
-				close(done)
-			}()
-			io.Copy(client, upstream)
-			<-done
+			// Use relayTunnel, NOT an inline copy pair: this branch used to run
+			// its own unbounded io.Copy pair, which was the same wedge #3872
+			// fixed in relayTunnel but left here. When GitHub FIN'd after the
+			// response while the client kept its side open (keep-alive), the
+			// client→upstream copy stayed blocked in client.Read() forever and
+			// `<-done` never returned — the handler's deferred Closes never ran,
+			// parking the upstream socket in CLOSE_WAIT for the life of the
+			// process (issue #3875's FD pile). relayTunnel bounds each direction
+			// once the other finishes.
+			relayTunnel(client, upstream)
 			return
 		}
 
@@ -964,6 +960,20 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
+
+		// Bound the BODY relay too, not just the header read above. The
+		// deadline was cleared once headers arrived, so a "reachable but slow"
+		// GitHub — TLS and headers complete, body never arrives (the measured
+		// #3875 signature: time_total=12s, 0 body bytes) — parked resp.Write
+		// in upstream.Read() with no deadline. The client had long since given
+		// up (10s collect budget) and FIN'd its side, but this goroutine never
+		// noticed: it holds all three sockets of the exchange forever, and the
+		// retry loop stacks a fresh parked handler on every attempt (~1k
+		// FDs/min measured live). The wrapper re-arms a rolling per-Read
+		// deadline, so a body that keeps flowing is never cut while a stall
+		// longer than responseBodyStallTimeout errors out and lets the
+		// handler's deferred Closes reclaim the sockets.
+		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: responseBodyStallTimeout}
 
 		client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 		if err := resp.Write(client); err != nil {
@@ -1065,15 +1075,96 @@ func (p *GitHubProxy) tunnelDirect(conn net.Conn, r *http.Request) {
 
 	fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
+	relayTunnel(conn, upstream)
+}
+
+// responseBodyStallTimeout bounds how long the MITM'd response-BODY relay may
+// go without a single byte of progress from the upstream. It is a rolling
+// per-Read bound (re-armed on every read by stallBoundedBody), not a cap on
+// total transfer time, so a large-but-flowing response is never cut while an
+// upstream that goes silent mid-body releases the handler — and with it the
+// three sockets of the exchange — within one stall window. A var, not a
+// const, so tests can shorten it (same pattern as tunnelHalfCloseDrain).
+// Matches httpReadTimeout: the same patience already extended to the header
+// phase.
+var responseBodyStallTimeout = httpReadTimeout
+
+// stallBoundedBody wraps a proxied response body so every underlying Read is
+// preceded by re-arming a read deadline on the upstream conn. Close clears the
+// deadline (for the next keep-alive exchange on the same conn) and closes the
+// wrapped body. See responseBodyStallTimeout for why this exists (#3875).
+type stallBoundedBody struct {
+	body io.ReadCloser
+	conn net.Conn
+	idle time.Duration
+}
+
+func (b *stallBoundedBody) Read(p []byte) (int, error) {
+	b.conn.SetReadDeadline(time.Now().Add(b.idle))
+	return b.body.Read(p)
+}
+
+func (b *stallBoundedBody) Close() error {
+	// Close the wrapped body while a stall deadline is armed: net/http body
+	// Close paths may still read from the conn (drain-to-EOF), and an unarmed
+	// read there would reintroduce the very stall this type exists to bound.
+	// The deadline is cleared afterwards so the next keep-alive exchange on
+	// this conn starts unencumbered.
+	b.conn.SetReadDeadline(time.Now().Add(b.idle))
+	err := b.body.Close()
+	b.conn.SetReadDeadline(time.Time{})
+	return err
+}
+
+// tunnelHalfCloseDrain bounds how long one direction of an opaque tunnel may
+// keep waiting for bytes AFTER the other direction has already finished. It is
+// a var, not a const, for the same reason as waitForReadyPollInterval in
+// pkg/hub: tests need a relay that unwedges in milliseconds. Production keeps
+// the default.
+//
+// 30s is deliberately generous: the only legitimate traffic still in flight
+// once one side has hung up is a response tail already on the wire, which
+// arrives in RTTs, not tens of seconds.
+var tunnelHalfCloseDrain = 30 * time.Second
+
+// relayTunnel shuttles bytes both ways between the proxied client conn and the
+// upstream until BOTH directions have finished, bounding each direction once
+// the other has ended.
+//
+// WHY THE BOUNDS EXIST (measured live, 2026-08-14): the previous inline copies
+// waited on each other unboundedly. On spokes whose forge host
+// (github.ibm.com) sits behind a SYN-accepting firewall, the upstream TCP
+// connect succeeds but no byte ever comes back and no FIN is ever sent. The
+// client (the daemon's own JWT mints, agents' CLIs) gives up at its TLS
+// handshake timeout and closes — the client→upstream copy finishes and
+// half-closes the upstream — but io.Copy(conn, upstream) stayed blocked in
+// upstream.Read() FOREVER. Every attempt leaked two sockets (the FIN_WAIT2 /
+// CLOSE_WAIT piles), the goroutine, and the splice pipe pair io.Copy holds for
+// a TCP↔TCP copy on Linux: ~300k fds and ~11 burned cores per affected spoke.
+//
+// SetReadDeadline is documented to interrupt Reads that are ALREADY blocked,
+// which is exactly what arms the escape hatch here: each side arms the OTHER
+// side's deadline only at the moment its own direction completes, so a
+// healthy long-lived tunnel (git smart HTTP, device-flow polling) is never
+// cut while both directions are still live.
+func relayTunnel(conn, upstream net.Conn) {
 	done := make(chan struct{})
 	go func() {
 		io.Copy(upstream, conn)
 		if tc, ok := upstream.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
+		// Client side is done (EOF or error — a dead client looks the same).
+		// A live upstream answers or closes within RTTs; a blackholed one
+		// never would, so bound the remaining upstream→client read.
+		upstream.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 		close(done)
 	}()
 	io.Copy(conn, upstream)
+	// Mirror image: upstream finished (or errored) but the client may sit
+	// half-open without ever sending EOF; bound the client-side read so
+	// <-done cannot wedge this handler.
+	conn.SetReadDeadline(time.Now().Add(tunnelHalfCloseDrain))
 	<-done
 }
 

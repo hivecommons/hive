@@ -75,8 +75,19 @@ else
   echo "  PASS: entrypoint does not mask the wrong bit (0x2000 / NET_RAW)"
   PASS=$((PASS + 1))
 fi
-assert_contains 'setpriv[[:space:]]+--ambient-caps[[:space:]]+\+net_admin' \
-  "entrypoint raises an ambient NET_ADMIN cap via setpriv"
+# INVERTED (not relaxed) for #3874. The old pattern was
+#   'setpriv[[:space:]]+--ambient-caps[[:space:]]+\+net_admin'
+# which required EXACTLY the silently-broken invocation and would have gone RED
+# on the correct fix — it ENCODED the bug. `--ambient-caps` alone exits 0 but
+# leaves CapAmb=0x0: the kernel only permits an ambient bit that is also in the
+# inheritable set, and the setuid transition zeroes pI first. The contract is now
+# STRONGER — both flags are required.
+assert_contains '--inh-caps[[:space:]]+\+net_admin' \
+  "entrypoint raises NET_ADMIN into the inheritable set (required for ambient to stick — #3874)"
+assert_contains '--ambient-caps[[:space:]]+\+net_admin' \
+  "entrypoint raises an ambient NET_ADMIN cap"
+assert_contains 'setpriv' \
+  "entrypoint still performs the drop via setpriv"
 assert_contains '--reuid[[:space:]]+dev' \
   "entrypoint drops the ambient-cap path to the dev user (--reuid dev)"
 assert_contains 'exec[[:space:]]+gosu[[:space:]]+dev' \

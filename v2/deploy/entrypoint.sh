@@ -956,29 +956,74 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # regid of a nonexistent `dev` group would make setpriv fail and silently drop
   # us to the gosu fallback (losing the ambient cap on managed spokes).
   _SETPRIV_ID="--reuid dev --regid node --init-groups"
+
+  # ── The ambient set CANNOT be raised without the INHERITABLE set (#3874) ──
+  # An ambient capability is only permitted to hold a bit that is in BOTH the
+  # permitted and the inheritable set (kernel: cap_ambient_raise → PR_CAP_AMBIENT
+  # requires the cap in pP *and* pI, capability.c). setpriv applies --ambient-caps
+  # AFTER the UID change, at which point a setuid transition has already zeroed
+  # pI. So `--ambient-caps +net_admin` ALONE is a silent no-op: setpriv exits 0,
+  # the entrypoint prints its success line, and the process lands with
+  # CapAmb=0x0 — exactly the signature seen fleet-wide (CapBnd=...a80435fb with
+  # CapInh/CapPrm/CapEff/CapAmb all zero). The proxy then cannot setsockopt
+  # (SO_MARK) its own upstream dial, that dial is REDIRECTed back into the proxy
+  # itself, and every outbound :443 hangs until timeout while inbound is fine.
+  #
+  # Raising --inh-caps in the SAME setpriv call fixes it: pI keeps NET_ADMIN
+  # across the credential change, so the ambient raise is legal and sticks
+  # (verified live: CapInh/CapPrm/CapEff/CapAmb all become 0x1000).
+  #
+  # This grants net_admin and NOTHING else — no file capability, no SUID, and the
+  # bounding set is still the gate above, so self-hosted spokes are unaffected.
+  _SETPRIV_CAPS="--inh-caps +net_admin --ambient-caps +net_admin"
+
   # Probe the full invocation once (as root) so a bad flag/identity falls through
   # to the gosu fallback instead of exec-failing after the point of no return.
+  #
+  # The probe VERIFIES THE OUTCOME rather than trusting the exit status: it reads
+  # CapAmb back out of /proc/self/status in the dropped child and requires bit 12
+  # to actually be set. A setpriv that "succeeds" while producing CapAmb=0x0 (the
+  # bug above, and any future kernel/util-linux regression of the same shape) is
+  # therefore treated as a FAILURE and falls through to the honest gosu path,
+  # instead of silently claiming an egress exemption the proxy does not have.
+  _setpriv_grants_ambient_net_admin() {
+    _probe_amb="$(setpriv $_SETPRIV_CAPS $_SETPRIV_ID \
+      sh -c 'grep -m1 "^CapAmb:" /proc/self/status' 2>/dev/null | awk '{print $2}')"
+    [ -n "$_probe_amb" ] && [ $(( 0x${_probe_amb} & 0x1000 )) -ne 0 ]
+  }
+
   if [ "$_cap_net_admin_in_bset" = "true" ] \
      && command -v setpriv >/dev/null 2>&1 \
-     && setpriv --ambient-caps +net_admin $_SETPRIV_ID true 2>/dev/null; then
+     && _setpriv_grants_ambient_net_admin; then
     # Managed spoke: bounding set HAS NET_ADMIN and setpriv can raise it into the
     # ambient set. Drop to dev WITH ambient+effective NET_ADMIN so the Go hive
     # process can SO_MARK its proxy dials.
     echo "[entrypoint] Dropping to dev user (ambient CAP_NET_ADMIN granted for proxy SO_MARK egress-gate)"
-    exec setpriv --ambient-caps +net_admin $_SETPRIV_ID "$0" "$@"
+    exec setpriv $_SETPRIV_CAPS $_SETPRIV_ID "$0" "$@"
   elif command -v gosu >/dev/null 2>&1 && gosu dev true 2>/dev/null; then
     if [ "$_cap_net_admin_in_bset" != "true" ]; then
       # Self-hosted / rootless spoke: no NET_ADMIN in the bounding set. Do NOT
       # attempt the ambient raise (setpriv would error). The binary execs fine
-      # (no file cap), but the proxy's SO_MARK egress exemption is unavailable —
-      # the forced-proxy egress-gate degrades to the owner-UID exemption only
-      # (works on OKE, not on OpenShift/OVN). The Go proxy logs this once and
-      # dials unmarked (v2/pkg/proxy/github_proxy.go warnSockMarkOnce).
-      echo "[entrypoint] NOTICE: CAP_NET_ADMIN is not in the bounding set — the forced-proxy egress exemption (SO_MARK) is unavailable. hive will run without it; grant NET_ADMIN (securityContext capabilities.add / --cap-add NET_ADMIN) for full egress attribution."
+      # (no file cap), but the proxy's SO_MARK egress exemption is unavailable.
+      # The only remaining self-exemption is the owner-UID RETURN appended above
+      # — and that one is CONDITIONAL: it is appended with `|| true` and silently
+      # does not exist on kernels without the xt_owner module (OpenShift/OVN and
+      # some IKS/OKE node images: "Extension owner revision 0 not supported").
+      # So do NOT promise it here. Report what is actually in the chain, which is
+      # verifiable, instead of asserting a backstop that may not be loaded.
+      # The Go proxy logs the unmarked dial once
+      # (v2/pkg/proxy/github_proxy.go warnSockMarkOnce).
+      if iptables -t nat -C HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN 2>/dev/null; then
+        _owner_backstop="present (xt_owner loaded) — proxy dials still exempt via owner-UID"
+      else
+        _owner_backstop="ABSENT (no xt_owner on this kernel) — the proxy has NO self-exemption; outbound :443 from the proxy will loop back into the redirect"
+      fi
+      echo "[entrypoint] NOTICE: CAP_NET_ADMIN is not in the bounding set — the forced-proxy egress exemption (SO_MARK) is unavailable. Owner-UID backstop: ${_owner_backstop}. Grant NET_ADMIN (securityContext capabilities.add / --cap-add NET_ADMIN) for full egress attribution."
     else
-      # Bounding set HAD NET_ADMIN but setpriv was missing or failed — fall back
-      # to gosu (no ambient cap). Same SO_MARK degradation as the no-cap case.
-      echo "[entrypoint] WARN: setpriv unavailable or ambient-cap raise failed despite NET_ADMIN in bounding set — falling back to gosu (SO_MARK egress exemption unavailable)."
+      # Bounding set HAD NET_ADMIN but setpriv was missing, or the probe proved
+      # the ambient bit did NOT survive the drop (the #3874 silent no-op). Fall
+      # back to gosu with an honest warning: this path has no SO_MARK exemption.
+      echo "[entrypoint] WARN: setpriv unavailable, or the ambient CAP_NET_ADMIN raise did not survive the privilege drop (verified CapAmb bit 12 unset), despite NET_ADMIN in the bounding set — falling back to gosu (SO_MARK egress exemption unavailable)."
     fi
     echo "[entrypoint] Dropping to dev user"
     exec gosu dev "$0" "$@"
