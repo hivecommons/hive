@@ -309,11 +309,19 @@ jobs:
           # advanced but /usr/local/bin/hive was an old build (reported commit
           # 4d9c11c while HEAD had the #3760 fix). Assert the built binary's
           # embedded commit matches THIS build's commit so a stale-layer cache hit
-          # is caught directly, not just an exec failure. `hive --version` prints
-          # `hive 3.0.0 (commit <short7>, branch <branch>)`; main.gitShort is the
-          # 7-char short SHA stamped from GIT_HASH=${{ github.sha }} at build.
+          # is caught directly, not just an exec failure.
+          #
+          # Two `--version` formats exist across branches and both must parse:
+          #   v4: `hive 3.0.0 (commit <short7>, branch <branch>)`
+          #   dd: `Hive development` / `commit: <full40>`  (runVersionCommand,
+          #       which this branch intentionally keeps over v4's inline path)
+          # So accept an optional colon after `commit`, and compare on the
+          # 7-char prefix of whatever was reported. The comparison stays exact
+          # on those 7 chars — a stale binary still fails, this only stops the
+          # guard from mis-parsing a full-length SHA as unparseable.
           EXPECTED_SHORT="${GITHUB_SHA::7}"
-          REPORTED_COMMIT=$(printf '%s\n' "$out" | sed -n 's/.*commit \([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1)
+          REPORTED_FULL=$(printf '%s\n' "$out" | sed -n 's/.*commit:\{0,1\} \([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1)
+          REPORTED_COMMIT="${REPORTED_FULL::7}"
           echo "expected commit=$EXPECTED_SHORT reported commit=$REPORTED_COMMIT"
           if [ -z "$REPORTED_COMMIT" ]; then
             echo "::error::stale-binary guard: could not parse commit from 'hive --version' output — version stamping is broken or the output format changed." >&2
