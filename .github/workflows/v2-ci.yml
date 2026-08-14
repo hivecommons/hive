@@ -259,7 +259,29 @@ jobs:
               echo "::error::#3760 regression: hive execve returned Operation not permitted at its image path under containerd/overlayfs." >&2
               exit 1 ;;
           esac
-          echo "OK: hive execs in-place under containerd/overlayfs (no copy, no NET_ADMIN)."
+
+          # STALE-BINARY GUARD. The exec check above passes even for an OLD hive
+          # binary — a stale binary works fine, it just reports the WRONG commit.
+          # A branch-persistent GHA cache once let BuildKit serve a cached
+          # final-stage `COPY --from=builder /hive` layer, so the manifest digest
+          # advanced but /usr/local/bin/hive was an old build (reported commit
+          # 4d9c11c while HEAD had the #3760 fix). Assert the built binary's
+          # embedded commit matches THIS build's commit so a stale-layer cache hit
+          # is caught directly, not just an exec failure. `hive --version` prints
+          # `hive 3.0.0 (commit <short7>, branch <branch>)`; main.gitShort is the
+          # 7-char short SHA stamped from GIT_HASH=${{ github.sha }} at build.
+          EXPECTED_SHORT="${GITHUB_SHA::7}"
+          REPORTED_COMMIT=$(printf '%s\n' "$out" | sed -n 's/.*commit \([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1)
+          echo "expected commit=$EXPECTED_SHORT reported commit=$REPORTED_COMMIT"
+          if [ -z "$REPORTED_COMMIT" ]; then
+            echo "::error::stale-binary guard: could not parse commit from 'hive --version' output — version stamping is broken or the output format changed." >&2
+            exit 1
+          fi
+          if [ "$REPORTED_COMMIT" != "$EXPECTED_SHORT" ]; then
+            echo "::error::stale-binary guard: shipped hive reports commit '$REPORTED_COMMIT' but this build is '$EXPECTED_SHORT'. The binary is STALE — a cached final-stage COPY --from=builder layer shipped an old /usr/local/bin/hive (the bug that let #3760's fix miss the published image). Check no-cache-filters covers the runtime stage in docker.yml." >&2
+            exit 1
+          fi
+          echo "OK: hive execs in-place under containerd/overlayfs (no copy, no NET_ADMIN) AND reports the current commit ($REPORTED_COMMIT)."
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'

@@ -23,7 +23,11 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive
 
-FROM alpine:3.24
+# Named `runtime` so the CI hub build step can list it in `no-cache-filters`
+# alongside `builder`. Busting only `builder` rebuilt a fresh /hive but let
+# BuildKit serve the final-stage `COPY --from=builder /hive` layer from the
+# branch-scoped GHA cache, shipping the OLD binary. See docker.yml.
+FROM alpine:3.24 AS runtime
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.36.3
 ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336
