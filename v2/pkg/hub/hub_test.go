@@ -229,7 +229,7 @@ func TestHandleHealthCheck(t *testing.T) {
 
 func TestHandleHeartbeatNoAuth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret123"
+	srv.setHubSecret("secret123")
 	req := httptest.NewRequest("POST", "/api/heartbeat", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)

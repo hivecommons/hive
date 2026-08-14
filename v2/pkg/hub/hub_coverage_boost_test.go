@@ -500,7 +500,7 @@ func TestGhcrTagExistsWithMock(t *testing.T) {
 
 func TestHandleHeartbeatValidPayload(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := HeartbeatPayload{
 		HiveID:       "test-hive",
@@ -536,7 +536,7 @@ func TestHandleHeartbeatValidPayload(t *testing.T) {
 
 func TestHandleHeartbeatEmptyHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"","org":"test"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -552,7 +552,7 @@ func TestHandleHeartbeatEmptyHiveID(t *testing.T) {
 
 func TestHandleHeartbeatInvalidHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	// sanitizeHeartbeatField strips most chars; use a string that becomes >100 chars of valid chars
 	longID := strings.Repeat("a", 101)
@@ -570,7 +570,7 @@ func TestHandleHeartbeatInvalidHiveID(t *testing.T) {
 
 func TestHandleHeartbeatInvalidOrg(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","org":"bad org name!"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -586,7 +586,7 @@ func TestHandleHeartbeatInvalidOrg(t *testing.T) {
 
 func TestHandleHeartbeatInvalidRepo(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	// Use a repo name that's >100 chars (too long for isValidName)
 	longRepo := strings.Repeat("r", 101)
@@ -604,7 +604,7 @@ func TestHandleHeartbeatInvalidRepo(t *testing.T) {
 
 func TestHandleHeartbeatInvalidRepoInList(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","repos":["good-repo","bad repo!"]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -620,7 +620,7 @@ func TestHandleHeartbeatInvalidRepoInList(t *testing.T) {
 
 func TestHandleHeartbeatBadDashboardURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","dashboard_url":"ftp://bad-scheme.com"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -636,7 +636,7 @@ func TestHandleHeartbeatBadDashboardURL(t *testing.T) {
 
 func TestHandleHeartbeatBadSnapshotURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","snapshot_url":"ftp://bad.com"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -652,7 +652,7 @@ func TestHandleHeartbeatBadSnapshotURL(t *testing.T) {
 
 func TestHandleHeartbeatInvalidAgentName(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","agents":[{"name":"bad agent!","state":"running"}]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -668,7 +668,7 @@ func TestHandleHeartbeatInvalidAgentName(t *testing.T) {
 
 func TestHandleHeartbeatInvalidLeaderboardUsername(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","leaderboard":[{"github_username":"bad user!"}]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -684,7 +684,7 @@ func TestHandleHeartbeatInvalidLeaderboardUsername(t *testing.T) {
 
 func TestHandleHeartbeatNoSecretRequired(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{"hive_id":"valid-id"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -699,7 +699,7 @@ func TestHandleHeartbeatNoSecretRequired(t *testing.T) {
 
 func TestHandleHeartbeatWrongSecret(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "correct-secret"
+	srv.setHubSecret("correct-secret")
 
 	payload := `{"hive_id":"valid-id"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -715,7 +715,7 @@ func TestHandleHeartbeatWrongSecret(t *testing.T) {
 
 func TestHandleHeartbeatExistingHive(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Pre-populate a hive
 	srv.mu.Lock()
@@ -795,7 +795,7 @@ func TestHandleHeartbeatHostedHiveRejectedWithoutSaaS(t *testing.T) {
 
 func TestHandleTaskStatusNoAuth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
@@ -809,7 +809,7 @@ func TestHandleTaskStatusNoAuth(t *testing.T) {
 
 func TestHandleTaskStatusValid(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	// Pre-populate a hive in registry
 	srv.mu.Lock()
@@ -832,7 +832,7 @@ func TestHandleTaskStatusValid(t *testing.T) {
 
 func TestHandleTaskStatusBadJSON(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader("not json"))
 	req.Header.Set("Authorization", heartbeatBearer("secret", "anything"))
@@ -847,7 +847,7 @@ func TestHandleTaskStatusBadJSON(t *testing.T) {
 
 func TestHandleTaskStatusEmptyHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(`{"hive_id":""}`))
 	req.Header.Set("Authorization", heartbeatBearer("secret", ""))
@@ -862,7 +862,7 @@ func TestHandleTaskStatusEmptyHiveID(t *testing.T) {
 
 func TestHandleTaskStatusOfflineHive(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -2172,7 +2172,7 @@ func TestHandleDenyAccessNotFound(t *testing.T) {
 
 func TestHandleHeartbeatWithClusterHealth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := HeartbeatPayload{
 		HiveID: "health-hive",
@@ -2209,7 +2209,7 @@ func TestHandleHeartbeatWithClusterHealth(t *testing.T) {
 
 func TestHandleHeartbeatResponseContainsFields(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Set up a latestSHA
 	latestSHAMu.Lock()

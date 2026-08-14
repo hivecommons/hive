@@ -325,7 +325,7 @@ func TestSendHeartbeatAutoUpgradeInPayload(t *testing.T) {
 
 func TestHeartbeatNoUpgradeToForHubManagedHives(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Simulate a heartbeat from a spoke with auto_upgrade=true
 	// but the hub also has AutoUpgrade on the SaaS hive — hub-managed
@@ -360,7 +360,7 @@ func TestHeartbeatNoUpgradeToForHubManagedHives(t *testing.T) {
 
 func TestHeartbeatUpgradeToForSpokeManaged(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Spoke declares auto_upgrade but no SaaS hive exists on hub
 	// (unreachable spoke) — should get UpgradeTo if SHA differs

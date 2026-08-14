@@ -69,7 +69,7 @@ func TestHandleHeartbeatUnauthorized(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	s := newHeartbeatHub()
-	s.hubSecret = "top-secret"
+	s.setHubSecret("top-secret")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/heartbeat", strings.NewReader(`{"hive_id":"h1"}`))
 	req.Header.Set("Content-Type", "application/json")

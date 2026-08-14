@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+	"time"
 )
 
 // Domain-separated key derivation for the hub master secret (CWE-321/798, C2).
@@ -239,12 +240,127 @@ func (s *HubServer) heartbeatKeyFor(hiveID string) string {
 //
 // Fails closed: an empty bearer, or an empty hiveID (which makes the per-hive
 // derivation return ""), authenticates nothing. The comparison is constant-time.
+//
+// ROTATION (master-key-rotation.md, follow-on PR #2): the bearer is tried
+// against the per-hive derivation from EVERY master generation the hub still
+// accepts, current first. See verifyHeartbeatBearerAcrossGenerations for why
+// trial verification is the only option here and why it does NOT re-open F2.
 func (s *HubServer) verifyHeartbeatBearer(presented, hiveID string) bool {
-	if presented == "" {
-		return false
+	_, ok := s.verifyHeartbeatBearerGeneration(presented, hiveID)
+	return ok
+}
+
+// setHubSecret replaces the hub's master AND the generation set derived from it,
+// keeping the two in lockstep.
+//
+// These are two representations of ONE fact, and once any verifier reads the
+// generation set (this PR makes the heartbeat the second such verifier, after
+// the impersonation cookie), assigning s.hubSecret alone leaves the hub deriving
+// keys from a master it no longer believes it has. That drift is silent: the
+// build is fine, the types are fine, and the only symptom is a 401.
+//
+// Setting a fresh master necessarily DISCARDS any previous generations — there
+// is no basis on which to keep verifying against generations of a master that is
+// being replaced wholesale rather than rotated. A real rotation goes through
+// generationSet.rotate, which is what preserves the outgoing generation.
+func (s *HubServer) setHubSecret(secret string) {
+	if s == nil {
+		return
+	}
+	s.hubSecret = secret
+	s.keyGenerations = legacyGenerationSet(secret)
+}
+
+// verifyHeartbeatBearerGeneration is verifyHeartbeatBearer with the accepting
+// master generation reported, so an operator can see whether any spoke is still
+// authenticating with pre-rotation material rather than having to infer it.
+//
+// keyGenerations is nil only in hand-built test servers. Those fall back to the
+// single-master path so this stays a pure addition of a second KEY rather than
+// a change to what authenticates.
+func (s *HubServer) verifyHeartbeatBearerGeneration(presented, hiveID string) (int, bool) {
+	if s == nil || presented == "" {
+		return 0, false
+	}
+	if s.keyGenerations != nil {
+		return verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
 	}
 	perHive := s.heartbeatKeyFor(hiveID)
-	return perHive != "" && secureCompareHub(presented, perHive)
+	if perHive != "" && secureCompareHub(presented, perHive) {
+		return legacyGenerationID, true
+	}
+	return 0, false
+}
+
+// verifyHeartbeatBearerAcrossGenerations is BOUNDED TRIAL VERIFICATION of the
+// heartbeat bearer against every live master generation.
+//
+// WHY TRIAL AND NOT A MARKER. The bearer IS the derived key, presented raw in
+// the Authorization header — there is no envelope to put a "g<N>." in. Its
+// format is also a contract with already-deployed spoke Deployments
+// (HIVE_HEARTBEAT_KEY) and with SpokeHeartbeatKey()'s self-derive lane, so
+// changing the format would make the rotation mechanism itself require the
+// fleet-wide flag day it exists to avoid. Trial verification is what the design
+// prescribes for exactly this class of artifact.
+//
+// THE BOUND IS THE WHOLE ARGUMENT. maxLiveGenerations == 2, so the worst case is
+// two HMAC computations where there was one — strictly less than the rest of a
+// heartbeat already costs, and an attacker cannot use it as an asymmetric-cost
+// lever because the count is capped by the loader rather than by anything the
+// caller supplies.
+//
+// !! AUDIT F2 (Critical, open across five audits) MUST NOT REGRESS. !!
+//
+// F2 was closed by DELETING the fleet-wide lane — deriveDomainKey(master,
+// infoHeartbeatKey), a value stamped byte-identically into every spoke, whose
+// possession proved "some provisioned spoke" and never "THIS hive". Because
+// handleHeartbeat trusts the body-supplied hive_id, that lane let any spoke beat
+// as any victim and be handed the victim's key material.
+//
+// This function adds a second GENERATION, not a second LANE. Every candidate
+// below is derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID) — identity-bound
+// under EVERY generation, and derivePerHiveKey returns "" for an empty hiveID so
+// an identity-less caller authenticates nothing no matter how many generations
+// exist. There is deliberately no code path here that derives without hiveID; if
+// one ever appears, F2 is re-opened.
+//
+// TIMING. Every attempt uses secureCompareHub (subtle.ConstantTimeCompare), and
+// the loop deliberately does NOT return early on a match: it ORs the results and
+// evaluates every acceptable generation regardless. Early return would leak,
+// through response latency, WHICH generation accepted a bearer — which is a
+// (small) oracle telling an attacker whether a given spoke has converged onto
+// the new key, and therefore which spokes are still holding material derived
+// from a master the operator is trying to retire. Two HMACs is cheap enough that
+// there is no reason to buy anything with that leak.
+//
+// Returns the accepting generation ID, which is 0 when nothing accepted.
+func verifyHeartbeatBearerAcrossGenerations(gs *generationSet, presented, hiveID string, now time.Time) (int, bool) {
+	if presented == "" || hiveID == "" {
+		return 0, false
+	}
+	acceptable := gs.acceptableGenerations(now)
+	if len(acceptable) == 0 {
+		return 0, false
+	}
+	matched := 0
+	for _, g := range acceptable {
+		// F2: identity-bound under EVERY generation. Never deriveDomainKey.
+		perHive := derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID)
+		if perHive == "" {
+			continue
+		}
+		// The compare is on its OWN line, unconditionally, so it runs for every
+		// acceptable generation. Folding it into the `if` below as
+		// `secureCompareHub(...) && matched == 0` would work today only because
+		// Go evaluates the left operand first — a reordering during some future
+		// tidy-up would silently reintroduce the early-exit timing leak. Keep
+		// them separate.
+		ok := secureCompareHub(presented, perHive)
+		if ok && matched == 0 {
+			matched = g.ID
+		}
+	}
+	return matched, matched != 0
 }
 
 // heartbeatBearerIsPerHive reports whether the presented bearer is the
@@ -255,7 +371,22 @@ func (s *HubServer) verifyHeartbeatBearer(presented, hiveID string) bool {
 // confirm none regressed. Post-F2 a bearer that is not per-hive no longer
 // verifies at all, so callers observe this only for bearers that already passed
 // verifyHeartbeatBearer.
+//
+// ROTATION: this must consider every live generation for the same reason the
+// verifier does. A spoke that has not yet been reconciled onto the new master
+// presents a bearer derived from the PREVIOUS generation — still per-hive, still
+// identity-bound, still accepted. Checking only the current generation would
+// report it as "not per-hive" and make the auth-rollout surface show a fleet-wide
+// F2 regression that has not happened, during exactly the window an operator is
+// watching that surface most closely.
 func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
+	if s == nil {
+		return false
+	}
+	if s.keyGenerations != nil {
+		_, ok := verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
+		return ok
+	}
 	perHive := s.heartbeatKeyFor(hiveID)
 	return perHive != "" && secureCompareHub(presented, perHive)
 }
