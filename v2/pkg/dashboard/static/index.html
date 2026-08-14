@@ -1384,6 +1384,22 @@
     /* Cost panel — mirrors token-panel styling */
     .cost-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
     .cost-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    /* Collapsible cost panel — reuses the .section-chevron / max-height idiom (#1533). */
+    .cost-title.cost-toggle { cursor: pointer; user-select: none; width: 100%; }
+    .cost-title.cost-toggle:hover { opacity: 0.85; }
+    .cost-chevron {
+      display: inline-block; font-size: 0.7em; transition: transform 200ms ease;
+      color: var(--muted); flex-shrink: 0;
+    }
+    .cost-chevron.collapsed { transform: rotate(-90deg); }
+    /* Compact total shown only while collapsed, so the header still carries the headline number. */
+    .cost-collapsed-total { display: none; font-size: 0.75rem; font-weight: 600; color: var(--muted); margin-left: auto; }
+    .cost-panel.collapsed .cost-collapsed-total { display: inline; }
+    .cost-body {
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      max-height: 8000px; opacity: 1;
+    }
+    .cost-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: 12px; }
     .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .cost-stat { text-align: left; }
@@ -8142,6 +8158,47 @@ function burnAreaChart() {
     // Last cost payload, so the range pills can re-render the trend chart
     // instantly (client-only bucketing) without waiting for the next poll.
     let _lastCost = null;
+    // ── Collapsible cost panel (mirrors the toggleSection idiom, #1533) ──
+    // The cost panel is fully rebuilt via innerHTML on every /api/cost poll, so
+    // the collapsed state cannot live only in the DOM — it is persisted in
+    // localStorage and re-applied after each render so a poll never re-expands it.
+    const COST_COLLAPSED_LS_KEY = 'hive-cost-collapsed';
+    function isCostCollapsed() {
+      return localStorage.getItem(COST_COLLAPSED_LS_KEY) === '1';
+    }
+    function setCostCollapsed(collapsed) {
+      if (collapsed) localStorage.setItem(COST_COLLAPSED_LS_KEY, '1');
+      else localStorage.removeItem(COST_COLLAPSED_LS_KEY);
+    }
+    /** Reflect the persisted collapsed state onto the current cost-panel DOM. */
+    function applyCostCollapse() {
+      const panel = document.querySelector('#cost-panel .cost-panel');
+      if (!panel) return;
+      const collapsed = isCostCollapsed();
+      const body = panel.querySelector('.cost-body');
+      const chevron = panel.querySelector('.cost-chevron');
+      const header = panel.querySelector('.cost-title');
+      panel.classList.toggle('collapsed', collapsed);
+      if (body) body.classList.toggle('collapsed', collapsed);
+      if (chevron) {
+        chevron.classList.toggle('collapsed', collapsed);
+        chevron.textContent = '▼';
+      }
+      if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    /** Toggle collapsed state on click / keyboard, persist, and animate. */
+    function toggleCostPanel() {
+      setCostCollapsed(!isCostCollapsed());
+      applyCostCollapse();
+    }
+    /** Enter/Space activate the header like a button. */
+    function costHeaderKey(ev) {
+      if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+        ev.preventDefault();
+        toggleCostPanel();
+      }
+    }
+
     function renderCost(cost) {
       const el = document.getElementById('cost-panel');
       if (!el) return;
@@ -8295,22 +8352,30 @@ function burnAreaChart() {
         </table>`;
 
       el.innerHTML = `<div class="cost-panel">
-        <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
-        <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
-        <div class="cost-grid">
-          <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
+        <div class="cost-title cost-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-panel-body" onclick="toggleCostPanel()" onkeydown="costHeaderKey(event)" title="Collapse / expand the cost panel">
+          <span class="cost-chevron" aria-hidden="true">▼</span>
+          Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>
+          <span class="cost-collapsed-total" title="Estimated all-time total">${fmtUSD(est.total_usd)}</span>
         </div>
-        ${costTrendHtml()}
-        ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
-        <table class="cost-table">
-          <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
-          <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
-        </table>
-        ${sandboxTable}
-        ${sessionTable}
-        ${unpricedNote}
-        <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+        <div class="cost-body" id="cost-panel-body">
+          <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
+          <div class="cost-grid">
+            <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
+          </div>
+          ${costTrendHtml()}
+          ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
+          <table class="cost-table">
+            <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+            <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+          </table>
+          ${sandboxTable}
+          ${sessionTable}
+          ${unpricedNote}
+          <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+        </div>
       </div>`;
+      // Re-apply the persisted collapsed state so a poll re-render never resets it.
+      applyCostCollapse();
     }
 
     async function fetchCost() {
