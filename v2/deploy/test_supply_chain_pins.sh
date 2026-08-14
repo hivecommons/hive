@@ -117,6 +117,32 @@ else
   pass "no compose service uses a :latest image tag"
 fi
 
+# --- 5. NodeSource GPG key must be pinned by SHA-256 before use --------------
+# issue #3821: the key used to be curl | gpg --dearmor with no verification, so
+# a compromised deb.nodesource.com or a build-network MITM could swap in a
+# trusted signing key silently. Guard both that the ARG is a real 64-hex-char
+# digest (not blank/placeholder) and that the RUN step actually verifies it
+# with sha256sum -c before dearmoring -- pinning the ARG alone without wiring
+# the check into the RUN would regress silently back to "trust on first use".
+nodesource_arg="$(grep -E '^[[:space:]]*ARG[[:space:]]+NODESOURCE_KEY_SHA256[[:space:]]*=' "$DOCKERFILE_CONTRIB" | head -1 || true)"
+if [ -z "$nodesource_arg" ]; then
+  fail "NODESOURCE_KEY_SHA256 is present and pinned" "no ARG NODESOURCE_KEY_SHA256 found in $DOCKERFILE_CONTRIB"
+else
+  nodesource_value="$(echo "${nodesource_arg#*=}" | tr -d ' "'"'"'')"
+  if echo "$nodesource_value" | grep -qE '^[0-9a-f]{64}$'; then
+    pass "NODESOURCE_KEY_SHA256 is pinned to a 64-hex-char digest"
+  else
+    fail "NODESOURCE_KEY_SHA256 is pinned to a 64-hex-char digest" "got: '$nodesource_value'"
+  fi
+fi
+
+if grep -A2 'NODESOURCE_KEY_SHA256}  /tmp/nodesource.key' "$DOCKERFILE_CONTRIB" | grep -q 'sha256sum -c'; then
+  pass "nodesource key fetch is verified with sha256sum -c before dearmoring"
+else
+  fail "nodesource key fetch is verified with sha256sum -c before dearmoring" \
+       "expected an 'echo \"\$NODESOURCE_KEY_SHA256  /tmp/nodesource.key\" | sha256sum -c -' step in $DOCKERFILE_CONTRIB"
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1
