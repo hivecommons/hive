@@ -844,9 +844,54 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
 
   # Drop to non-root user for all runtime processes.
   # Claude Code refuses --dangerously-skip-permissions as root.
-  # Test gosu first — on some NFS/container combos it fails with EPERM.
+  #
+  # CAP_NET_ADMIN (issue #3760): the Go hive process needs NET_ADMIN in its
+  # EFFECTIVE set so the MITM proxy can setsockopt(SO_MARK) its own upstream
+  # dials for the forced-egress exemption. Dropping via gosu strips all caps, so
+  # where the platform grants NET_ADMIN (managed OKE/OpenShift spokes via
+  # SCC/PSA — it is already in our bounding set because the iptables chain above
+  # succeeded) we drop with `setpriv`, which can raise NET_ADMIN into the
+  # inheritable + AMBIENT sets so it survives the UID transition. We deliberately
+  # do NOT put NET_ADMIN as a file capability on the binary: the kernel refuses
+  # to execve a binary carrying a file cap absent from the container bounding
+  # set, which crash-looped every self-hosted/rootless spoke (issue #3760).
+  #
+  # setpriv --init-groups replicates gosu's supplementary-group setup from
+  # /etc/group (preserving the `dev`-only `hive-launch` membership, audit C6).
+  # If setpriv is missing, NET_ADMIN is not in the bounding set, or setpriv
+  # fails, we fall back to gosu: hive still execs, and the proxy's SO_MARK path
+  # is best-effort (it logs once and dials unmarked), so egress still works via
+  # the owner-UID exemption on OKE.
+  # setpriv resolves `dev`'s UID and supplementary groups via --reuid/--init-groups;
+  # only the primary GID must be named explicitly.
+  DEV_GID="$(id -g dev 2>/dev/null || echo node)"
+  # NET_ADMIN is bit 12; the process bounding set is the CapBnd field in
+  # /proc/self/status (a hex bitmask). Only attempt the ambient-cap drop when
+  # NET_ADMIN is actually in the bounding set — otherwise setpriv would fail.
+  _capbnd="$(awk '/^CapBnd:/ {print $2}' /proc/self/status 2>/dev/null || echo 0)"
+  # Guard the arithmetic: only feed a pure-hex value into $(( )) so a malformed
+  # or missing CapBnd never aborts the entrypoint with a shell arithmetic error.
+  case "$_capbnd" in
+    ''|*[!0-9A-Fa-f]*) _capbnd=0 ;;
+  esac
+  _net_admin_in_bnd=false
+  if [ "$(( 0x${_capbnd} >> 12 & 1 ))" = "1" ]; then
+    _net_admin_in_bnd=true
+  fi
+  if [ "$_net_admin_in_bnd" = "true" ] && command -v setpriv >/dev/null 2>&1 \
+     && setpriv --reuid dev --regid "$DEV_GID" --init-groups \
+        --inh-caps +net_admin --ambient-caps +net_admin true 2>/dev/null; then
+    echo "[entrypoint] Dropping to dev user (setpriv, ambient CAP_NET_ADMIN)"
+    exec setpriv --reuid dev --regid "$DEV_GID" --init-groups \
+      --inh-caps +net_admin --ambient-caps +net_admin "$0" "$@"
+  fi
+  # Test gosu — on some NFS/container combos it fails with EPERM.
   if command -v gosu >/dev/null 2>&1 && gosu dev true 2>/dev/null; then
-    echo "[entrypoint] Dropping to dev user"
+    if [ "$_net_admin_in_bnd" = "true" ]; then
+      echo "[entrypoint] Dropping to dev user (gosu; NET_ADMIN present but setpriv unavailable — proxy SO_MARK will be best-effort)"
+    else
+      echo "[entrypoint] Dropping to dev user (gosu; no NET_ADMIN in bounding set — proxy SO_MARK best-effort, owner-UID exemption applies)"
+    fi
     exec gosu dev "$0" "$@"
   else
     echo "[entrypoint] WARN: gosu unavailable or failed, continuing as root"
