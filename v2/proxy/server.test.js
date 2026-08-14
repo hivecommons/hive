@@ -267,19 +267,34 @@ function mintCookie(secret, username) {
 
 // mintTerminalAssertion mirrors Go hub.MintTerminalAssertion / the proxy's
 // verifyTerminalAssertion: `<base64url(json{v,u,r,h,iat,exp})>.<base64url(HMAC)>`.
-// It signs with the DERIVED terminal sub-key (deriveTerminalKey), not the raw
-// master — matching the proxy's TERMINAL_SIGNING_KEY resolution for a spoke
-// provisioned with only HIVE_HUB_SECRET (its default in these tests). ttlSec and
-// version are overridable so tests can forge expired / wrong-version / wrong-hive
+// It signs with the PER-HIVE terminal sub-key (deriveTerminalKey), not the raw
+// master and not a fleet-wide derivation — matching the proxy's
+// TERMINAL_SIGNING_KEY self-derive lane for a spoke provisioned with
+// HIVE_HUB_SECRET + HIVE_ID (its default in these tests). ttlSec and version are
+// overridable so tests can forge expired / wrong-version / wrong-hive
 // assertions. Default: this hive, 15-min TTL, current version.
 const TERMINAL_ASSERTION_VERSION = 'hive-terminal-v1';
 const INFO_TERMINAL_KEY = 'hive-terminal-v1';
-// deriveTerminalKey mirrors the Go deriveTerminalKeyFrom / proxy deriveTerminalKeyFrom.
-function deriveTerminalKey(master) {
-  return crypto.createHmac('sha256', master).update(INFO_TERMINAL_KEY).digest('hex');
+// deriveTerminalKey mirrors the Go derivePerHiveKey / proxy
+// derivePerHiveTerminalKey: HMAC over info || 0x00 || hiveID (audit N3).
+//
+// The key is now bound to the hive, so signing for hive X and presenting on hive
+// Y fails on the SIGNATURE rather than only on the payload's h-claim check —
+// which is exactly the cross-tenant forgery N3 closed.
+function deriveTerminalKey(master, hiveID) {
+  return crypto
+    .createHmac('sha256', master)
+    .update(INFO_TERMINAL_KEY)
+    .update(Buffer.from([0]))
+    .update(hiveID)
+    .digest('hex');
 }
-function mintTerminalAssertion(secret, { username, role, hiveID, ttlSec = 900, version = TERMINAL_ASSERTION_VERSION, iatOffsetSec = 0 } = {}) {
-  const key = deriveTerminalKey(secret);
+function mintTerminalAssertion(secret, { username, role, hiveID, signingHiveID, ttlSec = 900, version = TERMINAL_ASSERTION_VERSION, iatOffsetSec = 0 } = {}) {
+  // signingHiveID defaults to the hive the assertion CLAIMS, so a normal mint is
+  // self-consistent. A test that wants a wrong-hive CLAIM signed by the LOCAL
+  // hive's key (i.e. probing the h-claim check specifically, not the signature)
+  // passes signingHiveID explicitly.
+  const key = deriveTerminalKey(secret, signingHiveID || hiveID);
   const now = Math.floor(Date.now() / 1000) + iatOffsetSec;
   const claims = { v: version, u: username, r: role, h: hiveID, iat: now, exp: now + ttlSec };
   const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
@@ -490,7 +505,10 @@ async function testC3F_ExpiredAssertionDenied() {
 // WRONG-HIVE assertion (minted for another hive id) → not usable → denied.
 async function testC3F_WrongHiveAssertionDenied() {
   const cookie = mintCookie(HIVE_B_SECRET, 'dave');
-  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'some-other-hive' });
+  // Signed by THIS hive's key but claiming another hive id, so the h-claim
+  // check is what must reject it (the signature is valid here). Since N3 the
+  // key is per-hive, so signingHiveID is pinned to keep this probing the CLAIM.
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'some-other-hive', signingHiveID: HIVE_B_ID });
   const resp = await terminalHTTP(cookie, HOSTED_HOST, assertion);
   assert.equal(resp.status, 403, `dave with a WRONG-HIVE assertion must be 403, got ${resp.status}`);
   const { opened } = await terminalWS(cookie, HOSTED_HOST, assertion);
@@ -631,8 +649,10 @@ async function testF4_ExpiredAssertionAloneDenied() {
 }
 
 async function testF4_WrongHiveAssertionAloneDenied() {
-  // Signed by hive B's key but claiming a different hive id.
-  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'hosted-some-other-hive' });
+  // Signed by hive B's key but claiming a different hive id — signingHiveID is
+  // pinned so this still exercises the h-claim check rather than failing on the
+  // signature (the terminal key is per-hive since N3).
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, { username: 'dave', role: 'owner', hiveID: 'hosted-some-other-hive', signingHiveID: HIVE_B_ID });
   const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
   assert.notEqual(resp.status, 200, 'an assertion for ANOTHER hive must not authenticate here');
   console.log('  ✓ F4: wrong-hive assertion alone → denied');
@@ -646,6 +666,40 @@ async function testF4_ForgedAssertionAloneDenied() {
   const { opened } = await terminalWS(null, HOSTED_HOST, assertion);
   assert.ok(!opened, 'a forged assertion must not open a WS');
   console.log('  ✓ F4: forged-signature assertion alone → denied, HTTP + WS');
+}
+
+// !! AUDIT N3: a sibling tenant's spoke must not be able to forge a shell grant
+// here, even though every spoke shares the SAME master. !!
+//
+// This is the property that the deleted fleet-uniform lanes destroyed. Hive C
+// holds the identical HIVE_HUB_SECRET (the master is fleet-wide, verified live:
+// 65/65 spokes, one distinct value) and honestly claims THIS hive's id. Before
+// N3, TERMINAL_SIGNING_KEY resolved to a value derived without any hive id — so
+// hive C's key WAS this hive's key and this assertion would have verified.
+//
+// It must now fail on the SIGNATURE, because the key is bound to the hive id.
+async function testN3_SiblingTenantCannotForgeAcrossHives() {
+  const SIBLING_HIVE_ID = 'hosted-hive-c';
+  // Same master, different hive identity — exactly a co-tenant's spoke.
+  const assertion = mintTerminalAssertion(HIVE_B_SECRET, {
+    username: 'dave', role: 'owner', hiveID: HIVE_B_ID, signingHiveID: SIBLING_HIVE_ID,
+  });
+  const resp = await terminalHTTP(null, HOSTED_HOST, assertion);
+  assert.notEqual(resp.status, 200,
+    'N3 REGRESSION: an assertion signed with a SIBLING hive key authenticated here');
+  const { opened } = await terminalWS(null, HOSTED_HOST, assertion);
+  assert.ok(!opened, 'N3 REGRESSION: sibling-hive-signed assertion opened a WS');
+
+  // POSITIVE CONTROL: the same claims signed with THIS hive's key DO open a
+  // terminal. Without this the assertions above could pass because the terminal
+  // gate is broken outright rather than because the key binding works.
+  const good = mintTerminalAssertion(HIVE_B_SECRET, {
+    username: 'dave', role: 'owner', hiveID: HIVE_B_ID,
+  });
+  const okResp = await terminalHTTP(null, HOSTED_HOST, good);
+  assert.equal(okResp.status, 200,
+    `positive control failed: a correctly-signed assertion must open (got ${okResp.status})`);
+  console.log('  \u2713 N3: sibling-tenant assertion denied; own-hive assertion still opens');
 }
 
 async function testF4_InsufficientRoleAloneDenied() {
@@ -863,6 +917,7 @@ try {
   await testF4_ExpiredAssertionAloneDenied();
   await testF4_WrongHiveAssertionAloneDenied();
   await testF4_ForgedAssertionAloneDenied();
+  await testN3_SiblingTenantCannotForgeAcrossHives();
   await testF4_InsufficientRoleAloneDenied();
   await testC3F_StaticAllowlistFallbackPreserved();
 
