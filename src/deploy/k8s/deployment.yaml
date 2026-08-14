@@ -63,16 +63,19 @@ spec:
           # su-exec source is pinned by commit SHA + SHA256-verified, and the
           # helper is chmod 4750 root:hive-launch (launcher-group-only, not
           # world-exec 4755), so only the `dev` launcher — not agent UIDs — can
-          # exec it. Fully removing SUID (dev switches UIDs via CAP_SETUID
-          # instead) is not viable here: it needs ambient/inheritable caps that
-          # the hub's netadmin_reconcile would wipe when it JSON-Patch-replaces
-          # the whole securityContext with {NET_ADMIN} on drift. See PR body.
+          # exec it. The helper still needs SUID, but it does not need the
+          # SETUID/SETGID *capabilities*: the kernel applies its set-id mode
+          # during exec, and su-exec performs the controlled UID transition.
+          # Keeping those capabilities out of the container bounding set limits
+          # unrelated binaries while preserving the narrowly group-gated helper.
           securityContext:
             seccompProfile:
               type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
+                - SETUID # su-exec's mode, not a container capability
+                - SETGID # su-exec's mode, not a container capability
               # OpenShift: NO stock SCC (including `anyuid`) permits adding
               # these capabilities, so on OpenShift this pod is rejected at
               # admission unless a cluster-admin has applied the optional
@@ -84,8 +87,6 @@ spec:
               # patch-advisory-mode.yaml and src/docs/net-admin-requirement.md.
               add:
                 - NET_ADMIN # ACMM proxy iptables redirect of outbound :443
-                - SETUID # su-exec dev->per-agent UID switch
-                - SETGID
                 - SETPCAP
                 - CHOWN # chown per-agent dirs/beads to the agent UID
                 - DAC_OVERRIDE
@@ -132,6 +133,9 @@ spec:
               readOnly: true
             - name: data
               mountPath: /data
+          # The CA certificate is intentionally readable by agent clients, but
+          # its private key is stored in /data/.hive with owner-only access;
+          # see pkg/proxy/github_proxy.go and the startup migration above.
           # startupProbe holds the liveness clock off until the process has
           # finished booting, so a slow start can never race the liveness
           # timer into a restart loop. failureThreshold x periodSeconds

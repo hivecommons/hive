@@ -333,6 +333,26 @@ if [ "$(id -u)" = "0" ]; then
   chown dev:node /home/dev 2>/dev/null || true
   chown dev:node /etc/hive/hive.yaml 2>/dev/null || true
 
+  # Keep the MITM CA private key out of /data's agent-writable namespace.
+  # /data contains shared agent state and may be group-writable on PVCs. The
+  # certificate remains at /data/proxy-ca.pem because agents need to trust it,
+  # but the private key lives below an owner-only directory. If the legacy key
+  # is present, discard the old CA pair so a key that may already have been
+  # copied by an agent can never remain trusted. Reject symlinks so the proxy
+  # cannot be redirected to an attacker-controlled path.
+  mkdir -p /data/.hive && chown dev:node /data/.hive 2>/dev/null || true
+  chmod 700 /data/.hive 2>/dev/null || true
+  if [ -L /data/.hive/proxy-ca-key.pem ]; then
+    rm -f -- /data/.hive/proxy-ca-key.pem 2>/dev/null || true
+  fi
+  if [ -L /data/proxy-ca-key.pem ] || [ -f /data/proxy-ca-key.pem ]; then
+    # A key that was exposed in the old location may already have been copied
+    # by an agent. Do not migrate it: discard the old key and certificate so
+    # the proxy creates a fresh CA pair on this boot.
+    rm -f -- /data/proxy-ca-key.pem /data/proxy-ca.pem /data/proxy-ca-bundle.pem 2>/dev/null || true
+  fi
+  chmod 600 /data/.hive/proxy-ca-key.pem 2>/dev/null || true
+
   # Ensure the PVC secrets dir the dashboard writes API keys into
   # (/data/secrets/litellm_api_key) exists and is owned by the dev user.
   # The Go binary runs as non-root (uid 1001) and CANNOT chown, so if this

@@ -50,10 +50,9 @@ const (
 	// upgradeKubectlTimeout in spirit.
 	netAdminKubectlTimeout = 15 * time.Second
 
-	// hiveContainerSecurityContextPath is the JSON-Patch path to the hive
-	// container's securityContext. The hive container is index 0 in the
-	// provisioning template (containers[0], name: hive).
-	hiveContainerSecurityContextPath = "/spec/template/spec/containers/0/securityContext"
+	// The reconcile patches only capabilities.add; replacing the whole
+	// securityContext would erase seccomp and capability drops.
+	hiveContainerCapabilitiesAddPath = "/spec/template/spec/containers/0/securityContext/capabilities/add"
 )
 
 // netAdminSweepEligible reports whether a hive with this lifecycle status
@@ -141,22 +140,22 @@ func securityContextHasNetAdmin(raw string) bool {
 // netAdminPatchJSON returns the JSON-Patch body that installs NET_ADMIN onto
 // the hive container's securityContext.
 //
-// A single `add` op at the securityContext path REPLACES the whole
-// securityContext object (JSON-Patch `add` on an existing path overwrites it,
-// and on a missing path creates it — so one op covers BOTH the drifted
-// `securityContext: {}` case and the never-set case). This matches the shape
-// verified working live via `kubectl patch` on kubestellar-console-4vkt and
-// projectbluefin-knuckle-gjvq (issue #2674). We only ever call this after the
-// idempotent check found NET_ADMIN missing, so it never issues a pointless
-// rollout on an already-correct hive.
+// A single `add` op at the capabilities path preserves the rest of the
+// securityContext (including the RuntimeDefault seccomp profile and the
+// SETUID/SETGID drops) while repairing the drifted NET_ADMIN field. Patching
+// the whole object would silently undo the security hardening in the standard
+// manifest. The path is present in current templates; JSON-Patch `add` also
+// creates it for older deployments that have a securityContext without
+// capabilities. We only call this after the idempotent check found NET_ADMIN
+// missing, so it never issues a pointless rollout on an already-correct hive.
 //
 // NOTE: this DOES change the podspec, so applying it triggers a one-time
 // rolling update — the intended correction. The idempotent has-NET_ADMIN check
 // guarantees the patch is issued at most once (the next sweep sees NET_ADMIN
 // present and skips), so it can never loop.
 func netAdminPatchJSON() string {
-	return `[{"op":"add","path":"` + hiveContainerSecurityContextPath +
-		`","value":{"capabilities":{"add":["` + netAdminCapability + `"]}}}]`
+	return `[{"op":"add","path":"` + hiveContainerCapabilitiesAddPath +
+		`","value":["` + netAdminCapability + `"]}]`
 }
 
 // reconcileNetAdminIfDue runs the NET_ADMIN sweep only if at least

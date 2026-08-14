@@ -101,11 +101,12 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 #     group node, so a node-group SUID is still agent-executable. A dedicated
 #     launcher group is what actually excludes the agents.
 #
-# Full removal of SUID (make dev switch UIDs via CAP_SETUID/CAP_SETGID instead)
-# was considered and rejected — see PR body: it needs ambient/inheritable caps
-# that fight `allowPrivilegeEscalation: false`, and the hub's netadmin_reconcile
-# JSON-Patches the whole securityContext to `{NET_ADMIN}` on drift, silently
-# wiping any SETUID/SETGID grant on live hives.
+# The helper remains SUID because the non-root dev process must switch to
+# per-agent UIDs. The Kubernetes container drops SETUID/SETGID from its
+# capability bounding set: the helper's set-id mode supplies the transition,
+# while unrelated binaries cannot rely on those container capabilities. The
+# hub's NET_ADMIN reconcile patches only capabilities.add and preserves this
+# hardening on already-provisioned hives.
 ARG SU_EXEC_COMMIT=89c016e6e08749d583efdeda04b9f73e1218e253
 ARG SU_EXEC_SHA256=0c90fe15804f2670037b90e72eb496579fe00d2c15765e5fe2ddec0f5afa35fa
 RUN curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/su-exec.c "https://raw.githubusercontent.com/ncopa/su-exec/${SU_EXEC_COMMIT}/su-exec.c" \

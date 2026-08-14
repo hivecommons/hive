@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,11 +130,14 @@ func warnSockMarkOnce(mark int, err error) {
 }
 
 // CACertPath and caKeyPath are the PVC locations of the persisted MITM CA.
+// The certificate is intentionally in /data because agents need to trust it.
+// The private key is kept in a dedicated owner-only directory: /data contains
+// agent-readable state and must not be treated as a suitable secret directory.
 // They are vars rather than consts solely so tests can redirect the CA
 // read/write to a temporary directory; production never reassigns them.
 var (
 	CACertPath = "/data/proxy-ca.pem"
-	caKeyPath  = "/data/proxy-ca-key.pem"
+	caKeyPath  = "/data/.hive/proxy-ca-key.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
@@ -1444,6 +1448,16 @@ func loadOrGenerateCA(logger *slog.Logger) (tls.Certificate, *x509.Certificate, 
 		return tls.Certificate{}, nil, fmt.Errorf("marshal CA key: %w", err)
 	}
 	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: caKeyDER})
+	// The parent directory is created with owner-only permissions before the
+	// key is written. /data itself is intentionally group-writable for agent
+	// workspaces, so 0600 on a file directly under /data is not sufficient:
+	// an agent could replace or race the path before the proxy opens it.
+	if err := os.MkdirAll(filepath.Dir(caKeyPath), 0700); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("create CA key directory: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(caKeyPath), 0700); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("restrict CA key directory: %w", err)
+	}
 	if err := os.WriteFile(caKeyPath, caKeyPEM, 0600); err != nil {
 		return tls.Certificate{}, nil, fmt.Errorf("write CA key to %s: %w", caKeyPath, err)
 	}

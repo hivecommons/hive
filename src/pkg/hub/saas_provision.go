@@ -2648,10 +2648,24 @@ spec:
       - name: hive
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
+        # Keep the container capability set minimal. NET_ADMIN is required for
+        # the forced-proxy egress redirect; the SUID su-exec helper is
+        # group-gated to dev and does not require SETUID/SETGID capabilities
+        # when it is executed. Dropping those capabilities limits unrelated
+        # binaries without changing the agent UID-switch path.
         securityContext:
+          seccompProfile:
+            type: RuntimeDefault
           capabilities:
+            drop:
+            - ALL
+            - SETUID
+            - SETGID
             add:
             - NET_ADMIN
+            - SETPCAP
+            - CHOWN
+            - DAC_OVERRIDE
         readinessProbe:
           httpGet:
             path: /api/health

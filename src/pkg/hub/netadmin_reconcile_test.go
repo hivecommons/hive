@@ -50,15 +50,18 @@ func TestSecurityContextHasNetAdmin(t *testing.T) {
 // a silent no-op (or worse, corrupt the podspec), so pin it.
 func TestNetAdminPatchJSON(t *testing.T) {
 	patch := netAdminPatchJSON()
-	if !strings.Contains(patch, hiveContainerSecurityContextPath) {
-		t.Errorf("patch %q does not target the hive container securityContext path %q",
-			patch, hiveContainerSecurityContextPath)
+	if !strings.Contains(patch, hiveContainerCapabilitiesAddPath) {
+		t.Errorf("patch %q does not target the hive container capabilities.add path %q",
+			patch, hiveContainerCapabilitiesAddPath)
 	}
 	if !strings.Contains(patch, netAdminCapability) {
 		t.Errorf("patch %q does not add %s", patch, netAdminCapability)
 	}
 	// It must be an "add" op so it works whether the path is missing (create) or
 	// present-but-empty (overwrite) — both drift shapes from #2674.
+	if !strings.Contains(patch, `"value":["NET_ADMIN"]`) {
+		t.Errorf("patch %q must set only the NET_ADMIN capability list", patch)
+	}
 	if !strings.Contains(patch, `"op":"add"`) {
 		t.Errorf("patch %q is not an add op", patch)
 	}

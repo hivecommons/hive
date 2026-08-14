@@ -24,6 +24,11 @@
 #   - the SHA256 of the pinned source is verified before compiling.
 #   - the installed helper is chmod 4750 and owned by root:hive-launch.
 #
+# Kubernetes invariant (#3866):
+#   - the deployment drops SETUID/SETGID container capabilities; the helper's
+#     set-id mode remains group-gated and does not require those capabilities.
+#   - the hub reconcile patches only capabilities.add, preserving the hardening.
+#
 # NET_ADMIN invariant (#3760 — asserted against Dockerfile + entrypoint):
 #   - NO `setcap` file capability on the hive binary (a file cap EPERMs on exec
 #     wherever the runtime bounding set lacks the cap — the #3760 crash-loop).
