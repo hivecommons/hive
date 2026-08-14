@@ -5765,14 +5765,18 @@ func writeAgentStateFile(path string, data []byte) error {
 		f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
 	// O_CREATE honours the mode only when the file did not already exist, so an
 	// existing 0644 file from a previous release keeps its old mode without
-	// this. Chmod on the path is acceptable here because O_NOFOLLOW above has
-	// already established it is not a symlink.
-	return os.Chmod(path, agentStateFileMode)
+	// this. Chmod through the still-open descriptor: O_NOFOLLOW only proved the
+	// path was not a symlink at OPEN time, so a path-based os.Chmod after Close
+	// left a window in shared /tmp where the pathname could be swapped for a
+	// symlink and the mode change applied to the link target (TOCTOU, #3175).
+	// f.Chmod acts on the inode we opened, closing that window.
+	if err := f.Chmod(agentStateFileMode); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // SyncModeFiles rewrites /tmp/.hive-mode-* for all running agents to reflect the given ACMM level.

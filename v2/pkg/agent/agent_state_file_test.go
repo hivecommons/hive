@@ -3,6 +3,8 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +101,43 @@ func TestWriteAgentStateFileRefusesSymlink(t *testing.T) {
 	}
 	if string(b) != "ORIGINAL" {
 		t.Fatalf("symlink target was CLOBBERED (now %q) — the write followed the link", b)
+	}
+}
+
+// TestWriteAgentStateFileChmodsViaDescriptor pins the #3175 fix at source
+// level: the mode-tightening step must go through the open descriptor
+// (f.Chmod), never through the pathname after Close. O_NOFOLLOW only proves
+// the path is not a symlink at OPEN time; a path-based os.Chmod issued in the
+// close→chmod window can be redirected by swapping the pathname for a symlink
+// in shared /tmp. The runtime tests above are the positive control that the
+// tightening still happens; this asserts HOW it happens, which no runtime
+// probe can observe reliably (the race window is microseconds).
+func TestWriteAgentStateFileChmodsViaDescriptor(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "manager.go"))
+	if err != nil {
+		t.Fatalf("read manager.go: %v", err)
+	}
+	text := string(body)
+	start := strings.Index(text, "func writeAgentStateFile(")
+	if start < 0 {
+		t.Fatal("writeAgentStateFile not found in manager.go")
+	}
+	end := strings.Index(text[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not delimit writeAgentStateFile body")
+	}
+	fn := text[start : start+end]
+	if !strings.Contains(fn, "f.Chmod(agentStateFileMode)") {
+		t.Fatal("writeAgentStateFile must tighten the mode via the open descriptor (f.Chmod) — " +
+			"see #3175: a path-based chmod after Close can be symlink-swapped")
+	}
+	if strings.Contains(fn, "os.Chmod(") {
+		t.Fatal("writeAgentStateFile must not use path-based os.Chmod — " +
+			"the close→chmod window is symlink-swappable in shared /tmp (#3175)")
 	}
 }
 
