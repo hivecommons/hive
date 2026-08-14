@@ -52,7 +52,10 @@ type customStyleSanitizeReport struct {
 var (
 	customStyleCacheMu sync.Mutex
 	customStyleCache   = map[string]customStyleCacheEntry{}
-	customStyleClient  = &http.Client{Timeout: customStyleFetchTTL}
+	customStyleClient  = &http.Client{
+		Timeout:       customStyleFetchTTL,
+		CheckRedirect: noRedirectToPrivate,
+	}
 )
 
 var (
