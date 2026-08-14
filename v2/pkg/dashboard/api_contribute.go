@@ -6805,8 +6805,34 @@ func (s *Server) handleContributorAgentRoleGrants(w http.ResponseWriter, r *http
 	jsonResponse(w, map[string]any{"ok": true, "agent_role_grants": grants, "grantable_roles": grantable})
 }
 
+// handleContributorAgentRole assigns a contributor's agent role.
+//
+// OWNER-ONLY (issue #3011, High). This was gated on requireContributorWrite,
+// which admits any caller whose role is not "read" — so a read-write
+// contributor could assign privileged agent roles. Its sibling
+// handleContributorAgentRoleGrants was moved to requireOwnerRole by F16; this
+// half of #3011 was left behind. Role assignment is an operator action.
+//
+// The handler also used to PRE-POPULATE its probe profile with the very grant
+// it was about to check:
+//
+//	probeProfile := *p
+//	if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(&probeProfile, role) {
+//	    probeProfile.AgentRoleGrants = append(probeProfile.AgentRoleGrants, role)
+//	}
+//
+// which made roleClaimAllowed's "requires an operator grant" check pass
+// trivially, and then wrote that grant to the REAL profile — auto-granting
+// sec-check/architect/ci-maintainer as a side effect of assigning them. That
+// is removed: the probe is now the unmodified profile, so a role needing a
+// grant is REFUSED unless the target already holds it. Grant issuance stays a
+// separate explicit owner action (handleContributorAgentRoleGrants).
+//
+// Assignment is additionally checked against the server-side assignable
+// allowlist, so a role outside contributorAgentRoleAssignableRoles cannot be
+// assigned even when roleClaimAllowed would tolerate it.
 func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Request) {
-	if !s.requireContributorWrite(w, r) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -6831,11 +6857,27 @@ func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Reque
 	if role == "" || role == "none" {
 		p.AssignedAgentRole = "none"
 	} else {
-		probeProfile := *p
-		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(&probeProfile, role) {
-			probeProfile.AgentRoleGrants = append(probeProfile.AgentRoleGrants, role)
+		// Server-side allowlist: only roles the hive actually exposes as
+		// assignable may be assigned (issue #3011 recommendation 3).
+		var allowCfg *config.Config
+		if s.deps != nil {
+			allowCfg = s.deps.Config
 		}
-		probe := &ContributorConnection{profile: &probeProfile}
+		assignable := false
+		for _, candidate := range contributorAgentRoleAssignableRoles(allowCfg) {
+			if candidate == role {
+				assignable = true
+				break
+			}
+		}
+		if !assignable {
+			jsonError(w, fmt.Sprintf("agent role %q is not assignable", role), http.StatusBadRequest)
+			return
+		}
+
+		// Probe with the profile AS IT IS. Pre-seeding the grant here was the
+		// #3011 bypass: it made the grant check below tautological.
+		probe := &ContributorConnection{profile: p}
 		if s.contributeHub == nil {
 			s.contributeHub = NewContributeWSHub(s.logger, s)
 		}
@@ -6843,9 +6885,13 @@ func (s *Server) handleContributorAgentRole(w http.ResponseWriter, r *http.Reque
 			jsonError(w, reason, http.StatusBadRequest)
 			return
 		}
+		// Belt and braces: roleClaimAllowed returns early for the no-config
+		// hubs used by unit tests and legacy deployments, so re-assert the
+		// grant requirement here unconditionally. No grant is ever WRITTEN by
+		// this handler — that is handleContributorAgentRoleGrants' job.
 		if roleClaimNeedsGrant[role] && !hasAgentRoleGrant(p, role) {
-			p.AgentRoleGrants = append(p.AgentRoleGrants, role)
-			p.AgentRoleGrants = normalizeUniqueAgentRoles(p.AgentRoleGrants)
+			jsonError(w, fmt.Sprintf("agent role %q requires an operator grant", role), http.StatusBadRequest)
+			return
 		}
 		p.AssignedAgentRole = role
 	}
