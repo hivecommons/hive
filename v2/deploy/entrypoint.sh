@@ -17,6 +17,17 @@ export HIVE_STATIC_DIR="${HIVE_STATIC_DIR:-/opt/hive/proxy/public}"
 # Go default (proxy.defaultProxyEgressMark).
 export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
 
+# Distinct preflight exit code (#3760 follow-up) for the "refusing to start
+# because CAP_NET_ADMIN is missing" case, so an operator or orchestrator can
+# tell it apart from every other startup failure in this script (bad config,
+# missing iptables binary, netfilter lock contention — all still plain `exit
+# 1`) from the exit code alone, without parsing the log. 77 is sysexits.h's
+# EX_NOPERM ("permission denied"), the closest standard-adjacent match for
+# "the container was not granted a capability it needs" — chosen over a
+# script-local number so it means the same thing to anyone who already knows
+# sysexits.h. See the FATAL branch below and v2/docs/net-admin-requirement.md.
+EXIT_NET_ADMIN_REQUIRED=77
+
 # ── Config backup/restore across container recreation ─────────────────
 # When Watchtower recreates the container (pull new image, stop old, start
 # new), the Go binary's config.Save() may write an empty/default config to
@@ -292,6 +303,25 @@ find /tmp -maxdepth 1 -name '.hive-launch-stderr-*.log' -mmin +"$STDERR_LOG_MAX_
 
 # ── Root-only setup (runs once, then re-execs as dev) ──────────────────
 if [ "$(id -u)" = "0" ]; then
+  # ── CAP_NET_ADMIN bounding-set probe (#3760 follow-up) ──────────────────
+  # Computed ONCE, here, up front — root's own bounding set does not change
+  # for the rest of this block, so both consumers below (the forced-egress
+  # FATAL branch and the ambient-cap-raise NOTICE branch further down) read
+  # the same value instead of re-deriving it. CAP_NET_ADMIN is capability
+  # number 12, so its bitmask is (1<<12) == 0x1000. (0x2000 would be bit 13 /
+  # CAP_NET_RAW — which IS in the docker default bounding set, so testing
+  # 0x2000 would wrongly read as "present" on a self-hosted spoke.) Read the
+  # bounding set from /proc/self/status (a hex bitmask) and test the bit with
+  # a pure-shell arithmetic AND (no external tools).
+  _cap_net_admin_in_bset=false
+  _capbnd_hex="$(grep -m1 '^CapBnd:' /proc/self/status 2>/dev/null | awk '{print $2}')"
+  if [ -n "$_capbnd_hex" ]; then
+    # 0x1000 == CAP_NET_ADMIN (bit 12). `$(( ))` parses the 0x-prefixed hex.
+    if [ $(( 0x${_capbnd_hex} & 0x1000 )) -ne 0 ]; then
+      _cap_net_admin_in_bset=true
+    fi
+  fi
+
   # Fix ownership of mounted volumes (may be root-owned from host bind mounts).
   # Skip recursive chown if /data is already owned by dev — critical for NFS
   # where recursive chown over thousands of files causes multi-minute delays.
@@ -837,6 +867,16 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
       else
         echo "[entrypoint] FATAL: could not establish forced proxy egress (iptables redirect). The ACMM capability model would be advisory-only, allowing agents with raw tokens to bypass the MITM proxy." >&2
         echo "[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode." >&2
+        # Distinguish root cause by exit code (#3760 follow-up): netfilter
+        # chain manipulation itself requires CAP_NET_ADMIN, so if the
+        # bounding set lacks it, that absence is BY ITSELF sufficient to
+        # explain the failure above — this IS the missing-capability case,
+        # not merely "iptables had some other problem". See
+        # EXIT_NET_ADMIN_REQUIRED's definition near the top of this file.
+        if [ "$_cap_net_admin_in_bset" != "true" ]; then
+          echo "[entrypoint] FATAL: CAP_NET_ADMIN is not in the container's capability bounding set — exiting ${EXIT_NET_ADMIN_REQUIRED} (EX_NOPERM) rather than 1." >&2
+          exit "$EXIT_NET_ADMIN_REQUIRED"
+        fi
         exit 1
       fi
     fi
@@ -858,20 +898,10 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
   # set actually having it — so managed spokes (SCC/PSA grant NET_ADMIN) get the
   # cap and self-hosted spokes exec cleanly and degrade the SO_MARK path.
   #
-  # CAP_NET_ADMIN is capability number 12, so its bitmask is (1<<12) == 0x1000.
-  # (0x2000 would be bit 13 / CAP_NET_RAW — which IS in the docker default
-  # bounding set, so testing 0x2000 would wrongly fire on self-hosted spokes and
-  # setpriv would then EPERM. The bit number is 12; the mask is 0x1000.)
-  # Read the bounding set from /proc/self/status (a hex bitmask) and test the bit
-  # with a pure-shell arithmetic AND (no external tools).
-  _cap_net_admin_in_bset=false
-  _capbnd_hex="$(grep -m1 '^CapBnd:' /proc/self/status 2>/dev/null | awk '{print $2}')"
-  if [ -n "$_capbnd_hex" ]; then
-    # 0x1000 == CAP_NET_ADMIN (bit 12). `$(( ))` parses the 0x-prefixed hex.
-    if [ $(( 0x${_capbnd_hex} & 0x1000 )) -ne 0 ]; then
-      _cap_net_admin_in_bset=true
-    fi
-  fi
+  # $_cap_net_admin_in_bset was already computed at the top of this "if root"
+  # block (before the forced-egress FATAL check above) — reused here rather
+  # than re-derived, since it can't have changed and the FATAL branch's exit
+  # code already depends on the two staying the same value.
 
   # setpriv identity mirrors `gosu dev` exactly: reuid=dev (UID 1001), regid=node
   # (dev's PRIMARY login group, GID 1000 — there is NO group named `dev`), and

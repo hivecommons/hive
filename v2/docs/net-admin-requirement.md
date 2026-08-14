@@ -60,6 +60,38 @@ iptables exemption; where that match is unavailable the proxy dials **unmarked**
 egress through the proxy is still installed; only the proxy's *self*-exemption is
 best-effort.
 
+## When the container refuses to start (exit 77)
+
+The degraded mode above is about the **SO_MARK self-exemption** only, and it
+never stops the container from starting. A *separate*, earlier check —
+whether the `iptables` **REDIRECT** that forces agent egress through the proxy
+could be installed at all — is fail-closed: without it, the whole ACMM
+capability model is advisory-only (an agent holding a raw token could bypass
+the proxy entirely), so the entrypoint refuses to start rather than run with
+unenforced egress. You'll see:
+
+```
+[entrypoint] FATAL: could not establish forced proxy egress (iptables redirect). …
+[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode.
+```
+
+Installing that redirect itself needs `CAP_NET_ADMIN` (netfilter chain
+manipulation), so on a container whose bounding set lacks it, this is really
+the *same* missing-capability condition — just hit at the point where the
+entrypoint has decided it cannot safely continue rather than degrade. The
+entrypoint exits with a distinct code for exactly this case, **77** (sysexits.h's
+`EX_NOPERM`, "permission denied"), instead of the generic `1` every other
+startup failure in this script uses — so a supervisor, `docker inspect
+--format '{{.State.ExitCode}}'`, or a Kubernetes `lastState.terminated.exitCode`
+can identify "grant the capability" programmatically, without parsing the log.
+Any other cause of the same FATAL (missing `iptables` binary, persistent
+netfilter lock contention) still exits `1`, since granting `NET_ADMIN` would
+not fix those.
+
+The escape hatch is the same as always: set `HIVE_PROXY_ADVISORY_OK=true` to
+start anyway in advisory-only mode (see [security-model.md](security-model.md#forced-proxy-egress-f5-and-cap_net_admin)),
+or grant the capability per the section below for the full gate.
+
 ## How to get the full gate
 
 ### Docker / Podman (rootful)
