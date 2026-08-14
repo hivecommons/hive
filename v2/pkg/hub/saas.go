@@ -13163,11 +13163,17 @@ const dashboardHTML = `<!DOCTYPE html>
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
               /* Upgrade kill switches (admin-only): checked = paused. Titles
-                 carry who/when; the dashboard banner repeats it prominently. */
-              hubAutoCheck += upgradePauseToggleHTML('hub', 'pause hub upgrades',
+                 carry who/when; the dashboard banner repeats it prominently.
+                 Rendered as ONE compact bordered column so the pair reads as a
+                 control cluster, stays vertically aligned with the header row,
+                 and wraps as a unit instead of the second toggle dangling onto
+                 its own line. */
+              hubAutoCheck += ' <span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;margin-left:8px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);vertical-align:middle;line-height:1.2">' +
+                upgradePauseToggleHTML('hub', 'hub upgrades',
                 'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed') +
-                upgradePauseToggleHTML('spokes', 'pause spoke upgrades',
-                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed');
+                upgradePauseToggleHTML('spokes', 'spoke upgrades',
+                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed') +
+                '</span>';
             }
             var hubStatusIcon = hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
@@ -14644,7 +14650,21 @@ const dashboardHTML = `<!DOCTYPE html>
     function upgradePauseToggleHTML(target, label, title) {
       var sw = (_upgradePause && _upgradePause[target]) || {paused: false};
       var t = title + (sw.paused ? ' — paused by ' + (sw.by || '?') + ' since ' + (sw.at || '?') : '');
-      return ' <label style="margin-left:6px;font-size:0.6rem;color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';cursor:pointer;white-space:nowrap;font-weight:' + (sw.paused ? '700' : '400') + '" title="' + escAttr(t) + '"><input type="checkbox" ' + (sw.paused ? 'checked' : '') + ' onchange="toggleUpgradePause(\'' + target + '\', this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">' + esc(label) + '</label>';
+      /* Pause/play ICON button with the plain-text label beside it. The icon
+         shows the ACTION a click performs: running → ⏸ (pause), paused → ▶
+         (resume, red). Text-variation selector (\uFE0E) keeps the glyphs
+         monochrome instead of emoji. The bordered flex-column wrapper at the
+         call site owns spacing/alignment for the pair. */
+      var icon = sw.paused ? '\u25B6\uFE0E' : '\u23F8\uFE0E';
+      var btnStyle = 'width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;' +
+        'padding:0;font-size:0.62rem;line-height:1;border-radius:4px;cursor:pointer;' +
+        (sw.paused
+          ? 'background:color-mix(in srgb, var(--red) 18%, transparent);border:1px solid var(--red);color:var(--red)'
+          : 'background:var(--surface);border:1px solid var(--border);color:var(--muted)');
+      return '<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap" title="' + escAttr(t) + '">' +
+        '<button onclick="toggleUpgradePause(\'' + target + '\', ' + (sw.paused ? 'false' : 'true') + ')" style="' + btnStyle + '" aria-label="' + escAttr((sw.paused ? 'Resume ' : 'Pause ') + label) + '">' + icon + '</button>' +
+        '<span style="font-size:0.6rem;color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (sw.paused ? '700' : '400') + '">' + esc(label) + '</span>' +
+        '</span>';
     }
     async function toggleUpgradePause(target, paused) {
       try {

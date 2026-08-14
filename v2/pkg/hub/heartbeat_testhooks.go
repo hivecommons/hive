@@ -32,4 +32,10 @@ func ResetHeartbeatStateForTest() {
 	lastGoodPayload.Lock()
 	lastGoodPayload.payload = nil
 	lastGoodPayload.Unlock()
+	// The collect-independent identity is process-global too. Clearing it keeps
+	// each test's starting state honest: a test asserting the "no identity yet"
+	// path must not silently inherit an identity published by an earlier test.
+	heartbeatIdentity.Lock()
+	heartbeatIdentity.payload = nil
+	heartbeatIdentity.Unlock()
 }

@@ -28,8 +28,12 @@
 #   - NO `setcap` file capability on the hive binary (a file cap EPERMs on exec
 #     wherever the runtime bounding set lacks the cap — the #3760 crash-loop).
 #   - the entrypoint instead raises NET_ADMIN as an AMBIENT capability, gated on
-#     the CAP_NET_ADMIN bounding-set bit, via `setpriv --ambient-caps +net_admin`,
+#     the CAP_NET_ADMIN bounding-set bit, via
+#     `setpriv --inh-caps +net_admin --ambient-caps +net_admin`,
 #     with a `gosu dev` fallback when the cap is unavailable.
+#     BOTH flags are required (#3874): --ambient-caps alone exits 0 but yields
+#     CapAmb=0x0, because the kernel only allows an ambient bit that is also in
+#     the inheritable set, which the setuid transition has already zeroed.
 #
 # Usage: v2/scripts/check-suid-contract.sh [path-to-Dockerfile] [path-to-entrypoint]
 set -euo pipefail
@@ -166,8 +170,17 @@ check "entrypoint reads the bounding set (CapBnd)" \
   'CapBnd' "$ENTRYPOINT"
 check "entrypoint tests the CAP_NET_ADMIN bounding-set bit (bit 12 / 0x1000)" \
   '0x1000' "$ENTRYPOINT"
-check "entrypoint raises NET_ADMIN as an ambient capability via setpriv" \
-  'setpriv[[:space:]]+--ambient-caps[[:space:]]+\+net_admin' "$ENTRYPOINT"
+# INVERTED (not relaxed) for #3874. This assertion previously required the
+# literal `setpriv --ambient-caps +net_admin` — i.e. it demanded EXACTLY the
+# form that is silently broken, and would have gone RED on the correct fix. It
+# ENCODED the bug: an ambient bit cannot be raised unless the same setpriv call
+# also raises the INHERITABLE set (the kernel requires the cap in pP *and* pI;
+# setpriv applies --ambient-caps after the UID change, when pI is already zero).
+# The contract is now the stronger one: --inh-caps must accompany --ambient-caps.
+check "entrypoint raises NET_ADMIN into the INHERITABLE set (required for the ambient raise to stick — #3874)" \
+  '--inh-caps[[:space:]]+\+net_admin' "$ENTRYPOINT"
+check "entrypoint raises NET_ADMIN as an ambient capability" \
+  '--ambient-caps[[:space:]]+\+net_admin' "$ENTRYPOINT"
 # The setpriv identity (--reuid dev) may live in a shell variable reused by both
 # the probe and the exec, so assert it appears in the file rather than adjacent
 # to --ambient-caps. A missing --reuid dev would leave the drop-to-dev broken.

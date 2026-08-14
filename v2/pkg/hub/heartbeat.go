@@ -24,6 +24,15 @@ import (
 )
 
 const (
+	// heartbeatTimeout bounds BOTH the collect() budget and the POST to the hub.
+	//
+	// DELIBERATELY NOT RAISED. A longer budget does not decouple liveness from
+	// third-party availability — it only moves the threshold at which a slow or
+	// rate-limited api.github.com starts making healthy spokes look dead, at the
+	// cost of a slower heartbeat loop for everyone. The fix for that coupling is
+	// structural (send an identity-only beat when no stats are available; see
+	// minimalLivenessPayload), so 10s stays: long enough for a healthy collect,
+	// short enough that the loop keeps ticking well inside staleThreshold.
 	heartbeatTimeout = 10 * time.Second
 	staleThreshold   = 15 * time.Minute
 )
@@ -114,6 +123,81 @@ var lastGoodPayload = struct {
 	sync.Mutex
 	payload *HeartbeatPayload
 }{}
+
+// heartbeatIdentity holds the CHEAP, purely-local identity of this spoke — the
+// fields that come straight from config and never require a network call.
+//
+// WHY (the GitHub-dependent-liveness outage): the last-good cache above can
+// only help a spoke that has completed at least one collect. A spoke that has
+// just restarted has no cache, and collect() reaches api.github.com (owner
+// token validation, plus MTTR/actionable-item enumeration feeding the same
+// pass). On a hive with real repos that enumeration exceeds the 10s collect
+// budget on EVERY early cycle, so `cached == nil` skipped every beat and a
+// perfectly healthy spoke read OFFLINE until it happened to get one fast
+// collect. Observed exactly this: placeholder hives (nothing to enumerate)
+// recovered instantly while named tenants with real repos stayed offline.
+//
+// Liveness is a property of THIS process, not of GitHub's availability. So we
+// publish identity as soon as it is known (before any collect runs) and use it
+// to send a minimal beat when there is nothing else to send. A third-party API
+// being slow, rate-limited or down must never make the fleet look dead.
+//
+// Guarded by a mutex for the same reason as lastGoodPayload: written once at
+// loop start, read by the sender goroutine on every timed-out beat.
+var heartbeatIdentity = struct {
+	sync.Mutex
+	payload *HeartbeatPayload
+}{}
+
+// publishHeartbeatIdentity records the collect-independent identity of this
+// spoke so a beat can always be addressed to the right hive, even when no
+// collect has ever succeeded. Only non-empty identities are stored.
+func publishHeartbeatIdentity(p *HeartbeatPayload) {
+	if p == nil || p.HiveID == "" {
+		return
+	}
+	c := *p
+	heartbeatIdentity.Lock()
+	heartbeatIdentity.payload = &c
+	heartbeatIdentity.Unlock()
+}
+
+// PublishHeartbeatIdentity registers this spoke's collect-independent identity
+// (hive id, org, reporter, started-at, git hash) so the heartbeat loop can send
+// a liveness beat before — or without ever — completing a stats collect.
+//
+// Call this as soon as config is loaded, BEFORE StartHeartbeat. It is the piece
+// that makes liveness independent of GitHub: without it, a spoke that restarts
+// while GitHub is slow has nothing it can legitimately address to the hub.
+func PublishHeartbeatIdentity(hiveID, org, reporter, startedAt, gitHash string) {
+	publishHeartbeatIdentity(&HeartbeatPayload{
+		HiveID:    hiveID,
+		Org:       org,
+		Reporter:  reporter,
+		StartedAt: startedAt,
+		GitHash:   gitHash,
+	})
+}
+
+// minimalLivenessPayload builds a beat that asserts ONLY "this spoke process is
+// alive and its loop is ticking", with no collected stats at all.
+//
+// It is marked StatsStale so the hub keeps the hive online and advances
+// lastHeartbeat (the documented contract of that field) without treating the
+// absent agent/fleet numbers as freshly-observed zeros. Returns nil when the
+// identity is not yet known, which is the only genuinely unsendable case.
+func minimalLivenessPayload() *HeartbeatPayload {
+	heartbeatIdentity.Lock()
+	id := heartbeatIdentity.payload
+	heartbeatIdentity.Unlock()
+	if id == nil {
+		return nil
+	}
+	c := *id
+	// No stats were collected this cycle. Carry identity only, and say so.
+	c.StatsStale = true
+	return &c
+}
 
 // storeUnixOrZero stores t as unix seconds, or 0 for the zero time so it
 // reads back as "never happened" through the Last* accessors.
@@ -391,6 +475,16 @@ type HeartbeatPayload struct {
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
 	StartedAt string `json:"started_at,omitempty"`
+	// OpenFDs is the spoke process's open file-descriptor count at beat time,
+	// with FDSoftLimit the RLIMIT_NOFILE soft cap it is burning toward. They
+	// exist because #3875's leak — tens of thousands of CLOSE_WAIT sockets to
+	// GitHub — reached 92,962 FDs and total self-DoS with NOTHING surfacing
+	// it; it took a manual /proc inspection to find. A gauge in the beat makes
+	// the next FD leak a visible climbing number instead of an outage
+	// forensics exercise. Zero means "could not be read / old spoke" and must
+	// be treated as UNKNOWN, never as "no descriptors open".
+	OpenFDs     int    `json:"open_fds,omitempty"`
+	FDSoftLimit uint64 `json:"fd_soft_limit,omitempty"`
 	// Reporter identifies the spoke PROCESS that sent this beat as
 	// "<pod-name>/<pid>" (hostname/PID; older spokes send the bare hostname).
 	// It exists because two spoke instances can report as the same hive_id —
@@ -916,10 +1010,28 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	if payload == nil {
 		cached := loadLastGoodPayload()
 		if cached == nil {
-			// No successful collect yet — genuinely nothing to send. Rare: only
-			// the first beats before any collect has ever finished in time.
-			logger.Warn("hub heartbeat collect timed out and no cached payload yet — skipping this beat; loop keeps ticking so liveness stays green")
-			return nil
+			// No successful collect yet. This is NOT a reason to stay silent:
+			// liveness is a property of this process, and collect() depends on
+			// api.github.com (owner-token validation, MTTR/actionable-item
+			// enumeration), which on a hive with real repos routinely exceeds
+			// the collect budget on every early cycle after a restart. Skipping
+			// here made healthy spokes read OFFLINE whenever GitHub was slow or
+			// rate-limited — the fleet looking dead because a third party was.
+			//
+			// Send a minimal identity-only beat instead: no stats, marked
+			// StatsStale, which the hub already treats as "keep this hive
+			// online, don't trust the numbers".
+			minimal := minimalLivenessPayload()
+			if minimal == nil {
+				// Identity genuinely unknown (loop started before config was
+				// published). Nothing can be addressed to a hive yet.
+				logger.Warn("hub heartbeat collect timed out and hive identity not yet known — skipping this beat; loop keeps ticking so liveness stays green")
+				return nil
+			}
+			logger.Warn("hub heartbeat collect timed out with no cached payload — sending MINIMAL liveness beat (identity only, no stats) so the hub keeps this hive online; loop keeps ticking so liveness stays green")
+			payload = minimal
+			payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
+			return postHeartbeatToHub(ctx, hubURL, payload, logger)
 		}
 		// Send the cached stats so the hub keeps the hive online through the
 		// stall. Mark them stale so the hub does not treat the agent/fleet
@@ -931,6 +1043,10 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		// Fresh collect: remember it (a clone, so the in-place filtering below
 		// never mutates the cache) for the next time collect() times out.
 		storeLastGoodPayload(payload)
+		// Keep the collect-independent identity current from the authoritative
+		// source, so a LATER restart-free identity change (e.g. git hash after
+		// an upgrade) is reflected in any minimal beat we may need to send.
+		publishHeartbeatIdentity(payload)
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	payload.PublicURLSelfCheck = publicURLSelfCheckFor(ctx, payload.DashboardURL, logger)
@@ -952,6 +1068,19 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	}
 	payload.Agents = filteredAgents
 
+	return postHeartbeatToHub(ctx, hubURL, payload, logger)
+}
+
+// postHeartbeat marshals and POSTs a beat to the hub, records success on
+// acceptance, and decodes the hub's response.
+//
+// Named ...ToHub to avoid colliding with the pkg-local test helper postHeartbeat.
+// Extracted from sendHeartbeat so the MINIMAL liveness beat (no cached payload,
+// collect timed out) travels the EXACT same path as a normal beat: same auth
+// header, same timeout, same recordHeartbeatSuccess accounting, same response
+// handling — including hub-instructed upgrades. A separate ad-hoc POST would
+// drift from this one over time and silently lose those behaviours.
+func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
