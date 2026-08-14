@@ -406,17 +406,34 @@ func (s *HubServer) hubSessionRevokedLookup(now time.Time) hubSessionRevokedFunc
 	return func(sid string) bool { return s.revokedSessions.isRevoked(sid, now) }
 }
 
-// verifyHubUserCookie is the hub-side entry point: it accepts v3, v2 or legacy
-// cookies and, for v3, additionally enforces signed expiry AND revocation.
+// verifyHubUserCookie is the hub-side entry point: it accepts v3 or v2 cookies
+// and, for v3, additionally enforces signed expiry AND revocation.
 //
 // Spokes deliberately get less: their proxy enforces the signature and the
 // signed expiry, but has no revocation store, so a revoked session can still
 // reach a spoke until its expiry. Closing that needs the spoke to ask the hub,
 // which is a network dependency on the terminal path and out of scope here.
+//
+// ROTATION (master-key-rotation.md, follow-on PR #1): the cookie is checked
+// against every master GENERATION the hub still accepts, not just the current
+// one. Without this, rotating the master logs every user out at the instant of
+// rotation — the session cookie is the longest-lived artifact bound to a
+// generation, which is why defaultVerifyWindow matches cookieMaxAgeDays.
+//
+// On a hub that has never rotated the set holds exactly one generation whose
+// secret IS s.hubSecret, so this is byte-identical to the single-master call it
+// replaces. keyGenerations is nil only in hand-built test servers; the fallback
+// below keeps those on the old path rather than failing them closed, which
+// would be an authentication change disguised as a nil check.
 func (s *HubServer) verifyHubUserCookie(value string) (string, bool) {
 	if s == nil {
 		return "", false
 	}
 	now := time.Now()
-	return verifyHubUserCookieEitherAt(s.sessionPublicKey(), s.sessionKey(), value, now, s.hubSessionRevokedLookup(now))
+	revoked := s.hubSessionRevokedLookup(now)
+	if s.keyGenerations != nil {
+		u, _, ok := verifyHubUserCookieAcrossGenerations(s.keyGenerations, value, now, revoked)
+		return u, ok
+	}
+	return verifyHubUserCookieEitherAt(s.sessionPublicKey(), s.sessionKey(), value, now, revoked)
 }

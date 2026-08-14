@@ -147,6 +147,30 @@ type hubCookieClaims struct {
 	// what makes logout mean something for a value that has already left the
 	// browser.
 	SID string `json:"sid"`
+	// G names the master GENERATION whose derived seed signed this cookie
+	// (hub_generations.go). It is a SELECTION HINT, not a claim of authority:
+	// it lets the verifier check one generation instead of trying each, and it
+	// lets telemetry answer "is anything still using the old key?" without
+	// reading the code. It names a key; it is not a key, so carrying it in the
+	// clear costs nothing.
+	//
+	// `omitempty` is load-bearing in BOTH directions:
+	//
+	//   - Omitted on the wire when zero, so a hub that has never rotated mints
+	//     byte-identical cookies to the ones it mints today. Deploying this is
+	//     therefore not observable at the cookie level.
+	//   - Absent on every cookie already sitting in a browser, which is all of
+	//     them. Verification treats a zero G as UNMARKED and falls back to
+	//     trying each acceptable generation, so no live session is logged out.
+	//
+	// The Node proxy (v2/proxy/server.js verifyHubUserCookieV3) parses u/iat/
+	// exp/sid and ignores unrecognized fields, so adding this one is additive
+	// and needs no spoke roll — which is the whole reason the marker lives in
+	// the payload rather than as a "g<N>." prefix on the cookie value. A prefix
+	// would sit in front of the base64url body and break the proxy's parse for
+	// every hosted tenant, which is the flag day this mechanism exists to
+	// avoid.
+	G int `json:"g,omitempty"`
 }
 
 // hubCookieSessionIDBytes is the entropy behind a session ID. Matches
@@ -176,6 +200,25 @@ func newHubCookieSessionID() string {
 // Returns "" on empty inputs, a bad seed, a non-positive ttl, or a CSPRNG
 // failure — fail closed rather than sign junk, matching mintHubUserCookieValueV2.
 func mintHubUserCookieValueV3(seedHex, username string, now time.Time, ttl time.Duration) (value, sid string) {
+	// gen 0 => the G claim is omitted, so this mints exactly the bytes it
+	// minted before generations existed.
+	return mintHubUserCookieValueV3Gen(seedHex, username, now, ttl, 0)
+}
+
+// mintHubUserCookieValueV3Gen is mintHubUserCookieValueV3 with the master
+// GENERATION that produced seedHex stamped into the signed claims.
+//
+// gen <= 0 omits the marker entirely and produces byte-identical output to the
+// pre-generations mint, which is what makes the unmarked-legacy path testable
+// against the real minter rather than against a hand-built fixture.
+//
+// The marker is INSIDE the signature, so it cannot be edited to steer generation
+// selection: a value whose G was altered fails the Ed25519 check before the
+// payload is ever parsed. That is a stronger property than the impersonation
+// cookie's "g<N>." prefix has (the prefix is unauthenticated, which is why
+// verifyWithGenerations treats a bad prefix as a hint that can only make
+// verification cheaper, never make it fail).
+func mintHubUserCookieValueV3Gen(seedHex, username string, now time.Time, ttl time.Duration, gen int) (value, sid string) {
 	if seedHex == "" || username == "" || ttl <= 0 {
 		return "", ""
 	}
@@ -187,12 +230,16 @@ func mintHubUserCookieValueV3(seedHex, username string, now time.Time, ttl time.
 	if sid == "" {
 		return "", ""
 	}
-	payload, err := json.Marshal(hubCookieClaims{
+	claims := hubCookieClaims{
 		U:   username,
 		IAT: now.Unix(),
 		EXP: now.Add(ttl).Unix(),
 		SID: sid,
-	})
+	}
+	if gen > 0 {
+		claims.G = gen
+	}
+	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", ""
 	}
@@ -200,6 +247,33 @@ func mintHubUserCookieValueV3(seedHex, username string, now time.Time, ttl time.
 	priv := ed25519.NewKeyFromSeed(seed)
 	sig := hubCookieB64.EncodeToString(ed25519.Sign(priv, []byte(body)))
 	return body + hubCookieV3Marker + sig, sid
+}
+
+// hubCookieClaimedGeneration reads the G marker off a v3 cookie WITHOUT
+// verifying its signature, returning 0 for any other shape or an unmarked
+// cookie.
+//
+// Reading an unauthenticated field is safe here for the same reason
+// hubCookieSessionID's identical shortcut is: the result is used only to pick
+// WHICH generation to verify against, and every candidate then has to pass a
+// real Ed25519 check. The worst a forged G achieves is pointing the verifier at
+// a key that will reject it — and the verifier falls back to trying every
+// acceptable generation in that case, so a forged marker cannot even deny
+// service to a legitimate cookie.
+func hubCookieClaimedGeneration(value string) int {
+	idx := strings.LastIndex(value, hubCookieV3Marker)
+	if idx <= 0 {
+		return 0
+	}
+	raw, err := hubCookieB64.DecodeString(value[:idx])
+	if err != nil {
+		return 0
+	}
+	var claims hubCookieClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return 0
+	}
+	return claims.G
 }
 
 // hubSessionRevokedFunc reports whether a session ID has been revoked. Passed in
