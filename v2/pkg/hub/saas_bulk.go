@@ -159,6 +159,18 @@ func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Admin kill switch: bulk upgrade / branch-switch are the same image-change
+	// deliveries the single-hive handlers refuse while spoke upgrades are
+	// paused, so they get the same explicit 409 — for the whole batch, before
+	// any hive is touched. Auto-upgrade preference changes and plain restarts
+	// (no image target) pass through.
+	if body.Action == bulkActionUpgrade || body.Action == bulkActionSwitchBranch {
+		if sw, paused := s.spokeUpgradesPaused(); paused {
+			writeBulkError(w, http.StatusConflict, upgradePauseRefusal("spoke", sw))
+			return
+		}
+	}
+
 	// De-duplicate while preserving the client's order: a repeated ID would
 	// otherwise restart the same hive twice within one request.
 	ids := make([]string, 0, len(body.HiveIDs))

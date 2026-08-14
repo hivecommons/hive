@@ -827,6 +827,13 @@ type HubServer struct {
 	// left the hub serving stale code for ~20 minutes with nothing surfaced.
 	hubUpgradeFault string
 	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	// Admin upgrade kill switch (upgrade_pause.go). Lazily loaded from its
+	// durable JSON file on first use so the state survives the hub's own
+	// frequent auto-rolls; guarded by its own mutex because it is consulted on
+	// every heartbeat and every upgrade-poll cycle, never under s.mu.
+	upgradePause       UpgradePauseState
+	upgradePauseLoaded bool
+	upgradePauseMu     sync.Mutex // guards upgradePause + upgradePauseLoaded
 	httpServer      *http.Server
 	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters        map[string]ClusterConfig
@@ -2115,6 +2122,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		spokeManaged = false
 	}
 
+	// Admin kill switch (upgrade_pause.go): while spoke upgrades are paused,
+	// this handler must not DELIVER any image change — no UpgradeTo, no
+	// SwitchToTag, no tracked-channel re-arm. Completion CLEARING below still
+	// runs (a spoke that already landed somewhere must not stay latched), and
+	// armed targets are left in place so resuming delivers them again.
+	spokePauseSw, spokeUpgradesPausedNow := s.spokeUpgradesPaused()
+
 	// Pending branch switch (image-tag change) delivered via heartbeat for
 	// clusters the hub can't kubectl-reach. Takes precedence over a plain
 	// SHA upgrade. Cleared when the spoke reports running that tag's build.
@@ -2133,7 +2147,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// re-arming would stamp a fresh restart-at annotation and re-roll the
 	// pod every beat). Also self-heals the delivered-upgrade-overwrote-the-
 	// channel-tag drift, not just hub restarts.
-	if switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
+	// The pause guard leads: a re-arm IS a delivery decision (the very next
+	// branch would put the tag on the wire), and the aggressive self-healing
+	// here is exactly what an admin reaching for the kill switch needs stopped.
+	if !spokeUpgradesPausedNow && switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
 		!payload.Upgrading && payload.ImageRef != "" &&
 		imageTagOf(sanitizeImageRef(payload.ImageRef)) != saasHive.TrackedChannel {
 		switchTag = saasHive.TrackedChannel
@@ -2167,6 +2184,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			s.logger.Info("heartbeat: spoke branch switch complete",
 				"hive_id", payload.HiveID, "branch", payload.GitBranch)
 			switchTag = ""
+		} else if spokeUpgradesPausedNow {
+			// Kill switch: keep the armed tag but do not put it on the wire.
+			s.logger.Debug("heartbeat: switch instruction withheld — spoke upgrades are paused",
+				"hive_id", payload.HiveID, "tag", switchTag,
+				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
 		} else {
 			resp.SwitchToTag = switchTag
 			s.logger.Info("heartbeat: instructing spoke to switch branch image",
@@ -2190,7 +2212,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		hbTarget = ""
 	}
 
-	if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
+	if spokeUpgradesPausedNow {
+		// Kill switch: no UpgradeTo of any flavour — spoke-managed chase-latest
+		// or the armed kubectl fallback. Heartbeat is otherwise answered
+		// normally; the armed target survives for resume.
+		if hbTarget != "" || spokeManaged {
+			s.logger.Debug("heartbeat: upgrade instruction withheld — spoke upgrades are paused",
+				"hive_id", payload.HiveID,
+				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+		}
+	} else if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
 		resp.UpgradeTo = latestSHA
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,

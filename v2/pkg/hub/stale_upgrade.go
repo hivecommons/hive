@@ -217,6 +217,17 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 // mid-upgrade. UpgradeTarget is preserved for observability, and the event is
 // logged and written to the hive's timeline.
 func (s *HubServer) sweepOrphanedUpgrades() {
+	// Admin kill switch: while spoke upgrades are paused nothing is being
+	// delivered, so this sweep must not run — it re-arms heartbeatUpgrade
+	// (a delivery the pause forbids) and burns OrphanedUpgradeSweeps retry
+	// budget against hives that CANNOT land their target while paused, which
+	// would tip healthy hives into a false permanent UpgradeFailed. Latches
+	// simply wait; the sweep resumes with the rest of the machinery.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		s.logger.Debug("orphaned-upgrade sweep suppressed — spoke upgrades are paused",
+			"paused_by", sw.By, "paused_at", sw.At)
+		return
+	}
 	now := time.Now()
 
 	type cleared struct {

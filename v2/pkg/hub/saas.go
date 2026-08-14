@@ -477,6 +477,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
 	s.mux.HandleFunc("PUT /api/saas/hub/auto-upgrade", s.requireAdmin(s.handleHubAutoUpgrade))
+	// Admin upgrade kill switch (upgrade_pause.go): pause hub self-upgrades
+	// and/or ALL automatic spoke image changes, fleet-wide.
+	s.mux.HandleFunc("GET /api/saas/upgrade-pause", s.requireAdmin(s.handleGetUpgradePause))
+	s.mux.HandleFunc("POST /api/saas/upgrade-pause", s.requireAdmin(s.handleSetUpgradePause))
 	s.mux.HandleFunc("GET /api/saas/auth-check", s.handleSaaSAuthCheck)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
@@ -3057,6 +3061,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"channel_targets":          getChannelTargets(getDisplaySHAs(), s.logger),
 		"hub_auto_upgrade":         isHubAutoUpgrade(),
 		"hub_upgrade_state":        s.hubUpgradeState(),
+		// Kill-switch state rides the top-level payload (NOT the hive-row
+		// shape, so no HIVES_CACHE_VERSION bump): the dashboard shows a
+		// prominent banner while anything is paused, and admins get toggles.
+		"upgrade_pause": s.upgradePauseSnapshot(),
 		"show_my_hives":            true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
@@ -3626,8 +3634,18 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 	os.WriteFile(hubAutoUpgradePath, []byte(val), 0644)
 	s.logger.Info("audit: hub auto-upgrade toggled", "enabled", body.AutoUpgrade, "by", s.getAuthUser(r))
 
-	// If enabling and hub is behind, trigger immediately
+	// If enabling and hub is behind, trigger immediately. The kill switch does
+	// NOT block saving the preference — only the immediate rollout: with hub
+	// upgrades paused the poller stays suppressed too, and the preference takes
+	// effect when an admin resumes.
 	if body.AutoUpgrade {
+		if sw, paused := s.hubUpgradesPaused(); paused {
+			s.logger.Info("hub auto-upgrade initial trigger suppressed — hub upgrades are paused",
+				"paused_by", sw.By, "paused_at", sw.At)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
+			return
+		}
 		latestSHA := getLatestHubSHAForBranch(s.hubGitBranch)
 		if latestSHA != "" && !sameCommit(latestSHA, s.hubGitHash) {
 			s.logger.Info("audit: hub auto-upgrade initial trigger", "from", s.hubGitHash, "to", latestSHA)
@@ -3826,6 +3844,15 @@ func (s *HubServer) hubUpgradeState() string {
 
 func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
+	// Admin kill switch: while hub upgrades are paused, a manual trigger is
+	// refused loudly — never queued — so the operator learns the state and who
+	// set it instead of waiting on a rollout that will not come.
+	if sw, paused := s.hubUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("hub", sw)})
+		return
+	}
 	target := getLatestHubSHAForBranch(s.hubGitBranch)
 	s.logger.Info("audit: hub self-upgrade triggered", "by", username, "to", target)
 	if err := s.rolloutHubToSHA(target); err != nil {
@@ -3858,6 +3885,15 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	}
 	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
+		return
+	}
+	// Admin kill switch: refuse loudly rather than arm anything — a request
+	// accepted here would either restart the pod now or sit silently in
+	// heartbeatUpgrade, both of which the pause exists to prevent.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
 		return
 	}
 	cluster := s.clusterForHive(h)
@@ -3947,6 +3983,15 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	if !userIsHiveOwner(username, h) {
 		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
+		return
+	}
+	// Admin kill switch: a branch/channel switch while spoke upgrades are
+	// paused gets an explicit 409 naming who paused and when — never a silent
+	// queue into heartbeatSwitchTag.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": upgradePauseRefusal("spoke", sw)})
 		return
 	}
 	var body struct {
@@ -4369,7 +4414,16 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	// (autoUpgradeDailyHour, currently 13:00 / 1pm ET). The
 	// operator who wants it now still has the explicit Upgrade button, which
 	// goes through handleUpgradeHive and is never gated by mode.
-	if body.AutoUpgrade && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
+	// The kill switch does not block saving the PREFERENCE (auto-upgrade
+	// on/off is configuration, not delivery) — only the immediate trigger
+	// below. While paused, triggerAutoUpgrades stays suppressed anyway, and
+	// the hive upgrades after an admin resumes.
+	spokePauseSw, spokesPaused := s.spokeUpgradesPaused()
+	if body.AutoUpgrade && spokesPaused {
+		s.logger.Info("auto-upgrade initial trigger suppressed — spoke upgrades are paused",
+			"hive_id", id, "paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+	}
+	if body.AutoUpgrade && !spokesPaused && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
 		s.mu.RLock()
 		var currentSHA, branch string
 		for _, reg := range s.registry.Hives {
@@ -5088,7 +5142,16 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.hubUpgradeMu.Lock()
 		debounced := time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce
 		s.hubUpgradeMu.Unlock()
-		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) && debounced {
+		// Admin kill switch: while hub upgrades are paused the hub stays on its
+		// current build regardless of new tags — the auto-trigger below never
+		// fires. Checked every cycle (like the trigger itself), so flipping the
+		// switch takes effect on the next poll without a restart.
+		if hubPauseSw, hubPaused := s.hubUpgradesPaused(); hubPaused {
+			if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) {
+				s.logger.Debug("hub auto-upgrade suppressed — hub upgrades are paused",
+					"behind", hubBranchSHA, "paused_by", hubPauseSw.By, "paused_at", hubPauseSw.At)
+			}
+		} else if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) && debounced {
 			s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
 			// rolloutHubToSHA verifies the hub image exists (skips a doomed roll
 			// when the hive-hub build for this SHA failed) and pins the SHA so a
@@ -5178,6 +5241,17 @@ func (s *HubServer) rolloutRestartHive(cluster *ClusterConfig, hiveID string) bo
 }
 
 func (s *HubServer) triggerAutoUpgrades() {
+	// Admin kill switch: while spoke upgrades are paused this entire reconciler
+	// is a no-op — it must start no new upgrades, issue no kubectl restarts,
+	// and (critically) not re-arm heartbeatUpgrade through its stale-recovery
+	// path, which otherwise re-delivers in-flight targets every cycle. The
+	// registry latches and armed targets are left untouched so resuming picks
+	// up exactly where the fleet paused.
+	if sw, paused := s.spokeUpgradesPaused(); paused {
+		s.logger.Debug("auto-upgrade reconciler suppressed — spoke upgrades are paused",
+			"paused_by", sw.By, "paused_at", sw.At)
+		return
+	}
 	hives := listSaaSHives()
 	for _, h := range hives {
 		s.mu.RLock()
@@ -12883,6 +12957,7 @@ const dashboardHTML = `<!DOCTYPE html>
         _latestBuildStarted = data.latest_sha_build_started || {};
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
+        if (data.upgrade_pause) _upgradePause = data.upgrade_pause;
         var shaEl = document.getElementById('latest-image-sha');
         if (shaEl) {
           var lines = '';
@@ -12996,6 +13071,12 @@ const dashboardHTML = `<!DOCTYPE html>
             var hubAutoCheck = '';
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
+              /* Upgrade kill switches (admin-only): checked = paused. Titles
+                 carry who/when; the dashboard banner repeats it prominently. */
+              hubAutoCheck += upgradePauseToggleHTML('hub', 'pause hub upgrades',
+                'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed') +
+                upgradePauseToggleHTML('spokes', 'pause spoke upgrades',
+                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed');
             }
             var hubStatusIcon = hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
@@ -13030,6 +13111,7 @@ const dashboardHTML = `<!DOCTYPE html>
            never be cached, or the next page load would replay the same crash
            from localStorage before the network could correct it. */
         writeHivesCache(data.hives || []);
+        renderUpgradePauseBanner();
         renderPendingBanner(data.hives || []);
         renderUserAccessBanner();
         renderProvisionRequestBanner(data.my_provision_request || null);
@@ -14462,6 +14544,59 @@ const dashboardHTML = `<!DOCTYPE html>
         _hubUpgrading = true;
         hiveToast('Hub upgrade started — page will refresh when ready', 'success');
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    /* Admin upgrade kill switch. _upgradePause mirrors the server's persisted
+       state ({hub:{paused,by,at}, spokes:{...}}); it rides the my-hives
+       top-level payload. Checked = PAUSED. */
+    var _upgradePause = {hub: {paused: false}, spokes: {paused: false}};
+    function upgradePauseToggleHTML(target, label, title) {
+      var sw = (_upgradePause && _upgradePause[target]) || {paused: false};
+      var t = title + (sw.paused ? ' — paused by ' + (sw.by || '?') + ' since ' + (sw.at || '?') : '');
+      return ' <label style="margin-left:6px;font-size:0.6rem;color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';cursor:pointer;white-space:nowrap;font-weight:' + (sw.paused ? '700' : '400') + '" title="' + escAttr(t) + '"><input type="checkbox" ' + (sw.paused ? 'checked' : '') + ' onchange="toggleUpgradePause(\'' + target + '\', this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">' + esc(label) + '</label>';
+    }
+    async function toggleUpgradePause(target, paused) {
+      try {
+        var resp = await fetch('/api/saas/upgrade-pause', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target: target, paused: paused})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Failed to update upgrade pause', 'error'); loadHives(); return; }
+        if (data.state) _upgradePause = data.state;
+        hiveToast((target === 'hub' ? 'Hub' : 'Spoke') + ' upgrades ' + (paused ? 'PAUSED' : 'resumed'), 'success');
+        renderUpgradePauseBanner();
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+    /* renderUpgradePauseBanner paints a prominent banner above the hive list
+       while EITHER kill switch is engaged, so a paused fleet is impossible to
+       miss. Same placement/styling family as renderPendingBanner. */
+    function renderUpgradePauseBanner() {
+      var existing = document.getElementById('upgrade-pause-banner');
+      if (existing) existing.remove();
+      var hubSw = (_upgradePause && _upgradePause.hub) || {};
+      var spokeSw = (_upgradePause && _upgradePause.spokes) || {};
+      if (!hubSw.paused && !spokeSw.paused) return;
+      var container = document.getElementById('hives-container');
+      if (!container || !container.parentNode) return;
+      var line = function(sw, label, detail) {
+        return '<div style="display:flex;align-items:center;gap:10px">' +
+          '<span style="font-size:1.1rem">&#x23F8;&#xFE0F;</span>' +
+          '<span style="font-size:0.85rem;color:var(--text)"><strong>' + label + '</strong> ' + detail +
+          ' — paused by <strong>' + esc(sw.by || 'an admin') + '</strong>' +
+          (sw.at ? ' since <span style="font-family:monospace;font-size:0.8rem">' + esc(sw.at) + '</span>' : '') +
+          '</span></div>';
+      };
+      var html = '';
+      if (hubSw.paused) html += line(hubSw, 'Hub upgrades are PAUSED', '(the hub stays on its current build)');
+      if (spokeSw.paused) html += line(spokeSw, 'Spoke upgrades are PAUSED fleet-wide', '(no automatic image changes reach any hive)');
+      var banner = document.createElement('div');
+      banner.id = 'upgrade-pause-banner';
+      banner.style.cssText = 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px';
+      banner.innerHTML = html;
+      container.parentNode.insertBefore(banner, container);
     }
 
     var _upgradingHives = {};
