@@ -45,6 +45,14 @@ jobs:
       - name: Entrypoint runtime-config migration tests
         run: bash deploy/test_entrypoint_runtime_config.sh
 
+      # #3760: the hive binary ships with NO file capability (a file cap EPERMs
+      # on exec wherever the bounding set lacks NET_ADMIN); the entrypoint grants
+      # NET_ADMIN as a bounding-set-gated AMBIENT cap instead. This unit-tests the
+      # CapBnd bit-check (bit 12 / 0x1000) with positive+negative controls and
+      # asserts the entrypoint keeps the ambient-cap grant + gosu fallback.
+      - name: Entrypoint NET_ADMIN ambient-cap tests (#3760)
+        run: bash deploy/test_entrypoint_netadmin_ambient.sh
+
       # Supply-chain pins regress SILENTLY. The PI_VERSION pin (#3443) landed on
       # v2, and a sync/v2-into-v4-* merge resolved the conflict in favour of the
       # older side and restored `ARG PI_VERSION=latest` — the fix commit is an
@@ -153,13 +161,13 @@ jobs:
             docker rm -f -v "$name" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          # --cap-add NET_ADMIN mirrors the production contract: the pod spec
-          # grants it (SCC hive-netadmin) and the image binary carries
-          # cap_net_admin+ep file caps (SO_MARK egress attribution), so exec
-          # under docker's default cap set fails EPERM by design, not by bug.
+          # #3760: the binary carries NO file capability anymore, so it must exec
+          # under docker's DEFAULT cap set (no --cap-add) — a self-hosted spoke
+          # has exactly that bounding set. NET_ADMIN, when present, is raised by
+          # the entrypoint as an ambient cap; the raw `--version` here needs none.
           # The old `--help || true` form could not fail and asserted nothing.
           timeout --signal=TERM --kill-after=10s 60s \
-            docker run --rm --name "$name" --network none --cap-add NET_ADMIN hive:test --version
+            docker run --rm --name "$name" --network none hive:test --version
 
   # #3760 REGRESSION GUARD — overlayfs/containerd in-place exec.
   #

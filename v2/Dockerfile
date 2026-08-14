@@ -43,8 +43,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM node:26-slim
 
 # --- Layer 1: system packages (rarely changes) ---
+# util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
+# AMBIENT CAP_NET_ADMIN (bounding-set gated) so the proxy's SO_MARK egress-gate
+# works without a file capability on the binary (#3760). gosu is the fallback
+# when setpriv is unavailable or the bounding set lacks NET_ADMIN.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates bash curl bzip2 gosu iptables inotify-tools libevent-core-2.1-7 \
+    git ca-certificates bash curl bzip2 gosu util-linux iptables inotify-tools libevent-core-2.1-7 \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
@@ -327,41 +331,37 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
 
-# SECURITY (audit F5-egress / refs #2674, #2678): give the hive binary
-# CAP_NET_ADMIN as a FILE capability so the MITM proxy's own upstream dials can
-# be exempted from the forced-egress iptables REDIRECT.
+# SECURITY (audit F5-egress / refs #2674, #2678, #3760): the hive process needs
+# CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can stamp SO_MARK on its
+# own upstream dials and be exempted from the forced-egress iptables REDIRECT
+# (on OpenShift/OVN xt_owner is ABSENT, so the owner-UID exemptions silently fail
+# to load and SO_MARK is the ONLY remaining exemption — observed live on vllm-d,
+# where the proxy's own :443 dials looped into the REDIRECT and 502'd every forge
+# request). setsockopt(SO_MARK) requires CAP_NET_ADMIN in the caller's EFFECTIVE
+# set, and the hive process is dropped to non-root `dev`.
 #
-# WHY THIS IS NEEDED
-# The entrypoint installs `-p tcp --dport 443 -j REDIRECT` so every agent's
-# egress is forced through the proxy, then exempts the proxy's OWN traffic three
-# ways. On OKE the `-m owner --uid-owner` matches work. On OpenShift/OVN xt_owner
-# is ABSENT, so those rules silently fail to load (`|| true`) and the only
-# remaining exemption is the SO_MARK packet mark — but setsockopt(SO_MARK)
-# requires CAP_NET_ADMIN in the calling process's EFFECTIVE set. The entrypoint
-# runs as root only long enough to build the chain; the hive process itself is
-# dropped to `dev` via gosu, so without a file capability it loses NET_ADMIN and
-# the mark silently fails ("operation not permitted").
+# WHY NOT A FILE CAPABILITY (the previous approach — deliberately removed)
+# A `setcap cap_net_admin+ep /usr/local/bin/hive` file capability is recomputed
+# by the kernel AT execve, and the kernel REFUSES to exec a binary whose file
+# caps it cannot fully grant from the current BOUNDING set. NET_ADMIN is NOT in
+# the default docker/podman/containerd bounding set, so on any self-hosted spoke
+# (k3s, rootless podman) execve of the capped binary fails with a bare EPERM —
+# the crash-loop diagnosed in #3760 (the overlayfs metacopy diagnosis was a red
+# herring for THIS symptom: even after the metacopy rewrite above, the file cap
+# alone EPERMs wherever the bounding set lacks NET_ADMIN). A file capability and
+# "execs everywhere" are fundamentally incompatible, so the file cap is GONE and
+# the binary ships with NO security.capability xattr.
 #
-# Observed live on vllm-d: with neither exemption active the proxy's own :443
-# dials hit the REDIRECT and looped back into itself, returning 502 for every
-# forge request and cutting a live tenant's agents off from their repository.
-#
-# WHY A FILE CAPABILITY IS SAFE HERE
-# File caps are recomputed AT EXEC from the binary being exec'd. Agents are
-# launched via su-exec into their OWN binaries (claude/goose/bob), which carry
-# no file capability, so NET_ADMIN does NOT propagate to any agent process.
-# Agent UIDs (2001+) also cannot exec su-exec itself — it is 4750
-# root:hive-launch and only `dev` is in that group (audit C6) — so there is no
-# path from an agent to a process holding this capability.
-#
-# +ep = permitted AND effective: the hive process needs the cap live at
-# setsockopt time, not merely inheritable.
-RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
- && setcap cap_net_admin+ep /usr/local/bin/hive \
- && [ "$(getcap /usr/local/bin/hive)" != "" ] \
- && getcap /usr/local/bin/hive | grep -q "cap_net_admin" \
- && apt-get purge -y libcap2-bin \
- && rm -rf /var/lib/apt/lists/*
+# HOW NET_ADMIN REACHES hive INSTEAD (see v2/deploy/entrypoint.sh)
+# The entrypoint reads its own CapBnd (bounding set) at the privilege-drop point
+# and, ONLY when CAP_NET_ADMIN is present (managed OKE/OpenShift spokes grant it
+# via SCC/PSA), drops to `dev` with `setpriv --ambient-caps +net_admin` so hive
+# inherits NET_ADMIN in its EFFECTIVE+AMBIENT set — SO_MARK works exactly as
+# before. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
+# does NOT attempt the raise (setpriv would error) and falls back to plain
+# `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
+# SO_MARK path degrades gracefully (v2/pkg/proxy/github_proxy.go logs once and
+# dials unmarked). setpriv comes from util-linux, installed in Layer 1.
 
 # --- Nous framework (strategist experiment engine) ---
 RUN (apt-get update && apt-get install -y --no-install-recommends \

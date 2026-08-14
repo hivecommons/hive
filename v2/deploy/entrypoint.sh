@@ -844,8 +844,66 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
 
   # Drop to non-root user for all runtime processes.
   # Claude Code refuses --dangerously-skip-permissions as root.
-  # Test gosu first — on some NFS/container combos it fails with EPERM.
-  if command -v gosu >/dev/null 2>&1 && gosu dev true 2>/dev/null; then
+  #
+  # ── NET_ADMIN for the proxy SO_MARK egress-gate, WITHOUT a file cap (#3760) ──
+  # The hive process (proxy) needs CAP_NET_ADMIN in its EFFECTIVE set to
+  # setsockopt(SO_MARK) on its own upstream dials so the forced-egress REDIRECT
+  # exempts them (the ONLY exemption that works on OpenShift/OVN, where xt_owner
+  # is absent — refs #2674/#2678). We used to grant this as a FILE capability on
+  # /usr/local/bin/hive, but the kernel refuses execve of a file-capped binary
+  # whenever the runtime's BOUNDING set lacks that cap (default docker/podman/
+  # containerd, i.e. every self-hosted k3s/rootless spoke) → bare EPERM at exec,
+  # the crash-loop in #3760. The binary now ships with NO file capability; we
+  # instead raise NET_ADMIN as an AMBIENT capability HERE, gated on the bounding
+  # set actually having it — so managed spokes (SCC/PSA grant NET_ADMIN) get the
+  # cap and self-hosted spokes exec cleanly and degrade the SO_MARK path.
+  #
+  # CAP_NET_ADMIN is capability number 12, so its bitmask is (1<<12) == 0x1000.
+  # (0x2000 would be bit 13 / CAP_NET_RAW — which IS in the docker default
+  # bounding set, so testing 0x2000 would wrongly fire on self-hosted spokes and
+  # setpriv would then EPERM. The bit number is 12; the mask is 0x1000.)
+  # Read the bounding set from /proc/self/status (a hex bitmask) and test the bit
+  # with a pure-shell arithmetic AND (no external tools).
+  _cap_net_admin_in_bset=false
+  _capbnd_hex="$(grep -m1 '^CapBnd:' /proc/self/status 2>/dev/null | awk '{print $2}')"
+  if [ -n "$_capbnd_hex" ]; then
+    # 0x1000 == CAP_NET_ADMIN (bit 12). `$(( ))` parses the 0x-prefixed hex.
+    if [ $(( 0x${_capbnd_hex} & 0x1000 )) -ne 0 ]; then
+      _cap_net_admin_in_bset=true
+    fi
+  fi
+
+  # setpriv identity mirrors `gosu dev` exactly: reuid=dev (UID 1001), regid=node
+  # (dev's PRIMARY login group, GID 1000 — there is NO group named `dev`), and
+  # --init-groups to populate the supplementary groups from the user db for dev
+  # (crucially hive-launch, so dev can still exec the 4750 su-exec helper). A
+  # regid of a nonexistent `dev` group would make setpriv fail and silently drop
+  # us to the gosu fallback (losing the ambient cap on managed spokes).
+  _SETPRIV_ID="--reuid dev --regid node --init-groups"
+  # Probe the full invocation once (as root) so a bad flag/identity falls through
+  # to the gosu fallback instead of exec-failing after the point of no return.
+  if [ "$_cap_net_admin_in_bset" = "true" ] \
+     && command -v setpriv >/dev/null 2>&1 \
+     && setpriv --ambient-caps +net_admin $_SETPRIV_ID true 2>/dev/null; then
+    # Managed spoke: bounding set HAS NET_ADMIN and setpriv can raise it into the
+    # ambient set. Drop to dev WITH ambient+effective NET_ADMIN so the Go hive
+    # process can SO_MARK its proxy dials.
+    echo "[entrypoint] Dropping to dev user (ambient CAP_NET_ADMIN granted for proxy SO_MARK egress-gate)"
+    exec setpriv --ambient-caps +net_admin $_SETPRIV_ID "$0" "$@"
+  elif command -v gosu >/dev/null 2>&1 && gosu dev true 2>/dev/null; then
+    if [ "$_cap_net_admin_in_bset" != "true" ]; then
+      # Self-hosted / rootless spoke: no NET_ADMIN in the bounding set. Do NOT
+      # attempt the ambient raise (setpriv would error). The binary execs fine
+      # (no file cap), but the proxy's SO_MARK egress exemption is unavailable —
+      # the forced-proxy egress-gate degrades to the owner-UID exemption only
+      # (works on OKE, not on OpenShift/OVN). The Go proxy logs this once and
+      # dials unmarked (v2/pkg/proxy/github_proxy.go warnSockMarkOnce).
+      echo "[entrypoint] NOTICE: CAP_NET_ADMIN is not in the bounding set — the forced-proxy egress exemption (SO_MARK) is unavailable. hive will run without it; grant NET_ADMIN (securityContext capabilities.add / --cap-add NET_ADMIN) for full egress attribution."
+    else
+      # Bounding set HAD NET_ADMIN but setpriv was missing or failed — fall back
+      # to gosu (no ambient cap). Same SO_MARK degradation as the no-cap case.
+      echo "[entrypoint] WARN: setpriv unavailable or ambient-cap raise failed despite NET_ADMIN in bounding set — falling back to gosu (SO_MARK egress exemption unavailable)."
+    fi
     echo "[entrypoint] Dropping to dev user"
     exec gosu dev "$0" "$@"
   else
