@@ -25,9 +25,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash curl git jq tmux python3 ca-certificates gnupg openssh-client \
   && rm -rf /var/lib/apt/lists/*
 
+# The NodeSource GPG key is downloaded to a file and its SHA-256 verified
+# BEFORE being dearmored into a trusted keyring, so a compromised
+# deb.nodesource.com, DNS hijack, or build-network MITM cannot slip a
+# malicious signing key into the container (issue #3821). The dearmored key
+# is also asserted to carry NodeSource's published fingerprint as a second,
+# independent check that survives even a sha256sum collision on the raw file.
+# Re-derive both values with:
+#   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/ns.key
+#   sha256sum /tmp/ns.key            # -> NODESOURCE_KEY_SHA256
+#   gpg --show-keys /tmp/ns.key      # -> fingerprint, compare to NodeSource's docs
+ARG NODESOURCE_KEY_SHA256=b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d
+ARG NODESOURCE_KEY_FINGERPRINT=6F71F525282841EEDAF851B42F59B5F99B1BE0B4
 RUN mkdir -p /etc/apt/keyrings \
-  && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+  && curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+    -o /tmp/nodesource.key https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  && echo "${NODESOURCE_KEY_SHA256}  /tmp/nodesource.key" | sha256sum -c - \
+  && gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.key \
+  && gpg --show-keys --with-colons /etc/apt/keyrings/nodesource.gpg \
+     | awk -F: -v want="${NODESOURCE_KEY_FINGERPRINT}" '$1=="fpr" && $10==want {found=1} END{exit !found}' \
+  && rm -f /tmp/nodesource.key \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update && apt-get install -y nodejs \
