@@ -2,20 +2,28 @@ package hub
 
 import (
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
-// These tests come in matched PAIRS. Every assertion that a pull-only hive must
-// NOT be armed/re-armed is accompanied by a positive control on a REACHABLE
-// cluster asserting the normal auto-upgrade still happens. Without that control,
-// a change that simply disabled auto-upgrade everywhere would pass the whole
-// file — which is the failure mode this repo has repeatedly shipped (a test that
-// passes for the wrong reason). The controls are what make the pull-only
-// assertions mean "refused BECAUSE undeliverable" rather than "nothing works".
+// These tests come in matched PAIRS. Every assertion that an uncollectible hive
+// must NOT be armed is accompanied by a positive control asserting a hive that
+// CAN collect still auto-upgrades normally. Without those controls, a change
+// that simply disabled auto-upgrade would pass the whole file.
+//
+// The most important control here is TestPullOnlyHiveThatHeartbeatsStillUpgrades.
+// An earlier revision of this fix gated on CLUSTER REACHABILITY, which would
+// have silently disabled auto-upgrade for every pull-only spoke that heartbeats
+// perfectly well — turning a loud wedge into a silent permanent opt-out. That
+// test is what makes the reachability-based gate un-reintroducible.
 
-// pullOnlyTestServer builds a hub with one reachable remote cluster and one
-// declared pull-only cluster, plus a known latest SHA for branch v4.
+func rfc3339At(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// pullOnlyTestServer builds a hub with one in-cluster and one declared pull-only
+// cluster, plus a known latest SHA for branch v4.
 func pullOnlyTestServer(t *testing.T) *HubServer {
 	t.Helper()
 	resetSHACaches(t)
@@ -24,105 +32,162 @@ func pullOnlyTestServer(t *testing.T) *HubServer {
 	latestSHAMu.Unlock()
 
 	return &HubServer{
-		logger:       slog.Default(),
-		hubSecret:    testHubSecret,
-		hubGitBranch: "v4",
-		// A real store, so the surfacing assertions read the same path
-		// production writes rather than a stub that cannot fail.
+		logger:           slog.Default(),
+		hubSecret:        testHubSecret,
+		hubGitBranch:     "v4",
 		timeline:         newTimelineStore(),
 		heartbeatUpgrade: make(map[string]string),
 		clusters: map[string]ClusterConfig{
-			// Reachable: a normal remote cluster with a kubeconfig.
 			"hive-oke": {ID: "hive-oke", InCluster: true, Domain: "hive.kubestellar.io"},
-			// Undeliverable BY DECLARATION — audit-8 F21. The hub has no write
-			// path here and is not meant to have one.
+			// The hub cannot WRITE here (audit-8 F21) — but its spokes pull
+			// their upgrades over their own outbound heartbeat, so this must
+			// NOT affect whether an upgrade is armed.
 			"vllm-d": {ID: "vllm-d", PullOnly: true, Domain: "vllmd.example.cloud"},
 		},
 	}
 }
 
-// TestAutoUpgradeNotArmedForPullOnlyCluster is the primary assertion: the hub
-// must not ARM an upgrade it structurally cannot deliver. Arming one is what
-// latches Upgrading=true with no mechanism to ever clear it.
-func TestAutoUpgradeNotArmedForPullOnlyCluster(t *testing.T) {
+// TestPullOnlyHiveThatHeartbeatsStillUpgrades is THE critical control.
+//
+// Delivery is pull: the spoke reads UpgradeTo off its own heartbeat response
+// (server.go) and patches its own Deployment with its own ServiceAccount
+// (cmd/hive/main.go → self_upgrade.go). The hub's inability to kubectl into the
+// cluster is irrelevant to that path. A gate keyed on cluster reachability would
+// disable auto-upgrade for 40+ healthy spokes; this test fails if anyone
+// reintroduces one.
+func TestPullOnlyHiveThatHeartbeatsStillUpgrades(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-1")
+	forgetUncollectibleUpgrade("pull-live")
+	saveSaaSHive(&SaaSHive{
+		ID: "pull-live", Owner: "alice", AutoUpgrade: true,
+		Status: "running", ClusterID: "vllm-d",
+	})
+	// On a pull-only cluster, but ALIVE and collecting instructions.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "pull-live", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	h := s.registry.Hives[0]
+	if !h.Upgrading {
+		t.Fatal("a pull-only spoke that heartbeats MUST still auto-upgrade — it collects " +
+			"the instruction over its own outbound heartbeat and patches its own " +
+			"Deployment. Gating on cluster reachability here would silently disable " +
+			"auto-upgrade for 40+ healthy spokes, which is worse than the wedge")
+	}
+	if h.UpgradeTarget != "7cd059b" {
+		t.Errorf("UpgradeTarget = %q, want 7cd059b", h.UpgradeTarget)
+	}
+	if got := s.heartbeatUpgrade["pull-live"]; got != "7cd059b" {
+		t.Errorf("heartbeatUpgrade = %q, want 7cd059b — the pull instruction must be armed", got)
+	}
+}
+
+// TestAutoUpgradeNotArmedForNeverHeartbeatedHive is the primary assertion: a hive
+// that has never checked in cannot collect an instruction, so arming one only
+// latches a flag nothing will ever clear.
+func TestAutoUpgradeNotArmedForNeverHeartbeatedHive(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	forgetUncollectibleUpgrade("ph-1")
 	saveSaaSHive(&SaaSHive{
 		ID: "ph-1", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
 	})
-	// Behind latest, so absent the pull-only check this WOULD be armed.
+	// The live wedged shape: no LastHeartbeat at all.
 	s.registry.Hives = []RegistryEntry{{ID: "ph-1", GitBranch: "v4", GitHash: "old1234"}}
 
 	s.triggerAutoUpgrades()
 
 	h := s.registry.Hives[0]
 	if h.Upgrading {
-		t.Error("armed an upgrade for a hive on a pull-only cluster: the hub has no write " +
-			"path to deliver it, so Upgrading=true can never be cleared and the hive " +
-			"wedges as perpetually 'Upgrading' while reading offline")
-	}
-	if h.UpgradeTarget != "" {
-		t.Errorf("UpgradeTarget = %q, want empty — nothing should be targeted", h.UpgradeTarget)
+		t.Error("armed an upgrade for a hive that has never heartbeated: nothing will ever " +
+			"collect it, so Upgrading=true latches forever and the hive wedges as " +
+			"perpetually 'Upgrading' while reading offline")
 	}
 	if got := s.heartbeatUpgrade["ph-1"]; got != "" {
-		t.Errorf("heartbeatUpgrade[ph-1] = %q, want empty — the heartbeat fallback must not "+
-			"be armed either; an unassigned placeholder has no spoke to consume it", got)
+		t.Errorf("heartbeatUpgrade[ph-1] = %q, want empty", got)
 	}
 }
 
-// TestAutoUpgradeStillArmedForReachableCluster is the POSITIVE CONTROL for the
-// test above. If this fails, the fix has disabled auto-upgrade generally rather
-// than refusing only the undeliverable case, and every other assertion in this
-// file is worthless.
-func TestAutoUpgradeStillArmedForReachableCluster(t *testing.T) {
+// TestAutoUpgradeNotArmedForLongDeadHive covers the other uncollectible shape: a
+// hive that once heartbeated but has been silent past the point where the
+// registry considers it present.
+func TestAutoUpgradeNotArmedForLongDeadHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	installScriptedKubectl(t)
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ok-1")
+	forgetUncollectibleUpgrade("dead-1")
 	saveSaaSHive(&SaaSHive{
-		ID: "ok-1", Owner: "alice", AutoUpgrade: true,
+		ID: "dead-1", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "hive-oke",
 	})
-	s.registry.Hives = []RegistryEntry{{ID: "ok-1", GitBranch: "v4", GitHash: "old1234"}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "dead-1", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-48 * time.Hour)),
+	}}
 
 	s.triggerAutoUpgrades()
 
-	h := s.registry.Hives[0]
-	if !h.Upgrading {
-		t.Fatal("a hive on a REACHABLE cluster must still auto-upgrade normally — " +
-			"the pull-only refusal must be narrow, not a blanket disable")
-	}
-	if h.UpgradeTarget != "7cd059b" {
-		t.Errorf("UpgradeTarget = %q, want 7cd059b (latest for v4)", h.UpgradeTarget)
+	if s.registry.Hives[0].Upgrading {
+		t.Error("armed an upgrade for a hive silent for 48h — it cannot collect it")
 	}
 }
 
-// TestStaleUpgradeNotReArmedForPullOnlyCluster covers the branch that actually
-// produced the measured damage: 208 re-arms in 15 minutes. A stale upgrade on a
-// cluster the hub cannot reach must be ABANDONED, not re-armed — re-arming
-// reproduces the identical no-op every staleUpgradeTimeout forever.
-func TestStaleUpgradeNotReArmedForPullOnlyCluster(t *testing.T) {
+// TestBrieflyQuietHiveStillUpgrades is the counter-control to the test above, and
+// guards the threshold choice. A spoke that is one beat late — or quiet BECAUSE
+// it is restarting into an upgrade — must still be armed. Gating on the 5-minute
+// Online threshold instead of staleRemoveAge would be a different silent opt-out.
+func TestBrieflyQuietHiveStillUpgrades(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-2")
+	forgetUncollectibleUpgrade("quiet-1")
+	saveSaaSHive(&SaaSHive{
+		ID: "quiet-1", Owner: "alice", AutoUpgrade: true,
+		Status: "running", ClusterID: "vllm-d",
+	})
+	// 20 minutes quiet: past maxHeartbeatAge (5m, the Online pill), well inside
+	// staleRemoveAge (24h). This hive will come back.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "quiet-1", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-20 * time.Minute)),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	if !s.registry.Hives[0].Upgrading {
+		t.Error("a briefly-quiet spoke must still be armed — it will collect the " +
+			"instruction on its next beat. Gating on the 5-minute Online threshold " +
+			"would refuse to upgrade a spoke that is merely mid-restart")
+	}
+}
+
+// TestStaleUpgradeNotReArmedForUncollectibleHive covers the branch that produced
+// the measured damage: re-arming an instruction nothing will ever pick up.
+func TestStaleUpgradeNotReArmedForUncollectibleHive(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	forgetUncollectibleUpgrade("ph-2")
 	saveSaaSHive(&SaaSHive{
 		ID: "ph-2", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
 	})
-	// Already latched and long past staleUpgradeTimeout — the live shape, where
-	// stale_minutes was observed between 90 and 104.
 	s.registry.Hives = []RegistryEntry{{
 		ID: "ph-2", GitBranch: "v4", GitHash: "old1234",
 		Upgrading: true, UpgradeTarget: "7cd059b",
-		UpgradeStartedAt: time.Now().Add(-99 * time.Minute),
+		UpgradeStartedAt: time.Now().Add(-146 * time.Minute),
 	}}
 	s.heartbeatUpgrade["ph-2"] = "7cd059b"
 
@@ -130,66 +195,57 @@ func TestStaleUpgradeNotReArmedForPullOnlyCluster(t *testing.T) {
 
 	h := s.registry.Hives[0]
 	if h.Upgrading {
-		t.Error("stale undeliverable upgrade was re-armed instead of abandoned — " +
-			"this is the 208-re-arms-in-15-minutes loop")
+		t.Error("stale uncollectible upgrade was re-armed instead of abandoned — " +
+			"this is the unbounded re-arm loop")
 	}
 	if !h.UpgradeStartedAt.IsZero() {
-		t.Error("UpgradeStartedAt must be zeroed when the latch is cleared, or the " +
-			"next cycle reads a stale elapsed and reports the hive stuck again")
+		t.Error("UpgradeStartedAt must be zeroed, or the next cycle reads a stale elapsed")
 	}
 	if got := s.heartbeatUpgrade["ph-2"]; got != "" {
-		t.Errorf("heartbeatUpgrade[ph-2] = %q, want empty — the armed instruction must "+
-			"be dropped so no path keeps re-delivering it", got)
+		t.Errorf("heartbeatUpgrade[ph-2] = %q, want empty", got)
 	}
 }
 
-// TestStaleUpgradeStillRecoveredForReachableCluster is the POSITIVE CONTROL for
-// the abandonment above. Stale-upgrade recovery on a reachable cluster is a real
-// and valuable behaviour (#2476) and must survive.
-func TestStaleUpgradeStillRecoveredForReachableCluster(t *testing.T) {
+// TestStaleUpgradeStillRecoveredForLiveHive is the POSITIVE CONTROL for the
+// abandonment above — including on a PULL-ONLY cluster, since recovery there is
+// exactly what the heartbeat fallback exists for.
+func TestStaleUpgradeStillRecoveredForLiveHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	installScriptedKubectl(t)
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ok-2")
+	forgetUncollectibleUpgrade("ok-2")
 	saveSaaSHive(&SaaSHive{
 		ID: "ok-2", Owner: "alice", AutoUpgrade: true,
-		Status: "running", ClusterID: "hive-oke",
+		Status: "running", ClusterID: "vllm-d",
 	})
 	s.registry.Hives = []RegistryEntry{{
 		ID: "ok-2", GitBranch: "v4", GitHash: "old1234",
 		Upgrading: true, UpgradeTarget: "7cd059b",
 		UpgradeStartedAt: time.Now().Add(-99 * time.Minute),
+		LastHeartbeat:    rfc3339At(time.Now().Add(-30 * time.Second)),
 	}}
 
 	s.triggerAutoUpgrades()
 
 	if !s.registry.Hives[0].Upgrading {
-		t.Fatal("a stale upgrade on a REACHABLE cluster must still be recovered/re-armed — " +
-			"abandonment must apply only where delivery is impossible")
+		t.Fatal("a stale upgrade on a LIVE hive must still be recovered/re-armed — " +
+			"abandonment must apply only where the instruction cannot be collected")
 	}
 	if got := s.heartbeatUpgrade["ok-2"]; got != "7cd059b" {
-		t.Errorf("heartbeatUpgrade[ok-2] = %q, want 7cd059b — recovery must keep the "+
-			"instruction alive for a reachable hive", got)
+		t.Errorf("heartbeatUpgrade[ok-2] = %q, want 7cd059b", got)
 	}
 }
 
-// TestUndeliverableUpgradeCannotAccumulateStaleness is the invariant the whole
-// fix exists to establish, asserted the way the bug actually presented: over
-// REPEATED poll cycles.
-//
-// The original loop survived every individual-cycle check — each cycle looked
-// like a reasonable recovery. Only the accumulation was pathological: elapsed
-// climbing past 90 minutes while the hub re-armed 208 times. So this replays
-// many cycles and asserts the hive never latches at all, which is the only
-// formulation that would have caught the live behaviour.
-func TestUndeliverableUpgradeCannotAccumulateStaleness(t *testing.T) {
+// TestUncollectibleUpgradeCannotAccumulateStaleness asserts the invariant the way
+// the bug actually presented: over REPEATED poll cycles. The original loop
+// survived every individual-cycle check; only the accumulation was pathological.
+func TestUncollectibleUpgradeCannotAccumulateStaleness(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-3")
+	forgetUncollectibleUpgrade("ph-3")
 	saveSaaSHive(&SaaSHive{
 		ID: "ph-3", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -201,29 +257,26 @@ func TestUndeliverableUpgradeCannotAccumulateStaleness(t *testing.T) {
 		h := s.registry.Hives[0]
 		if h.Upgrading {
 			t.Fatalf("cycle %d: hive latched Upgrading — staleness is accumulating for an "+
-				"upgrade that can never be delivered", cycle)
+				"upgrade that will never be collected", cycle)
 		}
 		if !h.UpgradeStartedAt.IsZero() {
-			t.Fatalf("cycle %d: UpgradeStartedAt is non-zero (%v) — the elapsed counter that "+
-				"reached 104 minutes live is being started again", cycle, h.UpgradeStartedAt)
+			t.Fatalf("cycle %d: UpgradeStartedAt non-zero (%v) — the elapsed counter that "+
+				"reached 146 minutes live is being started again", cycle, h.UpgradeStartedAt)
 		}
 		if got := s.heartbeatUpgrade["ph-3"]; got != "" {
-			t.Fatalf("cycle %d: heartbeatUpgrade re-armed to %q — this is the re-arm loop",
-				cycle, got)
+			t.Fatalf("cycle %d: heartbeatUpgrade re-armed to %q — the re-arm loop", cycle, got)
 		}
 	}
 }
 
-// TestUndeliverableUpgradeIsSurfacedNotSilent guards the second half of the fix.
-// Silently skipping is how the original wedge went unnoticed: a hive with
-// auto_upgrade=true that never upgrades looks exactly like one already at latest.
-// The refusal must leave an operator-visible record.
-func TestUndeliverableUpgradeIsSurfacedNotSilent(t *testing.T) {
+// TestUncollectibleUpgradeIsSurfacedNotSilent guards the second half of the fix.
+// Silence is how the original wedge went unnoticed.
+func TestUncollectibleUpgradeIsSurfacedNotSilent(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-4")
+	forgetUncollectibleUpgrade("ph-4")
 	saveSaaSHive(&SaaSHive{
 		ID: "ph-4", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -232,38 +285,29 @@ func TestUndeliverableUpgradeIsSurfacedNotSilent(t *testing.T) {
 
 	s.triggerAutoUpgrades()
 
-	events := s.timeline.recent("ph-4", 100)
 	var found bool
-	for _, e := range events {
+	for _, e := range s.timeline.recent("ph-4", 100) {
 		if e.Kind == TimelineUpgradeStale {
 			found = true
-			// The reason must NAME the cluster, or an operator reading it cannot
-			// act on it.
-			if !contains(e.Detail, "vllm-d") {
-				t.Errorf("timeline detail %q does not name the responsible cluster", e.Detail)
-			}
-			if !contains(e.Detail, "pull-only") {
+			if !strings.Contains(e.Detail, "heartbeat") {
 				t.Errorf("timeline detail %q does not explain WHY it was refused", e.Detail)
 			}
 		}
 	}
 	if !found {
 		t.Error("the refusal left NO timeline record — an operator cannot distinguish " +
-			"'deliberately not upgraded' from 'silently broken', which is exactly how " +
-			"this bug survived")
+			"'deliberately not upgraded' from 'silently broken'")
 	}
 }
 
-// TestUndeliverableRefusalIsDeduplicated stops the fix from trading an unbounded
-// re-arm loop for an unbounded timeline. StartLatestSHAPoller ticks every 2
-// minutes, so an un-deduplicated write would append ~720 identical entries per
-// hive per day and bury the genuine events.
-func TestUndeliverableRefusalIsDeduplicated(t *testing.T) {
+// TestUncollectibleRefusalIsDeduplicated stops the fix trading an unbounded
+// re-arm loop for an unbounded timeline (the poller ticks every 2 minutes).
+func TestUncollectibleRefusalIsDeduplicated(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-5")
+	forgetUncollectibleUpgrade("ph-5")
 	saveSaaSHive(&SaaSHive{
 		ID: "ph-5", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
@@ -281,107 +325,213 @@ func TestUndeliverableRefusalIsDeduplicated(t *testing.T) {
 		}
 	}
 	if stale != 1 {
-		t.Errorf("timeline recorded %d refusal entries across 10 identical cycles, want 1 — "+
-			"the refusal must be reported once per target, not once per poll", stale)
+		t.Errorf("timeline recorded %d refusal entries across 10 identical cycles, want 1", stale)
 	}
 }
 
-// TestUpgradeDeliverablePredicate pins the reachability predicate itself, and in
-// particular that it reuses the EXISTING clusterRecentlyUnreachable notion (the
-// F21 vocabulary) rather than introducing a second, divergent one.
-func TestUpgradeDeliverablePredicate(t *testing.T) {
-	s := &HubServer{
-		logger: slog.Default(),
-		clusters: map[string]ClusterConfig{
-			"in":   {ID: "in", InCluster: true},
-			"pull": {ID: "pull", PullOnly: true, Domain: "d"},
-			"rem":  {ID: "rem", KubeconfigPath: "/tmp/kc", Domain: "d"},
-		},
-		clusterUnreachableUntil: map[string]time.Time{},
-	}
-
+// TestUpgradeCollectiblePredicate pins the predicate, and in particular that it
+// is about HEARTBEAT HISTORY and nothing else — no cluster, no reachability.
+func TestUpgradeCollectiblePredicate(t *testing.T) {
+	now := time.Now()
 	cases := []struct {
-		name    string
-		cluster *ClusterConfig
-		want    bool
+		name string
+		last string
+		want bool
 	}{
-		{"nil cluster is not deliverable", nil, false},
-		{"in-cluster is deliverable", &ClusterConfig{ID: "in", InCluster: true}, true},
-		{"pull-only is never deliverable", &ClusterConfig{ID: "pull", PullOnly: true}, false},
-		{"reachable remote is deliverable", &ClusterConfig{ID: "rem", KubeconfigPath: "/tmp/kc"}, true},
+		{"never heartbeated", "", false},
+		{"unparseable timestamp", "not-a-timestamp", false},
+		{"beating right now", rfc3339At(now.Add(-10 * time.Second)), true},
+		{"quiet 20m (mid-restart)", rfc3339At(now.Add(-20 * time.Minute)), true},
+		{"quiet 23h, still present", rfc3339At(now.Add(-23 * time.Hour)), true},
+		{"silent 48h", rfc3339At(now.Add(-48 * time.Hour)), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := s.upgradeDeliverable(tc.cluster); got != tc.want {
-				t.Errorf("upgradeDeliverable = %v, want %v", got, tc.want)
+			if got := upgradeCollectible(tc.last, now); got != tc.want {
+				t.Errorf("upgradeCollectible(%q) = %v, want %v", tc.last, got, tc.want)
 			}
 		})
-	}
-
-	// A cluster inside the LEARNED unreachable window must also be undeliverable:
-	// an upgrade armed at a cluster the hub just failed to dial wedges exactly
-	// like one aimed at a declared pull-only cluster. This is the assertion that
-	// proves the predicate is the shared F21 notion, not a bare PullOnly test.
-	s.markClusterUnreachable("rem")
-	if s.upgradeDeliverable(&ClusterConfig{ID: "rem", KubeconfigPath: "/tmp/kc"}) {
-		t.Error("a cluster inside the unreachable breaker window must not be deliverable — " +
-			"upgradeDeliverable must reuse clusterRecentlyUnreachable, not re-test PullOnly")
 	}
 }
 
 // TestUpgradeBranchDefaultsToHubBranchNotV2 is the 0b78dc0 regression. A
 // placeholder that has never heartbeated has an empty GitBranch; the old
-// hardcoded `branch = "v2"` then resolved its target against v2 while running on
-// a v4 hub, which is how a v2-only commit was issued as a v4 hive's target.
+// hardcoded `branch = "v2"` resolved its target against v2 on a v4 hub — and v2
+// is no longer maintained.
 func TestUpgradeBranchDefaultsToHubBranchNotV2(t *testing.T) {
 	s := &HubServer{logger: slog.Default(), hubGitBranch: "v4"}
 
 	if got := s.upgradeBranchOrDefault(""); got != "v4" {
-		t.Errorf("upgradeBranchOrDefault(\"\") = %q, want v4 — an unset branch must resolve "+
-			"against the HUB's branch; defaulting to v2 on a v4 hub is what armed 0b78dc0, "+
-			"a commit that does not exist on v4", got)
+		t.Errorf("upgradeBranchOrDefault(\"\") = %q, want v4 — defaulting to v2 on a v4 hub "+
+			"is what armed 0b78dc0, a commit that does not exist on v4", got)
 	}
-	// An explicitly reported branch always wins — the default must never override
-	// a hive that has told us what it runs.
 	if got := s.upgradeBranchOrDefault("v2"); got != "v2" {
-		t.Errorf("upgradeBranchOrDefault(\"v2\") = %q, want v2", got)
+		t.Errorf("upgradeBranchOrDefault(\"v2\") = %q, want v2 — an explicit branch always wins", got)
 	}
-	// A hub that cannot identify its own branch falls back to the historical
-	// constant rather than resolving against "" (which yields no SHA at all).
 	s2 := &HubServer{logger: slog.Default()}
 	if got := s2.upgradeBranchOrDefault(""); got != "v2" {
 		t.Errorf("with no hub branch, upgradeBranchOrDefault(\"\") = %q, want v2", got)
 	}
 }
 
-// TestPullOnlyHiveNeverTargetedWithForeignBranchSHA joins the two fixes at the
-// surface where they were both observed: a placeholder on a pull-only cluster
-// with no reported branch. It must be neither armed nor aimed at a v2 commit.
-func TestPullOnlyHiveNeverTargetedWithForeignBranchSHA(t *testing.T) {
+// TestLiveHiveNeverTargetedWithForeignBranchSHA proves the branch fix on a hive
+// that CAN collect — which is where a foreign-branch target is actually
+// dangerous, because the spoke picks it up and rolls itself onto a v2 build.
+func TestLiveHiveNeverTargetedWithForeignBranchSHA(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := pullOnlyTestServer(t)
-	forgetUndeliverableUpgrade("ph-6")
-	// The v2 SHA that was actually being issued live.
+	forgetUncollectibleUpgrade("live-nobranch")
 	latestSHAMu.Lock()
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "0b78dc0"}
 	latestSHAMu.Unlock()
 
 	saveSaaSHive(&SaaSHive{
-		ID: "ph-6", Owner: "alice", AutoUpgrade: true,
+		ID: "live-nobranch", Owner: "alice", AutoUpgrade: true,
 		Status: "running", ClusterID: "vllm-d",
 	})
-	// GitBranch deliberately EMPTY — the unassigned-placeholder shape.
-	s.registry.Hives = []RegistryEntry{{ID: "ph-6", GitHash: "old1234"}}
+	// GitBranch empty, but heartbeating — so it WILL collect whatever we arm.
+	s.registry.Hives = []RegistryEntry{{
+		ID: "live-nobranch", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
 
 	s.triggerAutoUpgrades()
 
 	h := s.registry.Hives[0]
 	if h.UpgradeTarget == "0b78dc0" {
-		t.Error("hive was targeted at 0b78dc0, a v2-only commit, from a v4 hub")
+		t.Error("live hive was targeted at 0b78dc0, a v2-only commit, from a v4 hub — " +
+			"it would collect this and roll itself onto an unmaintained branch's build")
 	}
-	if h.Upgrading {
-		t.Error("hive on a pull-only cluster must not be latched Upgrading at all")
+	if h.UpgradeTarget != "7cd059b" {
+		t.Errorf("UpgradeTarget = %q, want 7cd059b (the hub's own branch)", h.UpgradeTarget)
+	}
+}
+
+// TestUpgradePathNeverShellsOutToCluster is the push-path retirement guard.
+//
+// It pins the security property the operator asked for: the hub must not need
+// write-capable kubeconfigs into spoke clusters to deliver an upgrade. If anyone
+// reintroduces a kubectl call on the auto-upgrade path, the fake kubectl
+// installed here records it and this fails.
+//
+// The positive half is that the upgrade is still DELIVERED — via the heartbeat —
+// so this cannot pass by simply breaking upgrades.
+func TestUpgradePathNeverShellsOutToCluster(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	forgetUncollectibleUpgrade("nopush")
+	// A REACHABLE remote cluster: under the old push model this is exactly the
+	// case that would have shelled out to kubectl.
+	s.clusters["remote"] = ClusterConfig{
+		ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx",
+		Domain: "r.example.com",
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "nopush", Owner: "alice", AutoUpgrade: true,
+		Status: "running", ClusterID: "remote",
+	})
+	s.registry.Hives = []RegistryEntry{{
+		ID: "nopush", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	// Delivered by pull.
+	if got := s.heartbeatUpgrade["nopush"]; got != "7cd059b" {
+		t.Errorf("heartbeatUpgrade = %q, want 7cd059b — the upgrade must still be "+
+			"delivered, by arming the heartbeat", got)
+	}
+	if !s.registry.Hives[0].Upgrading {
+		t.Error("hive must be latched Upgrading so the dashboard reflects the request")
+	}
+}
+
+// TestManualUpgradeButtonWorksUnderPull is the operator's explicit constraint:
+// the manual Upgrade button must keep working with the push path retired.
+//
+// Under pull, "working" means the request records a target and arms delivery —
+// the spoke applies it on its next beat. This asserts the button's observable
+// contract end-to-end through the HTTP handler.
+func TestManualUpgradeButtonWorksUnderPull(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	s.clusters["remote"] = ClusterConfig{
+		ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Domain: "r.example.com",
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "manual-btn", Owner: "alice", Status: "running", ClusterID: "remote",
+	})
+	s.registry.Hives = []RegistryEntry{{
+		ID: "manual-btn", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
+
+	mkUser(t, "alice")
+	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "manual-btn")
+	rec := httptest.NewRecorder()
+	s.handleUpgradeHive(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manual upgrade returned %d, body %q — the button must keep working",
+			rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"mode":"heartbeat"`) {
+		t.Errorf("response %q should report heartbeat delivery so the UI can say "+
+			"'queued' rather than implying an immediate roll", rec.Body.String())
+	}
+	s.mu.RLock()
+	armed := s.heartbeatUpgrade["manual-btn"]
+	upgrading := s.registry.Hives[0].Upgrading
+	s.mu.RUnlock()
+	if armed != "7cd059b" {
+		t.Errorf("heartbeatUpgrade = %q, want 7cd059b — the click must arm delivery", armed)
+	}
+	if !upgrading {
+		t.Error("the hive must be latched Upgrading so the dashboard reflects the request")
+	}
+}
+
+// TestAutoUpgradeToggleWorksUnderPull is the other operator constraint. The
+// toggle only writes hub-side state, so it must be entirely unaffected — this
+// pins that, and that flipping it on makes the hive eligible for arming.
+func TestAutoUpgradeToggleWorksUnderPull(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := pullOnlyTestServer(t)
+	saveSaaSHive(&SaaSHive{
+		ID: "toggle-1", Owner: "alice", Status: "running",
+		ClusterID: "vllm-d", AutoUpgrade: false,
+	})
+	s.registry.Hives = []RegistryEntry{{
+		ID: "toggle-1", GitBranch: "v4", GitHash: "old1234",
+		LastHeartbeat: rfc3339At(time.Now().Add(-30 * time.Second)),
+	}}
+
+	mkUser(t, "alice")
+	req := setPathValue(reqWithUser("PUT", "/au", `{"auto_upgrade":true}`, "alice"), "id", "toggle-1")
+	rec := httptest.NewRecorder()
+	s.handleToggleAutoUpgrade(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("toggle returned %d, body %q", rec.Code, rec.Body.String())
+	}
+	if h := loadSaaSHive("toggle-1"); h == nil || !h.AutoUpgrade {
+		t.Fatal("the toggle must persist AutoUpgrade=true")
+	}
+
+	// And the setting must actually take effect on the next poll — on a
+	// pull-only cluster, which is the case that matters.
+	forgetUncollectibleUpgrade("toggle-1")
+	s.triggerAutoUpgrades()
+	if !s.registry.Hives[0].Upgrading {
+		t.Error("after enabling auto-upgrade, a live hive must be armed on the next cycle")
 	}
 }

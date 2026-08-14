@@ -113,8 +113,11 @@ func TestBulkRestartViaKubectlWhenClusterReachable(t *testing.T) {
 	if !res.Ok {
 		t.Fatalf("restart on a reachable cluster must succeed, got %q", res.Error)
 	}
-	if res.Via != bulkViaKubectl {
-		t.Fatalf("want Via=%q, got %q", bulkViaKubectl, res.Via)
+	// INVERTED DELIBERATELY: the `kubectl set image` push is retired, so a
+	// branch switch is delivered by arming heartbeatSwitchTag and Via is
+	// "heartbeat" on every cluster.
+	if res.Via != bulkViaHeartbeat {
+		t.Fatalf("want Via=%q, got %q", bulkViaHeartbeat, res.Via)
 	}
 }
 
@@ -127,12 +130,17 @@ func TestBulkRestartFailsWhenClusterUnreachable(t *testing.T) {
 	bulkHiveOnCluster(t, s, "hosted-x", "alice", "v2")
 
 	res := s.applyBulkAction(bulkActionRestart, "", "hosted-x", "alice")
-	if res.Ok {
-		t.Fatal("an undeliverable restart must NOT report success — a restart has " +
-			"no heartbeat fallback")
-	}
-	if res.Error == "" {
-		t.Fatal("the failure must carry an explanation")
+	// INVERTED DELIBERATELY (push-path retirement). This test used to assert
+	// "an undeliverable restart must NOT report success — a restart has no
+	// heartbeat fallback". That premise died with the push path: a restart is
+	// now delivered by arming the durable RequestedRestartAt, which the
+	// heartbeat turns into resp.RestartSpoke and the spoke applies to itself.
+	// Cluster reachability is irrelevant, so there is no "undeliverable" case
+	// left to report — asserting the old behaviour would now be asserting that
+	// a working feature is broken.
+	if !res.Ok {
+		t.Fatalf("a restart must succeed via the heartbeat pull path regardless of "+
+			"cluster reachability, got %q", res.Error)
 	}
 	s.mu.RLock()
 	_, armed := s.heartbeatUpgrade["hosted-x"]
@@ -142,9 +150,9 @@ func TestBulkRestartFailsWhenClusterUnreachable(t *testing.T) {
 	}
 }
 
-// An upgrade that kubectl cannot deliver IS success, via the heartbeat path —
-// the only delivery route for a firewalled cluster. The spoke self-restarts on
-// its next check-in.
+// An upgrade is delivered over the heartbeat on EVERY cluster. This was
+// previously framed as a "fallback" for firewalled clusters; with the push path
+// retired it is simply the delivery mechanism, so Via is always "heartbeat".
 func TestBulkUpgradeFallsBackToHeartbeatWhenUnreachable(t *testing.T) {
 	installBulkKubectl(t, false)
 	s := bulkTestHub(t)
@@ -337,8 +345,11 @@ func TestBulkSwitchBranchViaKubectl(t *testing.T) {
 	if !res.Ok {
 		t.Fatalf("branch switch failed: %q", res.Error)
 	}
-	if res.Via != bulkViaKubectl {
-		t.Fatalf("want Via=%q, got %q", bulkViaKubectl, res.Via)
+	// INVERTED DELIBERATELY: the `kubectl set image` push is retired, so a
+	// branch switch is delivered by arming heartbeatSwitchTag and Via is
+	// "heartbeat" on every cluster.
+	if res.Via != bulkViaHeartbeat {
+		t.Fatalf("want Via=%q, got %q", bulkViaHeartbeat, res.Via)
 	}
 	reg := bulkRegistryEntry(t, s, "hosted-x")
 	if !reg.Upgrading {
@@ -348,12 +359,13 @@ func TestBulkSwitchBranchViaKubectl(t *testing.T) {
 	if reg.UpgradeTarget != branchToTag("dd")+"-latest" {
 		t.Fatalf("upgrade target = %q, want the branch's -latest tag", reg.UpgradeTarget)
 	}
-	// kubectl delivered, so no heartbeat fallback should be armed.
+	// The pull path IS the delivery, so the switch tag MUST be armed.
 	s.mu.RLock()
 	_, armed := s.heartbeatSwitchTag["hosted-x"]
 	s.mu.RUnlock()
-	if armed {
-		t.Fatal("a delivered switch must not also arm the heartbeat fallback")
+	if !armed {
+		t.Fatal("the branch switch must arm heartbeatSwitchTag — under the pull model " +
+			"that IS the delivery, not a fallback for a failed push")
 	}
 }
 
