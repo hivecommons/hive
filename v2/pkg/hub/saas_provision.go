@@ -1955,9 +1955,16 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// "some provisioned spoke", so the hub had to trust body-supplied
 		// hive_id — and three key-delivery lanes read off that claimed ID.
 		// Binding the bearer to the hive makes the claim self-authenticating.
+		//
+		// All five resolve against provisionCurrentSecret() — the CURRENT
+		// generation's master (hub_keys.go). Provisioning and the
+		// perhive_env_reconcile sweep MUST derive identically or they would
+		// fight and roll a pod every cycle forever, so both sides read the
+		// generation set through the same helper. Before any rotation exists
+		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		"SessionKey":   deriveDomainKey(provisionMasterSecret(), infoSessionKey),
-		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
+		"SessionKey":   deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
 		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
 		// which is symmetric and therefore let any spoke forge a hub ADMIN cookie.

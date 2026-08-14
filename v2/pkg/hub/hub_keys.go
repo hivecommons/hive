@@ -160,9 +160,11 @@ func (s *HubServer) sessionPublicKey() string {
 }
 
 // provisionSessionPublicKey is the provisioning-time mirror of
-// sessionPublicKey, resolved against provisionMasterSecret().
+// sessionPublicKey, resolved against the CURRENT generation's secret
+// (provisionCurrentSecret). Before any rotation exists that is byte-identical
+// to provisionMasterSecret().
 func provisionSessionPublicKey() string {
-	return ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSessionEd25519Seed))
+	return ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSessionEd25519Seed))
 }
 
 // provisionTerminalKey returns the PER-HIVE terminal signing key injected into a
@@ -179,7 +181,7 @@ func provisionSessionPublicKey() string {
 // code on either side — TerminalSigningKey() and the proxy's mirror already
 // prefer HIVE_TERMINAL_KEY; provisioning simply never set it.
 func provisionTerminalKey(hiveID string) string {
-	return derivePerHiveKey(provisionMasterSecret(), infoTerminalKey, hiveID)
+	return derivePerHiveKey(provisionCurrentSecret(), infoTerminalKey, hiveID)
 }
 
 // provisionHeartbeatKey returns the PER-HIVE heartbeat bearer injected into a
@@ -193,7 +195,7 @@ func provisionTerminalKey(hiveID string) string {
 // handleHeartbeat trusted body-supplied hive_id and three key-delivery lanes
 // became IDOR.
 func provisionHeartbeatKey(hiveID string) string {
-	return derivePerHiveKey(provisionMasterSecret(), infoHeartbeatKey, hiveID)
+	return derivePerHiveKey(provisionCurrentSecret(), infoHeartbeatKey, hiveID)
 }
 
 // provisionInviteKey returns the PER-HIVE contributor-invite signing key injected
@@ -209,7 +211,7 @@ func provisionHeartbeatKey(hiveID string) string {
 // lane was the one place a spoke still needed the master to function. With this
 // injected it does not.
 func provisionInviteKey(hiveID string) string {
-	return derivePerHiveKey(provisionMasterSecret(), infoInviteKey, hiveID)
+	return derivePerHiveKey(provisionCurrentSecret(), infoInviteKey, hiveID)
 }
 
 // heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
@@ -412,4 +414,59 @@ func provisionMasterSecret() string {
 		return strings.TrimSpace(string(data))
 	}
 	return ""
+}
+
+// provisionGenerationSet resolves the generation set that provision-time and
+// reconcile-time derivation share.
+//
+// WHY THIS EXISTS AS ONE FUNCTION. saas_provision.go's template data map and
+// perhive_env_reconcile.go's desiredPerHiveEnv must derive the five per-hive
+// env vars byte-identically — desiredPerHiveEnv's own doc comment says so, and
+// the consequence of divergence is not subtle: the sweep would see "drift" on
+// every freshly provisioned hive, patch it, and roll its pod every cycle
+// forever. Making them both resolve their master through THIS function means a
+// rotation cannot move one side without the other.
+//
+// TODAY THIS IS EXACTLY legacyGenerationSet(provisionMasterSecret()). There is
+// no persisted generations file yet and no endpoint that can create a second
+// generation (that is follow-on PR #4), so currentSecret() is always the same
+// string provisionMasterSecret() returns and every derived value is
+// byte-identical to what this code produced before generations existed. This
+// change is a READ-PATH change in effect: it re-expresses where the master
+// comes from without changing which master it is.
+//
+// Returns nil for an empty master, and currentSecret() on a nil set returns ""
+// — so the fail-closed contract every caller already relies on (deriveDomainKey
+// and derivePerHiveKey both return "" for an empty master) is preserved through
+// the nil case rather than needing a new one.
+func provisionGenerationSet() *generationSet {
+	if gs := provisionGenerationsOverride; gs != nil {
+		return gs
+	}
+	return legacyGenerationSet(provisionMasterSecret())
+}
+
+// provisionGenerationsOverride replaces the resolved generation set.
+//
+// It exists so a test can drive the ROTATED case, which is otherwise
+// unreachable: there is no persisted generations file and no endpoint that can
+// create a second generation until follow-on PR #4, so without this seam
+// "derives from the current generation" and "derives from the raw master" are
+// indistinguishable and no test could tell them apart. That is precisely the
+// kind of test-that-passes-for-the-wrong-reason this seam prevents.
+//
+// nil in production, set only via withProvisionGenerations in tests. Read
+// without a lock because it is only ever written before the code under test
+// runs, from that test's own goroutine — the same discipline as
+// HubServer.keyGenerations, which is set once in NewHubServer.
+var provisionGenerationsOverride *generationSet
+
+// provisionCurrentSecret is the MINTING master at provision/reconcile time: the
+// secret of the current generation. Every spoke-bound derivation goes through
+// this rather than provisionMasterSecret() directly, so that after a rotation
+// newly provisioned and newly reconciled spokes both receive material from the
+// new current generation while the hub's dual acceptance keeps the not-yet-
+// converged spokes authenticating against the demoted previous one.
+func provisionCurrentSecret() string {
+	return provisionGenerationSet().currentSecret()
 }

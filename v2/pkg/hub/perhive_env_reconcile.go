@@ -121,6 +121,22 @@ type deploymentEnvVar struct {
 // and roll a pod every cycle forever — so both sides call the same helpers in
 // hub_keys.go rather than re-implementing the formulas.
 //
+// GENERATIONS. The master used here is the CURRENT generation's secret
+// (provisionCurrentSecret), not the raw file/env master. That single change is
+// the whole of "rotate spoke-held material without re-provisioning": after a
+// rotation every spoke still carries generation-N material, perHiveEnvDrift
+// sees a var present with a DIFFERENT value — the case its own doc comment
+// names as "a rotated master" — and the existing rate limiter walks the fleet
+// onto the new generation at 3 patches per 15-minute cycle. Nothing about the
+// sweep's cadence or aggressiveness changes; the drift detector was already
+// correct for this case.
+//
+// Until a rotation can actually happen (follow-on PR #4 adds the persistence
+// and the admin endpoint) there is exactly one generation, so
+// provisionCurrentSecret() == provisionMasterSecret() and every value below is
+// byte-identical to what this function returned before. This is a read-path
+// change in effect.
+//
 // FAIL-SAFE: returns nil when any derived value is empty. derivePerHiveKey
 // returns "" for an empty master OR an empty hiveID, and deriveDomainKey
 // returns "" for an empty master, by design (a keyless caller must fail closed).
@@ -136,7 +152,11 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 	if hiveID == "" {
 		return nil
 	}
-	master := provisionMasterSecret()
+	// The CURRENT generation's secret. Empty when no generation is configured —
+	// including the nil-set case, since currentSecret() on a nil *generationSet
+	// returns "". The guard below is unchanged: an empty master must still
+	// short-circuit before anything is derived.
+	master := provisionCurrentSecret()
 	if master == "" {
 		return nil
 	}
@@ -302,6 +322,52 @@ func perHiveEnvSweepEligible(status string) bool {
 	return strings.TrimSpace(status) != "provisioning"
 }
 
+// perHiveEnvGeneration classifies which live generation a spoke's Deployment env
+// was derived from, by re-deriving the per-hive heartbeat key under each
+// acceptable generation and comparing.
+//
+// WHY THE HEARTBEAT KEY IS THE PROBE. Of the five reconciled vars it is the one
+// that is BOTH per-hive and a direct HMAC of the master, so a match identifies
+// the generation AND the hive — two spokes on the same generation produce
+// different values, so a stale-hive-ID drift can never be misread as a
+// generation match. The session/SSO public keys are fleet-uniform and would
+// answer a weaker question.
+//
+// Returns (id, true) for the generation that produced the live value, and
+// (0, false) when NO live generation explains it. That second case is
+// deliberately not folded into "previous": a value derived from a generation
+// the hub has already retired, or from a stale hive ID, is UNATTRIBUTED and
+// must not be counted as being on any generation — otherwise a spoke stuck on
+// a retired key would silently inflate a "converged" count. It fails closed.
+//
+// gens is the acceptable set in current-first order, so the common case (a
+// converged spoke) matches on the first attempt.
+func perHiveEnvGeneration(gens []keyGeneration, live []deploymentEnvVar, hiveID string) (int, bool) {
+	hiveID = strings.TrimSpace(hiveID)
+	if hiveID == "" || len(gens) == 0 {
+		return 0, false
+	}
+	var presented string
+	for _, e := range live {
+		if e.Name == EnvHeartbeatKey {
+			presented = e.Value
+			break
+		}
+	}
+	if presented == "" {
+		// Absent or blank. An absent heartbeat key is drift, already reported
+		// by perHiveEnvDrift; it is not evidence of any generation.
+		return 0, false
+	}
+	for _, g := range gens {
+		expect := derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID)
+		if expect != "" && secureCompareHub(presented, expect) {
+			return g.ID, true
+		}
+	}
+	return 0, false
+}
+
 // perHiveEnvObservation is one hive's live posture, recorded by the sweep from
 // its OWN Deployment read. See perHiveEnvSnapshot for why this is not sourced
 // from heartbeat recency.
@@ -311,6 +377,11 @@ type perHiveEnvObservation struct {
 	// HasMasterSecret is true when the Deployment still injects
 	// HIVE_HUB_SECRET, the master this whole line of work exists to remove.
 	HasMasterSecret bool
+	// Generation is the live generation ID whose material this hive carries, or
+	// 0 when the hub could not attribute the hive's key to any acceptable
+	// generation. Zero is the fail-closed value: it is counted as neither
+	// current nor previous.
+	Generation int
 	// Observed is when the Deployment was last successfully read.
 	Observed time.Time
 }
@@ -372,6 +443,50 @@ type PerHiveEnvStatus struct {
 	// was indistinguishable from "nothing to do".
 	ConsideredHives int `json:"considered_hives"`
 	SkippedByStatus int `json:"skipped_by_status"`
+	// KeyGenerations is the per-generation breakdown of the observed fleet. It
+	// is the surface an operator watches during a rotation to decide when the
+	// previous generation can be retired.
+	KeyGenerations KeyGenerationStatus `json:"key_generations"`
+}
+
+// KeyGenerationStatus is the rotation-readiness view: how many observed spokes
+// carry material from which master generation.
+//
+// SOURCED FROM DEPLOYMENT READS, NOT HEARTBEATS — for the reason spelled out at
+// length on PerHiveEnvSnapshot. A paused spoke still has a Deployment, so it is
+// still counted and still blocks retirement; it cannot fall out of the
+// denominator by going quiet. Gating retirement on a heartbeat-sourced count
+// would let a paused spoke sit on a key the hub has stopped accepting.
+type KeyGenerationStatus struct {
+	// Current is the ID of the generation that MINTS. 0 when the hub has no
+	// generation set configured at all.
+	Current int `json:"current"`
+	// LiveGenerations lists the IDs the hub currently accepts for VERIFY,
+	// current first. Never includes secret material — an ID names a key, it is
+	// not a key.
+	LiveGenerations []int `json:"live_generations,omitempty"`
+	// SpokesOnCurrent is how many observed hives carry material derived from
+	// the current generation.
+	SpokesOnCurrent int `json:"spokes_on_current"`
+	// SpokesOnPrevious is how many observed hives carry material from a live
+	// but non-current generation — the ones a rotation is still walking.
+	SpokesOnPrevious int `json:"spokes_on_previous"`
+	// SpokesUnattributed is how many observed hives carry a heartbeat key that
+	// matches NO live generation. These are not on "previous"; they are on
+	// something the hub no longer accepts, or their hive ID has drifted. They
+	// are broken now, not merely lagging, and they are counted separately so
+	// they can never be mistaken for either converged or converging.
+	SpokesUnattributed int `json:"spokes_unattributed"`
+	// PreviousVerifyUntil is when the most recent previous generation stops
+	// being accepted, RFC3339. Empty when there is no previous generation.
+	PreviousVerifyUntil string `json:"previous_verify_until,omitempty"`
+	// SafeToRetirePrevious is true only when a previous generation exists, at
+	// least one hive was observed, NO observed hive is on a previous generation
+	// or unattributed, and the previous generation's VerifyUntil has passed.
+	//
+	// Fails CLOSED on zero observations, exactly like PerHiveEnvConverged: "the
+	// hub has read nothing" must never render as "safe to retire".
+	SafeToRetirePrevious bool `json:"safe_to_retire_previous"`
 }
 
 // PerHiveEnvSnapshot reports fleet convergence for the five per-hive security
@@ -403,6 +518,40 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	defer s.perHiveEnvMu.RUnlock()
 	out.ConsideredHives = s.perHiveEnvConsidered
 	out.SkippedByStatus = s.perHiveEnvSkippedByStatus
+	gs := s.keyGenerations
+	now := time.Now()
+	current, hasCurrent := gs.currentGeneration()
+	if hasCurrent {
+		out.KeyGenerations.Current = current.ID
+	}
+	// LiveGenerations reports what the hub currently ACCEPTS, so it comes from
+	// acceptableGenerations — an expired previous generation is already gone
+	// from it, which is the finiteness promise made visible.
+	acceptable := gs.acceptableGenerations(now)
+	for _, g := range acceptable {
+		out.KeyGenerations.LiveGenerations = append(out.KeyGenerations.LiveGenerations, g.ID)
+	}
+
+	// previousVerifyUntil, by contrast, comes from the RAW set. It must not be
+	// sourced from `acceptable`: retirement is precisely the state where the
+	// window has already closed, so an acceptable-sourced read would drop the
+	// previous generation from view at the exact moment it becomes retirable
+	// and SafeToRetirePrevious could never be true. The entry still sits in the
+	// set until something removes it; this surface is what says it may be.
+	var previousVerifyUntil time.Time
+	hasPrevious := false
+	if gs != nil {
+		for _, g := range gs.Generations {
+			if g.ID == gs.Current {
+				continue
+			}
+			hasPrevious = true
+			if previousVerifyUntil.IsZero() || g.VerifyUntil.After(previousVerifyUntil) {
+				previousVerifyUntil = g.VerifyUntil
+			}
+		}
+	}
+
 	for id, obs := range s.perHiveEnvSeen {
 		out.ObservedHives++
 		if len(obs.MissingVars) > 0 {
@@ -412,9 +561,39 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 		if obs.HasMasterSecret {
 			out.StillCarryingMaster++
 		}
+		switch {
+		case hasCurrent && obs.Generation == out.KeyGenerations.Current:
+			out.KeyGenerations.SpokesOnCurrent++
+		case obs.Generation > 0:
+			out.KeyGenerations.SpokesOnPrevious++
+		default:
+			out.KeyGenerations.SpokesUnattributed++
+		}
 	}
 	sort.Strings(out.MissingHives)
 	out.PerHiveEnvConverged = out.ObservedHives > 0 && out.MissingPerHiveEnv == 0
+
+	if !previousVerifyUntil.IsZero() {
+		out.KeyGenerations.PreviousVerifyUntil = previousVerifyUntil.UTC().Format(time.RFC3339)
+	}
+	// windowClosed follows acceptableGenerations' rule exactly: a ZERO
+	// VerifyUntil means ALREADY EXPIRED, not "never expires". Reading it the
+	// other way here would be worse than inconsistent — a hand-edited
+	// generations file with the field stripped would report the window as
+	// permanently open and pin the previous generation live forever, which is
+	// the F1/F2 failure mode this design exists to make impossible.
+	windowClosed := previousVerifyUntil.IsZero() || !now.Before(previousVerifyUntil)
+
+	// Every clause is required. Dropping "hasPrevious" would report a fresh,
+	// never-rotated hub as safe to retire a generation it does not have;
+	// dropping the observation floor would report safety from zero evidence;
+	// and counting SpokesUnattributed here (rather than ignoring it) is what
+	// stops a spoke on an ALREADY-retired key from reading as retirable.
+	out.KeyGenerations.SafeToRetirePrevious = hasPrevious &&
+		out.ObservedHives > 0 &&
+		out.KeyGenerations.SpokesOnPrevious == 0 &&
+		out.KeyGenerations.SpokesUnattributed == 0 &&
+		windowClosed
 	return out
 }
 
@@ -513,12 +692,16 @@ func (s *HubServer) reconcilePerHiveEnv() {
 				break
 			}
 		}
+		// Attribute this hive to a generation from the SAME read that produced
+		// the drift list, so the two can never describe different moments.
+		gen, _ := perHiveEnvGeneration(s.keyGenerations.acceptableGenerations(time.Now()), liveEnv, h.ID)
 		// Record the observation from THIS read regardless of whether we go on
 		// to patch — the readiness surface must reflect the whole fleet even
 		// while remediation is rate-limited.
 		s.recordPerHiveEnvObservation(h.ID, perHiveEnvObservation{
 			MissingVars:     drift,
 			HasMasterSecret: hasMaster,
+			Generation:      gen,
 			Observed:        time.Now(),
 		})
 

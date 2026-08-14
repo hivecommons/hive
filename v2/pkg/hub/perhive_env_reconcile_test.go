@@ -54,11 +54,15 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 
 	// These right-hand sides are copied verbatim from the template's data map
 	// (saas_provision.go: HeartbeatKey / SessionKey / SSOPublicKey /
-	// SessionPublicKey / TerminalKey).
+	// SessionPublicKey / TerminalKey), INCLUDING their master expression. The
+	// template derives from provisionCurrentSecret() — the current generation —
+	// so this test pins the generation-aware expression, not the old
+	// provisionMasterSecret() one. If provisioning and the reconcile ever
+	// resolved different generations, this fails.
 	expect := map[string]string{
 		EnvHeartbeatKey:     provisionHeartbeatKey(hiveID),
-		EnvSessionKey:       deriveDomainKey(provisionMasterSecret(), infoSessionKey),
-		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSSOEd25519Seed)),
+		EnvSessionKey:       deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 		EnvTerminalKey:      provisionTerminalKey(hiveID),
 	}
