@@ -102,6 +102,117 @@ func TestCodexLinuxContainmentHelperPathIsSealedAndSourceDriftFailsClosed(t *tes
 	}
 }
 
+func TestCodexLinuxProviderRuntimeBundlesAttestedContainmentHelperBesideSealedCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the packaged Codex bundled helper layout is Linux-only")
+	}
+	command, err := inspectCodexProviderFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperSource := filepath.Join(t.TempDir(), "bwrap-source")
+	if err := os.WriteFile(helperSource, []byte("ordinary-bwrap-test-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := inspectCodexProviderFile(helperSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedCommand, sealedHelper, sealRoot, helperRoot, err := sealCodexProviderRuntime(command, helper, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleaned := false
+	t.Cleanup(func() {
+		if !cleaned {
+			_ = cleanupCodexProviderRuntimeSeal(sealRoot, sealedCommand.Path, sealedHelper.Path)
+		}
+	})
+	wantHelperRoot := filepath.Join(sealRoot, codexBundledResourcesDirectory)
+	wantHelperPath := filepath.Join(wantHelperRoot, codexBundledContainmentHelper)
+	if filepath.Dir(sealedCommand.Path) != sealRoot || helperRoot != wantHelperRoot || sealedHelper.Path != wantHelperPath {
+		t.Fatalf("sealed Codex runtime layout is not bundled: command=%q root=%q helper=%q helper_root=%q", sealedCommand.Path, sealRoot, sealedHelper.Path, helperRoot)
+	}
+	if sealedCommand.SHA256 != command.SHA256 || sealedCommand.Bytes != command.Bytes || sealedHelper.SHA256 != helper.SHA256 || sealedHelper.Bytes != helper.Bytes {
+		t.Fatalf("sealed Codex runtime identities drifted: command=%+v helper=%+v", sealedCommand, sealedHelper)
+	}
+	attestation := &codexProviderIdentityAttestation{
+		Command: command, ContainmentHelper: helper,
+		SealedCommand: sealedCommand, SealRoot: sealRoot,
+		SealedContainmentHelper: sealedHelper, ContainmentHelperRoot: helperRoot,
+	}
+	if err := attestation.revalidate(context.Background()); err != nil {
+		t.Fatalf("fresh bundled runtime did not revalidate: %v", err)
+	}
+	environment, err := bindCodexRuntimePath("linux", []string{"PATH=ambient-untrusted", "LANG=C"}, attestation, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(environment, "\n") != "LANG=C\nPATH="+wantHelperRoot {
+		t.Fatalf("bundled helper did not become the only private PATH entry: %q", environment)
+	}
+	if err := os.Chmod(sealedHelper.Path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedHelper.Path, []byte("changed-bwrap-test-bytes!"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := attestation.revalidate(context.Background()); err == nil || !strings.Contains(err.Error(), "sealed Codex containment helper changed") {
+		t.Fatalf("bundled helper drift was not rejected: %v", err)
+	}
+	if err := cleanupCodexProviderRuntimeSeal(sealRoot, sealedCommand.Path, sealedHelper.Path); err != nil {
+		t.Fatal(err)
+	}
+	cleaned = true
+	if _, err := os.Lstat(sealRoot); !os.IsNotExist(err) {
+		t.Fatalf("sealed runtime root survived cleanup: %v", err)
+	}
+}
+
+func TestCodexLinuxContainmentAttestationPrefersPackagedHelperOverSystemPath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the packaged Codex helper preference is Linux-only")
+	}
+	packageRoot := t.TempDir()
+	commandRoot := filepath.Join(packageRoot, "bin")
+	if err := os.Mkdir(commandRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	commandPath := filepath.Join(commandRoot, "codex")
+	if err := os.WriteFile(commandPath, []byte("ordinary-codex-test-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resourcesRoot := filepath.Join(packageRoot, codexBundledResourcesDirectory)
+	if err := os.Mkdir(resourcesRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bundledPath := filepath.Join(resourcesRoot, codexBundledContainmentHelper)
+	if err := os.WriteFile(bundledPath, []byte("packaged-bwrap-test-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	systemRoot := t.TempDir()
+	systemPath := filepath.Join(systemRoot, "bwrap")
+	if err := os.WriteFile(systemPath, []byte("different-system-bwrap-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", systemRoot)
+	command, err := inspectCodexProviderFile(commandPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := attestCodexLinuxContainmentHelper(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundled, err := inspectCodexProviderFile(bundledPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if helper != bundled || helper.Path == systemPath {
+		t.Fatalf("Codex containment attested the wrong helper: got=%+v bundled=%+v system=%q", helper, bundled, systemPath)
+	}
+}
+
 func TestCodexProviderOutputOverflowCancelsContainedProcess(t *testing.T) {
 	t.Setenv("GO_WANT_CODEX_PROVIDER_HELPER", "1")
 	provider := CodexProvider{Command: os.Args[0]}
