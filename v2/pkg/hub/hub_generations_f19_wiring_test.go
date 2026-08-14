@@ -103,10 +103,14 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 	// THE ASSERTION. Every mandatory var must now be derived from the NEW
 	// generation's secret, computed here independently of the code under test.
 	wantAfter := map[string]string{
-		EnvHeartbeatKey:     derivePerHiveKey(newSecret, infoHeartbeatKey, hiveID),
-		EnvTerminalKey:      derivePerHiveKey(newSecret, infoTerminalKey, hiveID),
-		EnvInviteKey:        derivePerHiveKey(newSecret, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(newSecret, infoSessionKey),
+		EnvHeartbeatKey: derivePerHiveKey(newSecret, infoHeartbeatKey, hiveID),
+		EnvTerminalKey:  derivePerHiveKey(newSecret, infoTerminalKey, hiveID),
+		EnvInviteKey:    derivePerHiveKey(newSecret, infoInviteKey, hiveID),
+		// PER-HIVE since RESIDUAL-2 (#3858): this file was written against the
+		// fleet-wide deriveDomainKey expression, which #3858 deliberately
+		// retired. The negative assertion below keeps a merge that resolves
+		// back to the fleet-wide formula from passing silently.
+		EnvSessionKey:       derivePerHiveKey(newSecret, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(newSecret, infoSessionEd25519Seed)),
 	}
@@ -125,6 +129,13 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 		if after[name] == before[name] {
 			t.Errorf("%s: unchanged by rotation — rotation is inert on the spoke-bound path (F19)", name)
 		}
+	}
+	// RESIDUAL-2 guard: the session key must be per-hive, never the fleet-wide
+	// derivation, even after a rotation. Without this, reverting BOTH the
+	// fixture above and desiredPerHiveEnv to deriveDomainKey would satisfy
+	// every equality check in this test.
+	if after[EnvSessionKey] == deriveDomainKey(newSecret, infoSessionKey) {
+		t.Errorf("HIVE_SESSION_KEY is byte-identical to the fleet-wide derivation after rotation — RESIDUAL-2 regressed")
 	}
 
 	// And specifically NOT the raw master file's derivation, which is the exact
@@ -157,15 +168,21 @@ func TestRotationReachesDesiredPerHiveEnv(t *testing.T) {
 	}
 }
 
-// rawMasterDerivation reproduces the PRE-generation expressions literally, the
-// same way TestPerHiveEnvGenerationIsAReadPathChangeToday does. Used as the
-// byte-identity reference in both directions.
+// rawMasterDerivation reproduces the current single-generation expressions
+// literally, the same way TestPerHiveEnvGenerationIsAReadPathChangeToday does.
+// Used as the byte-identity reference in both directions.
+//
+// HIVE_SESSION_KEY is the PER-HIVE expression, not the original fleet-wide
+// deriveDomainKey one: RESIDUAL-2 (#3858) retired the fleet-wide formula, so
+// "byte-identical on an unrotated hub" now means identical to the per-hive
+// derivation from the raw master. Keeping the old expression here would make
+// this reference assert the vulnerability rather than the invariant.
 func rawMasterDerivation(master, hiveID string) map[string]string {
 	return map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(master, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
+		EnvSessionKey:       derivePerHiveKey(master, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}
@@ -198,6 +215,12 @@ func TestUnrotatedHubDerivesByteIdenticallyAfterWiring(t *testing.T) {
 			if got[name] != want[name] {
 				t.Errorf("%s changed with no live set installed — the fallback is not byte-identical", name)
 			}
+		}
+		// RESIDUAL-2 guard: pin the per-hive property itself, not just the
+		// fixture. If rawMasterDerivation and desiredPerHiveEnv both regressed
+		// to the fleet-wide formula, every equality above would still hold.
+		if got[EnvSessionKey] == deriveDomainKey(f19SecretA, infoSessionKey) {
+			t.Errorf("HIVE_SESSION_KEY is byte-identical to the fleet-wide derivation — RESIDUAL-2 regressed")
 		}
 	})
 
