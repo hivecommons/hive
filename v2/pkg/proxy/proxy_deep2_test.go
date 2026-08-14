@@ -484,6 +484,11 @@ func TestHandleConnCONNECTGitHub(t *testing.T) {
 
 // ---------- identifyAgentFromReq with active iptables but empty result ----------
 
+// TestIdentifyAgentFromReqIptablesEmptyUID: UID lookup failing for this
+// connection (no matching /proc/net/tcp entry) must NOT fall back to trusting
+// the self-asserted Proxy-Authorization header by default (N7, #3841) — an
+// agent process cannot claim to be "quality" just because its own socket
+// wasn't found in the table.
 func TestIdentifyAgentFromReqIptablesEmptyUID(t *testing.T) {
 	uidMap := agent.NewUIDMap()
 	uidMap.IptablesActive = true
@@ -500,9 +505,8 @@ func TestIdentifyAgentFromReqIptablesEmptyUID(t *testing.T) {
 	req.Header.Set("Proxy-Authorization", "hive quality")
 
 	got := p.identifyAgentFromReq(req)
-	// UID lookup fails (no /proc/net/tcp on macOS), falls through to extractAgentName
-	if got != "quality" {
-		t.Errorf("expected fallback to quality, got %q", got)
+	if got != "" {
+		t.Errorf("expected the header to be ignored when UID lookup fails (not advisory), got %q", got)
 	}
 }
 

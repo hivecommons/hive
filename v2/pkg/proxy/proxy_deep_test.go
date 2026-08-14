@@ -1424,6 +1424,10 @@ func TestWriteSSE(t *testing.T) {
 
 // ---------- identifyAgentFromReq with UID map active but lookup returns name ----------
 
+// TestIdentifyAgentFromReqUIDMapFallback: with iptables active but this
+// connection's UID lookup failing, the self-asserted header must be ignored
+// by default (N7, #3841) rather than trusted as "fallback-agent" — and must
+// be honored when the deployment has explicitly opted into advisory mode.
 func TestIdentifyAgentFromReqUIDMapFallback(t *testing.T) {
 	p := &GitHubProxy{
 		uidMap: &agent.UIDMap{IptablesActive: true},
@@ -1434,12 +1438,15 @@ func TestIdentifyAgentFromReqUIDMapFallback(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:99999"
 	req.Header.Set("Proxy-Authorization", "hive fallback-agent")
 
-	// UID lookup will fail (port 99999), should NOT fall back to proxy auth
-	// when iptables is active (per code: if identifyAgentByUID returns "", falls through)
-	got := p.identifyAgentFromReq(req)
-	// When iptables active + UID fails, falls back to extractAgentName
-	if got != "fallback-agent" {
-		t.Errorf("expected fallback-agent, got %q", got)
+	// UID lookup fails (port 99999 has no /proc/net/tcp entry). Without
+	// proxyAdvisoryOK the header must not be trusted.
+	if got := p.identifyAgentFromReq(req); got != "" {
+		t.Errorf("expected the header to be ignored (not advisory), got %q", got)
+	}
+
+	p.proxyAdvisoryOK = true
+	if got := p.identifyAgentFromReq(req); got != "fallback-agent" {
+		t.Errorf("expected fallback-agent with proxyAdvisoryOK set, got %q", got)
 	}
 }
 

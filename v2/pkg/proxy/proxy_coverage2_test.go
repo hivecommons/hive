@@ -23,16 +23,23 @@ import (
 
 // newInferenceTestProxy builds a GitHubProxy with the maps/routers the
 // inference-side helpers require, plus a self-signed CA for MITM paths.
+//
+// proxyAdvisoryOK is set because several tests here identify their synthetic
+// CONNECT requests via a Proxy-Authorization header rather than building a
+// real /proc/net/tcp + UID map fixture (see identifyAgentFromConn/N7, #3841):
+// with no UID map, that header is trusted ONLY in advisory mode. Production
+// never sets this from a test helper — it reads HIVE_PROXY_ADVISORY_OK.
 func newInferenceTestProxy() *GitHubProxy {
 	caCert, caX509, _ := generateCA()
 	return &GitHubProxy{
-		caCert:       caCert,
-		caX509:       caX509,
-		logger:       slog.Default(),
-		violations:   make(map[string]int),
-		certCache:    make(map[string]cachedCert),
-		inference:    newInferenceRouter(),
-		entitlements: newEntitlementStore(),
+		caCert:          caCert,
+		caX509:          caX509,
+		logger:          slog.Default(),
+		violations:      make(map[string]int),
+		certCache:       make(map[string]cachedCert),
+		inference:       newInferenceRouter(),
+		entitlements:    newEntitlementStore(),
+		proxyAdvisoryOK: true,
 	}
 }
 

@@ -146,6 +146,15 @@ type GitHubProxy struct {
 	uidMap       *agent.UIDMap
 	allowedRepos map[string]bool
 
+	// proxyAdvisoryOK mirrors entrypoint.sh's HIVE_PROXY_ADVISORY_OK — the SAME
+	// explicit, operator-set escape hatch that already governs whether a failed
+	// forced-egress iptables redirect is fatal. Read once at construction (it
+	// is a boot-time deployment choice, not something that changes mid-process).
+	// See identifyAgentFromReq/identifyAgentFromConn (N7, #3841): it gates
+	// whether the proxy may EVER trust the self-asserted Proxy-Authorization
+	// header as an agent's identity.
+	proxyAdvisoryOK bool
+
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
 
@@ -230,6 +239,17 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		logger.Info("proxy loaded UID map", "agents", len(uidMap.Agents), "iptables", uidMap.IptablesActive)
 	}
 
+	// N7 (#3841): the same explicit opt-in entrypoint.sh already requires for a
+	// degraded forced-egress gate. See proxyAdvisoryOK's doc comment.
+	advisoryOK := strings.TrimSpace(os.Getenv("HIVE_PROXY_ADVISORY_OK")) == "true"
+	if uidMap == nil {
+		if advisoryOK {
+			logger.Warn("proxy: no UID map — agent identity falls back to the self-asserted Proxy-Authorization header (HIVE_PROXY_ADVISORY_OK=true)")
+		} else {
+			logger.Warn("proxy: no UID map — agents will be treated as unidentified (ADVISORY, writes blocked) rather than trusting a self-asserted identity; set HIVE_PROXY_ADVISORY_OK=true to accept the header instead (N7, #3841)")
+		}
+	}
+
 	allowed := make(map[string]bool, len(repos))
 	for _, repo := range repos {
 		key := org + "/" + repo
@@ -237,17 +257,18 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 	}
 
 	p := &GitHubProxy{
-		listenAddr:    fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
-		caCert:        caCert,
-		caX509:        caX509,
-		logger:        logger,
-		uidMap:        uidMap,
-		allowedRepos:  allowed,
-		violations:    make(map[string]int),
-		certCache:     make(map[string]cachedCert),
-		inference:     newInferenceRouter(),
-		entitlements:  newEntitlementStore(),
-		inferenceAuth: &inferenceAuthState{},
+		listenAddr:      fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
+		caCert:          caCert,
+		caX509:          caX509,
+		logger:          logger,
+		uidMap:          uidMap,
+		proxyAdvisoryOK: advisoryOK,
+		allowedRepos:    allowed,
+		violations:      make(map[string]int),
+		certCache:       make(map[string]cachedCert),
+		inference:       newInferenceRouter(),
+		entitlements:    newEntitlementStore(),
+		inferenceAuth:   &inferenceAuthState{},
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -643,15 +664,15 @@ func (c *prefixConn) Read(b []byte) (int, error) {
 
 // identifyAgentFromReq determines the agent name for a request. It always
 // tries UID-based identification first (unforgeable, works for any client
-// including native binaries that don't send Proxy-Authorization), falling
-// back to Proxy-Authorization headers when UID lookup fails.
+// including native binaries that don't send Proxy-Authorization); see
+// fallbackAgentName for what happens when that fails.
 func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
 	if p.uidMap != nil {
 		if name := p.identifyAgentByUID(r.RemoteAddr); name != "" {
 			return name
 		}
 	}
-	return extractAgentName(r)
+	return p.fallbackAgentName(r)
 }
 
 // identifyAgentFromConn identifies the calling agent for a request read off a
@@ -666,6 +687,45 @@ func (p *GitHubProxy) identifyAgentFromConn(conn net.Conn, r *http.Request) stri
 		if name := p.identifyAgentByUID(conn.RemoteAddr().String()); name != "" {
 			return name
 		}
+	}
+	return p.fallbackAgentName(r)
+}
+
+// fallbackAgentName is reached whenever unforgeable UID-based identification
+// did NOT succeed — either p.uidMap is nil (never loaded: no entrypoint root
+// phase ran to write uid-map.json, e.g. local dev, a native/systemd install,
+// or a genuine boot-ordering failure) or this specific connection's UID has
+// no entry in a map that DID load (N7, #3841).
+//
+// Before this fix, both cases fell through to extractAgentName — the
+// Proxy-Authorization header, which the CALLER sets. Any process that can
+// reach the proxy's loopback port can send `Proxy-Authorization: hive
+// <any-name>` and be identified as that name: a spoke-agent process claiming
+// to be a MORE privileged agent bypasses the whole capability model this
+// proxy exists to enforce, and #1861 (inject GitHub auth at the proxy so
+// agents never hold tokens) would turn that spoofed identity directly into a
+// minted token for the impersonated agent. That is strictly worse than
+// simply refusing to identify the caller.
+//
+// The safe default is therefore to NOT trust the header: return "", which
+// readAgentMode already treats as ModeAdvisory (the most restrictive mode —
+// writes blocked, per the existing "agent could not be identified" WARN a few
+// lines below in proxyHTTP). This is not new plumbing; it is the same path an
+// unidentified caller already hits today, now reached deliberately instead of
+// only when the header happens to be absent.
+//
+// The one deliberate exception is proxyAdvisoryOK (HIVE_PROXY_ADVISORY_OK=true)
+// — the SAME explicit, operator-set escape hatch entrypoint.sh already uses
+// for "this deployment does not enforce the full forced-egress gate" (local
+// dev, a native/systemd install with no per-agent UID separation at all,
+// platforms without NET_ADMIN). An operator who has already accepted a
+// degraded capability model there is not newly exposed by also accepting a
+// self-asserted identity within it — and without this exception, those
+// deployments would lose agent identification (and therefore write access)
+// entirely, which would be a functional regression, not a security fix.
+func (p *GitHubProxy) fallbackAgentName(r *http.Request) string {
+	if !p.proxyAdvisoryOK {
+		return ""
 	}
 	return extractAgentName(r)
 }

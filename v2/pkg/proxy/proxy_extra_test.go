@@ -36,6 +36,11 @@ func TestTransfer(t *testing.T) {
 	c2.Close()
 }
 
+// TestIdentifyAgentFromReqWithProxyAuth is the N7 (#3841) regression test: a
+// self-asserted Proxy-Authorization header must NOT be trusted as identity
+// when the UID map is unavailable and the deployment has not explicitly opted
+// into advisory mode — otherwise any process on the proxy's loopback port
+// could claim to be any agent.
 func TestIdentifyAgentFromReqWithProxyAuth(t *testing.T) {
 	p := &GitHubProxy{
 		uidMap:     nil,
@@ -47,8 +52,29 @@ func TestIdentifyAgentFromReqWithProxyAuth(t *testing.T) {
 	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("scanner:token123")))
 
 	got := p.identifyAgentFromReq(req)
+	if got != "" {
+		t.Errorf("expected the self-asserted header to be ignored (no UID map, not advisory), got %q", got)
+	}
+}
+
+// TestIdentifyAgentFromReqWithProxyAuthAdvisoryOK covers the explicit opt-out:
+// with proxyAdvisoryOK set (HIVE_PROXY_ADVISORY_OK=true), the same header IS
+// trusted — preserving native/dev deployments that have no per-agent UID
+// separation at all and would otherwise lose agent identification entirely.
+func TestIdentifyAgentFromReqWithProxyAuthAdvisoryOK(t *testing.T) {
+	p := &GitHubProxy{
+		uidMap:          nil,
+		proxyAdvisoryOK: true,
+		violations:      make(map[string]int),
+		logger:          slog.Default(),
+	}
+
+	req, _ := http.NewRequest("GET", "https://api.github.com/repos", nil)
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("scanner:token123")))
+
+	got := p.identifyAgentFromReq(req)
 	if got != "scanner" {
-		t.Errorf("expected 'scanner', got %q", got)
+		t.Errorf("expected 'scanner' with proxyAdvisoryOK set, got %q", got)
 	}
 }
 
@@ -66,6 +92,11 @@ func TestIdentifyAgentFromReqNoAuth(t *testing.T) {
 	}
 }
 
+// TestIdentifyAgentFromReqUIDMapNoIptables: a UID map that loaded but whose
+// lookup fails for this connection (here, IptablesActive is false so the
+// redirect that would make UID attribution meaningful never installed) is the
+// SAME "unforgeable identification did not succeed" case as a nil map (N7,
+// #3841) — the header must not be trusted without proxyAdvisoryOK either.
 func TestIdentifyAgentFromReqUIDMapNoIptables(t *testing.T) {
 	p := &GitHubProxy{
 		uidMap:     &agent.UIDMap{IptablesActive: false},
@@ -77,8 +108,8 @@ func TestIdentifyAgentFromReqUIDMapNoIptables(t *testing.T) {
 	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("quality:token")))
 
 	got := p.identifyAgentFromReq(req)
-	if got != "quality" {
-		t.Errorf("without iptables should fall back to proxy auth, got %q", got)
+	if got != "" {
+		t.Errorf("without a UID match, the self-asserted header must be ignored (not advisory), got %q", got)
 	}
 }
 

@@ -119,6 +119,38 @@ func TestIdentifyAgentOnReadRequestConnection(t *testing.T) {
 	}
 }
 
+// TestIdentifyAgentFromConnDoesNotTrustHeaderByDefault is identifyAgentFromConn's
+// half of the N7 (#3841) regression: on the SAME raw-connection path the
+// previous test exercises, a connection whose UID can't be resolved (net.Pipe's
+// RemoteAddr is not a host:port, so identifyAgentByUID fails immediately) must
+// not fall back to trusting a self-asserted Proxy-Authorization header — unless
+// the deployment has explicitly opted into advisory mode.
+func TestIdentifyAgentFromConnDoesNotTrustHeaderByDefault(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	req, err := http.NewRequest(http.MethodConnect, "https://api.github.com:443", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Proxy-Authorization", "hive supervisor")
+
+	p := &GitHubProxy{
+		uidMap: &agent.UIDMap{Agents: map[string]int{"scanner": agentUIDFixture}},
+		logger: slog.Default(),
+	}
+
+	if got := p.identifyAgentFromConn(server, req); got != "" {
+		t.Errorf("expected the self-asserted header to be ignored (UID lookup failed, not advisory), got %q", got)
+	}
+
+	p.proxyAdvisoryOK = true
+	if got := p.identifyAgentFromConn(server, req); got != "supervisor" {
+		t.Errorf("expected supervisor with proxyAdvisoryOK set, got %q", got)
+	}
+}
+
 // TestUpdateBranchRequiresMergeMode covers the second half of the outage:
 // PUT .../update-branch matched no rule at all, so AllowedByMode fell through
 // to its deny-by-default and refused it at EVERY mode — including the trusted
