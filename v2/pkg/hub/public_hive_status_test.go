@@ -10,8 +10,10 @@ import (
 )
 
 // Package-level tests for handlePublicHiveStatus (the anonymous, read-only
-// preview endpoint for is_public:true hives) and a regression test confirming
-// handleHiveStatus (the full, owner-only record) is unchanged by this fix.
+// JSON endpoint for is_public:true hives), handlePublicHivePreview (the
+// browser-facing HTML page that fetches it client-side), and a regression
+// test confirming handleHiveStatus (the full, owner-only record) is
+// unchanged by this fix.
 
 func newPublicStatusHub() *HubServer {
 	return &HubServer{
@@ -313,4 +315,76 @@ func TestHandleHiveStatusStillOwnerGated(t *testing.T) {
 			t.Fatalf("status = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// TestHandlePublicHivePreviewAnonymous verifies the preview PAGE — the
+// actual browser-facing surface a shared public-hive link lands on — is
+// reachable anonymously, serves HTML, and carries NO hive data inline (it
+// fetches /public-status client-side, so the page itself cannot regress the
+// allowlist no matter what a hive's fields contain).
+func TestHandlePublicHivePreviewAnonymous(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := newPublicStatusHub()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/hives/some-hive-id/preview", nil)
+	req = setPathValue(req, "id", "some-hive-id")
+	rec := httptest.NewRecorder()
+
+	s.handlePublicHivePreview(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/public-status") {
+		t.Errorf("preview page does not reference /public-status: %s", body)
+	}
+	// The page is a static shell — no hive ID, name, or any other
+	// server-interpolated value should appear in the HTML itself.
+	if strings.Contains(body, "some-hive-id") {
+		t.Errorf("preview page leaked the hive id server-side instead of resolving it client-side: %s", body)
+	}
+}
+
+// TestPublicHiveRoutesRegisteredWithoutAuth is a route-table regression test:
+// it asserts /public-status and /preview are registered WITHOUT
+// requireAuth (same pattern as /open and /access-status), by exercising them
+// through the real mux with no auth cookie/header at all and confirming
+// neither is redirected to login or 401s outright (a 404 for an unknown
+// hive is fine and expected).
+func TestPublicHiveRoutesRegisteredWithoutAuth(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := &HubServer{
+		logger:         slog.Default(),
+		hubSecret:      testHubSecret,
+		keyGenerations: legacyGenerationSet(testHubSecret),
+		mux:            http.NewServeMux(),
+		hubBanners:     make(map[string]*HubBannerEntry),
+	}
+	s.registerSaaSRoutes()
+
+	for _, path := range []string{
+		"/api/saas/hives/unknown-hive/public-status",
+		"/api/saas/hives/unknown-hive/preview",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, req)
+			if rec.Code == http.StatusUnauthorized {
+				t.Fatalf("%s is auth-gated (401 with no credentials); it must be reachable anonymously", path)
+			}
+			if loc := rec.Header().Get("Location"); strings.Contains(loc, "/login") {
+				t.Fatalf("%s redirected to login (%q); it must be reachable anonymously", path, loc)
+			}
+		})
+	}
 }

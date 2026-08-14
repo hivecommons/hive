@@ -460,6 +460,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	// raw SaaSHive record handleHiveStatus above serves to owners: see
 	// handlePublicHiveStatus for exactly what is and is not included and why.
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/public-status", s.handlePublicHiveStatus)
+	// /preview is the actual browser-facing page for the public read-only
+	// preview: a shared hive link should land here, not on /open (which
+	// requires the hub-authenticated caller to already have a role on the
+	// hive — see handleOpenHive — and so 401s/redirects-to-login for exactly
+	// the anonymous audience a public hive's preview is for). Public hives
+	// table (loadPublicHives) links each hive's name here.
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/preview", s.handlePublicHivePreview)
 	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
 	// It is registered WITHOUT requireAuth so an unauthenticated visit redirects
 	// to the hub login (and back) instead of dumping a raw {"error":...} JSON.
@@ -3578,6 +3585,98 @@ func (s *HubServer) handlePublicHiveStatus(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// publicHivePreviewHTML is the shell for the anonymous, read-only preview
+// page (handlePublicHivePreview). It ships NO hive data inline — everything
+// it shows is fetched client-side from /public-status and rendered with the
+// same DOM-based esc() pattern the rest of the hub SPA uses (see the `esc`
+// helper inside dashboardHTML), so a malicious ProjectName/Org/PrimaryRepo
+// can never inject markup: textContent, not string concatenation, puts it on
+// the page.
+const publicHivePreviewHTML = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hive — Public Preview</title>
+<meta name="robots" content="noindex">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:48px 16px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;max-width:560px;width:100%}
+h1{font-size:1.4rem;margin-bottom:4px;word-break:break-word}
+.sub{color:#8b949e;font-size:0.85rem;margin-bottom:20px}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:0.72rem;font-weight:600;margin-right:6px}
+.pill-online{background:rgba(34,197,94,0.15);color:#4ade80}
+.pill-offline{background:rgba(248,113,113,0.15);color:#f87171}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0}
+.stat{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px}
+.stat .n{font-size:1.3rem;font-weight:700}
+.stat .l{color:#8b949e;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em}
+.agents{margin-top:8px}
+.agent-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #21262d;font-size:0.85rem}
+.agent-row:last-child{border-bottom:none}
+.state{font-size:0.72rem;color:#8b949e}
+.err{color:#8b949e;line-height:1.6}
+.footer{margin-top:20px;font-size:0.75rem;color:#6e7681}
+.footer a{color:#58a6ff}
+</style></head>
+<body><div class="card" id="preview-card">
+<p class="err">Loading…</p>
+</div>
+<script>
+function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+(function() {
+  var parts = location.pathname.split('/');
+  // /api/saas/hives/{id}/preview
+  var id = decodeURIComponent(parts[4] || '');
+  var card = document.getElementById('preview-card');
+  if (!id) { card.innerHTML = '<p class="err">No hive specified.</p>'; return; }
+  fetch('/api/saas/hives/' + encodeURIComponent(id) + '/public-status').then(function(r) {
+    if (!r.ok) { throw new Error(r.status === 404 ? 'This hive is not public or does not exist.' : 'Could not load this hive.'); }
+    return r.json();
+  }).then(function(h) {
+    var title = h.project_name || h.id;
+    var repo = h.org && h.primary_repo ? h.org + '/' + h.primary_repo : (h.primary_repo || '');
+    var onlinePill = '<span class="pill ' + (h.online ? 'pill-online' : 'pill-offline') + '">' + (h.online ? 'Online' : 'Offline') + '</span>';
+    var verPill = h.version ? '<span class="pill" style="background:#21262d;color:#8b949e">' + esc(h.version) + '</span>' : '';
+    var agentsHTML = '';
+    if (h.agents && h.agents.length) {
+      agentsHTML = '<div class="agents">' + h.agents.map(function(a) {
+        return '<div class="agent-row"><span>' + esc(a.name) + '</span><span class="state">' + esc(a.state) + (a.paused ? ' (paused)' : '') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    card.innerHTML =
+      '<h1>' + esc(title) + '</h1>' +
+      '<div class="sub">' + esc(repo) + '</div>' +
+      '<div>' + onlinePill + verPill + '</div>' +
+      '<div class="grid">' +
+        '<div class="stat"><div class="n">' + esc(String(h.acmm_level || 0)) + '</div><div class="l">ACMM Level</div></div>' +
+        '<div class="stat"><div class="n">' + esc(String(h.agent_count || 0)) + '</div><div class="l">Agents</div></div>' +
+        '<div class="stat"><div class="n">' + esc(String(h.actionable_issues || 0)) + '</div><div class="l">Open Issues</div></div>' +
+        '<div class="stat"><div class="n">' + esc(String(h.actionable_prs || 0)) + '</div><div class="l">Open PRs</div></div>' +
+      '</div>' +
+      agentsHTML +
+      '<div class="footer">Read-only public preview · <a href="/">Hive</a></div>';
+  }).catch(function(e) {
+    card.innerHTML = '<h1>Not available</h1><p class="err">' + esc(e.message) + '</p><div class="footer"><a href="/">Back to Hive</a></div>';
+  });
+})();
+</script>
+</body></html>`
+
+// handlePublicHivePreview serves the anonymous, read-only preview PAGE for a
+// public hive — the actual browser-facing surface a shared hive link should
+// land on. It is registered WITHOUT requireAuth (see registerSaaSRoutes),
+// same as /public-status below it: the page itself carries no hive data and
+// is safe to serve regardless of the hive's visibility (it 404s/renders
+// nothing sensitive either way), and its inline script fetches
+// /public-status client-side — the endpoint that actually enforces the
+// is_public gate and the safe-subset allowlist. This handler never touches
+// SaaSHive/RegistryEntry itself, so it cannot regress the allowlist even by
+// accident.
+func (s *HubServer) handlePublicHivePreview(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(publicHivePreviewHTML))
 }
 
 // handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits
@@ -13404,8 +13503,15 @@ const dashboardHTML = `<!DOCTYPE html>
             accessSecondary = '<a href="#" onclick="dashRequestAccess(\'' + esc(h.id) + '\',this);return false" style="font-size:0.65rem;color:#60a5fa;text-decoration:none" title="request sign-in / manage access to this hive">Request access</a>';
           }
           actionCell = '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">' + contributeAction + accessSecondary + '</div>';
+          // Name links to the anonymous, read-only preview page — the actual
+          // surface a shared link for a public hive should land on. NOT
+          // /open: that route requires the visitor to already be a
+          // hub-authenticated owner/grantee (handleOpenHive), which is the
+          // opposite of the audience this table's "other people's public
+          // hives" row is for.
+          var previewHref = '/api/saas/hives/' + encodeURIComponent(h.id) + '/preview';
           return '<tr>' +
-            '<td style="text-align:left">' + esc(h.name || h.id) + '</td>' +
+            '<td style="text-align:left"><a href="' + previewHref + '" style="color:inherit;text-decoration:none" title="View read-only preview">' + esc(h.name || h.id) + '</a></td>' +
             '<td>' + repoLink + '</td>' +
             '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
             '<td>' + actionCell + '</td>' +
