@@ -29,6 +29,20 @@ set -euo pipefail
 REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 [[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
+HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
+
+# Contributor mode comes from a root-owned marker file at the image
+# boundary. The env var HIVE_CONTRIBUTOR_MODE is caller-controlled and
+# must never switch token injection or PR routing.
+#
+# SECURITY (#3249, re-landing #3321/fb87b4c7 on v4): this guard shipped on v2
+# but was dropped from v4 by a v2->v4 sync merge that resolved bin/gh-wrapper.sh
+# in favour of the v4 side. The marker tests and the contributor Dockerfile's
+# `touch /etc/hive/contributor-mode` both survived the sync, so the regression
+# suite kept asserting a boundary the wrapper no longer enforced.
+_contributor_mode() {
+  [[ -f "$HIVE_CONTRIBUTOR_MODE_MARKER" ]]
+}
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
 if [[ ! -x "$REAL_GH" ]]; then
@@ -45,7 +59,7 @@ fi
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
 # Contributors keep their personal token — they fork+PR with their own identity.
 TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
+if ! _contributor_mode; then
   # Per-agent scoped token (Phase 4) — 0640 dev:hive-<agent>, least-privilege,
   # readable ONLY by the owning agent's private group. This is the ONLY token an
   # agent may use.
@@ -71,7 +85,7 @@ if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+if _contributor_mode; then
   case "$*" in
     *"auth "*)
       echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
@@ -235,7 +249,7 @@ _resolve_self_login() {
 # before they leap. `--author` self-listing is allowed only when the author value
 # matches the current agent/bot identity (fixes #3072).
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  if _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356)
   elif author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
     self_login="$(_resolve_self_login)"
@@ -282,7 +296,7 @@ ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 # SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
 # WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
 # their OWN identity by design, so their gh pr create must pass through unchanged.
-if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   if command -v hive-open-pr >/dev/null 2>&1; then
     # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
     # the same --repo/--head/--base/--title/--body shape and ignores the rest.
@@ -582,7 +596,7 @@ if [ "$subcmd" = "api" ]; then
   # Any mutating gh api (POST/PATCH/PUT/DELETE) stays blocked for contributor
   # agents — the read/write split opens READS only, never writes. Non-contributor
   # hive agents keep their existing write paths (governed by mode/ACMM gates above).
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]] && [ "$api_method" != "GET" ]; then
+  if _contributor_mode && [ "$api_method" != "GET" ]; then
     echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
     exit 1
   fi
@@ -652,7 +666,7 @@ if [[ -n "$AGENT_NAME" ]]; then
   LABELS_CSV="agent/${AGENT_DISPLAY_NAME}"
   [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
   # Contributor labels
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
     [[ -n "${HIVE_CONTRIBUTOR_CLI:-}" ]] && LABELS_CSV="${LABELS_CSV},cli/${HIVE_CONTRIBUTOR_CLI}"
   fi
