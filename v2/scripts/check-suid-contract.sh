@@ -40,16 +40,7 @@ fail=0
 # checks run against CODE so that an explanatory comment mentioning e.g.
 # `chmod u+s` (describing the OLD insecure build) is not itself flagged — only a
 # real instruction would be. The positive checks run against the raw file.
-#
-# CODE is materialized to a temp file so every forbidden-pattern check greps a
-# FILE, never `printf | grep -q`. Under `set -o pipefail` a `grep -q` that
-# matches exits and closes the pipe before the writer finishes, giving the
-# writer EPIPE ("write error: Broken pipe") and making the pipeline exit
-# non-zero — which previously flipped a passing check to FAIL (issue #3760 fix).
 CODE="$(grep -vE '^[[:space:]]*#' "$DOCKERFILE")"
-CODE_TMP="$(mktemp)"
-trap 'rm -f "$CODE_TMP"' EXIT
-printf '%s\n' "$CODE" > "$CODE_TMP"
 
 check() {
   local desc="$1" pattern="$2"
@@ -63,7 +54,7 @@ check() {
 
 check_absent() {
   local desc="$1" pattern="$2"
-  if grep -qE "$pattern" "$CODE_TMP"; then
+  if printf '%s\n' "$CODE" | grep -qE "$pattern"; then
     echo "  FAIL: ${desc} (found forbidden pattern in a build instruction: ${pattern})"
     fail=1
   else
@@ -115,44 +106,32 @@ check "hive-launch launcher group is created" \
 check "dev is a member of hive-launch" \
   'useradd.*-G[[:space:]]+hive-launch'
 
-# ── File-capability contract (audit F5-egress, refs #2674/#2678, #3574, #3760) ─
+# ── File-capability contract (audit F5-egress, refs #2674/#2678) ──────────────
 #
-# The MITM proxy needs CAP_NET_ADMIN in the hive process's EFFECTIVE set so it
-# can stamp SO_MARK on its own upstream dials and be exempted from the forced-
-# egress iptables REDIRECT (on OpenShift, where xt_owner is absent, the packet
-# mark is the only exemption).
+# The hive binary carries cap_net_admin+ep so the MITM proxy can stamp SO_MARK
+# on its own upstream dials and be exempted from the forced-egress iptables
+# REDIRECT. Without it, on OpenShift (no xt_owner, so the owner-UID exemptions
+# silently fail to load) the proxy redirects its OWN traffic into itself and
+# every forge request 502s — observed live on vllm-d.
 #
-# It must NOT be granted as a FILE capability on the binary. A file capability
-# absent from the container bounding set makes the kernel refuse execve() with
-# EPERM, which crash-looped every self-hosted/rootless spoke (issue #3760).
-# Instead the entrypoint grants NET_ADMIN as an AMBIENT capability at the
-# non-root privilege drop (setpriv --ambient-caps), where the platform bounding
-# set allows it, and degrades gracefully (best-effort SO_MARK) where it does not.
-#
-# CONTRACT: NO binary in the image may carry a file capability. `setcap` must
-# not appear in a build instruction. CODE_TMP has comment lines stripped, so a
-# `setcap` mentioned in a comment is not flagged — only a real instruction.
-if grep -qE '(^|[^[:alnum:]_])setcap[[:space:]]' "$CODE_TMP"; then
-  echo "  FAIL: the Dockerfile runs setcap — no binary may carry a file capability (issue #3760: a file cap absent from the container bounding set makes execve fail with EPERM). Grant NET_ADMIN as an ambient cap in the entrypoint instead."
-  fail=1
-else
-  echo "  ok: no file capability is granted to any binary (setcap absent)"
-fi
+# The capability is SAFE only because it cannot reach an agent:
+#   - file caps are recomputed at exec, and agents exec their own binaries
+#   - agents cannot exec su-exec (4750 root:hive-launch, asserted above)
+# If either invariant breaks, this capability becomes an escalation path — hence
+# both are asserted in the same contract.
+check "hive binary carries cap_net_admin" \
+  'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'
+check "the capability is verified at build time" \
+  'getcap[[:space:]]+/usr/local/bin/hive'
 
-# The runtime ambient-capability grant must be present in the entrypoint so the
-# proxy egress exemption still works on platforms that grant NET_ADMIN. Grep the
-# entrypoint file directly (no pipe). The entrypoint builds the setpriv drop
-# across two physical lines and may use either `--ambient-caps +net_admin` or
-# `--ambient-caps=+net_admin`, so match `ambient-caps`, `net_admin`, and
-# `setpriv` independently rather than pinning one exact flag spelling.
-ENTRYPOINT_FILE="$(dirname "$0")/../deploy/entrypoint.sh"
-if [[ -f "$ENTRYPOINT_FILE" ]] \
-   && grep -qE -- 'ambient-caps[=[:space:]]+\+?net_admin' "$ENTRYPOINT_FILE" \
-   && grep -qE -- '(^|[^[:alnum:]_])setpriv([^[:alnum:]_]|$)' "$ENTRYPOINT_FILE"; then
-  echo "  ok: entrypoint grants CAP_NET_ADMIN as an ambient capability (setpriv --ambient-caps +net_admin)"
-else
-  echo "  FAIL: entrypoint does not grant CAP_NET_ADMIN via setpriv --ambient-caps +net_admin — the proxy SO_MARK egress exemption will never work"
+# No OTHER binary may be given a capability. Agents run their own binaries; a
+# capability on any of them would hand NET_ADMIN straight to an agent process.
+if printf '%s\n' "$CODE" | grep -oE 'setcap[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+' \
+   | grep -qvE 'setcap[[:space:]]+cap_net_admin\+ep[[:space:]]+/usr/local/bin/hive'; then
+  echo "  FAIL: a setcap targets something other than /usr/local/bin/hive"
   fail=1
+else
+  echo "  ok: no capability is granted to any binary except /usr/local/bin/hive"
 fi
 
 if [[ "$fail" -ne 0 ]]; then
