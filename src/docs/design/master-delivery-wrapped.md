@@ -13,7 +13,7 @@ hub and delivers nothing to two thirds of the fleet.
 
 Every reconciled per-hive value is a pure function of the master plus the hive
 ID. A spoke holding `HIVE_HUB_SECRET` and `HIVE_ID` self-derives all of them:
-the heartbeat bearer (`SpokeHeartbeatKey`, `hub_keys.go:485-496`), the invite
+the heartbeat bearer (`SpokeHeartbeatKey`, `v2/pkg/hub/hub_keys.go:485-496`), the invite
 key (`SpokeInviteKey`, `:535-544`), the session key (`spokeDomainKey`,
 `:443-448`), and even the SSO public key — because it holds the master, it
 regenerates the hub's *private* seed via `SSOSigningSeedFromMaster`
@@ -27,13 +27,13 @@ normally while the lane was dead, and why the 44 pull-only spokes work today.
 master after rotation is the lane's only irreplaceable job, and on 44 of 66
 spokes there is no delivery path.
 
-`KubectlReachable()` (`saas_provision.go:368-376`) tests `PullOnly` first and
+`KubectlReachable()` (`v2/pkg/hub/saas_provision.go:368-376`) tests `PullOnly` first and
 returns false unconditionally. Per the operator correction of 2026-08-14,
 `pull_only` is an **intentional architectural boundary on both clusters** — the
 hub is not meant to hold write credentials into `vllm-d` or `a-ks-wec2`. The
 field's own doc comment already says this plainly: a pull-only cluster's spokes
 "connect outbound over the heartbeat and nothing here can kubectl into them"
-(`saas_provision.go:207-208`).
+(`v2/pkg/hub/saas_provision.go:207-208`).
 
 | Cluster | Spokes | `pull_only` | Reconcile reach |
 |---|---:|---|---|
@@ -80,7 +80,7 @@ migration step, and it does not appear anywhere below.
 is rejected** for the reason recorded in the options paper: it makes the
 heartbeat bearer a master-exfiltration primitive. The bearer is
 `derivePerHiveKey(master, infoHeartbeatKey, hiveID)`
-(`hub_keys.go:350`) — master-derived. An attacker holding a leaked master
+(`v2/pkg/hub/hub_keys.go:350`) — master-derived. An attacker holding a leaked master
 derives any hive's bearer, heartbeats as that hive, and is handed each new
 master as the operator rotates. Rotation stops evicting them, which is the
 property rotation exists to provide. B closes F19 by making RESIDUAL-1
@@ -94,8 +94,8 @@ this document and the answer is qualified.
 
 ### Algorithm choice: X25519, not Ed25519
 
-The repo's existing asymmetric material is Ed25519 (`sso.go`, `hub_cookie.go`,
-`hub_pubkey_generations.go`). **Ed25519 is a signing key and cannot encrypt.**
+The repo's existing asymmetric material is Ed25519 (`v2/pkg/hub/sso.go`, `v2/pkg/hub/hub_cookie.go`,
+`v2/pkg/hub/hub_pubkey_generations.go`). **Ed25519 is a signing key and cannot encrypt.**
 Reusing it here would require either the Ed25519→X25519 birational map — which
 is sharp-edged, easy to get wrong, and creates a key used in two algorithms —
 or an ad-hoc scheme. Neither is acceptable for the one payload whose compromise
@@ -111,10 +111,10 @@ age-style sealed box:
 | KEM | X25519 (`crypto/ecdh`, `X25519()`) | Stdlib since Go 1.20; module is on Go 1.25.6 (`v2/go.mod`). No new dependency. 32-byte keys, hex-encodable like every existing env value. |
 | Ephemeral | Fresh sender keypair per wrap | Gives forward secrecy against later compromise of the hub's state and makes each ciphertext independently sealed. |
 | KDF | HKDF-SHA256 over the shared secret, both public keys, and a context label | Binds the ciphertext to both parties. |
-| AEAD | AES-256-GCM, 96-bit nonce | Stdlib, constant-time on the relevant hardware, and the repo already uses AES-256-GCM for `hubbackup` (`pkg/hubbackup/backup.go`). Precedent, not novelty. |
+| AEAD | AES-256-GCM, 96-bit nonce | Stdlib, constant-time on the relevant hardware, and the repo already uses AES-256-GCM for `hubbackup` (`v2/pkg/hubbackup/backup.go`). Precedent, not novelty. |
 
 `x/crypto/hkdf` is deliberately **not** a direct module dependency today — the
-comment at `hub_keys.go:31-33` records that as a considered choice, with
+comment at `v2/pkg/hub/hub_keys.go:31-33` records that as a considered choice, with
 HMAC-SHA256 single-block expansion used instead. This design should follow that
 precedent rather than reverse it: a single-block HMAC-SHA256 expansion is
 sufficient here for the same reason it is sufficient there (fixed, unique
@@ -135,17 +135,17 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`cmd/hive/main.go:99`) and
+`spokeAppKeyPath = "/data/gh-app-key.pem"` (`v2/cmd/hive/main.go:99`) and
 `spokeAppKeyDir = "/data"` (`:104`), with `spokeAppKeyFileMode = 0o600`
 (`:116`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:114-115`). `/data` is the PVC mount in the spoke template
-(`saas_provision.go:2585`), and `/data/hive-id` (`cmd/hive/main.go:5297`)
+(`v2/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`v2/cmd/hive/main.go:5297`)
 already establishes that identity-critical state persists there across
 restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`cmd/hive/main.go:95-97`.
+`v2/cmd/hive/main.go:95-97`.
 
 ### First boot, pod roll, PVC loss
 
@@ -202,13 +202,13 @@ and not to an attacker who heartbeated first.
 ### What the heartbeat bearer already proves
 
 The bearer is verified by `verifyHeartbeatBearerAcrossGenerations`
-(`hub_keys.go:339-366`). Every candidate is
+(`v2/pkg/hub/hub_keys.go:339-366`). Every candidate is
 `derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID)` (`:350`), and the
 function's banner states the invariant: "identity-bound under EVERY generation
 ... There is deliberately no code path here that derives without hiveID; if one
 ever appears, F2 is re-opened" (`:322-327`). `handleHeartbeat` verifies the
 bearer against the *claimed* `hive_id` after parsing the body
-(`server.go:1406`; the N1 comment at `:1395-1405` explains why the check must
+(`v2/pkg/hub/server.go:1406`; the N1 comment at `:1395-1405` explains why the check must
 follow the parse — the per-hive bearer is derived from the claimed ID, so the
 ID must be parsed and validated first).
 
@@ -284,6 +284,52 @@ longer suffices to change where masters get wrapped. It does not break it
 *before* the pin: the very first publication is accepted on bearer authority,
 so a pre-pin attacker still wins.
 
+### The pin is not a race for a spoke that cannot publish
+
+The trace above says "before the spoke publishes (or at any point where they
+can win the race)", and the rest of this document was written as though the
+pinning event is a contest the legitimate spoke normally wins — it is already
+running, it publishes every beat, the attacker has a narrow window. **For a
+meaningful part of the fleet that framing is wrong, and it changes how OQ-1
+should be read.**
+
+A hive only publishes a wrapping key if it is running the new image and able to
+heartbeat. For any hive that is not, there is no race at all — **the attacker
+pins by default, unopposed, with no timing requirement whatsoever.** The
+categories are not hypothetical:
+
+- **Not yet rolled to the new image.** Migration step 1 reaches pull-only
+  spokes via self-upgrade, which is not instantaneous or simultaneous. Between
+  the hub gaining the pin store and the last spoke rolling, every unrolled hive
+  is unopposed.
+- **Offline, paused, or crash-looping.** A paused spoke publishes nothing. So
+  does one in a crash loop.
+- **Stuck in `provisioning`.** The same status that §6's corrected clause exists
+  to stop leaving the denominator.
+- **Already denied by a hostile pin.** Self-sustaining: once the attacker pins,
+  §8 row 2 refuses the legitimate spoke's publication forever, so the hive can
+  never take the pin back without operator action.
+
+For every hive in those categories the attacker does not need to be fast, only
+first — and against a spoke that never publishes, *any* time is first. The
+window is not milliseconds; it is "until that spoke successfully publishes",
+which for a paused or unrolled hive is unbounded.
+
+Two consequences:
+
+1. **The exposed population is not "spokes an attacker outraces" but "spokes
+   that cannot publish at the moment the pin store goes live".** That is a
+   number the operator can measure before committing, and should — see the
+   re-stated OQ-1 in §11.
+2. **Sequencing is security-relevant, not merely operational.** The interval
+   between the hub accepting pins and the fleet finishing its roll is the
+   exposure window, and it should be minimised deliberately rather than allowed
+   to run for however long a self-upgrade takes. §6 step 1 should complete for
+   as much of the fleet as possible *before* step 2 begins accepting pins.
+
+This does not change the pinning rule, which is correct as written. It changes
+the estimate of how much of the fleet the rule protects on day one.
+
 **This is unavoidable given the constraints, and it should be stated as a
 residual rather than engineered around.** The hub cannot reach in to seed a
 key. There is no out-of-band channel from the hub. The only pre-existing shared
@@ -304,11 +350,11 @@ in and there is no out-of-band hub channel.
 Provisioning is the moment a spoke is created, and the hub controls the
 manifest even for pull-only clusters — the manifest is applied by an operator
 context, not by the hub. The template already injects per-hive secret material
-(`saas_provision.go:1966-1986`: `HeartbeatKey`, `SessionKey`, `SSOPublicKey`,
+(`v2/pkg/hub/saas_provision.go:1966-1986`: `HeartbeatKey`, `SessionKey`, `SSOPublicKey`,
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
-(`saas_provision.go:2763`) already carries private key material at provision
+(`v2/pkg/hub/saas_provision.go:2763`) already carries private key material at provision
 time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
+(`v2/cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
 before any heartbeat has run" (`:108`).
 
 So there is an existing, precedented channel for giving a spoke a secret at
@@ -364,15 +410,15 @@ initiate a connection to a spoke.**
 Step 1 is the only one needing a spoke image roll, and it needs **no hub
 action at all** — which is precisely why it works for pull-only clusters. The
 spoke's image is updated by its existing self-upgrade path
-(`HeartbeatResponse.SwitchToTag`, `heartbeat.go:1694-1698` (field at `:1698`)), whose doc comment
+(`HeartbeatResponse.SwitchToTag`, `v2/pkg/hub/heartbeat.go:1694-1698` (field at `:1698`)), whose doc comment
 records that this exists for exactly this reason: "Used for branch switches on
 clusters the hub can't reach over kubectl — the spoke has in-cluster RBAC
 (hive-self-upgrade role) to patch its own deployment." The delivery mechanism
 for the fix is one the pull-only boundary already accommodates.
 
 Step 4's carrier has direct precedent. `HeartbeatResponse.PendingGateway`
-(`heartbeat.go:1728-1733`) is a **secret** delivered on the heartbeat response,
-queued hub-side (`openrouter.go:217`), drained on delivery, and its doc
+(`v2/pkg/hub/heartbeat.go:1728-1733`) is a **secret** delivered on the heartbeat response,
+queued hub-side (`v2/pkg/hub/openrouter.go:217`), drained on delivery, and its doc
 comment states its purpose: "the delivery channel for firewalled/heartbeat-only
 spokes (vllm-d) the hub cannot POST to directly ... The hub sends it once
 (drained on delivery) rather than every beat, since it carries a secret key
@@ -385,7 +431,7 @@ structure rather than invent one. The "send once, drained" property should
 
 `42dd2cce` already built the interlock and it is exactly the right shape.
 `PerHiveEnvStatus` carries `UnreachableHives`, `UnreachableClusters` and
-`FleetFullyObserved` (`perhive_env_reconcile.go:552-580`), with
+`FleetFullyObserved` (`v2/pkg/hub/perhive_env_reconcile.go:552-580`), with
 `FleetFullyObserved = out.ConsideredHives > 0 && out.UnreachableHives == 0`
 (`:673`) — failing closed on a zero-considered sweep, because "I looked at
 nothing" is not "I looked at everything". `SafeToRetirePrevious` is gated on it
@@ -417,13 +463,100 @@ absent" from "hive never existed" — a paused spoke silently leaves the
 denominator and the fleet reads ready. That warning is correct and it applies
 here.
 
-The resolution is that the **denominator must stay registry-sourced** (every
-admitted hive, exactly as `ConsideredHives` is computed today) while only the
-**numerator** becomes heartbeat-sourced. A paused or vanished pull-only spoke
-then keeps its place in the denominator, never publishes, and correctly blocks
-retirement. What must never be built is a denominator of "hives that
-heartbeated recently". → this is the single most likely place for a test to
-pass for the wrong reason; see §9.
+The resolution is that the **denominator must stay registry-sourced** while
+only the **numerator** becomes heartbeat-sourced. A paused or vanished
+pull-only spoke then keeps its place in the denominator, never publishes, and
+correctly blocks retirement. What must never be built is a denominator of
+"hives that heartbeated recently". → this is the single most likely place for
+a test to pass for the wrong reason; see §10.
+
+#### Correction (adversarial review B-2): the clause above was wrong
+
+The clause first proposed here was
+`HivesWithPinnedWrapKey == ConsideredHives`. **It does not implement the
+property this section claims for it, and it fails open in two independent
+ways.** It is recorded rather than deleted because the reasoning error is
+instructive and because a future reader may otherwise re-derive it.
+
+**(a) `ConsideredHives` is not the registry denominator.** It is the count of
+hives that survived a status filter:
+
+```go
+// v2/pkg/hub/perhive_env_reconcile.go:427-429
+func perHiveEnvSweepEligible(status string) bool {
+	return strings.TrimSpace(status) != "provisioning"
+}
+```
+
+It is incremented only after that filter passes
+(`v2/pkg/hub/perhive_env_reconcile.go:811-816`) and published as
+`out.ConsideredHives = s.perHiveEnvConsidered`
+(`v2/pkg/hub/perhive_env_reconcile.go:665`). A hive in `provisioning` is
+therefore absent from **both** sides of the equality, and `0 == 0` is true.
+That is exactly the paused-spoke-leaves-the-denominator failure that
+`master-key-rotation.md:216-227` warns about and that this section claimed to
+have avoided.
+
+And a `provisioning` hive *can* already hold master-derived material: the
+template injects it at provision time
+(`v2/pkg/hub/saas_provision.go:1966-1986`), i.e. before the status leaves
+`provisioning`. So the exclusion is not harmless here.
+
+Note *why* the exclusion is safe for the existing counters and not for this
+one. The doc comment at `v2/pkg/hub/perhive_env_reconcile.go:381-426` justifies
+it as "a cheap-cycle optimisation, not a safety gate", and that is correct **for
+a Deployment-read numerator**: a hive the sweep never reads records no
+observation, so it can never count as converged. A pin-store numerator does not
+inherit that property, because the pin is read from hub-local state rather than
+from the spoke, and can be present for a hive the sweep never admitted. The
+filter's safety argument is numerator-specific, and this design changes the
+numerator. **Reusing a filter without re-checking the argument that made it
+safe is the actual root of this defect.**
+
+**(b) Equality between two independently-sourced counts is not a coverage
+check.** `ConsideredHives` is recomputed each sweep from `listSaaSHives()`;
+`HivesWithPinnedWrapKey` would be a count over a hub-local pin store. Nothing
+constrains the two to describe the same hive set. Deprovision a hive and leave
+a stale pin entry, and the numerator holds while the denominator drops — the
+equality goes **true** while a *different* hive is unpinned. The existing code
+is deliberate about this hazard: `perHiveEnvGeneration` takes its attribution
+"from the SAME read that produced the drift list, so the two can never describe
+different moments"
+(`v2/pkg/hub/perhive_env_reconcile.go:877-879`).
+
+**The corrected clause.** Do not compare counts. Carry unpinned hives the way
+`UnreachableHives` is carried — a counter incremented **inside the same sweep
+loop**, over the same iteration of `listSaaSHives()`, with the pin looked up per
+hive:
+
+```
+SafeToRetirePrevious = hasPrevious
+                    && ObservedHives > 0
+                    && FleetFullyObserved
+                    && SpokesOnPrevious == 0
+                    && SpokesUnattributed == 0
+                    && windowClosed
+                    && HivesWithoutPinnedWrapKey == 0   // new
+```
+
+This preserves the pattern every existing clause already uses — a `== 0` floor
+or a `> 0` liveness check, never an equality between two separately-sourced
+totals (`v2/pkg/hub/perhive_env_reconcile.go:752-757`, and `FleetFullyObserved
+= out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:673`). It cannot go
+true on a zero sweep, and a hive present in the registry with no pin is
+*counted* rather than silently absent.
+
+Increment it at the same point `noteUnreachable` is
+(`v2/pkg/hub/perhive_env_reconcile.go:803-809`).
+
+**And count it before the status filter, not after.** `HivesWithoutPinnedWrapKey`
+must be incremented for every hive returned by `listSaaSHives()`, including
+those skipped by `perHiveEnvSweepEligible`, because a `provisioning` hive can
+hold key material and must not be able to leave the denominator by sitting in a
+status. This makes the clause's denominator deliberately *wider* than
+`ConsideredHives` — that divergence is the point of the fix, not an
+inconsistency, and it should carry a comment saying so, or a future tidy-up will
+"align" the two and silently reinstate the hole.
 
 ### What still needs owner buy-in
 
@@ -449,11 +582,11 @@ Trace what reads `HIVE_HUB_SECRET` on a spoke at boot:
 
 | Reader | Location | Still needed once a wrapped master arrives? |
 |---|---|---|
-| `spokeDomainKey` (session key) | `hub_keys.go:443-448` | No — dedicated var, or the delivered master |
-| `SpokeHeartbeatKey` lane 2 | `hub_keys.go:489-495` | **Yes at first boot** — see below |
-| `SpokeInviteKey` lane 2 | `hub_keys.go:539-543` | No |
-| `SpokeSSOPublicKey` lane 2 | `hub_keys.go:567` | No |
-| `provisionMasterSecret` | `hub_keys.go:584-592` | Hub-side only; not a spoke reader |
+| `spokeDomainKey` (session key) | `v2/pkg/hub/hub_keys.go:443-448` | No — dedicated var, or the delivered master |
+| `SpokeHeartbeatKey` lane 2 | `v2/pkg/hub/hub_keys.go:489-495` | **Yes at first boot** — see below |
+| `SpokeInviteKey` lane 2 | `v2/pkg/hub/hub_keys.go:539-543` | No |
+| `SpokeSSOPublicKey` lane 2 | `v2/pkg/hub/hub_keys.go:567` | No |
+| `provisionMasterSecret` | `v2/pkg/hub/hub_keys.go:584-592` | Hub-side only; not a spoke reader |
 
 The blocker is the second row and it is circular in exactly the way the brief
 anticipates:
@@ -462,20 +595,20 @@ anticipates:
 > master.**
 
 If `HIVE_HUB_SECRET` is stripped and `HIVE_HEARTBEAT_KEY` is present, the spoke
-authenticates on lane 1 (`hub_keys.go:486-488`) and never needs the master —
+authenticates on lane 1 (`v2/pkg/hub/hub_keys.go:486-488`) and never needs the master —
 fine. But after a rotation, `HIVE_HEARTBEAT_KEY` is stale. On a reachable spoke
 the reconcile lane patches it. **On a pull-only spoke nothing patches it**, and
 the spoke cannot self-derive a fresh one without the master. So it must
 authenticate with the *old* bearer, which works only while the previous
 generation is still acceptable (`acceptableGenerations`,
-`hub_generations.go:222-242`, default 7 days).
+`v2/pkg/hub/hub_generations.go:222-242`, default 7 days).
 
 This yields a workable but strictly bounded property:
 
 - **A pull-only spoke can have `HIVE_HUB_SECRET` stripped** once it holds a
   pinned wrapping key and a valid `HIVE_HEARTBEAT_KEY`.
 - **It must then receive and apply each wrapped master within
-  `defaultVerifyWindow`** (7 days, `hub_generations.go:118`), because after that
+  `defaultVerifyWindow`** (7 days, `v2/pkg/hub/hub_generations.go:118`), because after that
   its old bearer stops verifying and it has no way to derive a new one.
 - **A spoke that is paused, offline, or fails to decrypt for longer than the
   verify window is permanently stranded** and requires operator intervention on
@@ -491,8 +624,45 @@ Options, with trade-offs, for the operator:
 | Approach | Strands? | RESIDUAL-1 |
 |---|---|---|
 | (a) Strip on the 22 reachable only | no | closes 22/66 |
-| (b) Strip on all 66 after wrap-key coverage is complete | yes, if offline > 7d | closes fully, adds a stranding mode |
+| ~~(b) Strip on all 66 after wrap-key coverage is complete~~ | **struck — see below** | — |
 | (c) Strip on all 66, and deliver a fresh **heartbeat key** alongside the wrapped master | no | closes fully; more machinery |
+
+### Why (b) is struck rather than offered as a trade
+
+(b) was originally listed as a legitimate availability-versus-exposure choice.
+**It is not a trade, because the stranding is attacker-triggerable from the same
+one-PodSpec-read position that starts the whole attack.** Attacks 1 and 6 of the
+adversarial review compose, and the composition is what makes (b) unacceptable:
+
+1. An attacker reads any one spoke PodSpec and obtains the fleet-wide master.
+2. They pin their own wrapping key on a hive that has not yet published (§4).
+3. The legitimate spoke's later publication is now **refused** by §8 row 2 —
+   which is the correct behaviour, and is precisely what prevents that spoke from
+   ever receiving a wrapped master.
+4. Retirement is unconditional and runs on the hub clock
+   (`v2/pkg/hub/hub_generations.go:222-242`,
+   `v2/pkg/hub/hub_generations_retire.go:238-244`), so the attacker simply waits
+   out `defaultVerifyWindow` (7 days,
+   `v2/pkg/hub/hub_generations.go:118`).
+5. Under (b) the spoke's master is already stripped, so when its old bearer stops
+   verifying it has no way to derive a new one. It is **permanently stranded**.
+
+**The hostile pin causes the stranding it then hides behind.** The refusal in §8
+row 2 is load-bearing security behaviour and must not be weakened — so the
+availability cost cannot be engineered out of (b); it can only be avoided by not
+choosing (b).
+
+The gain to the attacker is disproportionate: one PodSpec read converts a
+confidentiality incident into a durable, fleet-scale availability incident
+requiring operator intervention **on clusters the hub cannot reach into by
+design** — up to 44 spokes. That is a worse outcome than the exposure (b) was
+meant to reduce.
+
+(b) is struck rather than left in the table with a caveat because it is the
+option a reader skimming the table would plausibly pick as the "simpler" one.
+**Do not reinstate it.** If a future reader is tempted, the test is whether
+§8 row 2 still refuses a mismatched key: while it does — and it must — (b)
+carries an attacker-controlled stranding trigger.
 
 **(c) is the recommendation.** It is a small addition — the wrapped payload
 carries the new master *and* the spoke's freshly derived `HIVE_HEARTBEAT_KEY`
@@ -503,15 +673,16 @@ Note that (c) does **not** reintroduce Option B: the payload is sealed to the
 spoke's pinned wrapping key, so possession of the master does not let an
 attacker read it, and possession of a bearer does not either.
 
-→ **Open question OQ-2**: (a), (b) or (c). This is a genuine
-availability-versus-exposure trade and it is the operator's call. My assessment
-is (c).
+→ **Open question OQ-2**: (a) or (c). (b) is struck, not offered. The
+remaining choice is scope — close RESIDUAL-1 on 22 spokes with no new
+machinery, or on all 66 with the heartbeat key delivered alongside. My
+assessment is (c). **Operator's call.**
 
 ## 8. Failure modes, all fail-closed
 
 The governing principle is the one already stated for `VerifyUntil.IsZero()`
-meaning ALREADY EXPIRED (`hub_generations.go:232-238`) and for the
-absent-versus-unreadable distinction (`hub_generations_store.go:175-198`): a
+meaning ALREADY EXPIRED (`v2/pkg/hub/hub_generations.go:232-238`) and for the
+absent-versus-unreadable distinction (`v2/pkg/hub/hub_generations_store.go:175-198`): a
 state that cannot be trusted must never quietly widen what is accepted or
 revert what is current.
 
@@ -524,14 +695,14 @@ revert what is current.
 | Hub queue drained but spoke never applied | Hub re-queues until the spoke's heartbeat **acks the applied generation ID**. | This is where `PendingGateway`'s "send once, drained on delivery" must **not** be copied. Delivery is not application. Ack on generation ID, not on receipt. |
 | PVC loss on the spoke | New keypair generated + published; differs from pin → refused per row 2 → operator re-pins. Spoke continues on its existing master meanwhile. | Indistinguishable from attack, so treated as attack, with an operator escape hatch. Availability cost accepted deliberately. |
 | Clock skew | Wrapping-key overlap and `VerifyUntil` are both hub-evaluated on the hub clock. The spoke never makes an expiry decision. | Single clock. A spoke with a skewed clock cannot extend its own acceptance window. |
-| Hub has no pinned key for a hive at rotation time | Rotation proceeds (retirement is unconditional by design, `hub_generations_retire.go:238-244`) but `SafeToRetirePrevious` stays false and the alert names the hive. | Matches the existing anti-pin property: an unconverged spoke must not be able to hold a superseded master open indefinitely. |
+| Hub has no pinned key for a hive at rotation time | Rotation proceeds (retirement is unconditional by design, `v2/pkg/hub/hub_generations_retire.go:238-244`) but `SafeToRetirePrevious` stays false and the alert names the hive. | Matches the existing anti-pin property: an unconverged spoke must not be able to hold a superseded master open indefinitely. |
 
 Two notes on the last row. Retirement remaining unconditional is deliberate and
-should not be weakened by this design — `hub_generations_retire.go:238-244`
+should not be weakened by this design — `v2/pkg/hub/hub_generations_retire.go:238-244`
 argues it correctly. Option D's job is to make convergence *achievable* for the
 44, not to make retirement wait for them.
 
-And the `maxLiveGenerations = 2` bound (`hub_generations.go:107`) is unaffected:
+And the `maxLiveGenerations = 2` bound (`v2/pkg/hub/hub_generations.go:107`) is unaffected:
 wrapping does not add generations, it adds a delivery mechanism for the one
 being introduced. The two-HMAC trial-verification bound argued at `:92-99`
 stands unchanged.
@@ -552,7 +723,9 @@ stands unchanged.
 **Does NOT defend against:**
 
 - An adversary holding the leaked master **before the pin is taken**. §4. For
-  the existing 66 this is a one-time, permanent residual.
+  the existing 66 this is a one-time, permanent residual — and per §4's "the pin
+  is not a race for a spoke that cannot publish", for any hive not publishing at
+  that moment the adversary pins **by default rather than by racing**.
 - An adversary with read access to the spoke's PVC or process memory. They hold
   the wrapping private key and the master. Out of scope, and unchanged from
   today.
@@ -566,7 +739,50 @@ stands unchanged.
 Once a hive's wrapping key is pinned, an attacker holding master N cannot
 change where master N+1 is wrapped (§8 row 2), cannot decrypt a ciphertext
 sealed to a key they do not hold, and cannot pass the AAD binding for another
-hive. Rotating to N+1 evicts them.
+hive.
+
+**But "rotating evicts them" is two different claims with two different
+timelines, and only one is immediate.** An earlier draft of this section said
+"Rotating to N+1 evicts them", unqualified. That is the kind of
+resolved-looking sentence this document elsewhere refuses to write. Precisely:
+
+| | Timeline |
+|---|---|
+| **Evicted immediately at rotation** | All *future* masters. The bearer for N+1 is derived from master N+1 (`v2/pkg/hub/hub_keys.go:485-496`), which is sealed to a pinned key the attacker does not hold. They cannot obtain N+1 or anything after it. |
+| **Retained for `defaultVerifyWindow` (7 days)** | Everything master N itself derives, **fleet-wide**, until generation N leaves `acceptableGenerations`. |
+
+Generation N remains live for verification for 7 days after rotation
+(`defaultVerifyWindow`, `v2/pkg/hub/hub_generations.go:118`), excluded only on
+the hub clock (`v2/pkg/hub/hub_generations.go:222-242`). During that window an
+attacker holding master N retains, for **every hive in the fleet**:
+
+- **Heartbeat impersonation of any hive.**
+  `verifyHeartbeatBearerAcrossGenerations` accepts any live generation
+  (`v2/pkg/hub/hub_keys.go:339-366`, loop at `:348`).
+- **Invite signing.** `SpokeInviteKey` (`v2/pkg/hub/hub_keys.go:535-544`) is
+  symmetric and both minted and verified spoke-side.
+- **Session and terminal cookies.** `spokeDomainKey`
+  (`v2/pkg/hub/hub_keys.go:443-448`) is the verify key. Cookie lifetime is
+  `cookieMaxAgeDays` = 7 days, which is exactly why `defaultVerifyWindow` is 7
+  days (`v2/pkg/hub/hub_generations.go:109-118`).
+- **Fleet-wide SSO minting.** The sharpest one.
+  `SSOSigningSeedFromMaster` (`v2/pkg/hub/hub_keys.go:576-578`) yields the
+  Ed25519 **private** seed; its own doc comment at `:570-575` states "This is
+  PRIVATE-key material: it can mint SSO tokens".
+
+So the honest statement is:
+
+> **Rotation evicts the attacker from all future masters immediately, and from
+> heartbeat impersonation, invite signing, session cookies and fleet-wide SSO
+> minting only after `defaultVerifyWindow` — 7 days. Rotation starts a clock;
+> it does not close the door.**
+
+This remains a decisive improvement over Option B, where the attacker is
+*never* evicted from anything, so the option choice is unaffected. But an
+operator responding to a known master leak needs to know they have a 7-day tail,
+not a clean cut, and may want to force `VerifyUntil` forward to shorten it —
+accepting that doing so strands every unconverged spoke, which is the same trade
+§7 frames.
 
 **No, before the pin.** An attacker who pins their own key first receives every
 subsequent master, and — because re-pinning requires operator action — a
@@ -602,15 +818,45 @@ Ranked, because these are where I would expect the failure:
    with B. The positive control is that after an explicit operator re-pin, it
    opens with B and not A. Without both directions this test asserts nothing.
 
-2. **`FleetFullyObserved` numerator/denominator (§6).** This is the F19 shape
-   exactly: a test that injects a coverage number through a seam proves only
-   that the gate follows whatever it is handed. **Required shape:** a
-   registry-sourced denominator with a hive that is admitted but silent, and an
-   assertion that `SafeToRetirePrevious` is false — plus a **source-asserting**
-   test that the denominator expression does not read from a
-   heartbeat-recency set, in the style of the existing `f16_owner_gate_test.go`
-   count-floor invariants. A behavioural test cannot distinguish "denominator
-   is registry-sourced" from "denominator happens to equal the registry today".
+2. **Wrap-key coverage in `SafeToRetirePrevious` (§6).** This is the F19 shape
+   exactly, and **the test originally specified here was itself an instance of
+   the failure it was meant to prevent.** It asked for a source-asserting test
+   that the denominator does not read from a heartbeat-recency set. That test
+   **passes against the broken clause**, because `ConsideredHives` genuinely is
+   not heartbeat-sourced — it is just the wrong set. The test asserted a true
+   property of the wrong variable. It is retained here as a worked example: a
+   source-assertion is only as good as its choice of subject, and "not sourced
+   from X" is much weaker than "sourced from the set I actually need".
+
+   **Required shape — the test must FAIL against `HivesWithPinnedWrapKey ==
+   ConsideredHives` and pass only against the `== 0` floor:**
+
+   - **`provisioning` hole.** Register a hive whose status is `provisioning`,
+     give it **no** pin, leave every other hive pinned and observed, and assert
+     `SafeToRetirePrevious` is **false**. Against the equality clause this hive
+     is absent from both sides and the gate reads true — the test fails, which
+     is the point. Assert on `HivesWithoutPinnedWrapKey > 0` directly as well,
+     so the diagnosis does not depend on reading the composite bool.
+   - **Stale-pin / deprovision skew.** Register hives A and B. Pin A, then
+     deprovision A leaving its pin entry in the store, and leave B unpinned.
+     Assert `SafeToRetirePrevious` is **false**. Against the equality clause the
+     counts coincide and the gate reads true while B — a *different* hive — is
+     unpinned.
+   - **Zero-sweep floor.** With no hives at all, assert the gate is false, so
+     the new clause cannot resurrect the "I looked at nothing" reading that
+     `FleetFullyObserved`'s `ConsideredHives > 0` exists to block.
+   - **Positive control.** Every hive in the registry pinned and observed,
+     window closed → assert `SafeToRetirePrevious` is **true**. Without this the
+     first three assertions pass against a gate that is unconditionally false.
+   - **Source-assertion, corrected subject.** Assert that the unpinned counter
+     is incremented over the **full** `listSaaSHives()` iteration and not behind
+     `perHiveEnvSweepEligible` — i.e. that the count of hives examined for a pin
+     is `>= ConsideredHives`, in the style of the existing
+     `f16_owner_gate_test.go` count-floor invariants. This is what pins the
+     denominator to the registry rather than to the status filter, and it is the
+     assertion the original spec should have made.
+
+   Per §10's own framing, write these **before** the clause.
 
 3. **AAD binding.** A test that decrypts successfully proves the happy path and
    nothing about binding. **Required shape:** wrap for hive X, attempt to open
@@ -634,7 +880,7 @@ Ranked, because these are where I would expect the failure:
 ### Regression replays
 
 - **F2 replay.** Assert no code path derives a wrapping-key trust decision
-  without `hiveID`, mirroring the banner at `hub_keys.go:314-327`. If a
+  without `hiveID`, mirroring the banner at `v2/pkg/hub/hub_keys.go:314-327`. If a
   publication can be accepted without an identity-bound bearer, F2 is re-opened
   through a new door.
 - **F19 replay.** Assert the wrap path reads the hub's *live* generation set,
@@ -653,10 +899,57 @@ Ranked, because these are where I would expect the failure:
 ## 11. Open questions for the operator
 
 **OQ-1 — Is a one-time TOFU-on-bearer pin acceptable for the existing 66?**
-It cannot be avoided over an outbound-only channel (§4, §5). Alternatives are:
-accept it; or reprovision all 66 with an enrolment value, which is a fleet-wide
-flag day on clusters we do not own. My assessment: accept, because the status
-quo is strictly worse. **Operator's call.**
+
+*Re-stated after adversarial review. The original framing was materially
+misleading and the decision should be made against this one.*
+
+The original text presented the residual as a race the legitimate spoke
+normally wins, and asked the operator to accept a narrow timing risk. §4's
+"the pin is not a race for a spoke that cannot publish" shows that is wrong. The
+accurate proposition is:
+
+> **For any hive that is not running the new image and heartbeating at the
+> moment the hub begins accepting pins, an attacker holding the master pins
+> first by default — with no timing requirement and no race to win. The
+> exposure window for such a hive is not milliseconds; it lasts until that hive
+> successfully publishes, which for a paused, crash-looping, unrolled or
+> `provisioning` hive is unbounded.**
+
+That is a different question from the one originally posed, and it should be
+answered on these terms:
+
+- **What is actually being accepted.** Not "a small chance an attacker outraces
+  a spoke", but "every hive that cannot publish on day one is pinned by whoever
+  holds the master, and stays that way until an operator re-pins it".
+- **The quantity is measurable, not hypothetical.** Before committing, count the
+  hives that are paused, crash-looping, in `provisioning`, or not yet rolled.
+  That count — not 66, and not zero — is the population taking the weaker
+  anchor under adversarial conditions. **This should be measured, not
+  estimated.**
+- **The exposure is reducible by sequencing.** Rolling step 1 to as much of the
+  fleet as possible before step 2 begins accepting pins shrinks the population
+  directly. This is the main lever available and it costs nothing but ordering.
+- **What is unchanged.** The status quo remains strictly worse in the aggregate:
+  today the master is plaintext on all 66 *and* rotation reaches none of them.
+  Pinning makes the *next* leak remediable for every hive that pins honestly.
+- **What detection does and does not give you.** A hostile pin makes the
+  legitimate spoke's later publication fail loudly (§8 row 2) rather than
+  silently — real, and better than Option B. But per §8 row 7 that alert shares
+  a code path and shape with routine PVC loss, so it is only as useful as the
+  operator's ability to tell the two apart.
+
+**My assessment — mine, not a recommendation the operator should adopt
+unexamined:** still accept, but the reasoning is narrower than before. It holds
+because the alternative is not "a safer pin" — there is no safer pin available
+over an outbound-only channel — it is "no pinning at all, and rotation continues
+to reach none of the 44". Accepting a bounded, measurable, sequencing-reducible
+exposure to gain remediability for every future rotation is the better trade.
+**But this now depends on a fleet-state measurement that has not been taken, and
+if that count is large the sequencing work in §6 should be treated as a
+prerequisite rather than an optimisation.**
+
+**Operator's call**, and it is a genuinely different call than the one the
+original OQ-1 described.
 
 **OQ-2 — Strip the master on (a) 22 reachable, (b) all 66 with a stranding
 mode, or (c) all 66 with the heartbeat key delivered alongside?** (§7). My
@@ -664,7 +957,7 @@ assessment: (c). **Operator's call**, since it trades availability against
 exposure.
 
 **OQ-3 — HKDF as a module dependency, or single-block HMAC-SHA256 expansion?**
-(§3). `hub_keys.go:31-33` deliberately avoided the dependency. Following
+(§3). `v2/pkg/hub/hub_keys.go:31-33` deliberately avoided the dependency. Following
 precedent is defensible and so is deviating; it should be decided explicitly.
 
 **OQ-4 — Wrapping-key max age and overlap window.** Suggested 90 days / 24
@@ -680,10 +973,10 @@ access (§6). Steps 1–5 need nothing from them.
 
 - It does not weaken `pull_only`, request RBAC, or assume any inbound path.
 - It does not make retirement conditional on convergence
-  (`hub_generations_retire.go:238-244`).
+  (`v2/pkg/hub/hub_generations_retire.go:238-244`).
 - It does not change `maxLiveGenerations`, `VerifyUntil` semantics, or the
   heartbeat bearer format — the last of which is a contract with deployed
-  Deployments (`hub_keys.go:300-306`).
+  Deployments (`v2/pkg/hub/hub_keys.go:300-306`).
 - It does not fix F19 or F20. Those remain prerequisites; this design describes
   what F19's convergence should *deliver to* once it works.
 
