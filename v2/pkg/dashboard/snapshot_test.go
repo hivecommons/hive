@@ -277,6 +277,43 @@ func TestSnapshotAPINoSecretsEmbedded(t *testing.T) {
 	}
 }
 
+// TestSnapshotBuilderEnvPassesAuthToken is the regression test for the empty
+// /snapshot page: the Node snapshot builder fetches /api/status unauthenticated
+// and gets 401 unless DASHBOARD_AUTH_TOKEN is supplied. When the server has an
+// auth token it MUST be exposed to the builder (as the trusted X-Hive-Internal
+// credential); when there is no token the env must be left unchanged so open
+// spokes keep working.
+func TestSnapshotBuilderEnvPassesAuthToken(t *testing.T) {
+	const token = "test-internal-token-1234"
+
+	// With a token: DASHBOARD_AUTH_TOKEN must be present with that value.
+	env := snapshotBuilderEnv([]string{"PATH=/usr/bin"}, token)
+	var gotToken string
+	var haveTLS bool
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "DASHBOARD_AUTH_TOKEN="); ok {
+			gotToken = v
+		}
+		if kv == "NODE_TLS_REJECT_UNAUTHORIZED=0" {
+			haveTLS = true
+		}
+	}
+	if !haveTLS {
+		t.Error("snapshotBuilderEnv must always set NODE_TLS_REJECT_UNAUTHORIZED=0")
+	}
+	if gotToken != token {
+		t.Errorf("DASHBOARD_AUTH_TOKEN = %q, want %q — builder would fetch /api/status unauthenticated and bake an empty snapshot", gotToken, token)
+	}
+
+	// Without a token: DASHBOARD_AUTH_TOKEN must NOT be added (open spokes).
+	env = snapshotBuilderEnv([]string{"PATH=/usr/bin"}, "")
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "DASHBOARD_AUTH_TOKEN=") {
+			t.Errorf("snapshotBuilderEnv added %q for an empty token — must leave no-auth spokes unchanged", kv)
+		}
+	}
+}
+
 func TestSnapshotFrameAncestorsEndpoint(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Dashboard.SnapshotFrameAncestors = []string{"https://docs.projectbluefin.io"}

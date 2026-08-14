@@ -876,13 +876,33 @@ func (s *Server) buildSnapshot(outputFile, mode string) {
 		"--base-path", "/snapshot",
 		"--html", htmlSource,
 		dashURL, outputFile)
-	cmd.Env = append(os.Environ(), "NODE_TLS_REJECT_UNAUTHORIZED=0")
+	// The builder fetches /api/status (and siblings) from localhost. Those
+	// endpoints require auth, so without a token the builder gets 401 and
+	// bakes an empty snapshot (blank Governor/Tokens/Cost/Repos/Beads/Agents
+	// panels, ACMM "--"). Pass s.authToken as DASHBOARD_AUTH_TOKEN so the
+	// builder authenticates via the trusted X-Hive-Internal header path. The
+	// token is used ONLY as a request header for the localhost fetch; the
+	// builder never writes it into the snapshot HTML output.
+	cmd.Env = snapshotBuilderEnv(os.Environ(), s.authToken)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.logger.Warn("snapshot build failed", "error", err, "output", string(out))
 	} else {
 		s.logger.Info("snapshot built", "file", outputFile)
 	}
+}
+
+// snapshotBuilderEnv returns the environment for the Node snapshot builder.
+// NODE_TLS_REJECT_UNAUTHORIZED=0 is always set for the localhost fetch. When
+// authToken is non-empty it is exposed as DASHBOARD_AUTH_TOKEN so the builder
+// can send the trusted X-Hive-Internal header and receive live data instead of
+// a 401. Open/no-auth spokes (empty token) get the prior behavior unchanged.
+func snapshotBuilderEnv(baseEnv []string, authToken string) []string {
+	env := append(baseEnv, "NODE_TLS_REJECT_UNAUTHORIZED=0")
+	if authToken != "" {
+		env = append(env, "DASHBOARD_AUTH_TOKEN="+authToken)
+	}
+	return env
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
