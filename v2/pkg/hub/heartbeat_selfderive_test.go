@@ -118,8 +118,10 @@ func TestSpokeSelfDerivationRequiresBothInputs(t *testing.T) {
 		t.Fatalf("with no master, spoke bearer = %q, want \"\" (fail closed)", got)
 	}
 
-	// Master but no identity → fleet-wide fallback, explicitly. This lane is what
-	// the final deletion PR removes support for; it must be reachable ONLY here.
+	// Master but no identity → the spoke still computes the fleet-wide value.
+	// Post-F2 the HUB no longer accepts that value, so such a spoke fails closed at
+	// verification rather than authenticating unbound. This asserts the spoke-side
+	// resolver is unchanged and does not, say, emit "" or an attacker-chosen value.
 	t.Setenv("HIVE_HUB_SECRET", master)
 	t.Setenv(EnvHiveID, "")
 	if got, want := SpokeHeartbeatKey(), deriveDomainKey(master, infoHeartbeatKey); got != want {
@@ -127,27 +129,33 @@ func TestSpokeSelfDerivationRequiresBothInputs(t *testing.T) {
 	}
 }
 
-// TestFleetWideBearerStillAcceptedAtThisStage asserts the CURRENT stage
-// explicitly, so the cutover status is unambiguous in the test suite rather than
-// inferred. This PR does NOT delete the legacy lane — a spoke that has not yet
-// rolled the self-derivation code still presents the fleet-wide bearer, and
-// dropping it now would 401 those spokes.
+// TestFleetWideBearerNowRejected is the flip the previous stage's
+// TestFleetWideBearerStillAcceptedAtThisStage explicitly called for. That test
+// asserted the fleet-wide lane MUST be accepted — an assertion that encoded the
+// F2 vulnerability itself, so it is INVERTED rather than deleted: the file still
+// documents the lane's status, and re-adding the lane now reddens CI.
 //
-// The deletion PR flips this test to assert rejection. If it starts failing
-// because the lane was removed, that is the signal to check the precondition in
-// AuthRolloutReadiness (heartbeat_lane_ready, 65/65) before flipping it.
-func TestFleetWideBearerStillAcceptedAtThisStage(t *testing.T) {
+// The gating precondition was measured across all three clusters before the
+// deletion: 67 spokes hold an injected per-hive bearer, 0 hold the fleet-wide
+// one, and the 3 with no injected key hold both HIVE_HUB_SECRET and HIVE_ID so
+// they self-derive (see TestSpokeHeartbeatKeySelfDerivesPerHive).
+func TestFleetWideBearerNowRejected(t *testing.T) {
 	s := &HubServer{logger: slog.Default(), hubSecret: "test-master-secret-f2"}
 
-	if !s.verifyHeartbeatBearer(s.heartbeatKey(), "hive-alpha") {
-		t.Fatal("the fleet-wide lane was removed — every spoke that has not yet rolled " +
-			"the self-derivation change will 401. Confirm AuthRolloutReadiness reports " +
-			"heartbeat_lane_ready with 0 legacy hives before making this change.")
+	// Positive control first: a legitimate heartbeat still authenticates. A
+	// verifier that rejected everything would otherwise "pass" the check below
+	// while 401ing the entire fleet.
+	if !s.verifyHeartbeatBearer(s.heartbeatKeyFor("hive-alpha"), "hive-alpha") {
+		t.Fatal("positive control failed: a legitimate per-hive heartbeat was rejected, " +
+			"so the rejection below proves nothing")
 	}
-	// It is still correctly flagged as NOT identity-bound, which is what drives
-	// the readiness signal that gates the deletion.
+
+	if s.verifyHeartbeatBearer(s.heartbeatKey(), "hive-alpha") {
+		t.Fatal("F2: the fleet-wide bearer is still accepted. It is one value shared by " +
+			"every spoke, so it cannot bind identity and any spoke may claim any hive_id.")
+	}
+	// Still correctly flagged as NOT identity-bound by the retained telemetry.
 	if s.heartbeatBearerIsPerHive(s.heartbeatKey(), "hive-alpha") {
-		t.Fatal("fleet-wide bearer misreported as per-hive — readiness would read 100% " +
-			"while spokes are still unbound, and the deletion would be made on false evidence")
+		t.Fatal("fleet-wide bearer misreported as per-hive")
 	}
 }

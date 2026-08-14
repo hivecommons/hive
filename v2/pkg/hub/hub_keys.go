@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"os"
 	"strings"
+	"time"
 )
 
 // Domain-separated key derivation for the hub master secret (CWE-321/798, C2).
@@ -43,6 +44,14 @@ const (
 	infoSessionKey     = "hive-session-v1"
 	infoSSOKey         = "hive-sso-v1"
 	infoImpersonateKey = "hive-impersonate-v1"
+
+	// infoInviteKey derives the PER-HIVE HMAC key that signs contributor invite
+	// tokens (dashboard.inviteSigningSecret). Invite tokens carry attribution, not
+	// access, so this is the lowest-value key in the set — but it was the LAST
+	// spoke-side consumer of the raw master HIVE_HUB_SECRET, which is why it gets
+	// its own derived lane. Per-hive rather than fleet-wide because an invite
+	// minted on one tenant's hive has no business verifying on another's.
+	infoInviteKey = "hive-invite-v1"
 
 	// infoSSOEd25519Seed derives the SSO signing SEED for the C2 follow-up: SSO is
 	// now ASYMMETRIC. deriveDomainKey(master, infoSSOEd25519Seed) yields a 32-byte
@@ -152,9 +161,11 @@ func (s *HubServer) sessionPublicKey() string {
 }
 
 // provisionSessionPublicKey is the provisioning-time mirror of
-// sessionPublicKey, resolved against provisionMasterSecret().
+// sessionPublicKey, resolved against the CURRENT generation's secret
+// (provisionCurrentSecret). Before any rotation exists that is byte-identical
+// to provisionMasterSecret().
 func provisionSessionPublicKey() string {
-	return ssoPublicKeyFromSeed(deriveDomainKey(provisionMasterSecret(), infoSessionEd25519Seed))
+	return ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSessionEd25519Seed))
 }
 
 // provisionTerminalKey returns the PER-HIVE terminal signing key injected into a
@@ -171,7 +182,7 @@ func provisionSessionPublicKey() string {
 // code on either side — TerminalSigningKey() and the proxy's mirror already
 // prefer HIVE_TERMINAL_KEY; provisioning simply never set it.
 func provisionTerminalKey(hiveID string) string {
-	return derivePerHiveKey(provisionMasterSecret(), infoTerminalKey, hiveID)
+	return derivePerHiveKey(provisionCurrentSecret(), infoTerminalKey, hiveID)
 }
 
 // provisionHeartbeatKey returns the PER-HIVE heartbeat bearer injected into a
@@ -185,7 +196,23 @@ func provisionTerminalKey(hiveID string) string {
 // handleHeartbeat trusted body-supplied hive_id and three key-delivery lanes
 // became IDOR.
 func provisionHeartbeatKey(hiveID string) string {
-	return derivePerHiveKey(provisionMasterSecret(), infoHeartbeatKey, hiveID)
+	return derivePerHiveKey(provisionCurrentSecret(), infoHeartbeatKey, hiveID)
+}
+
+// provisionInviteKey returns the PER-HIVE contributor-invite signing key injected
+// into a spoke as HIVE_INVITE_KEY.
+//
+// Mirrors provisionTerminalKey exactly: the token is both minted and verified on
+// the same spoke (dashboard/api_contribute.go), so a symmetric key is the right
+// shape, and binding it to the hive ID means an invite link from one tenant is
+// meaningless on another.
+//
+// The point of this var is removing the last spoke-side READER of the raw master:
+// inviteSigningSecret() used HIVE_HUB_SECRET itself as the HMAC key, so the invite
+// lane was the one place a spoke still needed the master to function. With this
+// injected it does not.
+func provisionInviteKey(hiveID string) string {
+	return derivePerHiveKey(provisionCurrentSecret(), infoInviteKey, hiveID)
 }
 
 // heartbeatKeyFor returns the per-hive heartbeat bearer the hub EXPECTS from
@@ -196,43 +223,172 @@ func (s *HubServer) heartbeatKeyFor(hiveID string) string {
 }
 
 // verifyHeartbeatBearer authenticates a heartbeat and BINDS it to the claimed
-// hive (audit N1).
+// hive (audit N1/F2).
 //
-// Accepts either:
+// The ONLY accepted credential is the per-hive bearer for exactly this hiveID:
+// HMAC(master, infoHeartbeatKey || 0x00 || hiveID). Because the hub re-derives
+// it from the hive ID the caller claims, presenting it proves the caller is THAT
+// hive — the claimed identity is self-authenticating.
 //
-//  1. the per-hive bearer for exactly this hiveID — the post-fix path, which
-//     makes the claimed identity self-authenticating; or
-//  2. the legacy fleet-wide bearer — every spoke currently in the field holds
-//     this and will keep holding it until the hub re-provisions it.
+// A fleet-wide lane used to be accepted alongside it: deriveDomainKey(master,
+// infoHeartbeatKey), a pure function of the single hub master and therefore
+// stamped identically into every spoke. Possession proved "some provisioned
+// spoke" and never "THIS hive", and handleHeartbeat trusts the body-supplied
+// hive_id, so any spoke could beat as any victim and be handed the victim's key
+// material. That lane is DELETED (F2). It was retained only to avoid a flag-day
+// cutover; the precondition for removal has since been met — every spoke either
+// holds an injected per-hive bearer or self-derives one from the master plus its
+// own HIVE_ID (SpokeHeartbeatKey), which needs no hub-side re-provisioning.
 //
-// Lane 2 is a DELIBERATE, TEMPORARY compatibility path and it does NOT bind
-// identity — a spoke presenting the legacy key can still claim any hive_id, so
-// the N1 IDOR remains open for spokes that have not rolled. It exists because a
-// flag-day cutover would break every heartbeat in the fleet simultaneously,
-// which is the failure mode #2773 already documented for the v2-hub/v4-spoke
-// split. Remove it once the fleet has re-provisioned; the callers that consume
-// the identity are hardened independently, so the window is bounded by rollout
-// rather than by trust in the legacy key.
+// Fails closed: an empty bearer, or an empty hiveID (which makes the per-hive
+// derivation return ""), authenticates nothing. The comparison is constant-time.
 //
-// Both comparisons are constant-time. Order matters only for the returned
-// telemetry, not for security: a caller holding the legacy key is accepted
-// regardless of which branch runs first.
+// ROTATION (master-key-rotation.md, follow-on PR #2): the bearer is tried
+// against the per-hive derivation from EVERY master generation the hub still
+// accepts, current first. See verifyHeartbeatBearerAcrossGenerations for why
+// trial verification is the only option here and why it does NOT re-open F2.
 func (s *HubServer) verifyHeartbeatBearer(presented, hiveID string) bool {
-	if presented == "" {
-		return false
-	}
-	if perHive := s.heartbeatKeyFor(hiveID); perHive != "" && secureCompareHub(presented, perHive) {
-		return true
-	}
-	// Legacy fleet-wide bearer — accepted during rollout only.
-	return secureCompareHub(presented, s.heartbeatKey())
+	_, ok := s.verifyHeartbeatBearerGeneration(presented, hiveID)
+	return ok
 }
 
-// heartbeatBearerIsPerHive reports whether the presented bearer is the modern,
-// identity-bound one. Used for rollout telemetry so an operator can see when the
-// fleet has fully migrated and the legacy lane in verifyHeartbeatBearer can be
-// deleted.
+// setHubSecret replaces the hub's master AND the generation set derived from it,
+// keeping the two in lockstep.
+//
+// These are two representations of ONE fact, and once any verifier reads the
+// generation set (this PR makes the heartbeat the second such verifier, after
+// the impersonation cookie), assigning s.hubSecret alone leaves the hub deriving
+// keys from a master it no longer believes it has. That drift is silent: the
+// build is fine, the types are fine, and the only symptom is a 401.
+//
+// Setting a fresh master necessarily DISCARDS any previous generations — there
+// is no basis on which to keep verifying against generations of a master that is
+// being replaced wholesale rather than rotated. A real rotation goes through
+// generationSet.rotate, which is what preserves the outgoing generation.
+func (s *HubServer) setHubSecret(secret string) {
+	if s == nil {
+		return
+	}
+	s.hubSecret = secret
+	s.keyGenerations = legacyGenerationSet(secret)
+}
+
+// verifyHeartbeatBearerGeneration is verifyHeartbeatBearer with the accepting
+// master generation reported, so an operator can see whether any spoke is still
+// authenticating with pre-rotation material rather than having to infer it.
+//
+// keyGenerations is nil only in hand-built test servers. Those fall back to the
+// single-master path so this stays a pure addition of a second KEY rather than
+// a change to what authenticates.
+func (s *HubServer) verifyHeartbeatBearerGeneration(presented, hiveID string) (int, bool) {
+	if s == nil || presented == "" {
+		return 0, false
+	}
+	if s.keyGenerations != nil {
+		return verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
+	}
+	perHive := s.heartbeatKeyFor(hiveID)
+	if perHive != "" && secureCompareHub(presented, perHive) {
+		return legacyGenerationID, true
+	}
+	return 0, false
+}
+
+// verifyHeartbeatBearerAcrossGenerations is BOUNDED TRIAL VERIFICATION of the
+// heartbeat bearer against every live master generation.
+//
+// WHY TRIAL AND NOT A MARKER. The bearer IS the derived key, presented raw in
+// the Authorization header — there is no envelope to put a "g<N>." in. Its
+// format is also a contract with already-deployed spoke Deployments
+// (HIVE_HEARTBEAT_KEY) and with SpokeHeartbeatKey()'s self-derive lane, so
+// changing the format would make the rotation mechanism itself require the
+// fleet-wide flag day it exists to avoid. Trial verification is what the design
+// prescribes for exactly this class of artifact.
+//
+// THE BOUND IS THE WHOLE ARGUMENT. maxLiveGenerations == 2, so the worst case is
+// two HMAC computations where there was one — strictly less than the rest of a
+// heartbeat already costs, and an attacker cannot use it as an asymmetric-cost
+// lever because the count is capped by the loader rather than by anything the
+// caller supplies.
+//
+// !! AUDIT F2 (Critical, open across five audits) MUST NOT REGRESS. !!
+//
+// F2 was closed by DELETING the fleet-wide lane — deriveDomainKey(master,
+// infoHeartbeatKey), a value stamped byte-identically into every spoke, whose
+// possession proved "some provisioned spoke" and never "THIS hive". Because
+// handleHeartbeat trusts the body-supplied hive_id, that lane let any spoke beat
+// as any victim and be handed the victim's key material.
+//
+// This function adds a second GENERATION, not a second LANE. Every candidate
+// below is derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID) — identity-bound
+// under EVERY generation, and derivePerHiveKey returns "" for an empty hiveID so
+// an identity-less caller authenticates nothing no matter how many generations
+// exist. There is deliberately no code path here that derives without hiveID; if
+// one ever appears, F2 is re-opened.
+//
+// TIMING. Every attempt uses secureCompareHub (subtle.ConstantTimeCompare), and
+// the loop deliberately does NOT return early on a match: it ORs the results and
+// evaluates every acceptable generation regardless. Early return would leak,
+// through response latency, WHICH generation accepted a bearer — which is a
+// (small) oracle telling an attacker whether a given spoke has converged onto
+// the new key, and therefore which spokes are still holding material derived
+// from a master the operator is trying to retire. Two HMACs is cheap enough that
+// there is no reason to buy anything with that leak.
+//
+// Returns the accepting generation ID, which is 0 when nothing accepted.
+func verifyHeartbeatBearerAcrossGenerations(gs *generationSet, presented, hiveID string, now time.Time) (int, bool) {
+	if presented == "" || hiveID == "" {
+		return 0, false
+	}
+	acceptable := gs.acceptableGenerations(now)
+	if len(acceptable) == 0 {
+		return 0, false
+	}
+	matched := 0
+	for _, g := range acceptable {
+		// F2: identity-bound under EVERY generation. Never deriveDomainKey.
+		perHive := derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID)
+		if perHive == "" {
+			continue
+		}
+		// The compare is on its OWN line, unconditionally, so it runs for every
+		// acceptable generation. Folding it into the `if` below as
+		// `secureCompareHub(...) && matched == 0` would work today only because
+		// Go evaluates the left operand first — a reordering during some future
+		// tidy-up would silently reintroduce the early-exit timing leak. Keep
+		// them separate.
+		ok := secureCompareHub(presented, perHive)
+		if ok && matched == 0 {
+			matched = g.ID
+		}
+	}
+	return matched, matched != 0
+}
+
+// heartbeatBearerIsPerHive reports whether the presented bearer is the
+// identity-bound one. Retained after the F2 deletion because it still backs the
+// live GET /api/saas/admin/auth-rollout telemetry (noteHeartbeatAuthPath →
+// AuthRolloutStatus), which now serves a different purpose: rather than gating
+// the deletion, it lets an operator SEE which hives are authenticating and
+// confirm none regressed. Post-F2 a bearer that is not per-hive no longer
+// verifies at all, so callers observe this only for bearers that already passed
+// verifyHeartbeatBearer.
+//
+// ROTATION: this must consider every live generation for the same reason the
+// verifier does. A spoke that has not yet been reconciled onto the new master
+// presents a bearer derived from the PREVIOUS generation — still per-hive, still
+// identity-bound, still accepted. Checking only the current generation would
+// report it as "not per-hive" and make the auth-rollout surface show a fleet-wide
+// F2 regression that has not happened, during exactly the window an operator is
+// watching that surface most closely.
 func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
+	if s == nil {
+		return false
+	}
+	if s.keyGenerations != nil {
+		_, ok := verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
+		return ok
+	}
 	perHive := s.heartbeatKeyFor(hiveID)
 	return perHive != "" && secureCompareHub(presented, perHive)
 }
@@ -269,6 +425,10 @@ const (
 	// re-provisions them with the public key.
 	EnvSSOPublicKey = "HIVE_SSO_PUBLIC_KEY"
 	EnvSSOKeyLegacy = "HIVE_SSO_KEY"
+	// EnvInviteKey carries the per-hive contributor-invite signing key. The spoke
+	// both mints and verifies invite tokens with it, so it is symmetric; it exists
+	// so inviteSigningSecret() no longer has to read the raw master.
+	EnvInviteKey = "HIVE_INVITE_KEY"
 )
 
 // spokeDomainKey resolves a domain sub-key for spoke-side code. It prefers the
@@ -339,6 +499,50 @@ func SpokeHeartbeatKey() string {
 // `hive_hub_user` session/terminal cookie. It signs nothing on the spoke.
 func SpokeSessionKey() string { return spokeDomainKey(EnvSessionKey, infoSessionKey) }
 
+// SpokeInviteKey returns the PER-HIVE key a spoke both mints and verifies
+// contributor invite tokens with (dashboard.inviteSigningSecret).
+//
+// Resolution order mirrors TerminalSigningKey exactly, because the two keys have
+// exactly the same shape — symmetric, spoke-local, minted and verified by the
+// same process:
+//
+//  1. HIVE_INVITE_KEY — the hub-injected per-hive key (provisionInviteKey).
+//  2. Self-derived per-hive key from HIVE_HUB_SECRET + HIVE_ID.
+//
+// Returns "" when neither resolves, so the caller keeps its existing fail-closed
+// fallback (a persisted per-instance random secret) rather than signing with an
+// empty key.
+//
+// WHY THIS EXISTS. inviteSigningSecret's lane 2 used the RAW MASTER as the HMAC
+// key — not a key derived from it, the master itself. Measured on the live fleet
+// that is the lane in use on 65/65 spokes, because HIVE_INVITE_KEY is emitted by
+// the provisioning template but is NOT carried by the reconcile sweep, so no live
+// spoke has ever received it. Two consequences, both fixed by routing through
+// here:
+//
+//   - The master is fleet-uniform, so every spoke signed invites with the SAME
+//     key: an invite minted on one tenant verified on every other, defeating the
+//     per-hive binding provisionInviteKey was introduced to provide.
+//   - Using the master directly as an HMAC key gives the invite lane no domain
+//     separation at all — a signing oracle over attacker-influenced input keyed
+//     by the master that also protects heartbeats, sessions and SSO.
+//
+// ROTATION (master-key-rotation.md PR #5): as with the terminal key there is no
+// trial verification and none is possible — a spoke holds one master, never a
+// generation set. Rotation re-keys invites once; in-flight invite links become
+// invalid, which the invite flow already tolerates (verifyInviteToken returning
+// "" means "no attribution", never an error).
+func SpokeInviteKey() string {
+	if v := strings.TrimSpace(os.Getenv(EnvInviteKey)); v != "" {
+		return v
+	}
+	return derivePerHiveKey(
+		strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")),
+		infoInviteKey,
+		strings.TrimSpace(os.Getenv(EnvHiveID)),
+	)
+}
+
 // SpokeSSOPublicKey returns the Ed25519 PUBLIC key a spoke uses to VERIFY a
 // hub-minted SSO handoff token (C2 follow-up: SSO is asymmetric). It signs nothing
 // on the spoke and — unlike the old symmetric key — cannot be used to mint a token
@@ -385,4 +589,59 @@ func provisionMasterSecret() string {
 		return strings.TrimSpace(string(data))
 	}
 	return ""
+}
+
+// provisionGenerationSet resolves the generation set that provision-time and
+// reconcile-time derivation share.
+//
+// WHY THIS EXISTS AS ONE FUNCTION. saas_provision.go's template data map and
+// perhive_env_reconcile.go's desiredPerHiveEnv must derive the five per-hive
+// env vars byte-identically — desiredPerHiveEnv's own doc comment says so, and
+// the consequence of divergence is not subtle: the sweep would see "drift" on
+// every freshly provisioned hive, patch it, and roll its pod every cycle
+// forever. Making them both resolve their master through THIS function means a
+// rotation cannot move one side without the other.
+//
+// TODAY THIS IS EXACTLY legacyGenerationSet(provisionMasterSecret()). There is
+// no persisted generations file yet and no endpoint that can create a second
+// generation (that is follow-on PR #4), so currentSecret() is always the same
+// string provisionMasterSecret() returns and every derived value is
+// byte-identical to what this code produced before generations existed. This
+// change is a READ-PATH change in effect: it re-expresses where the master
+// comes from without changing which master it is.
+//
+// Returns nil for an empty master, and currentSecret() on a nil set returns ""
+// — so the fail-closed contract every caller already relies on (deriveDomainKey
+// and derivePerHiveKey both return "" for an empty master) is preserved through
+// the nil case rather than needing a new one.
+func provisionGenerationSet() *generationSet {
+	if gs := provisionGenerationsOverride; gs != nil {
+		return gs
+	}
+	return legacyGenerationSet(provisionMasterSecret())
+}
+
+// provisionGenerationsOverride replaces the resolved generation set.
+//
+// It exists so a test can drive the ROTATED case, which is otherwise
+// unreachable: there is no persisted generations file and no endpoint that can
+// create a second generation until follow-on PR #4, so without this seam
+// "derives from the current generation" and "derives from the raw master" are
+// indistinguishable and no test could tell them apart. That is precisely the
+// kind of test-that-passes-for-the-wrong-reason this seam prevents.
+//
+// nil in production, set only via withProvisionGenerations in tests. Read
+// without a lock because it is only ever written before the code under test
+// runs, from that test's own goroutine — the same discipline as
+// HubServer.keyGenerations, which is set once in NewHubServer.
+var provisionGenerationsOverride *generationSet
+
+// provisionCurrentSecret is the MINTING master at provision/reconcile time: the
+// secret of the current generation. Every spoke-bound derivation goes through
+// this rather than provisionMasterSecret() directly, so that after a rotation
+// newly provisioned and newly reconciled spokes both receive material from the
+// new current generation while the hub's dual acceptance keeps the not-yet-
+// converged spokes authenticating against the demoted previous one.
+func provisionCurrentSecret() string {
+	return provisionGenerationSet().currentSecret()
 }

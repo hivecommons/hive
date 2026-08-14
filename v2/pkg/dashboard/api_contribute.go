@@ -25,6 +25,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 )
 
 const (
@@ -63,14 +64,41 @@ var (
 )
 
 // inviteSigningSecret returns the HMAC key used to sign/verify invite tokens.
-// It prefers the operator-configured HIVE_HUB_SECRET (already the cross-hive
-// shared secret) so invites are consistent across a federated deployment; if
-// that is unset it lazily generates and persists a per-instance random secret
-// beside the contributor store. Either way the secret never leaves the server —
-// the token the client sees is opaque.
+//
+// Resolution order, most to least identity-bound:
+//
+//  1. hub.SpokeInviteKey() — the PER-HIVE invite key, either hub-injected as
+//     HIVE_INVITE_KEY or self-derived from HIVE_HUB_SECRET + HIVE_ID as
+//     HMAC(master, "hive-invite-v1" || 0x00 || hiveID). Both lanes are per-hive,
+//     so an invite link minted on one tenant is meaningless on another.
+//  2. A lazily generated, persisted per-instance random secret beside the
+//     contributor store, when the hive cannot identify itself at all.
+//
+// !! The RAW MASTER lane is DELETED. !!
+//
+// It read HIVE_HUB_SECRET and used the master ITSELF as the HMAC key. Measured on
+// the live fleet, that was the lane actually in use on 65/65 spokes —
+// HIVE_INVITE_KEY is emitted by the provisioning template but is not carried by
+// the perhive_env_reconcile sweep, so no live spoke has ever been handed it.
+// Since the master is fleet-uniform (65/65 spokes, one distinct value), every
+// spoke signed invites with an identical key and the per-hive binding that
+// provisionInviteKey exists to provide was not in force anywhere.
+//
+// Self-deriving in lane 1 is what makes deleting the master lane safe WITHOUT
+// waiting for a re-provision: the per-hive invite key is a pure function of the
+// master and the HIVE_ID a spoke already holds, so every spoke computes the
+// correct value the moment it rolls this code — the same in-place cutover
+// SpokeHeartbeatKey's lane 2 uses for the bearer (audit F2).
+//
+// Either way the secret never leaves the server — the token the client sees is
+// opaque. NOTE: invite tokens are signed with this key, so a hive whose key
+// CHANGES invalidates in-flight invite links; this change re-keys each spoke
+// exactly once, and an invalid invite degrades to "no attribution" (a plain
+// self-registration), never to an error. That is why the invite key is safe to
+// cut over in place while the terminal key is not re-keyed here at all.
 func inviteSigningSecret() []byte {
 	inviteSecretOnce.Do(func() {
-		if v := strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")); v != "" {
+		if v := strings.TrimSpace(hub.SpokeInviteKey()); v != "" {
 			inviteSecretCache = []byte(v)
 			return
 		}

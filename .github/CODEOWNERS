@@ -1,0 +1,33 @@
+# CODEOWNERS — mandatory review for security-sensitive files on v4.
+#
+# NOTE: This file is inert until "Require review from Code Owners" is
+# enabled in the v4 branch protection rule. That is deliberately NOT
+# enabled as part of this change — the repo's automation currently merges
+# green PRs without human review, and turning on enforcement here would
+# block that automation. Enabling enforcement is a separate operator
+# decision with workflow implications and should be made explicitly.
+
+# Security-sensitive build and image files
+v2/Dockerfile                       @clubanderson
+v2/Dockerfile.contributor           @clubanderson
+v2/Dockerfile.hub                   @clubanderson
+
+# CI/CD workflows (GITHUB_TOKEN write access, security gates)
+.github/workflows/                  @clubanderson
+
+# Kubernetes deployment, RBAC, and secret manifests
+v2/deploy/                          @clubanderson
+
+# Token-handling and agent launch scripts
+bin/agent-launch.sh                 @clubanderson
+bin/contributor-agent.sh            @clubanderson
+
+# gh CLI wrapper — enforces REAL_GH security-mode gating
+bin/gh-wrapper.sh                   @clubanderson
+
+# Core agent manager (exec construction, su-exec SUID invocation)
+v2/pkg/agent/                       @clubanderson
+
+# Hub key and session/cookie machinery
+v2/pkg/hub/hub_keys.go              @clubanderson
+v2/pkg/hub/hub_cookie.go            @clubanderson

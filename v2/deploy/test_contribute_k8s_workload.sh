@@ -69,7 +69,7 @@ OUT="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" just contribute-k8s hive-contributor
 contains "emits a Deployment"                 "$OUT" "kind: Deployment"
 contains "workload runs headless (#2660)"     "$OUT" "CONTRIBUTOR_MODE: \"headless\""
 contains "status file env for the probe"      "$OUT" "HIVE_HEADLESS_STATUS_FILE:"
-contains "uses the published contributor image" "$OUT" "image: ghcr.io/kubestellar/hive-contributor:v2"
+contains "uses the published contributor image" "$OUT" "image: ghcr.io/kubestellar/hive-contributor:v4"
 contains "wires the ConfigMap via envFrom"    "$OUT" "configMapRef:"
 contains "wires the Secret via secretRef"     "$OUT" "secretRef:"
 contains "has a readiness probe"              "$OUT" "readinessProbe:"

@@ -794,6 +794,27 @@ type HubServer struct {
 	hubGitHash   string
 	hubGitBranch string
 	hubSecret    string
+	// keyGenerations is the ordered set of master generations this hub accepts
+	// (hub_generations.go). Until a rotation happens it holds exactly ONE
+	// generation whose secret IS hubSecret, so every derived key is
+	// byte-identical to the single-master behavior and dual acceptance
+	// degenerates to single acceptance.
+	//
+	// GUARDED BY keyGenerationsMu. The admin rotate endpoint replaces this
+	// pointer while heartbeat and cookie verifiers are concurrently reading it,
+	// so every access goes through currentGenerations() / setGenerations()
+	// rather than touching the field. The field itself is only ever REPLACED,
+	// never mutated in place — generationSet.rotate is pure and returns a new
+	// set — so a reader that grabbed the old pointer keeps a consistent,
+	// immutable snapshot and simply verifies against the pre-rotation set for
+	// the remainder of its request. That is correct, not a race: the outgoing
+	// generation is still acceptable.
+	keyGenerationsMu sync.RWMutex
+	keyGenerations   *generationSet
+	// lastKeyRotation is when the current generation was minted, used ONLY by
+	// the double-rotation cooldown (evaluateRotation). It is never consulted to
+	// decide whether a key is acceptable — VerifyUntil alone does that.
+	lastKeyRotation time.Time
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
 	// in flight. See the auto-upgrade block in the SHA-poll loop. It also marks
@@ -882,6 +903,37 @@ type HubServer struct {
 	// most once per netAdminReconcileInterval. Guarded by clusterUnreachableMu
 	// (both are poller-loop-only state; no need for a separate mutex).
 	lastNetAdminReconcile time.Time
+	// lastPerHiveEnvReconcile throttles the per-hive security env reconcile
+	// (perhive_env_reconcile.go), which ensures HIVE_HEARTBEAT_KEY /
+	// HIVE_TERMINAL_KEY / HIVE_SESSION_KEY / HIVE_SSO_PUBLIC_KEY /
+	// HIVE_SESSION_PUBLIC_KEY are present and correct on every hosted spoke.
+	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
+	// both are poller-loop-only state.
+	lastPerHiveEnvReconcile time.Time
+	// lastGenerationRetire throttles the expired-master-generation retirement
+	// sweep (hub_generations_retire.go). Same rationale and same guarding mutex
+	// as the two above: poller-loop-only state.
+	//
+	// NOTE this throttles CLEANUP AND ALERTING ONLY. A generation stops being
+	// ACCEPTED at its VerifyUntil via acceptableGenerations, on the wall clock,
+	// whether or not this sweep ever runs — so a missed tick delays rewriting
+	// hub-generations.json, never extends the acceptance window.
+	lastGenerationRetire time.Time
+	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
+	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
+	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see
+	// the long note on PerHiveEnvSnapshot) so a paused spoke cannot drop out of
+	// the denominator and make the fleet read converged while it is not.
+	perHiveEnvSeen map[string]perHiveEnvObservation
+	// perHiveEnvConsidered / perHiveEnvSkippedByStatus record the LAST sweep's
+	// hive-selection split: how many hives the status filter admitted versus
+	// rejected. Published on the readiness surface so "the sweep is selecting
+	// nobody" is visible rather than silent — the failure this lane shipped
+	// with, where every downstream counter sat at zero and read exactly like a
+	// converged fleet. Guarded by perHiveEnvMu with perHiveEnvSeen.
+	perHiveEnvConsidered      int
+	perHiveEnvSkippedByStatus int
+	perHiveEnvMu              sync.RWMutex
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
@@ -1108,13 +1160,18 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Info("generated hub secret", "path", "/data/saas/hub-secret.key")
 	}
 	s := &HubServer{
-		mux:                     http.NewServeMux(),
-		logger:                  logger,
-		saveCh:                  make(chan struct{}, 1),
-		registryPath:            registryPath,
-		hubGitHash:              gitHash,
-		hubGitBranch:            gitBranch,
-		hubSecret:               secret,
+		mux:          http.NewServeMux(),
+		logger:       logger,
+		saveCh:       make(chan struct{}, 1),
+		registryPath: registryPath,
+		hubGitHash:   gitHash,
+		hubGitBranch: gitBranch,
+		hubSecret:    secret,
+		// Provisional single generation holding the existing master. Replaced
+		// immediately below by loadGenerations, which reads any persisted
+		// rotation off the PVC. It is set here too so the field is never nil
+		// between struct construction and that load.
+		keyGenerations:          legacyGenerationSet(secret),
 		clusters:                loadClusters(logger),
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade:        make(map[string]string),
@@ -1131,6 +1188,19 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		alerts:                  newAlertState(),
 		revokedSessions:         newRevokedSessions(),
 		urlHealth:               newURLHealthState(),
+	}
+
+	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
+	// that came back on generation 1 after a rotation would reject every
+	// artifact minted since it and quietly re-mint on the old key — strictly
+	// worse than never having rotated. Falls back to the single-generation
+	// legacy set on a missing or unusable file, which is correct because
+	// hub-secret.key is authoritative for generation 1 and is never rewritten.
+	if gs, rotatedAt := loadGenerations(secret, logger); gs != nil {
+		s.keyGenerations = gs
+		// Restore the rotation timestamp too, or the cooldown would reset on
+		// every hub roll and stop guarding anything.
+		s.lastKeyRotation = rotatedAt
 	}
 
 	s.loadRegistry()
@@ -1230,8 +1300,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// "I am a provisioned spoke" but cannot sign a session/SSO/impersonation value.
 	// The bearer is captured here but VERIFIED below, after the body is parsed:
 	// the per-hive bearer (N1) can only be checked once the claimed hive_id is
-	// known. The legacy fleet-wide key is still accepted during the rollout —
-	// see verifyHeartbeatBearer.
+	// known. It is now the ONLY accepted credential — the fleet-wide lane was
+	// deleted (F2). See verifyHeartbeatBearer.
 	presentedBearer := ""
 	if s.hubSecret != "" {
 		auth := r.Header.Get("Authorization")
@@ -1279,9 +1349,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// #3234: record WHICH format authenticated, so an operator can tell when
-		// every spoke has re-provisioned and the legacy compat lane — which does
-		// not bind identity — can finally be deleted.
+		// #3234: record WHICH format authenticated. The fleet-wide compat lane is
+		// now DELETED (F2), so this can only ever record the per-hive format; it is
+		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
+		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	// Normalize the reported SHA to the canonical short length up front so every
@@ -1668,7 +1739,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// re-rolls its pod every staleUpgradeTimeout forever. Commit-pinned
 			// hives keep the exact-SHA test below — their tag resolves to one
 			// build, so "did it reach the target" is a meaningful question.
-			floatingAtLatest := h.Upgrading && !payload.Upgrading && imageTagIsMutable(payload.ImageRef)
+			// A CHANNEL-switch latch ("stable") is only satisfied by the
+			// reported image actually running that tag. Without this guard, a
+			// spoke still on v4-latest (mutable) sending one quiet beat
+			// cleared the latch — the switch evaporated from the dashboard
+			// while the hive never moved (observed live 2026-08-13 when the
+			// hub auto-rolled mid-switch).
+			channelTarget := isReleaseChannel(h.UpgradeTarget)
+			channelSatisfied := imageTagOf(sanitizeImageRef(payload.ImageRef)) == h.UpgradeTarget
+			floatingAtLatest := h.Upgrading && !payload.Upgrading && imageTagIsMutable(payload.ImageRef) &&
+				(!channelTarget || channelSatisfied)
 			if floatingAtLatest {
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
@@ -1976,7 +2056,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	//      kubectl failed. triggerAutoUpgrades() adds hive to
 	//      s.heartbeatUpgrade; the next heartbeat sends UpgradeTo as fallback.
 	spokeManaged := payload.AutoUpgrade
-	if sh := loadSaaSHive(payload.HiveID); sh != nil && sh.AutoUpgrade {
+	saasHive := loadSaaSHive(payload.HiveID)
+	if saasHive != nil && saasHive.AutoUpgrade {
 		spokeManaged = false
 	}
 
@@ -1987,10 +2068,39 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	switchTag := s.heartbeatSwitchTag[payload.HiveID]
 	hbTarget := s.heartbeatUpgrade[payload.HiveID]
 	s.mu.RUnlock()
+	// Durable channel tracking: heartbeatSwitchTag is in-memory, so a hub
+	// restart mid-switch silently dropped the delivery and stranded the hive
+	// on its old tag while the pill kept promising the channel (the persisted
+	// tracked_channel survives; the directive did not). Re-arm from the
+	// hive record whenever the spoke's REPORTED image tag disagrees with its
+	// tracked channel. Guards: a reported ImageRef (unknown means we cannot
+	// tell drift from a stale cache — do not roll pods on a guess) and a
+	// non-upgrading spoke (mid-roll, the old pod still reports the old tag;
+	// re-arming would stamp a fresh restart-at annotation and re-roll the
+	// pod every beat). Also self-heals the delivered-upgrade-overwrote-the-
+	// channel-tag drift, not just hub restarts.
+	if switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
+		!payload.Upgrading && payload.ImageRef != "" &&
+		imageTagOf(sanitizeImageRef(payload.ImageRef)) != saasHive.TrackedChannel {
+		switchTag = saasHive.TrackedChannel
+		s.mu.Lock()
+		s.heartbeatSwitchTag[payload.HiveID] = switchTag
+		s.mu.Unlock()
+		s.logger.Info("heartbeat: re-armed channel switch from tracked_channel",
+			"hive_id", payload.HiveID, "channel", switchTag,
+			"reported_image", payload.ImageRef)
+	}
 	if switchTag != "" {
-		// Clear once the spoke reports it's on the target branch — its tag is
-		// branchToTag(GitBranch)+"-latest". Otherwise keep instructing.
-		if payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag {
+		// Clear once the spoke reports it runs the target tag. The reported
+		// deployment ImageRef is the authoritative signal and works for every
+		// switch shape — "<branch>-latest" AND bare channel tags ("stable"),
+		// whose completion the branch inference below can never detect: a
+		// channel image heartbeats its baked-in branch ("v4"), which maps to
+		// "v4-latest", not "stable", so a completed channel switch would be
+		// re-instructed forever. The branch inference stays as the fallback
+		// for older spokes whose heartbeat omits image_ref.
+		switchDone := payload.ImageRef != "" && imageTagOf(payload.ImageRef) == switchTag
+		if switchDone || (payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag) {
 			s.mu.Lock()
 			delete(s.heartbeatSwitchTag, payload.HiveID)
 			for i := range s.registry.Hives {
@@ -2432,9 +2542,10 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// #3234: record WHICH format authenticated, so an operator can tell when
-		// every spoke has re-provisioned and the legacy compat lane — which does
-		// not bind identity — can finally be deleted.
+		// #3234: record WHICH format authenticated. The fleet-wide compat lane is
+		// now DELETED (F2), so this can only ever record the per-hive format; it is
+		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
+		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
 	}
 	for i, lb := range payload.Leaderboard {

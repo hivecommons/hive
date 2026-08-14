@@ -280,10 +280,10 @@ func TestHandleTaskStatus_ValidPayload(t *testing.T) {
 
 	body := `{"hive_id":"hive-1","leaderboard":[{"github_username":"alice"}],"contributors":{"registered":5,"active":3}}`
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(body))
-	// v4 task-status auth is fail-closed: it accepts ONLY the derived heartbeat
-	// sub-key, never the master secret. Supply the derived key so the request
+	// Post-F2 task-status auth is fail-closed AND identity-bound: it accepts ONLY
+	// the PER-HIVE bearer for the hive_id in the body. Supply that so the request
 	// authenticates and we exercise the payload path this test targets.
-	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKey())
+	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKeyFor("hive-1"))
 	w := httptest.NewRecorder()
 	srv.handleTaskStatus(w, req)
 
@@ -311,10 +311,10 @@ func TestHandleTaskStatus_OfflineHiveRejected(t *testing.T) {
 
 	body := `{"hive_id":"hive-1","leaderboard":[],"contributors":{"registered":1,"active":0}}`
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(body))
-	// v4 task-status auth is fail-closed: it accepts ONLY the derived heartbeat
-	// sub-key, never the master secret. Supply the derived key so the request
+	// Post-F2 task-status auth is fail-closed AND identity-bound: it accepts ONLY
+	// the PER-HIVE bearer for the hive_id in the body. Supply that so the request
 	// authenticates and we exercise the payload path this test targets.
-	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKey())
+	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKeyFor("hive-1"))
 	w := httptest.NewRecorder()
 	srv.handleTaskStatus(w, req)
 
@@ -327,10 +327,10 @@ func TestHandleTaskStatus_InvalidJSON(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader("not json"))
-	// v4 task-status auth is fail-closed: it accepts ONLY the derived heartbeat
-	// sub-key, never the master secret. Supply the derived key so the request
+	// Post-F2 task-status auth is fail-closed AND identity-bound: it accepts ONLY
+	// the PER-HIVE bearer for the hive_id in the body. Supply that so the request
 	// authenticates and we exercise the payload path this test targets.
-	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKey())
+	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKeyFor("hive-1"))
 	w := httptest.NewRecorder()
 	srv.handleTaskStatus(w, req)
 
@@ -344,10 +344,10 @@ func TestHandleTaskStatus_EmptyHiveID(t *testing.T) {
 
 	body := `{"hive_id":"","leaderboard":[],"contributors":{}}`
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(body))
-	// v4 task-status auth is fail-closed: it accepts ONLY the derived heartbeat
-	// sub-key, never the master secret. Supply the derived key so the request
+	// Post-F2 task-status auth is fail-closed AND identity-bound: it accepts ONLY
+	// the PER-HIVE bearer for the hive_id in the body. Supply that so the request
 	// authenticates and we exercise the payload path this test targets.
-	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKey())
+	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKeyFor("hive-1"))
 	w := httptest.NewRecorder()
 	srv.handleTaskStatus(w, req)
 
@@ -356,20 +356,43 @@ func TestHandleTaskStatus_EmptyHiveID(t *testing.T) {
 	}
 }
 
-func TestHandleTaskStatus_AcceptsDerivedKey(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.registry.Hives = []RegistryEntry{
-		{ID: "hive-1", Name: "TestHive", Online: true},
+// TestHandleTaskStatus_AcceptsPerHiveKeyOnly replaces the former
+// TestHandleTaskStatus_AcceptsDerivedKey, which asserted that the FLEET-WIDE
+// derived sub-key must be accepted (200). That assertion encoded F2: the
+// fleet-wide key is one value held by every spoke, so accepting it let any spoke
+// post task-status for any hive. It is inverted rather than deleted, and paired
+// with a positive control so a handler that rejected everything cannot pass.
+func TestHandleTaskStatus_AcceptsPerHiveKeyOnly(t *testing.T) {
+	newSrv := func() *HubServer {
+		s := NewHubServer(0, slog.Default(), "test", "v2")
+		s.registry.Hives = []RegistryEntry{{ID: "hive-1", Name: "TestHive", Online: true}}
+		return s
+	}
+	const body = `{"hive_id":"hive-1","leaderboard":[],"contributors":{"registered":1,"active":1}}`
+
+	post := func(s *HubServer, bearer string) int {
+		req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		w := httptest.NewRecorder()
+		s.handleTaskStatus(w, req)
+		return w.Code
 	}
 
-	body := `{"hive_id":"hive-1","leaderboard":[],"contributors":{"registered":1,"active":1}}`
-	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+srv.heartbeatKey())
-	w := httptest.NewRecorder()
-	srv.handleTaskStatus(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 with derived key; body: %s", w.Code, w.Body.String())
+	// Positive control: the per-hive bearer for hive-1 still works.
+	s := newSrv()
+	if code := post(s, s.heartbeatKeyFor("hive-1")); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with the per-hive key — real spokes would break", code)
+	}
+	// F2: the fleet-wide derived sub-key is no longer a credential.
+	s = newSrv()
+	if code := post(s, s.heartbeatKey()); code == http.StatusOK {
+		t.Error("F2: task-status accepted the FLEET-WIDE derived key — every spoke holds " +
+			"it, so any spoke could post task-status for any hive")
+	}
+	// And another hive's per-hive key cannot claim hive-1 either.
+	s = newSrv()
+	if code := post(s, s.heartbeatKeyFor("hive-2")); code == http.StatusOK {
+		t.Error("F2: task-status accepted hive-2's bearer for a body claiming hive-1")
 	}
 }
 

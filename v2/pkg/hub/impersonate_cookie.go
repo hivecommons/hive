@@ -83,6 +83,61 @@ func impersonateSign(secret, payload string) string {
 	return hubCookieB64.EncodeToString(mac.Sum(nil))
 }
 
+// mintImpersonateCookieValueForGeneration mints an impersonation cookie under
+// the CURRENT generation and stamps it with that generation's marker.
+//
+// This is the pilot adoption of the master-secret rotation mechanism
+// (hub_generations.go), chosen because the impersonation cookie is the
+// lowest-risk verifier on the platform: it is hub-only (no spoke, no Node
+// proxy, no Deployment env), it lives 30 minutes, and it grants nothing — an
+// impersonating admin is read-only, so a failure here degrades to "not
+// impersonating" rather than to any loss of access.
+//
+// The cookie is one of the artifacts that CAN carry a marker: it has payload
+// room and the hub controls both mint and verify. So the verifier can SELECT a
+// generation instead of trial-verifying, and the audit trail records which key
+// was used. Returns "" when there is no minting generation, preserving the
+// fail-closed contract of the underlying mint.
+func mintImpersonateCookieValueForGeneration(gs *generationSet, admin, target string, now time.Time) string {
+	g, ok := gs.currentGeneration()
+	if !ok {
+		return ""
+	}
+	inner := mintImpersonateCookieValue(deriveDomainKey(g.Secret, infoImpersonateKey), admin, target, now)
+	if inner == "" {
+		return ""
+	}
+	return formatGenerationMarker(g.ID) + inner
+}
+
+// verifyImpersonateCookieValueWithGenerations verifies an impersonation cookie
+// against every generation the set still accepts, and reports WHICH one
+// accepted.
+//
+// Dual acceptance is the point: during a rotation a cookie minted under the
+// outgoing generation must keep working until it expires on its own, or every
+// rotation logs the admin out mid-session. The window is finite by
+// construction — acceptableGenerations drops any previous generation past its
+// VerifyUntil — so this cannot become the unbounded verify-both lane that F1/F2
+// took five audits to remove.
+//
+// An UNMARKED cookie (every one minted before this change) is tried against
+// each acceptable generation in turn, so deploying this is a non-event for
+// cookies already in browsers.
+//
+// Returns the accepting generation ID alongside the grant. Callers that do not
+// care may ignore it; it exists so "is anything still using the old key?" is a
+// question the telemetry can answer without reading the code.
+func verifyImpersonateCookieValueWithGenerations(gs *generationSet, value string, now time.Time) (impersonationGrant, int, bool) {
+	if value == "" {
+		return impersonationGrant{}, 0, false
+	}
+	return verifyWithGenerations(gs, value, now,
+		func(secret, artifact string) (impersonationGrant, bool) {
+			return verifyImpersonateCookieValue(deriveDomainKey(secret, infoImpersonateKey), artifact, now)
+		})
+}
+
 // mintImpersonateCookieValue returns a signed impersonation cookie value that
 // records admin viewing target, expiring impersonateTTL from now. It returns ""
 // when no secret is configured or either login is empty — callers must treat

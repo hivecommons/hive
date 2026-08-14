@@ -22,8 +22,14 @@ func SetHeartbeatStateForTest(enabled bool, lastAttempt, lastSuccess time.Time) 
 }
 
 // ResetHeartbeatStateForTest returns the heartbeat atomics to their
-// process-start values (no loop, no attempts, no successes). Tests that mutate
-// this global state should defer it so they don't leak into other tests.
+// process-start values (no loop, no attempts, no successes) and clears the
+// cached last-good collect payload. Tests that mutate this global state should
+// defer it so they don't leak into other tests — in particular so one test's
+// cached payload cannot make another test's timed-out collect look like it
+// still had fresh stats to fall back on.
 func ResetHeartbeatStateForTest() {
 	SetHeartbeatStateForTest(false, time.Time{}, time.Time{})
+	lastGoodPayload.Lock()
+	lastGoodPayload.payload = nil
+	lastGoodPayload.Unlock()
 }

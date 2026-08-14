@@ -500,7 +500,7 @@ func TestGhcrTagExistsWithMock(t *testing.T) {
 
 func TestHandleHeartbeatValidPayload(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := HeartbeatPayload{
 		HiveID:       "test-hive",
@@ -524,7 +524,7 @@ func TestHandleHeartbeatValidPayload(t *testing.T) {
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(string(body)))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "test-hive"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -536,11 +536,11 @@ func TestHandleHeartbeatValidPayload(t *testing.T) {
 
 func TestHandleHeartbeatEmptyHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"","org":"test"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", ""))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -552,13 +552,13 @@ func TestHandleHeartbeatEmptyHiveID(t *testing.T) {
 
 func TestHandleHeartbeatInvalidHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	// sanitizeHeartbeatField strips most chars; use a string that becomes >100 chars of valid chars
 	longID := strings.Repeat("a", 101)
 	payload := fmt.Sprintf(`{"hive_id":"%s"}`, longID)
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", longID))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -570,11 +570,11 @@ func TestHandleHeartbeatInvalidHiveID(t *testing.T) {
 
 func TestHandleHeartbeatInvalidOrg(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","org":"bad org name!"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -586,13 +586,13 @@ func TestHandleHeartbeatInvalidOrg(t *testing.T) {
 
 func TestHandleHeartbeatInvalidRepo(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	// Use a repo name that's >100 chars (too long for isValidName)
 	longRepo := strings.Repeat("r", 101)
 	payload := fmt.Sprintf(`{"hive_id":"valid-id","primary_repo":"%s"}`, longRepo)
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -604,11 +604,11 @@ func TestHandleHeartbeatInvalidRepo(t *testing.T) {
 
 func TestHandleHeartbeatInvalidRepoInList(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","repos":["good-repo","bad repo!"]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -620,11 +620,11 @@ func TestHandleHeartbeatInvalidRepoInList(t *testing.T) {
 
 func TestHandleHeartbeatBadDashboardURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","dashboard_url":"ftp://bad-scheme.com"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -636,11 +636,11 @@ func TestHandleHeartbeatBadDashboardURL(t *testing.T) {
 
 func TestHandleHeartbeatBadSnapshotURL(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","snapshot_url":"ftp://bad.com"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -652,11 +652,11 @@ func TestHandleHeartbeatBadSnapshotURL(t *testing.T) {
 
 func TestHandleHeartbeatInvalidAgentName(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","agents":[{"name":"bad agent!","state":"running"}]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -668,11 +668,11 @@ func TestHandleHeartbeatInvalidAgentName(t *testing.T) {
 
 func TestHandleHeartbeatInvalidLeaderboardUsername(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "test-secret"
+	srv.setHubSecret("test-secret")
 
 	payload := `{"hive_id":"valid-id","leaderboard":[{"github_username":"bad user!"}]}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("test-secret"))
+	req.Header.Set("Authorization", heartbeatBearer("test-secret", "valid-id"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -684,7 +684,7 @@ func TestHandleHeartbeatInvalidLeaderboardUsername(t *testing.T) {
 
 func TestHandleHeartbeatNoSecretRequired(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := `{"hive_id":"valid-id"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -699,7 +699,7 @@ func TestHandleHeartbeatNoSecretRequired(t *testing.T) {
 
 func TestHandleHeartbeatWrongSecret(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "correct-secret"
+	srv.setHubSecret("correct-secret")
 
 	payload := `{"hive_id":"valid-id"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
@@ -715,7 +715,7 @@ func TestHandleHeartbeatWrongSecret(t *testing.T) {
 
 func TestHandleHeartbeatExistingHive(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Pre-populate a hive
 	srv.mu.Lock()
@@ -747,7 +747,7 @@ func TestHandleHeartbeatLocalHiveType(t *testing.T) {
 	payload := `{"hive_id":"my-local-hive","hive_type":"local"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", heartbeatBearer(secret))
+	req.Header.Set("Authorization", heartbeatBearer(secret, "my-local-hive"))
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -780,7 +780,7 @@ func TestHandleHeartbeatHostedHiveRejectedWithoutSaaS(t *testing.T) {
 	payload := `{"hive_id":"hosted-test-nosaas"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", heartbeatBearer(secret))
+	req.Header.Set("Authorization", heartbeatBearer(secret, "hosted-test-nosaas"))
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -795,7 +795,7 @@ func TestHandleHeartbeatHostedHiveRejectedWithoutSaaS(t *testing.T) {
 
 func TestHandleTaskStatusNoAuth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
@@ -809,7 +809,7 @@ func TestHandleTaskStatusNoAuth(t *testing.T) {
 
 func TestHandleTaskStatusValid(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	// Pre-populate a hive in registry
 	srv.mu.Lock()
@@ -820,7 +820,7 @@ func TestHandleTaskStatusValid(t *testing.T) {
 
 	payload := `{"hive_id":"task-hive","leaderboard":[{"github_username":"user1","tasks_completed":3}],"contributors":{"registered":5,"active":2}}`
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(payload))
-	req.Header.Set("Authorization", heartbeatBearer("secret"))
+	req.Header.Set("Authorization", heartbeatBearer("secret", "task-hive"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -832,10 +832,10 @@ func TestHandleTaskStatusValid(t *testing.T) {
 
 func TestHandleTaskStatusBadJSON(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader("not json"))
-	req.Header.Set("Authorization", heartbeatBearer("secret"))
+	req.Header.Set("Authorization", heartbeatBearer("secret", "anything"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -847,10 +847,10 @@ func TestHandleTaskStatusBadJSON(t *testing.T) {
 
 func TestHandleTaskStatusEmptyHiveID(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(`{"hive_id":""}`))
-	req.Header.Set("Authorization", heartbeatBearer("secret"))
+	req.Header.Set("Authorization", heartbeatBearer("secret", ""))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -862,7 +862,7 @@ func TestHandleTaskStatusEmptyHiveID(t *testing.T) {
 
 func TestHandleTaskStatusOfflineHive(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = "secret"
+	srv.setHubSecret("secret")
 
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -871,7 +871,7 @@ func TestHandleTaskStatusOfflineHive(t *testing.T) {
 	srv.mu.Unlock()
 
 	req := httptest.NewRequest("POST", "/api/task-status", strings.NewReader(`{"hive_id":"offline-hive"}`))
-	req.Header.Set("Authorization", heartbeatBearer("secret"))
+	req.Header.Set("Authorization", heartbeatBearer("secret", "offline-hive"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -2174,7 +2174,7 @@ func TestHandleDenyAccessNotFound(t *testing.T) {
 
 func TestHandleHeartbeatWithClusterHealth(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	payload := HeartbeatPayload{
 		HiveID: "health-hive",
@@ -2211,7 +2211,7 @@ func TestHandleHeartbeatWithClusterHealth(t *testing.T) {
 
 func TestHandleHeartbeatResponseContainsFields(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
-	srv.hubSecret = ""
+	srv.setHubSecret("")
 
 	// Set up a latestSHA
 	latestSHAMu.Lock()

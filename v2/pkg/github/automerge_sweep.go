@@ -70,6 +70,37 @@ func (c *Client) SetMergerAuthorizer(fn MergerAuthorizer) {
 	c.mergerAuthz = fn
 }
 
+// SetRequiredChecks installs the config-declared required-status-check set
+// (config.AutoMergeConfig.RequiredCheckSet) consulted by commitGreen before
+// it ever calls GitHub's branch-protection API. nil/empty clears it, meaning
+// "not config-declared" — commitGreen then falls back to the API and, if that
+// also fails, to the isMetaCheck/isIgnorableCICheck allowlist. Safe to call
+// repeatedly (e.g. on every config reload); the sweep goroutine reads the
+// installed value through requiredChecksMu.
+func (c *Client) SetRequiredChecks(set map[string]bool) {
+	if c == nil {
+		return
+	}
+	c.requiredChecksMu.Lock()
+	defer c.requiredChecksMu.Unlock()
+	c.requiredChecks = set
+}
+
+// configRequiredChecks returns the currently installed config-declared
+// required-check set and whether one is installed. Mirrors isTrustedMerger's
+// nil-safe read pattern for c.mergerAuthz.
+func (c *Client) configRequiredChecks() (map[string]bool, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.requiredChecksMu.RLock()
+	defer c.requiredChecksMu.RUnlock()
+	if len(c.requiredChecks) == 0 {
+		return nil, false
+	}
+	return c.requiredChecks, true
+}
+
 // isTrustedMerger reports whether login may queue a merge. Fails CLOSED.
 func (c *Client) isTrustedMerger(login string) (allowed, configured bool) {
 	if c == nil {
@@ -624,15 +655,15 @@ func parseHiveQueueReview(body string) string {
 // commitGreen reports whether the head SHA is mergeable from a CI
 // standpoint.
 //
-// Gating is REQUIRED-CHECKS-ONLY: commitGreen first asks GitHub which status
-// contexts/check-run names are actually required by the target branch's
-// branch protection (requiredStatusCheckContexts). Any status or check-run
-// whose context/name is NOT in that required set is skipped entirely,
-// regardless of its state or conclusion — pending, failing, or cancelled
-// non-required checks can never block self-merge. A required check still
-// fully gates: pending blocks (return not-green, "pending" — the sweep must
-// never squash a PR before its required CI has finished), and a
-// failure/error/cancelled conclusion on a required check blocks too.
+// Gating is REQUIRED-CHECKS-ONLY: commitGreen first asks which status
+// contexts/check-run names are actually required for the target branch
+// (requiredStatusCheckContexts). Any status or check-run whose context/name
+// is NOT in that required set is skipped entirely, regardless of its state or
+// conclusion — pending, failing, or cancelled non-required checks can never
+// block self-merge. A required check still fully gates: pending blocks
+// (return not-green, "pending" — the sweep must never squash a PR before its
+// required CI has finished), and a failure/error/cancelled conclusion on a
+// required check blocks too.
 //
 // Why required-only, not a hardcoded ignore-list: the previous approach
 // (isMetaCheck/isIgnorableCICheck as an ALLOWLIST of names to ignore) is
@@ -645,13 +676,21 @@ func parseHiveQueueReview(body string) string {
 // must be green; anything else is by definition non-required and must never
 // wedge the queue.
 //
-// Fail-closed fallback: if the required-checks set cannot be determined
-// (branch protection absent/erroring, no branch known, or the API call
-// fails) this deliberately does NOT fall back to "ignore everything" — that
-// would merge over a genuinely broken build the moment GitHub's protection
-// API hiccups. Instead it falls back to the OLD isMetaCheck/isIgnorableCICheck
-// allowlist behavior, so an outage of the branch-protection endpoint degrades
-// gating back to the previously-shipped conservative behavior rather than to
+// Where that required set comes from (see requiredStatusCheckContexts for
+// the full precedence): config (auto_merge.required_checks) FIRST — the Hive
+// App token lacks administration:read, so GitHub's branch-protection API
+// (Repositories.GetRequiredStatusChecks, #3723) reliably errors in practice;
+// the operator-declared config list needs no such scope. The API is tried
+// only as a secondary source (in case the App ever does have that scope, or
+// the branch is legitimately unprotected).
+//
+// Fail-closed fallback: if the required-checks set cannot be determined by
+// EITHER config or the API (no config list, branch protection absent/erroring,
+// no branch known, or the API call fails) this deliberately does NOT fall
+// back to "ignore everything" — that would merge over a genuinely broken
+// build the moment both sources are unavailable. Instead it falls back to the
+// OLD isMetaCheck/isIgnorableCICheck allowlist behavior, so the previously-
+// shipped conservative behavior is preserved rather than degrading to
 // "always green".
 func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha string) (bool, string, error) {
 	required, requiredKnown := c.requiredStatusCheckContexts(ctx, owner, repo, branch)
@@ -729,24 +768,32 @@ func (c *Client) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 }
 
 // requiredStatusCheckContexts returns the set of status-check contexts /
-// check-run names that branch protection actually requires on branch, and
-// whether that set could be determined at all. It is the single source of
-// truth commitGreen gates on: membership in this set is what makes a check
+// check-run names that are actually required for branch, and whether that
+// set could be determined at all. It is the single source of truth
+// commitGreen gates on: membership in this set is what makes a check
 // "required" (must be green) versus ignorable (any state/conclusion, never
 // blocks).
 //
-// requiredKnown is false (empty set, ignore it) when:
-//   - branch is empty (caller could not resolve the PR's base branch), or
-//   - the repo/branch has no branch protection configured
-//     (gh.ErrBranchNotProtected — a repo with zero required checks is a
-//     valid, common state, NOT an error), or
-//   - the GitHub API call itself failed (rate limit, transient 5xx, ...).
-//
-// In all of those cases the caller must fall back to the OLD
-// isMetaCheck/isIgnorableCICheck allowlist rather than treating "we don't
-// know the required set" as "nothing is required" — see commitGreen's
-// fail-closed comment.
+// Precedence (first available source wins):
+//  1. Config: c.configRequiredChecks(), i.e. the operator-declared
+//     auto_merge.required_checks list (config.AutoMergeConfig.RequiredCheckSet).
+//     This needs NO GitHub API call and NO administration:read scope, so it
+//     is checked first and is the primary path in practice — the Hive App's
+//     token does not hold that scope, so path 2 below reliably errors.
+//  2. GitHub's branch-protection API (Repositories.GetRequiredStatusChecks).
+//     Kept as a fallback in case the App ever does have admin-read scope, or
+//     the branch is legitimately unprotected (gh.ErrBranchNotProtected — a
+//     repo with zero required checks is a valid, common state, NOT an
+//     error, so that case returns requiredKnown=true with an empty set).
+//  3. Neither available (no config list AND branch empty / API call failed
+//     for a reason other than "not protected") → requiredKnown=false. The
+//     caller must fall back to the OLD isMetaCheck/isIgnorableCICheck
+//     allowlist rather than treating "we don't know the required set" as
+//     "nothing is required" — see commitGreen's fail-closed comment.
 func (c *Client) requiredStatusCheckContexts(ctx context.Context, owner, repo, branch string) (map[string]bool, bool) {
+	if set, ok := c.configRequiredChecks(); ok {
+		return set, true
+	}
 	if strings.TrimSpace(branch) == "" {
 		return nil, false
 	}

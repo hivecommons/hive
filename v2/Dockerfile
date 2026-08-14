@@ -16,7 +16,14 @@ RUN npm ci \
  && node -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync("/visual-hive-release/release-manifest.json","utf8"));if(m.gitCommit!==process.argv[1])throw new Error(`Visual Hive release commit mismatch: ${m.gitCommit}`)' "$VISUAL_HIVE_REF" \
  && node /visual-hive-release/visual-hive.mjs --version
 
-FROM golang:1.26-alpine AS builder
+# Pinned to the golang:1.26-alpine multi-arch index digest to prevent
+# floating-tag supply-chain risk. Refresh deliberately:
+#   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/golang:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $TOKEN" \
+#     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+#     https://registry-1.docker.io/v2/library/golang/manifests/1.26-alpine | grep -i docker-content-digest
+# and update both the tag and the @sha256 digest together.
+FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -40,7 +47,11 @@ RUN DETECTED_GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || true) && \
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
-FROM node:26-slim AS tmux-builder
+# Pinned to the node:26-slim multi-arch index digest to prevent floating-tag
+# supply-chain risk. Refresh deliberately (same technique as golang above,
+# repo library/node, tag 26-slim) and update both the tag and the @sha256
+# digest together in BOTH FROM node:26-slim lines in this file.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS tmux-builder
 ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
 ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
@@ -59,11 +70,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION} /tmp/tmux.tar.gz
 
-FROM node:26-slim
+# Pinned to the same node:26-slim digest as the tmux-builder stage above —
+# refresh both FROM lines together.
+#
+# The final stage is NAMED `runtime` so the CI build steps can list it in
+# `no-cache-filters` alongside `builder`. Busting ONLY `builder` rebuilt a fresh
+# /hive but let BuildKit serve the final-stage `COPY --from=builder /hive` layer
+# (and the rewrite RUN below) from the branch-scoped GHA cache — so a fresh
+# binary was rebuilt and then discarded, and the OLD binary shipped. See the
+# stale-binary note in .github/workflows/docker.yml.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS runtime
 
 # --- Layer 1: system packages (rarely changes) ---
+# util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
+# AMBIENT CAP_NET_ADMIN (bounding-set gated) so the proxy's SO_MARK egress-gate
+# works without a file capability on the binary (#3760). gosu is the fallback
+# when setpriv is unavailable or the bounding set lacks NET_ADMIN.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates bash bubblewrap curl procps bzip2 gosu iptables inotify-tools libevent-core-2.1-7 \
+    git ca-certificates bash bubblewrap curl procps bzip2 gosu util-linux iptables inotify-tools libevent-core-2.1-7 \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
@@ -178,7 +202,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # 1.0.78 npm wrapper only spawns the platform binary — deleting it now
 # breaks the CLI outright instead of triggering a fallback.
 ARG COPILOT_VERSION=1.0.78
-RUN npm install -g @github/copilot@${COPILOT_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@github/copilot@${COPILOT_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
 
 # --- Layer 3b: GitHub Copilot SDK (pinned; powers SDK-based model discovery) ---
@@ -190,7 +215,8 @@ RUN npm install -g @github/copilot@${COPILOT_VERSION} && npm cache clean --force
 # reject the proxy CA). Tolerant of failure like the copilot layer: discovery
 # falls back to the raw HTTP probe when the SDK is absent.
 ARG COPILOT_SDK_VERSION=1.0.8
-RUN npm install -g @github/copilot-sdk@${COPILOT_SDK_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@github/copilot-sdk@${COPILOT_SDK_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot SDK install failed — skipping"
 
 # --- Layer 4: OpenAI Codex CLI (pinned; backend: codex + live model discovery) ---
@@ -203,12 +229,12 @@ RUN npm install -g @github/copilot-sdk@${COPILOT_SDK_VERSION} && npm cache clean
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
 ARG CODEX_VERSION=0.146.0
-RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=2.1.226
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
+RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
 
 # --- Layer 7b: reviewed native Codex runtime for governed repair children ---
 # Hive rejects npm/npx/script wrappers at the repair boundary. Keep the npm
@@ -258,7 +284,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
 ARG PI_VERSION=0.84.1
-RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
 
 # --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
@@ -316,6 +343,35 @@ COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
 COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 
+# #3760 — defeat the BuildKit/overlayfs metacopy redirect on the cross-stage
+# COPY above. When BuildKit builds these images it can emit a layer where a
+# file brought in by `COPY --from` is stored as an overlay *metacopy redirect*
+# (a size-0 upper entry with a trusted.overlay.redirect / metacopy xattr that
+# points at the lower data). On the CI runner's docker/runc this execs fine,
+# but on the fleet's runtimes — containerd/k3s and rootless podman, both on the
+# overlayfs snapshotter — the kernel presents the redirected file as
+# NON-EXECUTABLE at its image path (bare EPERM at execve) until it is copied up
+# to the writable upper layer. That is precisely why the reporter saw
+# `cp /usr/local/bin/hive /tmp/hx && /tmp/hx --version` succeed while running it
+# in place failed: the `cp` forces a copy-up that materializes the real bytes.
+#
+# Rewriting the binary here — a plain read+write to a NEW inode in THIS stage —
+# lands the full bytes freshly on this stage's own top layer, so the shipped
+# layer contains real file data with no cross-stage overlay redirect. The exec
+# bit is reasserted for good measure. This is robust regardless of buildx
+# attestation/OCI-index flags; the workflow-side `provenance:false / sbom:false`
+# change (which stops the OCI-index form that enables the metacopy layout in the
+# first place) and this rewrite are independent, belt-and-suspenders defenses.
+RUN for b in hive bd hive-backup; do \
+      cp --remove-destination "/usr/local/bin/$b" "/usr/local/bin/$b.fresh" && \
+      mv -f "/usr/local/bin/$b.fresh" "/usr/local/bin/$b" && \
+      chmod 0755 "/usr/local/bin/$b"; \
+    done
+
+# dd: Visual Hive release bundle, staged from the pinned visual-hive-builder.
+# Placed AFTER the #3760 rewrite above so the rewrite loop applies to the Go
+# binaries it repairs; this bundle is node/JS assets executed via `node`, never
+# execve'd at its image path, so the metacopy redirect does not affect it.
 COPY --from=visual-hive-builder /visual-hive-release /opt/hive/visual-hive
 ENV HIVE_VISUAL_HIVE_HOME=/opt/hive/visual-hive
 RUN chmod -R a-w /opt/hive/visual-hive \
@@ -348,41 +404,37 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
 
-# SECURITY (audit F5-egress / refs #2674, #2678): give the hive binary
-# CAP_NET_ADMIN as a FILE capability so the MITM proxy's own upstream dials can
-# be exempted from the forced-egress iptables REDIRECT.
+# SECURITY (audit F5-egress / refs #2674, #2678, #3760): the hive process needs
+# CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can stamp SO_MARK on its
+# own upstream dials and be exempted from the forced-egress iptables REDIRECT
+# (on OpenShift/OVN xt_owner is ABSENT, so the owner-UID exemptions silently fail
+# to load and SO_MARK is the ONLY remaining exemption — observed live on vllm-d,
+# where the proxy's own :443 dials looped into the REDIRECT and 502'd every forge
+# request). setsockopt(SO_MARK) requires CAP_NET_ADMIN in the caller's EFFECTIVE
+# set, and the hive process is dropped to non-root `dev`.
 #
-# WHY THIS IS NEEDED
-# The entrypoint installs `-p tcp --dport 443 -j REDIRECT` so every agent's
-# egress is forced through the proxy, then exempts the proxy's OWN traffic three
-# ways. On OKE the `-m owner --uid-owner` matches work. On OpenShift/OVN xt_owner
-# is ABSENT, so those rules silently fail to load (`|| true`) and the only
-# remaining exemption is the SO_MARK packet mark — but setsockopt(SO_MARK)
-# requires CAP_NET_ADMIN in the calling process's EFFECTIVE set. The entrypoint
-# runs as root only long enough to build the chain; the hive process itself is
-# dropped to `dev` via gosu, so without a file capability it loses NET_ADMIN and
-# the mark silently fails ("operation not permitted").
+# WHY NOT A FILE CAPABILITY (the previous approach — deliberately removed)
+# A `setcap cap_net_admin+ep /usr/local/bin/hive` file capability is recomputed
+# by the kernel AT execve, and the kernel REFUSES to exec a binary whose file
+# caps it cannot fully grant from the current BOUNDING set. NET_ADMIN is NOT in
+# the default docker/podman/containerd bounding set, so on any self-hosted spoke
+# (k3s, rootless podman) execve of the capped binary fails with a bare EPERM —
+# the crash-loop diagnosed in #3760 (the overlayfs metacopy diagnosis was a red
+# herring for THIS symptom: even after the metacopy rewrite above, the file cap
+# alone EPERMs wherever the bounding set lacks NET_ADMIN). A file capability and
+# "execs everywhere" are fundamentally incompatible, so the file cap is GONE and
+# the binary ships with NO security.capability xattr.
 #
-# Observed live on vllm-d: with neither exemption active the proxy's own :443
-# dials hit the REDIRECT and looped back into itself, returning 502 for every
-# forge request and cutting a live tenant's agents off from their repository.
-#
-# WHY A FILE CAPABILITY IS SAFE HERE
-# File caps are recomputed AT EXEC from the binary being exec'd. Agents are
-# launched via su-exec into their OWN binaries (claude/goose/bob), which carry
-# no file capability, so NET_ADMIN does NOT propagate to any agent process.
-# Agent UIDs (2001+) also cannot exec su-exec itself — it is 4750
-# root:hive-launch and only `dev` is in that group (audit C6) — so there is no
-# path from an agent to a process holding this capability.
-#
-# +ep = permitted AND effective: the hive process needs the cap live at
-# setsockopt time, not merely inheritable.
-RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
- && setcap cap_net_admin+ep /usr/local/bin/hive \
- && [ "$(getcap /usr/local/bin/hive)" != "" ] \
- && getcap /usr/local/bin/hive | grep -q "cap_net_admin" \
- && apt-get purge -y libcap2-bin \
- && rm -rf /var/lib/apt/lists/*
+# HOW NET_ADMIN REACHES hive INSTEAD (see v2/deploy/entrypoint.sh)
+# The entrypoint reads its own CapBnd (bounding set) at the privilege-drop point
+# and, ONLY when CAP_NET_ADMIN is present (managed OKE/OpenShift spokes grant it
+# via SCC/PSA), drops to `dev` with `setpriv --ambient-caps +net_admin` so hive
+# inherits NET_ADMIN in its EFFECTIVE+AMBIENT set — SO_MARK works exactly as
+# before. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
+# does NOT attempt the raise (setpriv would error) and falls back to plain
+# `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
+# SO_MARK path degrades gracefully (v2/pkg/proxy/github_proxy.go logs once and
+# dials unmarked). setpriv comes from util-linux, installed in Layer 1.
 
 # --- Nous framework (strategist experiment engine) ---
 RUN (apt-get update && apt-get install -y --no-install-recommends \
@@ -400,7 +452,7 @@ RUN pip3 install --no-cache-dir --break-system-packages specify-cli 2>/dev/null 
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
-RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
+RUN npm install -g --ignore-scripts --no-fund --no-audit "@kubestellar/pluk@${PLUK_VERSION}" && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chown dev:node /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 2770 /var/run/pluk/logs /var/run/pluk/commands

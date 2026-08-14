@@ -1,9 +1,15 @@
 #!/bin/bash
 # Wrapper for ttyd → tmux. Enables mouse mode on attach so the browser scroll
-# wheel drives tmux copy-mode scrollback (issue #3694) and raises the pane
-# history-limit so there is meaningful scrollback to reach; both are restored
-# on disconnect. Hold Shift (or Option on macOS) to bypass mouse mode for native
-# browser text selection / clipboard.
+# wheel drives tmux copy-mode scrollback (issue #3694) and raises the session
+# history-limit for panes created later; both are restored on disconnect.
+# Hold Shift (or Option on macOS) to bypass mouse mode for native browser text
+# selection / clipboard.
+#
+# NOTE: tmux reads history-limit at PANE creation, so the attach-time raise
+# cannot deepen an already-created pane. The authoritative deep-scrollback
+# setting is applied at session creation by the agent manager
+# (newSessionCommands in v2/pkg/agent/manager.go, override
+# HIVE_TMUX_HISTORY_LIMIT).
 #
 # NOTE: The container uses v2/deploy/ttyd-tmux.sh (copied to
 # /usr/local/bin/ttyd-tmux.sh by v2/Dockerfile), which additionally resolves

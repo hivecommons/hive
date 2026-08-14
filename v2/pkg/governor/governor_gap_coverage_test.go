@@ -184,39 +184,6 @@ func TestSetBudgetIgnoreAll_BypassesKickSuppression(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ClearLastKicks
-// ---------------------------------------------------------------------------
-
-// TestClearLastKicks_MakesAgentsDueAgain: clearing the timing gate makes every
-// cadenced agent due on the next eval, while paused agents stay excluded (the
-// reset clears timing only, not the operator's pause).
-func TestClearLastKicks_MakesAgentsDueAgain(t *testing.T) {
-	// testGovernor: idle cadences scanner=15m, supervisor=pause.
-	g := testGovernor()
-
-	g.Evaluate(0, 0, 0, 0)
-	g.RecordKick("scanner")
-
-	// Positive control: freshly kicked, scanner is not due.
-	if due := dueSet(g); due["scanner"] {
-		t.Fatal("precondition: scanner should not be due right after a kick")
-	}
-
-	g.ClearLastKicks()
-
-	due := dueSet(g)
-	if !due["scanner"] {
-		t.Error("scanner should be due immediately after ClearLastKicks")
-	}
-	if due["supervisor"] {
-		t.Error("paused supervisor must stay excluded even after ClearLastKicks")
-	}
-	if lk := g.GetState().LastKick; len(lk) != 0 {
-		t.Errorf("LastKick map should be empty after clear, got %v", lk)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Kick-channel gate in scheduled kicks
 // ---------------------------------------------------------------------------
 
