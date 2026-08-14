@@ -3877,10 +3877,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	var latestSHA string
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
-			branch := s.registry.Hives[i].GitBranch
-			if branch == "" {
-				branch = "v2"
-			}
+			branch := s.upgradeBranchOrDefault(s.registry.Hives[i].GitBranch)
 			latestSHA = getLatestSHAForBranch(branch)
 			s.beginUpgrade(i, latestSHA)
 			break
@@ -4380,9 +4377,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		s.mu.RUnlock()
-		if branch == "" {
-			branch = "v2"
-		}
+		branch = s.upgradeBranchOrDefault(branch)
 		latestSHA := getLatestSHAForBranch(branch)
 		if latestSHA != "" && currentSHA != "" && !sameCommit(currentSHA, latestSHA) {
 			s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
@@ -5196,9 +5191,11 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.RUnlock()
-		if branch == "" {
-			branch = "v2"
-		}
+		// Resolve against the hub's own branch when the hive has not reported
+		// one, never a hardcoded "v2" — see upgradeBranchOrDefault. A hardcoded
+		// v2 is what armed 0b78dc0 (a v2-only commit) at placeholders on a v4
+		// hub.
+		branch = s.upgradeBranchOrDefault(branch)
 		if alreadyUpgrading {
 			// Floating-tag convergence. A hive whose Deployment tracks a MUTABLE
 			// tag (…-latest) has no stable target commit: a restart re-pulls the
@@ -5269,6 +5266,41 @@ func (s *HubServer) triggerAutoUpgrades() {
 			isStale := upgradeStartedAt.IsZero() || upgradeAge > staleUpgradeTimeout
 
 			if isStale {
+				// STRUCTURALLY UNDELIVERABLE: abandon, do not re-arm. This is
+				// the branch that produced the measured wedge — 208 re-arms in
+				// 15 minutes across 26 hives, stale_minutes climbing to 104 —
+				// because re-arming an upgrade the hub cannot deliver reproduces
+				// the identical no-op every staleUpgradeTimeout, forever, while
+				// beginUpgrade() preserves the original start clock so the
+				// elapsed only ever grows. The retry budget in
+				// sweepOrphanedUpgrades() cannot bound it: these hives never
+				// heartbeated, so evaluateOrphanedUpgrade() bails on the
+				// liveness test and the budget is never spent.
+				//
+				// Clearing the latch outright is what stops staleness
+				// accumulating. The hive stays on its old SHA — which is
+				// truthful and visible — instead of misreporting as
+				// perpetually "Upgrading" while reading offline. Nothing is
+				// lost: the spoke self-derives its configuration and upgrades
+				// independently of the hub, so the hub was never the thing
+				// keeping it current.
+				if !s.upgradeDeliverable(s.clusterForHive(&h)) {
+					reason := s.undeliverableUpgradeReason(s.clusterForHive(&h))
+					s.logger.Warn("abandoning stale upgrade — undeliverable, not re-arming",
+						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
+						"target", upgradeTarget, "reason", reason)
+					s.mu.Lock()
+					for i := range s.registry.Hives {
+						if s.registry.Hives[i].ID == h.ID {
+							s.clearUpgradeLatch(i)
+							break
+						}
+					}
+					delete(s.heartbeatUpgrade, h.ID)
+					s.mu.Unlock()
+					s.noteUndeliverableUpgrade(h.ID, upgradeTarget, reason)
+					continue
+				}
 				// Upgrade has been stuck longer than staleUpgradeTimeout.
 				// Recover it. Two things can be wrong: (a) the target SHA
 				// contains a crashing bug a newer commit fixes — advance the
@@ -5401,6 +5433,30 @@ func (s *HubServer) triggerAutoUpgrades() {
 			s.logger.Warn("auto-upgrade skipped — no cluster config", "hive_id", h.ID, "cluster_id", h.ClusterID)
 			continue
 		}
+		// Do not ARM an upgrade the hub has no mechanism to deliver. Arming one
+		// latches Upgrading=true, and because rolloutRestartHive() cannot reach a
+		// pull-only cluster and the heartbeat fallback needs a spoke that is
+		// already checking in, nothing ever clears that latch: the stale-recovery
+		// branch above re-arms every staleUpgradeTimeout while beginUpgrade()
+		// preserves the original start clock, so the elapsed grows without bound
+		// and the hive reads "offline" while claiming to be upgrading. The
+		// orphan sweep's retry budget cannot rescue it either — a hive that never
+		// heartbeated fails evaluateOrphanedUpgrade()'s liveness test, so the
+		// budget is never spent and exhaustion never converts it to a visible
+		// failure. See pullonly_upgrade.go for the full measured loop.
+		//
+		// Refused LOUDLY, never silently: a hive with auto_upgrade=true that
+		// simply never upgrades is indistinguishable from one already at latest,
+		// which is how this stayed unnoticed. The timeline entry is the durable
+		// operator-visible record.
+		if !s.upgradeDeliverable(hiveCluster) {
+			reason := s.undeliverableUpgradeReason(hiveCluster)
+			s.logger.Warn("auto-upgrade not armed — undeliverable",
+				"hive_id", h.ID, "cluster", hiveCluster.ID, "branch", branch,
+				"from", currentSHA, "would_have_targeted", latestSHA, "reason", reason)
+			s.noteUndeliverableUpgrade(h.ID, latestSHA, reason)
+			continue
+		}
 		// Record the day's fire BEFORE kicking the rollout. Persisting first
 		// means a hub crash between here and the restart cannot cause a second
 		// upgrade for the same ET day; at worst the hive waits for tomorrow's
@@ -5419,6 +5475,9 @@ func (s *HubServer) triggerAutoUpgrades() {
 					"hive_id", h.ID, "date", decision.FireDate, "error", err)
 			}
 		}
+		// The hive is deliverable again — drop any suppressed-refusal memory so a
+		// future undeliverable episode is reported afresh rather than swallowed.
+		forgetUndeliverableUpgrade(h.ID)
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode))
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")

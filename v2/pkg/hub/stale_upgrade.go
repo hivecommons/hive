@@ -240,10 +240,7 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		// Resolve the image-verified latest for this hive's branch so the
 		// evaluation can recognise a floating-tag hive that is already at latest
 		// (and must not be swept/re-rolled toward a specific historical target).
-		branch := h.GitBranch
-		if branch == "" {
-			branch = "v2"
-		}
+		branch := s.upgradeBranchOrDefault(h.GitBranch)
 		ev := evaluateOrphanedUpgrade(h, now, getLatestSHAForBranch(branch))
 		if !ev.orphaned {
 			continue
