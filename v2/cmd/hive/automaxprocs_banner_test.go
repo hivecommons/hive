@@ -69,8 +69,16 @@ func TestChildProcessOutputHasNoAutomaxprocsBanner(t *testing.T) {
 			"a ref name):\n%s", out)
 	}
 
-	if !strings.Contains(string(out), "hive 3.0.0") {
-		t.Fatalf("expected combined output to contain the --version banner, got: %s", out)
+	// dd's --version is served by runVersionCommand (see main.go and
+	// version_test.go), whose format is "Hive <version>\ncommit: <full40>"
+	// — NOT v4's "hive 3.0.0" inline fast path, which dd intentionally does
+	// not carry (see the runEarlyCLI comment in main.go). Asserting dd's
+	// documented format here keeps this test a faithful check that the
+	// child produced its real --version answer (so the banner-absence check
+	// above is meaningful), without pinning the v4 version string.
+	if !strings.HasPrefix(string(out), "Hive ") || !strings.Contains(string(out), "commit:") {
+		t.Fatalf("expected combined output to contain dd's --version banner "+
+			"(\"Hive <version>\\ncommit: <sha>\"), got: %s", out)
 	}
 }
 
