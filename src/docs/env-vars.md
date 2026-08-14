@@ -70,6 +70,7 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `CONTEXT7_API_KEY` | No | none | Optional key for Context7 knowledge API integration. |
 | `GOOSE_PROVIDER` | No | Goose CLI default | Provider passed through Goose backend/model resolution. |
 | `GOOSE_MODEL` | No | Goose CLI default | Model passed through Goose backend/model resolution and contributor relay fallback. |
+| `HIVE_EXPLAIN_MODE` | No | `off` | Hive-wide default for agent explain mode (`off`, `brief`, `full`) — see [agent-configuration.md](agent-configuration.md#explain-mode-debugging-agent-behaviour). Applies only to agents that leave `explain_mode` unset; an agent with an explicit value, including `off`, keeps it. Hive also injects the *resolved* mode into every agent process under this same name. An unrecognized value resolves to `off`. |
 | `BD_DIR` | No | current directory | `bd` beads CLI data directory. |
 | `BD_DASHBOARD_URL` | No | none | Dashboard URL used by `bd kb` integration. |
 | `HIVE_CONN_<NAME>_URL` | No | generated from agent connection config | Agent API connection URI variable when a connection omits `env_name`; `<NAME>` is the uppercased connection name with `-` replaced by `_`. |

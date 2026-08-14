@@ -2441,6 +2441,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"detectKeywords":   agentCfg.DetectKeywords,
 			"aliases":          agentCfg.Aliases,
 			"cavemanMode":      agentCfg.CavemanMode,
+			"explainMode":      agentCfg.ExplainMode,
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			"replicas":         agentCfg.Replicas,
@@ -3085,6 +3086,18 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				return
 			}
 			agentCfg.CavemanMode = s
+		}
+	}
+	if v, ok := body["explainMode"]; ok {
+		if s, ok := v.(string); ok {
+			s = sanitizeString(s)
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if !config.ValidateExplainMode(s) {
+				jsonError(w, "explain_mode must be one of: off, brief, full (or empty to inherit the hive default)", http.StatusBadRequest)
+				return
+			}
+			agentCfg.ExplainMode = s
 		}
 	}
 	// promptSource: a nested {owner,repo,path,ref} object (or explicit null to

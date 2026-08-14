@@ -3674,9 +3674,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// Append an action-forcing block here — where the effective backend is
 	// knowable — instead of editing the kick templates, which are shared
 	// with commercial CLI backends that do not need it.
-	if IsInferenceBackend(effectiveBackend(agent)) {
-		message += "\n\n" + inferenceKickActionSuffix
-	}
+	message = kickMessageWithSuffixes(message,
+		IsInferenceBackend(effectiveBackend(agent)),
+		resolveExplainMode(agent.Config))
 
 	// Send message in chunks (400 rune max per chunk, rune-safe)
 	runes := []rune(message)
@@ -4275,6 +4275,100 @@ const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
 	"this session. Do not describe steps for someone else, do not summarize " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."
+
+// explainKickSuffixBrief and explainKickSuffixFull are appended to a kick when
+// the agent's resolved explain mode is brief/full (#3887).
+//
+// The terseness instruction they sit next to has a real rationale — agents told
+// to explain themselves narrate INSTEAD of acting, which is why every policy
+// carries "Output Rules — Terse Mode" and why inferenceKickActionSuffix exists
+// at all. Relaxing that outright would trade one debugging problem for a worse
+// one, so these blocks are written to preserve it:
+//
+//   - Acting first is restated as the hard requirement, and an explanation with
+//     no tool call is named as a failure, so the block cannot be read as
+//     permission to reply with prose. This matters most on the inference
+//     backends, where both suffixes are present.
+//   - Explanation is confined to lines carrying config.ExplainLinePrefix, so it
+//     is separable from the agent's real output at read time instead of being
+//     interleaved into it (see handleAgentFullLog's explain filter).
+//   - Terse mode is suspended ONLY on those prefixed lines. Compressing the
+//     explanation to caveman-speak would defeat the point of asking for it,
+//     while leaving terse mode in force everywhere else keeps the agent's
+//     actual output — logs, bead titles, PR bodies — exactly as it was.
+//
+// Appended per-kick rather than baked into the policy files because the option
+// is per-agent and toggleable at runtime; editing prompts would make it a
+// fleet-wide, redeploy-gated behavior change, which the issue explicitly did
+// not want.
+const explainKickSuffixBrief = "EXPLAIN MODE (brief) — DEBUGGING AID, NOT A LICENCE TO NARRATE: " +
+	"Do the work exactly as you otherwise would; tool execution is still the " +
+	"requirement and a response that only explains is a failure. In addition, " +
+	"before each tool call emit ONE line starting with " + config.ExplainLinePrefix +
+	" giving your reason for that specific call (what you expect it to show or " +
+	"change). Keep every other line unchanged. Terse-mode output rules are " +
+	"suspended on " + config.ExplainLinePrefix + " lines only — write those in " +
+	"plain, complete sentences so a human debugging you can read them."
+
+const explainKickSuffixFull = explainKickSuffixBrief +
+	" Additionally, when the work for this kick is finished, emit a closing " +
+	"block of " + config.ExplainLinePrefix + " lines covering: the goal as you " +
+	"understood it, the approach you chose, the alternatives you considered and " +
+	"why you rejected them, and what evidence would have changed your decision. " +
+	"This block comes AFTER the work, never instead of it."
+
+// kickMessageWithSuffixes composes the message actually typed into an agent's
+// CLI from the caller's kick text plus the backend/mode-dependent suffixes.
+//
+// Split out of deliverKickLocked so the composition — in particular the ORDER
+// of the two suffixes — is testable without a tmux session. On an inference
+// backend both apply, and the action-forcing block must be read first: the
+// explain block then reads as a qualification of "execute, do not narrate"
+// rather than as a later instruction overriding it.
+func kickMessageWithSuffixes(message string, isInference bool, explainMode string) string {
+	if isInference {
+		message += "\n\n" + inferenceKickActionSuffix
+	}
+	if suffix := explainKickSuffix(explainMode); suffix != "" {
+		message += "\n\n" + suffix
+	}
+	return message
+}
+
+// explainKickSuffix returns the kick suffix for a resolved explain mode, or ""
+// when explanation is off. Modes are resolved by resolveExplainMode, so an
+// unknown value here is treated as off rather than defaulted to a mode.
+func explainKickSuffix(mode string) string {
+	switch mode {
+	case config.ExplainModeBrief:
+		return explainKickSuffixBrief
+	case config.ExplainModeFull:
+		return explainKickSuffixFull
+	default:
+		return ""
+	}
+}
+
+// resolveExplainMode returns the explain mode in force for an agent.
+//
+// Precedence, and the tri-state is the point: an explicit per-agent value —
+// INCLUDING "off" — always wins, so an operator who turned explanation on
+// fleet-wide via HIVE_EXPLAIN_MODE does not force it onto an agent that opted
+// out. Only an unset agent inherits the hive default. An invalid value in
+// either place resolves to off, so a typo degrades to today's behavior rather
+// than to an unexpected mode.
+func resolveExplainMode(cfg config.AgentConfig) string {
+	mode := cfg.ExplainMode
+	if mode == "" {
+		mode = strings.TrimSpace(os.Getenv(config.ExplainModeEnvVar))
+	}
+	switch mode {
+	case config.ExplainModeBrief, config.ExplainModeFull:
+		return mode
+	default:
+		return config.ExplainModeOff
+	}
+}
 
 const (
 	// inferenceKickStallTimeout is how long after a kick an unchanged, idle
@@ -6492,6 +6586,12 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if agent.Config.CavemanMode != "" {
 		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
 	}
+	// Export the RESOLVED explain mode, not the raw config value, so an agent's
+	// skills and helper scripts see the same answer the kick suffix acted on
+	// (including inheritance from the hive-wide default and the off fallback for
+	// an invalid value). Always exported, off included, so a script can branch on
+	// it without having to re-derive the precedence rules itself.
+	vars = append(vars, agentEnvPair{config.ExplainModeEnvVar, resolveExplainMode(agent.Config), false})
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
