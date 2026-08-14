@@ -28,6 +28,11 @@ type Finding struct {
 	Detail    string    `json:"detail,omitempty"`
 	File      string    `json:"file,omitempty"`
 	Line      int       `json:"line,omitempty"`
+	// DuplicateCount is how many ADDITIONAL reports of the same finding were
+	// collapsed into this one by collapseNearDuplicates (0 = reported once).
+	// It is rendered as "(reported N×)" so a recurring problem still reads as
+	// recurring — the count is signal, and collapsing must not destroy it.
+	DuplicateCount int `json:"duplicate_count,omitempty"`
 	// PathStale is set by VerifyFindingPaths when File names a repo file path
 	// that does NOT exist at the digest's analyzed snapshot (Digest.AnalyzedSnapshot).
 	// Such a finding was generated against a different/older tree than the one
@@ -151,11 +156,19 @@ func BuildDigest(findings []Finding, mode string) *Digest {
 	for _, f := range findings {
 		byAgent[f.Agent] = append(byAgent[f.Agent], f)
 	}
+	// Collapse restatements of the same finding (#2364). TotalCount must be
+	// derived from what SURVIVES, not from the input, or the header count
+	// disagrees with the list beneath it.
+	total := 0
+	for agent, fs := range byAgent {
+		byAgent[agent] = collapseNearDuplicates(fs)
+		total += len(byAgent[agent])
+	}
 	return &Digest{
 		GeneratedAt: time.Now(),
 		Mode:        mode,
 		ByAgent:     byAgent,
-		TotalCount:  len(findings),
+		TotalCount:  total,
 	}
 }
 
@@ -172,6 +185,157 @@ func isAdvisoryBeadType(t beads.BeadType) bool {
 }
 
 const recentlyResolvedWindow = 48 * time.Hour
+
+// nearDuplicateThreshold is the Jaccard similarity at or above which two
+// findings from the SAME agent with the SAME finding type are treated as the
+// same finding reported twice (#2364).
+//
+// Exact-title dedup alone does not hold: an agent re-reporting a persistent
+// problem rewords the title each cycle, so the digest accumulates one entry per
+// report. Measured on the live digest of 2026-08-14 (92 findings in the pinned
+// comment of #2364), 29 were the same broken pr-verifier workflow under 29
+// different titles — 32% of the digest, all describing one already-fixed
+// problem, crowding out real findings.
+//
+// 0.5 is chosen for SAFETY MARGIN, not for maximum compression. Sweeping that
+// corpus, merges of genuinely different subjects last appear at 0.30 (a
+// "v2 Tests: N consecutive failures" summary absorbing a specific
+// "TestAlertAcksPersistRoundTrip regression"); 0.35 and above produce none.
+// At 0.5 the corpus goes 92 -> 56 findings and the pr-verifier pile 29 -> 4,
+// with a 0.20 margin over the observed boundary.
+//
+// The asymmetry is deliberate: a duplicate wastes a reader's attention, a
+// wrongly-merged finding HIDES a real defect. So the threshold errs toward
+// showing the duplicate, and is not tuned for the largest possible reduction.
+const nearDuplicateThreshold = 0.5
+
+// duplicateStopWords are words carrying no subject information in a finding
+// title. They are dropped before similarity is computed so that shared
+// boilerplate ("failing on every PR") cannot by itself make two findings look
+// alike.
+var duplicateStopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "of": true, "on": true, "in": true,
+	"to": true, "for": true, "is": true, "are": true, "was": true, "were": true,
+	"and": true, "or": true, "but": true, "with": true, "by": true, "from": true,
+	"at": true, "as": true, "it": true, "its": true, "this": true, "that": true,
+	"not": true, "no": true, "failing": true, "fails": true, "failed": true,
+	"failure": true, "every": true, "all": true,
+}
+
+var (
+	dupBacktickRe = regexp.MustCompile("`[^`]*`")
+	dupMDLinkRe   = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
+	// Split on every non-letter, which breaks paths and qualified names into
+	// their parts: "kubestellar/infra" -> {kubestellar, infra} and
+	// "pr-verifier.yml" -> {verifier, yml}. Keeping them whole made
+	// "…missing from kubestellar/infra" and "…deleted from infra" share no
+	// token for the thing they are both about, and the two failed to merge.
+	// Sub-word splitting measured strictly better on the #2364 corpus: more
+	// collapse AND zero cross-subject merges at every threshold tried.
+	dupTokenRe = regexp.MustCompile(`[^a-z]+`)
+)
+
+// findingTokens reduces a finding title to the set of words that carry its
+// subject, for near-duplicate comparison.
+//
+// Digits disappear with every other non-letter, which is deliberate: the titles
+// that motivated this differ almost entirely in their numbers ("19 consecutive
+// failures", "2,943 runs", "100%") — exactly the parts that change on every
+// re-report of one problem and must not make those reports look distinct.
+func findingTokens(title string) map[string]bool {
+	t := dupBacktickRe.ReplaceAllString(title, " ")
+	t = dupMDLinkRe.ReplaceAllString(t, " ")
+	t = strings.ToLower(t)
+	tokens := make(map[string]bool)
+	for _, w := range dupTokenRe.Split(t, -1) {
+		// Two-letter words are dropped with the stop words: they are almost all
+		// noise here ("pr", "yml" survives at three) and short tokens inflate
+		// similarity between unrelated titles.
+		if len(w) <= 2 || duplicateStopWords[w] {
+			continue
+		}
+		tokens[w] = true
+	}
+	return tokens
+}
+
+// jaccard returns |a∩b| / |a∪b| for two token sets; 0 when either is empty.
+func jaccard(a, b map[string]bool) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	inter := 0
+	for w := range a {
+		if b[w] {
+			inter++
+		}
+	}
+	union := len(a) + len(b) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+// collapseNearDuplicates merges findings that restate the same problem,
+// returning one representative per group in the input's original order.
+//
+// Two findings are merged only when they share an agent AND a finding type AND
+// their titles reach nearDuplicateThreshold similarity. Requiring agent+type to
+// match is the cheap structural guard: a scanner security finding can never be
+// absorbed into a ci-maintainer CI failure however the words line up.
+//
+// The representative keeps the HIGHEST severity in its group, so a critical
+// report is never hidden behind a medium-severity restatement of itself, and
+// carries DuplicateCount so the recurrence stays visible.
+func collapseNearDuplicates(findings []Finding) []Finding {
+	if len(findings) < 2 {
+		return findings
+	}
+	kept := make([]Finding, 0, len(findings))
+	keptTokens := make([]map[string]bool, 0, len(findings))
+
+	for _, f := range findings {
+		tokens := findingTokens(f.Title)
+		merged := false
+		for i := range kept {
+			if kept[i].Agent != f.Agent || kept[i].Type != f.Type {
+				continue
+			}
+			if jaccard(tokens, keptTokens[i]) < nearDuplicateThreshold {
+				continue
+			}
+			kept[i].DuplicateCount++
+			if severityRank(f.Severity) > severityRank(kept[i].Severity) {
+				kept[i].Severity = f.Severity
+			}
+			merged = true
+			break
+		}
+		if !merged {
+			kept = append(kept, f)
+			keptTokens = append(keptTokens, tokens)
+		}
+	}
+	return kept
+}
+
+// severityRank orders severities so the most serious wins a merge. Unknown and
+// empty severities rank lowest, so they can never displace a real one.
+func severityRank(sev string) int {
+	switch sev {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
 
 // BuildDigestFromBeads creates a digest by reading open advisory beads from all
 // agent bead stores. Only advisory/bug/feature beads are included — task and
@@ -233,6 +397,14 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 			byAgent[agentName] = append(byAgent[agentName], f)
 			total++
 		}
+	}
+	// Collapse near-duplicate findings per agent (#2364). Done after the whole
+	// store is read so every restatement is in hand, and the total recomputed
+	// from the survivors so the digest header matches the rendered list.
+	total = 0
+	for agent, fs := range byAgent {
+		byAgent[agent] = collapseNearDuplicates(fs)
+		total += len(byAgent[agent])
 	}
 	sort.Slice(resolved, func(i, j int) bool {
 		return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
@@ -533,7 +705,14 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 			}
 			title := logscrub.ScrubString(f.Title)
 			detail := logscrub.ScrubString(f.Detail)
-			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, linkifyRefs(title, org), loc, f.Agent))
+			// A collapsed group keeps its recurrence visible: "reported 29×"
+			// tells the reader this is persistent, which the 29 separate
+			// entries it replaces conveyed only by being exhausting to read.
+			repeat := ""
+			if f.DuplicateCount > 0 {
+				repeat = fmt.Sprintf(" _(reported %d×)_", f.DuplicateCount+1)
+			}
+			b.WriteString(fmt.Sprintf("- **[%s]** %s%s%s _%s_\n", f.Type, linkifyRefs(title, org), loc, repeat, f.Agent))
 			if detail != "" {
 				b.WriteString(fmt.Sprintf("  > %s\n", linkifyRefs(detail, org)))
 			}
