@@ -50,13 +50,26 @@ func TestPullOnlyClusterRegisters(t *testing.T) {
 func TestRemoteClusterWithoutKubeconfigStillDropped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clusters.json")
-	body := `[{"id":"oops","name":"typo","domain":"x.example"}]`
+	// The bad entry sits beside a GOOD one deliberately. Audit 8 §6 item 11 made
+	// a registry in which NOTHING survives validation a fail-closed refusal, so
+	// a fixture holding only the bad entry would now exercise the refusal path
+	// rather than the drop this test is about. Pairing them keeps the subject
+	// the drop, and makes it observable against a surviving entry.
+	body := `[
+		{"id":"oops","name":"typo","domain":"x.example"},
+		{"id":"good","name":"good","domain":"g.example","in_cluster":true}
+	]`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, ok := loadClusterConfigsFrom(t, path)["oops"]; ok {
+	clusters := loadClusterConfigsFrom(t, path)
+	if _, ok := clusters["oops"]; ok {
 		t.Error("a remote cluster with no kubeconfig_path and no pull_only must still be dropped")
+	}
+	// Positive control: the drop is selective, not a wholesale rejection.
+	if _, ok := clusters["good"]; !ok {
+		t.Error("the valid sibling entry was dropped too; validation rejected more than it should")
 	}
 }
 
