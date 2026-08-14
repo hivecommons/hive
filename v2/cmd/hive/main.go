@@ -3111,6 +3111,20 @@ func main() {
 		// fixed interval comfortably under that 5-min threshold so every hive,
 		// regardless of ACMM level, stays fresh on the hub.
 		const heartbeatSendInterval = 2 * time.Minute
+		// Publish the collect-independent identity BEFORE the loop starts, so
+		// this spoke can report liveness even if its very first collects time
+		// out. collect() below reaches api.github.com (owner-token validation,
+		// and it shares the pass that enumerates issues/PRs for MTTR), which on
+		// a hive with real repos routinely exceeds the collect budget right
+		// after a restart. Without this, such a spoke sent NOTHING and read
+		// OFFLINE on the hub while being perfectly healthy.
+		hub.PublishHeartbeatIdentity(
+			cfg.HiveID,
+			cfg.Project.Org,
+			reporterName,
+			processStartedAt.UTC().Format(time.RFC3339),
+			gitShort,
+		)
 		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
 			if !cfg.Hub.Enabled {
 				return nil

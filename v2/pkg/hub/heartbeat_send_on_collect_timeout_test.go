@@ -150,17 +150,35 @@ func TestSendHeartbeat_TimedOutCollectStillAdvancesAttempt(t *testing.T) {
 	}
 }
 
-// TestSendHeartbeat_FirstBeatTimeoutWithNoCacheSkips proves the one case that
-// still skips: a collect() that times out before ANY collect has ever
-// succeeded has no cached identity to send, so it skips the beat (but the loop
-// still ticks — attempt advanced, no success).
-func TestSendHeartbeat_FirstBeatTimeoutWithNoCacheSkips(t *testing.T) {
+// TestSendHeartbeat_FirstBeatTimeoutWithNoCacheStillReportsLiveness is the
+// INVERSION of the former TestSendHeartbeat_FirstBeatTimeoutWithNoCacheSkips.
+//
+// WHY IT WAS INVERTED, NOT RELAXED: that test asserted `posts == 0` — it
+// ENCODED the outage. Skipping the beat is exactly what made healthy spokes
+// read OFFLINE: collect() reaches api.github.com, and on a hive with real repos
+// the issue/PR/MTTR enumeration exceeds the collect budget on every early cycle
+// after a restart, so a just-restarted spoke had no cache, POSTed nothing, and
+// went offline while being perfectly alive. Placeholder hives (nothing to
+// enumerate) recovered instantly, which is the fingerprint of a GitHub-coupled
+// liveness path.
+//
+// The corrected contract: with an identity published, a spoke that has NEVER
+// completed a collect MUST still report liveness — identity only, no stats,
+// marked StatsStale.
+func TestSendHeartbeat_FirstBeatTimeoutWithNoCacheStillReportsLiveness(t *testing.T) {
 	t.Cleanup(ResetHeartbeatStateForTest)
 	ResetHeartbeatStateForTest()
 
+	// Identity is known (published at startup) but NO collect has ever run.
+	PublishHeartbeatIdentity("fresh-hive", "org", "pod-1", "2026-01-01T00:00:00Z", "abc1234")
+
 	var posts atomic.Int32
+	got := make(chan HeartbeatPayload, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		posts.Add(1)
+		var p HeartbeatPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		got <- p
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -182,15 +200,109 @@ func TestSendHeartbeat_FirstBeatTimeoutWithNoCacheSkips(t *testing.T) {
 		t.Fatal("sendHeartbeat did not return on a first-beat wedged collect — the loop would freeze")
 	}
 
-	if got := posts.Load(); got != 0 {
-		t.Fatalf("first-beat timeout with no cache should POST nothing, got %d POSTs", got)
+	if n := posts.Load(); n != 1 {
+		t.Fatalf("first-beat timeout with no cache POSTed %d beats, want 1 — a healthy spoke that cannot reach GitHub must still report liveness or the hub marks it OFFLINE", n)
+	}
+	p := <-got
+	if p.HiveID != "fresh-hive" {
+		t.Errorf("minimal beat carried hive_id %q, want fresh-hive — the hub could not attribute the beat", p.HiveID)
+	}
+	if !p.StatsStale {
+		t.Error("minimal beat was not marked StatsStale — the hub would treat absent stats as freshly-observed zeros")
 	}
 	att, ok := LastHeartbeatAttempt()
 	if !ok || att.Before(before) {
-		t.Errorf("LastHeartbeatAttempt() = (%v, %v), want a fresh attempt even on a skipped first beat", att, ok)
+		t.Errorf("LastHeartbeatAttempt() = (%v, %v), want a fresh attempt", att, ok)
+	}
+	// The beat WAS delivered, so success must advance — this is what keeps the
+	// hub's lastHeartbeat moving and the hive online.
+	suc, ok := LastHeartbeatSuccess()
+	if !ok || suc.Before(before) {
+		t.Errorf("LastHeartbeatSuccess() = (%v, %v), want a fresh success — the minimal beat was accepted by the hub", suc, ok)
+	}
+}
+
+// TestSendHeartbeat_NoCacheAndNoIdentityStillSkips is the NEGATIVE control for
+// the test above. The minimal-beat path must not invent a beat out of nothing:
+// with no cache AND no published identity there is no hive the beat could be
+// attributed to, so skipping remains correct. Without this control, the
+// inverted test above could be satisfied by unconditionally POSTing garbage.
+func TestSendHeartbeat_NoCacheAndNoIdentityStillSkips(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest() // clears identity too
+
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	done := make(chan struct{})
+	go func() {
+		sendHeartbeat(context.Background(), server.URL, blockUntilClosed(release, &HeartbeatPayload{HiveID: "late"}), nil2Logger())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(heartbeatTimeout + 5*time.Second):
+		t.Fatal("sendHeartbeat did not return on a wedged collect — the loop would freeze")
+	}
+
+	if n := posts.Load(); n != 0 {
+		t.Fatalf("with no cache and no identity, sendHeartbeat POSTed %d beats, want 0 — a beat with no hive_id cannot be attributed", n)
 	}
 	if _, ok := LastHeartbeatSuccess(); ok {
-		t.Error("LastHeartbeatSuccess() ok = true, want false: the first beat was skipped, nothing was delivered")
+		t.Error("LastHeartbeatSuccess() ok = true, want false: nothing was delivered")
+	}
+}
+
+// TestSendHeartbeat_CachedPayloadPreferredOverMinimal proves the pre-existing
+// behaviour did NOT regress: when a last-good cache EXISTS, a timed-out beat
+// must still send the cached STATS, not the stats-less minimal beat. The
+// minimal beat is strictly a last resort.
+func TestSendHeartbeat_CachedPayloadPreferredOverMinimal(t *testing.T) {
+	t.Cleanup(ResetHeartbeatStateForTest)
+	ResetHeartbeatStateForTest()
+
+	PublishHeartbeatIdentity("hive", "org", "pod-1", "2026-01-01T00:00:00Z", "abc1234")
+
+	got := make(chan HeartbeatPayload, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p HeartbeatPayload
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		got <- p
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+
+	// One good collect with real stats populates the cache.
+	sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{
+			HiveID:      "hive",
+			Org:         "org",
+			PrimaryRepo: "repo",
+			Agents:      []AgentSummary{{Name: "scanner", State: "running"}},
+		}
+	}, nil2Logger())
+	<-got
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	sendHeartbeat(ctx, server.URL, blockUntilClosed(release, &HeartbeatPayload{HiveID: "late"}), nil2Logger())
+
+	p := <-got
+	if len(p.Agents) != 1 || p.Agents[0].Name != "scanner" {
+		t.Fatalf("timed-out beat carried Agents=%v, want the CACHED stats (scanner) — the minimal beat must not displace a usable cache", p.Agents)
+	}
+	if !p.StatsStale {
+		t.Error("cached beat was not marked StatsStale")
 	}
 }
 
