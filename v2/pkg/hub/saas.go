@@ -10611,6 +10611,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var HIVE_GROUP_OWNER = 'owner';
     var HIVE_GROUP_ACMM = 'acmm';
     var HIVE_GROUP_BRANCH = 'branch';
+    var HIVE_GROUP_UPGRADE_STATE = 'upgradeState';
 
     /* Label shown for a hive whose grouping field is empty/unreported. Kept as
        one constant so every dimension buckets blanks identically. */
@@ -10683,8 +10684,54 @@ const dashboardHTML = `<!DOCTYPE html>
         var na = _acmmGroupOrder(a), nb = _acmmGroupOrder(b);
         return na - nb;
       }},
-      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }}
+      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }},
+      {key: HIVE_GROUP_UPGRADE_STATE, label: 'Upgrade state', of: function(h) {
+        /* Reuse hiveUpgradeState(h) — the SAME predicate the row's Upgrading
+           pill and the upgrade-state filter facet use (it routes through
+           hiveIsUpgradingNow) — so the group a hive lands in can never disagree
+           with the badge the operator already sees. Do NOT re-derive the states
+           here or the grouping would drift from the pill.
+
+           hiveUpgradeState returns:
+             'upgrading' — a rollout is in flight (h.upgrading / armed target /
+                           branch switch / just-clicked sentinel).
+             'queued'    — behind latest, auto-upgrade ON, hub has not instructed
+                           the rollout yet (ready, not yet triggered). This is
+                           the operator's target bucket.
+             ''          — neither: up to date, or behind with auto-upgrade off
+                           and no pending action.
+           Map each to a human-readable header. '' is rendered as its own
+           "Up to date" group rather than falling through to Unspecified, since
+           for this dimension "no pending upgrade" is a meaningful, expected
+           bucket rather than missing data. */
+        var st = hiveUpgradeState(h);
+        if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
+        if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
+        return HIVE_UPGRADE_GROUP_UPTODATE;
+      }, sort: function(a, b) {
+        /* Queued first — it is why this dimension exists (systems READY for an
+           upgrade that have not triggered) — then Upgrading (in flight), then
+           Up to date. Any unexpected label sorts last. */
+        return _upgradeGroupOrder(a) - _upgradeGroupOrder(b);
+      }}
     ];
+
+    /* Header labels for the Upgrade-state dimension. Named constants so the
+       of() grouper and the sort comparator can never drift on a string typo. */
+    var HIVE_UPGRADE_GROUP_QUEUED = 'Queued (ready, not yet upgrading)';
+    var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
+    var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
+
+    /* Sort weight for an upgrade-state group header. Queued (the actionable
+       "ready but not triggered" bucket) sorts first, then Upgrading, then Up to
+       date; anything else sorts last. */
+    var UPGRADE_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
+    function _upgradeGroupOrder(label) {
+      if (label === HIVE_UPGRADE_GROUP_QUEUED) return 0;
+      if (label === HIVE_UPGRADE_GROUP_UPGRADING) return 1;
+      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 2;
+      return UPGRADE_GROUP_UNKNOWN_ORDER;
+    }
 
     /* Sort weight for an ACMM group label. "Level N" → N; anything else (the
        Unspecified bucket) sorts after every real level. */
