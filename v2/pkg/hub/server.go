@@ -902,7 +902,15 @@ type HubServer struct {
 	// the long note on PerHiveEnvSnapshot) so a paused spoke cannot drop out of
 	// the denominator and make the fleet read converged while it is not.
 	perHiveEnvSeen map[string]perHiveEnvObservation
-	perHiveEnvMu   sync.RWMutex
+	// perHiveEnvConsidered / perHiveEnvSkippedByStatus record the LAST sweep's
+	// hive-selection split: how many hives the status filter admitted versus
+	// rejected. Published on the readiness surface so "the sweep is selecting
+	// nobody" is visible rather than silent — the failure this lane shipped
+	// with, where every downstream counter sat at zero and read exactly like a
+	// converged fleet. Guarded by perHiveEnvMu with perHiveEnvSeen.
+	perHiveEnvConsidered      int
+	perHiveEnvSkippedByStatus int
+	perHiveEnvMu              sync.RWMutex
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on

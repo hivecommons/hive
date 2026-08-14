@@ -524,3 +524,155 @@ func hasString(hay []string, needle string) bool {
 	}
 	return false
 }
+
+// realRegistryStatuses are the hive lifecycle statuses that actually occur,
+// with the LIVE distribution measured across all 66 /data/saas/hives/*/meta.json
+// records on the production hub at the time this test was written:
+//
+//	30 "available"   28 ""   8 "assigned"   0 "running"
+//
+// The zero is the whole point. The sweep originally guarded on
+// `h.Status != "running"`, so it selected no hive on any cycle and had never
+// patched a spoke in production. These fixtures are stated as real data, not
+// invented values, so that a future change to the status vocabulary that
+// invalidates them is a test failure rather than a silent regression.
+var realRegistryStatuses = []struct {
+	status string
+	live   int
+	want   bool
+	why    string
+}{
+	{"", 28, true, "the common steady state: provisioned, deployed, no status ever written"},
+	{"available", 30, true, "unclaimed placeholder; deployed, and must hold correct keys BEFORE it is claimed"},
+	{"assigned", 8, true, "claimed and deployed"},
+	{"running", 0, true, "never observed live, but the pre-existing intent must still select"},
+	{"error", 0, true, "status is often stale and the Deployment usually still exists; drift may be the CAUSE"},
+	{"provisioning", 0, false, "namespace/Deployment still being applied; the template renders all five vars at creation"},
+}
+
+// TestPerHiveEnvSweepEligibleOverRealStatuses pins the sweep's hive-selection
+// predicate against the REAL status vocabulary. This is the test layer that was
+// missing: the original suite exercised desiredPerHiveEnv, perHiveEnvDrift,
+// perHiveEnvPatchJSON and the rate limiter directly, but nothing covered the
+// filter that decides which hives reach any of them — so a filter matching
+// NOTHING left every one of those tests green.
+func TestPerHiveEnvSweepEligibleOverRealStatuses(t *testing.T) {
+	for _, tc := range realRegistryStatuses {
+		if got := perHiveEnvSweepEligible(tc.status); got != tc.want {
+			t.Errorf("perHiveEnvSweepEligible(%q) = %v, want %v — %s", tc.status, got, tc.want, tc.why)
+		}
+	}
+}
+
+// TestPerHiveEnvSweepSelectsTheLiveFleet replays the predicate over a fixture
+// with the exact live status distribution and asserts the sweep would examine
+// the whole 66-hive fleet.
+//
+// POSITIVE CONTROL, BOTH DIRECTIONS. The bug being fixed is "selects nothing",
+// so a test that can only fail when the predicate becomes too permissive is
+// insufficient — and the converse is equally true. This asserts a exact
+// selected count, which is the only assertion that fails in BOTH directions:
+//
+//   - Neuter the predicate to `return false` (the shipped bug, and the
+//     `!= "running"` guard is behaviourally identical against this fixture):
+//     selected becomes 0, and the count assertion fails.
+//   - Neuter it to `return true` (select everything unconditionally):
+//     selected becomes 66, "provisioning" is no longer excluded, and both the
+//     count assertion and the explicit skipped-bucket assertion fail.
+//
+// Neither direction can be satisfied by a predicate that ignores its argument.
+func TestPerHiveEnvSweepSelectsTheLiveFleet(t *testing.T) {
+	// The live registry: 66 hives, none "running".
+	type hive struct{ id, status string }
+	var fleet []hive
+	for _, tc := range realRegistryStatuses {
+		for i := 0; i < tc.live; i++ {
+			fleet = append(fleet, hive{id: "hosted-" + tc.status + itoa(i), status: tc.status})
+		}
+	}
+	// Add one hive in each status that has no live instances today, so the
+	// predicate is exercised over the full vocabulary rather than only the
+	// three statuses that happen to be populated right now.
+	for _, tc := range realRegistryStatuses {
+		if tc.live == 0 {
+			fleet = append(fleet, hive{id: "hosted-synth-" + tc.status, status: tc.status})
+		}
+	}
+
+	const liveFleetSize = 66 // 30 available + 28 "" + 8 assigned
+	if got := len(fleet) - 3; got != liveFleetSize {
+		t.Fatalf("fixture models %d live hives, want %d — update the measured distribution", got, liveFleetSize)
+	}
+
+	var selected, skipped int
+	var selectedProvisioning int
+	for _, h := range fleet {
+		if !perHiveEnvSweepEligible(h.status) {
+			skipped++
+			continue
+		}
+		selected++
+		if h.status == "provisioning" {
+			selectedProvisioning++
+		}
+	}
+
+	// Direction 1 — the shipped bug. A predicate that selects nobody (or that
+	// keys off "running", which no live hive has) drives this to 0.
+	if selected == 0 {
+		t.Fatal("sweep selected NO hives from a 66-hive fleet — this is the production bug: " +
+			"the lane runs every cycle and patches nothing, and drifted spokes never converge")
+	}
+	// The 66 live hives + the synthetic "running" and "error" rows are all
+	// eligible; only the synthetic "provisioning" row is not.
+	const wantSelected = liveFleetSize + 2
+	if selected != wantSelected {
+		t.Errorf("selected %d hives, want %d", selected, wantSelected)
+	}
+	// Direction 2 — over-selection. `return true` makes this 0 and trips here.
+	if skipped != 1 {
+		t.Errorf("skipped %d hives, want exactly 1 (the provisioning row) — "+
+			"a predicate that selects everything unconditionally skips 0", skipped)
+	}
+	if selectedProvisioning != 0 {
+		t.Error("a hive still provisioning was selected; its Deployment may not exist yet")
+	}
+
+	// The four spokes measured as drifted on the live fleet sit in "" and
+	// "available". If either status were excluded, the spokes this lane exists
+	// to repair would still never converge. Assert that explicitly rather than
+	// relying on the aggregate count.
+	for _, s := range []string{"", "available"} {
+		if !perHiveEnvSweepEligible(s) {
+			t.Errorf("status %q is not selected, but known-drifted production spokes carry it", s)
+		}
+	}
+}
+
+// TestPerHiveEnvSweepEligibleRejectsTheOldGuard is the regression replay,
+// pinned as a permanent test. It reconstructs the exact predicate that shipped
+// and asserts it selects nothing over the real distribution — so if anyone
+// reintroduces a "running"-based filter, the reasoning is already written down
+// next to the failure.
+func TestPerHiveEnvSweepEligibleRejectsTheOldGuard(t *testing.T) {
+	oldGuard := func(status string) bool { return status == "running" }
+
+	var oldSelected, newSelected int
+	for _, tc := range realRegistryStatuses {
+		if oldGuard(tc.status) {
+			oldSelected += tc.live
+		}
+		if perHiveEnvSweepEligible(tc.status) {
+			newSelected += tc.live
+		}
+	}
+	if oldSelected != 0 {
+		t.Fatalf("fixture no longer reproduces the bug: old guard selected %d hives, expected 0", oldSelected)
+	}
+	if newSelected == 0 {
+		t.Fatal("fixed predicate ALSO selects nothing — the bug is not fixed")
+	}
+	if newSelected != 66 {
+		t.Errorf("fixed predicate selects %d of 66 live hives, want all 66", newSelected)
+	}
+}

@@ -252,6 +252,56 @@ func perHiveEnvPatchAllowed(patchedThisCycle int) bool {
 	return patchedThisCycle < perHiveEnvMaxPatchesPerCycle
 }
 
+// perHiveEnvSweepEligible reports whether a hive with this lifecycle status
+// should be examined by the sweep. Extracted as a named predicate — the same
+// shape as perHiveEnvPatchAllowed — so the selection rule is a single testable
+// decision the sweep and its test share, rather than an inline comparison a
+// test could only re-implement (and therefore keep passing after the sweep's
+// own check broke).
+//
+// WHY THIS EXISTS. The original guard was `h.Status != "running"`, copied from
+// reconcileNetAdmin. It selected NOTHING: across the live 66-hive registry the
+// status distribution is 30 "available", 28 "", 8 "assigned" — zero "running".
+// The two code paths that do write "running" (the provision watcher in
+// saas_provision.go, and the stale-"error" clear on heartbeat in server.go)
+// only fire from the transient "provisioning"/"error" states, so a hive in
+// steady state never reaches or holds it. The sweep therefore `continue`d on
+// every hive of every cycle and had never patched a spoke; the fleet's key
+// posture was still held in place by the out-of-band `kubectl patch` this lane
+// exists to replace, and the four known-drifted spokes never converged.
+//
+// WHAT IT SHOULD HAVE EXPRESSED. Not "is running" but "is deployed" — does
+// this hive plausibly have a hive Deployment to reconcile? The sibling sweeps
+// over the same listSaaSHives() (triggerAutoUpgrades, sweepOrphanedUpgrades,
+// sweepStuckAssignments) apply NO status filter at all and gate instead on the
+// resources they actually need. This predicate follows that convention, only
+// naming the one status that is genuinely premature.
+//
+//   - "" (28 live) — the common steady state; a provisioned hive that has
+//     simply never had a status written. Must be swept: two of the four
+//     drifted spokes sit here.
+//   - "available" (30 live) — an unclaimed pre-provisioned placeholder. It is
+//     genuinely deployed, its Deployment is live, and it must carry correct
+//     per-hive keys BEFORE it is claimed — a placeholder that is assigned to a
+//     user while running on master-derived fallbacks hands that user a spoke
+//     with fleet-shared keys, exactly what N1/N3 removed.
+//   - "assigned" (8 live) — claimed and deployed. Obviously swept.
+//   - "running" — kept so the pre-existing intent still selects, not because
+//     anything reaches it.
+//   - "error" — SWEPT. The status is frequently stale (only a heartbeat clears
+//     it), the Deployment usually still exists, and an unconverged key is a
+//     plausible CAUSE of the error rather than a reason to leave it drifted.
+//
+// Only "provisioning" is excluded: the namespace and Deployment are still
+// being applied, so a read would fail anyway and the provisioning template
+// renders all five vars correctly at creation. This is a cheap-cycle
+// optimisation, not a safety gate — the sweep already handles a missing
+// Deployment safely (a failed `kubectl get` logs Debug and continues WITHOUT
+// recording an observation, so an unread hive can never count as converged).
+func perHiveEnvSweepEligible(status string) bool {
+	return strings.TrimSpace(status) != "provisioning"
+}
+
 // perHiveEnvObservation is one hive's live posture, recorded by the sweep from
 // its OWN Deployment read. See perHiveEnvSnapshot for why this is not sourced
 // from heartbeat recency.
@@ -313,6 +363,15 @@ type PerHiveEnvStatus struct {
 	// none is missing a var. Fails CLOSED on zero observations: "no evidence"
 	// must never read as "safe to proceed".
 	PerHiveEnvConverged bool `json:"per_hive_env_converged"`
+	// ConsideredHives is how many hives the LAST sweep's status filter
+	// admitted, and SkippedByStatus how many it rejected. These make the
+	// sweep's own selection auditable: ConsideredHives == 0 on a non-empty
+	// fleet means the sweep is patching nobody regardless of how healthy the
+	// counts above look. That is precisely the state this lane shipped in —
+	// the filter matched no hive, so ObservedHives stayed 0 and the surface
+	// was indistinguishable from "nothing to do".
+	ConsideredHives int `json:"considered_hives"`
+	SkippedByStatus int `json:"skipped_by_status"`
 }
 
 // PerHiveEnvSnapshot reports fleet convergence for the five per-hive security
@@ -342,6 +401,8 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	}
 	s.perHiveEnvMu.RLock()
 	defer s.perHiveEnvMu.RUnlock()
+	out.ConsideredHives = s.perHiveEnvConsidered
+	out.SkippedByStatus = s.perHiveEnvSkippedByStatus
 	for id, obs := range s.perHiveEnvSeen {
 		out.ObservedHives++
 		if len(obs.MissingVars) > 0 {
@@ -386,11 +447,21 @@ func (s *HubServer) reconcilePerHiveEnv() {
 	live := make(map[string]bool, len(hives))
 	patched := 0
 	deferredByRateLimit := 0
+	// Selection accounting, published to the readiness surface. A sweep that
+	// selects NOBODY is the exact failure this lane shipped with and nothing
+	// made it visible: every counter downstream of the filter stayed at zero,
+	// which is indistinguishable from a converged fleet. Recording the
+	// considered/skipped split makes "the filter matches nothing" readable
+	// instead of silent.
+	consideredHives := 0
+	skippedByStatus := 0
 
 	for _, h := range hives {
-		if h.Status != "running" {
+		if !perHiveEnvSweepEligible(h.Status) {
+			skippedByStatus++
 			continue
 		}
+		consideredHives++
 		cluster := s.clusterForHive(&h)
 		if cluster == nil {
 			continue
@@ -501,7 +572,18 @@ func (s *HubServer) reconcilePerHiveEnv() {
 			delete(s.perHiveEnvSeen, id)
 		}
 	}
+	s.perHiveEnvConsidered = consideredHives
+	s.perHiveEnvSkippedByStatus = skippedByStatus
 	s.perHiveEnvMu.Unlock()
+
+	// A sweep that admitted no hives at all is a BUG signal, not a quiet
+	// no-op: the registry is never legitimately empty on a hub that hosts
+	// spokes. Log it at Warn so the condition that made this lane dead code
+	// for its whole production life cannot recur silently.
+	if consideredHives == 0 && len(hives) > 0 {
+		s.logger.Warn("per-hive env reconcile: status filter selected NO hives — sweep is a no-op, key drift will not be repaired",
+			"hives_in_registry", len(hives), "skipped_by_status", skippedByStatus)
+	}
 
 	if deferredByRateLimit > 0 {
 		s.logger.Info("per-hive env reconcile: rate limit reached, remaining hives deferred to next cycle",
