@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -431,5 +432,177 @@ func TestContributeStatus_CarriesSurfaceAndVersion(t *testing.T) {
 	}
 	if got := w.Header().Get("X-Hive-Contribute-Protocol"); got != contributorProtocolVersion {
 		t.Errorf("expected X-Hive-Contribute-Protocol=%q, got %q", contributorProtocolVersion, got)
+	}
+}
+
+// ── #2547 DECLARE-half guard: declarations must NEVER influence selection ─────
+//
+// The accepted design split on kubestellar/hive#2547 is DECLARE only: a client
+// may describe its execution environment, and the hub records and DISPLAYS it —
+// but acting on a declaration when choosing what to assign (the ROUTE half) is
+// explicitly undecided and NOT implemented. The tests below pin that invariant
+// the same way the F14 owner-gate tests do — behaviourally (selection output is
+// identical with and without a declaration) AND at source level (the selection
+// code cannot even see the field) — because the failure mode to defend against
+// is a future change, or a sync merge, quietly wiring the self-reported posture
+// into dispatch. A declaration is unverified self-description; the moment it
+// influences assignment it becomes a value the client controls steering the
+// hub, which #2547 records as an explicit non-goal until ROUTE is decided.
+
+// richDeclaration returns a fully-populated, privileged-LOOKING capability
+// declaration. Nothing in it may buy — or cost — an assignment.
+func richDeclaration() *ContributorCapabilities {
+	return &ContributorCapabilities{
+		ContainerRuntime:     "docker",
+		OS:                   "linux",
+		Arch:                 "amd64",
+		AgentCLIVersion:      "9.9.9",
+		RelayProtocolVersion: "1.1",
+		CredentialType:       "app",
+	}
+}
+
+// TestSelectTask_DeclaredCapabilitiesDoNotAffectSelection asserts the ROUTE
+// half is genuinely unimplemented: contributors identical in every input
+// selectTask may legitimately read (tier, role, username, label interests) but
+// differing in what they declared are offered exactly the same work item, and a
+// single contributor's pick does not move when it starts declaring mid-session.
+func TestSelectTask_DeclaredCapabilitiesDoNotAffectSelection(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "repo1",
+			Full: "myorg/repo1",
+			ActionableIssues: []any{
+				map[string]any{
+					"number": float64(10),
+					"title":  "Issue A (head of scan order)",
+					"url":    "https://github.com/myorg/repo1/issues/10",
+					"author": "someone",
+				},
+				map[string]any{
+					"number": float64(20),
+					"title":  "Issue B",
+					"url":    "https://github.com/myorg/repo1/issues/20",
+					"author": "someone",
+				},
+			},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	mkConn := func(user string, caps *ContributorCapabilities) *ContributorConnection {
+		return &ContributorConnection{
+			profile:      &ContributorProfile{GitHubUsername: user, ContributorID: "c-" + user, TrustTier: "contributor"},
+			lastPong:     time.Now(),
+			capabilities: caps,
+		}
+	}
+
+	declared := hub.selectTask(mkConn("cap-rich", richDeclaration()))
+	undeclared := hub.selectTask(mkConn("cap-none", nil))
+	for name, msg := range map[string]*WSMessage{"declared": declared, "undeclared": undeclared} {
+		if msg == nil || msg.Type != "task_assign" {
+			t.Fatalf("%s: expected a task_assign, got %+v", name, msg)
+		}
+	}
+	if declared.Repo != undeclared.Repo || declared.Number != undeclared.Number {
+		t.Fatalf("declaring capabilities changed the selection: declared=%s#%d, undeclared=%s#%d",
+			declared.Repo, declared.Number, undeclared.Repo, undeclared.Number)
+	}
+
+	// Same contributor, before vs after declaring: the pick must not move. The
+	// held task is released the way the task_failed/complete handlers do (clear
+	// currentTask) WITHOUT recording a failure or completion, so the queue state
+	// seen by the second pass is identical to the first.
+	conn := mkConn("cap-flip", nil)
+	before := hub.selectTask(conn)
+	conn.mu.Lock()
+	conn.currentTask = nil
+	conn.mu.Unlock()
+	conn.capabilities = richDeclaration()
+	after := hub.selectTask(conn)
+	if before == nil || after == nil || before.Type != "task_assign" || after.Type != "task_assign" {
+		t.Fatalf("expected task_assign both times, got before=%+v, after=%+v", before, after)
+	}
+	if before.Repo != after.Repo || before.Number != after.Number {
+		t.Fatalf("declaring capabilities mid-session changed the selection: before=%s#%d, after=%s#%d",
+			before.Repo, before.Number, after.Repo, after.Number)
+	}
+}
+
+// selectionFuncBody returns the source of the named ContributeWSHub method,
+// from its func line to the first column-0 closing brace — the same extraction
+// the F14 owner-gate invariant tests use on api_contribute.go.
+func selectionFuncBody(t *testing.T, src, name string) string {
+	t.Helper()
+	i := strings.Index(src, "func (h *ContributeWSHub) "+name+"(")
+	if i < 0 {
+		t.Fatalf("%s not found in contribute_ws.go — it was renamed or removed; update this test deliberately, do not delete the case", name)
+	}
+	j := strings.Index(src[i:], "\n}\n")
+	if j < 0 {
+		t.Fatalf("could not find the end of %s", name)
+	}
+	return src[i : i+j]
+}
+
+// TestSelectionPathsDoNotReadDeclaredCapabilities is the source-level half of
+// the guard: the assignment/selection code paths must not even MENTION the
+// declared capability map. A behavioural test alone could pass while a routing
+// read hides behind config that is off in tests; a merge that wires the field
+// into selectTask trips this immediately (the exact way the F14 owner-gate
+// regression was caught).
+func TestSelectionPathsDoNotReadDeclaredCapabilities(t *testing.T) {
+	raw, err := os.ReadFile("contribute_ws.go")
+	if err != nil {
+		t.Fatalf("read contribute_ws.go: %v", err)
+	}
+	src := string(raw)
+
+	// Positive control (a): the declared-capability plumbing genuinely lives in
+	// this file, so a read inside the selection bodies below would be visible to
+	// the scan. If storage moved, re-point the test rather than deleting it.
+	if !strings.Contains(src, "capabilities *ContributorCapabilities") {
+		t.Fatal("contribute_ws.go no longer stores declared capabilities — the DECLARE-half storage moved; update this test deliberately")
+	}
+
+	for _, name := range []string{"selectTask", "RequeueContributorTask"} {
+		body := selectionFuncBody(t, src, name)
+		// Positive control (b): the extraction really captured the selection body.
+		if name == "selectTask" && !strings.Contains(body, "candidates") {
+			t.Fatal("extracted selectTask body has no candidate collection — extraction is wrong; fix the test")
+		}
+		if strings.Contains(strings.ToLower(body), "capabilit") {
+			t.Errorf("%s references the client-declared capability map — ROUTE is intentionally "+
+				"NOT implemented (kubestellar/hive#2547 DECLARE/ROUTE split). If routing has now been "+
+				"decided and recorded by a maintainer, update this test in that same PR; otherwise "+
+				"remove the read.", name)
+		}
+	}
+}
+
+// TestOpsPage_DeclaredCapabilitiesLabeledSelfReported asserts the fleet view
+// keeps the self-reported framing visible at the point of use (#2547 risk
+// section: a capability map that reads like a verified inventory is worse than
+// honest ignorance). The rendered Operations page must carry the renderer, the
+// explicit "declares:" prefix, and the advisory-only labeling — and the
+// renderer must actually be wired into the clanker row render.
+func TestOpsPage_DeclaredCapabilitiesLabeledSelfReported(t *testing.T) {
+	body := renderContributePage(t)
+	for _, want := range []string{
+		"function capabilityLine",        // the renderer exists
+		"declares:",                      // explicit self-report prefix on the row
+		"clanker-declares",               // stable hook class for the line
+		"Self-declared by the client",    // labeling at the point of use
+		"never routes, gates, or trusts", // the no-routing / not-a-trust-signal statement
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ops page missing %q — declared capabilities must stay labeled self-reported (#2547)", want)
+		}
+	}
+	if !strings.Contains(body, "capabilityLine(c.capabilities)") {
+		t.Error("renderClankers no longer renders capabilityLine(c.capabilities) — the declared posture is stored but not displayed")
 	}
 }
