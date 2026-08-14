@@ -151,8 +151,9 @@ const SESSION_PUBLIC_KEYS = sessionPublicKeys();
 // Boot-time "am I hub-hosted?" signal. Either the injected session key (modern)
 // or a master secret (legacy) proves hosted mode, where identity comes from the
 // hub cookie rather than a shared dashboard token.
-// N2: either key proves hosted mode. A freshly provisioned spoke may hold only
-// the public key once HIVE_SESSION_KEY is dropped after the rollout.
+// N2: either key proves hosted mode. Hosted provisioning no longer injects
+// HIVE_SESSION_KEY at all (issue #3234), so a spoke provisioned or reconciled
+// after that change holds only the public key — hence checking both.
 //
 // ROTATION: this deliberately keys off SESSION_PUBLIC_KEY — the PRIMARY key —
 // exactly as before, NOT off SESSION_PUBLIC_KEYS. Two reasons, both about not

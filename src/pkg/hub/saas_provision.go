@@ -1947,31 +1947,27 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// hive_id — and three key-delivery lanes read off that claimed ID.
 		// Binding the bearer to the hive makes the claim self-authenticating.
 		//
-		// All five resolve against provisionCurrentSecret() — the CURRENT
+		// All four resolve against provisionCurrentSecret() — the CURRENT
 		// generation's master (hub_keys.go). Provisioning and the
 		// perhive_env_reconcile sweep MUST derive identically or they would
 		// fight and roll a pod every cycle forever, so both sides read the
 		// generation set through the same helper. Before any rotation exists
 		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		// RESIDUAL-2: PER-HIVE, matching desiredPerHiveEnv. This MUST move in
-		// lockstep with the reconcile sweep — the two derivations fighting is
-		// exactly the "roll a pod every cycle forever" failure the comment
-		// above warns about.
-		"SessionKey":   provisionSessionKey(h.ID),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
-		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
-		// which is symmetric and therefore let any spoke forge a hub ADMIN cookie.
-		// SessionKey is still shipped for the rollout window so a spoke on an older
-		// image keeps verifying legacy cookies; remove it once the fleet has rolled.
+		// hive_hub_user with this and cannot mint one. The old symmetric
+		// SessionKey that used to sit here — which could ALSO mint, letting any
+		// spoke forge a hub ADMIN cookie — is gone (issue #3234): every lane
+		// that ever verified against it (F1, N3, F23) was already deleted, so
+		// it is no longer injected at all rather than shipped-but-unused.
 		"SessionPublicKey": provisionSessionPublicKey(),
 		// N3: the terminal key is PER-HIVE, not fleet-wide. Without it
-		// TerminalSigningKey() falls through to the fleet-uniform SessionKey
-		// above, so an assertion minted on one spoke verifies on every other —
-		// any tenant could forge a shell grant on any other tenant. The spoke
-		// both mints and verifies this key locally, so symmetric is correct;
-		// only the sharing was wrong.
+		// TerminalSigningKey() falls through to the self-derived fleet-wide
+		// session key, so an assertion minted on one spoke verifies on every
+		// other — any tenant could forge a shell grant on any other tenant. The
+		// spoke both mints and verifies this key locally, so symmetric is
+		// correct; only the sharing was wrong.
 		"TerminalKey": provisionTerminalKey(h.ID),
 		// The per-hive contributor-invite signing key. inviteSigningSecret() used
 		// the raw master as its HMAC key, making invites the LAST spoke-side
@@ -2725,30 +2721,34 @@ spec:
         # session, an SSO-as-any-owner token, or an impersonation grant.
         - name: HIVE_HEARTBEAT_KEY
           value: "{{.HeartbeatKey}}"
-        - name: HIVE_SESSION_KEY
-          value: "{{.SessionKey}}"
         # C2 asymmetric SSO: spokes receive only the Ed25519 PUBLIC key and
         # therefore cannot mint SSO tokens (only the hub, holding the private
         # seed, can). Replaces the earlier symmetric HIVE_SSO_KEY.
         - name: HIVE_SSO_PUBLIC_KEY
           value: "{{.SSOPublicKey}}"
-        # N2 (CWE-321/798): the Ed25519 PUBLIC key for hub SESSION cookies.
-        # HIVE_SESSION_KEY above is symmetric, so every spoke that could VERIFY
-        # hive_hub_user could also MINT it — including "clubanderson.<sig>",
-        # which requireAdmin accepts on ~21 admin routes. With this the spoke
-        # verifies and cannot forge. HIVE_SESSION_KEY is still injected for the
-        # rollout window (a spoke on an older image only knows the legacy
-        # format); drop it once the fleet has rolled.
+        # N2 (CWE-321/798): the Ed25519 PUBLIC key for hub SESSION cookies. A
+        # spoke can only VERIFY hive_hub_user with this, never mint it. The
+        # symmetric HIVE_SESSION_KEY that used to sit here let any spoke that
+        # could verify also MINT — including "clubanderson.<sig>", which
+        # requireAdmin accepts on ~21 admin routes. It is no longer injected
+        # (issue #3234): every lane that verified against it — F1 (Go legacy
+        # cookie lane), N3 (terminal key fall-through), F23 (Node proxy copy)
+        # — was already deleted, so shipping it at all was unjustified secret
+        # exposure with no remaining purpose. A spoke that lacks it self-derives
+        # a fleet-wide fallback value from HIVE_HUB_SECRET for its IS_HOSTED
+        # boot signal only (proxy/server.js deriveSessionKey) — never as a
+        # verification comparand, so the disagreement with any spoke that still
+        # holds the old per-hive value is harmless.
         - name: HIVE_SESSION_PUBLIC_KEY
           value: "{{.SessionPublicKey}}"
         # N3 (CWE-862): the terminal signing key is PER-HIVE. This spoke both
         # mints the assertion (dashboard/session.go, at login) and verifies it
         # (proxy/server.js, on /terminal), so a symmetric key is the right shape
         # — but it must not be shared. Without this var TerminalSigningKey()
-        # fell through to HIVE_SESSION_KEY, which is byte-identical fleet-wide,
-        # so an assertion minted here verified on EVERY other tenant's spoke:
-        # one hostile operator could forge a shell grant for an arbitrary user
-        # on an arbitrary hive. Both resolvers already prefer this var.
+        # falls through to the self-derived fleet-wide session key, so an
+        # assertion minted here would verify on EVERY other tenant's spoke: one
+        # hostile operator could forge a shell grant for an arbitrary user on an
+        # arbitrary hive. Both resolvers already prefer this var.
         - name: HIVE_TERMINAL_KEY
           value: "{{.TerminalKey}}"
         # The per-hive contributor-invite signing key. inviteSigningSecret() on

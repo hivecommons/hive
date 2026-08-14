@@ -104,11 +104,13 @@ What that looks like when misconfigured:
 
 ### Per-hive derived keys
 
-Every spoke uses keys derived per hive from the hub master secret. The hub reconciles six env vars onto **hosted** spoke Deployments automatically (a 15-minute sweep):
+Every spoke uses keys derived per hive from the hub master secret. The hub reconciles five env vars onto **hosted** spoke Deployments automatically (a 15-minute sweep):
 
-`HIVE_HEARTBEAT_KEY`, `HIVE_SESSION_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`
+`HIVE_HEARTBEAT_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`
 
-**Self-hosted spokes are never touched by that sweep** — and do not need to be. Every resolver falls back to deriving the same domain-separated key from `HIVE_HUB_SECRET` + `HIVE_ID`, so a self-hosted spoke that sets those two is byte-identical to a hub-injected one. Setting the six vars explicitly is the least-privilege alternative (the spoke then never holds the master).
+**Self-hosted spokes are never touched by that sweep** — and do not need to be. Every resolver falls back to deriving the same domain-separated key from `HIVE_HUB_SECRET` + `HIVE_ID`, so a self-hosted spoke that sets those two is byte-identical to a hub-injected one. Setting the five vars explicitly is the least-privilege alternative (the spoke then never holds the master).
+
+The symmetric `HIVE_SESSION_KEY` that used to sit alongside `HIVE_SESSION_PUBLIC_KEY` is gone (issue [#3234](https://github.com/kubestellar/hive/issues/3234)): every lane that ever verified against it — the legacy HMAC cookie lane ([#3725](https://github.com/kubestellar/hive/pull/3725)), the terminal-key fall-through, and the Node proxy's copy — was already deleted, so shipping it at all was unjustified secret exposure. The sweep now actively **strips** it from any Deployment still carrying one, rather than merely no longer adding it.
 
 Two gotchas:
 

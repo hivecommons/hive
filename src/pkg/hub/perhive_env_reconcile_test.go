@@ -53,15 +53,17 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 	}
 
 	// These right-hand sides are copied verbatim from the template's data map
-	// (saas_provision.go: HeartbeatKey / SessionKey / SSOPublicKey /
-	// SessionPublicKey / TerminalKey), INCLUDING their master expression. The
+	// (saas_provision.go: HeartbeatKey / SSOPublicKey / SessionPublicKey /
+	// TerminalKey / InviteKey), INCLUDING their master expression. The
 	// template derives from provisionCurrentSecret() — the current generation —
 	// so this test pins the generation-aware expression, not the old
 	// provisionMasterSecret() one. If provisioning and the reconcile ever
 	// resolved different generations, this fails.
+	//
+	// HIVE_SESSION_KEY is deliberately NOT in this map (issue #3234) — see
+	// TestSessionKeyIsPermanentlyRemoved below.
 	expect := map[string]string{
 		EnvHeartbeatKey:     provisionHeartbeatKey(hiveID),
-		EnvSessionKey:       provisionSessionKey(hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 		EnvTerminalKey:      provisionTerminalKey(hiveID),
@@ -93,9 +95,79 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 	}
 }
 
+// TestSessionKeyIsPermanentlyRemoved covers the issue #3234 removal: unlike
+// the mandatory five and the rotation-transient optional two,
+// HIVE_SESSION_KEY is a var the sweep must now actively STRIP wherever it
+// finds it, and must never re-add.
+func TestSessionKeyIsPermanentlyRemoved(t *testing.T) {
+	withTestMaster(t, perHiveEnvTestMaster)
+	const hiveID = "hive-alpha"
+
+	want := desiredPerHiveEnv(hiveID)
+	if want == nil {
+		t.Fatal("desiredPerHiveEnv returned nil for a valid master + hive ID")
+	}
+	if _, present := want[EnvSessionKey]; present {
+		t.Error("desiredPerHiveEnv still wants HIVE_SESSION_KEY — issue #3234 removal regressed")
+	}
+	for _, name := range perHiveEnvNames() {
+		if name == EnvSessionKey {
+			t.Error("EnvSessionKey is still in perHiveEnvNames() — it must not be re-asserted as mandatory")
+		}
+	}
+	found := false
+	for _, name := range perHiveEnvRemovedNames() {
+		if name == EnvSessionKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("EnvSessionKey is absent from perHiveEnvRemovedNames() — the sweep would never strip a " +
+			"live Deployment that still carries it")
+	}
+
+	// A Deployment that still carries the retired var — exactly what every
+	// spoke provisioned before this change looks like — must be reported as
+	// drifted, and the patch must remove it while leaving everything else
+	// alone.
+	live := envList("HIVE_ID", hiveID, "HIVE_SESSION_KEY", "stale-fleet-wide-value")
+	for _, name := range perHiveEnvNames() {
+		live = append(live, deploymentEnvVar{Name: name, Value: want[name]})
+	}
+
+	drift := perHiveEnvDrift(live, want)
+	if len(drift) != 1 || drift[0] != EnvSessionKey {
+		t.Fatalf("drift = %v, want exactly [%s] for a Deployment that is otherwise converged but still "+
+			"carries the retired var", drift, EnvSessionKey)
+	}
+
+	patchBody, err := perHiveEnvPatchJSON(live, want)
+	if err != nil {
+		t.Fatalf("perHiveEnvPatchJSON: %v", err)
+	}
+	merged := decodePatchEnv(t, patchBody)
+	if _, present := merged[EnvSessionKey]; present {
+		t.Error("patch left HIVE_SESSION_KEY in place — it must be stripped from the live Deployment")
+	}
+	if _, present := merged["HIVE_ID"]; !present {
+		t.Error("patch dropped an untouched pre-existing var while removing HIVE_SESSION_KEY")
+	}
+
+	// And a Deployment that never carried it (every spoke provisioned AFTER
+	// this change) must report no drift for it — the removal is idempotent.
+	converged := envList("HIVE_ID", hiveID)
+	for _, name := range perHiveEnvNames() {
+		converged = append(converged, deploymentEnvVar{Name: name, Value: want[name]})
+	}
+	if drift := perHiveEnvDrift(converged, want); len(drift) != 0 {
+		t.Errorf("a Deployment that never carried HIVE_SESSION_KEY reported drift %v — the sweep would "+
+			"patch (and roll the pod) for nothing", drift)
+	}
+}
+
 // TestPerHiveEnvDriftMissingAll covers the four spokes found running purely on
 // master fallbacks: a Deployment with the pre-cutover env shape and none of the
-// six reconciled vars. All six must be reported as drift.
+// five reconciled vars. All five must be reported as drift.
 func TestPerHiveEnvDriftMissingAll(t *testing.T) {
 	withTestMaster(t, perHiveEnvTestMaster)
 	want := desiredPerHiveEnv("hive-alpha")
