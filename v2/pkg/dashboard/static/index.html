@@ -14397,7 +14397,12 @@ function burnAreaChart() {
         // (v2/v3 release, or a personal dev branch like mk). Skip only the
         // unknown placeholder so the pill is always present for real builds.
         if (v.branch && v.branch !== 'unknown') {
-          html += ` <span title="Tracking branch ${escapeHtml(v.branch)}" style="display:inline-block;padding:1px 7px;margin-left:6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(v.branch)}</span>`;
+          // Channel-delivered spoke: the deployment tracks a release channel
+          // tag, so show "stable (v4)" — the channel is what the operator
+          // chose; the branch is what the channel currently resolves to.
+          const pillText = v.channel ? v.channel + ' (' + v.branch + ')' : v.branch;
+          const pillTitle = v.channel ? 'Tracking release channel ' + v.channel + ' (currently a ' + v.branch + ' build)' : 'Tracking branch ' + v.branch;
+          html += ` <span title="${escapeHtml(pillTitle)}" style="display:inline-block;padding:1px 7px;margin-left:6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(pillText)}</span>`;
         }
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {

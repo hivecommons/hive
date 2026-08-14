@@ -292,6 +292,9 @@ var (
 	// cmd/hive). The self-version check compares against the tip of THIS
 	// branch — a spoke running v3 must not be told it is "behind" v2.
 	versionBranch = "unknown"
+	// versionChannel is the release channel the Deployment image tracks, ""
+	// when not channel-delivered (see SetReleaseChannel).
+	versionChannel = ""
 )
 
 // defaultUpstreamBranch is the fallback branch for the self-version check
@@ -307,6 +310,15 @@ func SetGitVersion(hash, short string) {
 // version check and Upgrade affordance compare against the right upstream.
 func SetGitBranch(branch string) {
 	versionBranch = branch
+}
+
+// SetReleaseChannel records the release channel this spoke's Deployment image
+// tracks ("stable"/"candidate"/"edge"), or "" when it tracks a branch tag or
+// SHA pin. Display-only: the navbar badge shows "stable (v4)" instead of the
+// bare built-from branch. The upstream comparison logic is untouched — the
+// binary is still a build of versionBranch.
+func SetReleaseChannel(channel string) {
+	versionChannel = channel
 }
 
 // upstreamBranch returns the branch to compare against for the self-version
@@ -497,6 +509,9 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"hash":    versionHash,
 		"short":   versionShort,
 		"branch":  upstreamBranch(),
+	}
+	if versionChannel != "" {
+		resp["channel"] = versionChannel
 	}
 	// autoUpgrade tells the dashboard whether the hub manages this spoke's
 	// upgrades. When true the manual spoke Upgrade button is hidden — the hub

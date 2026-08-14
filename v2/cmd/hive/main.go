@@ -855,6 +855,10 @@ func main() {
 	}
 	dashboard.SetGitVersion(gitHash, gitShort)
 	dashboard.SetGitBranch(gitBranch)
+	// Channel-delivered spokes ("stable" retag of a v4 build) label their
+	// version badge with the channel; "" outside a cluster or on branch/SHA
+	// tags, in which case the badge stays branch-only.
+	dashboard.SetReleaseChannel(hub.SelfImageReleaseChannel())
 
 	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
