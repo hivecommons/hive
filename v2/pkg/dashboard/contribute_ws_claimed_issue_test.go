@@ -89,6 +89,45 @@ func TestClaimedIssue_SkippedAndNextOffered(t *testing.T) {
 	}
 }
 
+// TestClaimedIssue_ReadyQueueMatchesSelectTaskAdmission pins the contributor
+// queue contract: repository-global admission decisions must agree between the
+// read-only ReadyQueue projection and live selectTask assignment. An open PR
+// claims #353, so both paths must withhold it while leaving #360 offerable.
+func TestClaimedIssue_ReadyQueueMatchesSelectTaskAdmission(t *testing.T) {
+	for _, claimRepo := range []string{"projectbluefin/dakota", "dakota"} {
+		t.Run(claimRepo, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			claimedIssueStatus(s)
+			s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+				if repo == claimRepo && number == 353 {
+					return externalClaim(repo, number), true
+				}
+				return ghpkg.IssueClaim{}, false
+			}
+
+			queue := hub.ReadyQueue(readyQueueDefaultLimit)
+			if len(queue) != 1 || queue[0].Number != 360 {
+				t.Fatalf("ReadyQueue should initially offer only unclaimed #360, got %+v", queue)
+			}
+
+			conn := claimedIssueConn()
+			hub.mu.Lock()
+			hub.connections["conn-a"] = conn
+			hub.mu.Unlock()
+
+			msg := hub.selectTask(conn)
+			if msg == nil || msg.Type != "task_assign" || msg.Number != 360 {
+				t.Fatalf("selectTask should skip claimed #353 and assign #360, got %+v", msg)
+			}
+
+			queue = hub.ReadyQueue(readyQueueDefaultLimit)
+			if len(queue) != 0 {
+				t.Fatalf("ReadyQueue should be empty while #360 is active, got %+v", queue)
+			}
+		})
+	}
+}
+
 // TestClaimedIssue_AllClaimedYieldsNoMatchingWork: when every admissible issue
 // is claimed by an open PR, the contributor gets an explicit no_matching_work
 // negative-ack — never a duplicate assignment.
