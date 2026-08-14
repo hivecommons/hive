@@ -1,4 +1,11 @@
-FROM golang:1.26-alpine AS builder
+# Pinned to the golang:1.26-alpine multi-arch index digest to prevent
+# floating-tag supply-chain risk. Refresh deliberately:
+#   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/golang:pull" | jq -r .token)
+#   curl -sI -H "Authorization: Bearer $TOKEN" \
+#     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+#     https://registry-1.docker.io/v2/library/golang/manifests/1.26-alpine | grep -i docker-content-digest
+# and update both the tag and the @sha256 digest together.
+FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -21,7 +28,11 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
-FROM node:26-slim AS tmux-builder
+# Pinned to the node:26-slim multi-arch index digest to prevent floating-tag
+# supply-chain risk. Refresh deliberately (same technique as golang above,
+# repo library/node, tag 26-slim) and update both the tag and the @sha256
+# digest together in BOTH FROM node:26-slim lines in this file.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503 AS tmux-builder
 ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
 ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
@@ -40,7 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION} /tmp/tmux.tar.gz
 
-FROM node:26-slim
+# Pinned to the same node:26-slim digest as the tmux-builder stage above —
+# refresh both FROM lines together.
+FROM node:26-slim@sha256:4ebb5ace66f15a24c14c492e01a8beeed4fddf970a856109f5126e703e5fe503
 
 # --- Layer 1: system packages (rarely changes) ---
 # util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
