@@ -13429,8 +13429,25 @@ const dashboardHTML = `<!DOCTYPE html>
         '<div style="margin-top:10px;text-align:left;max-height:220px;overflow:auto">' + failedRows + '</div>', true);
     }
 
+    /* True while any row's branch/channel dropdown is open. renderHives
+       rebuilds the row DOM, which would destroy the open menu mid-click —
+       the fleet heartbeats change some hive field on nearly every poll, so
+       without this guard the dropdown closed itself within seconds of
+       opening. */
+    function branchMenuOpen() {
+      var menus = document.querySelectorAll('[id^="branch-menu-"]');
+      for (var i = 0; i < menus.length; i++) {
+        if (menus[i].style.display !== 'none') return true;
+      }
+      return false;
+    }
     function renderHives(allHives, force) {
       allHives = allHives || [];
+      /* Defer the whole render while a branch/channel menu is open. Skipping
+         BEFORE the signature is stored means the change is not swallowed: the
+         next render call (poll tick, or the catch-up fired when the menu
+         closes) sees a stale _lastHivesJSON and repaints normally. */
+      if (branchMenuOpen()) return;
       /* The signature must include EVERY piece of render-affecting view state,
          otherwise changing it while the hive data is unchanged is silently a
          no-op — toggling a chip, drilling into an alert type, expanding the
@@ -14613,6 +14630,10 @@ const dashboardHTML = `<!DOCTYPE html>
           if (!e.target.closest('#branch-pill-' + hiveId)) {
             menu.style.display = 'none';
             document.removeEventListener('click', closeHandler);
+            /* Catch up on the renders the open menu deferred (see
+               renderHives guard) so the rows reflect current data
+               immediately instead of waiting for the next poll. */
+            renderHives(sortedDashHives(), true);
           }
         };
         setTimeout(function() { document.addEventListener('click', closeHandler); }, 0);
