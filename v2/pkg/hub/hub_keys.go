@@ -168,6 +168,54 @@ func provisionSessionPublicKey() string {
 	return ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSessionEd25519Seed))
 }
 
+// provisionSessionKey returns the PER-HIVE value injected into a spoke as
+// HIVE_SESSION_KEY (audit RESIDUAL-2).
+//
+// Measured live before this change: 1 distinct value across all 70 spokes,
+// 0 converged — not sweep drift, but derivation by design. desiredPerHiveEnv
+// derived this var with deriveDomainKey, which takes no hiveID, while its
+// neighbours two lines away used derivePerHiveKey. Uniformity was the intended
+// output of the old formula, so no rotation could ever have made these
+// per-hive: a rotation moves all 70 in lockstep. That is why this is a code
+// change and not a convergence problem.
+//
+// WHY THIS IS SAFE TO MAKE PER-HIVE — the value is no longer a comparand.
+// Every lane that once VERIFIED against this key is already deleted:
+//
+//   - F1 removed the Go legacy symmetric cookie lane
+//     (hub_cookie.go verifyHubUserCookieEitherAt, `_ = legacySecret`).
+//   - N3 stopped the terminal key falling through to it (terminal_assertion.go).
+//   - F23 removed the Node proxy's copy (proxy/server.js
+//     verifyHubUserCookieAcrossKeys, `void legacySecret`).
+//
+// What remains on the spoke reads this var for its PRESENCE, never its value:
+// the proxy's IS_HOSTED boot signal is `SESSION_KEY !== ”`. SpokeSessionKey()
+// has zero non-test Go callers. So no party compares a value derived here
+// against a value derived anywhere else, and changing the formula cannot make
+// two honest parties disagree.
+//
+// THE SELF-DERIVE FALLBACK IS THEREFORE HARMLESS, and this is the one thing
+// worth being explicit about, because it is the obvious way a change like this
+// breaks a fleet. A spoke that lacks the env var self-derives it, and both
+// spoke-side resolvers — Go spokeDomainKey(EnvSessionKey, infoSessionKey) and
+// the proxy's deriveSessionKey() — self-derive the FLEET-WIDE value from
+// HIVE_HUB_SECRET, because neither mixes in the hive ID. Once the hub injects a
+// per-hive value the two disagree by construction, and during the roll the
+// fleet holds a mix of both. That is fine here, and only here, precisely
+// because nothing verifies with it: a disagreement over a value no one compares
+// has no observable effect. Both surviving readers are emptiness checks, and a
+// per-hive value is exactly as non-empty as a fleet-wide one, so IS_HOSTED is
+// unchanged for every spoke in every state.
+//
+// Deliberately NOT changing the self-derive fallbacks to match. Making them
+// per-hive would be dead code on both sides today, and on the spoke it would
+// hand a wrong answer to a spoke that has no HIVE_ID — flipping IS_HOSTED to
+// false and silently converting a hosted hive to the self-hosted identity
+// model. The fallbacks stay as they are until the var is dropped outright.
+func provisionSessionKey(hiveID string) string {
+	return derivePerHiveKey(provisionCurrentSecret(), infoSessionKey, hiveID)
+}
+
 // provisionTerminalKey returns the PER-HIVE terminal signing key injected into a
 // spoke as HIVE_TERMINAL_KEY (audit N3).
 //

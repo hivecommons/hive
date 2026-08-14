@@ -61,7 +61,7 @@ func TestDesiredPerHiveEnvMatchesProvisioningTemplate(t *testing.T) {
 	// resolved different generations, this fails.
 	expect := map[string]string{
 		EnvHeartbeatKey:     provisionHeartbeatKey(hiveID),
-		EnvSessionKey:       deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		EnvSessionKey:       provisionSessionKey(hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 		EnvTerminalKey:      provisionTerminalKey(hiveID),
