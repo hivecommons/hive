@@ -453,6 +453,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/lite/enroll", s.requireAuth(s.handleLiteEnroll))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
+	// /public-status is the read-only preview for an is_public:true hive. It is
+	// registered WITHOUT requireAuth — like /open and /access-status below — so
+	// an anonymous visitor (or a logged-in non-owner) can render the preview
+	// card. It returns a hand-picked SAFE SUBSET (PublicHiveStatus), never the
+	// raw SaaSHive record handleHiveStatus above serves to owners: see
+	// handlePublicHiveStatus for exactly what is and is not included and why.
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/public-status", s.handlePublicHiveStatus)
 	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
 	// It is registered WITHOUT requireAuth so an unauthenticated visit redirects
 	// to the hub login (and back) instead of dumping a raw {"error":...} JSON.
@@ -3053,11 +3060,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// own "channel -> image" block above the per-branch rows, and offers
 		// them as branch-switch targets. The association is resolved from
 		// registry digests (cached), never hardcoded to a branch name.
-		"release_channels":         ReleaseChannels(),
-		"channel_targets":          getChannelTargets(getDisplaySHAs(), s.logger),
-		"hub_auto_upgrade":         isHubAutoUpgrade(),
-		"hub_upgrade_state":        s.hubUpgradeState(),
-		"show_my_hives":            true,
+		"release_channels":  ReleaseChannels(),
+		"channel_targets":   getChannelTargets(getDisplaySHAs(), s.logger),
+		"hub_auto_upgrade":  isHubAutoUpgrade(),
+		"hub_upgrade_state": s.hubUpgradeState(),
+		"show_my_hives":     true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
 		// round-trip would make the panel pop in after the list and shift it.
@@ -3393,6 +3400,184 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h)
+}
+
+// PublicAgentSummary is the safe subset of AgentSummary shown on the public,
+// unauthenticated hive preview: just enough to render a roster (name, run
+// state, paused flag). It deliberately drops everything else AgentSummary
+// carries (StartedAt/LastActivityAt timestamps, NeedsLogin, SessionMissing,
+// and any per-agent operational detail added later) — none of that is
+// needed to answer "what agents does this hive have and are they running",
+// and all of it is internal operational detail, not something an anonymous
+// visitor needs.
+type PublicAgentSummary struct {
+	// Name — the agent's role/handle (e.g. "scanner"). Cosmetic, already
+	// shown in hive-open-pr commit trailers and public PR authorship, so it
+	// carries no confidentiality on its own.
+	Name string `json:"name"`
+	// State — coarse run state ("running", "paused", "stopped", …). Same
+	// category of fact as "is this hive up", already implied by the hive
+	// being public at all.
+	State string `json:"state"`
+	// Paused — whether the operator deliberately parked this agent. Purely
+	// descriptive of the roster's current shape.
+	Paused bool `json:"paused,omitempty"`
+}
+
+// PublicHiveStatus is the explicit ALLOWLIST returned by the public,
+// unauthenticated /public-status endpoint for an is_public:true hive.
+//
+// SECURITY: every field below is hand-picked and commented with why it is
+// safe to hand to an anonymous caller. This type is built field-by-field
+// from the SaaSHive/RegistryEntry records — it never embeds or forwards
+// either of those structs, so a new sensitive field added to SaaSHive or
+// RegistryEntry in the future does NOT silently leak here; it has to be
+// deliberately added to this struct to ever be exposed. Do not change this
+// handler to json.Marshal(h) or similar — that is exactly the regression
+// #3692 fixed for the owner-only route, and this route must not reopen it
+// for anonymous callers.
+//
+// Excluded on purpose (present on SaaSHive/RegistryEntry but NEVER copied
+// here): Owner (username — PII), GitHubHost/GitHubBaseURL/GitHubAPIURL,
+// PendingAppConfig (GitHub App id/slug/installation id — app credentials),
+// RequestedAppReset/RequestedGitHubHost/ForgeDelivered (in-flight admin
+// operations), ClusterID/ClusterName/Namespace (hub-internal infra
+// location), OCIFileSystemID/OCIExportID (storage internals), Error
+// (may echo internal failure detail), PendingRequests (other users'
+// access requests), AutoUpgrade*/RequestedRestartAt (operational
+// scheduling), Health (raw heartbeat health blob), TotalTokens24h/cost
+// data, ConflictingReporters/StatusFlipping (fleet diagnostics), and
+// AgentSummary's StartedAt/LastActivityAt/NeedsLogin/SessionMissing.
+type PublicHiveStatus struct {
+	// ID — the hive's own identifier, already in the URL the caller used to
+	// reach this endpoint.
+	ID string `json:"id"`
+	// ProjectName — the operator-set display name. Public by definition once
+	// is_public is true; it's the label used in preview cards / link
+	// unfurls.
+	ProjectName string `json:"project_name"`
+	// Org — the GitHub org the hive's repos live under. Already visible in
+	// PrimaryRepo's "owner/repo" form and in every PR/issue the hive's
+	// agents open publicly.
+	Org string `json:"org"`
+	// PrimaryRepo — the hive's main repo ("owner/repo"). Public GitHub data.
+	PrimaryRepo string `json:"primary_repo"`
+	// ACMMLevel — the hive's current maturity level. Purely a badge/score,
+	// no operational detail.
+	ACMMLevel int `json:"acmm_level"`
+	// Status — coarse provisioning/run status ("available", "claimed",
+	// "provisioning", …), not a diagnostic error string.
+	Status string `json:"status"`
+	// IsPublic — echoes the flag that gated this response, so a client can
+	// confirm it hit the public view (always true here; the handler 404s
+	// before reaching this point otherwise).
+	IsPublic bool `json:"is_public"`
+	// Version / GitBranch — the running build's version/branch label. Same
+	// class of fact as what a GitHub release page or Docker tag shows
+	// publicly for any open-source project.
+	Version   string `json:"version,omitempty"`
+	GitBranch string `json:"git_branch,omitempty"`
+	// TrackedChannel — release channel ("stable"/"candidate"/"edge") this
+	// hive tracks, if any. Cosmetic, like Version.
+	TrackedChannel string `json:"tracked_channel,omitempty"`
+	// Online — whether the spoke is currently heartbeating. The one true
+	// "is it up" signal a preview card needs; carries no internals.
+	Online bool `json:"online"`
+	// AgentCount — roster size. A count, not a capability/quota detail.
+	AgentCount int `json:"agent_count"`
+	// Agents — the safe per-agent subset (see PublicAgentSummary).
+	Agents []PublicAgentSummary `json:"agents,omitempty"`
+	// ActionableIssues / ActionablePRs — public GitHub issue/PR counts the
+	// hive is tracking. Same data a visitor could get from the repo's own
+	// GitHub issue/PR list; included because it's the headline metric the
+	// preview card exists to show.
+	ActionableIssues int `json:"actionable_issues"`
+	ActionablePRs    int `json:"actionable_prs"`
+}
+
+// handlePublicHiveStatus is the public, read-only status preview for a hive
+// with is_public:true. It is registered WITHOUT requireAuth (see
+// registerSaaSRoutes) precisely because the audience is anonymous visitors
+// and non-owner viewers of a shared hive link — the same audience
+// handleOpenHive's SSO fallback and handleAccessStatus already serve
+// unauthenticated.
+//
+// It intentionally does NOT reuse handleHiveStatus's owner gate: that route
+// stays owner-only per #3692 (operator decision 2026-08-13) because the raw
+// SaaSHive record carries operational metadata beyond what a read grant
+// implies. This route instead returns a hand-built PublicHiveStatus
+// allowlist — see that type's doc comment for exactly what is included and
+// excluded, and why each inclusion is safe.
+//
+// Access rule: a hive must have IsPublic:true to be visible here at all,
+// UNLESS the caller is already an owner/grantee (handled by falling through
+// to the same allowlist — owners get the safe subset too if they hit this
+// route directly; they should use /status for the full record). A private
+// hive with no matching credential 404s, matching handleHiveStatus's
+// not-found response so this endpoint cannot be used to distinguish
+// "private hive" from "no such hive".
+func (s *HubServer) handlePublicHiveStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if !h.IsPublic {
+		// Not public: only let an authenticated owner/admin through (so an
+		// owner previewing their own not-yet-public hive still works), and
+		// give every other caller the SAME "not found" response a genuinely
+		// missing hive gets — never confirm a private hive's existence to an
+		// anonymous caller.
+		username := s.getAuthUser(r)
+		if !userIsHiveOwner(username, h) {
+			http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+			return
+		}
+	}
+
+	out := PublicHiveStatus{
+		ID:          h.ID,
+		ProjectName: h.ProjectName,
+		Org:         h.Org,
+		PrimaryRepo: h.PrimaryRepo,
+		ACMMLevel:   h.ACMMLevel,
+		Status:      h.Status,
+		IsPublic:    h.IsPublic,
+	}
+
+	// Overlay the live heartbeat-derived fields (version, online state,
+	// agent roster, issue/PR counts) from the registry entry, when present.
+	// Same safe-subset copy as above — field by field, never the whole
+	// RegistryEntry.
+	s.mu.RLock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
+			reg := &s.registry.Hives[i]
+			out.Version = reg.Version
+			out.GitBranch = reg.GitBranch
+			out.TrackedChannel = h.TrackedChannel
+			out.Online = reg.Online
+			out.AgentCount = reg.AgentCount
+			out.ActionableIssues = reg.ActionableIssues
+			out.ActionablePRs = reg.ActionablePRs
+			if len(reg.Agents) > 0 {
+				out.Agents = make([]PublicAgentSummary, 0, len(reg.Agents))
+				for _, a := range reg.Agents {
+					out.Agents = append(out.Agents, PublicAgentSummary{
+						Name:   a.Name,
+						State:  a.State,
+						Paused: a.Paused,
+					})
+				}
+			}
+			break
+		}
+	}
+	s.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits
