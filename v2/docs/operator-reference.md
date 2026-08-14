@@ -2,7 +2,7 @@
 
 This page is a concise operator reference for fields and runtime knobs that are
 easy to miss in `hive.yaml.example`. It was checked against `pkg/config/config.go`
-and `cmd/hive/main.go` on v2.
+and `cmd/hive/main.go` on branch `v4`.
 
 For the full centralized environment variable table, including hub, backup,
 inference, deployment, contributor, and legacy helper-script variables, see
@@ -74,41 +74,28 @@ Top-level YAML keys accepted by `config.Config`:
 
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
 
-## Image provenance for `ghcr.io/kubestellar/hive:v2-latest`
+## Image provenance and tags
 
-The pre-built Docker image used by `v2/docker-compose.yaml` is built by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml). On the `v2` branch, that workflow publishes a rolling multi-architecture manifest tag:
+Pre-built images are published by [`.github/workflows/docker.yml`](../../.github/workflows/docker.yml) to `ghcr.io/kubestellar/hive` (plus `hive-contributor` and `hive-hub`). A build of the mainline branch `v4` publishes, in one multi-architecture manifest operation:
 
-- `ghcr.io/kubestellar/hive:v2-latest`
-- `ghcr.io/kubestellar/hive:<git-short-sha>`
+- `ghcr.io/kubestellar/hive:v4-latest` — rolling tag for the current HEAD of `origin/v4`;
+- `ghcr.io/kubestellar/hive:<git-short-sha>` — immutable per-commit tag;
+- `ghcr.io/kubestellar/hive:stable`, `:candidate`, `:edge` — the moving **release channels** (retags of the same digest; see [release-channels.md](release-channels.md)).
 
-### What updates the tag
+PR and short-lived branch builds compile the image as a CI gate but only long-lived branches push tags, and only `v4` moves the release channels. Before tagging, the workflow verifies its SHA is still branch HEAD, so a stale queued build cannot move a rolling tag backward.
 
-The workflow runs on pushes to every non-dependabot/non-copilot branch and on `workflow_dispatch`. PR and short-lived branch builds still compile the image as a CI gate, but the `gate` job only pushes to GHCR for long-lived branches listed in the workflow (`v2`, `v3`, `mk`, `dd`) or for manual `workflow_dispatch` runs.
+> **Note:** `v2-latest` was the rolling tag of the retired `v2` branch. Do not use it for new deployments — prefer `stable` for production, or pin a digest. (`v2/docker-compose.yaml` may still reference it until its default is bumped.)
 
-For the main Hive image, the build job uses `v2/Dockerfile` and passes these build arguments:
+### Choosing a tag
 
-```text
-GIT_HASH=${{ github.sha }}
-GIT_BRANCH=${{ github.ref_name }}
-```
-
-The merge job then combines the per-architecture digests into a manifest list. Before tagging, it verifies that the workflow SHA is still the current HEAD of the branch; stale queued builds skip tagging instead of moving `v2-latest` backward.
-
-### Stability guarantee
-
-`v2-latest` is a rolling branch tag for the current HEAD of `origin/v2` after the Docker workflow succeeds. It is not immutable and is intended for quick starts and continuously updated hives. Pin production deployments to a digest when you need a reproducible image.
+- **Production:** `stable`, or pin a digest for full reproducibility.
+- **Following mainline:** `v4-latest`.
+- **Reproducing an incident:** the `<git-short-sha>` tag from the workflow run.
 
 ### Verify and pin a digest
 
-Inspect the tag digest:
-
 ```bash
-docker buildx imagetools inspect ghcr.io/kubestellar/hive:v2-latest
-```
-
-Pull by digest after choosing the manifest digest you want:
-
-```bash
+docker buildx imagetools inspect ghcr.io/kubestellar/hive:stable
 docker pull ghcr.io/kubestellar/hive@sha256:<digest>
 ```
 
@@ -120,11 +107,12 @@ services:
     image: ghcr.io/kubestellar/hive@sha256:<digest>
 ```
 
-To relate an image to source, compare the `<git-short-sha>` tag published by the same workflow with commits on the `v2` branch, or inspect the Docker workflow run for the commit SHA that produced the digest.
+To relate an image to source, compare the `<git-short-sha>` tag published by the same workflow with commits on `v4`, or inspect the Docker workflow run for the commit SHA that produced the digest.
 
-### Changelog and release notes
+## Governor cadence and budget
 
-The rolling image follows merged changes on the `v2` branch. Use the GitHub commit/PR history for the exact source change set behind a SHA tag, and use repository releases or changelog files only when this repository publishes them for a specific release line.
+- Agent cadences are evaluated from persisted state: the last-kick map lives in `/data/hive-state.json` and is honored across pod restarts — a Deployment roll does **not** re-kick every cadenced agent at boot ([#3817](https://github.com/kubestellar/hive/pull/3817)). A fresh install (no persisted state) still kicks every cadenced agent on the first eval. There is no global default interval; a zero/absent interval means the agent is never cadence-kicked.
+- The governor token budget uses a rolling window of `governor.budget.period_days` (default 7 days), with a soft warning at `governor.budget.critical_pct` (default 90%). When spend reaches the limit, kicks are suppressed for all agents except those explicitly budget-exempt.
 
 ## Fleet breaker
 
@@ -190,8 +178,8 @@ installation instead of broadening the PAT.
 
 | Name | Purpose |
 |---|---|
-| `HIVE_METRICS_ENABLED` | Enables unauthenticated Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default because it exposes estimated cost data. |
-| `HIVE_METRICS_TOKEN` | Optional bearer token for `/metrics`. When set, scrapers must send `Authorization: Bearer <token>` (configure Prometheus `bearer_token`); when empty, `/metrics` stays open. Set it to stop the cost/agent series leaking to anyone on the pod network. |
+| `HIVE_METRICS_ENABLED` | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default (route not registered — scrapes 404) because it exposes estimated cost data. |
+| `HIVE_METRICS_TOKEN` | **Required whenever metrics are enabled** ([#3804](https://github.com/kubestellar/hive/pull/3804)): scrapers must send `Authorization: Bearer <token>` (configure Prometheus `bearer_token`). Enabled-but-tokenless serves 403 with an error naming both variables, and the hive logs a startup warning; the cost/agent series are never served unauthenticated. |
 
 > **Note on `tokens_24h`:** despite its name, the per-spoke heartbeat field
 > `tokens_24h` (stored on the hub as `totalTokens24h`) is a **cumulative total**,

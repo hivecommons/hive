@@ -2,7 +2,7 @@
 
 > **Legacy v1/systemd documentation.** This page troubleshoots the original
 > supervisor/tmux/systemd deployment (`bin/supervisor.sh`, `systemctl`, and
-> `/etc/hive/agent.env`). For current v2 Docker/Go operations, use
+> `/etc/hive/agent.env`). For current containerized Go operations (branch `v4`; code under `v2/`), use
 > [v2 troubleshooting](../v2/docs/troubleshooting.md) and the
 > [`v2/docs/README.md`](../v2/docs/README.md) index.
 

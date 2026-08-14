@@ -87,6 +87,15 @@ func TestLoadClustersFromFile(t *testing.T) {
 	}
 }
 
+// TestLoadClustersBadJSON pins that an unparseable registry makes the hub
+// REFUSE, and is deliberately the inversion of what it used to assert.
+//
+// AUDIT 8 / §6 ITEM 11. The original body asserted "bad JSON should yield empty
+// map" — it encoded the vulnerability as the expected behaviour. An empty
+// registry is not a safe degraded state: clusterForHive returns nil for every
+// hive, which silently turns off the hub's writes to hive-oke while the hub
+// reports healthy. The correct assertion is that the hub does not come up at
+// all, so this test now checks the refusal fired.
 func TestLoadClustersBadJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clusters.json")
@@ -95,10 +104,13 @@ func TestLoadClustersBadJSON(t *testing.T) {
 	clustersConfigPath = path
 	defer func() { clustersConfigPath = old }()
 
-	// Bad JSON -> empty map (no default injected on parse error).
-	clusters := loadClusters(slog.Default())
-	if len(clusters) != 0 {
-		t.Errorf("bad JSON should yield empty map, got %+v", clusters)
+	fatal := captureClustersFatal(t)
+
+	_ = loadClusters(slog.Default())
+
+	if !fatal.fired {
+		t.Fatal("unparseable clusters.json did not make the hub refuse to start; " +
+			"an empty registry nils out clusterForHive for every hive and silently disables writes to hive-oke")
 	}
 }
 

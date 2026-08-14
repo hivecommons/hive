@@ -415,55 +415,40 @@ func readSAToken() string {
 // loadClusters reads the clusters config file and returns a validated
 // map of cluster ID → ClusterConfig. If the file does not exist, it
 // returns a single default entry for hive-oke (backward compatibility).
+//
+// AUDIT 8 / §6 ITEM 11. This used to return an EMPTY map when the file existed
+// but did not parse. That is the most dangerous of the three possible answers:
+// clusterForHive falls through both its lookups on an empty registry and
+// returns nil for EVERY hive, so a truncated or hand-mangled file silently
+// disabled the hub's writes to hive-oke — the one cluster it can reach — while
+// the hub came up otherwise healthy. The registry now fails CLOSED: see
+// loadClustersChecked and clustersLoadOutcome in clusters_registry.go.
+//
+// The ABSENT case is unchanged and still returns the hive-oke default; a hub
+// that was never given a registry has not lost one.
 func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
-	clusters := make(map[string]ClusterConfig)
-
-	data, err := os.ReadFile(clustersConfigPath)
-	if err != nil {
-		logger.Info("no clusters config found, using default hive-oke cluster", "path", clustersConfigPath)
-		clusters[defaultClusterID] = ClusterConfig{
-			ID:           defaultClusterID,
-			Name:         "OKE (default)",
-			InCluster:    true,
-			StorageType:  "nfs",
-			IngressType:  "nginx",
-			IngressClass: "nginx",
-			CertIssuer:   "letsencrypt-prod",
-			Domain:       "hive.kubestellar.io",
-			Arch:         "arm64",
-			// v4 is the ONLY image a hosted spoke can run: audit F2 deleted the
-			// fleet-wide heartbeat lane, and a v2 spoke has no SpokeHeartbeatKey
-			// self-derive path, so it cannot authenticate to this hub at all.
-			ImageTag: "v4-latest",
-		}
-		return clusters
+	clusters, outcome := loadClustersChecked(logger)
+	if outcome == clustersUntrusted {
+		// Refuse to serve on a fleet topology the hub cannot establish.
+		//
+		// WHY FATAL RATHER THAN A DEGRADED START. NewHubServer returns no error,
+		// so the only alternatives available here are the two this fix exists to
+		// remove: come up with an empty registry (writes to hive-oke silently
+		// off) or come up on the synthesized default (every pull-only hive
+		// silently re-routed to the hub's own cluster). Both present as a
+		// healthy hub. A hub that refuses to start is loud, is caught by the
+		// pod's restart loop and readiness gate, and — critically — is
+		// RECOVERABLE by restoring the file, whereas a hub that starts on a
+		// wrong registry mis-routes provisioning and App identity for as long
+		// as it runs.
+		logger.Error("FATAL: refusing to start without a trustworthy cluster registry",
+			"path", clustersConfigPath,
+			"remedy", "restore a valid /data/saas/clusters.json on the hub PVC (a quarantined copy may be beside it) and restart the hub")
+		clustersFatal("hub cluster registry at " + clustersConfigPath + " could not be established; refusing to start")
+		// clustersFatal does not return in production. Tests substitute a
+		// recorder, so fall through to an empty map for them.
+		return map[string]ClusterConfig{}
 	}
-
-	var configs []ClusterConfig
-	if err := json.Unmarshal(data, &configs); err != nil {
-		logger.Error("failed to parse clusters config", "path", clustersConfigPath, "error", err)
-		return clusters
-	}
-
-	for _, c := range configs {
-		if c.ID == "" {
-			logger.Warn("skipping cluster config with empty ID")
-			continue
-		}
-		if !c.InCluster && c.KubeconfigPath == "" && !c.PullOnly {
-			logger.Warn("skipping remote cluster with no kubeconfig_path",
-				"cluster", c.ID,
-				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes connect outbound over the heartbeat")
-			continue
-		}
-		if c.Domain == "" {
-			logger.Warn("skipping cluster with no domain", "cluster", c.ID)
-			continue
-		}
-		clusters[c.ID] = c
-	}
-
-	logger.Info("loaded cluster configs", "count", len(clusters))
 	return clusters
 }
 
@@ -1963,7 +1948,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		// generation set through the same helper. Before any rotation exists
 		// this is byte-identical to the old provisionMasterSecret() reads.
 		"HeartbeatKey": provisionHeartbeatKey(h.ID),
-		"SessionKey":   deriveDomainKey(provisionCurrentSecret(), infoSessionKey),
+		// RESIDUAL-2: PER-HIVE, matching desiredPerHiveEnv. This MUST move in
+		// lockstep with the reconcile sweep — the two derivations fighting is
+		// exactly the "roll a pod every cycle forever" failure the comment
+		// above warns about.
+		"SessionKey":   provisionSessionKey(h.ID),
 		"SSOPublicKey": ssoPublicKeyFromSeed(deriveDomainKey(provisionCurrentSecret(), infoSSOEd25519Seed)),
 		// N2: the Ed25519 PUBLIC key for hub session cookies. A spoke verifies
 		// hive_hub_user with this and cannot mint one — unlike SessionKey below,
@@ -2315,6 +2304,51 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: hive-self-upgrade
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
+# hive-route-reader lets the spoke discover the external hostname its OWN
+# Route/Ingress serves, which it reports to the hub as dashboard_url (see
+# SpokeServedHost). Without it the spoke falls back to synthesising
+# "<hiveID>.<hub host>" — correct only for spokes fronted by the hub's wildcard
+# domain, and a guaranteed 503 anywhere else, because that wildcard sends the
+# name to the HUB's router which has no backend for it.
+#
+# The spoke is the only party that CAN read this on a pull-only cluster, where
+# the hub has no kubectl path by design. Strictly read-only and namespace-scoped:
+# list/get, no write verbs, so a compromised spoke learns only its own hostname
+# — which it already advertises — and can neither create nor retarget routing.
+# Routes are included unconditionally rather than under RequiresSCC: a cluster
+# can serve Routes without requiring an SCC, and a Role naming a CRD-backed
+# resource is inert on clusters where that API is absent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-route-reader
+  namespace: {{.Namespace}}
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list"]
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-route-reader
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-route-reader
 subjects:
 - kind: ServiceAccount
 {{- if .RequiresSCC}}

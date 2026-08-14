@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node server.test.js && node session_cookie_v2.test.js && node session_cookie_v3.test.js && node session_pubkey_rotation.test.js && node terminal_cookie_verify.test.js && node redoc_pin.test.js"
+    "test": "node server.test.js && node session_cookie_v2.test.js && node session_cookie_v3.test.js && node session_pubkey_rotation.test.js && node terminal_cookie_verify.test.js && node redoc_pin.test.js && node csp_token_injection.test.js"
   },
   "dependencies": {
     "express": "^5.2.0",

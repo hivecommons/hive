@@ -29,6 +29,20 @@ set -euo pipefail
 REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 [[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
+HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
+
+# Contributor mode comes from a root-owned marker file at the image
+# boundary. The env var HIVE_CONTRIBUTOR_MODE is caller-controlled and
+# must never switch token injection or PR routing.
+#
+# SECURITY (#3249, re-landing #3321/fb87b4c7 on v4): this guard shipped on v2
+# but was dropped from v4 by a v2->v4 sync merge that resolved bin/gh-wrapper.sh
+# in favour of the v4 side. The marker tests and the contributor Dockerfile's
+# `touch /etc/hive/contributor-mode` both survived the sync, so the regression
+# suite kept asserting a boundary the wrapper no longer enforced.
+_contributor_mode() {
+  [[ -f "$HIVE_CONTRIBUTOR_MODE_MARKER" ]]
+}
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
 if [[ ! -x "$REAL_GH" ]]; then
@@ -45,7 +59,7 @@ fi
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
 # Contributors keep their personal token — they fork+PR with their own identity.
 TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
+if ! _contributor_mode; then
   # Per-agent scoped token (Phase 4) — 0640 dev:hive-<agent>, least-privilege,
   # readable ONLY by the owning agent's private group. This is the ONLY token an
   # agent may use.
@@ -71,7 +85,7 @@ if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents
-if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+if _contributor_mode; then
   case "$*" in
     *"auth "*)
       echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
@@ -179,6 +193,94 @@ for arg in "${args[@]}"; do
   esac
 done
 
+# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840, F6/F7 residual) ────────────────
+#
+# Everything below this point is a DENYLIST: each gate names a specific thing an
+# agent must not do (`pr merge`, `issue create`, mutating `gh api`, ...) and the
+# script ends in a bare `exec "$REAL_GH" "$@"`. So any subcommand nobody thought
+# to enumerate reached real GitHub with the App token attached. That is the same
+# failure shape as the mode `case` with no default arm (fixed in ce9d19aa):
+# unenumerated input takes the permissive branch.
+#
+# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8, EVERY
+# one of these reached gh with rc=0 — including in NO_GITHUB mode, the most
+# restrictive mode there is, because the mode gates only ever inspect
+# `subcmd = issue|pr`:
+#
+#   NO_GITHUB     gh auth token                 → reached gh  (exfiltrates the token)
+#   NO_GITHUB     gh secret set FOO --body bar  → reached gh  (writes Actions secrets)
+#   NO_GITHUB     gh ssh-key add /tmp/k.pub     → reached gh  (persistent account access)
+#   NO_GITHUB     gh variable set X --body y    → reached gh
+#   ISSUES_ONLY   gh repo delete owner/repo     → reached gh  (destroys the repo)
+#   ISSUES_ONLY   gh release create v9.9.9      → reached gh  (publishes artifacts)
+#   ISSUES_ONLY   gh gist create /etc/passwd    → reached gh  (exfiltrates file content)
+#   ADVISORY      gh workflow run deploy.yml    → reached gh  (arbitrary CI execution)
+#
+# So we deny by default and enumerate what agents legitimately do. The permitted
+# set below was derived from actual usage in this repo — the agent policies
+# (v2/policies/*.md, examples/kubestellar/agents/**) and bin/*.sh — NOT invented,
+# so the allowlist cannot quietly break the fleet. Ordering matters: this runs
+# BEFORE the mode/ACMM gates, so it only decides whether a verb is on the map at
+# all. Everything it admits is still subject to every gate below — `pr merge`
+# passes here and is then held by the merge-eligibility allowlist.
+#
+# Adding a verb here is a deliberate security decision: it must be something an
+# agent genuinely needs, and it must be safe for a prompt-injected agent to run.
+_gh_surface_allowed() {
+  local s="$1" a="$2"
+  case "$s" in
+    # Core work surface. Per-action so a new destructive action on an existing
+    # subcommand (e.g. a future `gh pr delete`) is denied until reviewed, rather
+    # than inherited for free by allowing the whole subcommand.
+    issue)
+      case "$a" in
+        list|view|create|edit|comment|close|reopen|status|develop) return 0 ;;
+      esac ;;
+    pr)
+      case "$a" in
+        list|view|create|edit|comment|close|reopen|status|diff|checks| \
+        merge|review|ready|checkout) return 0 ;;
+      esac ;;
+    # Read-only discovery.
+    search)
+      case "$a" in issues|prs|repos|code|commits) return 0 ;; esac ;;
+    run)
+      case "$a" in list|view|watch) return 0 ;; esac ;;
+    release)
+      case "$a" in list|view) return 0 ;; esac ;;
+    cache)
+      case "$a" in list) return 0 ;; esac ;;
+    label)
+      # The wrapper itself calls `gh label create` to ensure agent/hive labels
+      # exist before tagging (see _ensure_labels below).
+      case "$a" in list|create) return 0 ;; esac ;;
+    repo)
+      # fork/clone/view are the contributor flow (contribute_ws.go:3207 issues
+      # `gh repo fork <r> --clone=true`). `delete`, `archive`, `rename`,
+      # `edit` and `deploy-key` are deliberately NOT here.
+      case "$a" in view|list|fork|clone) return 0 ;; esac ;;
+    # `gh api` has its own read/write split gate further down, which is finer
+    # grained than anything expressible here (it distinguishes GET from an
+    # implicit POST). Admit the subcommand and let that gate do the work.
+    api) return 0 ;;
+    # No-network local helpers.
+    help|version|--version|--help|status) return 0 ;;
+  esac
+  return 1
+}
+
+# `gh` with no arguments prints help — harmless, and denying it produces a
+# confusing error for an agent that is just probing.
+if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
+  echo "⛔ BLOCKED: 'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands." >&2
+  echo "The wrapper denies by default: only commands agents are known to need are permitted," >&2
+  echo "so a subcommand nobody reviewed cannot reach GitHub with the App token attached (#3840)." >&2
+  echo "Permitted: issue/pr (list view create edit comment close reopen ...), search, run list|view|watch," >&2
+  echo "           release list|view, label list|create, repo view|list|fork|clone, api, help, version." >&2
+  echo "If this command is genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh." >&2
+  exit 1
+fi
+
 # ── Helpers: author validation for the list gate ──
 
 # Extract the --author value from the args array. Returns the value on stdout
@@ -235,7 +337,7 @@ _resolve_self_login() {
 # before they leap. `--author` self-listing is allowed only when the author value
 # matches the current agent/bot identity (fixes #3072).
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  if _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356)
   elif author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
     self_login="$(_resolve_self_login)"
@@ -282,7 +384,7 @@ ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 # SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
 # WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
 # their OWN identity by design, so their gh pr create must pass through unchanged.
-if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   if command -v hive-open-pr >/dev/null 2>&1; then
     # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
     # the same --repo/--head/--base/--title/--body shape and ignores the rest.
@@ -582,7 +684,7 @@ if [ "$subcmd" = "api" ]; then
   # Any mutating gh api (POST/PATCH/PUT/DELETE) stays blocked for contributor
   # agents — the read/write split opens READS only, never writes. Non-contributor
   # hive agents keep their existing write paths (governed by mode/ACMM gates above).
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]] && [ "$api_method" != "GET" ]; then
+  if _contributor_mode && [ "$api_method" != "GET" ]; then
     echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
     exit 1
   fi
@@ -652,7 +754,7 @@ if [[ -n "$AGENT_NAME" ]]; then
   LABELS_CSV="agent/${AGENT_DISPLAY_NAME}"
   [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
   # Contributor labels
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+  if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
     [[ -n "${HIVE_CONTRIBUTOR_CLI:-}" ]] && LABELS_CSV="${LABELS_CSV},cli/${HIVE_CONTRIBUTOR_CLI}"
   fi

@@ -52,7 +52,15 @@ type customStyleSanitizeReport struct {
 var (
 	customStyleCacheMu sync.Mutex
 	customStyleCache   = map[string]customStyleCacheEntry{}
-	customStyleClient  = &http.Client{Timeout: customStyleFetchTTL}
+	// customStyleClient serves the unauthenticated /api/style endpoint. The
+	// fetch URL is always constructed against raw.githubusercontent.com, but
+	// noRedirectToPrivate is applied like every other outbound fetch so a
+	// redirect (or DNS rebinding) can never walk the request to a
+	// private/internal address (SSRF defence-in-depth, #3759).
+	customStyleClient = &http.Client{
+		Timeout:       customStyleFetchTTL,
+		CheckRedirect: noRedirectToPrivate,
+	}
 )
 
 var (

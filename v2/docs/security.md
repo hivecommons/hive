@@ -1,5 +1,7 @@
 # Security notes: log scrubbing and secret redaction
 
+> **Scope:** this page covers log redaction only. For the operator-facing security model (Ed25519 sessions/SSO, key rotation, forced proxy egress and `CAP_NET_ADMIN`, supply chain), see [security-model.md](security-model.md); for the attacker-oriented view, see [security-threat-model.md](security-threat-model.md).
+
 Hive wraps its structured `slog` handler with `pkg/logscrub`. The wrapper redacts recognized token-like strings before log records reach the underlying handler.
 
 ## What is scrubbed

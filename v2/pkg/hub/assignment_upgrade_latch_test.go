@@ -50,8 +50,18 @@ func primeBehindLatest(t *testing.T) {
 
 // registryBehind returns a v2 registry entry parked one commit behind latest and
 // not currently upgrading — the state a fresh eligibility decision reads.
+// registryBehind builds a LIVE hive that is behind latest.
+//
+// LastHeartbeat is set because these tests are about the ASSIGNMENT latch, not
+// about whether the hive can collect an instruction. Upgrades are delivered on
+// the spoke's own outbound heartbeat, so a hive that has never heartbeated is
+// not armed at all — without a beat here every case below would be refused for
+// the wrong reason and would stop testing the latch.
 func registryBehind(id string) RegistryEntry {
-	return RegistryEntry{ID: id, GitBranch: "v2", GitHash: "oldsha95"}
+	return RegistryEntry{
+		ID: id, GitBranch: "v2", GitHash: "oldsha95",
+		LastHeartbeat: time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
+	}
 }
 
 // TestAutoUpgradeLatchedWhileClaimInFlight is the core guarantee: an

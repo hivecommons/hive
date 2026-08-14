@@ -72,3 +72,83 @@ func TestGatewayConfDoesNotRelyOnConfD(t *testing.T) {
 			"and the dual-stack rationale in TestGatewayListensDualStack needs review")
 	}
 }
+
+// gatewaySecurityHeaders pins the defence-in-depth headers added for issue
+// #3822. Each entry is a directive regex (must appear at least once per
+// `location` block, i.e. at least twice total in this file's two proxied
+// locations) paired with a human label for failure messages.
+//
+// X-Frame-Options and Content-Security-Policy are deliberately NOT included
+// here: the Go dashboard (pkg/dashboard/server.go) already sets XFO per-route
+// (DENY, or omits it in favour of a CSP frame-ancestors allowlist for
+// /api/snapshot/frame-ancestors), and a blanket nginx XFO would collide with
+// that per-document logic. CSP is tracked separately as issue #3315.
+// Strict-Transport-Security is also excluded: this file has no `ssl`/`443`
+// directive, so nginx never terminates TLS here, and asserting HSTS would
+// pin a header that describes a connection this config doesn't make.
+var gatewaySecurityHeaders = []struct {
+	label     string
+	directive *regexp.Regexp
+}{
+	{
+		label:     `X-Content-Type-Options: nosniff`,
+		directive: regexp.MustCompile(`(?m)^\s*add_header\s+X-Content-Type-Options\s+"nosniff"\s+always;`),
+	},
+	{
+		label:     `Referrer-Policy: strict-origin-when-cross-origin`,
+		directive: regexp.MustCompile(`(?m)^\s*add_header\s+Referrer-Policy\s+"strict-origin-when-cross-origin"\s+always;`),
+	},
+	{
+		label:     `Permissions-Policy`,
+		directive: regexp.MustCompile(`(?m)^\s*add_header\s+Permissions-Policy\s+"[^"]+"\s+always;`),
+	},
+}
+
+// gatewayProxiedLocationCount is the number of `location` blocks in
+// nginx.conf that proxy to hive_api and therefore must carry the
+// defence-in-depth headers (/api/ and /). The @api_error location returns a
+// static JSON body directly, not a proxied response, so it is not counted.
+const gatewayProxiedLocationCount = 2
+
+// TestGatewaySecurityHeadersPresent pins the fix for issue #3822: nginx.conf
+// must add defence-in-depth headers on every proxied response, not just
+// Cache-Control/Pragma. Requiring gatewayProxiedLocationCount occurrences
+// (not just >=1) ensures a future edit that trims the header from one
+// location while leaving it in another still fails loudly instead of passing
+// on a technicality.
+func TestGatewaySecurityHeadersPresent(t *testing.T) {
+	conf := readNginxConf(t)
+
+	for _, h := range gatewaySecurityHeaders {
+		t.Run(h.label, func(t *testing.T) {
+			matches := h.directive.FindAllString(conf, -1)
+			if len(matches) < gatewayProxiedLocationCount {
+				t.Errorf("nginx.conf has %d occurrence(s) of `%s`, want at least %d "+
+					"(one per proxied location) -- issue #3822 regressed",
+					len(matches), h.label, gatewayProxiedLocationCount)
+			}
+		})
+	}
+}
+
+// TestGatewayDoesNotSetFrameOptionsOrHSTS documents and guards a deliberate
+// omission from TestGatewaySecurityHeadersPresent: X-Frame-Options/CSP belong
+// to the Go dashboard's per-route logic (server.go) and HSTS is inapplicable
+// because this file never terminates TLS. If either shows up here, that's a
+// signal the rationale in the comment above gatewaySecurityHeaders needs a
+// fresh look (e.g. TLS termination moved into this file), not a silent green.
+func TestGatewayDoesNotSetFrameOptionsOrHSTS(t *testing.T) {
+	conf := readNginxConf(t)
+
+	if regexp.MustCompile(`(?m)^\s*add_header\s+X-Frame-Options\b`).MatchString(conf) {
+		t.Error("nginx.conf now sets X-Frame-Options -- this would collide with " +
+			"the Go dashboard's per-route XFO/CSP logic in pkg/dashboard/server.go; " +
+			"revisit the rationale in gatewaySecurityHeaders before allowing this")
+	}
+	if regexp.MustCompile(`(?m)^\s*add_header\s+Strict-Transport-Security\b`).MatchString(conf) {
+		t.Error("nginx.conf now sets Strict-Transport-Security but has no TLS " +
+			"(ssl/443) directive -- HSTS from a plaintext listener is misleading; " +
+			"if TLS termination moved into this file, HSTS is now appropriate and " +
+			"this guard should be updated instead of just deleted")
+	}
+}

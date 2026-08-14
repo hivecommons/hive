@@ -65,7 +65,7 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretB, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretB, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretB, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(perHiveGenSecretB, infoSessionKey),
+		EnvSessionKey:       derivePerHiveKey(perHiveGenSecretB, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretB, infoSessionEd25519Seed)),
 	}
@@ -73,7 +73,7 @@ func TestDesiredPerHiveEnvUsesCurrentNotPrevious(t *testing.T) {
 		EnvHeartbeatKey:     derivePerHiveKey(perHiveGenSecretA, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(perHiveGenSecretA, infoTerminalKey, hiveID),
 		EnvInviteKey:        derivePerHiveKey(perHiveGenSecretA, infoInviteKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(perHiveGenSecretA, infoSessionKey),
+		EnvSessionKey:       derivePerHiveKey(perHiveGenSecretA, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(perHiveGenSecretA, infoSessionEd25519Seed)),
 	}
@@ -159,7 +159,7 @@ func TestDesiredPerHiveEnvDerivesFromCurrentGeneration(t *testing.T) {
 	expect := map[string]string{
 		EnvHeartbeatKey:     derivePerHiveKey(cur, infoHeartbeatKey, hiveID),
 		EnvTerminalKey:      derivePerHiveKey(cur, infoTerminalKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(cur, infoSessionKey),
+		EnvSessionKey:       derivePerHiveKey(cur, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(cur, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(cur, infoSessionEd25519Seed)),
 	}
@@ -191,9 +191,21 @@ func TestPerHiveEnvGenerationIsAReadPathChangeToday(t *testing.T) {
 
 	master := provisionMasterSecret() // the PRE-generation expression
 	preGeneration := map[string]string{
-		EnvHeartbeatKey:     derivePerHiveKey(master, infoHeartbeatKey, hiveID),
-		EnvTerminalKey:      derivePerHiveKey(master, infoTerminalKey, hiveID),
-		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
+		EnvHeartbeatKey: derivePerHiveKey(master, infoHeartbeatKey, hiveID),
+		EnvTerminalKey:  derivePerHiveKey(master, infoTerminalKey, hiveID),
+		// AUDIT RESIDUAL-2. This entry is deliberately INVERTED rather than
+		// relaxed. It used to read deriveDomainKey(master, infoSessionKey) —
+		// the fleet-uniform expression — and it was correct to do so: this test
+		// proves the GENERATION work was a pure read-path change. Making the
+		// session key per-hive is a genuinely fleet-VISIBLE change, so leaving
+		// the old right-hand side here would have been a real failure, and
+		// simply deleting the entry would have silently dropped HIVE_SESSION_KEY
+		// from this test's coverage.
+		//
+		// The invariant this test exists to protect is unchanged for every other
+		// var; for this one the claim is now the opposite and is asserted
+		// explicitly below, so a revert to the fleet-wide formula FAILS here.
+		EnvSessionKey:       derivePerHiveKey(master, infoSessionKey, hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: ssoPublicKeyFromSeed(deriveDomainKey(master, infoSessionEd25519Seed)),
 	}
@@ -206,6 +218,18 @@ func TestPerHiveEnvGenerationIsAReadPathChangeToday(t *testing.T) {
 		if got[name] != v {
 			t.Errorf("%s changed value: this PR must be a read-path change with no fleet-visible effect", name)
 		}
+	}
+
+	// AUDIT RESIDUAL-2, the inverted half. HIVE_SESSION_KEY must NOT equal the
+	// fleet-uniform value any more. Without this, restoring
+	// deriveDomainKey(master, infoSessionKey) in desiredPerHiveEnv would be
+	// caught only by the loop above — and only for as long as the fixture keeps
+	// the per-hive expression, which a merge resolving in favour of the older
+	// side would quietly undo. Asserting the negative pins the property itself
+	// rather than the fixture.
+	if fleetWide := deriveDomainKey(master, infoSessionKey); got[EnvSessionKey] == fleetWide {
+		t.Errorf("HIVE_SESSION_KEY is byte-identical to the fleet-wide derivation — RESIDUAL-2 regressed; " +
+			"desiredPerHiveEnv must use provisionSessionKey(hiveID), not deriveDomainKey(master, infoSessionKey)")
 	}
 }
 
@@ -273,7 +297,7 @@ func perHiveEnvForGeneration(secret, hiveID string) []deploymentEnvVar {
 		{Name: "HIVE_ID", Value: hiveID},
 		{Name: EnvHeartbeatKey, Value: derivePerHiveKey(secret, infoHeartbeatKey, hiveID)},
 		{Name: EnvTerminalKey, Value: derivePerHiveKey(secret, infoTerminalKey, hiveID)},
-		{Name: EnvSessionKey, Value: deriveDomainKey(secret, infoSessionKey)},
+		{Name: EnvSessionKey, Value: derivePerHiveKey(secret, infoSessionKey, hiveID)},
 		{Name: EnvSSOPublicKey, Value: ssoPublicKeyFromSeed(deriveDomainKey(secret, infoSSOEd25519Seed))},
 		{Name: envSessionPublicKey, Value: ssoPublicKeyFromSeed(deriveDomainKey(secret, infoSessionEd25519Seed))},
 	}
@@ -420,8 +444,17 @@ func TestPerHiveEnvSafeToRetireIsGated(t *testing.T) {
 	expired := legacyGenerationSet(perHiveGenSecretA).
 		rotate(perHiveGenSecretB, now.Add(-2*defaultVerifyWindow), defaultVerifyWindow)
 
+	// perHiveEnvConsidered mirrors what a sweep that read every admitted hive
+	// would record, with perHiveEnvUnreachable left at zero: a FULLY observed
+	// fleet. Retirement readiness is gated on that, so a fixture that omitted
+	// it would report "not retirable" for reasons unrelated to what each
+	// subtest is actually asserting.
 	newHub := func(gs *generationSet, seen map[string]perHiveEnvObservation) *HubServer {
-		return &HubServer{keyGenerations: gs, perHiveEnvSeen: seen}
+		return &HubServer{
+			keyGenerations:       gs,
+			perHiveEnvSeen:       seen,
+			perHiveEnvConsidered: len(seen),
+		}
 	}
 	allOnCurrent := map[string]perHiveEnvObservation{
 		"c1": {Generation: expired.Current, Observed: now},

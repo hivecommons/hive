@@ -90,7 +90,13 @@ func newHandlerHub() *HubServer {
 		hubBanners:         make(map[string]*HubBannerEntry),
 		heartbeatSwitchTag: make(map[string]string),
 		heartbeatUpgrade:   make(map[string]string),
-		clusters:           map[string]ClusterConfig{"hive-oke": {ID: "hive-oke"}},
+		// Domain is load-bearing, not decoration: the placeholder URL a hive
+		// with no reported dashboard URL falls back to is now derived from ITS
+		// OWN cluster's domain (placeholderHostURL) instead of a hardcoded
+		// hive.kubestellar.io. A cluster with no domain therefore yields no
+		// URL at all — which is the correct fail-closed answer, and is why this
+		// fixture must name the domain it is standing in for.
+		clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", Domain: "hive.kubestellar.io"}},
 	}
 }
 
@@ -174,6 +180,13 @@ func TestHandleOpenHive(t *testing.T) {
 	s.handleOpenHive(rec, req)
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/sso?token=") {
 		t.Errorf("admin open: status=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	// INVERTED (not relaxed): this used to assert only that SOME /sso?token=
+	// redirect happened, which passed just as happily when the host was
+	// unreachable — the 503 bug. Assert the HOST too: it must be the one this
+	// hive's own cluster serves.
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "https://hosted-abc.hive.kubestellar.io/sso?token=") {
+		t.Errorf("admin open must hand off to the host the hive's cluster serves, got %q", loc)
 	}
 
 	// Non-owner, non-authorized -> access denied.

@@ -31,12 +31,14 @@ func helperSetupTempDirs(t *testing.T) func() {
 	oldHMAC := hmacKeyPath
 	oldProv := provisionRequestsDir
 	oldAutoUpgrade := hubAutoUpgradePath
+	oldUpgradePause := upgradePausePath
 
 	saasUsersDir = filepath.Join(dir, "users")
 	saasHivesDir = filepath.Join(dir, "hives")
 	hmacKeyPath = filepath.Join(dir, "hmac.key")
 	provisionRequestsDir = filepath.Join(dir, "provision-requests")
 	hubAutoUpgradePath = filepath.Join(dir, "hub-auto-upgrade")
+	upgradePausePath = filepath.Join(dir, "upgrade-pause.json")
 
 	os.MkdirAll(saasUsersDir, 0o755)
 	os.MkdirAll(saasHivesDir, 0o755)
@@ -49,6 +51,7 @@ func helperSetupTempDirs(t *testing.T) func() {
 		hmacKeyPath = oldHMAC
 		provisionRequestsDir = oldProv
 		hubAutoUpgradePath = oldAutoUpgrade
+		upgradePausePath = oldUpgradePause
 	}
 }
 

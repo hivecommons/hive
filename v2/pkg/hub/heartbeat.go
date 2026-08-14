@@ -833,6 +833,17 @@ var (
 		nextProbe time.Time
 		result    *RouteExistenceCheck
 	}{}
+
+	// servedHostProbeCache memoises the spoke's own served-host discovery on
+	// the same cadence as the route-existence probe. The answer changes only
+	// when an operator recreates the spoke's Route/Ingress, so re-listing the
+	// namespace on every beat would be pure overhead against the API server.
+	servedHostProbeCache = struct {
+		sync.Mutex
+		nextProbe time.Time
+		host      string
+		probed    bool
+	}{}
 )
 
 func waitForReady(ctx context.Context, logger *slog.Logger) {
@@ -1352,6 +1363,132 @@ func ingressHostExists(ctx context.Context, client *http.Client, cfg *inClusterC
 		}
 	}
 	return false, false, ""
+}
+
+// spokeServedHost returns the external hostname the spoke's OWN Route or
+// Ingress actually serves, read from the in-cluster Kubernetes API, or "" when
+// it cannot be determined.
+//
+// This exists because the DashboardURL fallback used to synthesise
+// "<hiveID>.<hub's host>", which silently assumes every spoke is fronted by the
+// hub's own wildcard domain. That holds only for spokes co-located with the hub
+// (hive-oke, where *.hive.kubestellar.io IS the router). On any other cluster —
+// an OpenShift pool on *.apps.<cluster>, an IKS pool — the synthesised host
+// resolves, via the hub's wildcard, to the HUB's router, which has no backend
+// for that name and answers 503. The hub then linked users at a hostname that
+// could never work, while the spoke's real Route was serving fine all along.
+//
+// The spoke is the only party that can answer this on a pull-only cluster: the
+// hub has no kubectl path there by design, so it cannot read the Route. The
+// spoke reads its own namespace, which it can always do.
+//
+// Ingress is consulted before Route so a cluster carrying both resolves to the
+// same object the traffic path uses. Ordering matches routeExistenceProbe.
+//
+// Returns "" on any error, on an unknown/unsupported API, or when no host is
+// found — every caller must treat that as "no answer" and fall back, never as
+// an assertion that no route exists.
+func spokeServedHost(ctx context.Context) string {
+	now := time.Now()
+	servedHostProbeCache.Lock()
+	defer servedHostProbeCache.Unlock()
+	if servedHostProbeCache.probed && now.Before(servedHostProbeCache.nextProbe) {
+		return servedHostProbeCache.host
+	}
+
+	host := discoverSpokeServedHost(ctx)
+	servedHostProbeCache.probed = true
+	servedHostProbeCache.nextProbe = now.Add(routeExistenceProbeInterval)
+	servedHostProbeCache.host = host
+	return host
+}
+
+// SpokeServedHost is the exported entry point to spokeServedHost, used by the
+// spoke binary (cmd/hive) to resolve the dashboard URL it advertises to the hub
+// when no dashboard_url is configured. Returns "" when the host cannot be
+// determined; the caller must fall back rather than treat that as an answer.
+func SpokeServedHost(ctx context.Context) string { return spokeServedHost(ctx) }
+
+// discoverSpokeServedHost performs the uncached read behind spokeServedHost.
+func discoverSpokeServedHost(ctx context.Context) string {
+	cfg, err := inClusterAPIConfig()
+	if err != nil {
+		return ""
+	}
+	client, err := inClusterHTTPClient(cfg)
+	if err != nil {
+		return ""
+	}
+	if host := ingressServedHost(ctx, client, cfg); host != "" {
+		return host
+	}
+	return routeServedHost(ctx, client, cfg)
+}
+
+// ingressServedHost returns the first non-empty host on any Ingress rule in the
+// spoke's namespace.
+func ingressServedHost(ctx context.Context, client *http.Client, cfg *inClusterConfig) string {
+	var list struct {
+		Items []struct {
+			Spec struct {
+				Rules []struct {
+					Host string `json:"host"`
+				} `json:"rules"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if unknown, _ := listKubernetesResource(ctx, client, cfg,
+		"/apis/networking.k8s.io/v1/namespaces/"+url.PathEscape(cfg.Namespace)+"/ingresses", &list); unknown {
+		return ""
+	}
+	for _, item := range list.Items {
+		for _, rule := range item.Spec.Rules {
+			if host := strings.ToLower(strings.TrimSpace(rule.Host)); host != "" {
+				return host
+			}
+		}
+	}
+	return ""
+}
+
+// routeServedHost returns the host of the spoke's dashboard Route.
+//
+// The dashboard Route is selected BY NAME (routeBaseDashboard) rather than by
+// taking the first Route in the namespace, because the namespace also carries
+// the terminal Route and any "<base>-vanity" mirrors. Picking arbitrarily would
+// make the reported URL depend on list order and could advertise the terminal
+// host as the dashboard. Only if no Route bears that name does this fall back
+// to the first Route with a host, so a spoke provisioned under a different
+// naming convention still reports something reachable rather than nothing.
+func routeServedHost(ctx context.Context, client *http.Client, cfg *inClusterConfig) string {
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Host string `json:"host"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if unknown, _ := listKubernetesResource(ctx, client, cfg,
+		"/apis/route.openshift.io/v1/namespaces/"+url.PathEscape(cfg.Namespace)+"/routes", &list); unknown {
+		return ""
+	}
+	fallback := ""
+	for _, item := range list.Items {
+		host := strings.ToLower(strings.TrimSpace(item.Spec.Host))
+		if host == "" {
+			continue
+		}
+		if strings.TrimSpace(item.Metadata.Name) == routeBaseDashboard {
+			return host
+		}
+		if fallback == "" {
+			fallback = host
+		}
+	}
+	return fallback
 }
 
 func routeHostExists(ctx context.Context, client *http.Client, cfg *inClusterConfig, host string) (found, unknown bool, errText string) {

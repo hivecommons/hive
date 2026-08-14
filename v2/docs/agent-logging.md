@@ -170,6 +170,29 @@ Hive itself rotates the file.
   agent's session. Use each agent's own kick/messaging path
   (`SendKick`/`pluk send`) for that, not `hive-panes`.
 
+## Terminal scrollback and full-log capture
+
+Separate from pluk's JSONL stream, each agent's tmux session keeps a deep
+terminal scrollback:
+
+- Agent sessions are created with tmux `history-limit` **50000** (tmux's own
+  default is 2000, which silently truncated long runs —
+  [#3790](https://github.com/kubestellar/hive/pull/3790)). Override with
+  `HIVE_TMUX_HISTORY_LIMIT` (positive integer); it must be set at session
+  creation — raising it later never deepens an existing pane. The attach-time
+  twin `HIVE_TTYD_HISTORY_LIMIT` (also 50000) only affects panes created after
+  a browser attach.
+- The browser terminal attaches with tmux mouse mode on, so the scroll wheel
+  drives copy-mode scrollback; hold Shift (Option on macOS) for native browser
+  text selection ([#3722](https://github.com/kubestellar/hive/pull/3722)).
+- **Full-log view/download:** `GET /api/agents/{name}/log` returns the entire
+  retained buffer for the agent's latest run as `text/plain` (add `?download=1`
+  for a `Content-Disposition` download named
+  `hive-<agent>-<timestamp>.log`) — [#3711](https://github.com/kubestellar/hive/pull/3711).
+  In the dashboard these are the `📄 full log` and `⬇ log` controls on the
+  agent card. Normal dashboard auth applies (any authenticated role); output
+  passes through token redaction, so it is not a redaction bypass.
+
 ## Related
 
 - [`v2/deploy/README.md`](../deploy/README.md) — `hive-panes.sh` inventory

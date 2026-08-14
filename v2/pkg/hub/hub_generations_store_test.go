@@ -1,13 +1,17 @@
 package hub
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,8 +29,10 @@ import (
 //  2. A DOUBLE ROTATION IS REFUSED. maxLiveGenerations is 2, so a second
 //     rotation before the first converges DROPS the generation most of the
 //     fleet is still on.
-//  3. A MALFORMED FILE FAILS CLOSED to the legacy single-generation set, and is
-//     never replaced by a fresh rotation.
+//  3. A MALFORMED OR UNREADABLE FILE FAILS CLOSED to NO set at all, and is
+//     never replaced by a fresh rotation and never quietly resolved to the
+//     legacy single-generation set. Only an ABSENT file falls back to legacy
+//     (audit 8, F20 — see TestMalformedGenerationsFileFailsClosed).
 //  4. NO SECRET MATERIAL is ever logged or returned.
 
 const (
@@ -49,6 +55,20 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// newRotationTestHub builds a hub that is ALLOWED to rotate.
+//
+// AUDIT 8 / F19+F21. rotateMasterSecret now refuses unless the last reconcile
+// sweep observed the ENTIRE fleet, because with 44 of 70 spokes on pull-only
+// clusters a rotation would converge the reachable ones and strand the rest
+// when the previous generation retires. So a hub with no sweep state — which is
+// what this fixture used to be — is refused with errRotationWouldStrandSpokes.
+//
+// This fixture therefore declares a fully observed fleet: one hive considered,
+// none unreachable. That is the PRECONDITION under test elsewhere, not the
+// subject of the tests using this helper; they assert rotation mechanics
+// (demotion, persistence, cooldown, double-submit) and would otherwise all fail
+// for one unrelated reason. The interlock itself is asserted directly, in both
+// directions, by TestRotationRefusedWhileFleetNotFullyObserved.
 func newRotationTestHub(t *testing.T, master string) *HubServer {
 	t.Helper()
 	return &HubServer{
@@ -56,6 +76,12 @@ func newRotationTestHub(t *testing.T, master string) *HubServer {
 		hubSecret:       master,
 		keyGenerations:  legacyGenerationSet(master),
 		lastKeyRotation: time.Time{},
+		// A fully observed fleet: considered > 0 and unreachable == 0.
+		perHiveEnvConsidered:  1,
+		perHiveEnvUnreachable: 0,
+		perHiveEnvSeen: map[string]perHiveEnvObservation{
+			"hive-observed": {Generation: legacyGenerationID, Observed: time.Now()},
+		},
 	}
 }
 
@@ -138,7 +164,7 @@ func TestRotationSurvivesRestart(t *testing.T) {
 	}
 
 	// SIMULATED RESTART: nothing survives but the PVC and hub-secret.key.
-	reloaded, rotatedAt := loadGenerations(rotStoreSecretA, quietLogger())
+	reloaded, rotatedAt, _ := loadGenerations(rotStoreSecretA, quietLogger())
 	if reloaded == nil {
 		t.Fatal("reload returned no generation set")
 	}
@@ -339,9 +365,17 @@ func TestConcurrentRotationsProduceOne(t *testing.T) {
 }
 
 // TestMalformedGenerationsFileFailsClosed is property (3).
+//
+// INVERTED FOR AUDIT 8 / F20. This test previously asserted that a malformed
+// file falls back to the LEGACY single-generation set, and checked
+// `gs.currentSecret() == rotStoreSecretA` to prove it. That assertion encoded
+// the vulnerability: after a rotation, rotStoreSecretA is SUPERSEDED material,
+// and "the malformed file made the hub mint on generation 1 again" is exactly
+// the silent un-rotation F20 describes — the old test would have passed on the
+// vulnerable code and failed on the fix. It is inverted, not relaxed: every
+// case now asserts the STRONGER property that no set is returned at all, so a
+// future regression back to the legacy fallback fails here.
 func TestMalformedGenerationsFileFailsClosed(t *testing.T) {
-	legacy := legacyGenerationSet(rotStoreSecretA)
-
 	cases := []struct {
 		name    string
 		content string
@@ -383,29 +417,26 @@ func TestMalformedGenerationsFileFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			gs, rotatedAt := loadGenerations(rotStoreSecretA, quietLogger())
-			if gs == nil {
-				t.Fatal("loadGenerations returned nil — the hub would have no minting key at all")
+			gs, rotatedAt, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+			if outcome != generationsUntrusted {
+				t.Fatalf("outcome = %v, want generationsUntrusted — a file that EXISTS but cannot be trusted "+
+					"is not the same as one that is absent, and must not resolve to 'never rotated'", outcome)
 			}
-			// Fails closed to the LEGACY set, which is always correct because
-			// hub-secret.key is authoritative for generation 1.
-			if gs.Current != legacy.Current {
-				t.Errorf("current = %d, want the legacy generation %d", gs.Current, legacy.Current)
+			// The inverted assertion. A malformed file must yield NO set: the
+			// legacy set it used to yield is generation 1, which after any
+			// rotation is superseded material, so returning it silently
+			// un-rotates the hub.
+			if gs != nil {
+				t.Fatalf("a malformed file yielded a usable generation set (current=%d) — it must fail closed. "+
+					"If this set is the legacy one, the hub has silently reverted to the superseded master (F20)", gs.Current)
 			}
-			if gs.currentSecret() != rotStoreSecretA {
-				t.Error("did not fall back to the master from hub-secret.key")
-			}
-			if len(gs.Generations) != 1 {
-				t.Errorf("live generations = %d, want exactly the single legacy generation", len(gs.Generations))
+			// And it must certainly not mint a NEW key — that would be material
+			// the fleet has never seen, replacing the generation it is on.
+			if gs.currentSecret() != "" {
+				t.Fatal("a malformed file produced a minting secret")
 			}
 			if !rotatedAt.IsZero() {
 				t.Error("a malformed file yielded a non-zero RotatedAt")
-			}
-			// A malformed file must NOT trigger a fresh rotation — that would
-			// mint material the fleet has never seen while forgetting the
-			// generation it is actually on.
-			if gs.currentSecret() != legacy.currentSecret() {
-				t.Fatal("a malformed file caused the hub to mint on a NEW key — it must fall back, not rotate")
 			}
 			if tc.quarantined {
 				if _, err := os.Stat(path + hubGenerationsQuarantineSuffix); err != nil {
@@ -426,7 +457,7 @@ func TestMalformedGenerationsFileFailsClosed(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		gs, _ := loadGenerations(rotStoreSecretA, quietLogger())
+		gs, _, _ := loadGenerations(rotStoreSecretA, quietLogger())
 		if gs == nil || gs.Current != 2 {
 			t.Fatalf("a well-formed file should load; got %+v", gs)
 		}
@@ -449,7 +480,7 @@ func TestMalformedGenerationsFileFailsClosed(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		gs, rotatedAt := loadGenerations(rotStoreSecretA, quietLogger())
+		gs, rotatedAt, _ := loadGenerations(rotStoreSecretA, quietLogger())
 		if gs == nil {
 			t.Fatal("valid file did not load")
 		}
@@ -472,9 +503,17 @@ func TestMalformedGenerationsFileFailsClosed(t *testing.T) {
 }
 
 // TestMissingGenerationsFileIsNormal — the state of every hub in the fleet.
+//
+// This is the case F20's fix must NOT break. ENOENT is a positive fact ("no
+// rotation has ever been persisted", because the file is only ever created by
+// saveGenerations), not an absence of information, so the legacy fallback stays
+// exactly as it was here.
 func TestMissingGenerationsFileIsNormal(t *testing.T) {
 	withTempGenerationsPath(t) // temp dir; the file does not exist
-	gs, rotatedAt := loadGenerations(rotStoreSecretA, quietLogger())
+	gs, rotatedAt, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if outcome != generationsNeverRotated {
+		t.Fatalf("outcome = %v, want generationsNeverRotated — an ABSENT file is the ONE case that may fall back to legacy", outcome)
+	}
 	if gs == nil {
 		t.Fatal("a missing generations file must synthesize the legacy set, not return nil")
 	}
@@ -485,7 +524,7 @@ func TestMissingGenerationsFileIsNormal(t *testing.T) {
 		t.Error("a never-rotated hub reported a rotation time")
 	}
 	// An empty master must still fail closed, exactly as before.
-	if gs, _ := loadGenerations("", quietLogger()); gs != nil {
+	if gs, _, _ := loadGenerations("", quietLogger()); gs != nil {
 		t.Error("an empty master produced a generation set")
 	}
 }
@@ -644,4 +683,331 @@ func TestRotateResponseLeaksNoSecret(t *testing.T) {
 	if !sawCurrent || !sawPrevious {
 		t.Error("the view does not distinguish current from previous")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT 8 / F20: a non-ENOENT read error must NOT silently un-rotate the hub.
+//
+// The bug: loadGenerations collapsed "file absent" and "file unreadable" into
+// the same return — the legacy single-generation set. Before the first rotation
+// those really are the same state. After one they are opposites: generation 1
+// is SUPERSEDED material with a VerifyUntil, and re-installing it as the
+// current minting generation means the hub re-mints on the old key, drops the
+// post-rotation generation out of the accepted set entirely, and returns a zero
+// RotatedAt that clears the 8-hour anti-stranding cooldown.
+//
+// Every test below seeds a ROTATED file first, because that is the only state
+// in which the two cases differ — a test written against a never-rotated hub
+// would pass on the vulnerable code.
+// ---------------------------------------------------------------------------
+
+// seedRotatedGenerationsFile writes a well-formed, ROTATED generations file:
+// current is generation 2 on secret B, with generation 1 on secret A demoted
+// and still inside its verify window. Returns the path and the rotated_at it
+// recorded.
+func seedRotatedGenerationsFile(t *testing.T) (string, time.Time) {
+	t.Helper()
+	path := withTempGenerationsPath(t)
+	rotatedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	content := `{"current": 2, "rotated_at": "` + rotatedAt.Format(time.RFC3339) + `", "generations": [
+		{"id": 2, "secret": "` + rotStoreSecretB + `", "created": "` + rotatedAt.Format(time.RFC3339) + `"},
+		{"id": 1, "secret": "` + rotStoreSecretA + `", "verify_until": "` +
+		rotatedAt.Add(defaultVerifyWindow).Format(time.RFC3339) + `"}
+	]}`
+	if err := os.WriteFile(path, []byte(content), hubGenerationsFileMode); err != nil {
+		t.Fatal(err)
+	}
+	return path, rotatedAt
+}
+
+// makeUnreadable chmods the file to 000 so os.ReadFile returns EACCES —
+// a real, unsynthesised non-ENOENT read error.
+//
+// Skips as root, where the mode is not enforced and the read would SUCCEED,
+// turning this into a test that silently proves nothing. That is exactly the
+// "test passing for the wrong reason" failure mode this repo has been bitten by
+// before, so it is made explicit rather than left to chance.
+func makeUnreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode 000 is not enforced, so the read would succeed and the test would pass vacuously")
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, hubGenerationsFileMode) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("this filesystem/user can still read a 0000 file; cannot produce a genuine EACCES here")
+	} else if os.IsNotExist(err) {
+		t.Fatalf("fixture is wrong: chmod produced ENOENT, not a read error: %v", err)
+	}
+}
+
+// TestF20_UnreadableGenerationsFileDoesNotRevertToSupersededMaster is the
+// central regression for F20.
+func TestF20_UnreadableGenerationsFileDoesNotRevertToSupersededMaster(t *testing.T) {
+	path, _ := seedRotatedGenerationsFile(t)
+
+	// POSITIVE CONTROL, direction 1: while the file IS readable, the rotated
+	// state loads. Without this, "always fail closed" would satisfy the
+	// assertions below and the test would prove nothing about the fix.
+	pre, preRotatedAt, preOutcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if preOutcome != generationsLoaded || pre == nil || pre.Current != 2 {
+		t.Fatalf("positive control: a readable rotated file must load as generation 2; got outcome=%v set=%+v", preOutcome, pre)
+	}
+	if pre.currentSecret() != rotStoreSecretB {
+		t.Fatal("positive control: readable rotated file did not mint on the POST-rotation secret")
+	}
+	if preRotatedAt.IsZero() {
+		t.Fatal("positive control: readable rotated file did not yield its rotated_at")
+	}
+
+	makeUnreadable(t, path)
+
+	gs, rotatedAt, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+
+	if outcome != generationsUntrusted {
+		t.Errorf("outcome = %v, want generationsUntrusted — an unreadable file is NOT 'never rotated'", outcome)
+	}
+	// THE FINDING. The vulnerable code returned the legacy set here.
+	if gs != nil {
+		t.Fatalf("a non-ENOENT read error yielded a usable generation set (current=%d, minting on %s) — "+
+			"the hub silently un-rotated to the superseded master (F20)",
+			gs.Current, secretLabelForTest(gs.currentSecret()))
+	}
+	if gs.currentSecret() == rotStoreSecretA {
+		t.Fatal("the hub is minting on the SUPERSEDED generation-1 master after a read error (F20)")
+	}
+	if gs.currentSecret() != "" {
+		t.Fatal("the hub has a minting secret despite being unable to establish its generation state")
+	}
+	// Nothing may be accepted from a set the hub cannot vouch for.
+	if n := len(gs.acceptableGenerations(time.Now())); n != 0 {
+		t.Errorf("acceptable generations = %d on untrusted state, want 0", n)
+	}
+	// POSITIVE CONTROL, direction 2: restoring readability restores the
+	// rotated state, proving the failure above is caused by the read error and
+	// not by the fixture being broken.
+	if err := os.Chmod(path, hubGenerationsFileMode); err != nil {
+		t.Fatal(err)
+	}
+	post, _, postOutcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if postOutcome != generationsLoaded || post == nil || post.Current != 2 {
+		t.Fatalf("positive control: the file became loadable again but did not load; outcome=%v set=%+v", postOutcome, post)
+	}
+	_ = rotatedAt
+}
+
+// TestF20_ReadErrorDoesNotClearRotationCooldown covers the second half of the
+// finding: RotatedAt going to zero makes evaluateRotation say "never rotated",
+// which clears the 8-hour anti-stranding cooldown.
+func TestF20_ReadErrorDoesNotClearRotationCooldown(t *testing.T) {
+	path, seededRotatedAt := seedRotatedGenerationsFile(t)
+
+	// POSITIVE CONTROL: the seeded rotation is INSIDE the cooldown while the
+	// file is readable, so a second rotation is refused.
+	_, readableRotatedAt, _ := loadGenerations(rotStoreSecretA, quietLogger())
+	if !readableRotatedAt.Equal(seededRotatedAt) {
+		t.Fatalf("positive control: rotated_at = %v, want %v", readableRotatedAt, seededRotatedAt)
+	}
+	if d := evaluateRotation(readableRotatedAt, time.Now(), false); d.Allowed {
+		t.Fatal("positive control: a rotation one hour old must be inside the 8h cooldown")
+	}
+
+	makeUnreadable(t, path)
+
+	gs, rotatedAt, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if outcome != generationsUntrusted {
+		t.Fatalf("outcome = %v, want generationsUntrusted", outcome)
+	}
+
+	// On the vulnerable code rotatedAt is zero here AND a legacy set is
+	// installed, so evaluateRotation returns Allowed — the cooldown is gone.
+	// The fix does return a zero rotatedAt (there is nothing to read it from),
+	// but it returns NO SET, and rotateMasterSecret refuses outright on a nil
+	// set. That is what has to be asserted: not the timestamp in isolation, but
+	// that a rotation cannot proceed.
+	s := &HubServer{logger: quietLogger(), hubSecret: rotStoreSecretA, keyGenerations: gs, lastKeyRotation: rotatedAt}
+	next, decision, err := s.rotateMasterSecret(time.Now(), false)
+	if err == nil {
+		t.Fatal("a rotation was ALLOWED after a generations-file read error — the anti-stranding guard was cleared (F20)")
+	}
+	if !errors.Is(err, errGenerationsUntrusted) {
+		t.Errorf("err = %v, want errGenerationsUntrusted", err)
+	}
+	if decision.Allowed {
+		t.Error("rotationDecision.Allowed is true on untrusted generation state")
+	}
+	if next != nil {
+		t.Fatal("a rotation produced a new generation set from untrusted state — it would strand the fleet's actual current generation")
+	}
+
+	// And force must NOT override it. force exists to beat the convergence
+	// cooldown when the new generation is compromised, not to rotate from a
+	// state the hub cannot read.
+	if _, _, err := s.rotateMasterSecret(time.Now(), true); err == nil {
+		t.Fatal("force=true rotated from untrusted generation state — force must not override 'I do not know what generation I am on'")
+	}
+}
+
+// TestF20_TruncatedGenerationsFileFailsClosed covers the partial-write case: a
+// rotated file cut short by a crash mid-rename or a PVC fault. It must not read
+// as "empty" and therefore as "never rotated".
+func TestF20_TruncatedGenerationsFileFailsClosed(t *testing.T) {
+	path, _ := seedRotatedGenerationsFile(t)
+
+	full, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// POSITIVE CONTROL: the untruncated bytes load as the rotated set.
+	if gs, _, outcome := loadGenerations(rotStoreSecretA, quietLogger()); outcome != generationsLoaded || gs == nil || gs.Current != 2 {
+		t.Fatalf("positive control: the full file must load as generation 2; got outcome=%v set=%+v", outcome, gs)
+	}
+
+	// Truncate to half. Valid JSON prefix, invalid JSON document.
+	if err := os.WriteFile(path, full[:len(full)/2], hubGenerationsFileMode); err != nil {
+		t.Fatal(err)
+	}
+
+	gs, rotatedAt, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if outcome != generationsUntrusted {
+		t.Errorf("outcome = %v, want generationsUntrusted for a truncated file", outcome)
+	}
+	if gs != nil {
+		t.Fatalf("a truncated file yielded a usable set (current=%d) — a partial write of a ROTATED file "+
+			"must not resolve to the superseded generation 1", gs.Current)
+	}
+	if gs.currentSecret() == rotStoreSecretA {
+		t.Fatal("a truncated file put the hub back on the superseded master (F20)")
+	}
+	if !rotatedAt.IsZero() {
+		t.Error("a truncated file yielded a non-zero rotated_at")
+	}
+	// The bad bytes are preserved for the operator rather than overwritten.
+	if _, err := os.Stat(path + hubGenerationsQuarantineSuffix); err != nil {
+		t.Errorf("truncated file was not quarantined for inspection: %v", err)
+	}
+}
+
+// TestF20_ReadIsRetriedBeforeFailingClosed asserts the availability half of the
+// trade: a fault that clears must not take the hub out of minting. The file is
+// unreadable on the first attempt and readable by the time the loader retries.
+func TestF20_ReadIsRetriedBeforeFailingClosed(t *testing.T) {
+	path, _ := seedRotatedGenerationsFile(t)
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode 000 is not enforced")
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("this filesystem/user can still read a 0000 file")
+	}
+
+	// Restore readability partway through the retry budget.
+	restored := make(chan struct{})
+	go func() {
+		time.Sleep(generationsReadRetryDelay + generationsReadRetryDelay/2)
+		_ = os.Chmod(path, hubGenerationsFileMode)
+		close(restored)
+	}()
+	t.Cleanup(func() { <-restored })
+
+	gs, _, outcome := loadGenerations(rotStoreSecretA, quietLogger())
+	if outcome != generationsLoaded {
+		t.Fatalf("outcome = %v, want generationsLoaded — a TRANSIENT fault must be retried, not turned into a fail-closed hub", outcome)
+	}
+	if gs == nil || gs.Current != 2 {
+		t.Fatalf("the rotated set did not load after the transient fault cleared; got %+v", gs)
+	}
+	// POSITIVE CONTROL: the retry must not be so generous that it papers over a
+	// PERMANENT fault. An ENOENT is returned immediately with no retry at all.
+	withTempGenerationsPath(t)
+	start := time.Now()
+	if _, _, o := loadGenerations(rotStoreSecretA, quietLogger()); o != generationsNeverRotated {
+		t.Fatalf("outcome = %v, want generationsNeverRotated for an absent file", o)
+	}
+	if elapsed := time.Since(start); elapsed >= generationsReadRetryDelay {
+		t.Errorf("an absent file took %v — ENOENT must not be retried; it is the fleet's normal state", elapsed)
+	}
+}
+
+// TestF20_NewHubServerDoesNotServeSupersededMasterOnReadError is the end-to-end
+// assertion at the only call site that matters: NewHubServer installs a
+// provisional LEGACY set before loading, so a loader that merely returns nil
+// would leave the superseded master in place anyway. The server must actively
+// drop it.
+func TestF20_NewHubServerDoesNotServeSupersededMasterOnReadError(t *testing.T) {
+	path, _ := seedRotatedGenerationsFile(t)
+
+	// POSITIVE CONTROL: with a readable file the hub comes up on generation 2.
+	ok := newHubServerForGenerationsTest(t, rotStoreSecretA)
+	if gs := ok.currentGenerations(); gs == nil || gs.Current != 2 {
+		t.Fatalf("positive control: hub did not come up on the rotated generation; got %+v", gs)
+	}
+
+	makeUnreadable(t, path)
+
+	s := newHubServerForGenerationsTest(t, rotStoreSecretA)
+	gs := s.currentGenerations()
+	if gs != nil {
+		t.Fatalf("hub came up with a generation set (current=%d) after a generations-file read error; "+
+			"if that is the legacy set the hub is minting on SUPERSEDED material (F20)", gs.Current)
+	}
+	if gs.currentSecret() != "" {
+		t.Fatal("hub has a minting secret it cannot vouch for")
+	}
+	// The fleet must stay up: heartbeat verification runs off the single-master
+	// path, which is untouched, so an existing spoke still authenticates.
+	if s.hubSecret != rotStoreSecretA {
+		t.Fatal("fixture: hubSecret was not preserved")
+	}
+	if key := s.heartbeatKeyFor(rotStoreHiveIDForTest); key == "" {
+		t.Error("per-hive heartbeat key derivation broke — failing closed must not brick the fleet")
+	}
+	if !s.verifyHeartbeatBearer(s.heartbeatKeyFor(rotStoreHiveIDForTest), rotStoreHiveIDForTest) {
+		t.Error("an existing spoke can no longer authenticate — this fix must hold minting, not take the fleet down")
+	}
+	// And rotation is held.
+	if _, _, err := s.rotateMasterSecret(time.Now(), false); err == nil {
+		t.Error("rotation was allowed on a hub with untrusted generation state")
+	}
+}
+
+const rotStoreHiveIDForTest = "f20-test-hive"
+
+// newHubServerForGenerationsTest exercises the NewHubServer generations-restore
+// block without standing up the rest of the server, which reads the registry,
+// clusters, and several other PVC paths. It mirrors server.go's switch exactly;
+// if that block changes, this must change with it.
+func newHubServerForGenerationsTest(t *testing.T, master string) *HubServer {
+	t.Helper()
+	s := &HubServer{
+		logger:         quietLogger(),
+		hubSecret:      master,
+		keyGenerations: legacyGenerationSet(master),
+	}
+	switch gs, rotatedAt, outcome := loadGenerations(master, s.logger); outcome {
+	case generationsLoaded:
+		s.keyGenerations = gs
+		s.lastKeyRotation = rotatedAt
+	case generationsNeverRotated:
+		if gs != nil {
+			s.keyGenerations = gs
+		}
+	case generationsUntrusted:
+		s.keyGenerations = nil
+	}
+	return s
+}
+
+// secretLabelForTest renders a secret as a length + short hash prefix so a
+// failure message can identify WHICH master without ever printing one.
+func secretLabelForTest(secret string) string {
+	if secret == "" {
+		return "<none>"
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return "len=" + strconv.Itoa(len(secret)) + " sha256=" + hex.EncodeToString(sum[:4])
 }

@@ -170,8 +170,14 @@ func desiredPerHiveEnv(hiveID string) map[string]string {
 		// inviteSigningSecret fell through to the raw master on every spoke.
 		// Without it in this list a rotation would also never converge the
 		// invite key, leaving it derived from a generation the hub has retired.
-		EnvInviteKey:        provisionInviteKey(hiveID),
-		EnvSessionKey:       deriveDomainKey(master, infoSessionKey),
+		EnvInviteKey: provisionInviteKey(hiveID),
+		// AUDIT RESIDUAL-2: per-hive, was deriveDomainKey(master,
+		// infoSessionKey) — fleet-uniform by construction, measured as 1
+		// distinct value across all 70 spokes. Nothing verifies with this key
+		// any more (F1/N3/F23 deleted every lane), so the change is
+		// defence-in-depth; see provisionSessionKey for why the spoke-side
+		// self-derive fallback disagreeing during the roll is harmless.
+		EnvSessionKey:       provisionSessionKey(hiveID),
 		EnvSSOPublicKey:     ssoPublicKeyFromSeed(deriveDomainKey(master, infoSSOEd25519Seed)),
 		envSessionPublicKey: provisionSessionPublicKey(),
 	}
@@ -549,6 +555,35 @@ type PerHiveEnvStatus struct {
 	// was indistinguishable from "nothing to do".
 	ConsideredHives int `json:"considered_hives"`
 	SkippedByStatus int `json:"skipped_by_status"`
+	// UnreachableHives is how many hives the LAST sweep admitted by status but
+	// then could not read at all, because their cluster is pull-only, has no
+	// registry entry, or is inside the unreachable-cluster breaker's window.
+	//
+	// WHY THIS COUNTER EXISTS. Every counter above is sourced from successful
+	// Deployment reads, and the sweep's skip paths used to `continue` without
+	// recording anything. A hive on an unreachable cluster therefore left NO
+	// trace on this surface: it was absent from ObservedHives, absent from
+	// MissingPerHiveEnv, and absent from every generation bucket. With 44 of 66
+	// hosted spokes on pull-only clusters, the surface reported the 22
+	// reachable ones as a fully converged fleet while two thirds of it was
+	// never examined. "The hub cannot see this spoke" and "this spoke is fine"
+	// rendered identically, which is the condition under which an operator
+	// performs a rotation believing the fleet is ready and strands the
+	// unreachable two thirds at verify_until.
+	//
+	// It is a count of hives, not clusters, because that is the unit the
+	// convergence and retirement decisions are made in.
+	UnreachableHives int `json:"unreachable_hives"`
+	// UnreachableClusters names the clusters those hives sit on, so an operator
+	// reading a non-zero UnreachableHives can act on it rather than guess.
+	// Cluster IDs only — never kubeconfig paths or credentials.
+	UnreachableClusters []string `json:"unreachable_clusters,omitempty"`
+	// FleetFullyObserved is true only when the last sweep read EVERY hive it
+	// admitted: at least one hive considered, and none unreachable. It is the
+	// evidence-completeness predicate that PerHiveEnvConverged and
+	// SafeToRetirePrevious are both gated on — those two answer "is what I saw
+	// healthy", and without this one nothing answers "did I see all of it".
+	FleetFullyObserved bool `json:"fleet_fully_observed"`
 	// KeyGenerations is the per-generation breakdown of the observed fleet. It
 	// is the surface an operator watches during a rotation to decide when the
 	// previous generation can be retired.
@@ -588,10 +623,21 @@ type KeyGenerationStatus struct {
 	PreviousVerifyUntil string `json:"previous_verify_until,omitempty"`
 	// SafeToRetirePrevious is true only when a previous generation exists, at
 	// least one hive was observed, NO observed hive is on a previous generation
-	// or unattributed, and the previous generation's VerifyUntil has passed.
+	// or unattributed, the previous generation's VerifyUntil has passed, and
+	// the sweep observed the ENTIRE admitted fleet (FleetFullyObserved).
 	//
 	// Fails CLOSED on zero observations, exactly like PerHiveEnvConverged: "the
 	// hub has read nothing" must never render as "safe to retire".
+	//
+	// It fails equally closed on PARTIAL observation, which is the sharper edge.
+	// Retirement is unconditional once the window closes, so an unreachable
+	// spoke does not lag — it breaks, 7 days later, when the generation it
+	// still holds stops verifying. A spoke the hub cannot read is a spoke whose
+	// generation is UNKNOWN, and unknown must never be summed into "all clear".
+	// Without the FleetFullyObserved clause this field reported the 22
+	// reachable spokes' health as the whole fleet's, which is precisely the
+	// signal an operator would consult before retiring a generation that 44
+	// other spokes were still running on.
 	SafeToRetirePrevious bool `json:"safe_to_retire_previous"`
 }
 
@@ -624,6 +670,13 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	defer s.perHiveEnvMu.RUnlock()
 	out.ConsideredHives = s.perHiveEnvConsidered
 	out.SkippedByStatus = s.perHiveEnvSkippedByStatus
+	out.UnreachableHives = s.perHiveEnvUnreachable
+	out.UnreachableClusters = append([]string(nil), s.perHiveEnvUnreachableClusters...)
+	sort.Strings(out.UnreachableClusters)
+	// Fails closed on zero considered as well as on any unreachable hive: a
+	// sweep that admitted nobody has observed nothing, and "nothing observed"
+	// is not "everything observed".
+	out.FleetFullyObserved = out.ConsideredHives > 0 && out.UnreachableHives == 0
 	gs := s.keyGenerations
 	now := time.Now()
 	current, hasCurrent := gs.currentGeneration()
@@ -677,7 +730,14 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 		}
 	}
 	sort.Strings(out.MissingHives)
-	out.PerHiveEnvConverged = out.ObservedHives > 0 && out.MissingPerHiveEnv == 0
+	// Convergence requires that the hub both SAW the whole admitted fleet and
+	// found nothing missing in it. Dropping FleetFullyObserved here would let
+	// 22 healthy reads out of a 66-hive fleet render as "converged" while the
+	// other 44 were never examined — the exact misreport this counter exists
+	// to end.
+	out.PerHiveEnvConverged = out.ObservedHives > 0 &&
+		out.MissingPerHiveEnv == 0 &&
+		out.FleetFullyObserved
 
 	if !previousVerifyUntil.IsZero() {
 		out.KeyGenerations.PreviousVerifyUntil = previousVerifyUntil.UTC().Format(time.RFC3339)
@@ -697,6 +757,7 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	// stops a spoke on an ALREADY-retired key from reading as retirable.
 	out.KeyGenerations.SafeToRetirePrevious = hasPrevious &&
 		out.ObservedHives > 0 &&
+		out.FleetFullyObserved &&
 		out.KeyGenerations.SpokesOnPrevious == 0 &&
 		out.KeyGenerations.SpokesUnattributed == 0 &&
 		windowClosed
@@ -740,6 +801,17 @@ func (s *HubServer) reconcilePerHiveEnv() {
 	// instead of silent.
 	consideredHives := 0
 	skippedByStatus := 0
+	// Hives admitted by status that the hub could not read at all. Counted, not
+	// silently skipped: an unreachable spoke must be VISIBLE on the readiness
+	// surface, because it is the one a rotation would strand.
+	unreachableHives := 0
+	unreachableClusters := map[string]bool{}
+	noteUnreachable := func(clusterID string) {
+		unreachableHives++
+		if clusterID != "" {
+			unreachableClusters[clusterID] = true
+		}
+	}
 
 	for _, h := range hives {
 		if !perHiveEnvSweepEligible(h.Status) {
@@ -749,9 +821,16 @@ func (s *HubServer) reconcilePerHiveEnv() {
 		consideredHives++
 		cluster := s.clusterForHive(&h)
 		if cluster == nil {
+			// No registry entry resolves for this hive, so there is no cluster
+			// to aim kubectl at. Unknown, not healthy.
+			noteUnreachable("")
 			continue
 		}
 		if s.clusterRecentlyUnreachable(cluster.ID) {
+			// Pull-only by declaration, or inside the breaker's window after a
+			// failed dial. Either way this hive's Deployment is not readable
+			// this cycle and its convergence state is unknown.
+			noteUnreachable(cluster.ID)
 			continue
 		}
 		live[h.ID] = true
@@ -764,6 +843,7 @@ func (s *HubServer) reconcilePerHiveEnv() {
 			s.logger.Warn("per-hive env reconcile: skipping hive with no derivable keys — NOT patching (would write empty values)",
 				"hive_id", h.ID, "cluster", cluster.ID,
 				"has_master", provisionMasterSecret() != "")
+			noteUnreachable(cluster.ID)
 			continue
 		}
 
@@ -779,6 +859,7 @@ func (s *HubServer) reconcilePerHiveEnv() {
 			// observation: an unread hive must not count as converged.
 			s.logger.Debug("per-hive env reconcile: could not read hive deployment env",
 				"hive_id", h.ID, "cluster", cluster.ID, "error", err)
+			noteUnreachable(cluster.ID)
 			continue
 		}
 		s.markClusterReachable(cluster.ID)
@@ -787,6 +868,7 @@ func (s *HubServer) reconcilePerHiveEnv() {
 		if err := json.Unmarshal(out, &liveEnv); err != nil {
 			s.logger.Debug("per-hive env reconcile: could not parse hive deployment env",
 				"hive_id", h.ID, "cluster", cluster.ID, "error", err)
+			noteUnreachable(cluster.ID)
 			continue
 		}
 
@@ -863,6 +945,12 @@ func (s *HubServer) reconcilePerHiveEnv() {
 	}
 	s.perHiveEnvConsidered = consideredHives
 	s.perHiveEnvSkippedByStatus = skippedByStatus
+	s.perHiveEnvUnreachable = unreachableHives
+	s.perHiveEnvUnreachableClusters = make([]string, 0, len(unreachableClusters))
+	for id := range unreachableClusters {
+		s.perHiveEnvUnreachableClusters = append(s.perHiveEnvUnreachableClusters, id)
+	}
+	sort.Strings(s.perHiveEnvUnreachableClusters)
 	s.perHiveEnvMu.Unlock()
 
 	// A sweep that admitted no hives at all is a BUG signal, not a quiet
@@ -872,6 +960,21 @@ func (s *HubServer) reconcilePerHiveEnv() {
 	if consideredHives == 0 && len(hives) > 0 {
 		s.logger.Warn("per-hive env reconcile: status filter selected NO hives — sweep is a no-op, key drift will not be repaired",
 			"hives_in_registry", len(hives), "skipped_by_status", skippedByStatus)
+	}
+
+	// An unreachable hive is not a quiet skip: it is a spoke a rotation would
+	// strand. Say so at Warn, with the clusters named, so the condition is
+	// legible in the hub log and not only on the readiness JSON.
+	if unreachableHives > 0 {
+		clusterIDs := make([]string, 0, len(unreachableClusters))
+		for id := range unreachableClusters {
+			clusterIDs = append(clusterIDs, id)
+		}
+		sort.Strings(clusterIDs)
+		s.logger.Warn("per-hive env reconcile: hives are UNREACHABLE — fleet is only partially observed; convergence and retire-previous both report false until this clears",
+			"unreachable_hives", unreachableHives,
+			"considered_hives", consideredHives,
+			"unreachable_clusters", strings.Join(clusterIDs, ","))
 	}
 
 	if deferredByRateLimit > 0 {

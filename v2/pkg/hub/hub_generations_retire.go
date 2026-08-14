@@ -3,6 +3,7 @@ package hub
 import (
 	"errors"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -295,6 +296,16 @@ func (s *HubServer) retireExpiredGenerations(now time.Time) ([]int, error) {
 		return nil, err
 	}
 	s.keyGenerations = next
+	// AUDIT 8 / F19. Keep the spoke-bound derivation set in lockstep with the
+	// minting set here too. Retirement does not change the CURRENT generation —
+	// retirableGenerations always keeps gs.Current — so the six mandatory
+	// per-hive vars are unaffected. What it does change is the set of PREVIOUS
+	// generations, which is what provisionSSOPublicKeyPrevious and
+	// provisionSessionPublicKeyPrevious read to emit the two _PREV public keys.
+	// Without this line the sweep would keep advertising a _PREV public key for
+	// a generation the hub has just stopped accepting, and the removal path in
+	// perHiveEnvPatchJSON would never fire.
+	setLiveGenerations(next, false)
 	return retired, nil
 }
 
@@ -347,6 +358,22 @@ func (s *HubServer) sweepGenerationRetirement(now time.Time) {
 	// shows up in this alert; it cannot fall out of the denominator by going
 	// quiet and make a stranding look like a convergence.
 	snap := s.PerHiveEnvSnapshot()
+
+	// An UNREACHABLE spoke is a stranding candidate the pin alert cannot see:
+	// evaluateGenerationPin reasons over observed counts, and an unread spoke
+	// contributes to none of them. It is not merely absent from the alert — it
+	// is the spoke most likely to be stranded, because nothing is converging
+	// it. Retirement is unconditional on the wall clock, so say this plainly
+	// and separately rather than letting a clean pin alert imply a clean fleet.
+	if snap.UnreachableHives > 0 && s.logger != nil {
+		s.logger.Warn("master generation retirement is running against a PARTIALLY OBSERVED fleet — "+
+			"these spokes cannot be read, so their generation is unknown and the convergence lane "+
+			"cannot repair them; retirement will not wait for them",
+			"unreachable_hives", snap.UnreachableHives,
+			"unreachable_clusters", strings.Join(snap.UnreachableClusters, ","),
+			"observed_hives", snap.ObservedHives,
+			"safe_to_retire_previous", snap.KeyGenerations.SafeToRetirePrevious)
+	}
 
 	for _, g := range gs.Generations {
 		alert := evaluateGenerationPin(

@@ -142,6 +142,8 @@ function verifyHubUserCookieV3(pubHex, value, nowSeconds) {
   }
 }
 
+// AUDIT F23: kept in lockstep with server.js — no trailing legacy symmetric
+// lane. legacySecret is accepted and ignored.
 function verifyHubUserCookieAcrossKeys(pubKeys, legacySecret, value) {
   if (!value) return '';
   const keys = Array.isArray(pubKeys) ? pubKeys : [];
@@ -151,7 +153,8 @@ function verifyHubUserCookieAcrossKeys(pubKeys, legacySecret, value) {
     const v2 = verifyHubUserCookieV2(pubHex, value);
     if (v2) return v2;
   }
-  return verifyHubUserCookie(legacySecret, value);
+  void legacySecret;
+  return '';
 }
 
 // --- fixtures ---------------------------------------------------------------
@@ -282,8 +285,9 @@ const COOKIE_PREV_V2 = mintV2(SEED_PREV, 'erin');
     'expected the silent truncation to yield exactly the FIRST key');
 }
 
-// 4. EMPTY: no public key at all. Ed25519 verification must fail closed, and the
-//    legacy symmetric lane must be reachable exactly as before.
+// 4. EMPTY: no public key at all. Ed25519 verification must fail closed, and
+//    (audit F23) there is no longer any symmetric lane to fall through to, so
+//    such a spoke now authenticates NOBODY through this path.
 {
   assert.strictEqual(sessionPublicKeysFrom('', '').length, 0, 'no keys configured must yield no candidates');
   assert.strictEqual(sessionPublicKeysFrom(undefined, undefined).length, 0, 'undefined vars must yield no candidates');
@@ -295,21 +299,32 @@ const COOKIE_PREV_V2 = mintV2(SEED_PREV, 'erin');
     verifyHubUserCookieAcrossKeys(undefined, '', COOKIE_CUR_V3), '',
     'a non-array key set must fail closed rather than throw');
 
-  // The legacy symmetric lane is UNCHANGED by key plurality — it is tried once,
-  // after the public keys, and is not multiplied across generations.
+  // AUDIT F23 — INVERTED. These two assertions previously demanded the legacy
+  // symmetric lane "must still be reachable". That lane is the cross-tenant
+  // forgery primitive: SESSION_KEY is byte-identical fleet-wide, so any spoke
+  // operator could mint a cookie every other tenant's proxy accepted. It is now
+  // deleted, and these assert it stays deleted.
   const legacySecret = 'legacy-symmetric-session-key';
   const legacyCookie = 'frank.' + crypto.createHmac('sha256', legacySecret).update('frank').digest('base64url');
+
+  // PRECONDITION: the legacy primitive still computes and the secret is the
+  // CORRECT one, so the rejections below mean "lane gone", not "bad fixture".
   assert.strictEqual(
-    verifyHubUserCookieAcrossKeys([], legacySecret, legacyCookie), 'frank',
-    'the legacy symmetric lane must still be reachable with no public keys');
+    verifyHubUserCookie(legacySecret, legacyCookie), 'frank',
+    'precondition: the legacy HMAC primitive must still compute — otherwise this proves nothing');
+
   assert.strictEqual(
-    verifyHubUserCookieAcrossKeys(sessionPublicKeysFrom(PUB_CUR, PUB_PREV), legacySecret, legacyCookie), 'frank',
-    'the legacy symmetric lane must still be reachable after the public keys');
-  // POSITIVE CONTROL: the legacy lane must reject a wrong-secret cookie, so the
-  // two assertions above are not satisfied by a lane that accepts anything.
+    verifyHubUserCookieAcrossKeys([], legacySecret, legacyCookie), '',
+    'F23 REGRESSION: the legacy symmetric lane is reachable with no public keys');
   assert.strictEqual(
-    verifyHubUserCookieAcrossKeys([], 'a-different-secret', legacyCookie), '',
-    'positive control: the legacy lane accepted a cookie signed with another secret');
+    verifyHubUserCookieAcrossKeys(sessionPublicKeysFrom(PUB_CUR, PUB_PREV), legacySecret, legacyCookie), '',
+    'F23 REGRESSION: the legacy symmetric lane is reachable after the public keys');
+
+  // POSITIVE CONTROL: the Ed25519 lanes must STILL verify across keys, so the
+  // rejections above are not satisfied by a verifier that rejects everything.
+  assert.strictEqual(
+    verifyHubUserCookieAcrossKeys(sessionPublicKeysFrom(PUB_CUR, PUB_PREV), legacySecret, COOKIE_CUR_V3), 'alice',
+    'positive control FAILED: a current-generation v3 cookie must still verify');
 }
 
 // 5. DE-DUPLICATION: before the first rotation the hub may briefly hand out a

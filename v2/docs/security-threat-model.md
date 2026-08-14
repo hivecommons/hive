@@ -1,6 +1,7 @@
 # Hive security threat model
 
-This document describes the public threat model for Hive `v2`/`v4` as documented
+This document describes the public threat model for Hive (current line: branch
+`v4`; the `v2` branch is retired) as documented
 in the [reference architecture](architecture.md), the
 [ACMM policy matrix](acmm-policy-matrix.md), and the current implementation. It
 focuses on the agent-orchestration boundary: untrusted GitHub work enters Hive,
@@ -41,8 +42,10 @@ AI agents act on it, and deterministic Hive components constrain what can leave.
   (§8).
 - **Contributor relay → spoke.** Contributors donate compute through ClankeR;
   the architecture states their credentials never leave their machine (§8).
-- **Browser/dashboard/terminal → hive API and ttyd.** The Node proxy is the
-  public front door and passes terminal WebSocket traffic to ttyd (§2, §10).
+- **Browser/dashboard/terminal → hive API and ttyd.** The nginx gateway
+  (`deploy/nginx.conf`) is the public front door in Compose deployments, in
+  front of the Go dashboard; terminal WebSocket traffic passes through to ttyd
+  (§2, §10).
 
 ## Threat actors and abuse cases
 

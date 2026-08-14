@@ -22,6 +22,28 @@ func resetLeaderboardStyleTestState(t *testing.T) {
 	})
 }
 
+// TestCustomStyleClient_RefusesRedirectToInternal pins #3759: /api/style is a
+// public endpoint, and customStyleClient was the one outbound client without
+// noRedirectToPrivate — a redirect from the (normally trusted) upstream to a
+// private/internal address would have been followed. Mirrors
+// TestImportClient_RefusesRedirectToInternal.
+func TestCustomStyleClient_RefusesRedirectToInternal(t *testing.T) {
+	stubImportResolver(t, map[string][]string{
+		"metadata.attacker.example": {"169.254.169.254"},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://metadata.attacker.example/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	resp, err := customStyleClient.Get(srv.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("customStyleClient followed a redirect to an internal host (SSRF); " +
+			"it must carry noRedirectToPrivate like every other outbound client")
+	}
+}
+
 func TestValidateLeaderboardCustomStyleSource(t *testing.T) {
 	tests := []struct {
 		name    string

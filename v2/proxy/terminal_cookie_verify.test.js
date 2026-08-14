@@ -42,13 +42,39 @@ const TTYD_PORT = 19103;
 const HOSTED_HOST = 'hive-f3.hive.kubestellar.io';
 const HIVE_ID = 'hive-f3';
 
-// The master this spoke is provisioned with; the proxy derives SESSION_KEY from
-// it exactly as Go's SpokeSessionKey() does.
+// The master this spoke is provisioned with; the proxy derives its session
+// PUBLIC key from it exactly as Go's provisioning does.
 const MASTER = 'f3-test-master-secret';
 const SESSION_KEY = crypto.createHmac('sha256', MASTER).update('hive-session-v1').digest('hex');
 
-// mintCookie mirrors the hub's mintHubUserCookieValue.
+// AUDIT F23: mintCookie now mints v3 (Ed25519 + signed expiry), the format
+// production actually issues. It previously minted the legacy symmetric HMAC
+// format, whose verification lane is deleted from server.js — so the "valid
+// cookie" positive control below would otherwise be minting a cookie no spoke
+// can verify, and would fail for a reason that has nothing to do with F3.
+const INFO_SESSION_ED25519_SEED = 'hive-session-ed25519-v1';
+
+function privFromSeed(seedHex) {
+  const pkcs8 = Buffer.concat([
+    Buffer.from('302e020100300506032b657004220420', 'hex'),
+    Buffer.from(seedHex, 'hex'),
+  ]);
+  return crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
+}
+
+// mintCookie mirrors the hub's mintHubUserCookieValueV3.
 function mintCookie(username) {
+  const seed = crypto.createHmac('sha256', MASTER).update(INFO_SESSION_ED25519_SEED).digest('hex');
+  const iat = Math.floor(Date.now() / 1000);
+  const claims = { u: username, iat, exp: iat + 3600, sid: crypto.randomBytes(32).toString('hex') };
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const sig = crypto.sign(null, Buffer.from(body), privFromSeed(seed));
+  return `${body}.v3.${sig.toString('base64url')}`;
+}
+
+// mintCookieLegacy mints the DELETED symmetric format, for the F23 rejection
+// test only.
+function mintCookieLegacy(username) {
   const sig = crypto.createHmac('sha256', SESSION_KEY).update(username).digest('base64url');
   return `${username}.${sig}`;
 }
@@ -172,10 +198,31 @@ try {
   console.log('  ✓ valid hub-signed + authorized cookie still granted (HTTP + WS)');
 
   // --- Tampering: right shape, wrong signature ------------------------------
-  const tampered = 'mallory.' + good.split('.')[1];
+  // Swap the v3 CLAIMS BODY for one naming a different user while keeping
+  // alice's signature. The signature covers the body, so this must fail.
+  const goodSig = good.slice(good.lastIndexOf('.v3.') + 4);
+  const malloryIat = Math.floor(Date.now() / 1000);
+  const malloryBody = Buffer.from(JSON.stringify({
+    u: 'mallory', iat: malloryIat, exp: malloryIat + 3600,
+    sid: crypto.randomBytes(32).toString('hex'),
+  })).toString('base64url');
+  const tampered = `${malloryBody}.v3.${goodSig}`;
   assert.equal(await terminalHTTP(tampered), 401,
     'a re-labelled cookie (alice signature, different username) must be denied');
   console.log('  ✓ re-labelled cookie denied (signature covers the username)');
+
+  // --- AUDIT F23: the legacy symmetric lane is deleted -----------------------
+  // `alice` is signed with the CORRECT fleet SESSION_KEY and IS on this hive's
+  // allowlist, so if the lane were live she would get 200. A 401 is therefore
+  // attributable to the cookie lane alone, not to authorization. The v3 control
+  // for the same user passed above, so this is not a reject-everything proxy.
+  const legacyAlice = mintCookieLegacy('alice');
+  assert.equal(await terminalHTTP(legacyAlice), 401,
+    'F23 REGRESSION: a correctly-HMACd legacy symmetric cookie reached the terminal — ' +
+    'SESSION_KEY is fleet-uniform, so any spoke operator could forge this');
+  assert.ok(!(await terminalWS(legacyAlice)),
+    'F23 REGRESSION: a correctly-HMACd legacy symmetric cookie opened the WS terminal');
+  console.log('  ✓ F23: legacy symmetric cookie denied on BOTH gates (v3 for same user still 200)');
 
   console.log('\n✓ F3 terminal cookie verification tests passed\n');
 } catch (e) {

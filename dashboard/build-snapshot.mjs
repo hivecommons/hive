@@ -78,9 +78,23 @@ async function main() {
   ]);
 
   // Validate status
-  try { JSON.parse(statusRaw); } catch {
+  let parsedStatus;
+  try {
+    parsedStatus = JSON.parse(statusRaw);
+  } catch {
     console.error(`ERROR: Invalid JSON from ${dashboardUrl}/api/status`);
     process.exit(1);
+  }
+  // The fetch above hit /api/status directly (not a fallback), so an
+  // "error" key means the request itself failed authentication/routing
+  // rather than the hive being unhealthy — e.g. an unauthorized 401 body.
+  // render() would still hide the App-install/repo-target banners for that
+  // shape (their driving fields are simply absent), but warn loudly so a
+  // future auth regression on the snapshot's status fetch is caught in CI
+  // logs rather than silently shipping a snapshot with no live data baked
+  // in at all.
+  if (parsedStatus && parsedStatus.error) {
+    console.warn(`WARNING: /api/status returned an error payload (${parsedStatus.error}); snapshot will render with no live GitHub App / repo-target state baked in.`);
   }
 
   const config = JSON.parse(configRaw || '{}');
@@ -259,8 +273,18 @@ async function main() {
     // Apply layout mode
     ${layoutInit}
 
-    // Render baked status
-    render(${statusRaw});
+    // Render baked status. This carries the hive's REAL, server-computed
+    // GitHub App / repo-target verdicts (githubAppRequired,
+    // githubAppInstallMissing, githubAppState, repoTargetMisconfigured,
+    // repoTargetIssue, githubBaseURL — see dashboard.StatusPayload /
+    // Server.UpdateStatus), captured live at snapshot-build time by the
+    // trusted X-Hive-Internal fetch above. A healthy, fully-configured hive
+    // legitimately omits these fields (Go's \`omitempty\` on their
+    // zero/false/"" values), and render()'s own truthy checks already treat
+    // that omission as "no problem" — so no extra normalization is needed
+    // here for the App-install / repo-target banners to read true state.
+    var _snapStatus = ${statusRaw};
+    render(_snapStatus);
 
     // Render Strategy Lab (Nous)
     _nousCache = {
@@ -374,6 +398,29 @@ async function main() {
       }
       tick();
     })();
+
+    // checkGhAuth() and checkGHAuth() are LIVE auth probes: they fetch
+    // /api/gh-auth and /api/role + /api/gh-user-auth/status to answer "is
+    // THIS BROWSER SESSION authenticated right now" — a question about the
+    // anonymous snapshot VIEWER, not about the hive's own health. Two
+    // concrete false-negative banners came from letting them run baked into
+    // a static page:
+    //   1. /api/gh-auth is not on the dashboard's public-path allowlist, so
+    //      an anonymous snapshot visitor's fetch gets a 401 JSON error body
+    //      with no "ok" field. checkGhAuth()'s if (data.ok) {...} else
+    //      {mark #gh-auth-alert active} then reads that 401 as "GitHub API
+    //      authentication failed" even when the hive's real GitHub auth
+    //      (already captured correctly in the baked status above) is fine.
+    //   2. checkGHAuth() correctly reports the anonymous viewer as not
+    //      logged in and shows "GitHub login required for advisory
+    //      posting" — technically accurate for the viewer, but meaningless
+    //      for a read-only preview that never posts anything, so it reads
+    //      as a false alarm about the hive itself.
+    // A snapshot cannot authenticate or post on anyone's behalf, so both
+    // probes are neutralized rather than left to run against endpoints that
+    // were never designed to answer them anonymously.
+    function checkGhAuth() {}
+    function checkGHAuth() {}
 
     // Disable all interactive functions in snapshot mode
     function kick() {}

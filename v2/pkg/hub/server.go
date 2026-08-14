@@ -734,31 +734,27 @@ func secureCompareHub(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// heartbeatBearerOK reports whether the Authorization header carries a valid
-// heartbeat bearer, accepting EITHER scheme so this v2 hub authenticates old and
-// new spokes at once (dual-path, additive — never one instead of the other):
+// AUDIT F24 TOMBSTONE — heartbeatBearerOK WAS HERE AND IS DELETED.
+// Do not reintroduce it, and do not "restore" it from history.
 //
-//   - the legacy RAW master s.hubSecret, presented by the 33 existing spokes; and
-//   - the DERIVED heartbeatKey() (HMAC-SHA256(master, "hive-heartbeat-v1")),
-//     presented by a v4 spoke that self-derived it from the same HIVE_HUB_SECRET.
+// It was a complete F2/N1 lane: it accepted the RAW fleet master (s.hubSecret)
+// as a bearer, and the fleet-wide heartbeatKey() = HMAC(master,
+// "hive-heartbeat-v1"). Neither comparand binds a hive identity, so any spoke
+// presenting either token could claim ANY hive_id — the original N1 IDOR. It was
+// the only place in the hub tree where the raw master was an authentication
+// comparand.
 //
-// Both comparisons are constant-time via secureCompareHub. The caller keeps its
-// outer `if s.hubSecret != ""` guard, so an unconfigured hub still authenticates
-// nothing here — this only widens WHICH bearer a configured hub accepts, and only
-// ever adds the new scheme alongside the old one.
-func (s *HubServer) heartbeatBearerOK(auth string) bool {
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
-	}
-	tok := strings.TrimPrefix(auth, "Bearer ")
-	if secureCompareHub(tok, s.hubSecret) {
-		return true
-	}
-	if hk := s.heartbeatKey(); hk != "" && secureCompareHub(tok, hk) {
-		return true
-	}
-	return false
-}
+// It had zero non-test callers when deleted, so removal is behaviour-preserving.
+// It is removed rather than left dead because its tests ASSERTED THE VULNERABLE
+// BEHAVIOUR ("heartbeatBearerOK must accept raw master secret"), which would
+// have made a future refactor that re-wired it look verified-correct against a
+// green suite. Those tests are INVERTED, not deleted, in
+// server_handlers_coverage_test.go — they now assert the fleet-wide and
+// raw-master bearers are REJECTED, so this cannot come back silently.
+//
+// The live, correct path is verifyHeartbeatBearer (hub_keys.go), which is
+// per-hive-only: derivePerHiveKey(master_g, infoHeartbeatKey, hiveID) for every
+// live generation, with no deriveDomainKey fleet-wide branch anywhere (F2).
 
 // heartbeatHealthStaleness is the maximum age of heartbeat-reported health
 // data before it is considered stale and displayed with a warning.
@@ -831,6 +827,13 @@ type HubServer struct {
 	// left the hub serving stale code for ~20 minutes with nothing surfaced.
 	hubUpgradeFault string
 	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	// Admin upgrade kill switch (upgrade_pause.go). Lazily loaded from its
+	// durable JSON file on first use so the state survives the hub's own
+	// frequent auto-rolls; guarded by its own mutex because it is consulted on
+	// every heartbeat and every upgrade-poll cycle, never under s.mu.
+	upgradePause       UpgradePauseState
+	upgradePauseLoaded bool
+	upgradePauseMu     sync.Mutex // guards upgradePause + upgradePauseLoaded
 	httpServer      *http.Server
 	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters        map[string]ClusterConfig
@@ -933,7 +936,16 @@ type HubServer struct {
 	// converged fleet. Guarded by perHiveEnvMu with perHiveEnvSeen.
 	perHiveEnvConsidered      int
 	perHiveEnvSkippedByStatus int
-	perHiveEnvMu              sync.RWMutex
+	// perHiveEnvUnreachable / perHiveEnvUnreachableClusters record the LAST
+	// sweep's hives that were admitted by status but could not be READ at all —
+	// pull-only cluster, no registry entry, or inside the unreachable-cluster
+	// breaker window. Without these the sweep's skip paths left no trace, so an
+	// unreachable spoke was indistinguishable from one that does not exist and
+	// the surface reported a partially-observed fleet as converged. Guarded by
+	// perHiveEnvMu with perHiveEnvSeen.
+	perHiveEnvUnreachable         int
+	perHiveEnvUnreachableClusters []string
+	perHiveEnvMu                  sync.RWMutex
 	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
 	// name) last reported as each hive, to catch two instances alternating
 	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
@@ -1193,14 +1205,84 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
 	// that came back on generation 1 after a rotation would reject every
 	// artifact minted since it and quietly re-mint on the old key — strictly
-	// worse than never having rotated. Falls back to the single-generation
-	// legacy set on a missing or unusable file, which is correct because
-	// hub-secret.key is authoritative for generation 1 and is never rewritten.
-	if gs, rotatedAt := loadGenerations(secret, logger); gs != nil {
+	// worse than never having rotated.
+	//
+	// AUDIT 8 / F20. Three outcomes, and the third is the fix. An ABSENT file
+	// means no rotation has ever been persisted, so the provisional legacy set
+	// assigned above is already correct and generation 1 really is current. An
+	// UNTRUSTED file — unreadable after retries, unparseable, or carrying no
+	// minting generation — means a rotation MAY have been recorded and the hub
+	// cannot tell which generation is current. In that case it must not keep
+	// the provisional legacy set either: that set is the SUPERSEDED master, and
+	// installing it is the silent un-rotation this finding is about.
+	// AUDIT 8 / F19. Each arm below ALSO installs the set into the package-level
+	// pointer the spoke-bound derivation path reads (setLiveGenerations). Before
+	// this, provisionGenerationSet() ignored everything decided here and
+	// unconditionally rebuilt generation 1 from the raw hub-secret.key, so the
+	// hub minted on one set and provisioned the fleet from another. The two must
+	// come from the same load or a rotation never reaches a spoke.
+	switch gs, rotatedAt, outcome := loadGenerations(secret, logger); outcome {
+	case generationsLoaded:
 		s.keyGenerations = gs
 		// Restore the rotation timestamp too, or the cooldown would reset on
 		// every hub roll and stop guarding anything.
 		s.lastKeyRotation = rotatedAt
+		setLiveGenerations(gs, false)
+	case generationsNeverRotated:
+		// Legitimate fallback: keep the provisional legacy set built from
+		// hub-secret.key. This is the state of every hub in the fleet today.
+		if gs != nil {
+			s.keyGenerations = gs
+		}
+		// Install it on the derivation side too. On a never-rotated hub this is
+		// byte-identical to the pre-F19 legacyGenerationSet(provisionMasterSecret())
+		// whenever HIVE_HUB_SECRET and hub-secret.key agree, which is the whole
+		// fleet today — so this arm is a no-op in effect, by construction.
+		setLiveGenerations(gs, false)
+	case generationsUntrusted:
+		// FAIL CLOSED. Drop the provisional legacy set rather than serve on it.
+		//
+		// WHY THIS SHAPE OF FAIL-CLOSED, and not the two alternatives:
+		//
+		//   - Not "refuse to start". The hub rolls several times a day and a
+		//     crash-loop on a transient PVC fault would take SSO and the
+		//     dashboard down fleet-wide — an availability failure strictly
+		//     worse than the confidentiality one being fixed, and the hub
+		//     cannot re-read the file if it is not running.
+		//
+		//   - Not "keep the last known in-memory set". At NewHubServer there is
+		//     no last known set; the only thing in the field is the provisional
+		//     legacy one, which IS the superseded material.
+		//
+		// So: nil the generation set. Every consumer of it is already
+		// fail-closed on nil by contract — currentGeneration returns
+		// (zero,false), currentSecret returns "", deriveDomainKey returns "" for
+		// an empty master, and acceptableGenerations returns nil — so nothing
+		// mints on a key the hub cannot vouch for. Heartbeat verification and
+		// session verification both fall through to their documented
+		// single-master paths (hub_keys.go:287, hub_session_revocation.go:434),
+		// which key off s.hubSecret and are untouched here, so EXISTING SPOKES
+		// KEEP AUTHENTICATING while the rotation-dependent lanes are held. That
+		// is the deliberate trade: hold what could downgrade, keep what keeps
+		// the fleet up.
+		//
+		// lastKeyRotation is left at its zero value only because nothing has
+		// been loaded to set it from — and with keyGenerations nil, rotation is
+		// refused outright by rotateMasterSecret, so the cleared cooldown can
+		// no longer be used to strand anyone. See generationsUntrusted.
+		s.keyGenerations = nil
+		// AUDIT 8 / F19 + F20. Latch the untrusted state on the derivation side
+		// too, and note this is NOT the same as installing nil there: nil means
+		// "no hub in this process" and falls back to the legacy set, which is
+		// exactly the re-derivation from superseded material that must not
+		// happen here. The explicit flag makes provisionGenerationSet() return
+		// nil, so desiredPerHiveEnv's empty-master guard skips every hive and the
+		// sweep patches nothing rather than pushing the fleet backwards onto
+		// generation 1.
+		setLiveGenerations(nil, true)
+		logger.Error("hub master generation state is UNTRUSTED — minting and rotation are DISABLED until an operator resolves the generations file; "+
+			"existing spokes continue to authenticate on the single-master path",
+			"path", hubGenerationsPath)
 	}
 
 	s.loadRegistry()
@@ -2061,6 +2143,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		spokeManaged = false
 	}
 
+	// Admin kill switch (upgrade_pause.go): while spoke upgrades are paused,
+	// this handler must not DELIVER any image change — no UpgradeTo, no
+	// SwitchToTag, no tracked-channel re-arm. Completion CLEARING below still
+	// runs (a spoke that already landed somewhere must not stay latched), and
+	// armed targets are left in place so resuming delivers them again.
+	spokePauseSw, spokeUpgradesPausedNow := s.spokeUpgradesPaused()
+
 	// Pending branch switch (image-tag change) delivered via heartbeat for
 	// clusters the hub can't kubectl-reach. Takes precedence over a plain
 	// SHA upgrade. Cleared when the spoke reports running that tag's build.
@@ -2079,7 +2168,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// re-arming would stamp a fresh restart-at annotation and re-roll the
 	// pod every beat). Also self-heals the delivered-upgrade-overwrote-the-
 	// channel-tag drift, not just hub restarts.
-	if switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
+	// The pause guard leads: a re-arm IS a delivery decision (the very next
+	// branch would put the tag on the wire), and the aggressive self-healing
+	// here is exactly what an admin reaching for the kill switch needs stopped.
+	if !spokeUpgradesPausedNow && switchTag == "" && saasHive != nil && isReleaseChannel(saasHive.TrackedChannel) &&
 		!payload.Upgrading && payload.ImageRef != "" &&
 		imageTagOf(sanitizeImageRef(payload.ImageRef)) != saasHive.TrackedChannel {
 		switchTag = saasHive.TrackedChannel
@@ -2113,6 +2205,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			s.logger.Info("heartbeat: spoke branch switch complete",
 				"hive_id", payload.HiveID, "branch", payload.GitBranch)
 			switchTag = ""
+		} else if spokeUpgradesPausedNow {
+			// Kill switch: keep the armed tag but do not put it on the wire.
+			s.logger.Debug("heartbeat: switch instruction withheld — spoke upgrades are paused",
+				"hive_id", payload.HiveID, "tag", switchTag,
+				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
 		} else {
 			resp.SwitchToTag = switchTag
 			s.logger.Info("heartbeat: instructing spoke to switch branch image",
@@ -2136,7 +2233,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		hbTarget = ""
 	}
 
-	if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
+	if spokeUpgradesPausedNow {
+		// Kill switch: no UpgradeTo of any flavour — spoke-managed chase-latest
+		// or the armed kubectl fallback. Heartbeat is otherwise answered
+		// normally; the armed target survives for resume.
+		if hbTarget != "" || spokeManaged {
+			s.logger.Debug("heartbeat: upgrade instruction withheld — spoke upgrades are paused",
+				"hive_id", payload.HiveID,
+				"paused_by", spokePauseSw.By, "paused_at", spokePauseSw.At)
+		}
+	} else if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
 		resp.UpgradeTo = latestSHA
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,

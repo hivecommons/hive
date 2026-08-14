@@ -804,11 +804,15 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
-	// Prometheus scrape endpoint for estimated LLM cost — opt-in, since it
-	// exposes cost data unauthenticated (Prometheus can't do device-flow auth).
-	// Enabled only when HIVE_METRICS_ENABLED is truthy; see isPublicPath.
+	// Prometheus scrape endpoint for estimated LLM cost — opt-in via
+	// HIVE_METRICS_ENABLED, and the handler additionally requires the
+	// HIVE_METRICS_TOKEN bearer token (fails closed with 403 when the token is
+	// unset, #3785) since the series expose cost/agent data. See isPublicPath.
 	if metricsEnabled() {
 		s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+		if metricsToken() == "" && s.logger != nil {
+			s.logger.Warn("HIVE_METRICS_ENABLED is set but HIVE_METRICS_TOKEN is not; /metrics will refuse every request (403) until a token is configured — set HIVE_METRICS_TOKEN and the scraper's bearer_token to match")
+		}
 	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
@@ -837,6 +841,19 @@ func (s *Server) Start() error {
 	if err != nil {
 		s.markListenerStopped(err)
 		return fmt.Errorf("loading embedded static files: %w", err)
+	}
+	// The SPA document gets a dedicated handler with startup-precomputed gzip
+	// and a strong ETag (see static_index.go): http.FileServer would serve the
+	// ~1.3 MB inline document uncompressed with no cache validators (embed.FS
+	// has a zero ModTime, so not even Last-Modified), forcing a full re-download
+	// on every visit. "/{$}" matches the root path exactly; every other static
+	// path falls through to the plain file server below.
+	if rawIndex, err := fs.ReadFile(staticContent, "index.html"); err == nil {
+		idx := newIndexDocument(rawIndex)
+		s.mux.Handle("GET /{$}", idx)
+		s.mux.Handle("GET /index.html", idx)
+	} else {
+		s.logger.Warn("embedded index.html unavailable; falling back to plain file serving", "error", err)
 	}
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
 
@@ -1040,8 +1057,20 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		// SECURITY (#3315): script-src still carries 'unsafe-inline' because the
+		// dashboard is server-rendered HTML with ~400 inline on*= handlers and
+		// several inline <script> blocks (static/index.html, api_contribute.go,
+		// the device-flow login page below). Dropping it today would blank the
+		// UI, so it is staged behind a nonce/handler refactor — see #3315.
+		//
+		// What IS enforced here: the secret that 'unsafe-inline' used to expose
+		// is gone. The dashboard token is never rendered into the page (see
+		// serveIndex in proxy/server.js and handleAuthToken in api.go), so an
+		// inline-script XSS has no token to steal from the served HTML.
+		// form-action 'self' is added to stop an injected <form> from posting
+		// credentials off-origin, which does NOT depend on inline scripts.
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors "+frameAncestors)
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})
@@ -1285,8 +1314,11 @@ func isPublicPath(path string) bool {
 	case path == "/api/auth/token":
 		return true
 	case path == "/metrics" && metricsEnabled():
-		// Prometheus scrape target — public only when explicitly enabled via
-		// HIVE_METRICS_ENABLED. Prometheus cannot authenticate via device flow.
+		// Prometheus scrape target — bypasses dashboard auth only when
+		// explicitly enabled via HIVE_METRICS_ENABLED (Prometheus cannot
+		// authenticate via device flow). NOT actually open: handleMetrics
+		// requires the HIVE_METRICS_TOKEN bearer token and fails closed (403)
+		// when no token is configured (#3785).
 		return true
 	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
 		return true
