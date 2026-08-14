@@ -1,4 +1,6 @@
-# Hive v2 documentation
+# Hive documentation
+
+Documentation for the current Hive line (branch `v4`; the code and docs live under the historically named `v2/` directory — the doubled `v2` in repo paths is the directory name, not a branch). The `v2` branch was retired in August 2026.
 
 Start with [Architecture](architecture.md) for the system overview, then use the topic guides below.
 
@@ -8,9 +10,9 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
+- [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, switching a hive to a channel, and the `stable (v4)` version pill.
 - [Environment variable reference](env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
-- [Troubleshooting](troubleshooting.md) — v2 container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
-- [Notifications](notifications.md) — ntfy, Slack, and Discord webhook setup, trigger events, and test commands.
+- [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
 - [Cross-cluster migration](cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
 - [Dashboard route and health checks](health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
@@ -19,7 +21,6 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](../../discord/README.md).
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
-- [Custom stylesheets](custom-stylesheets.md) — public CSS theme injection for dashboard, leaderboard, and snapshot surfaces.
 - [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](backup-restore.md) — `hive-backup`, Kubernetes CronJob, and spoke backup scope.
@@ -27,7 +28,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [`bin/` pipeline script index](../../bin/README.md) — map of the 45 deterministic pipeline and operational shell/Python scripts, grouped by function.
 - [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
 - [Dashboard OpenAPI spec](../../dashboard/openapi.json) — machine-readable REST API reference for integrations.
-- [ioscan status](ioscan.md) — v2 status of the untrusted-input scanner/canary feature.
+- [ioscan status](ioscan.md) — the untrusted-input scanner/canary feature (live and default-on in v4).
 - [Deployment scripts](../deploy/README.md) — inventory of v2 deployment helpers, including dashboard TTY panes and `hive-panes`.
 
 ## Contributors and access
@@ -66,10 +67,11 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 
 ## Historical/design notes
 
-Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](credly-badges.md). `ioscan` is also documented as absent from v2 HEAD until code is reintroduced.
+Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](credly-badges.md).
 
 ## Security (v4)
 
+- [Security model — operator guide](security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
 - [Security threat model](security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
 - [Architecture Decision Records](adr/README.md) — lightweight ADR process and records 0001-0010.
 - [Intent verification](intent-verification.md) — tier-based change authorization for merge eligibility.

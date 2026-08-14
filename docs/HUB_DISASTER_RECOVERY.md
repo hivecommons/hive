@@ -170,7 +170,7 @@ ability to run.
 
 ## Backup
 
-Runs as a CronJob in `hive-hub`. Each run builds the archive, encrypts it,
+Runs as a CronJob in `hive-hub` — **opt-in, not deployed by default**: `v2/deploy/k8s/backup-cronjob.yaml` is deliberately excluded from the kustomization and must be applied explicitly, after creating Secret `hive-hub-backup-key` (key `backup-key`) with the escrowed `HIVE_BACKUP_KEY` and reviewing ConfigMap `hive-hub-backup-config`. The CronJob image tracks the `stable` release channel. Each run builds the archive, encrypts it,
 uploads it to OCI Object Storage, **downloads it again and verifies checksums**,
 then prunes beyond the retention count. A run that cannot self-verify fails
 rather than reporting a good backup.
@@ -178,6 +178,7 @@ rather than reporting a good backup.
 ```bash
 hive-backup run                    # to object storage
 hive-backup run -local out.enc     # to a local file
+hive-backup run -skip-spokes=true  # hub-only backup (no spoke exec)
 hive-backup verify                 # verify newest stored archive
 hive-backup list                   # list stored archives
 hive-backup extract -file f.enc -dest ./restore
@@ -187,10 +188,13 @@ Environment:
 
 | Variable | Meaning |
 |---|---|
-| `HIVE_BACKUP_KEY` | **required** 64-hex AES-256 key. No default; unset aborts. |
+| `HIVE_BACKUP_KEY` | **required** AES-256 key (64-char hex or base64). No default; unset aborts. |
 | `HIVE_BACKUP_BUCKET` | OCI Object Storage bucket |
 | `HIVE_BACKUP_RETENTION` | archives to keep (default 30) |
 | `HIVE_BACKUP_DATA_DIR` | hub data dir (default `/data`) |
+| `HIVE_BACKUP_OCI_ENDPOINT` | Object Storage endpoint override (default: regional endpoint) |
+| `HIVE_HUB_NAMESPACE` | hub namespace for Secret collection (default `hive-hub`) |
+| `HIVE_KUBECONFIG_DIR` | per-cluster kubeconfigs for remote spokes (default `/etc/hive/kubeconfigs`) |
 | `OCI_*` | credentials, from the existing `oci-api-key` Secret |
 
 ### Spoke gaps are recorded, not hidden
@@ -374,7 +378,9 @@ Manual, and unavoidable:
 ## Testing status
 
 Verified end-to-end against production data (read-only against live systems;
-writes confined to a throwaway namespace that was deleted afterwards):
+writes confined to a throwaway namespace that was deleted afterwards).
+Counts below are as measured at the time of that drill — expect different
+numbers on a grown fleet, not a restore failure:
 
 - Backup of the real hub: **423 files, all 50 spokes, all 4 Secrets**
 - Archive is opaque ciphertext — no plaintext leakage
@@ -504,8 +510,8 @@ control. The archive shares the hub format, so the same tooling reads it.
 # 0. Decrypt and verify. Uses the SAME archive format as the hub backup,
 #    so hive-backup verifies and extracts it unchanged.
 export HIVE_BACKUP_KEY=<the key escrowed for THIS hive>
-hive-backup verify --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc
-hive-backup extract --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc --dest ./restore
+hive-backup verify -file hive-spoke-backup-<id>-<ts>.tar.gz.enc
+hive-backup extract -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest ./restore
 
 # Layout:
 #   ./restore/MANIFEST.json

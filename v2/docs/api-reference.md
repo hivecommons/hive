@@ -12,7 +12,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:667` |
 | `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:668` |
 | `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:669` |
-| `GET` | `/metrics` | Public when `HIVE_METRICS_ENABLED` | Prometheus metrics | `pkg/dashboard/server.go:674` |
+| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: Bearer $HIVE_METRICS_TOKEN` (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:674` |
 | `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status | `pkg/dashboard/server.go:676` |
 | `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:677` |
 

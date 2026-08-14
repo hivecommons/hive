@@ -40,6 +40,8 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | Container/image registries | Deployment/auto-update | Pull hive images, watchtower updates, and any inference backend images. |
 | npm/GitHub for caveman mode | Optional | `npx github:JuliusBrussee/caveman#...` runs when `caveman_mode` is enabled for supported backends. |
 | Kubernetes API | In-cluster spokes/hub | Used for health/provisioning/route discovery when those features are configured. |
+| Login provider issuers | Hub with multi-provider login | GitHub OAuth endpoints, plus the OIDC issuer/JWKS hosts for each configured provider (e.g. `accounts.google.com`, `login.microsoftonline.com`, `sso.redhat.com`, or your IBMid/custom issuer). |
+| OCI Object Storage (`objectstorage.<region>.oraclecloud.com`) | Hub running DR backups | Only when the opt-in backup CronJob is deployed; see [backup-restore.md](backup-restore.md). |
 
 ## Firewall recommendations
 

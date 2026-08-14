@@ -1,6 +1,6 @@
-# Hive v2 troubleshooting
+# Hive troubleshooting
 
-This guide covers the current v2 containerized Go service. The older `docs/troubleshooting.md` page is for the legacy v1 systemd supervisor.
+This guide covers the current containerized Go service (branch `v4`; code under the `v2/` directory). The older `docs/troubleshooting.md` page is for the legacy v1 systemd supervisor.
 
 ## Find the running service logs
 
@@ -60,7 +60,7 @@ Detach from tmux with `Ctrl+B`, then `D`. If the dashboard shows an agent as pau
 
 ## Dashboard auth and access problems
 
-The dashboard config lives under `dashboard:`. `dashboard.auth_token` protects non-public dashboard/API paths; health/liveness, snapshot/style, contribute, leaderboard, user-auth negotiation, SSO, and GitHub App setup paths are intentionally public in `isPublicPath`. `dashboard.authorized_users` controls direct-route user login allowlists; `dashboard.hub_proxied` means trusted hub/nginx headers identify the caller.
+The dashboard config lives under `dashboard:`. `dashboard.auth_token` protects non-public dashboard/API paths; health/liveness, snapshot/style, contribute, leaderboard, user-auth negotiation, SSO, the login provider picker (`/login`, `/login/{provider}`), and GitHub App setup paths are intentionally public in `isPublicPath`. `dashboard.authorized_users` controls direct-route user login allowlists; `dashboard.hub_proxied` means trusted hub/nginx headers identify the caller.
 
 If API calls fail, check whether the request is going through the gateway on port `3001` or directly to Hive on `3002`, then inspect the response and Hive logs. Dashboard handlers return concrete messages such as `X-Hive-Role header required`, `insufficient access`, `owner access required`, and `only the owner can back up this hive` for role/header failures.
 
