@@ -2013,9 +2013,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	hbTarget := s.heartbeatUpgrade[payload.HiveID]
 	s.mu.RUnlock()
 	if switchTag != "" {
-		// Clear once the spoke reports it's on the target branch — its tag is
-		// branchToTag(GitBranch)+"-latest". Otherwise keep instructing.
-		if payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag {
+		// Clear once the spoke reports it runs the target tag. The reported
+		// deployment ImageRef is the authoritative signal and works for every
+		// switch shape — "<branch>-latest" AND bare channel tags ("stable"),
+		// whose completion the branch inference below can never detect: a
+		// channel image heartbeats its baked-in branch ("v4"), which maps to
+		// "v4-latest", not "stable", so a completed channel switch would be
+		// re-instructed forever. The branch inference stays as the fallback
+		// for older spokes whose heartbeat omits image_ref.
+		switchDone := payload.ImageRef != "" && imageTagOf(payload.ImageRef) == switchTag
+		if switchDone || (payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag) {
 			s.mu.Lock()
 			delete(s.heartbeatSwitchTag, payload.HiveID)
 			for i := range s.registry.Hives {
