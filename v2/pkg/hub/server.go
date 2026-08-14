@@ -910,6 +910,15 @@ type HubServer struct {
 	// Same rationale and same guarding mutex as lastNetAdminReconcile above:
 	// both are poller-loop-only state.
 	lastPerHiveEnvReconcile time.Time
+	// lastGenerationRetire throttles the expired-master-generation retirement
+	// sweep (hub_generations_retire.go). Same rationale and same guarding mutex
+	// as the two above: poller-loop-only state.
+	//
+	// NOTE this throttles CLEANUP AND ALERTING ONLY. A generation stops being
+	// ACCEPTED at its VerifyUntil via acceptableGenerations, on the wall clock,
+	// whether or not this sweep ever runs — so a missed tick delays rewriting
+	// hub-generations.json, never extends the acceptance window.
+	lastGenerationRetire time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see

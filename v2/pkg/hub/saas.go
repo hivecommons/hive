@@ -5027,6 +5027,13 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// rate-limited to perHiveEnvMaxPatchesPerCycle patches per cycle, because
 	// each patch rolls that hive's pod. See perhive_env_reconcile.go.
 	s.reconcilePerHiveEnvIfDue()
+	// Drop master generations whose verify window has closed, and warn when one
+	// is closing while spokes still carry it. Throttled internally to
+	// generationRetireInterval. This lane PERSISTS the drop and ALERTS; it is
+	// not what enforces expiry — acceptableGenerations already refuses an
+	// expired generation at every verify, on the wall clock, whether or not
+	// this ever runs. See hub_generations_retire.go.
+	s.retireExpiredGenerationsIfDue()
 	// Record the per-release image-pulls snapshot (external-adoption chart). The
 	// call is internally guarded to snapshot only when the v2 release SHA advances,
 	// so ticking it alongside the frequent SHA poll is cheap — no separate
@@ -5055,6 +5062,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.sweepStuckAssignments()
 		s.reconcileNetAdminIfDue()
 		s.reconcilePerHiveEnvIfDue()
+		s.retireExpiredGenerationsIfDue()
 		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
