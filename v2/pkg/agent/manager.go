@@ -5547,11 +5547,27 @@ func (m *Manager) ClearAllModeOverrides() {
 	}
 }
 
-// agentStateFileMode is owner-only. These files sit in the pod-shared /tmp and
-// carry per-agent CONTROL state — the enforcement mode the gh wrapper reads, and
-// the bootstrap prompt goose is launched with — so anything group- or
-// world-writable lets one agent steer another.
-const agentStateFileMode = 0o600
+// agentStateFileMode is owner-write, world-read (0644). These files sit in the
+// pod-shared /tmp and carry per-agent CONTROL state — the enforcement mode the
+// gh wrapper and git credential helper read, and the bootstrap prompt goose is
+// launched with — so nothing but the hive uid may WRITE them: anything group-
+// or world-writable lets one agent steer another.
+//
+// They must stay world-READABLE, though: the readers run as the per-agent UID
+// (hive-<agent>, group node), not as the hive uid. bin/gh-wrapper.sh and
+// bin/git-credential-hive.sh `cat` the mode file, and goose is launched with
+// `--text "$(cat /tmp/.hive-bootstrap-<name>.txt)"` from the agent's tmux
+// session. When #3172 tightened this to 0600 those readers got EACCES: under
+// `set -e` both scripts died mid-flight, so every agent gh call failed and
+// every push had no credential (#3679, #3881, #3882). Owner-only can never
+// work for a file whose consumer is a different uid by design.
+//
+// 0644 does not reopen N15's write path: /tmp is sticky, so an agent UID cannot
+// unlink, rename or replace a hive-owned file there, and the write itself stays
+// O_NOFOLLOW + fchmod-via-descriptor (see writeAgentStateFile). The contents
+// were never secret — the mode is the agent's own enforcement level and the
+// bootstrap prompt is what the agent prints in its own pane.
+const agentStateFileMode = 0o644
 
 // writeAgentStateFile writes per-agent control state to a shared-/tmp path
 // without following symlinks.
@@ -5562,8 +5578,9 @@ const agentStateFileMode = 0o600
 //   - follows symlinks — os.WriteFile opens O_WRONLY|O_CREATE|O_TRUNC with no
 //     O_NOFOLLOW, so a pre-planted symlink at the (predictable) path redirects
 //     the hive's own write to any file the process can reach; and
-//   - left the result world-readable, and the containing /tmp world-writable,
-//     so any agent UID could replace another agent's file afterwards.
+//   - relied on the caller's umask and on O_CREATE for the mode, so a file left
+//     behind by a previous release (or created under a restrictive umask) kept
+//     whatever mode it already had, and nothing ever repaired it.
 //
 // Both matter because the path is derived from the agent NAME, which is
 // guessable, and because the readers treat these files as authoritative:
@@ -5817,9 +5834,12 @@ func writeAgentStateFile(path string, data []byte) error {
 		f.Close()
 		return err
 	}
-	// O_CREATE honours the mode only when the file did not already exist, so an
-	// existing 0644 file from a previous release keeps its old mode without
-	// this. Chmod through the still-open descriptor: O_NOFOLLOW only proved the
+	// O_CREATE honours the mode only when the file did not already exist (and
+	// umask-filters it even then), so an existing file from a previous release
+	// — 0600 from the #3172 build, or umask-narrowed 0600 (#3882) — keeps its
+	// old, agent-unreadable mode without this; the explicit chmod repairs it on
+	// the next mode change or kick. Chmod through the still-open descriptor:
+	// O_NOFOLLOW only proved the
 	// path was not a symlink at OPEN time, so a path-based os.Chmod after Close
 	// left a window in shared /tmp where the pathname could be swapped for a
 	// symlink and the mode change applied to the link target (TOCTOU, #3175).

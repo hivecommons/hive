@@ -38,6 +38,25 @@ const (
 	bobStateDirGroupRWX os.FileMode = 0o070
 )
 
+// ModeFileGlob matches the per-agent GitHub-mode files the Manager writes
+// (/tmp/.hive-mode-<agent>) and the enforcement layer reads: gh-wrapper.sh,
+// git-credential-hive.sh, and the MITM proxy. The Manager writes them as the
+// hive uid but the shell readers run as per-agent UIDs, so the files must be
+// world-readable. A pod running a build that wrote them owner-only (#3172), or
+// that wrote them under a restrictive umask (#3882), has 0600 files that no
+// agent can read — which killed both `set -e` readers and blocked every gh
+// call and push (#3679/#3881). The watcher re-widens them each tick so a
+// running pod self-heals without operator intervention.
+//
+// A var (not const) so tests can point the scan at a writable temp pattern,
+// matching WatchedHomeDirs/SharedRepoParent. Production value is unchanged.
+var ModeFileGlob = "/tmp/.hive-mode-*"
+
+// modeFileReadBits is `a+r` — the read access every mode-file consumer needs.
+// ORed into the existing perms, never narrowing owner bits, so an
+// already-correct 0644 file is left byte-identical and the scan idempotent.
+const modeFileReadBits os.FileMode = 0o444
+
 // bobStateDirBase is the directory name bob uses for both its shared-HOME state
 // (/data/home/.bob) and its per-agent workdir state (/data/agents/<name>/.bob).
 // The watcher recognizes an entry as a bob state dir by this basename so it can
@@ -206,6 +225,8 @@ func fixPermissions(logger *slog.Logger) {
 	// write/commit/push and therefore open PRs. fixEntry already brings each
 	// dir to >=0770 and each file to >=0660 for the node group (and skips
 	// symlinks), which is exactly what the clone (created 0755 dev:node) needs.
+	fixModeFiles(logger)
+
 	roots := append([]string{}, WatchedHomeDirs...)
 	roots = append(roots, sharedRepoClones()...)
 	for _, root := range roots {
@@ -235,6 +256,66 @@ func fixPermissions(logger *slog.Logger) {
 			)
 		}
 	}
+}
+
+// fixModeFiles re-widens the per-agent mode files (ModeFileGlob) to be
+// world-readable. This is the running-pod remediation for #3882/#3679: the
+// Manager only rewrites a mode file on a level change or kick, so a pod whose
+// files are 0600 (written by the #3172 build, or umask-narrowed) stays broken
+// until then; this scan repairs them within one tick.
+//
+// SECURITY: /tmp is sticky and world-writable, so an agent can pre-create a
+// name matching the glob. Only regular files owned by the hive uid are
+// touched, the only change ever made is adding read bits, and the whole
+// check-then-chmod happens on one open descriptor: O_NOFOLLOW refuses a
+// planted symlink at open time, and f.Stat/f.Chmod act on that same inode, so
+// the pathname cannot be swapped between the check and the chmod (CWE-59 /
+// CWE-367 — the same descriptor discipline writeAgentStateFile follows, #3175).
+func fixModeFiles(logger *slog.Logger) {
+	paths, err := filepath.Glob(ModeFileGlob)
+	if err != nil {
+		return
+	}
+	for _, path := range paths {
+		fixModeFile(path, logger)
+	}
+}
+
+// fixModeFile applies the fixModeFiles policy to a single path.
+func fixModeFile(path string, logger *slog.Logger) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		// ELOOP for a planted symlink, EACCES for a file we do not own: skip.
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return
+	}
+	perm := fi.Mode().Perm()
+	if perm&modeFileReadBits == modeFileReadBits {
+		return
+	}
+	newPerm := perm | modeFileReadBits
+	if err := f.Chmod(newPerm); err != nil {
+		logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and gh/pushes will be blocked",
+			"path", path,
+			"old_mode", perm.String(),
+			"want_mode", newPerm.String(),
+			"error", err,
+		)
+		return
+	}
+	logger.Info("permissions watcher: fixed mode file permissions",
+		"path", path,
+		"old_mode", perm.String(),
+		"new_mode", newPerm.String(),
+	)
 }
 
 // fixEntry checks a single file or directory and corrects ownership/mode
