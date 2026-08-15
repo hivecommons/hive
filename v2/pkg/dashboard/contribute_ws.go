@@ -3540,6 +3540,12 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 	var candidates []candidate
 
+	// One ledger snapshot for this whole selection pass (#3845), shared with the
+	// contributor-neutral admission gate below so ReadyQueue and selectTask judge
+	// dependencies against the same contract. Discarded when the pass ends, so
+	// every selection re-observes current state rather than trusting a cache.
+	admissionSweep := h.newAdmissionSweep()
+
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
 			continue
@@ -3602,16 +3608,28 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			// PR per window. The claim ledger sees the open PR itself on the
 			// next eval cycle, which closes that hole regardless of what the
 			// relay managed to report.
-			decision := h.evaluateContributorNeutralAdmission(contributorAdmissionCandidate{
+			decision := h.evaluateContributorNeutralAdmission(admissionSweep, contributorAdmissionCandidate{
 				repoFull: repo.Full,
 				repoName: repo.Name,
 				number:   number,
 			})
 			if !decision.admitted {
-				if decision.reason == contributorAdmissionReasonOpenPRClaim {
+				switch decision.reason {
+				case contributorAdmissionReasonOpenPRClaim:
 					h.logger.Info("[contribute-ws] skip: issue already claimed by an open PR",
 						"repo", repo.Full, "number", number,
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor)
+				// #3845: a declared dependency is not satisfied (or cannot be
+				// resolved), so this issue is not admissible work yet. Only THIS
+				// candidate is withheld — the scan continues and unrelated ready
+				// work is still offered.
+				case contributorAdmissionReasonDependencyBlocked, contributorAdmissionReasonDependencyUnknown:
+					h.logger.Info("[contribute-ws] skip: dependency not satisfied",
+						"repo", repo.Full, "number", number,
+						"reason", decision.convergence.Reason,
+						"bead", decision.convergence.ObservedRecord,
+						"generation", decision.convergence.ObservedGeneration,
+						"blockers", strings.Join(decision.convergence.Blockers, ","))
 				}
 				continue
 			}

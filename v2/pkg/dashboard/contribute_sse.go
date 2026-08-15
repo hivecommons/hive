@@ -220,6 +220,11 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	// exclusion uses, so the two stay in lock-step.
 	var heldItems []ReadyQueueItem
 
+	// One ledger snapshot for this whole pass (#3845). Built here — not per
+	// candidate — so the dependency gate stays cheap, and discarded when the pass
+	// ends so the next call re-observes current state.
+	sweep := h.newAdmissionSweep()
+
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
 			continue
@@ -275,7 +280,7 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			if active[fmt.Sprintf("%s#%d", repo.Full, number)] {
 				continue
 			}
-			decision := h.evaluateContributorNeutralAdmission(contributorAdmissionCandidate{
+			decision := h.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
 				repoFull: repo.Full,
 				repoName: repo.Name,
 				number:   number,
