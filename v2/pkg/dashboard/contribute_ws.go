@@ -1614,6 +1614,13 @@ type FleetClanker struct {
 	// agent roles. It is shown to owner/read-write viewers in the fleet row; the
 	// server-side mutation endpoint remains the enforcement boundary.
 	AgentRoleGrants []string `json:"agent_role_grants,omitempty"`
+	// Protocol compares the contributor-protocol version this client DECLARED
+	// against the one this hub speaks (#2547 peer-compatibility criterion,
+	// building on the versions #2567 put on the wire). Always set — an
+	// unversioned relay reports verdict "unknown", which is a supported state,
+	// not a fault. Derived per snapshot from Capabilities.RelayProtocolVersion;
+	// it stores nothing new and, like Capabilities, is never routed or gated on.
+	Protocol *ProtocolCompat `json:"protocol,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -1683,6 +1690,16 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			capsCopy := *c.capabilities
 			fc.Capabilities = &capsCopy
 		}
+		// #2547 peer-compatibility: derive the hub-vs-client protocol comparison
+		// from the version already declared above. Always present so the operator
+		// row can show the hub's own version even when the client declared none —
+		// a bare "proto 1.1" chip with nothing to compare it against was the gap.
+		declaredVersion := ""
+		if c.capabilities != nil {
+			declaredVersion = c.capabilities.RelayProtocolVersion
+		}
+		compat := peerProtocolCompat(declaredVersion)
+		fc.Protocol = &compat
 		if c.profile != nil {
 			fc.ContributorID = c.profile.ContributorID
 			fc.GitHubUsername = c.profile.GitHubUsername
@@ -2080,6 +2097,25 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if !declared.IsZero() {
 				c := declared
 				caps = &c
+			}
+
+			// #2547 (peer-compatibility criterion): compare the declared version
+			// with ours and say so ONCE, at the log level the verdict deserves, so
+			// "an old relay against a new hub" is legible in the hub log instead of
+			// only discoverable by watching it misbehave. This is a REPORT, not a
+			// gate — admission continues unchanged for every verdict, including
+			// protoPeerIncompatible, because compatibility here has to be carried by
+			// the defaults (there is no negotiation to carry it) and rejecting on a
+			// client-declared string would strand relays written before any change.
+			switch verdict := classifyPeerProtocol(declared.RelayProtocolVersion); verdict {
+			case protoPeerIncompatible, protoPeerMalformed:
+				h.logger.Warn("[contribute-ws] contributor protocol mismatch (advisory; client still served)",
+					"contributor", profile.ContributorID, "verdict", verdict,
+					"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
+			case protoPeerOlder, protoPeerNewer:
+				h.logger.Info("[contribute-ws] contributor protocol drift (advisory; client still served)",
+					"contributor", profile.ContributorID, "verdict", verdict,
+					"client_version", declared.RelayProtocolVersion, "hub_version", contributorProtocolVersion)
 			}
 
 			contributor = &ContributorConnection{

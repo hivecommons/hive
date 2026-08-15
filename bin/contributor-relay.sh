@@ -123,9 +123,16 @@ const TASK_UNAVAILABLE_RETRY_MS = 30000;
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
 // optional — an older hub simply ignores it) and the hub advertises its own
-// version + capability set back on auth_ok. Keep in step with
-// contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go.
-const RELAY_PROTOCOL_VERSION = '1.1';
+// version + capability set back on auth_ok.
+//
+// MUST equal contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go:
+// the hub and this relay ship from the same tree, so they speak the same version
+// by construction. That was previously only a comment, and it drifted — #2600
+// shipped both at 1.1, #2671 bumped the hub to 1.2 for credential_after_accept
+// (handled by the token_refresh case below) and left this at 1.1, so the relay
+// under-declared itself for months with nothing to notice. It is now pinned by
+// TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
+const RELAY_PROTOCOL_VERSION = '1.2';
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -161,6 +168,9 @@ const hubs = rawHubList.map((url, i) => ({
   reconnectTimer: null,
   authenticated: false,
   authFailed: false,
+  // #2547: set once we have reported a contributor-protocol difference with
+  // this hub, so a reconnect loop does not repeat the same advisory line.
+  protocolDriftReported: false,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -332,6 +342,59 @@ function sanitizeDeclaredValue(raw) {
   return points.length > CLI_VERSION_MAX_LEN
     ? points.slice(0, CLI_VERSION_MAX_LEN).join('').trim()
     : clean;
+}
+
+// parseProtocolVersion mirrors the hub's parser (contribute_protocol_compat.go):
+// strict "MAJOR.MINOR", both non-negative integers, nothing after the minor.
+// Anything else returns null so an unrecognised shape is reported as unparseable
+// rather than coerced into a confident, wrong comparison.
+function parseProtocolVersion(v) {
+  var m = /^\s*(\d+)\.(\d+)\s*$/.exec(String(v == null ? '' : v));
+  if (!m) return null;
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
+}
+
+// classifyPeerProtocol compares a peer's declared version against ours and
+// returns the same verdict vocabulary the hub uses, so the two sides describe a
+// mismatch identically: 'unknown' | 'current' | 'older' | 'newer' |
+// 'incompatible' | 'malformed'. 'unknown' (peer stated nothing) is the
+// backward-compatible default and is never treated as a fault.
+//
+// The verdict always describes THE PEER, so the same 'older' means "the hub is
+// older" here and "the client is older" on the hub side. That is deliberate —
+// one vocabulary, each side reading it about the other — and every message
+// built from it names both versions explicitly so it cannot be misread.
+function classifyPeerProtocol(peer, self) {
+  if (!peer || !String(peer).trim()) return 'unknown';
+  var p = parseProtocolVersion(peer);
+  if (!p) return 'malformed';
+  var s = parseProtocolVersion(self);
+  if (!s) return 'unknown';
+  if (p.major !== s.major) return 'incompatible';
+  if (p.minor < s.minor) return 'older';
+  if (p.minor > s.minor) return 'newer';
+  return 'current';
+}
+
+// warnOnProtocolDrift reports, once per hub for the life of this process, that
+// the hub speaks a
+// different contributor-protocol version than this relay (kubestellar/hive#2547).
+// Purely informational: nothing below changes what we send, what we ask for, or
+// whether we stay connected — a version is not a gate on either side. Silent when
+// the versions agree or the hub is unversioned, so a healthy connection logs
+// nothing extra and an old hub is not nagged about a field it never had.
+function warnOnProtocolDrift(hub, hubVersion) {
+  if (hub.protocolDriftReported) return;
+  var verdict = classifyPeerProtocol(hubVersion, RELAY_PROTOCOL_VERSION);
+  if (verdict === 'current' || verdict === 'unknown') return;
+  hub.protocolDriftReported = true;
+  var detail = {
+    older: `hub ${hubVersion} is behind this relay ${RELAY_PROTOCOL_VERSION} — features this relay knows about may not be deployed there`,
+    newer: `hub ${hubVersion} is ahead of this relay ${RELAY_PROTOCOL_VERSION} — the hub may support features this relay does not use yet`,
+    incompatible: `hub ${hubVersion} differs from this relay ${RELAY_PROTOCOL_VERSION} in MAJOR version — the wire contract differs and behaviour is undefined; consider updating the relay`,
+    malformed: `hub announced an unparseable protocol version; expected MAJOR.MINOR`,
+  }[verdict];
+  console.warn(`Protocol ${verdict}: ${detail}. Continuing normally — this is advisory and nothing is gated on it.`);
 }
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
@@ -1371,6 +1434,18 @@ function handleMessage(data, hub) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
+      // #2547 (peer-compatibility): both sides have STATED a version since #2567,
+      // but neither COMPARED them, so "an old relay against a new hub" was still
+      // only detectable by watching it misbehave. Say it once, plainly, on the
+      // contributor's own terminal — this is the half of the detection the hub
+      // log cannot deliver, because the person running the relay is usually not
+      // the person reading the hub.
+      //
+      // Advisory in BOTH directions: we never refuse to connect, never stop
+      // asking for work, and never change what we send. A relay that downgraded
+      // itself on a version mismatch would strand its own contributor for a
+      // difference that is, by the additive-versioning rule, usually harmless.
+      warnOnProtocolDrift(hub, msg.protocol_version);
       hub.authenticated = true;
       hub.authFailed = false;
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
@@ -1655,6 +1730,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
     getHubs: () => hubs,
+    // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the
+    // relay-side half of "both sides can detect an incompatible peer" is tested
+    // behaviourally here, not just asserted to exist from the Go side.
+    RELAY_PROTOCOL_VERSION,
+    parseProtocolVersion,
+    classifyPeerProtocol,
+    warnOnProtocolDrift,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,

@@ -1716,6 +1716,102 @@ test('capabilities are probed once and cached, not re-probed per hub handshake',
 });
 
 // ---------------------------------------------------------------------------
+// Peer-protocol compatibility (kubestellar/hive#2547).
+//
+// #2567 gave both sides a version to STATE; neither side COMPARED them, so the
+// issue's original complaint stood: "the only way to learn that an old relay is
+// talking to a new hub is to watch it misbehave." These cover the relay half of
+// the detection, and — more importantly — that detecting a mismatch NEVER
+// changes what the relay does.
+// ---------------------------------------------------------------------------
+
+test('protocol verdicts: peer version is classified against our own', () => {
+  const relay = loadRelay();
+  try {
+    const self = relay.RELAY_PROTOCOL_VERSION;
+    const [maj, min] = self.split('.').map(Number);
+    const c = (peer) => relay.classifyPeerProtocol(peer, self);
+
+    // An unversioned hub is 'unknown', NEVER a fault: that is what every
+    // deployment predating the versioned handshake answers with.
+    assert.strictEqual(c(undefined), 'unknown');
+    assert.strictEqual(c(''), 'unknown');
+    assert.strictEqual(c('   '), 'unknown');
+
+    assert.strictEqual(c(self), 'current');
+    assert.strictEqual(c(`${maj}.${min + 1}`), 'newer');
+    assert.strictEqual(c(`${maj + 1}.${min}`), 'incompatible');
+    if (min > 0) assert.strictEqual(c(`${maj}.${min - 1}`), 'older');
+
+    // Strict MAJOR.MINOR — an unrecognised shape is reported as unparseable
+    // rather than coerced into a confident, wrong comparison.
+    for (const bad of ['1', '1.2.3', 'v1.2', '1.x', 'nonsense']) {
+      assert.strictEqual(c(bad), 'malformed', `${bad} should be malformed`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('protocol drift is reported once per hub and never changes relay behaviour', () => {
+  const relay = loadRelay();
+  const origWarn = console.warn;
+  const warnings = [];
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    const hub = relay.getHubs()[0];
+    const self = relay.RELAY_PROTOCOL_VERSION;
+    const [maj, min] = self.split('.').map(Number);
+    const wsBefore = hub.ws;
+    const authBefore = hub.authenticated;
+
+    // Matching and unversioned hubs are SILENT: a healthy connection and an old
+    // hub both stay quiet, so the warning means something when it does appear.
+    relay.warnOnProtocolDrift(hub, self);
+    relay.warnOnProtocolDrift(hub, undefined);
+    assert.strictEqual(warnings.length, 0, `expected silence, got: ${warnings.join(' | ')}`);
+
+    // A real mismatch is reported once, names BOTH versions (the verdict alone
+    // is ambiguous about which side is behind), and says it is advisory.
+    relay.warnOnProtocolDrift(hub, `${maj + 1}.${min}`);
+    assert.strictEqual(warnings.length, 1, 'expected exactly one warning');
+    assert.ok(/incompatible/.test(warnings[0]), warnings[0]);
+    assert.ok(warnings[0].includes(`${maj + 1}.${min}`) && warnings[0].includes(self),
+      `warning must name both versions: ${warnings[0]}`);
+    assert.ok(/advisory/.test(warnings[0]), `warning must say it is advisory: ${warnings[0]}`);
+
+    // Reconnect loops must not repeat it.
+    relay.warnOnProtocolDrift(hub, `${maj + 1}.${min}`);
+    assert.strictEqual(warnings.length, 1, 'drift warning repeated on a second call');
+
+    // And nothing about the connection changed: a mismatched peer keeps working
+    // exactly as before. #2547 is explicit that compatibility is carried by the
+    // defaults, because there is no negotiation to carry it.
+    assert.strictEqual(hub.authFailed, false, 'a protocol mismatch must not fail auth');
+    assert.strictEqual(hub.authenticated, authBefore, 'a protocol mismatch must not change auth state');
+    assert.strictEqual(hub.ws, wsBefore, 'a protocol mismatch must not drop the socket');
+  } finally {
+    console.warn = origWarn;
+    teardown(relay);
+  }
+});
+
+test('the relay declares the same protocol version the hub speaks', () => {
+  // The hub and this relay ship from the same tree. That was previously only a
+  // comment, and it drifted (#2600 shipped both at 1.1; #2671 bumped the hub to
+  // 1.2 and left the relay at 1.1). Pinned from both sides — the Go half is
+  // TestRelayProtocolVersionMatchesHub.
+  const goSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'v2', 'pkg', 'dashboard', 'contribute_protocol.go'), 'utf8');
+  const m = /const contributorProtocolVersion = "([^"]*)"/.exec(goSrc);
+  assert.ok(m, 'could not find contributorProtocolVersion in contribute_protocol.go');
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.RELAY_PROTOCOL_VERSION, m[1],
+      'bin/contributor-relay.sh and the hub must declare the same contributor-protocol version; ' +
+      'bump both in the same PR');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
