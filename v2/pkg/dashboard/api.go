@@ -8388,6 +8388,9 @@ func (s *Server) handleBeadsList(w http.ResponseWriter, r *http.Request) {
 const maxBeadPriority = 4
 
 func (s *Server) handleBeadsCreate(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	agentName := r.PathValue("agent")
 	if s.deps.BeadStores == nil {
 		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)

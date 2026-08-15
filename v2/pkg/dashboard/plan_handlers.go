@@ -71,6 +71,9 @@ func (s *Server) requestArchitectDecompose(epic *beads.Bead) planning.DecomposeS
 // polls GET /api/plan/{epicID} and the architect fills the plan in, surfaced via
 // the existing plan-review gate.
 func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	var body struct {
 		Repo   string `json:"repo"`
 		Number int    `json:"number"`
