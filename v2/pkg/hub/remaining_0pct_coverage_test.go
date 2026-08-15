@@ -171,3 +171,97 @@ func TestHeartbeatFreshForURLCheck_BadTimestamp(t *testing.T) {
 		t.Error("bad timestamp should not be fresh")
 	}
 }
+
+// ============================================================
+// hub_cookie.go — hubCookieSessionID / hubCookieExpiry
+// ============================================================
+
+func TestHubCookieSessionID_ValidV3(t *testing.T) {
+	s := &HubServer{hubSecret: testHubSecret}
+	seedHex := s.sessionSigningSeed()
+	now := time.Now()
+	cookie, sid := mintHubUserCookieValueV3(seedHex, "alice", now, 24*time.Hour)
+	if cookie == "" || sid == "" {
+		t.Fatal("mintHubUserCookieValueV3 returned empty")
+	}
+	got := hubCookieSessionID(cookie)
+	if got != sid {
+		t.Errorf("hubCookieSessionID = %q, want %q", got, sid)
+	}
+}
+
+func TestHubCookieSessionID_NonV3ReturnsEmpty(t *testing.T) {
+	// V2 cookie has no session ID.
+	cookie := mintHubUserCookieValue(testHubSecret, "bob")
+	got := hubCookieSessionID(cookie)
+	if got != "" {
+		t.Errorf("hubCookieSessionID(v2) = %q, want empty", got)
+	}
+}
+
+func TestHubCookieSessionID_GarbageReturnsEmpty(t *testing.T) {
+	if got := hubCookieSessionID("not-a-cookie"); got != "" {
+		t.Errorf("hubCookieSessionID(garbage) = %q, want empty", got)
+	}
+}
+
+func TestHubCookieExpiry_ValidV3(t *testing.T) {
+	s := &HubServer{hubSecret: testHubSecret}
+	seedHex := s.sessionSigningSeed()
+	now := time.Now()
+	ttl := 24 * time.Hour
+	cookie, _ := mintHubUserCookieValueV3(seedHex, "alice", now, ttl)
+	if cookie == "" {
+		t.Fatal("mintHubUserCookieValueV3 returned empty")
+	}
+	got := hubCookieExpiry(cookie)
+	want := now.Add(ttl).Unix()
+	if got != want {
+		t.Errorf("hubCookieExpiry = %d, want %d", got, want)
+	}
+}
+
+func TestHubCookieExpiry_NonV3ReturnsZero(t *testing.T) {
+	cookie := mintHubUserCookieValue(testHubSecret, "bob")
+	if got := hubCookieExpiry(cookie); got != 0 {
+		t.Errorf("hubCookieExpiry(v2) = %d, want 0", got)
+	}
+}
+
+// ============================================================
+// oauth.go — displayIdentity
+// ============================================================
+
+func TestDisplayIdentity_GitHubLogin(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	login, avatar := s.displayIdentity("alice")
+	if login != "alice" {
+		t.Errorf("login = %q, want alice", login)
+	}
+	if avatar != "https://github.com/alice.png" {
+		t.Errorf("avatar = %q, want github avatar URL", avatar)
+	}
+}
+
+func TestDisplayIdentity_CanonicalGitHub(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	login, avatar := s.displayIdentity("github:bob")
+	if login != "bob" {
+		t.Errorf("login = %q, want bob", login)
+	}
+	if avatar != "https://github.com/bob.png" {
+		t.Errorf("avatar = %q, want github avatar URL", avatar)
+	}
+}
+
+func TestDisplayIdentity_NonGitHubFallsBack(t *testing.T) {
+	// A non-GitHub identity with no SaaS user record falls back to the raw identity.
+	s := &HubServer{logger: slog.Default()}
+	login, avatar := s.displayIdentity("ibmid:user@example.com")
+	// Without a stored SaaS user, login is the raw identity string.
+	if login == "" {
+		t.Error("login should not be empty")
+	}
+	// Avatar may be empty when no SaaS user record exists.
+	_ = avatar
+}
