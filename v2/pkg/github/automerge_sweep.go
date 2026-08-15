@@ -23,6 +23,42 @@ const DefaultAutoMergeSweepMaxMerges = 3
 // tight loop risks GitHub secondary rate limits across every managed repo.
 const selfAuthoredAutoMergeSweepInterval = 10 * time.Second
 
+// selfAuthoredSweepBudgetShare caps the fraction of the App's hourly REST
+// budget this sweep alone may consume. The sweep is a background nicety; the
+// agents' own gh calls, the governor's eval cycle, the merge-eligible writer
+// and the fix loops all draw on the same allowance and must not be starved.
+const selfAuthoredSweepBudgetShare = 0.25
+
+// githubAppHourlyRateLimit is the GitHub App installation REST allowance the
+// interval is sized against.
+const githubAppHourlyRateLimit = 6900
+
+// selfAuthoredSweepInterval sizes the sweep tick so a hive with many repos
+// cannot exhaust its GitHub rate limit just by looking for merge candidates.
+//
+// Each tick lists open PRs for EVERY configured repo, so cost scales with repo
+// count while the fixed 10s tick did not. A 45-repo hive therefore issued
+// 45 x 360 = 16,200 requests/hour against a 6,900/hour limit — 2.3x over,
+// before a single agent made a call. Observed live: the sweep 403'd
+// continuously, go-github then short-circuited every request until the recorded
+// reset ("not making remote request"), and NO PR merged for a full day on a
+// hive that had merged 767 previously.
+//
+// Small hives are unaffected: the fixed interval remains the floor, so a
+// 1-4 repo hive still sweeps every 10s exactly as before.
+func selfAuthoredSweepInterval(repos int) time.Duration {
+	if repos <= 0 {
+		return selfAuthoredAutoMergeSweepInterval
+	}
+	budget := float64(githubAppHourlyRateLimit) * selfAuthoredSweepBudgetShare
+	seconds := float64(repos) * 3600.0 / budget
+	interval := time.Duration(seconds * float64(time.Second))
+	if interval < selfAuthoredAutoMergeSweepInterval {
+		return selfAuthoredAutoMergeSweepInterval
+	}
+	return interval.Round(time.Second)
+}
+
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
@@ -316,8 +352,9 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			"acmm_level", level, "min_acmm_level", config.SelfMergeMinACMMLevel)
 		return
 	}
+	interval := selfAuthoredSweepInterval(len(c.getRepos()))
 	go func() {
-		t := time.NewTicker(selfAuthoredAutoMergeSweepInterval)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
@@ -330,7 +367,7 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			}
 		}
 	}()
-	c.info("self-authored automerge sweep started", "interval", selfAuthoredAutoMergeSweepInterval)
+	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.getRepos()))
 }
 
 // listOpenAppAuthoredPullRequests returns every open, non-draft PR in owner/repo
