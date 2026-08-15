@@ -213,6 +213,57 @@ func TestCodexLinuxContainmentAttestationPrefersPackagedHelperOverSystemPath(t *
 	}
 }
 
+func TestCodexLinuxCapabilityDropHelperIsSealedRevalidatedAndCleaned(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the capability-drop helper is Linux-only")
+	}
+	source := filepath.Join(t.TempDir(), codexCapabilityDropHelper)
+	if err := os.WriteFile(source, []byte("ordinary-setpriv-test-bytes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := inspectCodexProviderFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, root, err := sealCodexCapabilityDropHelper(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleaned := false
+	t.Cleanup(func() {
+		if !cleaned {
+			_ = cleanupCodexCapabilityDropHelperSeal(root, sealed.Path)
+		}
+	})
+	if filepath.Base(sealed.Path) != codexCapabilityDropHelper || sealed.SHA256 != identity.SHA256 || sealed.Bytes != identity.Bytes {
+		t.Fatalf("sealed capability-drop identity drifted: source=%+v sealed=%+v", identity, sealed)
+	}
+	command, err := inspectCodexProviderFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	attestation := &codexProviderIdentityAttestation{
+		Command:              command,
+		CapabilityDropHelper: identity, SealedCapabilityDropHelper: sealed, CapabilityDropHelperRoot: root,
+	}
+	if err := attestation.revalidateSource(context.Background()); err != nil {
+		t.Fatalf("fresh capability-drop helper did not revalidate: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("changed-setpriv-test-bytes!"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := attestation.revalidateSource(context.Background()); err == nil || !strings.Contains(err.Error(), "capability-drop helper changed") {
+		t.Fatalf("capability-drop source drift was not rejected: %v", err)
+	}
+	if err := cleanupCodexCapabilityDropHelperSeal(root, sealed.Path); err != nil {
+		t.Fatal(err)
+	}
+	cleaned = true
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("capability-drop seal root survived cleanup: %v", err)
+	}
+}
+
 func TestCodexProviderOutputOverflowCancelsContainedProcess(t *testing.T) {
 	t.Setenv("GO_WANT_CODEX_PROVIDER_HELPER", "1")
 	provider := CodexProvider{Command: os.Args[0]}
