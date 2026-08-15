@@ -2,6 +2,7 @@ package advisory
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -426,4 +427,97 @@ func containsSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- Digest flooding (#2364 digest truncation, 2026-08-15) ------------------
+//
+// A single recurring signal re-filed with cosmetic wording drift must neither
+// pass the bead dedup (numbers/punctuation variants) nor render as an unbounded
+// list that pushes the digest past GitHub's comment limit and truncates away
+// the medium/low sections.
+
+func TestNormalizedFindingKey(t *testing.T) {
+	same := [][2]string{
+		{"pr-verifier.yml failing (run #3279)", "pr-verifier.yml failing (run #3291)"},
+		{"v2 Tests: 8 consecutive failures", "v2 Tests — 12 consecutive failures"},
+		{"Coverage at 88.0%, floor is 89%", "coverage at 87.5%, floor is 89%"},
+	}
+	for _, pair := range same {
+		if normalizedFindingKey(pair[0]) != normalizedFindingKey(pair[1]) {
+			t.Errorf("expected same key for %q and %q", pair[0], pair[1])
+		}
+	}
+	distinct := [][2]string{
+		{"pr-verifier.yml failing", "pr-verifier.yml fixed"},
+		{"reusable workflow missing", "reusable workflow deleted"},
+	}
+	for _, pair := range distinct {
+		if normalizedFindingKey(pair[0]) == normalizedFindingKey(pair[1]) {
+			t.Errorf("expected different keys for %q and %q — key must not merge different words", pair[0], pair[1])
+		}
+	}
+	if normalizedFindingKey("#42 — 7%") == "" {
+		t.Error("all-symbol title must not normalize to the empty key")
+	}
+}
+
+func TestBuildDigestFromBeadsDedupesCosmeticVariants(t *testing.T) {
+	dir := t.TempDir()
+	store, err := beads.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titles := []string{
+		"pr-verifier.yml failing (run #3279)",
+		"pr-verifier.yml failing (run #3291)",
+		"pr-verifier.yml failing — run 3300",
+	}
+	for _, title := range titles {
+		if _, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, "ci-maintainer", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := BuildDigestFromBeads(map[string]*beads.Store{"ci-maintainer": store}, "busy")
+	if d.TotalCount != 1 {
+		t.Errorf("TotalCount = %d, want 1 — titles differing only in run numbers/punctuation are the same finding", d.TotalCount)
+	}
+}
+
+func TestFormatDigestMarkdownCapsPerAgentTypeGroups(t *testing.T) {
+	base := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	var findings []Finding
+	for i := 0; i < maxFindingsPerAgentType+3; i++ {
+		findings = append(findings, Finding{
+			Agent:     "ci-maintainer",
+			Severity:  "critical",
+			Type:      "ci-failure",
+			Title:     fmt.Sprintf("workflow broken variant %c", 'A'+i),
+			Timestamp: base.Add(time.Duration(i) * time.Hour),
+		})
+	}
+	// A different finding-type from the same agent must not be swallowed by the cap.
+	findings = append(findings, Finding{
+		Agent: "ci-maintainer", Severity: "critical", Type: "coverage-drop",
+		Title: "coverage gate failing", Timestamp: base,
+	})
+	d := BuildDigest(findings, "busy")
+	md := FormatDigestMarkdown(d, "", "")
+
+	if !contains(md, "…plus 3 more [ci-failure] findings from ci-maintainer") {
+		t.Errorf("missing collapse line for the capped group:\n%s", md)
+	}
+	// Newest survive, oldest collapse: H (newest) rendered, A (oldest) not.
+	if !contains(md, "workflow broken variant H") {
+		t.Error("newest finding in the capped group must render")
+	}
+	if contains(md, "workflow broken variant A") {
+		t.Error("oldest finding beyond the cap must be collapsed, not rendered")
+	}
+	if !contains(md, "coverage gate failing") {
+		t.Error("a different finding-type from the same agent must render in full")
+	}
+	// The section header keeps the TRUE count so nothing disappears silently.
+	if !contains(md, fmt.Sprintf("CRITICAL (%d)", len(findings))) {
+		t.Errorf("section header must keep the uncapped count:\n%s", md)
+	}
 }

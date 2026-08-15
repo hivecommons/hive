@@ -173,6 +173,12 @@ func isAdvisoryBeadType(t beads.BeadType) bool {
 
 const recentlyResolvedWindow = 48 * time.Hour
 
+// maxFindingsPerAgentType is the most findings one agent may render under one
+// finding-type within a single severity section of the digest; the newest are
+// kept and the rest collapse into an explicit "…plus N more" line. See the
+// comment at the cap's use in FormatDigestMarkdown.
+const maxFindingsPerAgentType = 5
+
 // BuildDigestFromBeads creates a digest by reading open advisory beads from all
 // agent bead stores. Only advisory/bug/feature beads are included — task and
 // decision beads are internal agent work items, not findings for repo owners.
@@ -211,10 +217,11 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 				}
 				continue
 			}
-			if seen[b.Title] {
+			if key := normalizedFindingKey(b.Title); seen[key] {
 				continue
+			} else {
+				seen[key] = true
 			}
-			seen[b.Title] = true
 			f := Finding{
 				Agent:     agentName,
 				Timestamp: b.CreatedAt.Time,
@@ -248,6 +255,39 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 		TotalCount:       total,
 		RecentlyResolved: resolved,
 	}
+}
+
+// normalizedFindingKey collapses a finding title to a duplicate-detection key:
+// lowercase, letters kept, every digit run folded to a single '#', all other
+// runes dropped. Agents re-file the same finding with only cosmetic drift —
+// "pr-verifier.yml failing (run #3279)" vs "pr-verifier.yml failing (run
+// #3291)", or punctuation/em-dash variants — and the exact-title dedup let
+// every variant through, so one recurring CI failure could occupy dozens of
+// digest entries (the 2026-08-15 digest carried ~40 of them and truncated away
+// its entire medium/low sections). Folding digits and punctuation catches the
+// mechanical variants; deliberately NOTHING semantic (no stemming, no token
+// similarity) so two findings that differ in words are never merged.
+func normalizedFindingKey(title string) string {
+	var b strings.Builder
+	inDigits := false
+	for _, r := range strings.ToLower(title) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			inDigits = false
+		case r >= '0' && r <= '9':
+			if !inDigits {
+				b.WriteByte('#')
+			}
+			inDigits = true
+		default:
+			inDigits = false
+		}
+	}
+	if b.Len() == 0 {
+		return title
+	}
+	return b.String()
 }
 
 func beadPriorityToSeverity(p beads.Priority) string {
@@ -515,12 +555,49 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 		if !ok {
 			continue
 		}
+		// Agent, then finding-type, then newest first: the per-(agent,type) cap
+		// below needs each group contiguous, and when a group IS capped the
+		// entries that survive should be the most recent ones.
 		sort.Slice(items, func(i, j int) bool {
-			return items[i].Agent < items[j].Agent
+			if items[i].Agent != items[j].Agent {
+				return items[i].Agent < items[j].Agent
+			}
+			if items[i].Type != items[j].Type {
+				return items[i].Type < items[j].Type
+			}
+			return items[i].Timestamp.After(items[j].Timestamp)
 		})
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))
+		// Cap what ONE agent may render under ONE finding-type in this section.
+		// A single recurring signal (a broken workflow, a flaky suite) re-filed
+		// with cosmetic wording drift can otherwise occupy dozens of entries and
+		// push the digest past GitHub's 65,536-char comment limit — at which
+		// point truncateDigest cuts from the BOTTOM and the medium/low sections
+		// vanish entirely (see the 2026-08-15 digest: 174,962 chars, ~40
+		// near-identical ci-failure entries, nothing below HIGH rendered). The
+		// summary table and section headers keep the true counts; the collapsed
+		// remainder is announced explicitly so nothing disappears silently.
+		groupShown := 0
+		groupSuppressed := 0
+		var groupAgent, groupType string
+		flushOverflow := func() {
+			if groupSuppressed > 0 {
+				b.WriteString(fmt.Sprintf("- _…plus %d more [%s] findings from %s, collapsed to keep lower-severity sections within GitHub's comment limit_\n",
+					groupSuppressed, groupType, groupAgent))
+			}
+		}
 		for _, f := range items {
+			if f.Agent != groupAgent || f.Type != groupType {
+				flushOverflow()
+				groupAgent, groupType = f.Agent, f.Type
+				groupShown, groupSuppressed = 0, 0
+			}
+			if groupShown >= maxFindingsPerAgentType {
+				groupSuppressed++
+				continue
+			}
+			groupShown++
 			var loc string
 			if f.PathStale {
 				// The file path does not exist at the analyzed commit (#3704):
@@ -538,6 +615,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 				b.WriteString(fmt.Sprintf("  > %s\n", linkifyRefs(detail, org)))
 			}
 		}
+		flushOverflow()
 		b.WriteString("\n")
 	}
 
