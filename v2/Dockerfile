@@ -215,7 +215,21 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
 
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=2.1.226
-RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
+# --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
+# build) skips claude-code's install.cjs, which is what LINKS the platform
+# native binary into the package's bin/. The binary itself ships in the
+# platform sub-package, so nothing is downloaded here — but without the link
+# every invocation dies with:
+#
+#     Error: claude native binary not installed.
+#
+# i.e. the `claude` backend is unusable in the image. Run the vendor's own
+# install step explicitly: still auditable (one named script, not "whatever any
+# dependency wants"), and it writes into the global package dir, so the fix
+# applies to every agent UID rather than one $HOME.
+RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force && \
+    node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs && \
+    claude --version
 
 # --- Layer 8: Goose CLI (official block/goose upstream) ---
 # Installs from the OFFICIAL block/goose repo, pinned to a fixed release and
