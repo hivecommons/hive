@@ -4438,12 +4438,53 @@ var expandedToolCallMarkers = []string{
 // The no-action watchdog compares the count after a kick against the count
 // recorded at kick delivery: scrollback keeps markers from work done before
 // the kick, so only an increase proves the model executed tools since.
+//
+// EXPLAIN lines are stripped first (#3887). toolSummaryRe matches ENGLISH
+// PHRASES — "read 3 files", "running 2 shell commands" — because that is how
+// the CLI renders its own collapsed tool summaries. An agent in explain mode is
+// asked to state, in plain English, what it is about to do, so it writes
+// exactly those phrases as narration:
+//
+//	EXPLAIN: reading 3 files under pkg/agent to find the kick handler.
+//
+// That counts as a tool marker, the watchdog concludes "real tool activity
+// since the kick", and the prose-only action nudge never fires — on precisely
+// the agents an operator turned explanation ON to debug, which is the worst
+// possible time to silently lose the check. Narration about a tool is not tool
+// execution, so an explanation line contributes nothing to the count.
+//
+// The whole line is dropped rather than just the prefix: a "⎿" or "⏺ Bash("
+// quoted INSIDE an explanation is the agent describing a tool call, not making
+// one.
 func countToolMarkers(pane string) int {
+	pane = stripExplainLines(pane)
 	n := len(toolSummaryRe.FindAllStringIndex(pane, -1))
 	for _, marker := range expandedToolCallMarkers {
 		n += strings.Count(pane, marker)
 	}
 	return n
+}
+
+// stripExplainLines removes the agent's explanation lines from captured pane
+// content, so pane analysis sees only what the agent actually did.
+//
+// Matching is on the TRIMMED line, mirroring the read-time filter in
+// pkg/dashboard (filterExplainLines): the CLI indents assistant output, so
+// anchoring at column 0 would miss every real line. Returns the input unchanged
+// when nothing matches, which is every pane on a hive with explain mode off.
+func stripExplainLines(pane string) string {
+	if !strings.Contains(pane, config.ExplainLinePrefix) {
+		return pane
+	}
+	lines := strings.Split(pane, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), config.ExplainLinePrefix) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // paneShowsActiveWork reports whether the CLI is mid-response: either the

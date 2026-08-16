@@ -257,3 +257,71 @@ func TestAgentEnvPairs_ExportsResolvedExplainMode(t *testing.T) {
 		})
 	}
 }
+
+// ── Explanation must not be mistaken for execution ───────────────────────────
+//
+// The prose-only watchdog (checkInferenceKickStall) disarms when
+// countToolMarkers rises after a kick. toolSummaryRe matches ENGLISH PHRASES —
+// "read 3 files", "running 2 shell commands" — because that is how the CLI
+// renders its own collapsed tool summaries. An agent in explain mode is asked
+// to state in plain English what it is about to do, so it writes those exact
+// phrases as narration.
+//
+// Left unhandled, explain mode silently disables the one check that catches a
+// model answering a kick with a plan instead of running it — on precisely the
+// agents an operator turned explanation ON to debug.
+
+func TestCountToolMarkers_ExplanationIsNotExecution(t *testing.T) {
+	// No tool ran here. Every phrase that looks like execution is narration on
+	// an EXPLAIN line, and both spellings toolSummaryRe accepts are present.
+	proseOnly := "" +
+		"EXPLAIN: I am reading 3 files under pkg/agent to find the kick handler.\n" +
+		"EXPLAIN: Then running 2 shell commands to confirm the build still passes.\n" +
+		"  EXPLAIN: indented, because the CLI indents assistant output.\n" +
+		"Here is the plan I suggest you run.\n"
+
+	if n := countToolMarkers(proseOnly); n != 0 {
+		t.Errorf("countToolMarkers = %d on a pane with NO tool execution — the prose-only "+
+			"watchdog would disarm and the action nudge would never fire (#3887)", n)
+	}
+}
+
+// A quoted tool glyph inside an explanation is the agent DESCRIBING a call, not
+// making one — which is why the whole line is dropped rather than just the
+// prefix.
+func TestCountToolMarkers_QuotedGlyphInExplanationDoesNotCount(t *testing.T) {
+	if n := countToolMarkers("EXPLAIN: next I will run ⏺ Bash( to list the dir.\n"); n != 0 {
+		t.Errorf("countToolMarkers = %d for a tool glyph quoted inside an explanation, want 0", n)
+	}
+}
+
+// The positive control, and the property that actually matters: stripping
+// explanation must not cost the watchdog a REAL marker sitting beside it.
+func TestCountToolMarkers_RealToolsStillCountAlongsideExplanation(t *testing.T) {
+	mixed := "" +
+		"EXPLAIN: reading the manager to find where kicks are delivered.\n" +
+		"⏺ Read(v2/pkg/agent/manager.go)\n" +
+		"  ⎿  read 1 file\n" +
+		"EXPLAIN: now running the tests to see the failure.\n" +
+		"⏺ Bash(go test ./pkg/agent/)\n"
+
+	got := countToolMarkers(mixed)
+	// ⏺ Read( + ⎿ + ⏺ Bash( — the "read 1 file" summary rides on the ⎿ line and
+	// is counted by toolSummaryRe as well, which is existing behaviour.
+	if got < 3 {
+		t.Errorf("countToolMarkers = %d with real tool calls present, want >= 3 — "+
+			"stripping explanation must not swallow genuine markers", got)
+	}
+}
+
+// Explain mode off must leave pane analysis byte-identical to before the
+// feature existed: the fast path returns the input untouched.
+func TestStripExplainLines_NoExplanationIsUnchanged(t *testing.T) {
+	pane := "⏺ Bash(ls)\n  ⎿  ran 1 shell command\nnormal output\n"
+	if got := stripExplainLines(pane); got != pane {
+		t.Errorf("a pane with no explanation was modified:\n got %q\nwant %q", got, pane)
+	}
+	if strings.Contains(pane, config.ExplainLinePrefix) {
+		t.Fatal("fixture accidentally contains the explain prefix — test is not proving the fast path")
+	}
+}
