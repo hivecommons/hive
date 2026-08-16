@@ -63,6 +63,17 @@ jobs:
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
 
+      # #3865: watchtower bind-mounted /var/run/docker.sock — the full daemon
+      # API, including /exec, which reads the GitHub App private key out of the
+      # hive container with no escalation at all. The socket now sits behind a
+      # deny-by-default docker-socket-proxy on an internal-only network. Every
+      # property of that containment is one plausible edit from reverting (a
+      # bind mount added "to debug", a published 2375, EXEC=1 to unblock some
+      # other tool, the proxy attached to the network the hive runs on) and none
+      # of those break anything at runtime — so they need a gate, not a review.
+      - name: Docker-socket containment guard (#3865)
+        run: bash deploy/test_watchtower_socket_contract.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
