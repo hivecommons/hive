@@ -20,28 +20,36 @@ import (
 )
 
 type Dependencies struct {
-	Config            *config.Config
-	AgentMgr          *agent.Manager
-	Governor          *governor.Governor
-	GHClient          *ghpkg.Client
-	GHAppAuth         *ghpkg.AppAuth
-	Tokens            *tokens.Collector
-	Knowledge         *knowledge.KnowledgeAPI
-	Inception         *knowledge.InceptionEngine
-	Nous              *NousState
-	Scheduler         *scheduler.Scheduler
-	MetricsCollector  *MetricsCollector
-	BeadSynthesizer   *knowledge.BeadSynthesizer
-	BeadStores        map[string]*beads.Store
-	Logger            *slog.Logger
-	Ctx               context.Context
-	RefreshFunc       func()
-	PersistFunc       func()
-	SkipReloadFunc    func()
-	ReInitFunc        func()
-	EnumerateFunc     func()
-	AdvisoryResetFunc func(newPrimaryRepo string)
-	ReinitGitHubFunc  func(appID, installationID int64, keyFile string) error
+	Config           *config.Config
+	AgentMgr         *agent.Manager
+	Governor         *governor.Governor
+	GHClient         *ghpkg.Client
+	GHAppAuth        *ghpkg.AppAuth
+	Tokens           *tokens.Collector
+	Knowledge        *knowledge.KnowledgeAPI
+	Inception        *knowledge.InceptionEngine
+	Nous             *NousState
+	Scheduler        *scheduler.Scheduler
+	MetricsCollector *MetricsCollector
+	BeadSynthesizer  *knowledge.BeadSynthesizer
+	BeadStores       map[string]*beads.Store
+	// BeadStoreLoadFailures counts configured bead stores that failed to open at
+	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
+	// admission gate (contribute_admission_deps.go) needs this because it cannot
+	// otherwise tell a hive with three stores from a hive with four where one
+	// would not load: the map looks identical, so a dependent whose blocking bead
+	// lived in the dropped store reads as "declared nothing" and is admitted.
+	// Only the producer knows a store is missing, so only the producer can say so.
+	BeadStoreLoadFailures int
+	Logger                *slog.Logger
+	Ctx                   context.Context
+	RefreshFunc           func()
+	PersistFunc           func()
+	SkipReloadFunc        func()
+	ReInitFunc            func()
+	EnumerateFunc         func()
+	AdvisoryResetFunc     func(newPrimaryRepo string)
+	ReinitGitHubFunc      func(appID, installationID int64, keyFile string) error
 	// ResolveAppKeyFileFunc resolves which App private key the process would
 	// actually sign with, given the configured key_file and app_id — the SAME
 	// resolution the boot and heartbeat-apply paths use (config value, then

@@ -1,6 +1,8 @@
 package beads
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -111,7 +113,16 @@ type Store struct {
 	dir    string
 	hiveID string
 	beads  map[string]*Bead
-	mu     sync.RWMutex
+	// retired holds the IDs of beads that were removed from the live map after
+	// reaching a TERMINAL state — archived by lifecycle culling, or evicted by
+	// evictOldClosed once the store passes maxBeadCount. Both removal paths only
+	// ever remove closed/done beads, so membership here means "this bead existed
+	// and was satisfied", which is materially different from an ID that was never
+	// seen. Dependency resolution needs that distinction: without it a satisfied
+	// dependency that later gets culled resolves nowhere and permanently withholds
+	// its dependent (kubestellar/hive#3845 review).
+	retired map[string]bool
+	mu      sync.RWMutex
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -136,8 +147,9 @@ func NewStore(dir string) (*Store, error) {
 	_ = os.Chmod(dir, 0o770|os.ModeSetgid)
 
 	s := &Store{
-		dir:   dir,
-		beads: make(map[string]*Bead),
+		dir:     dir,
+		beads:   make(map[string]*Bead),
+		retired: make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -210,8 +222,55 @@ func (s *Store) evictOldClosed() {
 		if len(s.beads) <= maxBeadCount {
 			break
 		}
+		// Record the eviction the same way Archive does before dropping it.
+		// Eviction only ever takes CLOSED/DONE beads, so losing the ID silently
+		// would turn a satisfied dependency into an unresolvable one and
+		// permanently withhold whatever depended on it.
+		//
+		// If the archive cannot be written, KEEP the bead. Evicting anyway would
+		// retire it in memory only, and the next restart would forget — the same
+		// silent withholding, just deferred. Eviction is an opportunistic memory
+		// bound, so skipping one bead until the next Create is the cheap side of
+		// this trade.
+		if !s.appendArchiveEntry(s.beads[id]) {
+			continue
+		}
 		delete(s.beads, id)
+		s.retired[id] = true
 	}
+}
+
+// appendArchiveEntry writes one compact archive record, reporting whether the
+// record actually reached disk. Callers use that to decide whether removing the
+// bead is safe: an in-memory-only retirement is forgotten on restart.
+func (s *Store) appendArchiveEntry(b *Bead) bool {
+	if b == nil {
+		return false
+	}
+	entry := ArchivedBead{
+		ID:          b.ID,
+		Title:       b.Title,
+		Type:        b.Type,
+		Priority:    b.Priority,
+		ExternalRef: b.ExternalRef,
+		ArchivedAt:  time.Now().UTC(),
+	}
+	if b.ClosedAt != nil {
+		entry.ClosedAt = b.ClosedAt.Time
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return false
+	}
+	f, err := os.OpenFile(filepath.Join(s.dir, archiveFileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return false
+	}
+	return true
 }
 
 func (s *Store) Update(id string, fn func(b *Bead)) error {
@@ -482,6 +541,17 @@ func (s *Store) Reload() error {
 }
 
 func (s *Store) load() error {
+	// Retirement is reconstructed FIRST, and unconditionally. archive.jsonl is
+	// an independent append-only log, so a directory can hold a complete archive
+	// with no beads.json at all — a store whose beads were every one of them
+	// culled, a restore that kept only the log, external tooling rewriting the
+	// live file. Loading it after the missing-file return meant exactly those
+	// stores came back with an EMPTY retired set, so every archived dependency
+	// read as "never resolved" rather than "satisfied then culled" — silently
+	// withholding the dependents forever, which is the failure retirement exists
+	// to prevent.
+	s.loadRetired()
+
 	path := filepath.Join(s.dir, beadsFileName)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -500,6 +570,60 @@ func (s *Store) load() error {
 		s.beads[b.ID] = b
 	}
 	return nil
+}
+
+// loadRetired repopulates the retired set from archive.jsonl so a restart does
+// not forget that a culled dependency was satisfied. Best-effort: a missing or
+// partly-corrupt archive degrades to "fewer known-retired IDs", which is the
+// same conservative state as before this existed.
+func (s *Store) loadRetired() {
+	f, err := os.Open(filepath.Join(s.dir, archiveFileName))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	// bufio.Reader, not Scanner: a Scanner stops PERMANENTLY on ErrTooLong, so a
+	// single oversized entry would discard every retirement recorded after it
+	// rather than just that one. Bead titles are unbounded and agent-influenced,
+	// so that line is reachable. ReadString has no length cap; an over-long line
+	// simply fails to parse as JSON and is skipped like any other bad line.
+	r := bufio.NewReader(f)
+	for {
+		raw, err := r.ReadString('\n')
+		if line := bytes.TrimSpace([]byte(raw)); len(line) > 0 {
+			var entry ArchivedBead
+			if jsonErr := json.Unmarshal(line, &entry); jsonErr == nil && entry.ID != "" {
+				s.retired[entry.ID] = true
+			}
+		}
+		if err != nil {
+			return // io.EOF or a read failure: take what we parsed
+		}
+	}
+}
+
+// IsRetired reports whether the given bead ID was removed from the live map
+// after reaching a terminal state. Callers use it to tell a satisfied-then-culled
+// dependency from a reference that never resolved.
+func (s *Store) IsRetired(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.retired[id]
+}
+
+// RetiredIDs returns a detached copy of the retired set — the whole-set view, for
+// inspection and assertions. The dependency gate does NOT use it: it resolves one
+// ID at a time via IsRetired, because the retired set is rebuilt from the entire
+// archive history and only grows, so copying it per selection would be an
+// unbounded cost to answer a question only a dangling edge ever asks.
+func (s *Store) RetiredIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.retired))
+	for id := range s.retired {
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Store) persist(_ *Bead) error {
@@ -614,6 +738,14 @@ func (s *Store) Archive(id string) error {
 	}
 
 	delete(s.beads, id)
+	// Retire ONLY a bead that actually reached a terminal state. The retired set
+	// means "this existed and was satisfied", and a consumer treats membership as
+	// a satisfied dependency — so retiring an archived-but-open bead would assert
+	// completion that never happened. Archiving an open bead is still allowed
+	// (the audit line is written either way); it just does not claim satisfaction.
+	if b.Status == StatusClosed || b.Status == StatusDone {
+		s.retired[id] = true
+	}
 	return s.persist(nil)
 }
 

@@ -1,6 +1,12 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -285,36 +291,62 @@ func TestDependencyAdmission_CrossStoreDependencyResolves(t *testing.T) {
 	assertAssigns(t, hub, 601)
 }
 
-// TestDependencyAdmission_PartialLedgerWithholdsRatherThanAssumes covers the
-// observer-unavailable row. With one configured store unreadable, a candidate
-// whose record was NOT found might have that record in the store we could not
-// read — so the miss is degraded, not admitted. No false satisfaction.
+// TestDependencyAdmission_PartialLedgerStillGatesWhatItCanSee covers the
+// truncated-ledger row. A store that fails to open is dropped from BeadStores
+// entirely (every failure path in cmd/hive/main.go logs and continues), so the
+// hub is told about it out of band via Dependencies.BeadStoreLoadFailures.
 //
-// Critically the degradation is per candidate: it does not claim convergence,
-// and it does not touch work whose record WAS found and resolved.
-func TestDependencyAdmission_PartialLedgerWithholdsRatherThanAssumes(t *testing.T) {
+// The policy is deliberately NOT "withhold every miss". On a real hive most
+// actionable issues have no bead, so withholding misses would turn one
+// unreadable beads.json into a fleet-wide stall — an empty queue and endless
+// no_matching_work, presenting as a hub bug. A partial view instead gates what
+// it CAN see and admits what it cannot, and says so in the log.
+func TestDependencyAdmission_PartialLedgerStillGatesWhatItCanSee(t *testing.T) {
 	store := depTestStore(t)
 	blockerID := seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
-	if err := store.Close(blockerID); err != nil {
-		t.Fatalf("closing blocker: %v", err)
+
+	hub, s := depTestHub(t, map[string]*beads.Store{"readable": store})
+	// One configured store failed to open: the ledger view is incomplete.
+	s.deps.BeadStoreLoadFailures = 1
+
+	if idx := hub.buildBeadDependencyIndex(); !idx.partial {
+		t.Fatal("a reported store-load failure must mark the snapshot partial")
 	}
 
-	// "readable" holds the dependent's record; "broken" is a store that failed
-	// to initialise, leaving the ledger view incomplete.
-	hub, _ := depTestHub(t, map[string]*beads.Store{"readable": store, "broken": nil})
-
-	// #601 has a record and its dependency is satisfied → still offerable.
-	// #700 has no record, and the miss is no longer trustworthy → withheld.
-	assertQueue(t, hub, 601)
-	assertAssigns(t, hub, 601)
+	// #601 HAS a record with an open dependency → still withheld. Reduced
+	// coverage must not weaken the gate where the evidence is present.
+	// #700 has no record → admitted, exactly as on a healthy ledger.
+	assertQueue(t, hub, 700)
+	assertAssigns(t, hub, 700)
 
 	decision := hub.evaluateContributorNeutralAdmission(hub.newAdmissionSweep(),
 		contributorAdmissionCandidate{repoFull: "projectbluefin/dakota", repoName: "dakota", number: 700})
-	if decision.admitted {
-		t.Fatal("an unresolvable miss on a partial ledger must not be admitted")
+	if !decision.admitted {
+		t.Fatalf("a miss on a partial ledger must stay admitted, got reason %q",
+			decision.convergence.Reason)
 	}
-	if decision.convergence.Reason != beadLedgerPartialReason {
-		t.Fatalf("reason = %q, want %q", decision.convergence.Reason, beadLedgerPartialReason)
+
+	// Once the blocker closes, the gated candidate comes back on the next sweep
+	// — a partial ledger changes coverage, not level-triggering.
+	if err := store.Close(blockerID); err != nil {
+		t.Fatalf("closing blocker: %v", err)
+	}
+	assertQueue(t, hub, 601, 700)
+}
+
+// A nil entry in BeadStores cannot occur in production — main.go never inserts
+// one — but the index must still not treat it as a readable store if some
+// future caller builds the map differently.
+func TestDependencyAdmission_NilStoreEntryIsNotCountedAsRead(t *testing.T) {
+	store := depTestStore(t)
+	hub, _ := depTestHub(t, map[string]*beads.Store{"readable": store, "broken": nil})
+
+	idx := hub.buildBeadDependencyIndex()
+	if idx.stores != 1 {
+		t.Fatalf("stores read = %d, want 1 (the nil entry is not a store)", idx.stores)
+	}
+	if !idx.partial {
+		t.Fatal("a nil store entry must still mark the snapshot partial")
 	}
 }
 
@@ -541,5 +573,294 @@ func TestBeadDependencyIndex_IsRaceFreeAgainstConcurrentWriters(t *testing.T) {
 	}
 	if _, ok := sweep.deps.byID[blockerID]; !ok {
 		t.Fatalf("blocker %s missing from the index after concurrent mutation", blockerID)
+	}
+}
+
+// TestDependencyAdmission_CulledSatisfiedDependencyStaysSatisfied covers the
+// review's highest finding: closed beads are DELETED from the live ledger by two
+// live mechanisms — knowledge lifecycle culling via Store.Archive, and
+// Store.evictOldClosed past maxBeadCount — and both only ever take terminal
+// beads. Resolving a culled edge to Unknown therefore punished exactly the
+// dependencies that had been satisfied, withholding their dependents forever
+// with no log and no Held badge.
+func TestDependencyAdmission_CulledSatisfiedDependencyStaysSatisfied(t *testing.T) {
+	store := depTestStore(t)
+	blockerID := seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
+	if err := store.Close(blockerID); err != nil {
+		t.Fatalf("closing blocker: %v", err)
+	}
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"scanner": store})
+	assertQueue(t, hub, 601, 700) // satisfied → offerable
+
+	// Lifecycle culling removes the closed blocker from the live ledger.
+	if err := store.Archive(blockerID); err != nil {
+		t.Fatalf("archiving blocker: %v", err)
+	}
+	if !store.IsRetired(blockerID) {
+		t.Fatal("an archived bead must be recorded as retired")
+	}
+
+	assertQueue(t, hub, 601, 700)
+	assertAssigns(t, hub, 601)
+
+	decision := hub.evaluateContributorNeutralAdmission(hub.newAdmissionSweep(),
+		contributorAdmissionCandidate{repoFull: "projectbluefin/dakota", repoName: "dakota", number: 601})
+	if !decision.admitted {
+		t.Fatalf("a culled SATISFIED dependency must not withhold its dependent, got reason %q",
+			decision.convergence.Reason)
+	}
+}
+
+// A dependency ID that resolves nowhere and was never retired is still Unknown.
+// The retirement carve-out must not become a general "unresolvable is fine" rule
+// — a dangling reference is a record we cannot read, not a satisfied edge.
+func TestDependencyAdmission_DanglingDependencyIsStillUnknown(t *testing.T) {
+	store := depTestStore(t)
+	dependent, err := store.Create("dependent work", beads.TypeTask, beads.PriorityMedium, "scanner",
+		"gh-projectbluefin/dakota#601")
+	if err != nil {
+		t.Fatalf("creating dependent bead: %v", err)
+	}
+	if err := store.Update(dependent.ID, func(b *beads.Bead) {
+		b.DependsOn = append(b.DependsOn, "bd-never-existed")
+	}); err != nil {
+		t.Fatalf("adding dangling dependency: %v", err)
+	}
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"scanner": store})
+	decision := hub.evaluateContributorNeutralAdmission(hub.newAdmissionSweep(),
+		contributorAdmissionCandidate{repoFull: "projectbluefin/dakota", repoName: "dakota", number: 601})
+	if decision.admitted {
+		t.Fatal("an unresolvable, never-retired dependency must not be admitted")
+	}
+}
+
+// TestDependencyAdmission_PRRefBeadDoesNotClaimIssueIdentity covers the review's
+// identity-collision finding. pkg/retro mints advisory beads with
+// ExternalRef = "owner/repo#<PR number>" into a store this index reads. Indexing
+// any bare "x#n" ref as an issue identity let PR #601 and issue #601 share a key
+// — and because byRef is first-wins, a retro advisory could shadow the real epic
+// and silently bypass the dependencies that epic declared.
+func TestDependencyAdmission_PRRefBeadDoesNotClaimIssueIdentity(t *testing.T) {
+	store := depTestStore(t)
+	// A retro-shaped bead: no "gh-" prefix, numbered like the issue.
+	if _, err := store.Create("advisory for PR 601", beads.TypeTask, beads.PriorityMedium, "retro",
+		"projectbluefin/dakota#601"); err != nil {
+		t.Fatalf("creating retro-shaped bead: %v", err)
+	}
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"retro": store})
+	idx := hub.buildBeadDependencyIndex()
+	if _, claimed := idx.byRef["projectbluefin/dakota#601"]; claimed {
+		t.Fatal("a PR-numbered external ref claimed the same-numbered ISSUE's identity")
+	}
+
+	// And the live issue is unaffected: no record, so it is admitted as before.
+	assertQueue(t, hub, 601, 700)
+}
+
+// TestBeadDependencyIndex_IndexesOnlyWhatTheGateCanAsk pins the SHAPE of the
+// snapshot the assignment path pays for on every sweep (#3845 review, perf). The
+// gate asks the ledger exactly two questions, so the index carries exactly two
+// answers:
+//
+//   - a RECORD, only for beads that answer to a candidate identity key — the
+//     only beads byRef can ever hand back;
+//   - a SATISFACTION BOOL for every bead in every store, because ANY bead may be
+//     the target of a dependency edge, including one that no candidate maps to.
+//
+// A bead with no identity key must therefore be absent from byRef and present in
+// byID. If that inverts, the sweep has either gone back to copying the whole
+// ledger per selection or lost its ability to resolve an edge.
+func TestBeadDependencyIndex_IndexesOnlyWhatTheGateCanAsk(t *testing.T) {
+	store := depTestStore(t)
+	plain, err := store.Create("no issue identity", beads.TypeTask, beads.PriorityMedium, "scanner", "")
+	if err != nil {
+		t.Fatalf("creating unkeyed bead: %v", err)
+	}
+	keyed, err := store.Create("issue work", beads.TypeTask, beads.PriorityMedium, "scanner",
+		"gh-projectbluefin/dakota#601")
+	if err != nil {
+		t.Fatalf("creating issue-keyed bead: %v", err)
+	}
+	if err := store.Close(plain.ID); err != nil {
+		t.Fatalf("closing unkeyed bead: %v", err)
+	}
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"scanner": store})
+	idx := hub.buildBeadDependencyIndex()
+
+	if _, ok := idx.byRef["projectbluefin/dakota#601"]; !ok {
+		t.Fatal("an issue-keyed bead must be reachable by candidate identity")
+	}
+	if len(idx.byRef) != 1 {
+		t.Fatalf("byRef holds %d records, want 1: only identity-keyed beads get one", len(idx.byRef))
+	}
+
+	satisfied, ok := idx.byID[plain.ID]
+	if !ok {
+		t.Fatal("a bead with no identity key must still be resolvable as a dependency target")
+	}
+	if !satisfied {
+		t.Fatal("a closed dependency target must read as satisfied")
+	}
+	if satisfied, ok := idx.byID[keyed.ID]; !ok || satisfied {
+		t.Fatalf("byID[keyed] = (%v, %v), want (false, true): an open bead is not satisfied",
+			satisfied, ok)
+	}
+}
+
+// TestDependencyAdmission_CulledDependencyResolvesAcrossStores holds the
+// retirement carve-out to the cross-store case. Retirement is now asked of each
+// store ON DEMAND (Store.IsRetired) for the few edges that resolve nowhere,
+// rather than every store's retired set being folded into the snapshot up front
+// — so the fan-out over stores has to be real, or a dependency culled in the
+// ARCHITECT's store would read as unresolvable to a dependent in the SCANNER's
+// and withhold it forever.
+func TestDependencyAdmission_CulledDependencyResolvesAcrossStores(t *testing.T) {
+	architect := depTestStore(t)
+	scanner := depTestStore(t)
+
+	blocker, err := architect.Create("blocking work", beads.TypeTask, beads.PriorityMedium, "architect", "")
+	if err != nil {
+		t.Fatalf("creating blocker bead: %v", err)
+	}
+	dependent, err := scanner.Create("dependent work", beads.TypeTask, beads.PriorityMedium, "scanner",
+		"gh-projectbluefin/dakota#601")
+	if err != nil {
+		t.Fatalf("creating dependent bead: %v", err)
+	}
+	if err := scanner.AddDependency(dependent.ID, blocker.ID); err != nil {
+		t.Fatalf("adding cross-store dependency: %v", err)
+	}
+
+	// Satisfied, then culled out of the live ledger by lifecycle archiving.
+	if err := architect.Close(blocker.ID); err != nil {
+		t.Fatalf("closing cross-store blocker: %v", err)
+	}
+	if err := architect.Archive(blocker.ID); err != nil {
+		t.Fatalf("archiving cross-store blocker: %v", err)
+	}
+	if _, err := architect.Get(blocker.ID); err == nil {
+		t.Fatal("an archived bead must be gone from the live ledger")
+	}
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"architect": architect, "scanner": scanner})
+	assertQueue(t, hub, 601, 700)
+	assertAssigns(t, hub, 601)
+}
+
+// TestDependencyAdmission_ObservedGenerationIsTheRecordsUpdateTime pins the
+// reported generation across the change that stopped formatting one RFC3339Nano
+// timestamp per bead in the ledger and renders it only when a candidate actually
+// resolves to a record. Same value, paid for once per lookup instead of once per
+// bead.
+func TestDependencyAdmission_ObservedGenerationIsTheRecordsUpdateTime(t *testing.T) {
+	store := depTestStore(t)
+	seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
+	dependent := store.FindByExternalRef("gh-projectbluefin/dakota#601")
+	if dependent == nil {
+		t.Fatal("seeded dependent bead not found by ref")
+	}
+	want := dependent.UpdatedAt.UTC().Format(time.RFC3339Nano)
+
+	hub, _ := depTestHub(t, map[string]*beads.Store{"scanner": store})
+	obs := hub.observeCandidateDependencies(hub.newAdmissionSweep(),
+		contributorAdmissionCandidate{repoFull: "projectbluefin/dakota", repoName: "dakota", number: 601})
+	if !obs.Found {
+		t.Fatal("the seeded record must be observed as found")
+	}
+	if obs.Generation != want {
+		t.Fatalf("observed generation = %q, want the record's UpdatedAt %q", obs.Generation, want)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, obs.Generation); err != nil {
+		t.Fatalf("generation %q is not RFC3339Nano: %v", obs.Generation, err)
+	}
+}
+
+// ── Sweep cost (#3845 review, perf) ───────────────────────────────────────────
+
+// benchBeadStore writes a store of `count` beads straight to beads.json and
+// opens it, because Store.Create re-persists the whole file per bead and would
+// make seeding a realistic ledger quadratic. Every tenth bead is issue-keyed
+// (the shape byRef indexes) and depends on its neighbour, so the benchmark
+// exercises identity keys and dependency-edge resolution, not just iteration.
+func benchBeadStore(b *testing.B, count, firstIssue int) *beads.Store {
+	b.Helper()
+	dir := b.TempDir()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	all := make([]map[string]any, 0, count)
+	for i := 0; i < count; i++ {
+		bead := map[string]any{
+			"id":         fmt.Sprintf("bd-%d-%d", firstIssue, i),
+			"title":      "bench bead",
+			"type":       "task",
+			"status":     "closed",
+			"priority":   2,
+			"actor":      "bench",
+			"created_at": now,
+			"updated_at": now,
+		}
+		if i%10 == 0 {
+			bead["external_ref"] = fmt.Sprintf("gh-projectbluefin/dakota#%d", firstIssue+i)
+			bead["depends_on"] = []string{fmt.Sprintf("bd-%d-%d", firstIssue, i+1)}
+		}
+		all = append(all, bead)
+	}
+	data, err := json.Marshal(all)
+	if err != nil {
+		b.Fatalf("marshaling bench beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beads.json"), data, 0o600); err != nil {
+		b.Fatalf("writing bench beads: %v", err)
+	}
+	store, err := beads.NewStore(dir)
+	if err != nil {
+		b.Fatalf("opening bench bead store: %v", err)
+	}
+	return store
+}
+
+// BenchmarkAdmissionSweep costs ONE ReadyQueue/selectTask pass at the scale the
+// review costed it: several agent stores near the 5000-bead cap, ~150 live
+// candidates, and most of those candidates carrying no ledger record at all.
+//
+//	go test ./pkg/dashboard/ -run '^$' -bench AdmissionSweep -benchmem
+//
+// It exists to keep the sweep from silently going back to materializing a full
+// record for every bead in every store on every selection.
+func BenchmarkAdmissionSweep(b *testing.B) {
+	const (
+		storeCount    = 8
+		beadsPerStore = 5000
+		candidates    = 150
+	)
+	stores := map[string]*beads.Store{}
+	for s := 0; s < storeCount; s++ {
+		// Store 0's issue keys overlap the candidate range (so ~15 candidates
+		// resolve to a record and walk their dependency edges); the rest are
+		// ledger bulk that no candidate ever asks about.
+		firstIssue := 1
+		if s > 0 {
+			firstIssue = 100000 * s
+		}
+		stores[fmt.Sprintf("agent-%02d", s)] = benchBeadStore(b, beadsPerStore, firstIssue)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	srv := NewServer(0, logger)
+	srv.deps = &Dependencies{BeadStores: stores}
+	hub := NewContributeWSHub(logger, srv)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sweep := hub.newAdmissionSweep()
+		for n := 1; n <= candidates; n++ {
+			hub.evaluateContributorNeutralAdmission(sweep, contributorAdmissionCandidate{
+				repoFull: "projectbluefin/dakota", repoName: "dakota", number: n,
+			})
+		}
 	}
 }

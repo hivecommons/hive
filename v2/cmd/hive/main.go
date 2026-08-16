@@ -1730,10 +1730,16 @@ func main() {
 	}
 
 	beadStores = make(map[string]*beads.Store)
+	// Count stores that fail to open. They are dropped from beadStores entirely,
+	// which makes an incomplete ledger indistinguishable from a smaller one — and
+	// the dependency admission gate must not read a lookup miss in a truncated
+	// ledger as "this candidate declared no dependencies".
+	beadStoreLoadFailures := 0
 	for name, agentCfg := range cfg.EnabledAgents() {
 		store, err := beads.NewStore(agentCfg.BeadsDir)
 		if err != nil {
 			logger.Warn("failed to init beads store", "agent", name, "error", err)
+			beadStoreLoadFailures++
 			continue
 		}
 		store.SetHiveID(cfg.HiveID)
@@ -1763,6 +1769,7 @@ func main() {
 			store, err := beads.NewStore(agentBeadsDir)
 			if err != nil {
 				logger.Warn("failed to load orphan beads store", "agent", name, "error", err)
+				beadStoreLoadFailures++
 				continue
 			}
 			store.SetHiveID(cfg.HiveID)
@@ -1776,6 +1783,7 @@ func main() {
 			retroStore, err := beads.NewStore(filepath.Join(beadsRootDir, retro.Actor))
 			if err != nil {
 				logger.Warn("failed to init retro beads store", "error", err)
+				beadStoreLoadFailures++
 			} else {
 				retroStore.SetHiveID(cfg.HiveID)
 				beadStores[retro.Actor] = retroStore
@@ -2191,22 +2199,23 @@ func main() {
 	}
 
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
-		Config:           cfg,
-		AgentMgr:         agentMgr,
-		Governor:         gov,
-		GHClient:         ghClient,
-		GHAppAuth:        appAuth,
-		Tokens:           tokenCollector,
-		Knowledge:        knowledgeAPI,
-		Inception:        inceptionEngine,
-		Nous:             nousState,
-		Scheduler:        sched,
-		MetricsCollector: metricsCollector,
-		BeadSynthesizer:  beadSynth,
-		BeadStores:       beadStores,
-		Logger:           logger,
-		Ctx:              ctx,
-		RefreshFunc:      refreshDashboard,
+		Config:                cfg,
+		AgentMgr:              agentMgr,
+		Governor:              gov,
+		GHClient:              ghClient,
+		GHAppAuth:             appAuth,
+		Tokens:                tokenCollector,
+		Knowledge:             knowledgeAPI,
+		Inception:             inceptionEngine,
+		Nous:                  nousState,
+		Scheduler:             sched,
+		MetricsCollector:      metricsCollector,
+		BeadSynthesizer:       beadSynth,
+		BeadStores:            beadStores,
+		BeadStoreLoadFailures: beadStoreLoadFailures,
+		Logger:                logger,
+		Ctx:                   ctx,
+		RefreshFunc:           refreshDashboard,
 		// #3768: give the contribute queue read access to the duplicate-PR
 		// claim ledger, so an issue any open PR (hive-authored or a human
 		// contributor's) already claims to fix is never offered to another
