@@ -303,6 +303,51 @@ func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 // started at all: an ACMM L4/L5 hive (l4.md/l5.md both forbid the App
 // merging its own PRs) must not self-merge, matching console's L6 hive which
 // is unaffected and keeps self-merging as before.
+// refreshRateLimitCache re-reads GitHub's real rate limits and writes them back
+// into the go-github client's cache.
+//
+// WHY THIS IS NEEDED. go-github refuses requests PRE-EMPTIVELY: once it has seen
+// Remaining==0 it returns a synthetic 403 ("not making remote request") for
+// every call until the cached Reset time passes, without contacting GitHub.
+// That cache lives on the Client and is only updated by responses the Client
+// itself receives.
+//
+// Hive's App client is created ONCE (NewClientFromApp) while appTransport
+// injects a freshly minted INSTALLATION TOKEN per request, and installation
+// tokens rotate roughly hourly. A new token gets a new allowance — but the
+// Client's cache still says Remaining==0 with the old token's reset, so
+// go-github keeps refusing requests the new token could happily serve.
+//
+// Observed live: the dashboard reported core remaining=6613 of 6900 while every
+// sweep tick failed with "API rate limit of 6900 still exceeded", and the fleet
+// consumed ZERO requests over six minutes — not rate-limited, just refusing.
+// Merges stalled for the remainder of the window each time.
+//
+// GET /rate_limit does not count against any limit, and RateLimitService.Get
+// writes the result back into the client's cache, so this is a cheap, exact
+// correction rather than a guess.
+func (c *Client) refreshRateLimitCache(ctx context.Context) {
+	if c == nil || c.client == nil {
+		return
+	}
+	if _, _, err := c.client.RateLimit.Get(ctx); err != nil {
+		c.warn("could not refresh rate-limit cache", "error", err)
+		return
+	}
+	c.info("refreshed rate-limit cache after a pre-emptive rate-limit refusal")
+}
+
+// isRateLimited reports whether err is a primary/secondary rate-limit error,
+// including go-github's pre-emptive synthetic one.
+func isRateLimited(err error) bool {
+	var rl *gh.RateLimitError
+	if errors.As(err, &rl) {
+		return true
+	}
+	var ab *gh.AbuseRateLimitError
+	return errors.As(err, &ab)
+}
+
 func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges int, acmmAllowed bool, acmmLevel *int) {
 	if c == nil {
 		return
@@ -326,6 +371,14 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			case <-t.C:
 				if _, err := c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges}); err != nil {
 					c.warn("self-authored automerge sweep failed", "error", err)
+					// A rate-limit refusal may be go-github's cached verdict
+					// from a token that has since rotated. Re-read the real
+					// limits (free, and it updates that cache) so the next tick
+					// is decided on current truth instead of repeating a stale
+					// refusal for the rest of the window.
+					if isRateLimited(err) {
+						c.refreshRateLimitCache(ctx)
+					}
 				}
 			}
 		}
