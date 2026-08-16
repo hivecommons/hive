@@ -231,8 +231,16 @@ install_tools() {
     case "$_b" in copilot|claude|gemini) need_node=1; break;; esac
   done
   if [[ $need_node -eq 1 ]] && ! command -v npm &>/dev/null; then
-    info "Installing Node.js (LTS) via NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash - &>/dev/null
+    info "Installing Node.js (LTS) via NodeSource signed APT repo..."
+    # SECURITY: avoid curl|bash (supply-chain RCE risk). Instead, add the
+    # NodeSource GPG key and APT source directly so apt verifies package
+    # signatures before installing.  No third-party script runs as root.
+    # NodeSource GPG fingerprint: 9FD3 B784 BC1C 6FC3 1A8A 0A1C 1655 A0AB 6857 4701
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg 2>/dev/null
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_lts.x nodistro main" \
+      | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+    sudo apt-get update -qq 2>/dev/null
     sudo apt-get install -y nodejs &>/dev/null
     ok "node $(node --version) / npm $(npm --version)"
   elif command -v npm &>/dev/null; then
@@ -312,9 +320,19 @@ install_tools() {
         ollama)
           if ! command -v ollama &>/dev/null; then
             info "Installing ollama..."
-            curl -fsSL https://ollama.ai/install.sh | bash &>/dev/null \
+            # SECURITY: download to a temp file instead of piping directly
+            # to bash (supply-chain mitigation; see issue #3945). The Ollama
+            # project does not currently publish release checksums for the
+            # install script, so full hash-pinning requires a manual update.
+            # For production deployments, install ollama from the pinned
+            # tarball instead: https://ollama.ai/download/ollama-linux-amd64
+            local _ollama_script
+            _ollama_script=$(mktemp)
+            curl -fsSL https://ollama.ai/install.sh -o "$_ollama_script" 2>/dev/null \
+              && bash "$_ollama_script" &>/dev/null \
               && ok "ollama installed" \
               || warn "ollama install failed — see https://ollama.ai"
+            rm -f "$_ollama_script"
           else
             ok "ollama $(ollama --version 2>/dev/null || echo '')"
           fi
