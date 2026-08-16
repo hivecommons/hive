@@ -50,3 +50,4 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0012: Skill registry and BYO-agent contract](0012-skill-registry.md)
 - [ADR-0013: CEL triggers over normalized forge events](0013-cel-triggers.md)
 - [ADR-0014: Hub/spoke fleet over heartbeat callbacks](0014-hub-spoke.md)
+- [ADR-0015: Scope `style-src` as two directives and accept inline style attributes](0015-csp-style-src-scope.md)
