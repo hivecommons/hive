@@ -39,7 +39,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 
 | Script | Stage | Purpose |
 |---|---|---|
-| `gh-app-token.sh` | Credentials | Generates and caches a GitHub App installation token; `--export` prints shell exports for callers. |
+| `gh-app-token.sh` | Credentials | Generates and caches (0600, hub-only) a GitHub App installation token; `--export` prints shell exports for callers; `--scoped <tier> [repos]` prints a JSON tier-scoped token for a contributor agent and never touches the shared cache. |
 | `git-credential-hive.sh` | Credentials | Git credential helper that serves cached GitHub App tokens and honors the host requested by Git. |
 | `gh-wrapper.sh` | Enforcement | `gh` wrapper that injects App tokens and enforces global/per-agent restriction rules from `/etc/hive/restrictions/<agent-id>.json`. |
 | `hive-open-pr.sh` | Enforcement | Agent-side wrapper for PR creation requests. It writes a request file for the Hive watcher so PRs are opened by the GitHub App bot and pass the same ACMM authorization checks. |
