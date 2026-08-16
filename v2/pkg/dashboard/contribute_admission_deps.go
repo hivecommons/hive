@@ -56,10 +56,12 @@ import (
 //
 // It is a SNAPSHOT, not a cache: it lives for exactly one sweep and is thrown
 // away, so it can never serve a stale satisfaction judgment to a later sweep.
-// It holds COPIED VALUES rather than the live *beads.Bead pointers List returns,
-// for two reasons: an agent closing a bead mid-sweep must not make one candidate
-// see the before-state and the next see the after-state, and reading a live bead
-// outside the store lock while another goroutine mutates it is a data race.
+// It holds COPIED VALUES rather than the live *beads.Bead pointers the store
+// owns, for two reasons: a writer closing a bead mid-sweep must not make one
+// candidate see the before-state and the next the after-state, and reading a
+// live bead outside the store lock while another goroutine mutates it is a data
+// race. The copy is taken INSIDE the lock via Store.ReadEach — copying outside
+// it would narrow that race, not remove it.
 type beadDependencyIndex struct {
 	// byRef maps a candidate identity key (see candidateIdentityKeys) to the
 	// record declaring that candidate's work.
@@ -143,9 +145,17 @@ func (h *ContributeWSHub) buildBeadDependencyIndex() *beadDependencyIndex {
 			continue
 		}
 		idx.stores++
-		for _, b := range store.List(beads.ListFilter{}) {
+		// ReadEach, not List: List hands back the store's LIVE bead pointers and
+		// drops the lock first, so projecting them here would race any concurrent
+		// Update — the inception watcher's Close and the planning decomposer's
+		// AddDependency both mutate beads in place while this sweep runs, and this
+		// sweep is now on the assignment path rather than an occasional read.
+		// `go test -race` reproduced exactly that (TestBeadDependencyIndex_
+		// IsRaceFreeAgainstConcurrentWriters pins it). Everything below copies out
+		// of the bead and retains nothing.
+		store.ReadEach(beads.ListFilter{}, func(b *beads.Bead) {
 			if b == nil {
-				continue
+				return
 			}
 			rec := newBeadRecord(b)
 			// Bead IDs are UUID-derived and effectively unique across stores;
@@ -159,7 +169,7 @@ func (h *ContributeWSHub) buildBeadDependencyIndex() *beadDependencyIndex {
 					idx.byRef[key] = rec
 				}
 			}
-		}
+		})
 	}
 	return idx
 }

@@ -291,6 +291,59 @@ func (s *Store) List(filter ListFilter) []*Bead {
 	return result
 }
 
+// ReadEach invokes fn once per bead matching filter, in the same
+// creation-ordered sequence as List, WHILE HOLDING the store's read lock.
+//
+// Why this exists (kubestellar/hive#3845). List returns the store's LIVE
+// *Bead pointers and releases the lock before the caller reads them, so every
+// field read off a List result races any concurrent Update — which mutates
+// beads in place under the write lock (Status and DependsOn via the caller's
+// fn, plus UpdatedAt/ClosedAt). That is latent for an occasional reader, but
+// the contributor-neutral admission gate reads every bead in every store on
+// every ReadyQueue and selectTask pass, concurrently with the inception watcher
+// and the planning decomposer calling Close/AddDependency. `go test -race`
+// reproduces it within a few hundred iterations. Reading inside the lock removes
+// the race at its source rather than narrowing the window.
+//
+// Two rules for fn, enforced by nothing but this comment:
+//
+//   - It MUST NOT retain the *Bead (or alias its DependsOn/Metadata) past the
+//     call. Copy out whatever is needed; the pointer is only stable while the
+//     lock is held.
+//   - It MUST NOT call back into the store. sync.RWMutex is not reentrant, so a
+//     nested Get/List/Update deadlocks.
+//
+// fn should therefore be a cheap projection, never I/O.
+func (s *Store) ReadEach(filter ListFilter, fn func(*Bead)) {
+	if fn == nil {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Bead
+	for _, b := range s.beads {
+		if filter.Status != nil && b.Status != *filter.Status {
+			continue
+		}
+		if filter.Actor != nil && b.Actor != *filter.Actor {
+			continue
+		}
+		if filter.ExternalRef != nil && b.ExternalRef != *filter.ExternalRef {
+			continue
+		}
+		result = append(result, b)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt.Time)
+	})
+
+	for _, b := range result {
+		fn(b)
+	}
+}
+
 // Plan-review metadata keys. These mirror the convention written by
 // pkg/planning (planning.MetaParentEpic / planning.MetaPlanStatus /
 // planning.PlanStatusApproved); they are duplicated here as plain strings so

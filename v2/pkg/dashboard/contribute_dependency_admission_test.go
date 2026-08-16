@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -465,5 +467,79 @@ func TestBeadSatisfied(t *testing.T) {
 		if got := beadSatisfied(&beads.Bead{Status: status}); got != want {
 			t.Errorf("beadSatisfied(%s) = %v, want %v", status, got, want)
 		}
+	}
+}
+
+// TestBeadDependencyIndex_IsRaceFreeAgainstConcurrentWriters pins the lock
+// discipline of the admission sweep.
+//
+// beads.Store.List returns the store's LIVE *Bead pointers and releases the read
+// lock before the caller touches them, so projecting a List result races any
+// concurrent Update — which mutates beads in place (Status and DependsOn through
+// the caller's fn, plus UpdatedAt and ClosedAt). That was tolerable while bead
+// reads were occasional; this gate reads every bead in every store on every
+// ReadyQueue and selectTask pass, alongside the inception watcher's Close and the
+// planning decomposer's AddDependency. The sweep therefore projects inside the
+// lock via Store.ReadEach.
+//
+// Under -race this fails within a few hundred iterations if the sweep goes back
+// to reading live pointers outside the lock. Without -race it is a smoke test
+// that concurrent admission and mutation neither panic nor deadlock — which is
+// itself worth pinning, since ReadEach runs a caller-supplied callback while
+// holding a non-reentrant lock.
+func TestBeadDependencyIndex_IsRaceFreeAgainstConcurrentWriters(t *testing.T) {
+	store := depTestStore(t)
+	blockerID := seedDependentBead(t, store, "gh-projectbluefin/dakota#601")
+	hub, _ := depTestHub(t, map[string]*beads.Store{"scanner": store})
+
+	const iterations = 400
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	// Reader 1: the sweep itself, the way ReadyQueue/selectTask build it.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			hub.newAdmissionSweep()
+		}
+	}()
+
+	// Reader 2: the full production path, so the race surface under test is the
+	// real one and not just the index constructor.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			hub.ReadyQueue(10)
+		}
+	}()
+
+	// Writer: flips the blocker's terminal state and grows its dependency edges,
+	// touching exactly the fields the sweep projects (Status, DependsOn,
+	// UpdatedAt, ClosedAt).
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			if i%2 == 0 {
+				_ = store.Close(blockerID)
+			} else {
+				_ = store.Update(blockerID, func(b *beads.Bead) {
+					b.Status = beads.StatusOpen
+					b.ClosedAt = nil
+				})
+			}
+			_ = store.AddDependency(blockerID, "edge-"+strconv.Itoa(i))
+		}
+	}()
+
+	wg.Wait()
+
+	// The ledger is still coherent afterwards, and admission still answers: a
+	// race-free sweep must also be a CORRECT one, not merely a quiet one.
+	sweep := hub.newAdmissionSweep()
+	if sweep == nil || sweep.deps == nil {
+		t.Fatal("sweep did not survive concurrent mutation")
+	}
+	if _, ok := sweep.deps.byID[blockerID]; !ok {
+		t.Fatalf("blocker %s missing from the index after concurrent mutation", blockerID)
 	}
 }
