@@ -21,7 +21,7 @@
 'use strict';
 
 const WebSocket = require('ws');
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -264,8 +264,74 @@ function detectCapabilities() {
       caps.credential_type = 'pat';
     }
   } catch (_) { /* ignore */ }
+  // Agent CLI version: the hub schema, the operator docs and the Operations row
+  // ("cli 1.2.3") have carried this field since the declare half shipped, but the
+  // relay never populated it — so the one axis #2547's own evidence names first
+  // ("an agent CLI old enough to lack a flag the prompt assumes") was the one an
+  // operator could not see. Best-effort: omitted entirely when the probe fails.
+  const cliVersion = detectAgentCLIVersion();
+  if (cliVersion) caps.agent_cli_version = cliVersion;
   cachedCapabilities = caps;
   return caps;
+}
+
+// CLI_VERSION_PROBE_TIMEOUT_MS bounds the `<cli> --version` probe. Generous
+// enough for a Node/Python CLI's cold start, short enough that a wedged binary
+// costs a couple of seconds rather than the handshake.
+const CLI_VERSION_PROBE_TIMEOUT_MS = 3000;
+// CLI_VERSION_MAX_LEN bounds what we are willing to REPORT. The value is another
+// program's stdout, so it is arbitrary text; the hub bounds it again on receipt
+// (ContributorCapabilities.Sanitized) because no hub should trust a client to
+// have done this.
+const CLI_VERSION_MAX_LEN = 64;
+
+// detectAgentCLIVersion asks the agent CLI this relay drives for its version.
+//
+// Best-effort and deliberately quiet: any failure — binary absent, flag
+// unsupported, CLI wedged, output unusable — yields '' and the field is simply
+// omitted, which reads as "unknown" and is exactly what every relay written
+// before this change reports. Declaring nothing must always remain a working
+// answer (#2547: no default may read silence as incapacity).
+//
+// stdin is closed (`ignore`) so a CLI that mistakes --version for an interactive
+// launch gets EOF and exits rather than waiting on a terminal nobody is at;
+// stderr is discarded so a warning banner cannot end up declared as a version.
+function detectAgentCLIVersion() {
+  try {
+    // resolveBackend() maps the backend NAME to its actual binary (litellm →
+    // claude), and is the same resolution the launch path uses — so the version
+    // reported is the version of the CLI that will really run the work.
+    const bin = (resolveBackend().cmd || BACKEND).trim();
+    if (!bin) return '';
+    const out = execFileSync(bin, ['--version'], {
+      encoding: 'utf8',
+      timeout: CLI_VERSION_PROBE_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      killSignal: 'SIGKILL',
+    });
+    return sanitizeDeclaredValue(out);
+  } catch (_) {
+    // Nothing to log: an absent or unprobeable CLI is an ordinary, supported
+    // state here, not a fault.
+    return '';
+  }
+}
+
+// sanitizeDeclaredValue reduces a CLI's version output to one short, printable
+// line fit to declare. Takes the first non-empty line (CLIs append update
+// nudges and banners), strips control characters, collapses whitespace, and
+// truncates. The hub renders declarations into an operator row, so a multi-line
+// or unbounded value would be its problem rather than ours.
+function sanitizeDeclaredValue(raw) {
+  if (typeof raw !== 'string') return '';
+  const line = raw.split('\n').map(s => s.trim()).find(Boolean) || '';
+  const clean = line.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Truncate by code POINT, not code unit, so a value carrying an astral
+  // character is never cut into a lone surrogate on the way out.
+  const points = Array.from(clean);
+  return points.length > CLI_VERSION_MAX_LEN
+    ? points.slice(0, CLI_VERSION_MAX_LEN).join('').trim()
+    : clean;
 }
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
@@ -1551,6 +1617,9 @@ process.on('SIGINT', () => { cleanup(); process.exit(0); });
 if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   module.exports = {
     buildLaunchCommand,
+    detectCapabilities,
+    detectAgentCLIVersion,
+    sanitizeDeclaredValue,
     handleMessage,
     tmuxSendKeys,
     flushPendingTask,
@@ -1601,5 +1670,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getHeadlessChild: () => headlessChild,
   };
 } else {
+  // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
+  // is called from the auth_challenge handler, and the hub bounds a handshake at
+  // 30s (wsAuthTimeout); doing the probes here keeps every one of them — backend
+  // resolution and the `--version` call added for the CLI version — off the auth
+  // path entirely, where a slow host could otherwise eat that budget. Failures are
+  // already absorbed field-by-field, so this cannot stop the relay starting.
+  detectCapabilities();
   connect();
 }
