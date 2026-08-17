@@ -2078,6 +2078,14 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if declared.RelayProtocolVersion == "" && msg.ProtocolVersion != "" {
 				declared.RelayProtocolVersion = msg.ProtocolVersion
 			}
+			// Bound and clean it before it is stored: a declaration is unverified
+			// client text that lives for the connection, is re-serialized into
+			// every fleet poll, and lands in an operator row. Sanitizing cannot
+			// reject — an over-long or messy declaration still authenticates, it
+			// just cannot spill past its field. Checked AFTER sanitizing so a
+			// declaration made entirely of whitespace reads as "declared nothing"
+			// rather than as an empty-stringed capability set.
+			declared = declared.Sanitized()
 			if !declared.IsZero() {
 				c := declared
 				caps = &c

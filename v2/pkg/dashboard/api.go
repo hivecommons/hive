@@ -1651,6 +1651,15 @@ const (
 )
 
 func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
+	// SECURITY (#3936, CWE-284): the token-access log records every gh CLI
+	// command an agent issued, including full arguments (--repo, --title,
+	// --body ...). Without a role gate any authenticated user — including
+	// read-only contributors — could enumerate the hive's full GitHub operation
+	// history. Gate at owner-role, consistent with handleConfigDownload and
+	// handleSelfUpgrade which protect equivalent operator-only data.
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	data, err := os.ReadFile(tokenAccessLogPath)
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"entries": []interface{}{}, "error": "no audit log"})
