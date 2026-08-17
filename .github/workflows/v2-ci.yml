@@ -95,15 +95,24 @@ jobs:
       # real recipe and asserts the workload it produces, so a regression (a
       # dropped headless mode, a broken probe, a token leak into stdout) fails
       # the PR. Requires `just`; the test SKIPs cleanly if it is ever absent.
+      # Direct pinned download instead of extractions/setup-just: the action
+      # lists releases via the GitHub API at RUN TIME, and that lookup broke
+      # fleet-wide on 2026-08-17 ("no release for just matching version
+      # specifier", even with an explicit version) during a GitHub API
+      # incident — failing build-and-test on every branch/PR after all tests
+      # had passed. The releases CDN stayed up throughout; a pinned URL with a
+      # checksum has no API dependency at all. Bump the version and hash
+      # together, deliberately.
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-        with:
-          # Pin explicitly: with no specifier the action resolves casey/just's
-          # latest release at RUN TIME, and that resolution broke fleet-wide on
-          # 2026-08-17 ("no release for just matching version specifier"),
-          # failing build-and-test on every branch/PR after all tests passed.
-          # Bump deliberately, not implicitly.
-          just-version: "1.58.0"
+        run: |
+          set -euo pipefail
+          JUST_VERSION=1.58.0
+          JUST_SHA256=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+          curl -fsSL -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${JUST_SHA256}  /tmp/just.tgz" | sha256sum -c -
+          tar -xzf /tmp/just.tgz -C /tmp just
+          sudo install -m 0755 /tmp/just /usr/local/bin/just
+          just --version
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash v2/deploy/test_contribute_k8s_workload.sh
