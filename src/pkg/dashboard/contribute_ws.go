@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -269,6 +270,30 @@ type WSMessage struct {
 	// #2356 duplicate-detection work. Field naming follows the PRURL
 	// convention in src/pkg/github/prclaims.go.
 	PRURL string `json:"pr_url,omitempty"`
+	// Verdict is the OPTIONAL, client-declared outcome of a task_complete
+	// (kubestellar/hive#3987): "shipped" (a PR was opened), "idle" (returned to
+	// idle without an affirmative conclusion — today's semantics and what an
+	// absent field normalizes to, so relays written before this keep working
+	// unchanged), or "no_work_needed" (the agent affirmatively determined
+	// nothing is shippable — e.g. the issue's remainder is gated on an
+	// unanswered maintainer decision, or merged PRs already cover it: the
+	// #2547 shape that #3980's escalation only BOUNDS).
+	//
+	// Self-reported and therefore weak evidence, like FailureKind above: the
+	// hub honours it ONLY to lengthen how long the issue is withheld from the
+	// contribute OFFER pool (see markTaskCompletedVerdict /
+	// isSuppressedByNoWorkVerdict). It never grants trust credit or promotion,
+	// never closes or labels anything on GitHub, and never touches the hive
+	// agent pipeline's selection. A verified PR overrides any claimed value
+	// (normalizeCompletionVerdict).
+	Verdict string `json:"verdict,omitempty"`
+	// VerdictReason optionally carries a machine-readable reason for a
+	// no_work_needed verdict ("maintainer_gated", "already_covered", or free
+	// text the relay scraped from the agent's output). Audit-only: it is
+	// stored with the verdict and logged so an operator can see WHY an issue
+	// keeps yielding no work — precisely the signal needed to go answer the
+	// gating question. Truncated server-side to noWorkReasonMaxLen.
+	VerdictReason string `json:"verdict_reason,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
 	// bin/contributor-relay.sh). Reassigning the same work item to the same
@@ -367,8 +392,30 @@ type ContributeWSHub struct {
 	// that ships a verified PR, or by noPRStreakResetAfter of quiet. Guarded
 	// by completedMu.
 	noPRStreaks map[string]noPRStreakRecord
-	completedMu sync.Mutex
-	selectMu    sync.Mutex
+	// noWorkVerdicts records, per "repo#number", the most recent
+	// contributor-reported no_work_needed completion verdict (#3987): the agent
+	// affirmatively determined the issue has nothing shippable (the #2547
+	// shape — shippable parts merged, remainder maintainer-gated, no open PR
+	// left to claim it, so no claim of any kind survives the next rescan).
+	// While a verdict is live the issue is withheld from the contribute OFFER
+	// pool (selectTask + ReadyQueue) for the long with-PR-cooldown window
+	// instead of cycling on the short no-PR ladder forever.
+	//
+	// Invalidation beats suppression: the verdict is VOID the moment the issue
+	// shows activity newer than the verdict (issue updated_at > RecordedAt),
+	// so a genuinely reopened issue — the maintainer answered, new commits or
+	// comments landed — is offered again immediately. When the issue's
+	// updated_at is unknown, the check fails OPEN (no suppression). The
+	// verdict is contributor-reported (weak evidence): it only ever suppresses
+	// offers — it never closes issues, never feeds trust/promotion, and never
+	// gates the hive agent pipeline. SEPARATE map from completedTasks for the
+	// same reason noPRStreaks is: the loop's signature is the completion entry
+	// EXPIRING before the next dispatch, so this must survive that sweep.
+	// Guarded by completedMu; persisted in the same PVC-backed ledger dir as
+	// the cooldowns so a pod restart does not forget the verdict.
+	noWorkVerdicts map[string]noWorkVerdictRecord
+	completedMu    sync.Mutex
+	selectMu       sync.Mutex
 	// assignmentTimes records, per contributor identity (identityOf), the wall-clock
 	// times of the task_assign messages that identity has been handed. It backs the
 	// #2436/#2566 per-tier rate gate: tier_limits.max_per_hour / max_per_day were
@@ -569,6 +616,24 @@ const completedNoPRCooldownHours = 4
 // weeks = 2× the default cap, so one full capped cycle plus slack.
 const noPRStreakResetAfter = 14 * 24 * time.Hour
 
+// completionVerdict* are the recognized values of WSMessage.Verdict on
+// task_complete (#3987). Anything else — including an absent field, which is
+// what every relay written before this sends — normalizes to idle, i.e.
+// byte-for-byte today's behavior (see normalizeCompletionVerdict).
+const (
+	completionVerdictShipped      = "shipped"
+	completionVerdictIdle         = "idle"
+	completionVerdictNoWorkNeeded = "no_work_needed"
+)
+
+// noWorkReasonMaxLen caps the client-supplied VerdictReason before it is stored
+// in the PVC-backed verdict ledger and echoed into logs: the field is scraped
+// from arbitrary agent output, so an unbounded value would let a confused (or
+// hostile) relay bloat the ledger file. 200 runes comfortably fits the
+// machine-readable reasons ("maintainer_gated", "already_covered") plus a short
+// free-text explanation.
+const noWorkReasonMaxLen = 200
+
 // failedTaskCooldownMinutes is the SHORT cooldown applied to an issue when a
 // contributor reports task_failed (#2435). It is deliberately far shorter than
 // the completion cooldowns above: a failure is often purely environmental
@@ -637,6 +702,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		failedTasks:           make(map[string]time.Time),
 		consecutiveFailures:   make(map[string]int),
 		noPRStreaks:           make(map[string]noPRStreakRecord),
+		noWorkVerdicts:        make(map[string]noWorkVerdictRecord),
 		assignmentTimes:       make(map[string][]time.Time),
 		leases:                make(map[string]*taskLease),
 		yankExclusions:        make(map[string]time.Time),
@@ -647,6 +713,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadCompletedTasks()
 	hub.loadFailedTasks()
 	hub.loadNoPRStreaks()
+	hub.loadNoWorkVerdicts()
 	hub.loadActivity()
 	go hub.cleanupLoop()
 	return hub
@@ -843,6 +910,180 @@ func (h *ContributeWSHub) advanceNoPRStreakLocked(key string, ceiling time.Durat
 	return cooldown
 }
 
+// noWorkVerdictsFileName is the on-disk ledger for no_work_needed completion
+// verdicts (#3987), living in the same PVC-backed contributors dir as the
+// cooldown/streak ledgers so a hub pod restart does not forget a verdict.
+// The full path comes from noWorkVerdictsPath(), which honours
+// HIVE_CONTRIBUTORS_DIR exactly as the contributor profiles do — that is what
+// lets the persistence round-trip test point it at a temp dir.
+const noWorkVerdictsFileName = "no-work-verdicts.json"
+
+func noWorkVerdictsPath() string {
+	return filepath.Join(getContributorsDir(), noWorkVerdictsFileName)
+}
+
+// noWorkVerdictRecord is the in-memory and on-disk shape of one no_work_needed
+// verdict (#3987). RecordedAt anchors both the suppression window and the
+// invalidation comparison (issue updated_at newer than RecordedAt voids the
+// verdict). SuppressHours snapshots the operator's with-PR cooldown at record
+// time so a later config change cannot retroactively stretch an old verdict;
+// 0 (an older entry) falls back to the completedTaskCooldownHours default.
+// Reporter/Reason are audit-only.
+type noWorkVerdictRecord struct {
+	RecordedAt    time.Time `json:"recorded_at"`
+	SuppressHours float64   `json:"suppress_hours,omitempty"`
+	Reporter      string    `json:"reporter,omitempty"`
+	Reason        string    `json:"reason,omitempty"`
+}
+
+// suppressWindow is how long, from RecordedAt, this verdict withholds the
+// issue from the contribute offer pool (absent earlier invalidation).
+func (r noWorkVerdictRecord) suppressWindow() time.Duration {
+	if r.SuppressHours > 0 {
+		return time.Duration(r.SuppressHours * float64(time.Hour))
+	}
+	return completedTaskCooldownHours * time.Hour
+}
+
+func (h *ContributeWSHub) loadNoWorkVerdicts() {
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	data, err := os.ReadFile(noWorkVerdictsPath())
+	if err != nil {
+		return
+	}
+	records := make(map[string]noWorkVerdictRecord)
+	if json.Unmarshal(data, &records) != nil {
+		return
+	}
+	for k, rec := range records {
+		if rec.RecordedAt.IsZero() {
+			continue
+		}
+		// Drop entries already past their own suppression window so a stale
+		// verdict is never resurrected across a restart.
+		if time.Since(rec.RecordedAt) >= rec.suppressWindow() {
+			continue
+		}
+		if h.noWorkVerdicts != nil {
+			h.noWorkVerdicts[k] = rec
+		}
+	}
+	h.logger.Info("[contribute-ws] loaded no-work verdicts", "count", len(h.noWorkVerdicts))
+}
+
+func (h *ContributeWSHub) saveNoWorkVerdicts() {
+	h.completedMu.Lock()
+	saved := make(map[string]noWorkVerdictRecord, len(h.noWorkVerdicts))
+	for k, rec := range h.noWorkVerdicts {
+		if time.Since(rec.RecordedAt) >= rec.suppressWindow() {
+			continue
+		}
+		saved[k] = rec
+	}
+	h.completedMu.Unlock()
+	data, err := json.Marshal(saved)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] no-work verdicts marshal failed", "error", err)
+		return
+	}
+	path := noWorkVerdictsPath()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		h.logger.Warn("[contribute-ws] no-work verdicts write failed", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		h.logger.Warn("[contribute-ws] no-work verdicts rename failed", "error", err)
+	}
+}
+
+// normalizeCompletionVerdict maps the client-reported verdict plus the
+// SERVER-side PR verification outcome to the verdict the hub acts on (#3987).
+// A VERIFIED PR always wins ("shipped") regardless of what the client claimed —
+// the self-reported field can neither hide nor fabricate shipped work. With no
+// verified PR, only an exact (case-insensitive) no_work_needed is honoured;
+// anything else — absent, unknown, or a claimed "shipped" whose PR failed
+// verification — normalizes to idle, which is byte-for-byte today's behavior,
+// so relays that never learn the field keep working unchanged.
+func normalizeCompletionVerdict(reported, verifiedPR string) string {
+	if verifiedPR != "" {
+		return completionVerdictShipped
+	}
+	if strings.EqualFold(strings.TrimSpace(reported), completionVerdictNoWorkNeeded) {
+		return completionVerdictNoWorkNeeded
+	}
+	return completionVerdictIdle
+}
+
+// isSuppressedByNoWorkVerdict reports whether a live no_work_needed verdict
+// (#3987) withholds this issue from the contribute OFFER pool. It is consulted
+// ONLY by the two offer surfaces — selectTask and ReadyQueue — never by the
+// hive agent pipeline, and it can only ever exclude an offer: it closes and
+// labels nothing.
+//
+// Invalidation beats suppression. The verdict is discarded (and the issue
+// offerable again) when:
+//   - the issue shows activity NEWER than the verdict (issueUpdatedAt after
+//     RecordedAt): the maintainer answered, commits or comments landed, the
+//     decision the remainder was gated on may have arrived; or
+//   - the suppression window (the with-PR cooldown snapshotted at record time)
+//     has elapsed.
+//
+// When the issue's updated_at is UNKNOWN (zero — an older status producer that
+// does not carry the field), the check fails OPEN: we cannot prove the issue
+// has been quiet since the verdict, and suppressing genuinely reopened work is
+// the one failure mode this feature must not have. The record is kept (not
+// discarded) so a later snapshot that does carry updated_at can still honour
+// or void it. Like every completion cooldown, the operator kill-switch
+// disables the exclusion entirely.
+func (h *ContributeWSHub) isSuppressedByNoWorkVerdict(repo string, number int, issueUpdatedAt time.Time) bool {
+	if !h.cooldownEnabled() {
+		return false
+	}
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	rec, ok := h.noWorkVerdicts[key]
+	if !ok {
+		h.completedMu.Unlock()
+		return false
+	}
+	expired := time.Since(rec.RecordedAt) >= rec.suppressWindow()
+	voided := !issueUpdatedAt.IsZero() && issueUpdatedAt.After(rec.RecordedAt)
+	if expired || voided {
+		delete(h.noWorkVerdicts, key)
+		h.completedMu.Unlock()
+		h.saveNoWorkVerdicts()
+		h.logger.Info("[contribute-ws] no-work verdict lifted",
+			"key", key, "expired", expired, "voided_by_activity", voided)
+		return false
+	}
+	h.completedMu.Unlock()
+	if issueUpdatedAt.IsZero() {
+		// Activity unknown → fail open. See doc comment.
+		return false
+	}
+	return true
+}
+
+// issueUpdatedAtFromMap extracts the issue's GitHub updated_at from the
+// map[string]any shape selectTask/ReadyQueue read out of ActionableIssues.
+// ghpkg.Issue.UpdatedAt marshals as an RFC3339 string; anything absent or
+// unparseable yields the zero time, which isSuppressedByNoWorkVerdict treats
+// as "activity unknown" (fail open).
+func issueUpdatedAtFromMap(issue map[string]any) time.Time {
+	s, _ := issue["updated_at"].(string)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // failedTaskRecord is the on-disk shape of one failed-task entry (#2435). It
 // preserves the last-failure time and the running consecutive-failure count so a
 // hub restart does not reset a quarantine — otherwise a bounce would re-admit a
@@ -1003,6 +1244,20 @@ func (h *ContributeWSHub) saveCompletedTasks() {
 // by isTaskInCooldown; the prURL is retained for stats/audit and #2356
 // duplicate detection.
 func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL string) {
+	h.markTaskCompletedVerdict(repo, number, prURL, completionVerdictIdle, "", "")
+}
+
+// markTaskCompletedVerdict is markTaskCompleted plus the completion's
+// normalized verdict (#3987). A no_work_needed verdict — the agent
+// affirmatively determined nothing is shippable, as opposed to merely going
+// idle — additionally records a durable entry in the noWorkVerdicts ledger,
+// which withholds the issue from the OFFER pool for the full with-PR cooldown
+// window unless/until the issue shows newer activity (see
+// isSuppressedByNoWorkVerdict). The regular escalating no-PR cooldown is still
+// booked as the backstop, so behavior for relays that never learn the verdict
+// field — and for hubs where the verdict is later voided — is unchanged.
+// reporter/reason are audit-only and stored with the verdict.
+func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prURL, verdict, reporter, reason string) {
 	key := fmt.Sprintf("%s#%d", repo, number)
 	// The WITH-PR period is operator-tunable (Config.Hub.ContributeCooldownHours,
 	// default completedTaskCooldownHours). We still RECORD this even when cooldown
@@ -1013,17 +1268,41 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	withPRCooldown := h.configuredWithPRCooldown()
 	h.completedMu.Lock()
 	var cooldown time.Duration
+	verdictLedgerDirty := false
 	if prURL != "" {
 		cooldown = withPRCooldown
 		// A shipped, verified PR ends any no-PR streak: the issue's next no-PR
 		// completion (if any) starts back at the short base cooldown.
 		delete(h.noPRStreaks, key)
+		// It also voids any standing no_work_needed verdict (#3987): real work
+		// just landed, so "nothing is shippable" is no longer true.
+		if _, had := h.noWorkVerdicts[key]; had {
+			delete(h.noWorkVerdicts, key)
+			verdictLedgerDirty = true
+		}
 	} else {
 		// #3980: repeated no-PR completions escalate geometrically (4h → 8h →
 		// …, capped at the with-PR cooldown) so a "nothing to ship" loop —
 		// e.g. an issue whose remaining work is maintainer-gated (#2547) —
 		// cannot burn a full contributor task cycle every 4h forever.
 		cooldown = h.advanceNoPRStreakLocked(key, withPRCooldown)
+		// #3987: an affirmative no_work_needed verdict eliminates that loop
+		// rather than just bounding it — the issue is withheld from the offer
+		// pool for the full with-PR window, subject to invalidation by newer
+		// issue activity. Only the OFFER surfaces read this ledger; the
+		// escalating cooldown above still stands as the backstop.
+		if verdict == completionVerdictNoWorkNeeded {
+			if len(reason) > noWorkReasonMaxLen {
+				reason = reason[:noWorkReasonMaxLen]
+			}
+			h.noWorkVerdicts[key] = noWorkVerdictRecord{
+				RecordedAt:    time.Now(),
+				SuppressHours: withPRCooldown.Hours(),
+				Reporter:      reporter,
+				Reason:        reason,
+			}
+			verdictLedgerDirty = true
+		}
 	}
 	h.completedTasks[key] = time.Now()
 	if h.completedTaskCooldown != nil {
@@ -1052,6 +1331,9 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	h.completedMu.Unlock()
 	h.saveCompletedTasks()
 	h.saveNoPRStreaks()
+	if verdictLedgerDirty {
+		h.saveNoWorkVerdicts()
+	}
 	if failureCleared {
 		h.saveFailedTasks()
 	}
@@ -2688,13 +2970,21 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
 						verifiedPR = msg.PRURL
 					}
+					// #3987: normalize the completion's verdict. A verified PR always
+					// wins (shipped); with none, only an explicit no_work_needed is
+					// honoured and everything else — including the absent field every
+					// pre-#3987 relay sends — is idle, i.e. today's exact semantics.
+					verdict := normalizeCompletionVerdict(msg.Verdict, verifiedPR)
 					if completedTask != nil {
 						// #2393 item 7 + #2565: the full week-long cooldown is applied
 						// only for a VERIFIED PR; an unverified or no-PR completion gets
 						// the short cooldown so the issue is not locked for a week (and,
 						// per #2492/#2557, still gets a non-zero cooldown so it is not
-						// instantly re-offered in a tight loop).
-						h.markTaskCompleted(completedTask.Repo, completedTask.Number, verifiedPR)
+						// instantly re-offered in a tight loop). #3987: a no_work_needed
+						// verdict additionally books the durable offer-suppression
+						// verdict (see markTaskCompletedVerdict).
+						h.markTaskCompletedVerdict(completedTask.Repo, completedTask.Number, verifiedPR,
+							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 					}
 					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task complete",
@@ -2702,6 +2992,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						"task", msg.TaskID,
 						"result", msg.Result,
 						"pr_verified", verifiedPR != "",
+						"verdict", verdict,
+						"verdict_reason", strings.TrimSpace(msg.VerdictReason),
 					)
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
@@ -3463,7 +3755,18 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"re-forking). Then 'cd' into that checkout, read the issue, "+
 			"understand what's needed, and take action. "+
 			"Push your branch to your fork remote, then open a PR from your fork. "+
-			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
+			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
+			// #3987: the no_work_needed sentinel. The relay scrapes this exact
+			// marker from the agent's output and reports it as the completion
+			// verdict, so an issue whose remainder is maintainer-gated stops
+			// re-entering the offer pool every cooldown window. Keep the marker
+			// spelling in sync with detectNoWorkVerdict in
+			// bin/contributor-relay.sh.
+			"If you determine there is genuinely NOTHING shippable — for example the "+
+			"remaining work is blocked on an unanswered maintainer decision, or merged "+
+			"PRs already cover everything actionable — do NOT open a PR; instead print "+
+			"a single line of the exact form 'HIVE_VERDICT: no_work_needed — <short reason>' "+
+			"and stop.",
 		repoFull, repoFull, number, title, repoFull, repoFull,
 	)
 }
@@ -3840,6 +4143,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				continue
 			}
 			if h.isTaskInCooldown(repo.Full, number) {
+				continue
+			}
+			// #3987: skip an issue with a live no_work_needed completion verdict
+			// (the #2547 shape — shippable parts merged, remainder maintainer-
+			// gated, no open PR left for the claim ledger to see). The verdict
+			// is voided the moment the issue shows activity newer than it, so a
+			// genuinely reopened issue comes straight back into the pool.
+			if h.isSuppressedByNoWorkVerdict(repo.Full, number, issueUpdatedAtFromMap(issue)) {
 				continue
 			}
 			// #2435: skip an issue still inside its short post-failure cooldown or

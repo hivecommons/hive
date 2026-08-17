@@ -143,13 +143,21 @@ func (c *Client) SetAppBotLogin(login string) {
 }
 
 type Issue struct {
-	Repo           string    `json:"repo"`
-	Number         int       `json:"number"`
-	Title          string    `json:"title"`
-	Author         string    `json:"author"`
-	Labels         []string  `json:"labels"`
-	Assignees      []string  `json:"assignees"`
-	CreatedAt      time.Time `json:"created_at"`
+	Repo      string    `json:"repo"`
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Author    string    `json:"author"`
+	Labels    []string  `json:"labels"`
+	Assignees []string  `json:"assignees"`
+	CreatedAt time.Time `json:"created_at"`
+	// UpdatedAt is GitHub's last-activity timestamp for the issue (new commits
+	// referencing it, comments, label/assignee changes, …). It is the
+	// invalidation signal for the contribute queue's no_work_needed verdict
+	// (kubestellar/hive#3987): a verdict recorded BEFORE this timestamp is void,
+	// so fresh activity on a previously "nothing to ship" issue re-opens it for
+	// offers. Zero when produced by an older enumerator; consumers must fail
+	// OPEN (treat activity as unknown → do not suppress) in that case.
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
 	AgeMinutes     int       `json:"age_minutes"`
 	URL            string    `json:"url"`
 	IsTracker      bool      `json:"is_tracker"`
@@ -532,6 +540,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			Labels:     labels,
 			Assignees:  extractAssignees(issue.Assignees),
 			CreatedAt:  issue.GetCreatedAt().Time,
+			UpdatedAt:  issue.GetUpdatedAt().Time,
 			AgeMinutes: ageMinutes,
 			URL:        issue.GetHTMLURL(),
 			IsTracker:  isTracker(issue.GetTitle(), labels),

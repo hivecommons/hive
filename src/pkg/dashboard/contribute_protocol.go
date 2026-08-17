@@ -72,6 +72,13 @@ const (
 	// from contributor relays and, when allowed by hive config/tier/grants, shapes
 	// assignments with the matching spoke agent's prompt.
 	capAgentRoleClaim = "agent_role_claim"
+	// capCompletionVerdict: the hub accepts an OPTIONAL verdict field on
+	// task_complete (#3987) — "no_work_needed" lets a relay report that the
+	// agent affirmatively determined nothing is shippable (maintainer-gated
+	// remainder / already covered by merged work), earning the issue a long
+	// offer-pool suppression instead of the short idle cooldown loop. Purely
+	// additive: a relay that never sends the field behaves exactly as before.
+	capCompletionVerdict = "completion_verdict"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -85,6 +92,7 @@ func serverCapabilities() []string {
 		capCapabilityDeclare,
 		capCredentialAfterAccept,
 		capAgentRoleClaim,
+		capCompletionVerdict,
 	}
 }
 

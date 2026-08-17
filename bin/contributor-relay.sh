@@ -607,8 +607,13 @@ function runHeadlessTask(task) {
       console.log(`Headless task ${task.task_id} completed (exit 0)`);
       const prURL = detectPRURL(outTail, task.repo);
       if (prURL) console.log(`Detected PR for ${task.task_id}: ${prURL}`);
+      // #3987: only report a no_work_needed verdict when no PR was shipped —
+      // a visible PR contradicts "nothing shippable" (the hub would override
+      // the claim with "shipped" anyway).
+      const noWork = prURL ? null : detectNoWorkVerdict(outTail);
+      if (noWork) console.log(`Detected no_work_needed verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, pr_url: prURL });
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
       currentTask = null;
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -1027,6 +1032,40 @@ function detectPRURL(lines, repo) {
   return repoMatch || anyMatch;
 }
 
+// Best-effort scan of the agent's recent output for the no_work_needed
+// sentinel (kubestellar/hive#3987). The hub's task prompt instructs the agent:
+// when it affirmatively determines there is NOTHING shippable (the remainder
+// is gated on an unanswered maintainer decision, or merged PRs already cover
+// it), it prints a line of the exact form
+//   HIVE_VERDICT: no_work_needed — <short reason>
+// instead of opening a PR. Reported on task_complete as verdict/verdict_reason
+// so the hub can park the issue for the long offer-suppression window instead
+// of re-offering it every short-cooldown period forever (the #2547 shape that
+// escalation only bounded). Returns null when no marker is found — the hub
+// then treats the completion exactly as an idle one (today's semantics). The
+// marker spelling must stay in sync with buildTaskPrompt in
+// src/pkg/dashboard/contribute_ws.go.
+function detectNoWorkVerdict(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  // Anchored at line start: the task PROMPT quotes the marker mid-sentence
+  // ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
+  // that instruction echo from reading as the agent's own verdict.
+  const VERDICT_RE = /^\s*HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
+  // Scan newest-first so the agent's final conclusion wins over anything it
+  // merely quoted or considered earlier in the transcript.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = VERDICT_RE.exec(lines[i]);
+    if (!m) continue;
+    const reason = (m[1] || '').trim();
+    // tmux may wrap the prompt's instruction so its quoted marker lands at a
+    // visual line start; its giveaway is the literal "<short reason>"
+    // placeholder. Never treat that echo as a real verdict.
+    if (reason.startsWith('<')) continue;
+    return { verdict: 'no_work_needed', reason };
+  }
+  return null;
+}
+
 // True while a bob CLI process is alive. bob exits at the end of every turn,
 // so "process gone" means the turn finished — see the bob branch of
 // checkTmuxIdle(). Matches the launch command rather than the bare name so a
@@ -1385,7 +1424,12 @@ function progressTick() {
     // Empty when no PR link is found — the hub then applies the short cooldown.
     const prURL = detectPRURL(tmuxLines, currentTask.repo);
     if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
+    // #3987: only report a no_work_needed verdict when no PR was shipped — a
+    // visible PR contradicts "nothing shippable" (the hub would override the
+    // claim with "shipped" anyway).
+    const noWork = prURL ? null : detectNoWorkVerdict(tmuxLines);
+    if (noWork) console.log(`Detected no_work_needed verdict for ${currentTask.task_id}: ${noWork.reason || '(no reason)'}`);
+    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: noWork ? 'Agent returned to idle (reported no_work_needed)' : 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.

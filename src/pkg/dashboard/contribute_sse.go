@@ -274,6 +274,14 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			if h.isTaskInCooldown(repo.Full, number) {
 				continue
 			}
+			// #3987: a live no_work_needed verdict withholds the issue from the
+			// offer pool, and ReadyQueue is the read-only projection of exactly
+			// that pool — the two surfaces must agree (same contract the claim
+			// ledger admission pins). The hive AGENT pipeline does not read
+			// this ledger anywhere.
+			if h.isSuppressedByNoWorkVerdict(repo.Full, number, issueUpdatedAtFromMap(issue)) {
+				continue
+			}
 			if h.isTaskInFailureCooldown(repo.Full, number) {
 				continue
 			}
