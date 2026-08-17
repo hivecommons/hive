@@ -5,7 +5,7 @@
 #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
 #     https://registry-1.docker.io/v2/library/golang/manifests/1.26-alpine | grep -i docker-content-digest
 # and update both the tag and the @sha256 digest together.
-FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
+FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
