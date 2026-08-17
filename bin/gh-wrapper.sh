@@ -366,10 +366,15 @@ fi
 
 # ── Mode-based enforcement (hot-reloadable via mode file) ──
 # Read mode from file first (updated by Manager on mode change), fallback to env var.
+# -r as well as -f: this script runs under `set -e`, so a mode file that exists
+# but is unreadable by the agent UID (owner-only perms, #3679) would kill the
+# wrapper before any mode gate or repo restriction ran, failing every gh call
+# with exit 1 and no output. Fall back to the env var instead — the same mode
+# value the Manager exported.
 AGENT_NAME_GW="${HIVE_AGENT:-${HIVE_AGENT_ID:-unknown}}"
 MODE_FILE="/tmp/.hive-mode-${AGENT_NAME_GW}"
-if [ -f "$MODE_FILE" ]; then
-  AGENT_MODE="$(cat "$MODE_FILE")"
+if [ -f "$MODE_FILE" ] && [ -r "$MODE_FILE" ]; then
+  AGENT_MODE="$(cat "$MODE_FILE" 2>/dev/null || true)"
 else
   AGENT_MODE="${HIVE_AGENT_MODE:-}"
 fi

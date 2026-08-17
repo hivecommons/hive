@@ -93,6 +93,14 @@ func markOwnerRequest(req *http.Request) {
 	req.Header.Set(ownerRoleVerifiedHeader, "true")
 }
 
+func doOwnerGet(s *Server, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func doOwnerPost(s *Server, path string, body interface{}) *httptest.ResponseRecorder {
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(body)
