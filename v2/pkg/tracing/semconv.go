@@ -20,6 +20,12 @@ const (
 	AttrHiveLane         = "hive.lane"
 	AttrHiveACMMLevel    = "hive.acmm_level"
 	AttrHiveGovernorMode = "hive.governor.mode"
+	// AttrHiveComponent is the coarse package/component a span belongs to,
+	// derived from the span-name prefix before the first dot ("governor",
+	// "agent", "pr", ...). It is the phase-1 reach dimension for #3973: a PR's
+	// changed files map to components, and (hive.commit, hive.component) on
+	// span data answers "did that component ever run on the merged commit".
+	AttrHiveComponent = "hive.component"
 
 	attrEventKind = "hive.timeline.kind"
 	attrEventID   = "event.id"

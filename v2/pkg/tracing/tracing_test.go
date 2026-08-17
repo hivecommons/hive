@@ -366,6 +366,124 @@ func TestTimelineSpanAttributes_GenAIAndHiveAttrs(t *testing.T) {
 	}
 }
 
+// resourceAttrs flattens a resource into a key→string map for assertions.
+func resourceAttrs(t *testing.T, cfg Config) map[attribute.Key]string {
+	t.Helper()
+	res := newResource(cfg)
+	if res == nil {
+		t.Fatal("newResource returned nil")
+	}
+	out := map[attribute.Key]string{}
+	for _, kv := range res.Attributes() {
+		out[kv.Key] = kv.Value.AsString()
+	}
+	return out
+}
+
+// TestNewResource_StampsCommitAndImage verifies the #3973 reach anchors: the
+// running commit lands on the resource as BOTH service.version (standard
+// semconv) and hive.commit, and the Deployment-declared image ref as
+// hive.image, alongside the pre-existing identity attributes.
+func TestNewResource_StampsCommitAndImage(t *testing.T) {
+	attrs := resourceAttrs(t, Config{
+		ServiceName: "hive",
+		HiveID:      "hive-abc",
+		Branch:      "v4",
+		Commit:      "eede356",
+		Image:       "ghcr.io/kubestellar/hive@sha256:deadbeef",
+	})
+
+	if got := attrs["service.version"]; got != "eede356" {
+		t.Errorf("service.version = %q, want eede356", got)
+	}
+	if got := attrs["hive.commit"]; got != "eede356" {
+		t.Errorf("hive.commit = %q, want eede356", got)
+	}
+	if got := attrs["hive.image"]; got != "ghcr.io/kubestellar/hive@sha256:deadbeef" {
+		t.Errorf("hive.image = %q", got)
+	}
+	// Pre-existing identity attributes must survive the refactor.
+	if attrs["service.name"] != "hive" || attrs["hive.id"] != "hive-abc" || attrs["hive.branch"] != "v4" {
+		t.Errorf("identity attrs = name %q id %q branch %q",
+			attrs["service.name"], attrs["hive.id"], attrs["hive.branch"])
+	}
+}
+
+// TestNewResource_OmitsPlaceholderVersion verifies that a build without ldflags
+// injection (Commit is "unknown" or empty) stamps NO version attributes: reach
+// queries must never group spans under a placeholder pseudo-commit.
+func TestNewResource_OmitsPlaceholderVersion(t *testing.T) {
+	for _, commit := range []string{"", "unknown", "  "} {
+		attrs := resourceAttrs(t, Config{ServiceName: "hive", Commit: commit})
+		if v, ok := attrs["service.version"]; ok {
+			t.Errorf("Commit=%q: service.version unexpectedly present (%q)", commit, v)
+		}
+		if v, ok := attrs["hive.commit"]; ok {
+			t.Errorf("Commit=%q: hive.commit unexpectedly present (%q)", commit, v)
+		}
+	}
+	// Empty image likewise omits hive.image rather than recording "".
+	attrs := resourceAttrs(t, Config{ServiceName: "hive"})
+	if v, ok := attrs["hive.image"]; ok {
+		t.Errorf("hive.image unexpectedly present for empty Image (%q)", v)
+	}
+}
+
+// TestNewResource_DefaultServiceName verifies the empty-ServiceName fallback
+// still applies after the newResource refactor.
+func TestNewResource_DefaultServiceName(t *testing.T) {
+	attrs := resourceAttrs(t, Config{})
+	if attrs["service.name"] != DefaultServiceName {
+		t.Errorf("service.name = %q, want %q", attrs["service.name"], DefaultServiceName)
+	}
+}
+
+// TestSpanComponent covers the coarse span-name→component mapping (#3973
+// phase-1 granularity).
+func TestSpanComponent(t *testing.T) {
+	cases := map[string]string{
+		"governor.eval_cycle":           "governor",
+		"agent.kick":                    "agent",
+		"pr.merged":                     "pr",
+		"hive.timeline":                 "hive",
+		"nodot":                         "nodot",
+		"":                              "",
+		".leading_dot_is_own_component": ".leading_dot_is_own_component",
+	}
+	for name, want := range cases {
+		if got := SpanComponent(name); got != want {
+			t.Errorf("SpanComponent(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestStartSpan_AddsComponentAttribute verifies every span started via
+// StartSpan automatically carries hive.component derived from its name, with
+// no call-site changes (#3973).
+func TestStartSpan_AddsComponentAttribute(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	_, span := StartSpan(context.Background(), "governor.eval_cycle")
+	span.End()
+
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(ended))
+	}
+	var component string
+	for _, kv := range ended[0].Attributes() {
+		if string(kv.Key) == AttrHiveComponent {
+			component = kv.Value.AsString()
+		}
+	}
+	if component != "governor" {
+		t.Errorf("hive.component = %q, want governor", component)
+	}
+}
+
 func TestStartTimelineSpan_RecordsMappedSpan(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

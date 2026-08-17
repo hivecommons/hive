@@ -1027,6 +1027,13 @@ func main() {
 		SampleRatio: otelCfg.SampleRatio,
 		HiveID:      cfg.HiveID,
 		Branch:      cfg.Policies.Branch,
+		// Reach anchors (#3973): gitShort is the ldflags-baked commit of THIS
+		// binary (already canonicalized to 7 chars above), and the image ref is
+		// the Deployment-declared image (cached — warmed by the release-channel
+		// read at startup; "" outside a cluster). Spans attribute to the code
+		// that actually runs, not to the merge/publish event (#3816).
+		Commit: gitShort,
+		Image:  hub.SelfDeploymentImage(),
 	})
 	if traceErr != nil {
 		logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
