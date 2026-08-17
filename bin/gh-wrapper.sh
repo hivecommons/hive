@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-# The real gh binary is installed at /opt/hive/bin/gh-real (v2/Dockerfile:74),
+# The real gh binary is installed at /opt/hive/bin/gh-real (src/Dockerfile:74),
 # NOT /usr/bin/gh — which does not exist in the image. A stale /usr/bin/gh path
 # made the guard below fire "gh CLI is not available" for every agent gh call,
 # silently breaking the CLI GitHub workflow (issue/PR view, create, merge). Keep
@@ -214,7 +214,7 @@ done
 #
 # So we deny by default and enumerate what agents legitimately do. The permitted
 # set below was derived from actual usage in this repo — the agent policies
-# (v2/policies/*.md, examples/kubestellar/agents/**) and bin/*.sh — NOT invented,
+# (src/policies/*.md, examples/kubestellar/agents/**) and bin/*.sh — NOT invented,
 # so the allowlist cannot quietly break the fleet. Ordering matters: this runs
 # BEFORE the mode/ACMM gates, so it only decides whether a verb is on the map at
 # all. Everything it admits is still subject to every gate below — `pr merge`
@@ -491,7 +491,7 @@ if [ -n "$AGENT_MODE" ]; then
       # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
       # 160), which REPLACES this process — execution never reaches here for the
       # create path. The hold label is now applied AUTHORITATIVELY server-side, in
-      # v2/pkg/github/pr_request_watcher.go, after the hive's App-bot opens the PR,
+      # src/pkg/github/pr_request_watcher.go, after the hive's App-bot opens the PR,
       # keyed on the real hive ACMM level (L3/L4/L5). Do NOT rely on this line to
       # gate anything; it is retained only so `args` stays well-formed for any
       # non-create pr subcommand that still falls through.

@@ -1,0 +1,95 @@
+# Policy and prompt templates
+
+Hive kicks an agent by resolving a Markdown prompt template, substituting runtime variables, and typing the result into that agent's CLI session. This directory is the human-editable source mirror for the shipped policy templates. The Go binary embeds the copies under `src/pkg/policies/defaults/`; keep both locations in mind when changing defaults.
+
+## Resolution order
+
+For a scheduled kick, Hive uses the agent's configured `kick_template` when present. ACMM packs set that field explicitly in `src/pkg/config/packs/level-*.yaml`; for example L4 sets `scanner-issues.md` and `guide-issues.md`, L5 sets `*-holdgated.md`, and L6 sets `*-full.md`/`scanner-automerge.md`.
+
+The scheduler resolves the template from the configured policies directory (`policies.local_dir` plus `policies.path`, commonly `/data/policies/examples/kubestellar/agents/`) and falls back to the embedded defaults in this package. A prompt source may also fetch Markdown from an allowlisted GitHub repository at kick time; if the fetch fails, Hive uses its last cached copy or the inline/baked template rather than sending an empty kick.
+
+If an agent has no explicit template, Hive falls back by convention: first an agent-local `CLAUDE.md` style policy when present, then `<agent>.md`, then the embedded default for the role.
+
+## Mode variants
+
+Template suffixes mirror the ACMM interaction mode:
+
+| Suffix | Mode | Meaning |
+| --- | --- | --- |
+| `-advisory` | `ADVISORY` | Analyze and write advisory beads; no GitHub writes. |
+| `-issues` | `ISSUES_ONLY` | May open/update issues; no pull requests. |
+| `-holdgated` | `ISSUES_AND_PRS` at L5 | May open issues and PRs; PRs are hold-gated for humans. |
+| `-full` | `ISSUES_AND_PRS` outside L5 | May open issues and PRs without the L5 hold-gate wording. |
+| `-automerge` | `ISSUES_PRS_MERGE` | Scanner may merge on green CI when policy allows. |
+| `-nogithub` | advisory variant | Explicit no-GitHub policy used by supervisor packs. |
+
+Examples in the current packs:
+
+- `guide-issues.md` is the L4 guide policy: documentation issues are allowed, PRs are not.
+- `scanner-issues.md` is the L4 scanner policy: issue filing only.
+- `supervisor-nogithub.md` is the supervisor policy from L2 through L6; it keeps orchestration separate from GitHub mutation.
+- `brainstorm-advisory.md` is the only brainstorm template referenced by v2 HEAD, including L1 inception. `brainstorm-inception.md` is mentioned only by stale documentation, so operators should not create or rely on that filename unless they also set `kick_template` to it.
+
+## Customizing prompts
+
+Use one of these supported paths:
+
+1. **Policy checkout** — set `policies.repo`, `policies.path`, and `policies.local_dir` in `hive.yaml`. Put files with the same names as the pack templates in that directory. Hive polls the checkout and the next kick picks up changes.
+2. **Per-agent override** — set `agents.<name>.kick_template` to a filename in the policy checkout/defaults.
+3. **Dashboard or `hivectl`** — use the agent prompt editor or `hivectl agent prompt set <agent> --file policy.md`; writes land in the server's writable policy directory.
+4. **Portable agent definition** — import an `AgentDefinition` with `spec.promptTemplate`; Hive stores a baked copy and can keep selected safe fields linked to an allowlisted source.
+
+Do not put secrets in policy Markdown. Prompts are shown in logs, dashboard history, and agent panes.
+
+## Variables
+
+Kick templates reference variables as `${NAME}`. The scheduler replaces the built-in variables below on every scheduled kick; an unknown `${NAME}` is left literal. Operator-defined variables from the top-level `variables:` config block are resolved by the same engine, but built-ins win on name conflicts.
+
+The complete built-in scheduler set in v2 HEAD is:
+
+| Variable | Runtime value | Notes |
+| --- | --- | --- |
+| `${AGENT_NAME}` | Configured agent key receiving the kick, such as `scanner` or `scanner-2`. | Replicas use the materialized name. |
+| `${AGENT_DISPLAY_NAME}` | `agents.<name>.display_name` when set; otherwise the agent key. | Dashboard label. |
+| `${TIMESTAMP}` | Local wall-clock time formatted like `1/2 3:04 PM MST`. | Generated at kick render time. |
+| `${QUEUE_ISSUES}` | Count of actionable issues in the current GitHub scan. | From `ActionableResult.Issues.Count`. |
+| `${QUEUE_PRS}` | Count of actionable pull requests in the current GitHub scan. | From `ActionableResult.PRs.Count`. |
+| `${QUEUE_HOLD}` | Count of hold-gated items. | From `ActionableResult.Hold.Total`. |
+| `${SLA_VIOLATIONS}` | Count of actionable issues past the configured SLA. | From `ActionableResult.Issues.SLAViolations`. |
+| `${ISSUE_LIST}` | Formatted issue list for the agent's lane. | `scanner` sees all passed issues; other agents get lane-filtered issues. |
+| `${PR_LIST}` | Formatted pull-request list. | Empty/none formatting comes from the scheduler formatter. |
+| `${AUTHORIZED_REPOS}` | Repository authorization section for the configured project repos and GitHub host. | Built by the scheduler. |
+| `${GH_AUTH}` | GitHub App/CLI authentication instructions for the agent. | Templates/policies decide whether using GitHub writes is allowed; supervisor no-GitHub policies should not rely on this fragment. |
+| `${PROJECT_ORG}` | `project.org`. | GitHub organization/owner. |
+| `${PROJECT_NAME}` | `project.name`. | May be empty if not configured. |
+| `${PROJECT_PRIMARY_REPO}` | Primary repo as `org/repo`. | Combines `project.org` and `project.primary_repo`. |
+| `${PROJECT_AI_AUTHOR}` | Effective AI author username. | Uses config defaulting from `EffectiveAIAuthor()`. |
+| `${PROJECT_REPOS_LIST}` | Comma-separated `project.repos`. | Plain repo names as configured. |
+| `${PROJECT_HOMEBREW_REPO}` | `<project.org>/homebrew-tap`. | Convenience repo name. |
+| `${HIVE_REPO}` | `<project.org>/hive`. | Convenience repo name. |
+| `${HIVE_ID}` | `hive_id`. | May be empty for standalone configs. |
+| `${AGENT_LIST}` | Formatted enabled-agent list. | Same value as `${ENABLED_AGENTS}`. |
+| `${ENABLED_AGENTS}` | Formatted enabled-agent list. | Alias of `${AGENT_LIST}`. |
+| `${AGENT_ROLES}` | Formatted role/metadata summary for configured agents. | Built from current config. |
+| `${KNOWLEDGE}` | Knowledge priming section for relevant issues. | Populated by configured knowledge layers; otherwise renders the scheduler's empty/none text. |
+| `${INCEPTION_IDEA}` | Current inception idea text. | Empty when no inception run is active. |
+| `${INCEPTION_PHASE}` | Current inception phase. | Empty when inactive. |
+| `${INCEPTION_MODE}` | Current inception mode. | Empty when inactive. |
+| `${INCEPTION_ANSWERS}` | Collected inception answers. | Empty when inactive. |
+| `${INCEPTION_SLUG}` | Inception slug. | Empty when inactive. |
+| `${INCEPTION_REPO_URL}` | Inception repository URL. | Empty when inactive. |
+| `${MERGE_ELIGIBLE}` | Formatted merge-eligible PR list from `/var/run/hive-metrics/merge-eligible.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
+| `${CI_FAILING}` | Formatted failing-CI PR list from `/var/run/hive-metrics/ci-failing.json`. | Renders `(none)` when the file is absent, invalid, or empty. |
+
+Dashboard prompt previews substitute only the config-only subset that does not require a live GitHub scan: `${AGENT_NAME}`, `${AGENT_DISPLAY_NAME}`, `${PROJECT_NAME}`, `${PROJECT_ORG}`, `${PROJECT_PRIMARY_REPO}`, `${PROJECT_AI_AUTHOR}`, `${PROJECT_REPOS_LIST}`, `${HIVE_REPO}`, and `${HIVE_ID}`. Live-only variables such as `${ISSUE_LIST}`, `${PR_LIST}`, `${QUEUE_ISSUES}`, `${KNOWLEDGE}`, `${MERGE_ELIGIBLE}`, and `${CI_FAILING}` are resolved when the scheduler sends an actual kick.
+
+### Custom variables
+
+Custom variables are declared under `variables.defs` in `hive.yaml` and use the same `${NAME}` syntax. Names must match letters/digits/underscore and not start with a digit. `static` and `env` variables can be managed from the dashboard; `script` and `http` variables are seed/GitOps-only and require their corresponding security gates. Scope controls where a custom variable resolves: `template`, `config`, or `both`. Unresolved custom variables remain literal, matching built-in unknown-variable behavior.
+
+## Operator checklist
+
+- Match the template to the agent's `mode`; do not give an advisory agent a hold-gated template and expect GitHub writes to work.
+- Keep `stale_timeout` longer than the longest cadence in the selected ACMM pack.
+- Prefer replacing a shipped filename in a policy checkout over editing embedded files; embedded defaults change only when Hive is rebuilt.
+- After changing prompts, kick the agent once and inspect the prompt history or pane output to verify the expected file was used.

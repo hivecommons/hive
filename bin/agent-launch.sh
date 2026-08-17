@@ -49,7 +49,7 @@ fi
 
 # N14 (#3842) follow-up: a native/systemd install (kick-agents.sh, no Go
 # AgentManager) never sets HIVE_AGENT_TOKEN_CACHE — that per-agent scoped
-# cache is minted only by the container-hosted model (v2/pkg/agent/manager.go).
+# cache is minted only by the container-hosted model (src/pkg/agent/manager.go).
 # Without it, neither of this codebase's two SAFE gh-auth mechanisms apply:
 # gh-wrapper.sh isn't installed as `gh` for native installs (install.sh ships
 # it under its own name), and git-credential-hive.sh refuses without a

@@ -1,0 +1,188 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hive
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: hive
+      # SECURITY (audit N5, CWE-732/522): fsGroup pins the supplementary group
+      # Kubernetes applies to mounted volumes. Paired with `defaultMode: 0440` on
+      # the secrets projection below, it makes the GitHub App PEMs readable by
+      # `dev` (a member of hive-launch, GID 1002 — pinned in src/Dockerfile) while
+      # excluding the agent UIDs (2001+).
+      #
+      # Mode alone cannot achieve that: `dev`'s PRIMARY group is `node`, which
+      # every agent UID also shares, so 0440 root:node would still hand the org
+      # App key to any prompt-injected agent. 0400 would be root-only and lock
+      # out `dev` itself. A dedicated group is the only split that works — the
+      # same reasoning the C6 su-exec fix used for `chmod 4750 root:hive-launch`.
+      securityContext:
+        fsGroup: 1002
+      containers:
+        - name: hive
+          # Tracks the "stable" release channel rather than the mutable
+          # `:latest` tag. Channels (stable/canary/etc.) are hub-managed and
+          # get retagged to a new, reviewed digest as releases roll out — see
+          # src/pkg/hub auto-upgrade logic — so pointing at the channel name is
+          # the operator-blessed default. A hard @sha256 digest here would go
+          # stale the moment the channel advances, since nothing on this
+          # manifest re-resolves it. Self-hosted users who want a harder pin
+          # than the channel tag can replace this with a specific
+          # ghcr.io/kubestellar/hive@sha256:<digest> of a release they've
+          # reviewed and are willing to manage upgrades for manually.
+          image: ghcr.io/kubestellar/hive:stable
+          # SECURITY: drop the ambient root capability set down to only what the
+          # runtime actually needs, and pin the default seccomp profile. This
+          # container CANNOT run fully unprivileged: it starts as root to set up
+          # the ACMM MITM proxy's iptables (NET_ADMIN) and to switch each agent to
+          # its own UID via su-exec (SETUID/SETGID/SETPCAP), and it writes agent
+          # scratch state to /tmp, /run and /home — so runAsNonRoot and
+          # readOnlyRootFilesystem are intentionally NOT set (they would break
+          # agent launch). Everything else is dropped.
+          #
+          # allowPrivilegeEscalation is deliberately NOT set to false (C6): the
+          # agent-UID switch runs through the SUID su-exec helper, and
+          # `allowPrivilegeEscalation: false` sets the kernel no_new_privs bit,
+          # which DISABLES all SUID binaries — it would break agent launch
+          # outright. C6 is instead mitigated in the image (src/Dockerfile): the
+          # su-exec source is pinned by commit SHA + SHA256-verified, and the
+          # helper is chmod 4750 root:hive-launch (launcher-group-only, not
+          # world-exec 4755), so only the `dev` launcher — not agent UIDs — can
+          # exec it. Fully removing SUID (dev switches UIDs via CAP_SETUID
+          # instead) is not viable here: it needs ambient/inheritable caps that
+          # the hub's netadmin_reconcile would wipe when it JSON-Patch-replaces
+          # the whole securityContext with {NET_ADMIN} on drift. See PR body.
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN # ACMM proxy iptables redirect of outbound :443
+                - SETUID # su-exec dev->per-agent UID switch
+                - SETGID
+                - SETPCAP
+                - CHOWN # chown per-agent dirs/beads to the agent UID
+                - DAC_OVERRIDE
+          args:
+            - "--config"
+            - "/etc/hive/hive.yaml"
+          ports:
+            - name: dashboard
+              containerPort: 3002
+              protocol: TCP
+            - name: api
+              containerPort: 3002
+              protocol: TCP
+            # ttyd (:7681) is loopback-only inside the pod (reached via the
+            # authenticating /terminal proxy), so it is not declared as a
+            # containerPort — nothing should target it directly.
+          env:
+            - name: HIVE_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hive-secrets
+                  key: HIVE_GITHUB_TOKEN
+                  optional: true
+            - name: HIVE_DASHBOARD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hive-secrets
+                  key: HIVE_DASHBOARD_TOKEN
+                  optional: true
+            - name: HIVE_VLLM_ENDPOINT
+              value: "http://vllm-svc.hive-inference.svc.cluster.local:8000"
+            - name: HIVE_LLMD_ENDPOINT
+              value: "http://llm-d-epp.hive-inference.svc.cluster.local:8000"
+            - name: HIVE_VLLM_MODELS
+              value: "qwen2.5-0.5b-instruct"
+            - name: HIVE_LLMD_MODELS
+              value: "qwen2.5-0.5b-instruct"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/hive
+              readOnly: true
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+            - name: data
+              mountPath: /data
+          # startupProbe holds the liveness clock off until the process has
+          # finished booting, so a slow start can never race the liveness
+          # timer into a restart loop. failureThreshold x periodSeconds
+          # (30 x 5s = 150s) is the boot budget.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            # /api/livez checks that the HTTP server responds AND that the
+            # heartbeat loop is still *attempting* sends — i.e. it only fails
+            # when the process is genuinely wedged, which a restart fixes.
+            # It deliberately does NOT fail on a stale heartbeat: an
+            # unreachable hub is a connectivity problem no restart can fix,
+            # and gating liveness on it crash-loops healthy pods on
+            # firewalled clusters. That signal lives in /api/health/deep.
+            # See pkg/dashboard/server.go handleLivez.
+            httpGet:
+              path: /api/livez
+              port: api
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: config
+          configMap:
+            name: hive-config
+        - name: secrets
+          secret:
+            secretName: hive-secrets
+            optional: true
+            # SECURITY (audit N5, CWE-732/522): without defaultMode Kubernetes
+            # projects Secret files 0644 — world-readable to every UID in the
+            # pod, so any agent (2001+) could read the org GitHub App private
+            # key. app_id + installation_id + key_file is all it takes to mint a
+            # full installation token (see bin/gh-app-token.sh), so this was a
+            # direct privilege escalation.
+            #
+            # The entrypoint's compensating `chmod 600 /secrets/*.pem` CANNOT
+            # fix it: /secrets is a read-only tmpfs projection, so chmod returns
+            # EROFS and the `2>/dev/null || true` swallows both the error and
+            # the exit code — it fails silently and the 0644 mode survives.
+            # 0440 + the pod-level fsGroup above is the enforcement.
+            defaultMode: 0440
+        - name: data
+          persistentVolumeClaim:
+            claimName: hive-data

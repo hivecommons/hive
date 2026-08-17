@@ -1,6 +1,6 @@
 # Hive configuration files
 
-This directory contains configuration used by the top-level Hive helper scripts. It is not the same as the v2 Go binary config in `v2/hive.yaml.example`.
+This directory contains configuration used by the top-level Hive helper scripts. It is not the same as the v2 Go binary config in `src/hive.yaml.example`.
 
 ## `hive-project.yaml`
 
@@ -12,11 +12,11 @@ This directory contains configuration used by the top-level Hive helper scripts.
 
 Install it at `/etc/hive/hive-project.yaml`, or point the scripts at another path with `HIVE_PROJECT_CONFIG` and `HIVE_PROJECT_YAML`.
 
-## How it differs from `v2/hive.yaml`
+## How it differs from `src/hive.yaml`
 
 | File | Used by | Purpose |
 |---|---|---|
 | `config/hive-project.yaml.example` | Top-level `bin/` shell automation and deterministic pre-kick pipeline | Project/org/repo metadata, enabled script agents, beads base directory, health-check workflow names, outreach metadata, and optional GitHub App values for script token minting. |
-| `v2/hive.yaml.example` | The v2 Go `hive` binary, dashboard, governor, agent manager, hub, and API server | Runtime config for the containerized v2 service: project, agents, governor modes, GitHub auth, dashboard auth, data paths, knowledge, hub/spoke settings, and ACMM level. |
+| `src/hive.yaml.example` | The v2 Go `hive` binary, dashboard, governor, agent manager, hub, and API server | Runtime config for the containerized v2 service: project, agents, governor modes, GitHub auth, dashboard auth, data paths, knowledge, hub/spoke settings, and ACMM level. |
 
-Use `v2/hive.yaml` for normal v2 Docker/Kubernetes operation. Use `hive-project.yaml` only when you run the top-level `bin/` scripts or the deterministic pipeline directly.
+Use `src/hive.yaml` for normal v2 Docker/Kubernetes operation. Use `hive-project.yaml` only when you run the top-level `bin/` scripts or the deterministic pipeline directly.

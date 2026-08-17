@@ -52,7 +52,7 @@ const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 // root) or die on EACCES trying (any other uid — the write was uncaught), and
 // detectCapabilities() would misreport the hub's own cache as this relay's
 // credential. Distinct filename, same directory, so the contributor container
-// (which owns /var/run/hive-metrics — v2/Dockerfile.contributor) behaves as
+// (which owns /var/run/hive-metrics — src/Dockerfile.contributor) behaves as
 // before. See kubestellar/hive#1861 / #3842 (audit N14).
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
   ? '/var/run/hive-metrics/contributor-gh-token.cache'
@@ -136,7 +136,7 @@ const TASK_UNAVAILABLE_RETRY_MS = 30000;
 // optional — an older hub simply ignores it) and the hub advertises its own
 // version + capability set back on auth_ok.
 //
-// MUST equal contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go:
+// MUST equal contributorProtocolVersion in src/pkg/dashboard/contribute_protocol.go:
 // the hub and this relay ship from the same tree, so they speak the same version
 // by construction. That was previously only a comment, and it drifted — #2600
 // shipped both at 1.1, #2671 bumped the hub to 1.2 for credential_after_accept
@@ -499,7 +499,7 @@ const HEADLESS_BACKENDS = {
   // documented non-interactive entry point (#2828): `-t` takes the prompt as
   // its VALUE (not a trailing positional), and --no-session skips creating or
   // resuming a session file, which one-shot dispatch never needs. Verified
-  // against goose 1.37.0 — the version v2/Dockerfile pins via GOOSE_VERSION —
+  // against goose 1.37.0 — the version src/Dockerfile pins via GOOSE_VERSION —
   // that `run`, `-t` and `--no-session` all exist and that a failed run exits
   // non-zero, which is the exit-code contract runHeadlessTask() relies on.
   goose: { flag: ['run', '--no-session', '-t'] },

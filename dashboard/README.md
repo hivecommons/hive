@@ -2,7 +2,7 @@
 
 This directory is a **legacy/static dashboard support area**, not the primary v2 dashboard server.
 
-The live v2 dashboard is implemented in Go under `v2/pkg/dashboard/`, with the current frontend embedded from `v2/pkg/dashboard/static/index.html` and served through the Node auth/rewrite proxy in `v2/proxy/`. The v2 image still copies this root `dashboard/` directory to `/opt/hive/dashboard/` because the v2 dashboard API calls `build-snapshot.mjs` from there when it builds read-only `/snapshot` pages, and the publish scripts use the same builder for kubestellar.io live snapshots.
+The live v2 dashboard is implemented in Go under `src/pkg/dashboard/`, with the current frontend embedded from `src/pkg/dashboard/static/index.html` and served through the Node auth/rewrite proxy in `src/proxy/`. The v2 image still copies this root `dashboard/` directory to `/opt/hive/dashboard/` because the v2 dashboard API calls `build-snapshot.mjs` from there when it builds read-only `/snapshot` pages, and the publish scripts use the same builder for kubestellar.io live snapshots.
 
 ## What is here
 
@@ -22,8 +22,8 @@ cd dashboard
 npm test
 ```
 
-The package only declares the Node test script; it is separate from the v2 Go test suite under `v2/`.
+The package only declares the Node test script; it is separate from the v2 Go test suite under `src/`.
 
 ## Editing guidance
 
-For live v2 dashboard features, edit `v2/pkg/dashboard/`, `v2/pkg/dashboard/static/index.html`, or `v2/proxy/`. Edit this directory when changing snapshot generation/publishing, the fallback OpenAPI bundle, or legacy helper scripts.
+For live v2 dashboard features, edit `src/pkg/dashboard/`, `src/pkg/dashboard/static/index.html`, or `src/proxy/`. Edit this directory when changing snapshot generation/publishing, the fallback OpenAPI bundle, or legacy helper scripts.

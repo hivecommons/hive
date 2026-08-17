@@ -1,6 +1,6 @@
 # Agent backend setup
 
-Hive validates backend names in `v2/pkg/config` and launches CLIs in `v2/pkg/agent/manager.go`. `backend:` selects the runtime for an agent; inference backends are covered separately in [inference-backends.md](inference-backends.md).
+Hive validates backend names in `src/pkg/config` and launches CLIs in `src/pkg/agent/manager.go`. `backend:` selects the runtime for an agent; inference backends are covered separately in [inference-backends.md](inference-backends.md).
 
 ## CLI backends
 
@@ -36,7 +36,7 @@ The dashboard **Test key** probe intentionally sends `User-Agent: bobshell`. IBM
 
 ## Contributor relay image
 
-`v2/Dockerfile.contributor` builds the ClankeR image used by `just contribute-hive`. It installs Claude Code, Copilot, Codex, Bob, Goose, Pi, `gh`, Go, tmux, and the relay scripts. `v2/compose-contributor.yaml` runs that image with your local Hive config and selected backend. It mounts `${HOME}/.config/hive`, `${HOME}/.claude`, and `${HOME}/.config/claude-code` read-only, then reads the registered `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` from `${HOME}/.config/hive/contributor.env` inside the container.
+`src/Dockerfile.contributor` builds the ClankeR image used by `just contribute-hive`. It installs Claude Code, Copilot, Codex, Bob, Goose, Pi, `gh`, Go, tmux, and the relay scripts. `src/compose-contributor.yaml` runs that image with your local Hive config and selected backend. It mounts `${HOME}/.config/hive`, `${HOME}/.claude`, and `${HOME}/.config/claude-code` read-only, then reads the registered `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` from `${HOME}/.config/hive/contributor.env` inside the container.
 
 ```bash
 AGENT_BACKEND=claude just contribute-hive

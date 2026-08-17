@@ -155,7 +155,7 @@ if docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -qE '(v2
 else
   fail "Hive image: not built"
   if [[ -d "${HIVE_DIR}" ]]; then
-    try_fix "cd ${HIVE_DIR} && docker compose -f v2/docker-compose.yaml build" \
+    try_fix "cd ${HIVE_DIR} && docker compose -f src/docker-compose.yaml build" \
       && pass "Hive image: built"
   fi
 fi
@@ -184,14 +184,14 @@ fi
 
 # Check for a hive.yaml project config
 HIVE_YAML_COUNT=0
-for yaml in "${HIVE_DIR}"/v2/deploy/hive*.yaml; do
+for yaml in "${HIVE_DIR}"/src/deploy/hive*.yaml; do
   if [[ -f "$yaml" ]] && grep -q "^project:" "$yaml" 2>/dev/null; then
     pass "Hive config: $(basename "$yaml")"
     HIVE_YAML_COUNT=$((HIVE_YAML_COUNT + 1))
   fi
 done
 if [[ "$HIVE_YAML_COUNT" -eq 0 ]]; then
-  fail "No hive.yaml config found in ${HIVE_DIR}/v2/deploy/"
+  fail "No hive.yaml config found in ${HIVE_DIR}/src/deploy/"
 fi
 
 # ── Running Container ─────────────────────────────────────────────

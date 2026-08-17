@@ -363,7 +363,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
 #        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (native mode, claude)
 # Runtime: auto-detects docker then podman (discovery order, not posture —
-# see v2/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
+# see src/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -508,7 +508,7 @@ contribute-hive backend="" mode="docker": check-version
       # A contributor who wants rootless-by-default should set
       # HIVE_CONTAINER_RUNTIME=podman explicitly; the page selector does
       # the same. Rootless Podman handling is exercised by hand, not yet
-      # by CI — see v2/docs/podman-rootless-ci.md (#2535 Option C) for the
+      # by CI — see src/docs/podman-rootless-ci.md (#2535 Option C) for the
       # test-intent seam. We are deliberately NOT re-ordering this detect
       # to prefer Podman (that's Option A) until that CI coverage exists.
       RUNTIME="{{container_runtime}}"

@@ -5,7 +5,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 ## Prerequisites
 
 - Git and GitHub CLI (`gh`) for normal issue and PR workflows.
-- Go `1.25.6`, as declared by [`v2/go.mod`](../v2/go.mod).
+- Go `1.25.6`, as declared by [`src/go.mod`](../src/go.mod).
 - Docker or Podman if you are exercising containerized contributor relay or deployment paths.
 - `tmux` for local agent/contributor workflows that attach CLIs to terminal sessions.
 - `just` if you use the repository's helper recipes (`brew install just` on macOS, or install from the `just` project for your platform).
@@ -39,14 +39,14 @@ go build ./cmd/hive
 
 ## Test
 
-Run the module tests from `v2/`:
+Run the module tests from `src/`:
 
 ```bash
 cd v2
 go test ./...
 ```
 
-The `v2/test/` package contains integration/regression coverage and may exercise local ports, temporary state, and helper processes. If a local environment dependency prevents a full run, include the failing package and error summary in the PR and still run the narrower package tests affected by your change.
+The `src/test/` package contains integration/regression coverage and may exercise local ports, temporary state, and helper processes. If a local environment dependency prevents a full run, include the failing package and error summary in the PR and still run the narrower package tests affected by your change.
 
 Useful narrower loops:
 
@@ -103,7 +103,7 @@ Current public recipes are centered on the **contribute** workflow:
 - `just contribute-k8s [namespace] [outfile] [image_tag]` — print Kubernetes manifests for a headless contributor workload; it prints or writes the manifest you request and does not apply it.
 - `just hive-api <endpoint>` and `just hive-api-docs` — inspect hub API endpoints for the configured hive.
 
-Deployment and development tasks that are not listed by `just --list` are not public recipes today. Use the Go, Docker Compose, and Kubernetes commands documented in the README and `v2/docs/` for those workflows.
+Deployment and development tasks that are not listed by `just --list` are not public recipes today. Use the Go, Docker Compose, and Kubernetes commands documented in the README and `src/docs/` for those workflows.
 
 ## Before opening a PR
 

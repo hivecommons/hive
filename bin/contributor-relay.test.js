@@ -1605,7 +1605,7 @@ test('the /tmp cleanup find scopes its -o group (N20: no cross-owner *.html dele
 // ---------------------------------------------------------------------------
 // Capability declaration — agent CLI version (kubestellar/hive#2547, DECLARE).
 //
-// The hub schema, v2/docs/contributor-relay.md and the Operations row ("cli
+// The hub schema, src/docs/contributor-relay.md and the Operations row ("cli
 // 1.2.3") all carried agent_cli_version, but the relay never sent it, so the
 // column was blank for every connected client. These pin the probe AND — more
 // importantly — that failing to probe stays a first-class outcome: an omitted
@@ -1800,7 +1800,7 @@ test('the relay declares the same protocol version the hub speaks', () => {
   // 1.2 and left the relay at 1.1). Pinned from both sides — the Go half is
   // TestRelayProtocolVersionMatchesHub.
   const goSrc = fs.readFileSync(
-    path.join(__dirname, '..', 'v2', 'pkg', 'dashboard', 'contribute_protocol.go'), 'utf8');
+    path.join(__dirname, '..', 'src', 'pkg', 'dashboard', 'contribute_protocol.go'), 'utf8');
   const m = /const contributorProtocolVersion = "([^"]*)"/.exec(goSrc);
   assert.ok(m, 'could not find contributorProtocolVersion in contribute_protocol.go');
   const relay = loadRelay();

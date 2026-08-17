@@ -34,7 +34,7 @@ LOG="/var/log/hive.log"
 # NodeSource APT signing key, as published at
 # https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key — pinned
 # 2026-08-17. Must stay in lockstep with the same pin in
-# v2/Dockerfile.contributor (NODESOURCE_KEY_SHA256). Before bumping,
+# src/Dockerfile.contributor (NODESOURCE_KEY_SHA256). Before bumping,
 # re-verify the new key against NodeSource's documented fingerprint
 # (6F71 F525 2828 41EE DAF8 51B4 2F59 B5F9 9B1B E0B4):
 #   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sha256sum
@@ -307,7 +307,7 @@ install_tools() {
     # NodeSource GPG key and APT source directly so apt verifies package
     # signatures before installing — no third-party script runs as root — and
     # verify the key itself against the pinned SHA-256 BEFORE trusting it
-    # (mirrors the NODESOURCE_KEY_SHA256 check in v2/Dockerfile.contributor).
+    # (mirrors the NODESOURCE_KEY_SHA256 check in src/Dockerfile.contributor).
     # Without the key pin, a compromised deb.nodesource.com or a DNS hijack
     # could swap in a malicious signing key that apt would then trust for
     # every nodejs package.

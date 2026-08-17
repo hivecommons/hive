@@ -14,7 +14,7 @@ on:
   # so a red PR fails the check without also filing an issue.
   pull_request:
     branches: [v2, v4]
-    paths: ['v2/**', '.github/workflows/v2-tests.yml']
+    paths: ['src/**', '.github/workflows/v2-tests.yml']
 
 permissions:
   contents: read
@@ -25,14 +25,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: v2
+        working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
 
       # ./cmd/... is included deliberately. It used to be ./pkg/... only, so no
       # workflow anywhere ran the cmd tests — v2-ci.yml builds and vets but does

@@ -9,7 +9,7 @@
 // (NODE_EXTRA_CA_CERTS — required behind the egress proxy). That makes it work
 // in auth configurations the dashboard's raw-HTTP /models probe cannot reach.
 //
-// Contract with the Go caller (v2/pkg/dashboard/cli_models.go):
+// Contract with the Go caller (src/pkg/dashboard/cli_models.go):
 //   - success: exactly ONE line of JSON on stdout —
 //       {"models":[{"id":...,"name":...,"policyState":...,"efforts":[...],"defaultEffort":...}]}
 //     and exit code 0.
@@ -35,7 +35,7 @@ const EXIT_OK = 0;
 const EXIT_FAIL = 1;
 
 // Node entry of the PINNED copilot CLI installed globally by the image
-// (v2/Dockerfile Layer 3). The image deletes the CLI's native binary so the
+// (src/Dockerfile Layer 3). The image deletes the CLI's native binary so the
 // CLI runs its Node.js path (which honors NODE_EXTRA_CA_CERTS); pointing the
 // SDK's runtime connection at THIS entry guarantees the probe runs the fleet's
 // pinned CLI — never the newer @github/copilot the SDK bundles as its own

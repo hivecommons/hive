@@ -10,11 +10,11 @@ on:
   #
   # v4 added here (#3903): development moved to v4 and this filter still said
   # v2, so the pre-merge half of the gate had silently stopped covering every PR
-  # that actually lands. `v2/**` is the Go module directory on BOTH branches —
+  # that actually lands. `src/**` is the Go module directory on BOTH branches —
   # it is the module path, not the branch name — so the path filter is unchanged.
   pull_request:
     branches: [v2, v4]
-    paths: ['v2/**']
+    paths: ['src/**']
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
       measured_ref: ${{ steps.coverage.outputs.measured_ref }}
     defaults:
       run:
-        working-directory: v2
+        working-directory: src
     steps:
       # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
       # to the branch whose floor this gate reports on hourly.
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
 
       # The coverage run must NOT abort this job on a test failure: the
       # per-package check below is what turns a failure into a readable report.

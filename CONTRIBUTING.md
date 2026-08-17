@@ -13,18 +13,18 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 
 ## Repository layout
 
-- `v2/` — the current Go module (`github.com/kubestellar/hive/v2`) and the main development target for this repository.
-  - `v2/cmd/hive` — main Hive binary.
-  - `v2/cmd/hivectl`, `v2/cmd/apiproxy`, `v2/cmd/hive-backup` — supporting command-line tools.
-  - `v2/pkg/` — Go packages for agents, GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
-  - `v2/policies/` — policy prompts and rule files used by the deterministic/agent pipeline. Treat policy changes like code: review the behavior they enable, test where possible, and explain risk in the PR.
-  - `v2/deploy/` and `v2/examples/` — deployment manifests and example configuration.
-  - `v2/docs/` — architecture and operator/developer reference material.
-  - `v2/test/` — integration and regression tests.
+- `src/` — the current Go module (`github.com/kubestellar/hive`) and the main development target for this repository.
+  - `src/cmd/hive` — main Hive binary.
+  - `src/cmd/hivectl`, `src/cmd/apiproxy`, `src/cmd/hive-backup` — supporting command-line tools.
+  - `src/pkg/` — Go packages for agents, GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
+  - `src/policies/` — policy prompts and rule files used by the deterministic/agent pipeline. Treat policy changes like code: review the behavior they enable, test where possible, and explain risk in the PR.
+  - `src/deploy/` and `src/examples/` — deployment manifests and example configuration.
+  - `src/docs/` — architecture and operator/developer reference material.
+  - `src/test/` — integration and regression tests.
 - `bin/` — deterministic pipeline, supervision, enforcement, deployment, and maintainer helper scripts. See [`bin/README.md`](bin/README.md) for the script-by-script index.
 - `config/hive-project.yaml.example` — project metadata for the top-level
   deterministic shell pipeline; see [config/README.md](config/README.md). This
-  is separate from the v2 Go runtime config in `v2/hive.yaml.example`.
+  is separate from the v2 Go runtime config in `src/hive.yaml.example`.
 - `dashboard/`, `docs/`, `config/`, `systemd/`, `launchd/`, and top-level scripts — supporting assets for hub, dashboard, installation, and operational workflows.
 - `Justfile` — contributor relay recipes; see [Just recipes](docs/development.md#just-recipes).
 
@@ -49,7 +49,7 @@ go build ./...
 go test ./...
 ```
 
-The Go version is declared in [`v2/go.mod`](v2/go.mod). Install that version or newer compatible tooling before building.
+The Go version is declared in [`src/go.mod`](src/go.mod). Install that version or newer compatible tooling before building.
 
 ## Contributor `just` recipes
 
@@ -67,7 +67,7 @@ The root [`Justfile`](Justfile) exposes the public contributor relay workflow. R
 | `just hive-api <endpoint>` | Calls a hub API endpoint, defaulting to `/status`, using the configured hive URL. |
 | `just hive-api-docs` | Opens the hub API documentation in a browser. |
 
-See [v2/docs/contributor-relay.md](v2/docs/contributor-relay.md) for the end-to-end contributor relay workflow and Kubernetes workload details.
+See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) for the end-to-end contributor relay workflow and Kubernetes workload details.
 
 ## Style and quality
 

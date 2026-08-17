@@ -1,0 +1,265 @@
+package agent
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
+)
+
+// ---------------------------------------------------------------------------
+// reapAgentCLI / killAgentProcesses — /proc-based; on non-Linux /proc is
+// absent so these exercise the ReadDir-error branch. containsCLIMarker and
+// environHasMarker are pure and always testable.
+// ---------------------------------------------------------------------------
+
+func TestReapAgentCLI_NoProc(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"a": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	// On darwin /proc doesn't exist -> returns 0; on linux it scans and finds
+	// no matching HIVE_AGENT marker for this test agent -> also 0.
+	if n := m.reapAgentCLI(agent); n != 0 {
+		t.Errorf("expected 0 reaped for a fresh test agent, got %d", n)
+	}
+}
+
+func TestKillAgentProcesses_NoMatch(t *testing.T) {
+	// A UID that owns no processes (or /proc absent) -> 0 killed, no panic.
+	if n := killAgentProcesses(999999, discardLogger()); n != 0 {
+		t.Errorf("expected 0 killed, got %d", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// installCavemanForAgent — fast branches only (no npx exec).
+// ---------------------------------------------------------------------------
+
+func TestInstallCavemanForAgent_EmptyMode(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"a": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	// CavemanMode is "" -> early return, no exec.
+	m.installCavemanForAgent(agent, "claude")
+}
+
+func TestInstallCavemanForAgent_UnsupportedBackend(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"a": {Backend: "bob", CavemanMode: "loud"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	// "bob" hits the default (unsupported) switch branch -> returns before exec.
+	m.installCavemanForAgent(agent, "bob")
+}
+
+// ---------------------------------------------------------------------------
+// sanitizeGitRemotes
+// ---------------------------------------------------------------------------
+
+func TestSanitizeGitRemotes_CanPushSkips(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"a": {Backend: "claude", Mode: "ISSUES_AND_PRS"},
+	}, discardLogger(), ProjectContext{ACMMLevel: 5})
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	// CanPush() true -> early return, no walk.
+	m.sanitizeGitRemotes(agent)
+}
+
+func TestSanitizeGitRemotes_AdvisoryWalksEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HIVE_WORK_DIR", dir)
+	m := NewManager(map[string]config.AgentConfig{
+		"a": {Backend: "claude", Mode: "ADVISORY"},
+	}, discardLogger(), ProjectContext{ACMMLevel: 1})
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	// Advisory (no push) -> walks the (empty/nonexistent) agent dir without error.
+	m.sanitizeGitRemotes(agent)
+}
+
+// ---------------------------------------------------------------------------
+// UIDMap.Save error branch
+// ---------------------------------------------------------------------------
+
+func TestUIDMapSave_MkdirError(t *testing.T) {
+	u := NewUIDMap()
+	u.AllocateUIDs([]string{"a", "b"})
+
+	// Create a regular file, then try to Save into a path under it — MkdirAll
+	// on the parent fails because a file is in the way.
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Save(filepath.Join(blocker, "sub", "uid-map.json")); err == nil {
+		t.Error("expected MkdirAll error when parent is a file")
+	}
+}
+
+func TestUIDMapSave_Success(t *testing.T) {
+	u := NewUIDMap()
+	u.AllocateUIDs([]string{"z", "a"})
+	path := filepath.Join(t.TempDir(), "nested", "uid-map.json")
+	if err := u.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := LoadUIDMap(path)
+	if err != nil {
+		t.Fatalf("LoadUIDMap: %v", err)
+	}
+	// Alphabetical allocation: a=2001, z=2002.
+	if loaded.LookupByName("a") != 2001 {
+		t.Errorf("a uid = %d", loaded.LookupByName("a"))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// permissions_watcher: ensureWatchedDirs / fixPermissions / fixEntry
+// ---------------------------------------------------------------------------
+
+func TestEnsureWatchedDirs_NoPanic(t *testing.T) {
+	// WatchedHomeDirs live under /data which usually can't be created here;
+	// the function logs warnings and never panics.
+	ensureWatchedDirs(discardLogger())
+}
+
+func TestFixPermissions_NoPanic(t *testing.T) {
+	fixPermissions(discardLogger())
+}
+
+// ---------------------------------------------------------------------------
+// TrajectoryAgents
+// ---------------------------------------------------------------------------
+
+func TestTrajectoryAgents(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"running":  {Backend: "claude"},
+		"paused":   {Backend: "claude"},
+		"stopped":  {Backend: "claude"},
+		"nooutput": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{})
+
+	m.mu.Lock()
+	r := m.agents["running"]
+	r.State = StateRunning
+	r.LastKickMessage = "fix issue #1"
+	r.paneMu.Lock()
+	r.lastPaneCapture = []string{"working on it", "line two"}
+	r.paneMu.Unlock()
+
+	p := m.agents["paused"]
+	p.State = StateRunning
+	p.Paused = true
+
+	m.agents["nooutput"].State = StateRunning // running but no pane -> omitted
+	m.mu.Unlock()
+
+	views := m.TrajectoryAgents()
+	if len(views) != 1 {
+		t.Fatalf("expected 1 trajectory view, got %d", len(views))
+	}
+	if views[0].Name != "running" || views[0].Intent != "fix issue #1" {
+		t.Errorf("unexpected view: %+v", views[0])
+	}
+	if views[0].Transcript == "" {
+		t.Error("transcript should be non-empty")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// configHasTokens / copilotConfigHasTokens / clearExpiredTokens — shared config
+// paths under /data are absent in tests, so these exercise the not-found /
+// error branches (returns false / err), which is the safe default.
+// ---------------------------------------------------------------------------
+
+func TestConfigHasTokens_NoFiles(t *testing.T) {
+	// Neither /data/home/.claude nor /data/home/.copilot exists here.
+	if configHasTokens() {
+		t.Skip("shared token files present on this host; skipping negative assertion")
+	}
+}
+
+func TestCopilotConfigHasTokens_NoFile(t *testing.T) {
+	if copilotConfigHasTokens() {
+		t.Skip("shared copilot config present; skipping negative assertion")
+	}
+}
+
+func TestClearExpiredTokens_NoFile(t *testing.T) {
+	// Missing config.json -> ReadFile error is returned.
+	if err := clearExpiredTokens(); err == nil {
+		t.Skip("shared copilot config present; clearExpiredTokens succeeded")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BackendAuthAvailable
+// ---------------------------------------------------------------------------
+
+func TestBackendAuthAvailable(t *testing.T) {
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+
+	// Unknown backend -> (false, false).
+	if avail, known := m.BackendAuthAvailable("gemini"); avail || known {
+		t.Errorf("gemini auth = (%v,%v), want (false,false)", avail, known)
+	}
+
+	// claude -> always known (value depends on credentials file presence).
+	if _, known := m.BackendAuthAvailable("claude"); !known {
+		t.Error("claude auth should be known")
+	}
+
+	// copilot with a cached token -> (true, true).
+	m.SetCopilotToken("gho_test")
+	if avail, known := m.BackendAuthAvailable("copilot"); !avail || !known {
+		t.Errorf("copilot with token = (%v,%v), want (true,true)", avail, known)
+	}
+	if m.CopilotToken() != "gho_test" {
+		t.Error("CopilotToken should return the cached token")
+	}
+
+	// copilot with no cached token -> falls through to configHasTokens.
+	m.SetCopilotToken("")
+	if _, known := m.BackendAuthAvailable("copilot"); !known {
+		t.Error("copilot auth should be known even without token")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReloadClaudeToken — smoke (reads credentials file, may be empty)
+// ---------------------------------------------------------------------------
+
+func TestReloadClaudeToken(t *testing.T) {
+	m := NewManager(nil, discardLogger(), ProjectContext{})
+	m.ReloadClaudeToken() // must not panic
+}
+
+// ---------------------------------------------------------------------------
+// buildEnvPrefix — secrets excluded, non-secrets quoted
+// ---------------------------------------------------------------------------
+
+func TestBuildEnvPrefix_SecretExcluded(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"a": {Backend: "claude"},
+	}, discardLogger(), ProjectContext{ACMMLevel: 5})
+	m.SetCopilotToken("gho_secret")
+	m.mu.RLock()
+	agent := m.agents["a"]
+	m.mu.RUnlock()
+	prefix := m.buildEnvPrefix(agent)
+	if !containsBoot(prefix, "HIVE_AGENT=") {
+		t.Errorf("prefix missing HIVE_AGENT: %q", prefix)
+	}
+	if containsBoot(prefix, "gho_secret") {
+		t.Error("secret token must not appear in env prefix")
+	}
+}

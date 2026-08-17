@@ -2,7 +2,7 @@
 
 The scripts in this directory are the deterministic shell/Node/Python layer around Hive's agent runtime. They enumerate work, classify it, gate merges, enforce GitHub permissions, launch/supervise CLIs, and publish operational telemetry before an LLM is asked to act.
 
-Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy.sh`; several write machine-readable state under `/var/run/hive-metrics` for the dashboard, governor, and agent prompts. For the architecture context, see [`v2/docs/architecture.md`](../v2/docs/architecture.md#4-the-deterministic-pipeline).
+Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy.sh`; several write machine-readable state under `/var/run/hive-metrics` for the dashboard, governor, and agent prompts. For the architecture context, see [`src/docs/architecture.md`](../src/docs/architecture.md#4-the-deterministic-pipeline).
 
 ## Pre-kick pipeline and merge gates
 
