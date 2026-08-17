@@ -1012,11 +1012,21 @@ func TestHandleKickBadJSON(t *testing.T) {
 	_ = w.Code
 }
 
+// beadsCreateAsOwner stamps the request with the server-verified owner
+// identity requireOwnerRole demands: the role header AND the internal
+// verification marker authenticate sets only for trusted owner sessions.
+// Handler tests bypass the auth middleware, so they must stamp both.
+func beadsCreateAsOwner(req *http.Request) {
+	req.Header.Set("X-Hive-Role", "owner")
+	req.Header.Set(ownerRoleVerifiedHeader, "true")
+}
+
 func TestHandleBeadsCreateUnknownAgent(t *testing.T) {
 	srv := newFullServer(t)
 	body := `{"title":"test bead"}`
 	req := httptest.NewRequest("POST", "/api/beads/nonexistent", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1030,6 +1040,7 @@ func TestHandleBeadsCreateMissingTitle(t *testing.T) {
 	body := `{"type":"advisory"}`
 	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1044,6 +1055,7 @@ func TestHandleBeadsCreateTitleTooLong(t *testing.T) {
 	body := `{"title":"` + longTitle + `"}`
 	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1057,6 +1069,7 @@ func TestHandleBeadsCreateBadPriority(t *testing.T) {
 	body := `{"title":"test","priority":99}`
 	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1069,6 +1082,7 @@ func TestHandleBeadsCreateBadJSON(t *testing.T) {
 	srv := newFullServer(t)
 	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(`{invalid`))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -1082,11 +1096,58 @@ func TestHandleBeadsCreateSuccess(t *testing.T) {
 	body := `{"title":"test bead","type":"advisory","priority":1,"external_ref":"test/ref","metadata":{"key1":"val1"}}`
 	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	beadsCreateAsOwner(req)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusCreated && w.Code != http.StatusOK {
 		t.Errorf("expected 201 or 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleBeadsCreateRequiresOwner is the positive control for the owner
+// gate this fix adds (#3914): with no identity at all, bead creation must be
+// refused before any validation runs — otherwise any authenticated non-owner
+// can inject beads into an agent's store and poison audit signals.
+func TestHandleBeadsCreateRequiresOwner(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"title":"test bead"}`
+	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 without owner identity, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleBeadsCreateSpoofedRoleRejected replays the exact spoof vector the
+// gate exists for: a client-supplied X-Hive-Role: owner WITHOUT the
+// server-only verification marker (authenticate strips inbound markers and
+// sets it only for trusted owner sessions) must still be refused.
+func TestHandleBeadsCreateSpoofedRoleRejected(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"title":"test bead"}`
+	req := httptest.NewRequest("POST", "/api/beads/scanner", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "owner") // spoofed: no verified marker
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for spoofed unverified owner role, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestBeadsCreateOwnerGateInSource asserts the gate exists in the handler
+// source itself (the F16 pattern): a refactor that drops the requireOwnerRole
+// call from handleBeadsCreate must fail here even if the HTTP tests are
+// reshuffled.
+func TestBeadsCreateOwnerGateInSource(t *testing.T) {
+	body := f16HandlerBody(t, f16ReadSource(t, "api.go"), "handleBeadsCreate")
+	if !strings.Contains(body, "requireOwnerRole(w, r)") {
+		t.Error("handleBeadsCreate must call requireOwnerRole — bead creation writes into an agent's store (#3914)")
 	}
 }
 
