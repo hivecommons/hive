@@ -258,6 +258,33 @@ func TestAuthorizerTransferWorkflowUsesDedicatedOldActorAuthorizedOperation(t *t
 	}
 }
 
+func TestAuthorizerTransferIntentSeparatesHumanActorFromAppStatusWriter(t *testing.T) {
+	marker, err := newAuthorizerTransferMarker("owner/repo", 456, 789)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	intent := AuthorizerTransferIntent{
+		SchemaVersion: authorizerTransferIntentSchema, Phase: authorizerTransferAuthorized,
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", VisualHive: true, ExecutionMode: ExecutionLocal,
+		SourceConfigDigest: strings.Repeat("a", 64), OldAuthorizerID: 456, OldAuthorizerLogin: "old-owner",
+		NewAuthorizerID: 789, NewAuthorizerLogin: "new-owner", WriterID: 202, WriterLogin: "hive-test[bot]", WriterType: "Bot",
+		Reason: "rotate accountable owner", Branch: managedOperationBranch(string(OperationAuthorizerTransfer), "123"),
+		BaseSHA: strings.Repeat("b", 40), HeadSHA: strings.Repeat("c", 40), Marker: marker,
+		ChangedFiles: []string{".hive/integrated.json"}, PRNumber: 11, PRURL: "https://github.test/owner/repo/pull/11",
+		PullDiffDigest: strings.Repeat("d", 64), SetupDiffDigest: strings.Repeat("e", 64),
+		AuthorizationContext: SetupAuthorizationContextPrefix + strings.Repeat("f", 64), AuthorizationStatus: 901, AuthorizationCreator: 202,
+		PreparedAt: now, PullRecordedAt: now, AuthorizedAt: now,
+	}
+	if err := validateAuthorizerTransferIntent(intent); err != nil {
+		t.Fatalf("App-written transfer authorization was rejected: %v", err)
+	}
+	intent.AuthorizationCreator = intent.OldAuthorizerID
+	if err := validateAuthorizerTransferIntent(intent); err == nil {
+		t.Fatal("human actor was accepted as the App-written status creator")
+	}
+}
+
 type authorizerTransferFixture struct {
 	t              *testing.T
 	stateDir       string

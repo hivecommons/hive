@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 func doIntegratedPost(server *Server, path string, body any) *httptest.ResponseRecorder {
@@ -17,8 +19,8 @@ func doIntegratedPost(server *Server, path string, body any) *httptest.ResponseR
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(data)))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "alice")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 	return recorder
 }
@@ -28,31 +30,25 @@ func configureIntegratedLifecycleTestOwner(t *testing.T, server *Server, deps *D
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.Org = "owner"
 	deps.Config.Project.PrimaryRepo = "repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-owner-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(token string) (string, error) {
-		if token != "saved-owner-token" {
-			t.Fatalf("unexpected lifecycle token")
-		}
-		return "alice", nil
-	}
+	configureIntegratedOwnerIdentity(deps, "alice")
 }
 
 func TestIntegratedLifecycleStatusUsesServerRepositoryAndSavedOwner(t *testing.T) {
 	server, deps := apiServer(t)
 	configureIntegratedLifecycleTestOwner(t, server, deps)
 	called := false
-	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, token string) (map[string]any, error) {
+	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
 		called = true
-		if token != "saved-owner-token" || request.Repository != "owner/repository" || request.Operation != "status" {
-			t.Fatalf("unexpected lifecycle request: token=%q request=%+v", token, request)
+		if operator.ID != 101 || !strings.EqualFold(operator.Login, "alice") || request.Repository != "owner/repository" || request.Operation != "status" {
+			t.Fatalf("unexpected lifecycle request: operator=%+v request=%+v", operator, request)
 		}
 		return map[string]any{"schema_version": "test.status.v1"}, nil
 	}
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/integrated/status", nil)
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "Alice")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK || !called || !strings.Contains(recorder.Body.String(), "test.status.v1") {
@@ -63,7 +59,7 @@ func TestIntegratedLifecycleStatusUsesServerRepositoryAndSavedOwner(t *testing.T
 func TestIntegratedLifecycleRejectsViewerAndDifferentOwner(t *testing.T) {
 	server, deps := apiServer(t)
 	configureIntegratedLifecycleTestOwner(t, server, deps)
-	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error) {
+	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("unauthorized lifecycle callback ran")
 		return nil, nil
 	}
@@ -78,10 +74,10 @@ func TestIntegratedLifecycleRejectsViewerAndDifferentOwner(t *testing.T) {
 
 	mismatch := httptest.NewRecorder()
 	mismatchRequest := httptest.NewRequest(http.MethodGet, "/api/integrated/doctor", nil)
-	mismatchRequest.Header.Set("X-Hive-Role", "owner")
 	mismatchRequest.Header.Set("X-Hive-User", "bob")
+	markOwnerRequest(mismatchRequest)
 	server.mux.ServeHTTP(mismatch, mismatchRequest)
-	if mismatch.Code != http.StatusForbidden || !strings.Contains(mismatch.Body.String(), "does not match") {
+	if mismatch.Code != http.StatusConflict || !strings.Contains(mismatch.Body.String(), "exact numeric GitHub identity") {
 		t.Fatalf("mismatch status=%d body=%s", mismatch.Code, mismatch.Body.String())
 	}
 }
@@ -89,16 +85,15 @@ func TestIntegratedLifecycleRejectsViewerAndDifferentOwner(t *testing.T) {
 func TestIntegratedLifecycleRejectsUnauthenticatedOpenDashboard(t *testing.T) {
 	server, deps := apiServer(t)
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-owner-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("unauthenticated lifecycle callback ran")
 		return nil, nil
 	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/integrated/status", nil)
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "alice")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "authenticated dashboard") {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -109,7 +104,7 @@ func TestIntegratedControlPlanAndApplyUseClosedTypedContract(t *testing.T) {
 	server, deps := apiServer(t)
 	configureIntegratedLifecycleTestOwner(t, server, deps)
 	var requests []IntegratedLifecycleRequest
-	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, token string) (map[string]any, error) {
+	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, _ github.AuthenticatedUserIdentity) (map[string]any, error) {
 		requests = append(requests, request)
 		return map[string]any{"schema_version": "test.control.v1"}, nil
 	}
@@ -165,7 +160,7 @@ func TestIntegratedBaselineApprovalRequiresEveryExactBinding(t *testing.T) {
 	server, deps := apiServer(t)
 	configureIntegratedLifecycleTestOwner(t, server, deps)
 	called := false
-	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, _ string) (map[string]any, error) {
+	deps.IntegratedLifecycleFunc = func(_ context.Context, request IntegratedLifecycleRequest, _ github.AuthenticatedUserIdentity) (map[string]any, error) {
 		called = true
 		if request.Operation != "baseline-approve" || request.Baseline == nil || request.Baseline.PRNumber != 17 {
 			t.Fatalf("unexpected baseline request: %+v", request)
@@ -200,13 +195,13 @@ func TestIntegratedBaselineApprovalRequiresEveryExactBinding(t *testing.T) {
 func TestIntegratedLifecycleScrubsSavedTokenFromErrors(t *testing.T) {
 	server, deps := apiServer(t)
 	configureIntegratedLifecycleTestOwner(t, server, deps)
-	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error) {
+	deps.IntegratedLifecycleFunc = func(context.Context, IntegratedLifecycleRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		return nil, &testIntegratedLifecycleError{message: "provider rejected token saved-owner-token and sk-proj-secretvalue"}
 	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/integrated/status", nil)
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "alice")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusConflict || strings.Contains(recorder.Body.String(), "saved-owner-token") || strings.Contains(recorder.Body.String(), "secretvalue") {
 		t.Fatalf("scrub status=%d body=%s", recorder.Code, recorder.Body.String())

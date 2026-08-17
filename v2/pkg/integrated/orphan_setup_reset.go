@@ -26,32 +26,37 @@ const orphanSetupResetPlanSchema = "hive.orphaned-setup-reset-plan.v1"
 // the authenticated dashboard. StateDir is a temporary durable recovery area;
 // it is never treated as an installed Visual Hive controller contract.
 type OrphanSetupResetOptions struct {
-	Repository        string
-	StateDir          string
-	GitHub            *hivegithub.Client
-	GitTransportToken string
+	Repository           string
+	StateDir             string
+	GitHub               *hivegithub.Client
+	GitTransportToken    string
+	AuthorizationActor   hivegithub.AuthenticatedUserIdentity
+	RuntimeBindingDigest string
 }
 
 // OrphanSetupResetPlan is a non-mutating proof that one exact merged setup can
 // be safely restored to its pre-setup tree through Hive's normal uninstall PR.
 type OrphanSetupResetPlan struct {
-	SchemaVersion     string                    `json:"schema_version"`
-	Repository        string                    `json:"repository"`
-	RepositoryID      string                    `json:"repository_id"`
-	DefaultBranch     string                    `json:"default_branch"`
-	CurrentHeadSHA    string                    `json:"current_head_sha"`
-	SetupPRNumber     int                       `json:"setup_pr_number"`
-	SetupPRURL        string                    `json:"setup_pr_url"`
-	SetupBranch       string                    `json:"setup_branch"`
-	SetupBaseSHA      string                    `json:"setup_base_sha"`
-	SetupHeadSHA      string                    `json:"setup_head_sha"`
-	SetupMergeSHA     string                    `json:"setup_merge_sha"`
-	SetupMergedAt     time.Time                 `json:"setup_merged_at"`
-	SetupAuthorizerID int64                     `json:"setup_authorizer_id"`
-	ManagedPaths      []OrphanSetupPathBinding  `json:"managed_paths"`
-	RecoveryAvailable bool                      `json:"recovery_available"`
-	PlanSHA256        string                    `json:"plan_sha256"`
-	Installed         installedRepositoryConfig `json:"-"`
+	SchemaVersion        string                    `json:"schema_version"`
+	Repository           string                    `json:"repository"`
+	RepositoryID         string                    `json:"repository_id"`
+	DefaultBranch        string                    `json:"default_branch"`
+	CurrentHeadSHA       string                    `json:"current_head_sha"`
+	SetupPRNumber        int                       `json:"setup_pr_number"`
+	SetupPRURL           string                    `json:"setup_pr_url"`
+	SetupBranch          string                    `json:"setup_branch"`
+	SetupBaseSHA         string                    `json:"setup_base_sha"`
+	SetupHeadSHA         string                    `json:"setup_head_sha"`
+	SetupMergeSHA        string                    `json:"setup_merge_sha"`
+	SetupMergedAt        time.Time                 `json:"setup_merged_at"`
+	SetupAuthorizerID    int64                     `json:"setup_authorizer_id"`
+	OperatorID           int64                     `json:"operator_id,omitempty"`
+	WriterID             int64                     `json:"writer_id,omitempty"`
+	RuntimeBindingDigest string                    `json:"runtime_binding_digest,omitempty"`
+	ManagedPaths         []OrphanSetupPathBinding  `json:"managed_paths"`
+	RecoveryAvailable    bool                      `json:"recovery_available"`
+	PlanSHA256           string                    `json:"plan_sha256"`
+	Installed            installedRepositoryConfig `json:"-"`
 }
 
 // OrphanSetupPathBinding proves both that the current managed byte is exactly
@@ -104,6 +109,18 @@ func PlanOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOptions
 		return plan, fmt.Errorf("installed repository contract does not bind the exact repository or setup authorizer")
 	}
 	plan.SetupAuthorizerID = plan.Installed.SetupAuthorizationActorID
+	if options.AuthorizationActor.ID > 0 || strings.TrimSpace(options.AuthorizationActor.Login) != "" {
+		installedConfig := orphanInstalledAuthorizationConfig(plan.Installed)
+		operator, operatorErr := resolveManagedOperatorIdentity(ctx, options.GitHub, installedConfig, options.AuthorizationActor, "setup-reset")
+		if operatorErr != nil {
+			return plan, operatorErr
+		}
+		writer, writerOK := setupAuthorizationWriter(installedConfig)
+		if !writerOK || writer.ID <= 0 || !setupIdentityDigest.MatchString(strings.ToLower(strings.TrimSpace(options.RuntimeBindingDigest))) {
+			return plan, fmt.Errorf("orphaned setup recovery requires an exact App writer/runtime binding")
+		}
+		plan.OperatorID, plan.WriterID, plan.RuntimeBindingDigest = operator.ID, writer.ID, strings.ToLower(strings.TrimSpace(options.RuntimeBindingDigest))
+	}
 	plan.SetupBranch = managedOperationBranch("setup", plan.RepositoryID)
 	pull, err := exactMergedSetupAtHead(ctx, options.GitHub, owner, name, plan)
 	if err != nil {
@@ -163,6 +180,21 @@ func PlanOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOptions
 	return plan, nil
 }
 
+func orphanInstalledAuthorizationConfig(installed installedRepositoryConfig) Config {
+	return Config{
+		Repository:                         installed.Repository,
+		SetupAuthorizationActorID:          installed.SetupAuthorizationActorID,
+		SetupAuthorizationActorLogin:       installed.SetupAuthorizationActorLogin,
+		SetupAuthorizationWriterID:         installed.SetupAuthorizationWriterID,
+		SetupAuthorizationWriterLogin:      installed.SetupAuthorizationWriterLogin,
+		SetupAuthorizationWriterType:       installed.SetupAuthorizationWriterType,
+		SetupAuthorizationAppID:            installed.SetupAuthorizationAppID,
+		SetupAuthorizationInstallationID:   installed.SetupAuthorizationInstallationID,
+		SetupAuthorizationPermissionDigest: installed.SetupAuthorizationPermissionDigest,
+		SetupAuthorizationAppBindingDigest: installed.SetupAuthorizationAppBindingDigest,
+	}
+}
+
 // PrepareOrphanedSetupReset rechecks the exact plan, reconstructs only the
 // missing preimage/config state, and delegates the GitHub mutation to the
 // existing managed two-phase uninstall implementation.
@@ -186,6 +218,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 		}
 		return RunManagement(ctx, ManagementOptions{
 			Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, GitTransportToken: options.GitTransportToken,
+			AuthorizationActor: options.AuthorizationActor,
 		})
 	} else if readErr != nil && !os.IsNotExist(readErr) {
 		return result, fmt.Errorf("inspect orphaned setup recovery state: %w", readErr)
@@ -234,6 +267,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 	}
 	return RunManagement(ctx, ManagementOptions{
 		Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, GitTransportToken: options.GitTransportToken,
+		AuthorizationActor: options.AuthorizationActor,
 	})
 }
 
@@ -274,7 +308,13 @@ func configFromInstalledRepository(installed installedRepositoryConfig) Config {
 		VisualHiveConfigDigest: installed.VisualHiveConfigDigest, TestCommands: installed.TestCommands,
 		AllowedRepairPaths: installed.AllowedRepairPaths, AllowedAutoMergePaths: installed.AllowedAutoMergePaths,
 		AllowedAutoMergeRisk: installed.AllowedAutoMergeRisk, SetupAuthorizationActorID: installed.SetupAuthorizationActorID,
-		SetupAuthorizationPreviousActorID: installed.SetupAuthorizationPreviousActorID,
+		SetupAuthorizationActorLogin: installed.SetupAuthorizationActorLogin,
+		SetupAuthorizationWriterID:   installed.SetupAuthorizationWriterID, SetupAuthorizationWriterLogin: installed.SetupAuthorizationWriterLogin,
+		SetupAuthorizationWriterType: installed.SetupAuthorizationWriterType, SetupAuthorizationAppID: installed.SetupAuthorizationAppID,
+		SetupAuthorizationInstallationID:   installed.SetupAuthorizationInstallationID,
+		SetupAuthorizationPermissionDigest: installed.SetupAuthorizationPermissionDigest,
+		SetupAuthorizationAppBindingDigest: installed.SetupAuthorizationAppBindingDigest,
+		SetupAuthorizationPreviousActorID:  installed.SetupAuthorizationPreviousActorID,
 	}
 }
 
@@ -441,22 +481,26 @@ func isGitHubNotFound(err error) bool {
 
 func orphanSetupResetPlanDigest(plan OrphanSetupResetPlan) (string, error) {
 	binding := struct {
-		SchemaVersion     string                   `json:"schema_version"`
-		Repository        string                   `json:"repository"`
-		RepositoryID      string                   `json:"repository_id"`
-		DefaultBranch     string                   `json:"default_branch"`
-		CurrentHeadSHA    string                   `json:"current_head_sha"`
-		SetupPRNumber     int                      `json:"setup_pr_number"`
-		SetupBaseSHA      string                   `json:"setup_base_sha"`
-		SetupHeadSHA      string                   `json:"setup_head_sha"`
-		SetupMergeSHA     string                   `json:"setup_merge_sha"`
-		SetupAuthorizerID int64                    `json:"setup_authorizer_id"`
-		ManagedPaths      []OrphanSetupPathBinding `json:"managed_paths"`
+		SchemaVersion        string                   `json:"schema_version"`
+		Repository           string                   `json:"repository"`
+		RepositoryID         string                   `json:"repository_id"`
+		DefaultBranch        string                   `json:"default_branch"`
+		CurrentHeadSHA       string                   `json:"current_head_sha"`
+		SetupPRNumber        int                      `json:"setup_pr_number"`
+		SetupBaseSHA         string                   `json:"setup_base_sha"`
+		SetupHeadSHA         string                   `json:"setup_head_sha"`
+		SetupMergeSHA        string                   `json:"setup_merge_sha"`
+		SetupAuthorizerID    int64                    `json:"setup_authorizer_id"`
+		OperatorID           int64                    `json:"operator_id,omitempty"`
+		WriterID             int64                    `json:"writer_id,omitempty"`
+		RuntimeBindingDigest string                   `json:"runtime_binding_digest,omitempty"`
+		ManagedPaths         []OrphanSetupPathBinding `json:"managed_paths"`
 	}{
 		SchemaVersion: plan.SchemaVersion, Repository: plan.Repository, RepositoryID: plan.RepositoryID,
 		DefaultBranch: plan.DefaultBranch, CurrentHeadSHA: plan.CurrentHeadSHA, SetupPRNumber: plan.SetupPRNumber,
 		SetupBaseSHA: plan.SetupBaseSHA, SetupHeadSHA: plan.SetupHeadSHA, SetupMergeSHA: plan.SetupMergeSHA,
-		SetupAuthorizerID: plan.SetupAuthorizerID, ManagedPaths: plan.ManagedPaths,
+		SetupAuthorizerID: plan.SetupAuthorizerID, OperatorID: plan.OperatorID, WriterID: plan.WriterID,
+		RuntimeBindingDigest: plan.RuntimeBindingDigest, ManagedPaths: plan.ManagedPaths,
 	}
 	data, err := json.Marshal(binding)
 	if err != nil {

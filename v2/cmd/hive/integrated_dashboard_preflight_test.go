@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
@@ -110,12 +111,18 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := dashboardPreflightReceipt{
-		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v1", Repository: request.Repository, RepositoryID: "123",
+		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v2", Repository: request.Repository, RepositoryID: "123",
 		StateRoot: stateDir, VisualHiveRef: request.VisualHiveRef, Provider: request.Provider, ProviderBinary: "/release/codex",
-		ProviderArgs:  append([]string(nil), normalized.ProviderArgs...),
+		ProviderArgs: append([]string(nil), normalized.ProviderArgs...), ProviderModel: "gpt-5.6-sol",
 		VisualCommand: "/release/node", VisualArgs: []string{"/release/visual-hive.mjs"},
 		HiveCommit: strings.Repeat("1", 40), HiveExecutableSHA256: strings.Repeat("2", 64), ProviderBinarySHA256: strings.Repeat("3", 64),
 		VisualCommandSHA256: strings.Repeat("4", 64), VisualEntrypointSHA256: strings.Repeat("5", 64), ImageDigest: "sha256:" + strings.Repeat("6", 64),
+		OperatorID: 1, OperatorLogin: "test-owner", WriterID: 1, WriterLogin: "test-owner", WriterType: "User",
+		RuntimeBindingDigest: strings.Repeat("0", 64), QualityProbe: agent.QualityRuntimeProbeResult{
+			Agent: "quality", UID: 2006, Home: "/data/home", CodexHome: "/data/.codex-quality", Backend: "codex",
+			Model: "gpt-5.6-sol", CommandSHA256: strings.Repeat("7", 64), ApprovalPolicy: "never",
+			ToolCall: "read-only-local-file", OutputSHA256: strings.Repeat("8", 64),
+		},
 		TestedAt: now, ExpiresAt: now.Add(dashboardPreflightValidity),
 	}
 	receipt.BindingSHA256, err = dashboardPreflightBinding(request, receipt)
@@ -148,6 +155,17 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 	}
 	if err := requireDashboardPreflightReceipt(context.Background(), setup); err != nil {
 		t.Fatalf("matching hosted preflight receipt was rejected: %v", err)
+	}
+	tampered := receipt
+	tampered.QualityProbe.ApprovalPolicy = "on-request"
+	if err := saveDashboardPreflightReceipt(integratedStateRoot(), tampered); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireDashboardPreflightReceipt(context.Background(), setup); err == nil {
+		t.Fatal("tampered unattended approval policy was accepted")
+	}
+	if err := saveDashboardPreflightReceipt(integratedStateRoot(), receipt); err != nil {
+		t.Fatal(err)
 	}
 	setup.VisualHiveRef = strings.Repeat("b", 40)
 	if err := requireDashboardPreflightReceipt(context.Background(), setup); err == nil || !strings.Contains(err.Error(), "different setup inputs") {
@@ -187,6 +205,52 @@ func TestHostedStorageProbeLeavesNoTemporaryFile(t *testing.T) {
 			t.Fatalf("storage preflight leaked %s", filepath.Join(integratedStateRoot(), entry.Name()))
 		}
 	}
+}
+
+func TestHostedPreflightReceiptRejectsLinkedDirectoryAndFile(t *testing.T) {
+	t.Run("linked directory", func(t *testing.T) {
+		useTemporaryHostedHiveState(t)
+		path, err := dashboardPreflightReceiptPath(integratedStateRoot(), "owner/repository")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Dir(path)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(t.TempDir(), filepath.Dir(path)); err != nil {
+			if os.IsPermission(err) {
+				t.Skipf("symlink creation unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		if err := saveDashboardPreflightReceipt(integratedStateRoot(), dashboardPreflightReceipt{Repository: "owner/repository"}); err == nil || !strings.Contains(err.Error(), "must be a real directory") {
+			t.Fatalf("linked receipt directory was accepted: %v", err)
+		}
+	})
+
+	t.Run("linked file", func(t *testing.T) {
+		useTemporaryHostedHiveState(t)
+		path, err := dashboardPreflightReceiptPath(integratedStateRoot(), "owner/repository")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "receipt.json")
+		if err := os.WriteFile(target, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			if os.IsPermission(err) {
+				t.Skipf("symlink creation unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		if _, _, err := readDashboardPreflightReceiptFile(path); err == nil || !strings.Contains(err.Error(), "regular non-link file") {
+			t.Fatalf("linked receipt file was accepted: %v", err)
+		}
+	})
 }
 
 func TestHostedPreflightRejectsExistingControllerLease(t *testing.T) {

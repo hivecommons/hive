@@ -861,7 +861,8 @@ func validHostedTransitionPull(intent HostedReleaseTransitionIntent) bool {
 		return false
 	}
 	candidate, err := intent.CandidateConfig.Config()
-	return err == nil && candidate.SetupAuthorizationActorID > 0 && intent.SetupAuthorizationCreatorID == candidate.SetupAuthorizationActorID
+	writer, ok := setupAuthorizationWriter(candidate)
+	return err == nil && candidate.SetupAuthorizationActorID > 0 && ok && intent.SetupAuthorizationCreatorID == writer.ID
 }
 
 func emptyHostedTransitionPull(intent HostedReleaseTransitionIntent) bool {

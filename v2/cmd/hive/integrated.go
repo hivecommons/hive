@@ -785,6 +785,9 @@ func runSetupCommand(args []string) int {
 	jsonOutput := flags.Bool("json", false, "emit machine-readable JSON")
 	githubTokenEnv := flags.String("github-token-env", "HIVE_GITHUB_TOKEN", "environment variable containing GitHub token")
 	githubAPIURL := flags.String("github-api-url", "", "optional GitHub Enterprise API URL")
+	dashboardOperatorHandoffPath := flags.String("dashboard-operator-handoff", "", "internal root-sealed dashboard operator handoff")
+	dashboardRequestID := flags.String("dashboard-request-id", "", "internal dashboard request binding")
+	dashboardPlanSHA256 := flags.String("dashboard-plan-sha256", "", "internal dashboard plan binding")
 	var providerArgs stringListFlag
 	var visualArgs stringListFlag
 	var autoMergePaths stringListFlag
@@ -895,6 +898,28 @@ func runSetupCommand(args []string) int {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		client = hivegithub.NewClient(token, "", nil, logger, *githubAPIURL)
 	}
+	var dashboardHandoff dashboardOperatorHandoff
+	hasDashboardHandoff := strings.TrimSpace(*dashboardOperatorHandoffPath) != "" || strings.TrimSpace(*dashboardRequestID) != "" || strings.TrimSpace(*dashboardPlanSHA256) != ""
+	if hasDashboardHandoff {
+		if client == nil || strings.TrimSpace(*dashboardOperatorHandoffPath) == "" || !dashboardOperatorRequestIDPattern.MatchString(*dashboardRequestID) || !dashboardOperatorDigestPattern.MatchString(strings.ToLower(strings.TrimSpace(*dashboardPlanSHA256))) {
+			fmt.Fprintln(os.Stderr, "setup failed: dashboard operator handoff is incomplete or invalid")
+			return 2
+		}
+		handoffCtx, handoffCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var handoffErr error
+		dashboardHandoff, handoffErr = consumeDashboardOperatorHandoff(handoffCtx, *dashboardOperatorHandoffPath, *repository, *dashboardRequestID, *dashboardPlanSHA256)
+		handoffCancel()
+		if handoffErr != nil {
+			fmt.Fprintln(os.Stderr, "setup failed: consume dashboard operator handoff:", handoffErr)
+			return 2
+		}
+		if strings.EqualFold(dashboardHandoff.Writer.Type, "Bot") {
+			if err := client.SetVerifiedAppWriter(dashboardHandoff.Writer, dashboardHandoff.App.BindingDigest); err != nil {
+				fmt.Fprintln(os.Stderr, "setup failed: bind dashboard App writer:", err)
+				return 2
+			}
+		}
+	}
 	if !*planOnly {
 		if client == nil {
 			fmt.Fprintf(os.Stderr, "GitHub authorization is required. Set %s or sign in once with gh auth login.\n", *githubTokenEnv)
@@ -974,6 +999,7 @@ func runSetupCommand(args []string) int {
 		ExpectedSeedSHA: *expectedSeedSHA, ReviewedBaselineDigest: *reviewedBaselineDigest,
 		VisualHiveCommand: *visualCommand, VisualHiveArgs: append([]string(nil), visualArgs...),
 		VisualHiveRepo: *visualRepo, VisualHiveRef: *visualRef, GitHub: client, GitTransportToken: token,
+		AuthorizationActor: dashboardHandoff.Actor, AuthorizationWriter: dashboardHandoff.Writer, AuthorizationApp: dashboardHandoff.App,
 		MaxActiveIssues:        *maxActiveIssues,
 		MaxRepairAttempts:      *maxRepairAttempts,
 		AllowedAutoMergePaths:  append([]string(nil), autoMergePaths...),

@@ -36,6 +36,7 @@ type ManagementOptions struct {
 	Cancel             bool
 	GitHub             *hivegithub.Client
 	GitTransportToken  string
+	AuthorizationActor hivegithub.AuthenticatedUserIdentity
 }
 
 type ManagementResult struct {
@@ -117,7 +118,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 	}
 	result.Repository, result.PreviousRef = config.Repository, config.VisualHiveRef
 	if options.Operation == OperationUninstall {
-		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation); err != nil {
+		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation, options.AuthorizationActor); err != nil {
 			return result, err
 		}
 		if err := drainWorkflowDispatchForUninstall(ctx, store, config, options.GitHub); err != nil {
@@ -196,7 +197,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 				return result, nil
 			}
 		}
-		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation); err != nil {
+		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation, options.AuthorizationActor); err != nil {
 			return result, err
 		}
 	}
@@ -431,11 +432,11 @@ func blockPendingSetupBaselineManagement(store *Store, operation ManagementOpera
 	return nil
 }
 
-func verifyManagedOperationAuthorizer(ctx context.Context, client *hivegithub.Client, config Config, operation ManagementOperation) error {
+func verifyManagedOperationAuthorizer(ctx context.Context, client *hivegithub.Client, config Config, operation ManagementOperation, explicit hivegithub.AuthenticatedUserIdentity) error {
 	if config.SetupAuthorizationActorID <= 0 {
 		return fmt.Errorf("managed %s requires the numeric setup authorizer recorded by a current Hive installation; rerun setup first", operation)
 	}
-	identity, err := client.AuthenticatedNumericUser(ctx)
+	identity, err := resolveManagedOperatorIdentity(ctx, client, config, explicit, string(operation))
 	if err != nil {
 		return err
 	}

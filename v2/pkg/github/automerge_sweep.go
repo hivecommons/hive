@@ -245,7 +245,7 @@ func (c *Client) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		maxMerges = DefaultAutoMergeSweepMaxMerges
 	}
 	result := &AutoMergeSweepResult{}
-	if strings.TrimSpace(c.appBotLogin) == "" {
+	if c.AppBotLogin() == "" {
 		// No usable App identity: there is no "self" to authenticate PRs as
 		// App-authored, so this sweep has nothing safe to do. Warn once per
 		// call (matching the human-queue sweep's per-call warn cadence) rather
@@ -338,6 +338,7 @@ func (c *Client) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // because the caller needs PullRequest objects (head SHA, mergeable state)
 // for every candidate, not just issue metadata.
 func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
+	appBotLogin := c.AppBotLogin()
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
 		ListOptions: gh.ListOptions{PerPage: 100},
@@ -352,7 +353,7 @@ func (c *Client) listOpenAppAuthoredPullRequests(ctx context.Context, owner, rep
 			if pr.GetDraft() {
 				continue
 			}
-			if !strings.EqualFold(safeGetLogin(pr.GetUser()), c.appBotLogin) {
+			if !strings.EqualFold(safeGetLogin(pr.GetUser()), appBotLogin) {
 				continue
 			}
 			out = append(out, pr)
@@ -385,7 +386,7 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "draft", nil
 	}
 	author := safeGetLogin(pr.GetUser())
-	if !strings.EqualFold(author, c.appBotLogin) {
+	if !strings.EqualFold(author, c.AppBotLogin()) {
 		// Not the App's own PR: this path never touches non-App-authored PRs,
 		// matching the human-queue sweep's untouched behavior for PRs it does
 		// not own. Defense in depth — listOpenAppAuthoredPullRequests already
@@ -505,7 +506,7 @@ func (c *Client) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if headSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
-	if strings.TrimSpace(c.appBotLogin) == "" {
+	if c.AppBotLogin() == "" {
 		return AutoMergeSweepEvent{}, autoMergeReasonNoAppBotLogin, nil
 	}
 	approval, ok, reason, err := c.latestHiveQueueApproval(ctx, owner, repo, number)
@@ -608,7 +609,7 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 			}
 			if !c.isHiveAppReviewAuthor(review) {
 				untrusted = true
-				c.warn(autoMergeWarnUntrustedQueueApproval, "owner", owner, "repo", repo, "pr", number, "review_author", safeGetLogin(review.GetUser()), "claimed_queued_by", queuedBy, "expected_app_bot", c.appBotLogin)
+				c.warn(autoMergeWarnUntrustedQueueApproval, "owner", owner, "repo", repo, "pr", number, "review_author", safeGetLogin(review.GetUser()), "claimed_queued_by", queuedBy, "expected_app_bot", c.AppBotLogin())
 				continue
 			}
 			latest = hiveQueueApproval{QueuedBy: queuedBy, HeadSHA: review.GetCommitID()}
@@ -628,10 +629,10 @@ func (c *Client) latestHiveQueueApproval(ctx context.Context, owner, repo string
 }
 
 func (c *Client) isHiveAppReviewAuthor(review *gh.PullRequestReview) bool {
-	if c == nil || review == nil || strings.TrimSpace(c.appBotLogin) == "" {
+	if c == nil || review == nil || c.AppBotLogin() == "" {
 		return false
 	}
-	return strings.EqualFold(safeGetLogin(review.GetUser()), c.appBotLogin)
+	return strings.EqualFold(safeGetLogin(review.GetUser()), c.AppBotLogin())
 }
 
 func (c *Client) invalidateQueuedAutoMerge(ctx context.Context, owner, repo string, number int, label, body string) error {

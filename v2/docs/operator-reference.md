@@ -138,7 +138,10 @@ Minimum practical PAT permissions for full PAT-authenticated operation:
   - Contents: read/write (branch pushes by agents and content reads)
   - Pull requests: read/write (list, open, approve, merge)
   - Issues: read/write (list, comments, labels, advisory issue)
-  - Checks: read-only and Commit statuses: read-only (CI/merge gating)
+  - Checks: read-only (CI/merge gating)
+  - Actions: read/write (inspect and dispatch managed workflows)
+  - Workflows: read/write (create and update managed workflow files)
+  - Commit statuses: read/write (publish and verify setup authorization)
   - Metadata: read-only (required by GitHub)
 
 If you use a GitHub App, configure equivalent repository permissions on the App

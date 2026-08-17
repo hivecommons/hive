@@ -121,6 +121,14 @@ func reconcileHostedManagedPolicy(checkoutDir string, durable Config, current Ho
 	candidate.AllowedAutoMergePaths = append([]string(nil), installed.AllowedAutoMergePaths...)
 	candidate.AllowedAutoMergeRisk = append([]automation.RiskTier(nil), installed.AllowedAutoMergeRisk...)
 	candidate.SetupAuthorizationActorID = installed.SetupAuthorizationActorID
+	candidate.SetupAuthorizationActorLogin = installed.SetupAuthorizationActorLogin
+	candidate.SetupAuthorizationWriterID = installed.SetupAuthorizationWriterID
+	candidate.SetupAuthorizationWriterLogin = installed.SetupAuthorizationWriterLogin
+	candidate.SetupAuthorizationWriterType = installed.SetupAuthorizationWriterType
+	candidate.SetupAuthorizationAppID = installed.SetupAuthorizationAppID
+	candidate.SetupAuthorizationInstallationID = installed.SetupAuthorizationInstallationID
+	candidate.SetupAuthorizationPermissionDigest = installed.SetupAuthorizationPermissionDigest
+	candidate.SetupAuthorizationAppBindingDigest = installed.SetupAuthorizationAppBindingDigest
 	candidate.SetupAuthorizationPreviousActorID = installed.SetupAuthorizationPreviousActorID
 
 	wantWorkflow, err := GenerateHostedControllerWorkflow(hostedWorkflowConfig(candidate))

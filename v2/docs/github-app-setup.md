@@ -24,8 +24,10 @@ Repository permissions used by the dashboard setup UI are:
 | Contents | Read/write | Clone, branch, and push agent changes. |
 | Issues | Read/write | Enumerate, comment on, create, and close issues. |
 | Pull requests | Read/write | Create, update, approve/merge, and inspect PRs. |
-| Checks | Read-only | Monitor CI status. |
-| Actions | Read-only | Inspect workflow runs. |
+| Checks | Read-only | Monitor CI check runs. |
+| Actions | Read/write | Inspect and dispatch the managed Visual Hive workflows. |
+| Workflows | Read/write | Create and update the two managed workflow files. |
+| Commit statuses | Read/write | Publish and verify exact setup-authorization statuses. |
 
 Organization permission:
 
@@ -49,6 +51,12 @@ github:
   oauth_client_id: <client-id>
 ```
 
+When an existing App registration gains either write permission, GitHub marks
+the installation update as pending. The organization or repository owner must
+approve that permission update before hosted Visual Hive preflight can pass.
+Hive reports the exact granted permission set and fails before any setup
+mutation while a required permission is absent.
+
 For GitHub Enterprise, also set `api_url`/`base_url` or the supported `forge` value so install URLs and API calls target the same host.
 
 ## `/gh-setup` flow
@@ -62,10 +70,21 @@ Hive accepts `setup_action=install` and `setup_action=update`, verifies that:
 - the installation ID can mint/verify a GitHub App installation, and
 - the installation account matches the configured project org.
 
-If verification succeeds, Hive persists `github.installation_id`, reinitializes the GitHub client, and redirects the browser to `/?ghSetup=ok`. `setup_action=request` records a pending approval redirect but does not configure an installation.
+If verification succeeds, Hive persists `github.installation_id`, publishes a
+new in-process App runtime snapshot, and redirects the browser to
+`/?ghSetup=ok`. Ordinary Hive remains available while the snapshot is missing
+or invalid. An installed Visual Hive controller becomes ready in the same
+process after a valid snapshot appears; a pod restart is not required.
+`setup_action=request` records a pending approval redirect but does not
+configure an installation.
 
 The setup endpoint is intentionally public because GitHub opens it in a browser that may not have a Hive session. The query string is not trusted; verification is done with the app key and GitHub API.
 
 ## Rotation and recovery
 
-To rotate a private key, generate a new key in GitHub, mount it at the configured `key_file`, restart Hive, then delete the old key in GitHub after the new one is confirmed working. If an installation was replaced, use `/gh-setup` again or update `github.installation_id` and restart/reload the hive.
+To rotate a private key, generate a new key in GitHub, mount it at the configured
+`key_file`, and reload the Hive configuration (or complete `/gh-setup`) before
+deleting the old key. The same verified App and installation may rotate keys and
+installation tokens without replacing the process. A different App,
+installation, repository, or active Visual Hive binding is rejected and must use
+the managed rebind path.
