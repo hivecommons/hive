@@ -37,7 +37,7 @@ HMAC(master, "hive-heartbeat-v1" || 0x00 || hiveID)
 needed for a spoke to start presenting the identity-bound bearer. It only needs
 code that derives it.
 
-### Measured fleet state (2026-08-13, contexts `hive-oke` + `vllm-d`)
+### Measured fleet state (2026-08-13, hub-reachable + heartbeat-only clusters)
 
 Classified by comparing each Deployment's `HIVE_HEARTBEAT_KEY` against both
 derivations computed from the live master:
@@ -48,11 +48,11 @@ derivations computed from the live master:
 | `HIVE_HEARTBEAT_KEY` **absent** → self-derives fleet-wide today | 3 |
 | Fleet-wide value explicitly injected | 0 |
 
-The three laggards are:
+The three laggards are all on the hub-reachable cluster:
 
-- `hive-oke/hive-hosted-hosted-available-oke-02-placeholder-7zus`
-- `hive-oke/hive-hosted-hosted-daviddiaz0317-visual-hive--1jos`
-- `hive-oke/hive-hosted-hosted-projectbluefin-knuckle-gjvq`
+- `hive-hosted-hosted-available-<cluster>-02-placeholder-7zus`
+- `hive-hosted-hosted-example-org-visual-hive--1jos`
+- `hive-hosted-hosted-projectbluefin-knuckle-gjvq`
 
 All three have `HIVE_HUB_SECRET` and `HIVE_ID` present, so all three can
 self-derive. They are the only reason the legacy lane cannot be deleted, and they
@@ -118,8 +118,8 @@ from the live master):
 Two of the three self-derivers run v4 with the merged self-derivation
 (`c2286f45`) and show 0 heartbeat auth errors in production.
 
-**Accepted casualty:** `daviddiaz0317-visual-hive--1jos` runs `dd-latest`, which
-does not contain `c2286f45`. It presents the fleet-wide bearer and will 401
+**Accepted casualty:** `example-org-visual-hive--1jos` runs a lagging fork image
+that does not contain `c2286f45`. It presents the fleet-wide bearer and will 401
 until its fork is topped up from v4 and it rolls. This was accepted knowingly
 rather than softening the deletion.
 
@@ -144,8 +144,8 @@ Do not open the deletion PR until **all** of the following hold:
    ```sh
    # Count by CONTAINER name, not by an `app=hive` label — that label is not
    # applied consistently across clusters and undercounts (it matched 0 of 22
-   # spokes on hive-oke when this was written).
-   for ctx in hive-oke vllm-d; do
+   # spokes on the hub-reachable cluster when this was written).
+   for ctx in <hub-reachable-context> <heartbeat-only-context>; do
      kubectl --context "$ctx" get deploy -A -o json \
        | jq '[.items[]|select(.spec.template.spec.containers[].name=="hive")]|length'
    done

@@ -1,30 +1,30 @@
 # Migrating a Hosted Hive Between Clusters (vanilla Kubernetes → OpenShift)
 
 This guide documents the manual procedure for moving a hosted hive from one
-cluster to another, using a real migration as the reference: the `kellyaa`
-hive, moved from **hive-oke** (vanilla Kubernetes, OKE) to **vllm-d**
+cluster to another, using a real migration as the reference: a hive moved from
+a **hub-reachable cluster** (vanilla Kubernetes) to a **heartbeat-only cluster**
 (OpenShift). Every gotcha below was hit during that migration.
 
 Moving a hive between clusters is a **manual procedure**. The hub used to
 expose a `POST /api/saas/hives/{id}/migrate` endpoint that automated it as
 "fresh provision on the target + deprovision of the source"; it was removed
 because the automation was not worth the maintenance it demanded — it could
-not work at all when the hub had no `kubectl` path to the target (the vllm-d
-case), and it was actively destructive when run after a manual move, since it
-found no source secrets to copy and provisioned a credential-less hive over a
-working deployment.
+not work at all when the hub had no `kubectl` path to the target (the
+heartbeat-only case), and it was actively destructive when run after a manual
+move, since it found no source secrets to copy and provisioned a
+credential-less hive over a working deployment.
 
 ## Background: how the two clusters differ
 
-**hive-oke (vanilla Kubernetes).** Dashboards are reached via
+**Hub-reachable cluster (vanilla Kubernetes).** Dashboards are reached via
 `*.hive.kubestellar.io`. The hub's nginx ingress performs authentication
 (`auth-url` pointing at `/api/saas/auth-check`) and injects `X-Hive-User` /
 `X-Hive-Role` headers into proxied requests. Spokes on this cluster do **not**
 need their own OAuth configuration — the hub is the auth proxy.
 
-**vllm-d (OpenShift).** The hub has **no network path** to this cluster; the
-spoke reports in via heartbeats only. Dashboards are therefore exposed
-directly via OpenShift Routes on `*.apps.fmaas-vllm-d.fmaas.res.ibm.com`, and
+**Heartbeat-only cluster (OpenShift).** The hub has **no network path** to this
+cluster; the spoke reports in via heartbeats only. Dashboards are therefore
+exposed directly via OpenShift Routes on `*.apps.<your-cluster-domain>`, and
 each spoke must run its **own GitHub device-flow login** — there is no hub
 auth proxy in front of it.
 
@@ -45,8 +45,8 @@ From the source namespace (`hive-hosted-<hive-id>`), copy to the target:
 
 ### 2. Create the Service and Routes
 
-Mirror an existing vllm-d hive (e.g. `osscar`) rather than writing these from
-scratch.
+Mirror an existing hive already running on the target (heartbeat-only) cluster
+rather than writing these from scratch.
 
 **Service** named `hive`, selector `app=hive` plus the hive-id label, with
 two ports:
@@ -57,7 +57,7 @@ two ports:
 | `dashboard` | 3002 |
 
 **Two OpenShift Routes**, both with host
-`<hive-id>.apps.fmaas-vllm-d.fmaas.res.ibm.com` and TLS edge termination with
+`<hive-id>.apps.<your-cluster-domain>` and TLS edge termination with
 `insecureEdgeTerminationPolicy: Redirect`:
 
 | Route | Path | targetPort |
@@ -77,14 +77,14 @@ Add to `hive.yaml`:
 ```yaml
 github:
   # Public Hive GitHub App client ID — enables device-flow dashboard login.
-  # Required on vllm-d because there is no hub auth proxy in front of the
-  # dashboard. Without it the login page errors:
+  # Required on a heartbeat-only cluster because there is no hub auth proxy in
+  # front of the dashboard. Without it the login page errors:
   #   "oauth_client_id not configured"
   oauth_client_id: Ov23ligE2p0gjXg6xAUf
 
 hub:
   # The spoke reports this URL in its heartbeats.
-  dashboard_url: https://<hive-id>.apps.fmaas-vllm-d.fmaas.res.ibm.com
+  dashboard_url: https://<hive-id>.apps.<your-cluster-domain>
 ```
 
 > **Gotcha — the heartbeat owns `dashboardUrl`.** The hub registry's
@@ -176,8 +176,8 @@ These live on the hub pod's PVC — **back them up first** (`kubectl cp` or a
 
 **`/data/saas/hives/<hive-id>/meta.json`:**
 
-- `cluster_id` → `vllm-d`
-- `subdomain` → `<hive-id>.apps.fmaas-vllm-d.fmaas.res.ibm.com`
+- `cluster_id` → the target (heartbeat-only) cluster's ID
+- `subdomain` → `<hive-id>.apps.<your-cluster-domain>`
 
 **`/data/hub-registry.json`:** update the hive's entry — `clusterId` /
 `clusterName`. You can leave `dashboardUrl` alone: once step 3 is done, the
@@ -196,13 +196,13 @@ attached to one node anyway). Before deleting, decide whether any
 pre-migration PVC data needs to be kept.
 
 ```sh
-kubectl --context hive-oke delete namespace hive-hosted-<hive-id>
+kubectl --context <source-cluster> delete namespace hive-hosted-<hive-id>
 ```
 
 ### 6. Verify
 
 - Dashboard returns 200 at
-  `https://<hive-id>.apps.fmaas-vllm-d.fmaas.res.ibm.com`.
+  `https://<hive-id>.apps.<your-cluster-domain>`.
 - GitHub sign-in (device flow) works on the spoke's login page.
 - Hub registry shows the hive on the new cluster with fresh heartbeats.
 - The **My Hives → Dashboard** button targets the new URL (i.e. the

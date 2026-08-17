@@ -1,9 +1,10 @@
 # Provisioning a Hosted Hive
 
 > **Self-hosting a standalone hive (no hub)?** Most of this guide is about
-> **hub-attached** hosted hives on the KubeStellar-internal fleet (hive-oke /
-> vllm-d, shared hub, placeholder pools). If instead you are standing up your
-> **own** hub-less hive on your **own** cluster against your **own** repos, read
+> **hub-attached** hosted hives on a managed fleet (a hub-reachable cluster and
+> a heartbeat-only cluster, a shared hub, placeholder pools). If instead you are
+> standing up your **own** hub-less hive on your **own** cluster against your
+> **own** repos, read
 > **[Standalone / self-hosted (no hub)](#standalone--self-hosted-no-hub)** below
 > and skip the hub-only Path A / Path B, `meta.json`, and placeholder-pool
 > sections — none of them apply to you.
@@ -14,12 +15,13 @@ This guide documents how hosted hives are provisioned, covering both paths:
   the hub can reach with `kubectl`. This is the normal path.
 - **Manual provisioning** — hand-applied manifests, required when the hub has
   **no network path** to the target cluster (a *heartbeat-only* cluster). This
-  is the situation on **vllm-d**.
+  is the situation on any **heartbeat-only** cluster.
 
 Every command and manifest below was executed and verified while standing up a
-pool of ten placeholder hives — five on **vllm-d** (manual) and five on
-**hive-oke** (automated) — so the procedure is real, not aspirational. Where a
-step has a non-obvious failure mode, it is called out as a **Gotcha**.
+pool of ten placeholder hives — five on a **heartbeat-only** cluster (manual)
+and five on a **hub-reachable** cluster (automated) — so the procedure is real,
+not aspirational. Where a step has a non-obvious failure mode, it is called out
+as a **Gotcha**.
 
 ---
 
@@ -28,32 +30,34 @@ step has a non-obvious failure mode, it is called out as a **Gotcha**.
 The provisioning path is dictated entirely by whether the hub can `kubectl` to
 the target cluster.
 
-| | **hive-oke** (vanilla Kubernetes) | **vllm-d** (OpenShift) |
+| | **Hub-reachable cluster** (vanilla Kubernetes) | **Heartbeat-only cluster** (OpenShift) |
 |---|---|---|
 | Hub reachability | Hub **can** `kubectl` → **automated** provisioning | Hub is **heartbeat-only** → **manual** provisioning |
-| Dashboard routing | nginx **Ingress**, host `<id>.hive.kubestellar.io` | OpenShift **Route**, host `<id>.apps.fmaas-vllm-d.fmaas.res.ibm.com` |
+| Dashboard routing | nginx **Ingress**, host `<id>.hive.kubestellar.io` | OpenShift **Route**, host `<id>.apps.<your-cluster-domain>` |
 | Auth in front of the dashboard | Hub's nginx ingress runs `auth-url` → `/api/saas/auth-check`, injecting `X-Hive-User` / `X-Hive-Role`. Spokes need **no** own OAuth. | No hub auth proxy. Each spoke runs its **own** GitHub device-flow login (`oauth_client_id`, `hub_proxied: false`). |
 | Pod security | Standard Kubernetes; empty `securityContext`. | OpenShift SCC. The pod **must** run under the `anyuid` SCC (the entrypoint `chown`s the PVC as root). Without it the pod lands on `restricted-v2` and crash-loops. |
 | Storage | RWX volume, default storage class. | RWX on `ocs-storagecluster-cephfs`. |
 | Which methods it serves | **Public** methods (claude / copilot / gemini — subscription CLIs). | **Private** methods (litellm / vllm / llm-d — self-hosted inference). |
 
 > **Why methods map to clusters.** Public-method hives run subscription CLIs and
-> need no in-cluster inference, so they live on the hub's own cluster (hive-oke).
-> Private-method hives point at a self-hosted inference endpoint that lives on
-> vllm-d, so the hive runs there too — and vllm-d is heartbeat-only, which is
-> exactly why it needs the manual path.
+> need no in-cluster inference, so they live on the hub's own (hub-reachable)
+> cluster. Private-method hives point at a self-hosted inference endpoint that
+> lives on the heartbeat-only cluster, so the hive runs there too — and that
+> cluster is heartbeat-only, which is exactly why it needs the manual path.
 
 ---
 
 ## Prerequisites (both paths)
 
-- `kubectl` access with a context per cluster (`hive-oke`, `vllm-d`).
-- The hub is running on **hive-oke** in namespace `hive-hub`, backed by a RWX
-  PVC named `hive-hub-data-rwx` mounted at `/data`. The hub's SaaS store lives
-  at `/data/saas/hives/<id>/meta.json`; its fleet registry at
+- `kubectl` access with a context per cluster (one for the hub-reachable
+  cluster, one for the heartbeat-only cluster).
+- The hub is running on the **hub-reachable** cluster in namespace `hive-hub`,
+  backed by a RWX PVC named `hive-hub-data-rwx` mounted at `/data`. The hub's
+  SaaS store lives at `/data/saas/hives/<id>/meta.json`; its fleet registry at
   `/data/hub-registry.json`.
-- For manual (vllm-d) provisioning: the `system:openshift:scc:anyuid`
-  ClusterRole must exist (it does by default on OpenShift).
+- For manual (heartbeat-only cluster) provisioning: the
+  `system:openshift:scc:anyuid` ClusterRole must exist (it does by default on
+  OpenShift).
 
 ---
 
@@ -178,7 +182,7 @@ key is defined (config struct) and where you edit it (overlay file).
 | Route host domain (OpenShift) | `hive.apps.joes-cluster.example.com` (example) | `route.yaml` `spec.host` | `route.openshift.io/v1` Route |
 | `project.org` / `repos` / `primary_repo` | `YOUR_ORG` / `YOUR_REPO` | `patch-configmap.yaml` (`project:`) | `ProjectConfig` (`Org`, `Repos`, `PrimaryRepo`, `AIAuthor`) |
 | `dashboard.authorized_users` | `YOUR_GITHUB_LOGIN:owner` | `patch-configmap.yaml` (`dashboard:`) | `DashboardConfig.AuthorizedUsers` — first entry is the owner |
-| `github.oauth_client_id` | `YOUR_OAUTH_CLIENT_ID` | `patch-configmap.yaml` (`github:`) | `GitHubConfig.OAuthClientID`. The built-in default (`DefaultOAuthClientID`) is a **github.com** Hive App — if you use GitHub Enterprise (e.g. `github.ibm.com`) you must register your **own** OAuth App there and also set `project.forge` / `github.forge` to your host |
+| `github.oauth_client_id` | `YOUR_OAUTH_CLIENT_ID` | `patch-configmap.yaml` (`github:`) | `GitHubConfig.OAuthClientID`. The built-in default (`DefaultOAuthClientID`) is a **github.com** Hive App — if you use GitHub Enterprise (e.g. `github.your-company.com`) you must register your **own** OAuth App there and also set `project.forge` / `github.forge` to your host |
 | litellm `endpoint` + API key | in-cluster inference Service | `patch-configmap.yaml` (`governor.litellm.endpoint`) + the `hive-secrets` Secret | `LiteLLMConfig` under `Config.Governor` (`Endpoint`, `APIKeyEnv` → default `HIVE_LITELLM_API_KEY`, `APIKeyFile` → default `/secrets/litellm_api_key`, `DefaultModel`) |
 
 Also populate the base `hive-secrets` Secret with a GitHub App PEM **or**
@@ -246,7 +250,7 @@ wires both `HIVE_VLLM_ENDPOINT` and `HIVE_LLMD_ENDPOINT`). Verify any key agains
 
 ---
 
-## Path A — Automated provisioning (hive-oke)
+## Path A — Automated provisioning (hub-reachable cluster)
 
 The hub exposes `POST /api/saas/hives` (`handleCreateHive`). It generates the
 hive ID, creates the namespace + RBAC + PVC + Service + Ingress + Deployment,
@@ -259,11 +263,11 @@ simply the username, validated against the SaaS user store. From **inside the
 hub pod** (localhost), that is all you need:
 
 ```bash
-HUB_POD=$(kubectl --context hive-oke -n hive-hub get pods -l app=hive-hub \
+HUB_POD=$(kubectl --context <hub-reachable-cluster> -n hive-hub get pods -l app=hive-hub \
   --no-headers | grep Running | awk '{print $1}' | head -1)
 
-kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- curl -s -X POST \
-  -H "Cookie: hive_hub_user=clubanderson" \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- curl -s -X POST \
+  -H "Cookie: hive_hub_user=<hub-admin-login>" \
   -H "Content-Type: application/json" \
   -d '{
         "org": "myorg",
@@ -271,7 +275,7 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- curl -s -X POST \
         "primary_repo": "myrepo",
         "project_name": "My Hive",
         "acmm_level": 2,
-        "cluster_id": "hive-oke",
+        "cluster_id": "<hub-reachable-cluster>",
         "auth_method": "app",
         "app_id": "999999999",
         "installation_id": "",
@@ -303,7 +307,7 @@ The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
 | `org`, `repos` | **Required, non-empty.** `repos` is comma-separated. |
 | `primary_repo` | Hosts the advisory issue and default markings. |
 | `acmm_level` | Starting autonomy. **Default new hives to `2`** (Advisory (Instructed) / advisory-only). |
-| `cluster_id` | `hive-oke` (the `defaultClusterID`). |
+| `cluster_id` | the hub-reachable cluster's ID (the `defaultClusterID`). |
 | `auth_method` | `app` or a token. |
 | `app_id` / `installation_id` / `app_private_key` | Three auth shapes: **token** (`github_token` starts `ghp_`/`github_pat_`); **app now** (all three set); **app later** — `app_id` set, `installation_id` **and** `app_private_key` **empty**. The last is the placeholder case: pass the sentinel `app_id: 999999999` (see [Placeholder `app_id`](#placeholder-app_id)) and the hive provisions into dashboard-only mode until the owner installs the App from the dashboard. |
 | `is_public` | Pointer. **Absent defaults to public.** Send `false` explicitly for a private hive. |
@@ -343,10 +347,10 @@ and need it applied retroactively.
 
 ---
 
-## Path B — Manual provisioning (vllm-d)
+## Path B — Manual provisioning (heartbeat-only cluster)
 
-The hub cannot reach vllm-d, so every object is applied by hand with
-`kubectl --context vllm-d`. The full set, in order:
+The hub cannot reach a heartbeat-only cluster, so every object is applied by hand
+with `kubectl --context <heartbeat-only-cluster>`. The full set, in order:
 
 1. Namespace
 2. ServiceAccount (`hive-sa`)
@@ -364,10 +368,10 @@ The hub cannot reach vllm-d, so every object is applied by hand with
 Set these shell variables for the target hive:
 
 ```bash
-CTX=vllm-d
+CTX=<heartbeat-only-cluster>    # kubectl context for the target cluster
 ID=hosted-myorg-myrepo          # the hive ID
 NS=hive-hosted-$ID              # namespace is always hive-hosted-<id>
-ROUTE_HOST=$ID.apps.fmaas-vllm-d.fmaas.res.ibm.com
+ROUTE_HOST=$ID.apps.<your-cluster-domain>
 IMAGE=ghcr.io/kubestellar/hive:v4-latest   # what the hub provisioner stamps by default (saas_provision.go); use `stable` for production
 SC=ocs-storagecluster-cephfs
 
@@ -474,9 +478,9 @@ synthesising `<hiveID>.<hub host>`. That is correct **only** for spokes fronted
 by the hub's own wildcard domain. Anywhere else it is a guaranteed **503**: the
 wildcard resolves, so DNS looks healthy, but it sends the name to the **hub's**
 router, which has no backend for a hive living on another cluster. This was a
-live user-visible outage on the vllm-d pool — the hub minted links at
+live user-visible outage on the heartbeat-only pool — the hub minted links at
 `<id>.hive.kubestellar.io` while the spoke's Route served
-`<id>.apps.fmaas-vllm-d.fmaas.res.ibm.com`.
+`<id>.apps.<your-cluster-domain>`.
 
 The spoke is the only party that **can** answer this on a heartbeat-only
 cluster, since the hub has no `kubectl` path there by design.
@@ -494,9 +498,10 @@ Notes on the shape of the Role:
 
 > **Gotcha — derive the ServiceAccount, do not assume it.** The subject is
 > **not** uniform across the fleet. OpenShift/SCC spokes bind `hive-sa`; others
-> bind `default`. Measured live: hive-oke is 22× `default`; vllm-d is 2×
-> `default` **and** 41× `hive-sa`; a-ks-wec2 is 5× `hive-sa`. Binding the wrong
-> one fails silently — the pod runs, the lookup is denied, and you get the 503
+> bind `default`. Measured live: the hub-reachable cluster is 22× `default`; one
+> heartbeat-only cluster is 2× `default` **and** 41× `hive-sa`; another spoke
+> cluster is 5× `hive-sa`. Binding the wrong one fails silently — the pod runs,
+> the lookup is denied, and you get the 503
 > fallback with no error anywhere obvious. Read it off the Deployment:
 >
 > ```bash
@@ -554,7 +559,7 @@ data:
     project:
       org: myorg                      # a POOL PLACEHOLDER can seed any bootstrap org here; the
       repos: [myrepo]                 # AUTHORITATIVE identity is the meta.json org
-      primary_repo: myrepo            # (available-vllmd-<date>-<suffix>), which is what the hub
+      primary_repo: myrepo            # (available-<cluster>-<date>-<suffix>), which is what the hub
                                       # renders — see Placeholder pools below
     agents:
       guide:   { backend: copilot, model: claude-sonnet-4-6, enabled: true }
@@ -572,8 +577,8 @@ data:
     dashboard:
       port: 3002
       authorized_users:
-        - owner-github-login:owner    # a POOL PLACEHOLDER lists the pool owner: clubanderson:owner
-      hub_proxied: false              # vllm-d has no hub auth proxy → direct device-flow
+        - owner-github-login:owner    # a POOL PLACEHOLDER lists the pool owner: <hub-admin-login>:owner
+      hub_proxied: false              # heartbeat-only cluster has no hub auth proxy → direct device-flow
     hub:
       enabled: true
       url: https://hive.kubestellar.io
@@ -615,9 +620,10 @@ YAML
 > when the App is installed. To do it by hand, patch the PVC overlay
 > (`/data/hive.yaml.dashboard`, **not** the ConfigMap) and restart the pod.
 
-> **Gotcha — `hub_proxied` must be `false` on vllm-d.** vllm-d has no hub nginx
-> auth proxy. If `hub_proxied` is `true`, dashboard sign-in enters an OAuth
-> redirect loop. On hive-oke it is the opposite — the hub proxy handles auth.
+> **Gotcha — `hub_proxied` must be `false` on a heartbeat-only cluster.** A
+> heartbeat-only cluster has no hub nginx auth proxy. If `hub_proxied` is `true`,
+> dashboard sign-in enters an OAuth redirect loop. On the hub-reachable cluster
+> it is the opposite — the hub proxy handles auth.
 
 ### B.5 Secret
 
@@ -811,14 +817,14 @@ YAML
 > heartbeat *attempts*, not successes. A hub that is down, firewalled, or
 > rejecting beats leaves the process perfectly healthy, and restarting it
 > cannot fix a network partition — an earlier version gated liveness on
-> heartbeat freshness and crash-looped healthy spokes on firewalled clusters
-> (vllm-d). Heartbeat freshness is reported by `/api/health/deep` under the
+> heartbeat freshness and crash-looped healthy spokes on firewalled
+> (heartbeat-only) clusters. Heartbeat freshness is reported by `/api/health/deep` under the
 > `hub_heartbeat` check, and the hub greys the hive's dot on its own.
 > Spokes deployed before this fix need a redeploy (or a probe patch) to stop
 > restarting on hub outages.
 
 > **Gotcha — some clusters enforce an `owner` label.** A `ValidatingAdmissionPolicy`
-> on vllm-d requires an `owner` label on `PersistentVolumeClaim`, `ConfigMap`,
+> on the heartbeat-only cluster requires an `owner` label on `PersistentVolumeClaim`, `ConfigMap`,
 > `Secret`, `Service`, and `Deployment`. Objects still apply without it, but each
 > emits a warning. Add `owner: <github-login>` to every `metadata.labels` block
 > to silence them.
@@ -848,7 +854,7 @@ no hub restart.
 
 ```bash
 ID=hosted-myorg-myrepo
-HUB_POD=$(kubectl --context hive-oke -n hive-hub get pods -l app=hive-hub \
+HUB_POD=$(kubectl --context <hub-reachable-cluster> -n hive-hub get pods -l app=hive-hub \
   --no-headers | grep Running | awk '{print $1}' | head -1)
 
 cat > /tmp/meta.json <<JSON
@@ -865,18 +871,18 @@ cat > /tmp/meta.json <<JSON
   "subdomain": "",
   "auto_upgrade": true,
   "is_public": false,
-  "cluster_id": "vllm-d"
+  "cluster_id": "<heartbeat-only-cluster>"
 }
 JSON
 
-kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- \
   sh -c "mkdir -p /data/saas/hives/${ID}"
-kubectl --context hive-oke -n hive-hub cp /tmp/meta.json \
+kubectl --context <hub-reachable-cluster> -n hive-hub cp /tmp/meta.json \
   hive-hub/"$HUB_POD":/data/saas/hives/${ID}/meta.json
 ```
 
 **Visibility rule.** `handleMyHives` shows a hive to a user when the user is its
-`owner`, has a role on it, **or** is the hub admin (`clubanderson`) — even if the
+`owner`, has a role on it, **or** is the hub admin — even if the
 hive has no fleet-registry entry (never heartbeated). So a hive with
 `owner: <someone>` in its `meta.json` appears in that person's My Hives (and the
 admin's) as soon as the file exists.
@@ -965,16 +971,16 @@ A **placeholder** is a fully-provisioned but idle hive, waiting to be claimed �
 so a request for access is satisfied in seconds instead of the full 5–10 minute
 provision. Two pools, one per method type:
 
-- **vllm-d** placeholders serve **private** methods — provisioned manually
-  (Path B) and left running at **`replicas: 1`**.
-- **hive-oke** placeholders serve **public** methods — provisioned via the API
-  (Path A) and left running at **`replicas: 1`**.
+- **Heartbeat-only-cluster** placeholders serve **private** methods —
+  provisioned manually (Path B) and left running at **`replicas: 1`**.
+- **Hub-reachable-cluster** placeholders serve **public** methods — provisioned
+  via the API (Path A) and left running at **`replicas: 1`**.
 
 > **Gotcha — placeholder IDs are date + random suffix, NOT sequential integers.**
-> The live pool uses `hosted-available-vllmd-<YYMMDD>-<suffix>`, where `<suffix>`
-> is a short unique token (4 lowercase base36 chars) — e.g.
-> `hosted-available-vllmd-260731-fikn`, `hosted-available-vllmd-260806-1bo3`.
-> **Do not** use sequential numbers like `hosted-available-vllmd-01`: they
+> The live pool uses `hosted-available-<cluster>-<YYMMDD>-<suffix>`, where
+> `<suffix>` is a short unique token (4 lowercase base36 chars) — e.g.
+> `hosted-available-<cluster>-260731-fikn`, `hosted-available-<cluster>-260806-1bo3`.
+> **Do not** use sequential numbers like `hosted-available-<cluster>-01`: they
 > collide with existing pool slots and don't match the ID convention the fleet
 > uses, so renumbering is needed every time the pool grows. Unique suffixes let
 > you add a batch on any date without touching existing slots. Generate a batch
@@ -988,8 +994,8 @@ provision. Two pools, one per method type:
 > exist — against both the hub meta dirs and the target cluster's namespaces:
 >
 > ```bash
-> kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- ls /data/saas/hives/   # existing hive IDs
-> kubectl --context vllm-d get ns | grep hive-hosted-hosted-available-vllmd        # existing namespaces
+> kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- ls /data/saas/hives/   # existing hive IDs
+> kubectl --context <heartbeat-only-cluster> get ns | grep hive-hosted-hosted-available-<cluster>  # existing namespaces
 > ```
 
 Provision each placeholder as above at **`replicas: 1`**. The pod boots
@@ -997,11 +1003,11 @@ immediately, lands on the `anyuid` SCC, and heartbeats to the hub as an
 available slot ready to be claimed. Both pools stay at `replicas: 1`:
 
 ```bash
-# manual (vllm-d): apply the Deployment at replicas: 1 (it boots and heartbeats).
+# manual (heartbeat-only cluster): apply the Deployment at replicas: 1 (it boots and heartbeats).
 # If you applied it at 0, scale it up:
-kubectl --context vllm-d -n "$NS" scale deploy/hive --replicas=1
+kubectl --context <heartbeat-only-cluster> -n "$NS" scale deploy/hive --replicas=1
 
-# automated (hive-oke): the API already provisions at replicas=1 — leave it there.
+# automated (hub-reachable cluster): the API already provisions at replicas=1 — leave it there.
 ```
 
 > **Gotcha — do NOT scale placeholders to 0.** A `replicas: 0` slot is **not
@@ -1010,31 +1016,31 @@ kubectl --context vllm-d -n "$NS" scale deploy/hive --replicas=1
 > claimed. Every assignable slot in the live pool runs at `replicas: 1`,
 > `ready 1/1`. (Earlier guidance to "scale to 0" was incorrect.)
 
-Give every placeholder a `meta.json` with **`owner: clubanderson`** (admin-only
-visibility), **`status: "available"`**, and **`acmm_level: 2`**. Set `org` to a
-**unique** value per slot — `available-vllmd-<YYMMDD>-<suffix>` mirroring the
-`id`'s date-suffix — with **empty** `repos: []` and `primary_repo: ""` (they get
-their real values when the slot is claimed). The `meta.json` also carries
-`github_host` because vllm-d placeholders target GitHub Enterprise
-(`github.ibm.com`), not `github.com`:
+Give every placeholder a `meta.json` with **`owner: <hub-admin-login>`**
+(admin-only visibility), **`status: "available"`**, and **`acmm_level: 2`**. Set
+`org` to a **unique** value per slot — `available-<cluster>-<YYMMDD>-<suffix>`
+mirroring the `id`'s date-suffix — with **empty** `repos: []` and
+`primary_repo: ""` (they get their real values when the slot is claimed). The
+`meta.json` also carries `github_host` when the placeholders target GitHub
+Enterprise (`github.your-company.com`), not `github.com`:
 
 ```json
 {
-  "id": "hosted-available-vllmd-260806-1bo3",
-  "owner": "clubanderson",
+  "id": "hosted-available-<cluster>-260806-1bo3",
+  "owner": "<hub-admin-login>",
   "project_name": "Available slot (private) 260806-1bo3",
-  "org": "available-vllmd-260806-1bo3",
+  "org": "available-<cluster>-260806-1bo3",
   "repos": [],
   "primary_repo": "",
   "acmm_level": 2,
   "status": "available",
   "created_at": "",
-  "subdomain": "hosted-available-vllmd-260806-1bo3.apps.fmaas-vllm-d.fmaas.res.ibm.com",
+  "subdomain": "hosted-available-<cluster>-260806-1bo3.apps.<your-cluster-domain>",
   "claim_delivered": false,
   "auto_upgrade": true,
   "is_public": false,
-  "cluster_id": "vllm-d",
-  "github_host": "github.ibm.com"
+  "cluster_id": "<heartbeat-only-cluster>",
+  "github_host": "github.your-company.com"
 }
 ```
 
@@ -1046,23 +1052,24 @@ their real values when the slot is claimed). The `meta.json` also carries
 
 ### Verify a provisioned placeholder
 
-A correct vllm-d placeholder runs at `replicas: 1` with its pod up (`Running`,
-`ready`, `restartCount: 0`) on the `anyuid` SCC, its `hive-anyuid` binding points
-at its **own** namespace, its PVC is `Bound`, its `livez` returns 200, and its hub
-`meta.json` exists. This set verified all ten placeholders in the 2026-08-06 batch:
+A correct heartbeat-only-cluster placeholder runs at `replicas: 1` with its pod
+up (`Running`, `ready`, `restartCount: 0`) on the `anyuid` SCC, its `hive-anyuid`
+binding points at its **own** namespace, its PVC is `Bound`, its `livez` returns
+200, and its hub `meta.json` exists. This set verified all ten placeholders in
+the 2026-08-06 batch:
 
 ```bash
-ID=hosted-available-vllmd-<date>-<suffix>; NS=hive-hosted-$ID
-kubectl --context vllm-d -n $NS get deploy hive -o jsonpath='{.spec.replicas}'          # must be 1
-POD=$(kubectl --context vllm-d -n $NS get pod -l app=hive -o jsonpath='{.items[0].metadata.name}')
-kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.phase}'              # must be Running
-kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.metadata.annotations.openshift\.io/scc}'  # must be anyuid
-kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}'       # must be true
-kubectl --context vllm-d -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].restartCount}' # must be 0
-kubectl --context vllm-d -n $NS exec $POD -c hive -- curl -s -o /dev/null -w '%{http_code}' localhost:3002/api/livez  # must be 200
-kubectl --context vllm-d -n $NS get rolebinding hive-anyuid -o jsonpath='{.subjects[0].namespace}'  # must equal $NS
-kubectl --context vllm-d -n $NS get pvc hive-data -o jsonpath='{.status.phase}'         # must be Bound
-kubectl --context hive-oke -n hive-hub exec $HUB_POD -- test -f /data/saas/hives/$ID/meta.json  # must exist
+ID=hosted-available-<cluster>-<date>-<suffix>; NS=hive-hosted-$ID
+kubectl --context <heartbeat-only-cluster> -n $NS get deploy hive -o jsonpath='{.spec.replicas}'          # must be 1
+POD=$(kubectl --context <heartbeat-only-cluster> -n $NS get pod -l app=hive -o jsonpath='{.items[0].metadata.name}')
+kubectl --context <heartbeat-only-cluster> -n $NS get pod $POD -o jsonpath='{.status.phase}'              # must be Running
+kubectl --context <heartbeat-only-cluster> -n $NS get pod $POD -o jsonpath='{.metadata.annotations.openshift\.io/scc}'  # must be anyuid
+kubectl --context <heartbeat-only-cluster> -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}'       # must be true
+kubectl --context <heartbeat-only-cluster> -n $NS get pod $POD -o jsonpath='{.status.containerStatuses[0].restartCount}' # must be 0
+kubectl --context <heartbeat-only-cluster> -n $NS exec $POD -c hive -- curl -s -o /dev/null -w '%{http_code}' localhost:3002/api/livez  # must be 200
+kubectl --context <heartbeat-only-cluster> -n $NS get rolebinding hive-anyuid -o jsonpath='{.subjects[0].namespace}'  # must equal $NS
+kubectl --context <heartbeat-only-cluster> -n $NS get pvc hive-data -o jsonpath='{.status.phase}'         # must be Bound
+kubectl --context <hub-reachable-cluster> -n hive-hub exec $HUB_POD -- test -f /data/saas/hives/$ID/meta.json  # must exist
 ```
 
 > **The `hive-anyuid` subject-namespace check is still load-bearing at apply
@@ -1097,7 +1104,7 @@ Until the dashboard "assign" flow lands, claiming is manual:
 ## Mapping a namespace back to its hive (identity labels)
 
 A claimed placeholder's namespace **keeps its original placeholder name
-forever** — e.g. `hive-hosted-hosted-available-oke-01-placeholder-bb95` — even
+forever** — e.g. `hive-hosted-hosted-available-<cluster>-01-placeholder-bb95` — even
 after the hub API's claim/assign flow gives the hive a real name and org.
 Kubernetes has no atomic namespace-rename primitive, and renaming would mean
 recreating every object inside it (including the PVC), so the namespace name
@@ -1130,14 +1137,14 @@ labels rather than written as an empty/invalid label.
 Given a hive name, find its namespace:
 
 ```bash
-kubectl --context hive-oke get ns \
+kubectl --context <hub-reachable-cluster> get ns \
   -l hive.kubestellar.io/hive-name=tradingasbuddies
 ```
 
 Given a namespace, find the hive that owns it:
 
 ```bash
-kubectl --context hive-oke get ns hive-hosted-hosted-available-oke-01-placeholder-bb95 \
+kubectl --context <hub-reachable-cluster> get ns hive-hosted-hosted-available-<cluster>-01-placeholder-bb95 \
   -o jsonpath='{.metadata.annotations.hive\.kubestellar\.io/display-name}'
 # -> TradingAsBuddies
 ```
@@ -1213,7 +1220,7 @@ hive owner doesn't need `kubectl` at all to find it:
 # delete the workload namespace
 kubectl --context "$CTX" delete ns "$NS"
 # remove the hub SaaS record
-kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
+kubectl --context <hub-reachable-cluster> -n hive-hub exec "$HUB_POD" -- \
   rm -rf /data/saas/hives/"$ID"
 # if it ever heartbeated, also drop its registry entry (see the placeholder gotcha)
 ```
@@ -1232,11 +1239,11 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | Pod won't boot: `github.token or github.app_id is required` | `github.app_id` empty in the seed | Set the placeholder sentinel `app_id: 999999999` — exactly that value, see [Placeholder `app_id`](#placeholder-app_id). Any other stand-in number is treated as a real App |
 | Pod `CrashLoopBackOff` with `failed to init GitHub App auth` / `reading app key ...: no such file`, restarts climbing, hive offline on the hub, rollout stuck with two crashlooping pods | A non-sentinel placeholder `app_id` plus a real `installation_id`, and no private key at `key_file`. Older builds exited before the listener bound, so nothing was visible in the dashboard | Set `app_id` to the real App ID and install the PEM at `key_file` (or set `app_id` to the sentinel `999999999` to park the hive in dashboard-only mode). Patch `/data/hive.yaml.dashboard` and restart. Current builds boot degraded and show the reason in the GitHub App banner instead of crashlooping |
 | Dashboard banner: "GitHub App private key could not be loaded from ..." | A real `app_id` + `installation_id`, but no readable PEM at the resolved path | The banner names the exact path tried and the resolution order (`$GH_APP_KEY_FILE` → `github.key_file` → PVC `/data/gh-app-key.pem` → provisioning mount `/secrets/gh-app-key.pem`). Write the PEM to that path, or point `github.key_file` at one |
-| Dashboard sign-in redirect loop (vllm-d) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |
+| Dashboard sign-in redirect loop (heartbeat-only cluster) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |
 | Hive online but **Upgrade** → `hive not found` | No `meta.json` on the hub | Create `/data/saas/hives/<id>/meta.json` |
 | Hive online, but **My Hives → Dashboard** returns a branded **503**; the link reads `<hive-id>.<hub-host>` instead of the spoke cluster's own domain | Missing `hive-route-reader` RBAC, so the spoke can't read its own Route/Ingress and the hub falls back to the hub-wildcard host, which has no backend for a hive on another cluster | Apply the `hive-route-reader` Role + RoleBinding, binding the SA the hive Deployment actually uses (see [B.2](#hive-route-reader--why-the-dashboard-link-503s-without-it)), then `rollout restart deploy/hive` |
 | Not visible in My Hives | No `meta.json`, or `owner` doesn't match | Create/patch `meta.json` with the right `owner` |
 | ConfigMap edits have no effect | PVC overlay is authoritative | Edit `/data/hive.yaml.dashboard`, not the ConfigMap |
 | User has `read-write` in Manage Access but login fails with `device-flow login rejected: user not authorized` | Grant written to `/data/hive.yaml.dashboard` after the pod booted; the running authorizer only rebuilds `authorized_users` at startup (common right after provisioning / cross-cluster migration onto a fresh PVC) | Confirm the user is in the pod's `/etc/hive/hive.yaml`, then `rollout restart deploy/hive` so the authorizer rebuilds |
 | Admission warnings on apply | Cluster requires an `owner` label | Add `owner: <login>` to every `metadata.labels` |
-| Placeholder rows all render as "placeholder / placeholder" | `meta.json` used the literal `org: "placeholder"` | Give each slot a unique `org: available-vllmd-<date>-<suffix>` with `repos: []` |
+| Placeholder rows all render as "placeholder / placeholder" | `meta.json` used the literal `org: "placeholder"` | Give each slot a unique `org: available-<cluster>-<date>-<suffix>` with `repos: []` |

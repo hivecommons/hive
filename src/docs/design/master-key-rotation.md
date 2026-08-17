@@ -538,7 +538,7 @@ installed hub the ambient master is still there as current or previous.
 ### The stranding interlock, and why rotation is gated shut today
 
 F21 measured that **44 of 70 hosted spokes** sit on `pull_only` clusters
-(`vllm-d`, `a-ks-wec2`) that the reconcile sweep structurally cannot read or
+(heartbeat-only clusters) that the reconcile sweep structurally cannot read or
 patch. That is by design and is not changing until the Option D wrapped-master
 delivery path lands.
 
