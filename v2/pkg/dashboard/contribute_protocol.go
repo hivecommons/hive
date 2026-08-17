@@ -29,6 +29,12 @@
 //     half and is deliberately out of scope here.
 package dashboard
 
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
 // contributorProtocolVersion is the contributor WebSocket protocol version this
 // hub speaks. It is advertised to clients on auth_ok (#2567) so a relay can
 // learn the deployed protocol level without probing. Bump ONLY on a wire
@@ -130,4 +136,76 @@ type ContributorCapabilities struct {
 func (c ContributorCapabilities) IsZero() bool {
 	return c.ContainerRuntime == "" && c.OS == "" && c.Arch == "" &&
 		c.AgentCLIVersion == "" && c.RelayProtocolVersion == "" && c.CredentialType == ""
+}
+
+// capabilityFieldMaxLen bounds each declared capability field the hub is willing
+// to store. These are compact tokens ("podman", "linux", "1.2.3") rendered inline
+// on one operator row, so 64 runes is far more than any honest value needs while
+// still fitting the surface. Mirrors the existing bound on other client-supplied
+// display strings (bobKeyNameMaxLen / gatewayKeyNameMaxLen).
+const capabilityFieldMaxLen = 64
+
+// Sanitized returns the declaration bounded and made printable.
+//
+// A declaration is UNVERIFIED CLIENT TEXT — that is the whole premise of the
+// declare half (#2547): the hub stores what it is told and shows it, and a client
+// can say anything. "Anything" includes 64KB of padding (the read limit is the
+// only ceiling on the wire) and embedded newlines or escapes, and this value is
+// held for the life of the connection, re-serialized into every fleet poll, and
+// rendered into an operator row. Trusting a client to self-limit its own display
+// string is not a bound at all, so the hub applies one on receipt: control
+// characters become spaces, runs of whitespace collapse, and each field is
+// truncated to capabilityFieldMaxLen runes.
+//
+// This is hygiene on a display value, NOT validation: no field is checked against
+// a vocabulary, nothing is rejected, and an over-long or messy declaration is
+// still accepted and still authenticates. Declaring badly must never cost a
+// client its connection or its work.
+func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
+	return ContributorCapabilities{
+		ContainerRuntime:     sanitizeCapabilityField(c.ContainerRuntime),
+		OS:                   sanitizeCapabilityField(c.OS),
+		Arch:                 sanitizeCapabilityField(c.Arch),
+		AgentCLIVersion:      sanitizeCapabilityField(c.AgentCLIVersion),
+		RelayProtocolVersion: sanitizeCapabilityField(c.RelayProtocolVersion),
+		CredentialType:       sanitizeCapabilityField(c.CredentialType),
+	}
+}
+
+// sanitizeCapabilityField makes one declared value printable and bounded.
+// Truncation is by rune, not byte, so a multi-byte value is never cut mid-rune
+// into invalid UTF-8 on the way to the fleet JSON. U+FFFD is dropped: encoding/json
+// substitutes it for undecodable bytes, and a replacement character is never part
+// of an honest runtime/version token.
+func sanitizeCapabilityField(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range s {
+		if r == utf8.RuneError {
+			continue
+		}
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			// Collapse any whitespace run (including embedded newlines) to one
+			// space, and never let one lead the value.
+			pendingSpace = b.Len() > 0
+			continue
+		}
+		if pendingSpace {
+			b.WriteRune(' ')
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if utf8.RuneCountInString(out) > capabilityFieldMaxLen {
+		n := 0
+		for i := range out {
+			if n == capabilityFieldMaxLen {
+				out = out[:i]
+				break
+			}
+			n++
+		}
+	}
+	return strings.TrimSpace(out)
 }
