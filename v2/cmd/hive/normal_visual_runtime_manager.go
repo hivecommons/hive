@@ -35,9 +35,10 @@ var (
 )
 
 type normalVisualRuntimeBinding struct {
-	Digest     string
-	Repository string
-	StateDir   string
+	Digest       string
+	Repository   string
+	StateDir     string
+	RuntimeOwner runtimeOwnerIntent
 }
 
 type normalVisualRuntimeInstance interface {
@@ -332,6 +333,7 @@ func (manager *normalVisualRuntimeManager) RuntimeStatus() map[string]any {
 		status["contract_binding_digest"] = binding.Digest
 		status["repository"] = binding.Repository
 		status["state_dir"] = binding.StateDir
+		status["runtime_owner"] = binding.RuntimeOwner
 		status["github_runtime_binding_digest"] = manager.activeGitHubBinding
 		status["github_runtime_revision"] = manager.activeGitHubRevision
 	}
@@ -860,6 +862,7 @@ func normalVisualBinding(installed integrated.Config) (normalVisualRuntimeBindin
 	sum := sha256.Sum256(data)
 	return normalVisualRuntimeBinding{
 		Digest: hex.EncodeToString(sum[:]), Repository: repository, StateDir: stateDir,
+		RuntimeOwner: configuredRuntimeOwnerIntent(installed),
 	}, nil
 }
 

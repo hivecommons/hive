@@ -50,6 +50,37 @@ func TestUninstallDeleteStateFirstCallOnlyPreparesExactCleanup(t *testing.T) {
 	}
 }
 
+func TestUninstallAcceptsExplicitPATBackedDashboardAuthorizer(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetupAuthorizationActorLogin = "hive-bot"
+	config.SetupAuthorizationWriterID = config.SetupAuthorizationActorID
+	config.SetupAuthorizationWriterLogin = "HIVE-BOT"
+	config.SetupAuthorizationWriterType = "User"
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+		AuthorizationActor: hivegithub.AuthenticatedUserIdentity{ID: 55, Login: "Hive-Bot", Type: "User"},
+	})
+	if err != nil {
+		t.Fatalf("explicit PAT-backed dashboard authorizer was rejected: %v", err)
+	}
+	if !result.FinalizationPending || result.PRNumber != 17 || result.PRURL == "" {
+		t.Fatalf("explicit PAT-backed uninstall did not prepare exact cleanup: %+v", result)
+	}
+}
+
 func TestUninstallWorkflowDispatchDrainRequiresExactBoundRun(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -1455,6 +1486,8 @@ func (fixture *uninstallFixture) serve(t *testing.T, writer http.ResponseWriter,
 	case request.Method == http.MethodGet && path == "/repos/owner/repo":
 		writeUninstallJSON(t, writer, map[string]any{"id": 123, "full_name": "owner/repo", "default_branch": "main"})
 	case request.Method == http.MethodGet && path == "/user":
+		writeUninstallJSON(t, writer, map[string]any{"id": 55, "login": "hive-bot", "type": "User"})
+	case request.Method == http.MethodGet && strings.EqualFold(path, "/users/hive-bot"):
 		writeUninstallJSON(t, writer, map[string]any{"id": 55, "login": "hive-bot", "type": "User"})
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/repos/owner/repo/commits/") && strings.HasSuffix(path, "/statuses"):
 		if fixture.statusContext == "" {

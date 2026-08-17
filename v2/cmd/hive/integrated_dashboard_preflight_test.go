@@ -300,6 +300,36 @@ func TestHostedPreflightAllowsExactManagedRuntimeForRebind(t *testing.T) {
 	}
 }
 
+func TestHostedPreflightAllowsLeaseFreeIntakeRuntimeForManagedAuthorityTransition(t *testing.T) {
+	stateDir := t.TempDir()
+	installed := testInstalledNormalVisualContract(t, stateDir)
+	installed.Automation = integrated.AutomationIssues
+	contract := &testNormalVisualContract{config: installed, exists: true}
+	manager, _, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	if active, err := manager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("activate exact managed intake runtime: active=%v err=%v", active, err)
+	}
+	original := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(manager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(original) })
+
+	active, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true)
+	if err != nil || !active {
+		t.Fatalf("lease-free intake runtime rejected for managed authority transition: active=%v err=%v", active, err)
+	}
+
+	lease, err := claimNormalVisualDaemonLease(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseDaemonLease(lease) })
+	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", true); err == nil || !strings.Contains(err.Error(), "intake-only controller unexpectedly holds") {
+		t.Fatalf("unexpected intake-only ownership lease was accepted: %v", err)
+	}
+}
+
 func TestHostedPreflightRejectsManagedContractWithoutDurableState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

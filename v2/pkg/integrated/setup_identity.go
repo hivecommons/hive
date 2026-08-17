@@ -87,12 +87,34 @@ func resolveManagedOperatorIdentity(ctx context.Context, client *hivegithub.Clie
 		return hivegithub.AuthenticatedUserIdentity{}, errors.New("managed lifecycle operator does not match the installed human setup authorizer")
 	}
 	writer, ok := setupAuthorizationWriter(config)
-	if !ok || !strings.EqualFold(writer.Type, "Bot") || config.SetupAuthorizationAppID <= 0 || config.SetupAuthorizationInstallationID <= 0 ||
-		!setupIdentityDigest.MatchString(strings.ToLower(strings.TrimSpace(config.SetupAuthorizationAppBindingDigest))) {
-		return hivegithub.AuthenticatedUserIdentity{}, errors.New("App-backed managed lifecycle requires an exact installed App writer binding")
+	if !ok {
+		return hivegithub.AuthenticatedUserIdentity{}, errors.New("managed lifecycle requires an exact installed writer binding")
 	}
-	if err := client.VerifyAppWriterBinding(writer, config.SetupAuthorizationAppBindingDigest); err != nil {
-		return hivegithub.AuthenticatedUserIdentity{}, err
+	switch {
+	case strings.EqualFold(writer.Type, "User"):
+		if config.SetupAuthorizationAppID != 0 || config.SetupAuthorizationInstallationID != 0 ||
+			strings.TrimSpace(config.SetupAuthorizationAppBindingDigest) != "" || writer.ID != explicit.ID ||
+			!strings.EqualFold(writer.Login, explicit.Login) {
+			return hivegithub.AuthenticatedUserIdentity{}, errors.New("standalone managed lifecycle requires the human operator and PAT writer to be identical")
+		}
+		authenticated, authErr := client.AuthenticatedNumericUser(ctx)
+		if authErr != nil {
+			return hivegithub.AuthenticatedUserIdentity{}, fmt.Errorf("authenticate standalone managed lifecycle writer: %w", authErr)
+		}
+		if authenticated.ID != writer.ID || !strings.EqualFold(authenticated.Login, writer.Login) ||
+			!strings.EqualFold(authenticated.Type, "User") {
+			return hivegithub.AuthenticatedUserIdentity{}, errors.New("standalone managed lifecycle credential does not match the installed human writer")
+		}
+	case strings.EqualFold(writer.Type, "Bot"):
+		if config.SetupAuthorizationAppID <= 0 || config.SetupAuthorizationInstallationID <= 0 ||
+			!setupIdentityDigest.MatchString(strings.ToLower(strings.TrimSpace(config.SetupAuthorizationAppBindingDigest))) {
+			return hivegithub.AuthenticatedUserIdentity{}, errors.New("App-backed managed lifecycle requires an exact installed App writer binding")
+		}
+		if err := client.VerifyAppWriterBinding(writer, config.SetupAuthorizationAppBindingDigest); err != nil {
+			return hivegithub.AuthenticatedUserIdentity{}, err
+		}
+	default:
+		return hivegithub.AuthenticatedUserIdentity{}, errors.New("managed lifecycle installed writer type is neither User nor Bot")
 	}
 	resolved, err := client.ResolveHumanNumericUser(ctx, explicit.Login)
 	if err != nil || resolved.ID != explicit.ID {

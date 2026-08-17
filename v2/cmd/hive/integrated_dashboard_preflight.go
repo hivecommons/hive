@@ -336,6 +336,7 @@ func ensureManagedRepositoryContractBeforeSetup(
 
 func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManagedUpdate bool) (bool, error) {
 	exactActive := false
+	leaseRequired := false
 	if manager := dashboardNormalVisualRuntime.Load(); manager != nil {
 		if binding, active := manager.ActiveBinding(); active {
 			if !allowManagedUpdate || !strings.EqualFold(strings.TrimSpace(binding.Repository), strings.TrimSpace(repository)) ||
@@ -343,11 +344,15 @@ func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManaged
 				return false, fmt.Errorf("Visual Hive controller is already active for %s", binding.Repository)
 			}
 			exactActive = true
+			leaseRequired = binding.RuntimeOwner == runtimeOwnerNormalHive
 		}
 	}
 	leasePath := filepath.Join(stateRoot, "integrated", "daemon.lease")
 	if _, leaseErr := os.Lstat(leasePath); leaseErr == nil {
 		if exactActive {
+			if !leaseRequired {
+				return false, fmt.Errorf("Visual Hive intake-only controller unexpectedly holds an ownership lease at the selected state root")
+			}
 			owner, held := readNormalVisualDaemonLease(stateRoot)
 			if !held || owner.PID != os.Getpid() {
 				return false, fmt.Errorf("Visual Hive ownership lease at the selected state root is not held by this exact dashboard process")
@@ -359,7 +364,15 @@ func ensureNoVisualRuntimeBeforeSetup(stateRoot, repository string, allowManaged
 		return false, fmt.Errorf("inspect Visual Hive ownership lease: %w", leaseErr)
 	}
 	if exactActive {
-		return false, fmt.Errorf("active Visual Hive controller is missing its authoritative ownership lease")
+		if leaseRequired {
+			return false, fmt.Errorf("active Visual Hive controller is missing its authoritative ownership lease")
+		}
+		// Advisory/issues and repository-hosted contracts intentionally keep an
+		// in-process evidence-intake controller without owning repair cadence.
+		// That exact, lease-free runtime must be permitted to enter the managed
+		// setup path so an L4/issues -> L5/repair-pr transition can stop it and
+		// atomically claim normal-Hive ownership under the new contract.
+		return true, nil
 	}
 	return false, nil
 }

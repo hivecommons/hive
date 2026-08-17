@@ -116,6 +116,39 @@ func TestResolveManagedOperatorRequiresInstalledAppWriterBinding(t *testing.T) {
 	}
 }
 
+func TestResolveManagedOperatorPreservesExplicitPATCompatibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch strings.ToLower(request.URL.Path) {
+		case "/user", "/users/standalone-owner":
+			_, _ = io.WriteString(writer, `{"id":303,"login":"standalone-owner","type":"User"}`)
+		default:
+			http.Error(writer, `{"message":"not found"}`, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := hivegithub.NewClientForTest(server.URL, "", nil, slog.Default())
+	config := Config{
+		Repository: "owner/repository", SetupAuthorizationActorID: 303, SetupAuthorizationActorLogin: "Standalone-Owner",
+		SetupAuthorizationWriterID: 303, SetupAuthorizationWriterLogin: "standalone-owner", SetupAuthorizationWriterType: "User",
+	}
+	explicit := hivegithub.AuthenticatedUserIdentity{ID: 303, Login: "STANDALONE-OWNER", Type: "User"}
+	resolved, err := resolveManagedOperatorIdentity(context.Background(), client, config, explicit, "uninstall")
+	if err != nil || resolved.ID != 303 || !strings.EqualFold(resolved.Login, explicit.Login) {
+		t.Fatalf("standalone PAT-backed managed operator was rejected: identity=%+v err=%v", resolved, err)
+	}
+
+	config.SetupAuthorizationWriterID = 304
+	if _, err := resolveManagedOperatorIdentity(context.Background(), client, config, explicit, "uninstall"); err == nil || !strings.Contains(err.Error(), "operator and PAT writer to be identical") {
+		t.Fatalf("mismatched standalone PAT writer was accepted: %v", err)
+	}
+	config.SetupAuthorizationWriterID = 303
+	config.SetupAuthorizationAppID = 11
+	if _, err := resolveManagedOperatorIdentity(context.Background(), client, config, explicit, "uninstall"); err == nil || !strings.Contains(err.Error(), "operator and PAT writer to be identical") {
+		t.Fatalf("User writer with an App binding was accepted: %v", err)
+	}
+}
+
 func setupIdentityTestApp() hivegithub.AppRuntimeIdentity {
 	return hivegithub.AppRuntimeIdentity{
 		AppID: 11, InstallationID: 22, BotID: 202, BotLogin: "hive-test[bot]", BotType: "Bot",
