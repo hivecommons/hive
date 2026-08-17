@@ -171,7 +171,7 @@ CTX=vllm-d
 ID=hosted-myorg-myrepo          # the hive ID
 NS=hive-hosted-$ID              # namespace is always hive-hosted-<id>
 ROUTE_HOST=$ID.apps.fmaas-vllm-d.fmaas.res.ibm.com
-IMAGE=ghcr.io/kubestellar/hive:v2-latest
+IMAGE=ghcr.io/kubestellar/hive:v4-latest   # what the hub provisioner stamps by default (saas_provision.go); use `stable` for production
 SC=ocs-storagecluster-cephfs
 
 # The hub heartbeat secret — the SAME for every spoke on a given hub. Copy it

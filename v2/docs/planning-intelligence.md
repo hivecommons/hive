@@ -117,7 +117,7 @@ the feature: *click ⧉ Plan on any issue, or add the `plan` label on GitHub.*
 
 ```yaml
 # Auto-plan issues carrying the `plan`/`epic` label. Omit to use the ACMM gate
-# (on at L4+); set explicitly to force on/off.
+# (on at L5+); set explicitly to force on/off.
 planning:
   plan_from_label: true
 

@@ -30,7 +30,6 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_METRICS_TOKEN` | Yes when metrics enabled | none | Bearer token for `/metrics` (`Authorization: Bearer <token>`; Prometheus `bearer_token`). `/metrics` bypasses dashboard session auth, so this token is its only guard; the cost/agent series are never served without it. |
 | `HIVE_METRICS_FILE` | No | `/var/run/hive-metrics/contribute.json` | Contributor metrics JSON file override. |
 | `HIVE_COPILOT_INTEGRATION_ID` | No | compiled Copilot integration id | Overrides the integration id used by Copilot model discovery. |
-| `HIVE_PROXY_PROOF_REQUIRED` | No | `false` | Requires the internal proxy proof header when set to `true`. |
 | `HIVE_CONTRIBUTORS_DIR` | No | hub default | Contributor registry directory override. |
 | `HIVE_FEDERATION_REGISTRY_PATH` | No | `/data/federation/registry.json` | Federation registry path override. |
 | `HIVE_WEBHOOK_SECRET` | No | none | HMAC secret for the spoke `/webhook` channel. |
