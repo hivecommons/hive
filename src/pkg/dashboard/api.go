@@ -870,6 +870,11 @@ func (s *Server) handleSnapshotPage(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60")
+	// The snapshot document is built at runtime by build-snapshot.mjs and then
+	// rewritten above, so its inline <script> content is only known here. Stamp
+	// the CSP script-src-elem hash allowlist from the exact bytes being served
+	// (#3848 part 1 / #3907, see csp_script_src.go).
+	applyDocumentScriptSrcElem(w, []byte(html))
 	w.Write([]byte(html))
 }
 

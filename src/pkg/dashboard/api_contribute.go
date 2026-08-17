@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -794,7 +795,15 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	// verb mid-template would renumber every argument after it. Substituting on
 	// the template also means no rendered value — project name, Host header —
 	// can ever contain the sentinel and be rewritten by it.
-	fmt.Fprintf(w, strings.ReplaceAll(`<!DOCTYPE html>
+	//
+	// Rendered into a buffer, not straight to w: this page's inline <script>
+	// content varies per response (hubURL derives from the Host header, and the
+	// optional custom-style script from the ?style= query), so its CSP
+	// script-src-elem hashes can only be computed from the finished document.
+	// applyDocumentScriptSrcElem below stamps them before the first Write
+	// (#3848 part 1 / #3907, see csp_script_src.go).
+	var page bytes.Buffer
+	fmt.Fprintf(&page, strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
@@ -5937,6 +5946,8 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
 }).catch(function(){});
 </script>
 </body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+	applyDocumentScriptSrcElem(w, page.Bytes())
+	w.Write(page.Bytes())
 }
 
 // ── Registration ───────────────────────────────────────────────────────────

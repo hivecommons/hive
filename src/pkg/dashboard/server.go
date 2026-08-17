@@ -864,25 +864,47 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
-		// SECURITY (#3315): script-src still carries 'unsafe-inline' because the
-		// dashboard is server-rendered HTML with inline on*= handlers and
-		// several inline <script> blocks (static/index.html, api_contribute.go,
-		// the device-flow login page below). Dropping it today would blank the
-		// UI, so it is staged behind a nonce/handler refactor — see #3315/#3848.
-		// Measured on v4 for #3848: 437 inline on*= attributes in
-		// static/index.html plus ~145 more BUILT AS STRINGS inside the page's
-		// own JavaScript and injected through 169 innerHTML/insertAdjacentHTML
-		// sites. A nonce cannot cover ANY of them — nonces apply to <script>
-		// elements, never to event-handler attributes — so completing script-src
-		// is an event-delegation refactor of the SPA, not a nonce threading
-		// exercise. TestCSPScriptSrcUnsafeInlineIsStaged stays as the tripwire.
+		// SECURITY (#3315 → #3848 part 1, #3907): script-src is scoped into its
+		// element and attribute halves, the same decomposition ADR-0015 applied
+		// to style-src, because the same asymmetry decides it — see ADR-0016 and
+		// csp_script_src.go for the full rationale:
 		//
-		// What IS enforced here: the secret that 'unsafe-inline' used to expose
-		// is gone. The dashboard token is never rendered into the page (see
-		// serveIndex in proxy/server.js and handleAuthToken in api.go), so an
-		// inline-script XSS has no token to steal from the served HTML.
-		// form-action 'self' is added to stop an injected <form> from posting
-		// credentials off-origin, which does NOT depend on inline scripts.
+		//   script-src-elem 'self' 'sha256-…'  — inline <script> ELEMENTS.
+		//     CLOSED. Every inline script this server sends is hash-allowlisted:
+		//     the embedded SPA and the device-flow login page at startup
+		//     (baseScriptSrcElem), the per-response documents (/contribute,
+		//     /snapshot) by applyDocumentScriptSrcElem over the exact bytes
+		//     served. No 'unsafe-inline': an injected inline <script> cannot
+		//     match a hash and does not execute in any CSP3 browser. Hashes, not
+		//     nonces, so the #3863 startup-pre-gzip + strong-ETag design for the
+		//     SPA document is untouched.
+		//
+		//   script-src-attr 'unsafe-inline'  — inline on*= HANDLER attributes.
+		//     STAGED, not accepted: 426 on*= attributes in static/index.html
+		//     plus ~145 more built as strings and injected through 169
+		//     innerHTML/insertAdjacentHTML sites. Neither nonces nor elem-hashes
+		//     apply to attributes, so closing this half is an event-delegation
+		//     refactor of the SPA (#3848), and until then an injected on*=
+		//     attribute still executes. TestCSPScriptSrcAttrUnsafeInlineIsStaged
+		//     is the tripwire: invert it, never relax it.
+		//
+		//   script-src 'self' 'unsafe-inline'  — the CSP2 fallback, unchanged,
+		//     and it must NEVER carry the hashes: a hash in this directive makes
+		//     hash-aware browsers ignore 'unsafe-inline' here, and a browser
+		//     that knows hashes but not script-src-elem/-attr (Firefox < 108)
+		//     would then block every inline handler and blank the dashboard.
+		//     Pre-CSP3 browsers keep exactly today's behaviour.
+		//
+		// The secret that 'unsafe-inline' used to expose is gone regardless: the
+		// dashboard token is never rendered into the page (see serveIndex in
+		// proxy/server.js and handleAuthToken in api.go), so an inline-script
+		// XSS has no token to steal from the served HTML. form-action 'self'
+		// stops an injected <form> from posting credentials off-origin.
+		//
+		// /terminal is excluded from the split: those responses are ttyd's own
+		// UI streamed through a reverse proxy, this server never sees the
+		// document bytes to hash, and a wrong allowlist there would brick the
+		// terminal. It keeps the blanket CSP2 policy it has always had.
 		//
 		// style-src (#3848 part 2) is scoped as TWO directives rather than one
 		// blanket allowance, because the two halves have different futures:
@@ -905,8 +927,12 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// Both are listed AFTER the style-src fallback, which browsers without
 		// CSP3 support use instead; the effective policy is identical either way,
 		// so this split names the decision without changing behaviour.
+		scriptDirectives := "script-src 'self' 'unsafe-inline'; script-src-elem " + baseScriptSrcElem() + "; script-src-attr 'unsafe-inline'"
+		if r.URL.Path == "/terminal" || strings.HasPrefix(r.URL.Path, "/terminal/") {
+			scriptDirectives = "script-src 'self' 'unsafe-inline'"
+		}
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
+			"default-src 'self'; "+scriptDirectives+"; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})

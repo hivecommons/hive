@@ -775,13 +775,70 @@ async function snapshotFrameAncestors() {
   }
 }
 
+// ── CSP script-src scoping (#3848 part 1 / #3907, mirrors Go securityHeaders) ──
+//
+// script-src is split into its CSP3 halves, exactly like the Go spoke server:
+//   script-src-elem 'self' cdn + sha256 hashes — inline <script> ELEMENTS,
+//     CLOSED: only this proxy's own inline scripts (the SPA document's) can
+//     execute; an injected inline <script> matches no hash and is blocked.
+//   script-src-attr 'unsafe-inline' — the SPA's ~426 inline on*= handler
+//     attributes, STAGED behind an event-delegation refactor (#3848). Hashes
+//     and nonces do not exist for attributes.
+//   script-src (fallback) keeps 'self' 'unsafe-inline' UNCHANGED for pre-CSP3
+//     browsers, and must never carry the hashes: a hash there makes hash-aware
+//     browsers ignore 'unsafe-inline' in the same directive, blanking the UI
+//     on browsers that know hashes but not -elem/-attr (Firefox < 108).
+//
+// Hashes are computed from the exact index.html bytes this proxy serves —
+// lazily, because the dashboard file can be built after startup (see
+// serveIndex). Documents this proxy does NOT render — the Go-rendered
+// /contribute, /leaderboard and /snapshot pages, and ttyd's own UI under
+// /terminal — keep the blanket CSP2 policy: the Go upstream stamps its own
+// per-document hash policy on the pages it renders (http-proxy-middleware
+// copies upstream headers over ours), and a hash allowlist computed from the
+// WRONG document would blank exactly those pages if that copy ever changed.
+function computeInlineScriptHashes(html) {
+  const hashes = [];
+  const scriptRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  for (const m of html.matchAll(scriptRe)) {
+    if (/(^|\s)src\s*=/i.test(m[1])) continue; // external: covered by URL sources
+    const h = `'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`;
+    if (!hashes.includes(h)) hashes.push(h);
+  }
+  return hashes;
+}
+
+let indexScriptHashes = null;
+function spaScriptElemHashes() {
+  if (indexScriptHashes) return indexScriptHashes;
+  if (!indexHtml) {
+    try { indexHtml = fs.readFileSync(indexPath, 'utf8'); } catch { return []; }
+  }
+  indexScriptHashes = computeInlineScriptHashes(indexHtml);
+  return indexScriptHashes;
+}
+
+// Paths whose HTML this proxy does not render itself; they keep the blanket
+// CSP2 script-src (see the comment above).
+const UPSTREAM_DOC_PATHS = ['/contribute', '/leaderboard', '/snapshot', '/terminal'];
+function isUpstreamDocPath(p) {
+  return UPSTREAM_DOC_PATHS.some((base) => p === base || p.startsWith(`${base}/`));
+}
+
 app.use(async (req, res, next) => {
   const frameAllowlist = req.path === '/snapshot' ? await snapshotFrameAncestors() : [];
   const snapshotFramingAllowed = frameAllowlist.length > 0;
   const frameAncestors = snapshotFramingAllowed ? frameAllowlist.join(' ') : "'none'";
+  const scriptDirectives = isUpstreamDocPath(req.path)
+    ? ["script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"]
+    : [
+        "script-src 'self' 'unsafe-inline' https://cdn.redoc.ly",
+        `script-src-elem ${["'self'", 'https://cdn.redoc.ly', ...spaScriptElemHashes()].join(' ')}`,
+        "script-src-attr 'unsafe-inline'",
+      ];
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdn.redoc.ly",
+    ...scriptDirectives,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "worker-src blob:",
     "img-src 'self' data: https:",

@@ -63,43 +63,15 @@ func TestCSPDirectivesPinned(t *testing.T) {
 	}
 }
 
-// TestCSPScriptSrcUnsafeInlineIsStaged documents the REMAINING half of #3315.
-//
-// script-src still carries 'unsafe-inline' because the dashboard is
-// server-rendered HTML with roughly 400 inline on*= handlers plus several
-// inline <script> blocks (static/index.html, api_contribute.go, and the
-// device-flow login page in server.go). Removing the directive today blanks
-// the UI, so it is staged behind a nonce/handler-extraction refactor.
-//
-// This test is deliberately written as a TRIPWIRE, not an endorsement: when the
-// refactor lands, script-src loses 'unsafe-inline', this test FAILS, and whoever
-// does that work must invert it into the "must be absent" assertion below --
-// which is already written and enabled for the directives that are safe today.
-func TestCSPScriptSrcUnsafeInlineIsStaged(t *testing.T) {
-	s := &Server{deps: &Dependencies{Config: &config.Config{}}}
-	handler := s.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-
-	scriptSrc := cspDirective(rec.Header().Get("Content-Security-Policy"), "script-src")
-	if scriptSrc == "" {
-		t.Fatal("CSP must declare an explicit script-src directive")
-	}
-	if !strings.Contains(scriptSrc, "'self'") {
-		t.Errorf("script-src must allowlist 'self', got %q", scriptSrc)
-	}
-	if strings.Contains(scriptSrc, "'unsafe-eval'") {
-		t.Errorf("script-src must never permit 'unsafe-eval', got %q", scriptSrc)
-	}
-	if !strings.Contains(scriptSrc, "'unsafe-inline'") {
-		t.Fatalf("script-src no longer has 'unsafe-inline' (got %q).\n"+
-			"This is GOOD NEWS: the #3315 follow-up appears to have landed.\n"+
-			"Invert this test into an assertion that 'unsafe-inline' is ABSENT, "+
-			"so it can never come back.", scriptSrc)
-	}
-}
+// The tripwire that lived here — TestCSPScriptSrcUnsafeInlineIsStaged — has
+// been INVERTED, exactly as its own instructions and #3848 required, for the
+// half that landed: script-src is now scoped into its element and attribute
+// halves (#3848 part 1 / #3907, ADR-0016), and the closed element half is
+// pinned by TestCSPScriptSrcElemUnsafeInlineIsClosed in csp_script_src_test.go.
+// The attribute half is still staged behind the event-delegation refactor and
+// carries its own tripwire there (TestCSPScriptSrcAttrUnsafeInlineIsStaged),
+// and the CSP2 fallback's deliberate 'unsafe-inline' is pinned by
+// TestCSPScriptSrcScopedIntoElemAndAttr.
 
 // TestJSStringLiteralEscapesScriptContext covers the encode-at-the-sink helper
 // used for the values injected into the /contribute inline <script> (#3315),
