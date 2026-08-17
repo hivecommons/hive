@@ -29,15 +29,18 @@ func TestVerifyHubUserCookieEither_V2Preferred(t *testing.T) {
 	}
 }
 
-func TestVerifyHubUserCookieEither_FallsBackToLegacy(t *testing.T) {
+// Adapted from the original "FallsBackToLegacy" case: the symmetric legacy
+// lane was deleted (AUDIT F1 — any spoke operator holding the shared
+// HIVE_SESSION_KEY could forge it), so a well-formed legacy HMAC cookie must
+// now be REJECTED even when the correct legacy secret is supplied. This is a
+// regression test that the lane stays dead.
+func TestVerifyHubUserCookieEither_LegacyLaneRemoved(t *testing.T) {
 	legacyCookie := mintHubUserCookieValue(testHubSecret, "bob")
 	if legacyCookie == "" {
 		t.Fatal("mintHubUserCookieValue returned empty")
 	}
-	// Pass an empty pubHex so V2 verification fails; should fall back to legacy.
-	user, ok := verifyHubUserCookieEither("", testHubSecret, legacyCookie)
-	if !ok || user != "bob" {
-		t.Errorf("legacy fallback: got (%q, %v), want (bob, true)", user, ok)
+	if user, ok := verifyHubUserCookieEither("", testHubSecret, legacyCookie); ok {
+		t.Errorf("legacy HMAC cookie was accepted as %q; the F1 legacy lane must remain removed", user)
 	}
 }
 
