@@ -228,7 +228,7 @@ func TestCovBR_TokensAndAdvisor(t *testing.T) {
 	if rec := doGet(s, "/api/tokens"); rec.Code != http.StatusOK {
 		t.Fatalf("tokens: %d", rec.Code)
 	}
-	if rec := doGet(s, "/api/token-access"); rec.Code != http.StatusOK {
+	if rec := doOwnerGet(s, "/api/token-access"); rec.Code != http.StatusOK {
 		t.Fatalf("token-access: %d", rec.Code)
 	}
 	if rec := doGet(s, "/api/model-advisor"); rec.Code != http.StatusOK {

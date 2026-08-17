@@ -24,8 +24,8 @@ func covCServer(t *testing.T) *Server {
 func TestCovC_TokenAccess(t *testing.T) {
 	s := covCServer(t)
 	// tokenAccessLogPath is a const under /var/run — no file in tests, so this
-	// exercises the "no audit log" fallback branch.
-	rec := doGet(s, "/api/token-access")
+	// exercises the "no audit log" fallback branch. Owner role required (#3936).
+	rec := doOwnerGet(s, "/api/token-access")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("token-access status = %d, want 200", rec.Code)
 	}

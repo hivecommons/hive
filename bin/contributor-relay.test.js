@@ -25,7 +25,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -36,7 +36,10 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
 
   const fakeExecSync = (cmd) => {
     if (commands.length < MAX_RECORDED_COMMANDS) commands.push(cmd);
-    if (/backend_binary/.test(cmd)) return `${backend}\n`;
+    // backendBinary lets a test model backends.conf mapping a backend NAME to a
+    // different BINARY (litellm → claude); it defaults to the identity mapping
+    // every other backend has.
+    if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
     if (/backend_perm_flag/.test(cmd)) return '--allow-all\n';
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
@@ -76,10 +79,23 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
     return child;
   };
 
+  // The capability probe (`<cli> --version`, kubestellar/hive#2547) is the only
+  // execFileSync caller. `cliVersion` is what the CLI "prints"; an Error instance
+  // makes the probe throw, standing in for an absent binary, an unsupported flag
+  // or a timeout kill — every one of which must leave the field simply absent.
+  const execFileSyncCalls = [];
+  const fakeExecFileSync = (bin, args, opts) => {
+    execFileSyncCalls.push({ bin, args, opts });
+    if (cliVersion instanceof Error) throw cliVersion;
+    if (cliVersion === null) throw new Error('spawnSync ENOENT');
+    return cliVersion;
+  };
+
   const stubs = {
     child_process: {
       execSync: fakeExecSync,
       execFile: fakeExecFile,
+      execFileSync: fakeExecFileSync,
     },
     ws: class FakeWebSocket {
       static get OPEN() { return 1; }
@@ -151,6 +167,7 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
     try { return JSON.parse(fs.readFileSync(headlessStatusFile, 'utf8')); } catch (_) { return null; }
   };
   relay.__tmuxSends = () => commands.filter(c => /send-keys/.test(c));
+  relay.__execFileSyncCalls = execFileSyncCalls;
   return relay;
 }
 
@@ -1583,6 +1600,119 @@ test('the /tmp cleanup find scopes its -o group (N20: no cross-owner *.html dele
     !line.includes("-user dev -name '*.out' -o -name"),
     'the unparenthesized (vulnerable) form is back:\n' + line
   );
+});
+
+// ---------------------------------------------------------------------------
+// Capability declaration — agent CLI version (kubestellar/hive#2547, DECLARE).
+//
+// The hub schema, v2/docs/contributor-relay.md and the Operations row ("cli
+// 1.2.3") all carried agent_cli_version, but the relay never sent it, so the
+// column was blank for every connected client. These pin the probe AND — more
+// importantly — that failing to probe stays a first-class outcome: an omitted
+// field is what every relay written before this change reports, and nothing may
+// treat that silence as a defect.
+// ---------------------------------------------------------------------------
+
+test('the relay declares the agent CLI version it probed', () => {
+  const relay = loadRelay({ backend: 'copilot', cliVersion: '0.0.352\n' });
+  try {
+    const caps = relay.detectCapabilities();
+    assert.strictEqual(caps.agent_cli_version, '0.0.352');
+
+    const [call] = relay.__execFileSyncCalls;
+    assert.ok(call, 'no version probe was made');
+    assert.deepStrictEqual(call.args, ['--version']);
+    // stdin closed so a CLI that mistakes --version for a launch gets EOF
+    // instead of waiting on a terminal nobody is at; a timeout so a wedged
+    // binary costs seconds rather than the handshake.
+    assert.deepStrictEqual(call.opts.stdio, ['ignore', 'pipe', 'ignore']);
+    assert.ok(call.opts.timeout > 0 && call.opts.timeout <= 10000,
+      `probe timeout should be short and present, got ${call.opts.timeout}`);
+  } finally { teardown(relay); }
+});
+
+test('the probed version is the binary backends.conf maps the backend to', () => {
+  // litellm runs the claude binary. Probing "litellm --version" would report the
+  // version of a CLI that never runs the work — usually nothing at all, since no
+  // such binary exists — so the probe has to go through the same resolution the
+  // launch path uses.
+  const relay = loadRelay({ backend: 'litellm', backendBinary: 'claude', cliVersion: '2.0.14 (Claude Code)' });
+  try {
+    const caps = relay.detectCapabilities();
+    const [call] = relay.__execFileSyncCalls;
+    assert.strictEqual(call.bin, 'claude',
+      'the probe must run the resolved backend binary, not the backend name');
+    assert.strictEqual(caps.agent_cli_version, '2.0.14 (Claude Code)');
+  } finally { teardown(relay); }
+});
+
+test('a CLI that cannot be probed simply declares nothing', () => {
+  for (const failure of [null, new Error('ETIMEDOUT'), new Error('Unknown flag: --version')]) {
+    const relay = loadRelay({ backend: 'copilot', cliVersion: failure });
+    try {
+      const caps = relay.detectCapabilities();
+      assert.ok(!('agent_cli_version' in caps),
+        `a failed probe must omit the field entirely, got ${JSON.stringify(caps)}`);
+      // The rest of the declaration still stands — one unprobeable field must
+      // not cost the others.
+      assert.strictEqual(caps.os, process.platform);
+      assert.ok(caps.container_runtime, 'container runtime should still be declared');
+    } finally { teardown(relay); }
+  }
+});
+
+test('a CLI banner is reduced to one short printable line before it is declared', () => {
+  const cases = [
+    // Real shape: version first, update nudge after. Keep the version.
+    ['1.4.2\nA new release is available!\n', '1.4.2'],
+    // Leading blank lines and padding.
+    ['\n\n   3.1.0   \n', '3.1.0'],
+    // Escape sequences from a colourising CLI.
+    ['\x1b[32m2.0.1\x1b[0m', '[32m2.0.1 [0m'],
+    // Nothing usable reads as no declaration at all.
+    ['\n \n', ''],
+  ];
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    for (const [raw, want] of cases) {
+      assert.strictEqual(relay.sanitizeDeclaredValue(raw), want,
+        `sanitizeDeclaredValue(${JSON.stringify(raw)})`);
+    }
+    // Bounded: the hub bounds it again on receipt, but a relay should not be
+    // shipping a novel in a display field either.
+    const long = relay.sanitizeDeclaredValue('v'.repeat(500));
+    assert.ok(long.length <= 64, `declared version not bounded: ${long.length} chars`);
+  } finally { teardown(relay); }
+});
+
+test('auth_response carries the declared capabilities, and omits nothing else', () => {
+  const relay = loadRelay({ backend: 'copilot', model: 'gpt-5.6-luna', cliVersion: '0.0.352' });
+  try {
+    const hubs = relay.getHubs();
+    const sent = [];
+    hubs[0].ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }), hubs[0]);
+
+    const auth = sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'no auth_response was sent');
+    assert.strictEqual(auth.cli_backend, 'copilot');
+    assert.ok(auth.capabilities, 'auth_response carried no capabilities object');
+    assert.strictEqual(auth.capabilities.agent_cli_version, '0.0.352');
+    assert.strictEqual(auth.capabilities.os, process.platform);
+    assert.strictEqual(auth.capabilities.arch, process.arch);
+  } finally { teardown(relay); }
+});
+
+test('capabilities are probed once and cached, not re-probed per hub handshake', () => {
+  const relay = loadRelay({ backend: 'copilot', cliVersion: '0.0.352' });
+  try {
+    relay.detectCapabilities();
+    relay.detectCapabilities();
+    relay.detectCapabilities();
+    assert.strictEqual(relay.__execFileSyncCalls.length, 1,
+      'the CLI version probe must run once per process, not once per handshake');
+  } finally { teardown(relay); }
 });
 
 // ---------------------------------------------------------------------------
