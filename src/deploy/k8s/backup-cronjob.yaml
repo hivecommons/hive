@@ -182,7 +182,7 @@ spec:
               persistentVolumeClaim:
                 claimName: hive-hub-data-rwx
                 readOnly: true
-            # Kubeconfigs for remote spoke clusters (e.g. vllm-d). Without
+            # Kubeconfigs for remote spoke clusters (e.g. the heartbeat-only cluster). Without
             # this, spokes on remote clusters cannot be captured.
             - name: kubeconfigs
               secret:

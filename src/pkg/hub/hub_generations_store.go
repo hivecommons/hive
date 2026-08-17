@@ -376,7 +376,7 @@ func (s *HubServer) fleetObservation() fleetObservationSummary {
 }
 
 // unreachableClusterSuffix renders cluster IDs for an operator-facing message.
-// Cluster IDs are non-secret registry identifiers (e.g. "vllm-d"); no key
+// Cluster IDs are non-secret registry identifiers (e.g. "heartbeat-only-cluster"); no key
 // material, hive name, or env value passes through here.
 func unreachableClusterSuffix(clusters []string) string {
 	if len(clusters) == 0 {
@@ -545,7 +545,7 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	//
 	// F19 wires the derivation path to the live set, which means a rotation now
 	// actually reaches the fleet. F21 measured that 44 of the 70 hosted spokes
-	// sit on pull_only clusters (vllm-d, a-ks-wec2) that the reconcile sweep
+	// sit on pull_only clusters (the heartbeat-only cluster, a spoke cluster) that the reconcile sweep
 	// structurally cannot read or patch — by design, and that is not changing
 	// until the Option D wrapped-master delivery path lands. Those two facts
 	// together are dangerous in a way neither is alone: before F19 a rotation

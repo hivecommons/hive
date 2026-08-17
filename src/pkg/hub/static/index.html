@@ -1222,11 +1222,11 @@
 
     // contributeBase returns the spoke's real base URL for building /contribute
     // links. Prefers the heartbeat-reported dashboardUrl (correct for firewalled
-    // spokes like vllm-d, which live on a different domain), and falls back to
-    // the hive-oke host pattern only when no dashboardUrl was reported. Accepts
+    // spokes like the heartbeat-only cluster, which live on a different domain), and falls back to
+    // the hub-reachable-cluster host pattern only when no dashboardUrl was reported. Accepts
     // either a hive object or a hive id (looked up in _allMainHives). Previously
     // these links hardcoded <id>.hive.kubestellar.io, which was a dead host for
-    // every non-hive-oke spoke.
+    // every non-hub-reachable-cluster spoke.
     function contributeBase(hiveOrId) {
       var h = (typeof hiveOrId === 'string')
         ? (_allMainHives || []).find(function(x) { return x.id === hiveOrId; })

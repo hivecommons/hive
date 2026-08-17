@@ -907,9 +907,9 @@ type HubServer struct {
 	heartbeatUpgrade map[string]string
 
 	// clusterUnreachableUntil suppresses kubectl against clusters the hub has
-	// just proven it cannot route to (firewalled GPU clusters like vllm-d).
+	// just proven it cannot route to (firewalled GPU clusters like the heartbeat-only cluster).
 	// Without this, triggerAutoUpgrades() paid a full dial timeout PER HIVE PER
-	// CYCLE — 15 vllm-d hives serialized into ~30 minutes of blocking, which
+	// CYCLE — 15 heartbeat-only-cluster hives serialized into ~30 minutes of blocking, which
 	// starved the hub's own auto-upgrade check at the end of the same loop and
 	// left the hub pinned to an old SHA indefinitely. Key: cluster ID, value:
 	// the time after which kubectl may be retried.
@@ -2088,7 +2088,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// assigned a pre-provisioned placeholder reconciles its running project
 	// config. Mirrors AuthorizedUsers: the hub keeps sending it every beat
 	// until the spoke reports the matching project. This is the ONLY channel
-	// that reaches heartbeat-only clusters (vllm-d) — the hub cannot push
+	// that reaches heartbeat-only clusters (the heartbeat-only cluster) — the hub cannot push
 	// config there over kubectl. A nil return means "spoke already matches, or
 	// no SaaS record / still a placeholder" — send nothing.
 	// Org/repos/primary_repo/ACMM are operator-controlled on the spoke dashboard
@@ -2103,7 +2103,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// (empty = public github.com), never from its cluster's default — a cluster
 	// hosts hives of both forges. The per-beat blank-fill-from-cluster and the
 	// cluster-keyed "GHE guard" that used to run here are gone: on 2026-08-05
-	// the guard rewrote github_host on every vllm-d hive whose spoke reported
+	// the guard rewrote github_host on every heartbeat-only-cluster hive whose spoke reported
 	// the public App — github.com projects included — and 9 spokes were flipped
 	// onto an App that 404'd every token mint.
 	//
@@ -2136,7 +2136,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	//
 	// ASYNC, deliberately. The repair shells out to kubectl against the hive's
 	// cluster (existingVanityHost, then addVanityHostToIngress), and on a
-	// cluster the hub cannot reach (vllm-d is heartbeat-only/firewalled) each
+	// cluster the hub cannot reach (the heartbeat-only cluster is heartbeat-only/firewalled) each
 	// call blocks until its TCP dial times out — ~90s per beat observed live.
 	// The spoke's heartbeat client gives up after heartbeatTimeout (10s), so
 	// running the repair synchronously here meant EVERY response built below —

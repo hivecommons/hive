@@ -1384,7 +1384,7 @@ var cliPaneMarkers = []string{
 	bobInputPlaceholderDefault,
 	bobProductMarker,
 	// codex's markers. Codex 0.144.1's TUI renders NONE of the entries above:
-	// verified live (daviddiaz "Visual Hive", hive-oke) — an idle codex pane
+	// verified live (daviddiaz "Visual Hive", the hub-reachable cluster) — an idle codex pane
 	// contained no "❯", "goose", "Claude"/"Gemini" chrome, or bob strings, only
 	// the "›" (U+203A) input caret and the "OpenAI Codex" banner. Without these
 	// two entries waitForCLIReadyForAgent can never see a booted codex, so its
@@ -5291,7 +5291,7 @@ const codexBackend = "codex"
 // the "❯" (U+276F) used by the other TUIs and by the consent-screen menu, so it
 // never collides with paneShowsConsentScreen's "❯"-selected-line check.
 //
-// Verified live on Codex 0.144.1 (daviddiaz "Visual Hive", hive-oke): an idle
+// Verified live on Codex 0.144.1 (daviddiaz "Visual Hive", the hub-reachable cluster): an idle
 // scanner pane sitting at its prompt rendered this caret with placeholder
 // ghost-text ("› Improve documentation in @filename", "› Explain this
 // codebase") and contained ZERO "❯", "goose is ready", "> Enter to send", or

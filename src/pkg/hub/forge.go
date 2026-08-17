@@ -421,8 +421,8 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the App identity for the TARGET forge from CLUSTER CONFIG. No App
-	// ID or slug is hardcoded anywhere in Go: hive-oke names its github.com App
-	// and vllm-d names its github.ibm.com App, both in clusters.json, exactly as
+	// ID or slug is hardcoded anywhere in Go: the hub-reachable cluster names its github.com App
+	// and the heartbeat-only cluster names its github.ibm.com App, both in clusters.json, exactly as
 	// resolveProvisionAppID already reads them.
 	cluster := s.clusterForHive(h)
 	identity, missing := s.forgeIdentityForTarget(cluster, target)
@@ -617,7 +617,7 @@ const forgeIdentityRemedy = "populate the target cluster's entry in /data/saas/c
 // carry identity for BOTH forges (see ClusterConfig.Forges) and a hive elects
 // one. So this refuses only a target the cluster has no identity FOR, rather
 // than every target differing from the cluster's own host. That is the change
-// that unblocks a public election on the GHE-default vllm-d cluster, which
+// that unblocks a public election on the GHE-default heartbeat-only cluster, which
 // previously 409'd with "the target forge identity is incomplete" — leaving
 // seven public hives that had already elected github.com unrepairable.
 //

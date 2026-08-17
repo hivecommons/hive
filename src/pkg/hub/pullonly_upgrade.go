@@ -61,7 +61,7 @@ import (
 //
 // The gate below is therefore keyed on heartbeat history, which is the correct
 // predicate on EVERY cluster: a hive that cannot collect an instruction must not
-// be handed one, whether it sits on hive-oke or vllm-d.
+// be handed one, whether it sits on the hub-reachable cluster or the heartbeat-only cluster.
 
 // PUSH-PATH RETIREMENT: WHAT THIS PR DOES AND DOES NOT MAKE DROPPABLE.
 //
@@ -75,7 +75,7 @@ import (
 //
 //  1. NODE STATS (saas.go ~2000: `kubectl get nodes -o json`, ~1993 `top nodes`,
 //     ~2126 node summary). The heartbeat fallback beside it fires only when the
-//     kubectl query ERRORS or times out — on a reachable cluster like hive-oke
+//     kubectl query ERRORS or times out — on a reachable cluster like the hub-reachable cluster
 //     the kubectl path succeeds, so the spoke is never asked. Drop the
 //     kubeconfig and this does not fail over; it just stops reporting.
 //
@@ -83,12 +83,12 @@ import (
 //     but cannot currently answer on either cluster:
 //       - it requires the metrics API FIRST and returns nil if that fails
 //         (cluster_metrics.go ~59), and nodes.metrics.k8s.io is not granted to
-//         hive-sa on hive-oke OR vllm-d;
+//         hive-sa on the hub-reachable cluster OR the heartbeat-only cluster;
 //       - it is gated on HIVE_CLUSTER_ID (cmd/hive/main.go ~3310), which
 //         provisioning does not emit;
 //       - node-read RBAC is not in the provisioning template (saas_provision.go)
-//         at all — where it exists on vllm-d it was granted out-of-band.
-//     Verified live 2026-08-14: on hive-oke, `auth can-i list nodes` and
+//         at all — where it exists on the heartbeat-only cluster it was granted out-of-band.
+//     Verified live 2026-08-14: on the hub-reachable cluster, `auth can-i list nodes` and
 //     `list nodes.metrics.k8s.io` as the spoke's hive-sa are both "no".
 //
 //  2. PROVISIONING itself (saas_provision.go) creates namespaces, Deployments

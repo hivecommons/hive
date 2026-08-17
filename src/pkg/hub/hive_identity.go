@@ -26,7 +26,7 @@ import (
 //	forgeIdentityForTarget  (forge.go)           — the forge endpoint.
 //
 // Four answers to one question is the bug class. On 2026-07-31 a clusters.json
-// edit stamped the GHE App onto public-GitHub hives on the vllm-d cluster; a
+// edit stamped the GHE App onto public-GitHub hives on the heartbeat-only cluster; a
 // hand-applied repair to torch-spyre was overwritten six seconds later:
 //
 //	16:44:11  using GitHub App authentication   app_id=3568013   (correct)
@@ -38,7 +38,7 @@ import (
 // # THE SPOKE PULLS; THE HUB ANSWERS
 //
 // The spoke initiates the heartbeat and converges on the response. The hub has
-// no network path to the vllm-d API server at all, so there is no "push" to
+// no network path to the heartbeat-only cluster's API server at all, so there is no "push" to
 // fix. A spoke-side repair therefore cannot hold — the hub must answer
 // correctly, and every spoke then converges on its own next beat with no
 // per-spoke editing. That is what makes this one change repair the whole set.
@@ -48,7 +48,7 @@ import (
 // Every rule here is expressed in terms of app_id and the hive's recorded host.
 // It deliberately does NOT key on api_url/base_url/app_slug string markers:
 // those are EMPTY on ~41 of ~50 fleet spokes (the healthy console hive on
-// hive-oke runs all three empty), so a marker-based rule is unreachable in
+// the hub-reachable cluster runs all three empty), so a marker-based rule is unreachable in
 // production while passing happily against hand-built fixtures. app_id is
 // always populated.
 
@@ -163,7 +163,7 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	// FORGE IS PER-HIVE, NOT PER-CLUSTER. A CLAIMED hive that records no host
 	// defaults to PUBLIC github.com — the documented meaning of an empty
 	// github_host ("empty means public github.com", SaaSHive) — NOT to its
-	// cluster's forge. The vllm-d cluster hosts BOTH github.ibm.com projects
+	// cluster's forge. The heartbeat-only cluster hosts BOTH github.ibm.com projects
 	// (certus, EPM, …) AND github.com projects (ibm/alchemy-logging: the org
 	// "ibm" lives on public github.com). Inheriting the CLUSTER's GHE forge for
 	// a claimed hive that never recorded a GHE host is what force-flipped every
@@ -239,12 +239,12 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 // ResolveHiveIdentityInFleet is ResolveHiveIdentity with a fleet-wide fallback
 // for the elected forge's App.
 //
-// A cluster entry has ONE identity slot today, so vllm-d — a GHE-default
+// A cluster entry has ONE identity slot today, so the heartbeat-only cluster — a GHE-default
 // cluster — names no public App at all. ResolveHiveIdentity therefore returns
 // forge=github.com with AppID=0 for torch-spyre: correct, and not yet useful,
 // because a repair needs an actual App to authenticate as.
 //
-// The fleet already knows that App: hive-oke names it, and appKeysByAppID
+// The fleet already knows that App: the hub-reachable cluster names it, and appKeysByAppID
 // indexes every App the hub holds a key for. A GitHub App ID is a per-forge
 // constant, not per-cluster state, so borrowing the public App for a hive that
 // elected public is correct by construction — it is the SAME App every other
@@ -404,7 +404,7 @@ func normalizeHiveForge(h *SaaSHive, cluster *ClusterConfig) bool {
 	// set. Removing the gate breaks no test today. It stays because it states
 	// the invariant that matters — never erase a hive's only record of its
 	// forge, which would drop it onto the cluster default and turn a public
-	// hive on vllm-d into a GHE one — and because a future change to
+	// hive on the heartbeat-only cluster into a GHE one — and because a future change to
 	// electedForgeForHive could make it reachable. Flagged rather than left
 	// looking verified.
 	if elected != "" {
@@ -430,7 +430,7 @@ func normalizeHiveForge(h *SaaSHive, cluster *ClusterConfig) bool {
 // fields: clusterDefaultForge said github.ibm.com while this said github.com.
 //
 // That split is the regression this whole file exists to prevent, reintroduced
-// one layer down. A vllm-d entry written as
+// one layer down. A heartbeat-only-cluster entry written as
 //
 //	{ "default_forge": "github.ibm.com",
 //	  "forges": { "github.ibm.com": { "app_id": 5686, "app_slug": "..." } } }
@@ -515,7 +515,7 @@ func defaultForgeIdentity(c *ClusterConfig, forge string) ClusterForgeIdentity {
 //
 // Today a cluster entry has ONE identity slot, so this can only answer for the
 // cluster's own forge. That is the honest state of clusters.json and the reason
-// a public election on the GHE-default vllm-d cluster still resolves to "no App
+// a public election on the GHE-default heartbeat-only cluster still resolves to "no App
 // named": the hub genuinely does not know one. Per-forge cluster entries are a
 // follow-up; isolating the lookup here means that change lands in one function
 // rather than across every caller.
@@ -529,7 +529,7 @@ func clusterAppForForge(c *ClusterConfig, forge string) (clusterAppIdentity, boo
 	// dual-forge one.
 	//
 	// Reading only the flat fields is what left this unable to answer for a
-	// hive that elected a forge its cluster does not default to: on vllm-d — a
+	// hive that elected a forge its cluster does not default to: on the heartbeat-only cluster — a
 	// GHE-default cluster hosting hives that elected github.com — it returned
 	// "no App", so the resolver produced app_id 0 and 26 hives stayed broken
 	// even with a public App named in `forges`.
@@ -585,7 +585,7 @@ func (i HiveIdentity) AppIDString() string {
 // assembled from every cluster's config.
 //
 // This is what lets a hive elect a forge its OWN cluster does not serve and
-// still be handed a real App: vllm-d names only the GHE App, but hive-oke names
+// still be handed a real App: the heartbeat-only cluster names only the GHE App, but the hub-reachable cluster names
 // the public one, and a github.com App is the same App everywhere.
 //
 // Deterministic on collision (two clusters naming different Apps on one forge):

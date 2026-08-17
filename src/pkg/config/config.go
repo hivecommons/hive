@@ -2719,12 +2719,12 @@ type DashboardConfig struct {
 	AuthorizedUsers []string `yaml:"authorized_users"`
 	// HubProxied is true when this hive sits behind the hub's nginx auth-proxy,
 	// which authenticates every request and injects trusted X-Hive-User/X-Hive-Role
-	// headers (hive-oke hosted hives). When true the hive TRUSTS those headers and
+	// headers (hub-reachable-cluster hosted hives). When true the hive TRUSTS those headers and
 	// keeps the shared-token path enabled even if AuthorizedUsers is non-empty —
 	// nginx is the gate, and the allowlist is informational (Access tab) only.
 	//
 	// When false (the default) a non-empty AuthorizedUsers list means this is a
-	// STANDALONE direct-route spoke with no nginx in front (vllm-d), so it must
+	// STANDALONE direct-route spoke with no nginx in front (the heartbeat-only cluster), so it must
 	// strip client-supplied identity headers and enforce per-user device-flow
 	// authz itself. Decoupling these two meanings fixes hub-proxied hives being
 	// wrongly forced into direct-route mode (which broke their dashboard link and

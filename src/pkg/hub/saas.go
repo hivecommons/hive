@@ -1471,8 +1471,8 @@ func clusterIDForSaaSHive(sh SaaSHive) string {
 // ensureClusterIDForClaim stamps a non-blank cluster_id onto a hive that is
 // about to be persisted by a claim/assign. This is the data-integrity guard
 // for the observed bug where CLAIMED hives lost cluster_id in their meta.json
-// and then fell back to defaultClusterID (hive-oke) in clusterForHive — which
-// mis-routed App/host resolution for hives that actually run on vllm-d.
+// and then fell back to defaultClusterID (the hub-reachable cluster) in clusterForHive — which
+// mis-routed App/host resolution for hives that actually run on the heartbeat-only cluster.
 //
 // Precedence, most-trusted first:
 //  1. The hive's OWN non-blank ClusterID (the placeholder already belongs to a
@@ -3306,7 +3306,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 
 	hiveID := generateHiveID(req.Org, primaryRepo)
 
-	// Determine which cluster to provision on. Default to hive-oke if unspecified.
+	// Determine which cluster to provision on. Default to the hub-reachable cluster if unspecified.
 	clusterID := req.ClusterID
 	if clusterID == "" {
 		clusterID = defaultClusterID
@@ -3416,7 +3416,7 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 // authorized_users allowlist before minting a session (see dashboard.handleSSO).
 //
 // If SSO can't be used (no hub secret, or the spoke reported no dashboard URL),
-// it falls back to redirecting straight to the dashboard URL (or the hive-oke
+// it falls back to redirecting straight to the dashboard URL (or the hub-reachable-cluster
 // host), preserving today's behavior — the spoke will then prompt for login.
 func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -3446,7 +3446,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the spoke's base URL: prefer the heartbeat-reported dashboard URL
-	// (correct for firewalled spokes), fall back to the hive-oke host pattern.
+	// (correct for firewalled spokes), fall back to the hub-reachable-cluster host pattern.
 	base := ""
 	s.mu.RLock()
 	for i := range s.registry.Hives {
@@ -4088,8 +4088,8 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// The hub can't reach this hive's cluster over kubectl (e.g. vllm-d
-		// from the hive-oke hub). Fall back to the heartbeat path: record the
+		// The hub can't reach this hive's cluster over kubectl (e.g. the heartbeat-only cluster
+		// from the hub-reachable-cluster hub). Fall back to the heartbeat path: record the
 		// target tag; the spoke — which has in-cluster RBAC (hive-self-upgrade
 		// role) to patch its own deployment — applies it on its next
 		// heartbeat. This is the ONLY path that works for unreachable
@@ -6923,7 +6923,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 
 	// Approving now ASSIGNS an available placeholder instead of just bumping
 	// quota for a manual provision. Pick the pool from the request's auth_method
-	// (private → vllm-d/GPU pool, otherwise → hive-oke/public pool). If no
+	// (private → the heartbeat-only cluster / GPU pool, otherwise → the hub-reachable cluster / public pool). If no
 	// placeholder is available in that pool, tell the admin to provision more.
 	pool := poolClusterForAuthMethod(pr.AuthMethod)
 	hiveID := strings.TrimSpace(approveBody.HiveID)
@@ -7007,7 +7007,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
 	// resolution below (host backfill uses s.clusterForHive(h), which silently
-	// returns hive-oke when ClusterID is blank). The placeholder was picked
+	// returns the hub-reachable cluster when ClusterID is blank). The placeholder was picked
 	// from `pool`, so a blank cluster_id here can only mean the placeholder was
 	// created without one — stamp the pool it came from rather than leaving a
 	// blank that later resolves to the wrong (default) cluster's App/host.
@@ -7088,7 +7088,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// user record for Hives[hiveID], NOT from h.Owner. Without this the
 	// assignment set h.Owner correctly but the new owner never appeared under
 	// Manage Access — only the admin who provisioned the placeholder did — and
-	// on a heartbeat-only cluster (vllm-d) that stale list is what gets
+	// on a heartbeat-only cluster (the heartbeat-only cluster) that stale list is what gets
 	// delivered to the spoke.
 	user := loadSaaSUser(targetUsername)
 	if user == nil {
@@ -7171,13 +7171,13 @@ func (s *HubServer) handleDenyProvision(w http.ResponseWriter, r *http.Request) 
 }
 
 // authMethodPrivate is the request auth_method value that routes a provision
-// request to the private/GPU placeholder pool (vllm-d). Any other value (the
-// default) routes to the public pool (hive-oke).
+// request to the private/GPU placeholder pool (the heartbeat-only cluster). Any other value (the
+// default) routes to the public pool (the hub-reachable cluster).
 const authMethodPrivate = "private"
 
 // poolClusterForAuthMethod maps a provision request's auth_method to the
 // placeholder pool it should draw from: private methods → the GPU pool
-// (vllm-d, heartbeat-only); everything else → the public pool (hive-oke).
+// (the heartbeat-only cluster); everything else → the public pool (the hub-reachable cluster).
 func poolClusterForAuthMethod(authMethod string) string {
 	if strings.EqualFold(authMethod, authMethodPrivate) || strings.EqualFold(authMethod, gpuClusterID) {
 		return gpuClusterID
@@ -7186,7 +7186,7 @@ func poolClusterForAuthMethod(authMethod string) string {
 }
 
 // clusterIDForHive returns the effective cluster ID of a SaaS hive, treating an
-// empty cluster_id as the default (hive-oke) — matching clusterForHive's own
+// empty cluster_id as the default (the hub-reachable cluster) — matching clusterForHive's own
 // fallback so pool matching agrees with cluster resolution.
 func clusterIDForHive(h *SaaSHive) string {
 	if h.ClusterID == "" {
@@ -7423,7 +7423,7 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 //   - Claimed hive with a non-empty meta VanityURL: return it. A vanity URL is
 //     only non-empty because it was VALIDATED as servable at provision/assign
 //     time (addVanityHostToIngress succeeded, or a cluster wildcard/OpenShift
-//     route already serves it, e.g. vllm-d's hosted-...apps.fmaas-vllm-d... host).
+//     route already serves it, e.g. the heartbeat-only cluster's hosted OpenShift-route host).
 //     Trusting it here means the hub shows/links the friendly host the instant a
 //     hive is claimed, instead of waiting for the spoke to adopt+report it back.
 //   - Claimed hive with an empty VanityURL: "" — never mint an unvalidated host
@@ -7494,7 +7494,7 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// (org/repos/ACMM) alone; reconciling from a stale record wiped/downgraded
 		// live hives. BUT the vanity URL is independent of project completeness: a
 		// claimed hive can carry a validated meta vanity_url (set at provision,
-		// e.g. vllmd-10's hosted-...apps.fmaas-vllm-d... route) while its meta's
+		// e.g. a hive's hosted OpenShift-route on the heartbeat-only cluster) while its meta's
 		// org/repos/ACMM are still stale/empty. Without pushing it, the spoke never
 		// adopts the vanity URL and the hub keeps showing the raw placeholder host
 		// forever (the placeholder-URL-persists bug). Push the URL alone — never
@@ -7567,7 +7567,7 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// the retroactive repair, or an admin editing the host later — has
 	// ClaimDelivered == true and a matching vanity URL, so every gate above is
 	// false and the reconcile returns nil forever. The spoke would then keep
-	// talking to api.github.com against a GitHub Enterprise org (the vllm-d /
+	// talking to api.github.com against a GitHub Enterprise org (the heartbeat-only cluster /
 	// hosted-available-vllmd-01 failure). Push whenever we have a GHE API URL
 	// to deliver and the spoke reports a DIFFERENT one.
 	//
@@ -7597,7 +7597,7 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// ("invalid repo name"), /api/livez then fails on the stale heartbeat, and
 	// the kubelet restarts the pod in a loop. Normalizing here repairs an
 	// already-broken hive over the heartbeat, which is the only channel that
-	// reaches a firewalled cluster (vllm-d).
+	// reaches a firewalled cluster (the heartbeat-only cluster).
 	pushRepos := make([]string, 0, len(h.Repos))
 	for _, r := range h.Repos {
 		if rr := sanitizeRepoEntry(r); rr != "" {
@@ -7688,8 +7688,8 @@ type AssignHiveRequest struct {
 // (admin-only). It rewrites the hive's meta.json to the real project and clears
 // its "available" status, then delivers the new project config — and any GitHub
 // App creds — to the spoke via the heartbeat response. This works uniformly for
-// both reachable (hive-oke) and heartbeat-only (vllm-d) clusters: NO hub→spoke
-// push or kubectl is used, so a vllm-d claim is delivered entirely by heartbeat.
+// both reachable (the hub-reachable cluster) and heartbeat-only (the heartbeat-only cluster) clusters: NO hub→spoke
+// push or kubectl is used, so a heartbeat-only-cluster claim is delivered entirely by heartbeat.
 func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	if !isHubAdmin(s.getAuthUser(r)) {
 		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
@@ -7728,7 +7728,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// ("github.ibm.com") and no org — clear body.Org in that case so the
 	// isValidName check below rejects it, instead of the raw hostname (which
 	// isValidName accepts, dots and all) silently becoming the org. That
-	// host-as-org bug produced the two broken github.ibm.com claims on vllm-d.
+	// host-as-org bug produced the two broken github.ibm.com claims on the heartbeat-only cluster.
 	if h, o := normalizeOrgRef(body.Org); h != "" {
 		body.Org = o // may be "" for a bare-host paste — rejected just below
 		if body.GitHubHost == "" {
@@ -7821,10 +7821,10 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.Owner = body.Owner
 	h.Org = body.Org
 	// Preserve the placeholder's real cluster before the host backfill below,
-	// which resolves via s.clusterForHive(h) and would fall back to hive-oke on
+	// which resolves via s.clusterForHive(h) and would fall back to the hub-reachable cluster on
 	// a blank cluster_id. The admin assigns a specific placeholder, so its own
 	// ClusterID is authoritative; only a placeholder created without one lands
-	// on the default here (never a silent blank that mis-routes to hive-oke).
+	// on the default here (never a silent blank that mis-routes to the hub-reachable cluster).
 	s.ensureClusterIDForClaim(h, "")
 	// Record the GHE host (if any) so the heartbeat can point this spoke at the
 	// right GitHub API. Never blank an existing value with an empty one.
@@ -7851,7 +7851,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// nothing else ever fills it in: projectConfigForHiveID pushes
 	// gheAPIURLForHost(h.GitHubHost), which is empty for those hives, so the
 	// spoke keeps api.github.com and the public app_id even though the cluster
-	// is a GHE cluster (observed on vllm-d: hosted-available-vllmd-01 has
+	// is a GHE cluster (observed on the heartbeat-only cluster: hosted-available-vllmd-01 has
 	// base_url: "" / api_url: "" against a github.ibm.com cluster). The hive's
 	// own value always wins; this only fills a blank.
 	if host := backfillGitHubHostFromCluster(h, s.clusterForHive(h)); host != "" {
@@ -7885,7 +7885,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// cluster) between this save and the HTTP response, which held the admin's
 	// assign dialog hostage for ~a minute whenever the cluster was slow or
 	// unreachable (each kubectl call eats a ~45s TCP dial timeout on the
-	// heartbeat-only vllm-d pool — the same disease #2730 cured on the
+	// heartbeat-only cluster pool — the same disease #2730 cured on the
 	// heartbeat path). The mint — same host preference (name-bearing Option B
 	// host, org/repo fallback), same servability seam, same "never adopt an
 	// unservable host" rule — now runs in the background via
@@ -7902,7 +7902,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// list by scanning every user record for Hives[hiveID], NOT from h.Owner —
 	// so without this the assignment set h.Owner correctly while Manage Access
 	// still showed only the admin who provisioned the placeholder. On a
-	// heartbeat-only cluster (vllm-d) that stale list is what reaches the spoke.
+	// heartbeat-only cluster (the heartbeat-only cluster) that stale list is what reaches the spoke.
 	assignee := loadSaaSUser(body.Owner)
 	if assignee == nil {
 		assignee = ensureSaaSUser(body.Owner)
@@ -7922,7 +7922,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// webhook path uses — storePendingGitHubAppConfig queues them for the next
 	// heartbeat response (consumePendingGitHubAppConfig in handleHeartbeat). We
 	// deliberately do NOT call pushGitHubConfigToSpoke here: it requires a
-	// reachable dashboardURL and would fail for vllm-d. The heartbeat path
+	// reachable dashboardURL and would fail for the heartbeat-only cluster. The heartbeat path
 	// covers both clusters uniformly.
 	appDelivered := false
 	if body.AppID != "" && body.InstallationID != "" && strings.TrimSpace(body.AppPrivateKey) != "" {
@@ -7978,7 +7978,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// The project config itself is delivered by handleHeartbeat via
 	// projectConfigForHiveID on the next beat — it keeps sending until the spoke
 	// reports the matching project. No hub→spoke push or kubectl is needed, so
-	// this works for the heartbeat-only vllm-d pool as well as hive-oke.
+	// this works for the heartbeat-only cluster pool as well as the hub-reachable cluster.
 
 	s.logger.Info("audit: placeholder hive assigned",
 		"hive_id", hiveID,
@@ -13385,7 +13385,7 @@ const dashboardHTML = `<!DOCTYPE html>
           // EVERYONE on a public hive, regardless of access status. Use the
           // hive's heartbeat-reported dashboard URL (resolvedBase), NOT a
           // hardcoded <id>.hive.kubestellar.io host. Firewalled spokes (e.g.
-          // vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a different
+          // the heartbeat-only cluster on its OpenShift-route domain) live on a different
           // domain, so the hardcoded host 503'd/failed to resolve.
           var cBase = resolvedBase(h);
           var contributeAction = cBase
@@ -17215,8 +17215,8 @@ const dashboardHTML = `<!DOCTYPE html>
             var regEntry = (_hiveRegistry || []).find(function(h) { return h.id === hid; });
             var hiveName = regEntry ? (regEntry.name || hid) : hid;
             // Prefer the hive's heartbeat-reported dashboard URL so firewalled
-            // spokes (vllm-d etc.) link to their real route, not a dead
-            // <id>.hive.kubestellar.io host. Fall back to the hive-oke pattern.
+            // spokes (the heartbeat-only cluster etc.) link to their real route, not a dead
+            // <id>.hive.kubestellar.io host. Fall back to the hub-reachable-cluster pattern.
             var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
               ? regEntry.dashboardUrl : (isHosted ? 'https://' + esc(hid) + '.hive.kubestellar.io' : '');
             var linkLabel = linkBase.replace(/^https?:\/\//, '');

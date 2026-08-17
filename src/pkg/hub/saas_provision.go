@@ -230,12 +230,12 @@ type ClusterConfig struct {
 	// fields above give a cluster exactly ONE identity slot, which made a
 	// cluster's forge a PIN rather than a DEFAULT. On 2026-07-31 that cost seven
 	// hives their identity: adding github_app_slug: kubestellar-hive-ghe to the
-	// vllm-d entry handed a GHE App to every public-GitHub hive on the cluster,
+	// the heartbeat-only cluster's entry handed a GHE App to every public-GitHub hive on the cluster,
 	// because there was nowhere else for a public identity to live. Those hives
 	// had already ELECTED github.com in their meta.json github_host — the hub
 	// knew the right answer and had no field in which to act on it.
 	//
-	// Per the platform owner: "vllm-d is used for GHE, but gh can be elected."
+	// Per the platform owner: "the heartbeat-only cluster is used for GHE, but gh can be elected."
 	// A cluster's forge is a DEFAULT with per-hive election. This map is what
 	// makes a public election on a GHE-default cluster RESOLVABLE instead of
 	// 409-ing as "incomplete".
@@ -414,17 +414,17 @@ func readSAToken() string {
 
 // loadClusters reads the clusters config file and returns a validated
 // map of cluster ID → ClusterConfig. If the file does not exist, it
-// returns a single default entry for hive-oke (backward compatibility).
+// returns a single default entry for the hub-reachable cluster (backward compatibility).
 //
 // AUDIT 8 / §6 ITEM 11. This used to return an EMPTY map when the file existed
 // but did not parse. That is the most dangerous of the three possible answers:
 // clusterForHive falls through both its lookups on an empty registry and
 // returns nil for EVERY hive, so a truncated or hand-mangled file silently
-// disabled the hub's writes to hive-oke — the one cluster it can reach — while
+// disabled the hub's writes to the hub-reachable cluster — the one cluster it can reach — while
 // the hub came up otherwise healthy. The registry now fails CLOSED: see
 // loadClustersChecked and clustersLoadOutcome in clusters_registry.go.
 //
-// The ABSENT case is unchanged and still returns the hive-oke default; a hub
+// The ABSENT case is unchanged and still returns the hub-reachable-cluster default; a hub
 // that was never given a registry has not lost one.
 func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 	clusters, outcome := loadClustersChecked(logger)
@@ -433,7 +433,7 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 		//
 		// WHY FATAL RATHER THAN A DEGRADED START. NewHubServer returns no error,
 		// so the only alternatives available here are the two this fix exists to
-		// remove: come up with an empty registry (writes to hive-oke silently
+		// remove: come up with an empty registry (writes to the hub-reachable cluster silently
 		// off) or come up on the synthesized default (every pull-only hive
 		// silently re-routed to the hub's own cluster). Both present as a
 		// healthy hub. A hub that refuses to start is loud, is caught by the
@@ -805,7 +805,7 @@ func resolveProvisionAppID(reqAppID string, h *SaaSHive, cluster *ClusterConfig)
 // projectConfigForHiveID pushes gheAPIURLForHost("") == "" on every heartbeat
 // — which the spoke reads as "leave mine alone". The result is a hive on a GHE
 // cluster still pointing at api.github.com with the public app_id (observed on
-// vllm-d: hosted-available-vllmd-01 in org "katamari" has base_url: "",
+// the heartbeat-only cluster: a hosted-available hive in org "katamari" has base_url: "",
 // api_url: "", app_id: 3568013 against a github.ibm.com cluster).
 //
 // This only ever fills a blank: a hive that already carries a host — including
@@ -848,10 +848,10 @@ func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
 // (rewrote a blank-or-public github_host to the cluster's GHE host whenever the
 // spoke reported the public forge). Both are gone, on purpose.
 //
-// A cluster hosts hives of BOTH forges: vllm-d carries github.ibm.com projects
+// A cluster hosts hives of BOTH forges: the heartbeat-only cluster carries github.ibm.com projects
 // (certus, EPM, …) beside github.com projects (ibm/alchemy-logging — the org
 // "ibm" lives on public github.com). At 23:56Z on 2026-08-05, minutes after the
-// cluster-keyed guard shipped, it rewrote github_host on every vllm-d hive whose
+// cluster-keyed guard shipped, it rewrote github_host on every heartbeat-only-cluster hive whose
 // spoke reported the public App — github.com projects included — and the
 // delivery that followed flipped their spokes onto app 5686 / github.ibm.com,
 // degrading 9 of them with "404 Not Found" on every token mint. Cluster
@@ -1169,7 +1169,7 @@ const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying 
 // never on the request path: the kubectl calls below can hang for minutes
 // against an unreachable cluster, and a heartbeat response delayed past the
 // spoke's 10s client timeout is a response the spoke never sees (which is how
-// claim delivery to vllm-d silently broke). The guards below still return
+// claim delivery to the heartbeat-only cluster silently broke). The guards below still return
 // before any network call or write in the overwhelmingly common no-op case.
 func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	h := loadSaaSHive(hiveID)
@@ -1319,7 +1319,7 @@ func (s *HubServer) reconcileStaleVanityURL(hiveID string, h *SaaSHive, cluster 
 // It exists because the repair is only cheap on its NO-OP paths. When it
 // actually has work to do it shells out to kubectl against the hive's cluster
 // (existingVanityHost, then addVanityHostToIngress), and against a cluster the
-// hub cannot reach — vllm-d is heartbeat-only — those calls hang until their
+// hub cannot reach — the heartbeat-only cluster is heartbeat-only — those calls hang until their
 // TCP dials time out: ~90 seconds per attempt observed live. Called
 // synchronously from handleHeartbeat, that stall pushed every heartbeat
 // response past the spoke's 10s client timeout (heartbeatTimeout), so the
@@ -1370,7 +1370,7 @@ func (s *HubServer) kickVanityURLRepairAsync(hiveID string) {
 // handleAssignHive and handleApproveProvision used to run this work
 // SYNCHRONOUSLY between persisting the assignment and writing the HTTP
 // response. Every call shells out to kubectl against the hive's cluster, and
-// against a cluster the hub cannot reach — vllm-d is heartbeat-only — those
+// against a cluster the hub cannot reach — the heartbeat-only cluster is heartbeat-only — those
 // calls hang until their TCP dials time out (~45s each, ~90s observed for the
 // vanity mint alone), so the admin's assign dialog sat on a pending fetch for
 // about a minute. Nothing here is needed for the response semantics: the claim
@@ -1421,7 +1421,7 @@ func (s *HubServer) kickClaimClusterWorkAsync(hiveID string) {
 // host built from the hive's display name (Option B — see
 // hosted_namespace_identity.go), fall back to the org/repo-derived host, make
 // it servable through the same seam as the retroactive repair, and only adopt
-// a host that IS servable (the vllm-d 503 rule). On failure VanityURL stays
+// a host that IS servable (the heartbeat-only-cluster 503 rule). On failure VanityURL stays
 // empty, every read path keeps the working placeholder host, and the
 // heartbeat-kicked repair retries later — exactly as before.
 //
@@ -1447,7 +1447,7 @@ func (s *HubServer) mintClaimVanityURL(hiveID string) {
 		// Do NOT adopt a host we could not make servable — leaving VanityURL
 		// empty makes every read path fall back to the working placeholder
 		// host, and the heartbeat repair re-attempts adoption once a route
-		// exists (the cluster-wildcard/vllm-d case included).
+		// exists (the cluster-wildcard / heartbeat-only-cluster case included).
 		s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
 			"keeping the working placeholder host; the heartbeat repair will retry",
 			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
@@ -2460,7 +2460,7 @@ data:
           git_sync: false
     dashboard:
       port: {{.DashboardPort}}
-      # hub_proxied is true ONLY on the nginx-ingress path (hive-oke), where the
+      # hub_proxied is true ONLY on the nginx-ingress path (the hub-reachable cluster), where the
       # hub's auth-proxy (see the auth-url/auth-signin/auth-response-headers
       # annotations below) authenticates every request and injects trusted
       # X-Hive-User/X-Hive-Role headers. That keeps the hive from flipping into
@@ -2468,7 +2468,7 @@ data:
       # (which would strip those headers and disable the shared token, breaking
       # the dashboard link and the snapshot preview).
       #
-      # On the OpenShift-Route path (vllm-d) there is NO nginx auth-proxy — the
+      # On the OpenShift-Route path (the heartbeat-only cluster) there is NO nginx auth-proxy — the
       # hive is reached directly — so it stays hub_proxied:false and correctly
       # enforces per-user device-flow authz itself from authorized_users.
       hub_proxied: {{.IsNginxIngress}}

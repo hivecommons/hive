@@ -268,7 +268,7 @@ func perAppIDKeyPath(appID int64) string {
 // The filename NAMES the App, so a key can only ever be found under the App it
 // was delivered for. The generic /data/gh-app-key.pem carries no such evidence:
 // a key written there for one App silently becomes "the key" for whatever
-// app_id the config later claims, which is how all 33 vllm-d spokes ended up
+// app_id the config later claims, which is how all 33 heartbeat-only-cluster spokes ended up
 // signing as the public App with the GHE key and getting
 // 404 Integration not found.
 //
@@ -496,7 +496,7 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 		// typed by an operator. Until /secrets was included here, a provisioned
 		// hive could never change forges: the hub could correct app_id all it
 		// liked and the spoke kept signing with the provisioned key, which on
-		// the a-ks-wec2 pool was a placeholder matching NEITHER real App.
+		// the spoke-cluster pool was a placeholder matching NEITHER real App.
 		if v == spokeAppKeyPath || v == spokeProvisionedAppKeyPath {
 			if p := perAppIDKeyPath(appID); p != "" {
 				if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
@@ -3608,7 +3608,7 @@ func main() {
 			// /data/gh-app-key.pem carries no evidence of which App signed it, so
 			// a key delivered for one App silently becomes "the key" for whatever
 			// app_id the config later claims. On 2026-07-31 that is exactly what
-			// happened: all 33 vllm-d spokes had key_file pinned to the generic
+			// happened: all 33 heartbeat-only-cluster spokes had key_file pinned to the generic
 			// path holding the GHE key, so correcting app_id to the public App
 			// still produced 404 Integration not found — the right key was
 			// already on disk at gh-app-key-3568013.pem and unreachable, because
@@ -3730,7 +3730,7 @@ func main() {
 			// stored one that outlives the App it was derived for: once written,
 			// it short-circuits resolveAppKeyFile on every later boot, so a
 			// corrected app_id keeps signing with the previous App's key. That is
-			// what left all 33 vllm-d spokes pinned to the GHE key.
+			// what left all 33 heartbeat-only-cluster spokes pinned to the GHE key.
 			//
 			// Leaving it empty lets derivation run every time, so the key always
 			// tracks the App actually in effect. An operator-set key_file still
@@ -3784,7 +3784,7 @@ func main() {
 
 			// Resolve the key file the same way startup does, so a hive whose
 			// only correct key arrived as an ADDITIONAL per-app-id key (no
-			// primary key_file configured — the exact vllm-d state) still finds
+			// primary key_file configured — the exact heartbeat-only-cluster state) still finds
 			// it: resolveAppKeyFile prefers /data/gh-app-key-<appid>.pem for the
 			// app_id we now claim. An explicit key_file still wins outright.
 			rebuildKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
@@ -3861,7 +3861,7 @@ func main() {
 			// The hub assigned this (previously placeholder) hive a real project.
 			// Reconcile our running project config so agents work the claimed
 			// org/repos at the claimed maturity level. This is the ONLY delivery
-			// channel on heartbeat-only clusters (vllm-d) — no kubectl push is
+			// channel on heartbeat-only clusters (the heartbeat-only cluster) — no kubectl push is
 			// possible. The hub keeps sending this every beat until we report the
 			// matching project back, so an idempotent no-op when already matched
 			// is expected and cheap.
@@ -3975,7 +3975,7 @@ func main() {
 		}), hub.GatewayConfigCallback(func(gw *hub.HeartbeatGatewayConfig) {
 			// The hub funded an OpenRouter gateway on this hive's behalf (scan-to-
 			// fund from My Hives) and delivered it over the heartbeat channel — the
-			// only path that reaches a firewalled/heartbeat-only spoke (vllm-d). We
+			// only path that reaches a firewalled/heartbeat-only spoke (the heartbeat-only cluster). We
 			// store the key in our OWN per-gateway secret-file store and create the
 			// "openrouter" gateway. The hub drains the delivery after sending, so
 			// this fires once per fund; the key value is never logged.

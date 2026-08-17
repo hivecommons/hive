@@ -19,7 +19,7 @@ import (
 // is drift-prone with nothing to correct it.
 //
 // WHY THIS FIX IS A LOADER AND NOT A RECONCILER. The registry is not derivable
-// from the fleet: two of its three clusters (vllm-d, a-ks-wec2) are pull_only
+// from the fleet: two of its three clusters (the heartbeat-only cluster, a spoke cluster) are pull_only
 // BY DESIGN and the hub cannot reach them to enumerate anything. There is no
 // in-cluster source that could re-generate this file, so a reconciler would
 // have to invent one — and a new source of truth for the file that gates all
@@ -32,7 +32,7 @@ import (
 // on a JSON parse error. An empty registry is not a degraded registry, it is an
 // inverted one: clusterForHive falls through both its lookups and returns nil
 // for EVERY hive, so a truncated write silently disables the hub's writes to
-// hive-oke — the one cluster it can reach — while logging a single line and
+// the hub-reachable cluster — the one cluster it can reach — while logging a single line and
 // coming up otherwise healthy. A half-written file produced by an interrupted
 // `kubectl cp` (exactly the mechanism that left the .bak sibling) lands
 // squarely in this case.
@@ -50,7 +50,7 @@ import (
 // reason hub-generations.json differs: a corrupt acks file can be discarded
 // because losing an ack merely un-silences an alert — the safe direction. A
 // corrupt REGISTRY must not be discarded and replaced with a synthesized
-// default, because the default names only hive-oke and would silently strand
+// default, because the default names only the hub-reachable cluster and would silently strand
 // every hive on the two pull-only clusters, re-routing their App and host
 // resolution to the wrong cluster. The bad bytes are left on disk under this
 // suffix so an operator can see what arrived.
@@ -114,7 +114,7 @@ const (
 	clustersLoaded clustersLoadOutcome = iota
 	// clustersAbsent: the file is ENOENT. A POSITIVE fact, not an absence of
 	// information — a hub with no registry has never been given one, so the
-	// synthesized hive-oke default is exactly right. This is the documented
+	// synthesized hub-reachable-cluster default is exactly right. This is the documented
 	// backward-compatibility path for a fresh or Compose deployment and it is
 	// preserved verbatim.
 	clustersAbsent
@@ -124,7 +124,7 @@ const (
 	//
 	// THIS IS THE CASE THAT MUST NOT YIELD AN EMPTY MAP, and must not fall back
 	// to the default either. The hub knows a registry was placed here and
-	// cannot tell what it says. Returning empty disables writes to hive-oke;
+	// cannot tell what it says. Returning empty disables writes to the hub-reachable cluster;
 	// returning the default silently re-routes every pull-only hive. Both are
 	// widenings of the blast radius of a corrupt file, so the hub refuses.
 	clustersUntrusted

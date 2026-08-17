@@ -2703,7 +2703,7 @@ func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Reques
 	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
 	jsonResponse(w, map[string]any{
 		// enforced == this is a direct-route spoke that gates logins by this list
-		// (vllm-d); false means hub-proxied (hive-oke), where nginx gates instead.
+		// (the heartbeat-only cluster); false means hub-proxied (the hub-reachable cluster), where nginx gates instead.
 		"users":    out,
 		"enforced": len(entries) > 0,
 	})

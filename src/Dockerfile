@@ -372,7 +372,7 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
 # CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can stamp SO_MARK on its
 # own upstream dials and be exempted from the forced-egress iptables REDIRECT
 # (on OpenShift/OVN xt_owner is ABSENT, so the owner-UID exemptions silently fail
-# to load and SO_MARK is the ONLY remaining exemption — observed live on vllm-d,
+# to load and SO_MARK is the ONLY remaining exemption — observed live on the heartbeat-only cluster,
 # where the proxy's own :443 dials looped into the REDIRECT and 502'd every forge
 # request). setsockopt(SO_MARK) requires CAP_NET_ADMIN in the caller's EFFECTIVE
 # set, and the hive process is dropped to non-root `dev`.

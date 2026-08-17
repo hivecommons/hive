@@ -12,7 +12,7 @@ import (
 
 // SSO handoff: the hub mints a short-lived, ASYMMETRICALLY-signed token that lets
 // an already-hub-authenticated admin/user open a direct-route spoke (e.g. a
-// firewalled vllm-d hive) WITHOUT a second GitHub device-flow login. The hub signs
+// firewalled heartbeat-only-cluster hive) WITHOUT a second GitHub device-flow login. The hub signs
 // the token with an Ed25519 PRIVATE key that never leaves the hub; the spoke
 // verifies it with only the corresponding PUBLIC key. The spoke confirms the
 // carried user is in its authorized_users allowlist and mints a local session.

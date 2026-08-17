@@ -29,7 +29,7 @@ const (
 	authAuditStartupDelay = 5 * time.Minute
 
 	// authAuditProbeTimeout bounds each per-spoke probe. Firewalled/unreachable
-	// spokes (vllm-d from the hub) simply time out and are reported as
+	// spokes (the heartbeat-only cluster from the hub) simply time out and are reported as
 	// "unreachable", never as open.
 	authAuditProbeTimeout = 8 * time.Second
 
@@ -83,7 +83,7 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 
 	var open []string
 	probed, unreachable := 0, 0
-	// Per-cluster tallies so a whole cluster going dark (vllm-d has been
+	// Per-cluster tallies so a whole cluster going dark (the heartbeat-only cluster has been
 	// intermittently unreachable from the hub) is reported as ONE outage rather
 	// than as N individually broken hives.
 	clusterProbed := map[string]int{}
@@ -143,7 +143,7 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 // HTTP status (0 when the request never completed), wideOpen and reachable.
 // wideOpen is true only on a 200 (dashboard served to anyone). A 30x/401/403
 // means protected. A transport error means unreachable (e.g. a firewalled
-// vllm-d spoke the hub can't reach), never counted as open.
+// heartbeat-only-cluster spoke the hub can't reach), never counted as open.
 //
 // The status is returned so callers can distinguish a SERVING spoke from one
 // whose ingress answered with an error: reachable only says the HTTP exchange

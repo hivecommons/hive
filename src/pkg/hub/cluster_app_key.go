@@ -227,9 +227,9 @@ func (i *clusterAppIdentity) HasKey() bool {
 // nil — and every downstream reconcile silently became a no-op.
 //
 // That is exactly how the placeholder-sentinel repair shipped in #2333 was
-// prevented from ever running on the hive-oke cluster: the operator added
-// "github_app_id" to clusters.json as instructed, but hive-oke has no
-// <clusterID>.pem (only vllm-d does), so appIdentityForCluster returned nil and
+// prevented from ever running on the hub-reachable cluster: the operator added
+// "github_app_id" to clusters.json as instructed, but the hub-reachable cluster has no
+// <clusterID>.pem (only the heartbeat-only cluster does), so appIdentityForCluster returned nil and
 // appKeyConfigForHeartbeat bailed before decideAppKeySync's sentinel branch was
 // ever consulted. The repair was unreachable in production for the one cluster
 // it was written for.
@@ -261,7 +261,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 		// missing from clusters.json got no answer at all, beat after beat —
 		// the hub logged "cluster names no github app — cannot repair" and
 		// offered a remedy (set github_app_id on the cluster) for a cluster
-		// entry that does not exist. Five a-ks-wec2 spokes stayed on
+		// entry that does not exist. Five spoke-cluster spokes stayed on
 		// config.PlaceholderAppID that way.
 		//
 		// A hive's ELECTED forge does not depend on the cluster registry, and
@@ -340,7 +340,7 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 // only way a spoke received an App at assign was an admin pasting app_id,
 // installation_id AND a PEM into the dialog — all three, or nothing was sent.
 // Leave one blank and the hive kept config.PlaceholderAppID, which is how five
-// spokes on a-ks-wec2 sat in dashboard-only mode carrying 999999999 while the
+// spokes on a spoke cluster sat in dashboard-only mode carrying 999999999 while the
 // hub knew their forge was github.ibm.com and held that App's key the whole
 // time.
 //
@@ -552,7 +552,7 @@ const (
 	// App identity is the only thing that can fix it.
 	appKeyReasonPlaceholderAppID = "spoke still carries the placeholder app_id sentinel"
 	// appKeyReasonPublicHiveOnGHECluster is the class fix for a github.com hive
-	// parked on a GitHub-Enterprise-default cluster (vllm-d). The hive's meta
+	// parked on a GitHub-Enterprise-default cluster (the heartbeat-only cluster). The hive's meta
 	// pins it to public github.com (github_base_url:"public" / "https://github.com")
 	// even though its cluster's default App is the GHE App. Pushing the cluster's
 	// GHE key as the hive's PRIMARY every beat overwrites its github.com app_id and
@@ -588,7 +588,7 @@ const (
 	// class), and a public-host hive whose spoke was wrongly flipped onto the
 	// GHE App (the alchemy class, mis-flipped by the cluster-keyed guard #2713
 	// shipped). Judging it on the CLUSTER's forge instead is exactly what
-	// force-flipped every github.com project on the vllm-d cluster to app 5686.
+	// force-flipped every github.com project on the heartbeat-only cluster to app 5686.
 	appKeyReasonWrongForgeApp = "hive carries an app_id registered on a different github host"
 )
 
@@ -662,7 +662,7 @@ const (
 // forge). Combined with a non-zero spoke app_id that differs from the identity
 // being delivered, that proves the spoke's App names nothing on the host this
 // hive uses. It is judged on the HIVE's forge, never the cluster's: a cluster
-// hosts hives of BOTH forges (vllm-d carries github.ibm.com projects beside
+// hosts hives of BOTH forges (the heartbeat-only cluster carries github.ibm.com projects beside
 // github.com ones), so cluster membership alone proves nothing about any one
 // hive. See appKeyReasonWrongForgeApp.
 //
@@ -849,7 +849,7 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 	//
 	// The 2026-08-05 fleet regression is why this is emphatically NOT
 	// "clusterIsGHE": #2713 shipped this branch keyed on clusterDefaultForge, so
-	// every hive on the GHE-default vllm-d cluster whose spoke reported the
+	// every hive on the GHE-default heartbeat-only cluster whose spoke reported the
 	// public App — including the github.com projects that cluster also hosts
 	// (ibm/alchemy-logging: org "ibm" lives on public github.com) — was
 	// "repaired" onto app 5686 / github.ibm.com and 404'd on every token mint.

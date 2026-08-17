@@ -40,7 +40,7 @@ func ttydPort() int {
 // Ingress/Route that is supposed to peel off /terminal to the Node proxy
 // (port 3001) does not exist on every spoke — clicking "▶ terminal" then
 // landed on the static FileServer here and returned a bare Go
-// "404 page not found" (task #39, vllm-d hosted spokes). Serving /terminal
+// "404 page not found" (task #39, heartbeat-only-cluster hosted spokes). Serving /terminal
 // from this server makes the link work regardless of which Service port the
 // cluster's route actually targets, and puts terminal access behind the same
 // authenticate() middleware as the rest of the dashboard (session cookie,

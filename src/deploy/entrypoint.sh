@@ -89,7 +89,7 @@ if [ "$IS_KUBERNETES" = "true" ]; then
   # Why this is the right way round: the ConfigMap is frozen at provision
   # time and cannot be written by anything at runtime (the hub has only
   # `get` on ConfigMaps, spoke RBAC omits them entirely, and the hub has no
-  # kubectl path to vllm-d at all). The runtime config on the PVC is the
+  # kubectl path to the heartbeat-only cluster at all). The runtime config on the PVC is the
   # only layer any component can actually write. Treating the writable
   # layer as the input — instead of merging it over a frozen one on every
   # boot — is what removes the "which layer wins" question that cost about
@@ -796,7 +796,7 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
       #     the proxy's traffic.
       #
       # REGRESSION HISTORY: PR #2678 replaced the working owner-UID exemption with
-      # a MARK-ONLY exemption. That was verified only on OpenShift/vllm-d. On the
+      # a MARK-ONLY exemption. That was verified only on OpenShift / the heartbeat-only cluster. On the
       # LIVE OKE console hive the SO_MARK did NOT reliably stick on the proxy's
       # outbound sockets, so its OWN :443 to api.github.com hit the REDIRECT rule,
       # looped back into itself (:18443) → EPERM/ECONNREFUSED/EOF → no GitHub App
@@ -814,7 +814,7 @@ print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
       # failure into a fail-closed FATAL crash-loop: on 2026-08-13 three
       # spokes sharing one node rolled simultaneously at the daily upgrade
       # window and kept re-colliding in synchronized backoff for three
-      # hours (a-ks-wec2). Jittered retries break the lockstep; the real
+      # hours (a spoke cluster). Jittered retries break the lockstep; the real
       # iptables error is logged instead of discarded.
       _ipt_chain_ok=false
       _ipt_try=0

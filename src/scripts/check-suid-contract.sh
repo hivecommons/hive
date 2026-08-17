@@ -134,7 +134,7 @@ check "dev is a member of hive-launch" \
 # The hive process needs CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can
 # stamp SO_MARK on its own upstream dials and be exempted from the forced-egress
 # iptables REDIRECT (on OpenShift/OVN, where xt_owner is absent, SO_MARK is the
-# ONLY exemption that works — refs #2674/#2678, observed live on vllm-d).
+# ONLY exemption that works — refs #2674/#2678, observed live on the heartbeat-only cluster).
 #
 # It USED to carry this as a FILE capability (setcap cap_net_admin+ep). That is
 # now FORBIDDEN: the kernel refuses execve of a file-capped binary whenever the

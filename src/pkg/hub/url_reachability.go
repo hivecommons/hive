@@ -46,7 +46,7 @@ const (
 
 	// urlClusterOutageRatio is the share of a cluster's probed hives that must
 	// fail before the failures are treated as a single cluster-wide outage
-	// instead of per-hive breakage. vllm-d has been intermittently unreachable
+	// instead of per-hive breakage. the heartbeat-only cluster has been intermittently unreachable
 	// from the hub, and a partition there must not raise 30 separate alerts.
 	urlClusterOutageRatio = 0.5
 
@@ -79,7 +79,7 @@ const (
 //   - 30x: redirected to login. The hub's own spokes do this, so it is the
 //     single most common healthy answer and must never read as a failure.
 //   - 401/403: an authenticated endpoint refusing an anonymous caller. This is
-//     what every vllm-d spoke returns via its OAuth proxy — healthy.
+//     what every heartbeat-only-cluster spoke returns via its OAuth proxy — healthy.
 //
 // Anything else (5xx, 404, and any transport error) is a failure.
 func urlHealthyStatus(status int) bool {

@@ -1515,7 +1515,7 @@ func ingressHostExists(ctx context.Context, client *http.Client, cfg *inClusterC
 // This exists because the DashboardURL fallback used to synthesise
 // "<hiveID>.<hub's host>", which silently assumes every spoke is fronted by the
 // hub's own wildcard domain. That holds only for spokes co-located with the hub
-// (hive-oke, where *.hive.kubestellar.io IS the router). On any other cluster —
+// (the hub-reachable cluster, where *.hive.kubestellar.io IS the router). On any other cluster —
 // an OpenShift pool on *.apps.<cluster>, an IKS pool — the synthesised host
 // resolves, via the hub's wildcard, to the HUB's router, which has no backend
 // for that name and answers 503. The hub then linked users at a hostname that
@@ -1903,11 +1903,11 @@ type HeartbeatAppKey struct {
 // the hub to a spoke via the heartbeat response. It mirrors the AuthorizedUsers
 // mechanism: when an admin assigns a pre-provisioned "placeholder" hive to a
 // requesting user, the hub cannot push the new project config to a
-// heartbeat-only spoke (e.g. vllm-d) over kubectl. Delivering it in the
+// heartbeat-only spoke (e.g. the heartbeat-only cluster) over kubectl. Delivering it in the
 // heartbeat response lets the spoke reconcile its running config
 // (cfg.Project.Org/Repos/PrimaryRepo and ACMM level) every beat until it
 // matches what the hub recorded — the only channel that works uniformly for
-// both reachable (hive-oke) and heartbeat-only (vllm-d) clusters.
+// both reachable (the hub-reachable cluster) and heartbeat-only (the heartbeat-only cluster) clusters.
 type HeartbeatProjectConfig struct {
 	Org         string   `json:"org"`
 	Repos       []string `json:"repos"`
@@ -1941,7 +1941,7 @@ type HeartbeatProjectConfig struct {
 // HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the
 // hub's scan-to-fund flow) from the hub to a spoke via the heartbeat response.
 // It mirrors HeartbeatProjectConfig: for a firewalled/heartbeat-only spoke
-// (vllm-d) the hub cannot POST to the spoke's dashboard over the network, so it
+// (the heartbeat-only cluster) the hub cannot POST to the spoke's dashboard over the network, so it
 // delivers the gateway in the heartbeat response and the spoke stores the key in
 // its OWN per-gateway secret-file store. The Key is a secret VALUE — it travels
 // only over the TLS heartbeat channel, is never logged, and the spoke writes it
@@ -1990,7 +1990,7 @@ type HeartbeatResponse struct {
 	IsPublic        *bool                     `json:"is_public,omitempty"`
 	// AuthorizedUsers is the hub's authoritative per-hive access list, as
 	// "username:role" entries. The hub can't reach heartbeat-only spokes (e.g.
-	// vllm-d) over kubectl, and those spokes authorize their own device-flow
+	// the heartbeat-only cluster) over kubectl, and those spokes authorize their own device-flow
 	// logins against a local allowlist — so a grant made in the hub's Manage
 	// Access UI would never reach them. Delivering the list in the heartbeat
 	// response lets the spoke reconcile its allowlist every beat, so access
@@ -2003,11 +2003,11 @@ type HeartbeatResponse struct {
 	// The hub keeps sending it every beat until the spoke reconciles and reports
 	// the matching project. nil means "no reconcile needed" — leave the spoke's
 	// project config alone. This is the ONLY delivery channel for heartbeat-only
-	// clusters (vllm-d) the hub cannot reach over kubectl.
+	// clusters (the heartbeat-only cluster) the hub cannot reach over kubectl.
 	ProjectConfig *HeartbeatProjectConfig `json:"project_config,omitempty"`
 	// PendingGateway carries a funded model gateway (OpenRouter scan-to-fund) the
 	// hub minted on the spoke's behalf. It is the delivery channel for
-	// firewalled/heartbeat-only spokes (vllm-d) the hub cannot POST to directly.
+	// firewalled/heartbeat-only spokes (the heartbeat-only cluster) the hub cannot POST to directly.
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`

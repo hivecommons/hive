@@ -7,7 +7,7 @@ package hub
 // the hub. On return, the hub exchanges the code for a user-controlled OpenRouter
 // API key and delivers it to the target hive as a model gateway named
 // "openrouter" via the heartbeat channel (the only channel that reaches
-// firewalled/heartbeat-only spokes like vllm-d uniformly). The spoke stores the
+// firewalled/heartbeat-only spokes like the heartbeat-only cluster uniformly). The spoke stores the
 // key in its OWN per-gateway secret-file store — the hub never persists the key.
 //
 // SECURITY:

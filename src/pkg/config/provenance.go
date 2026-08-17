@@ -258,7 +258,7 @@ const (
 	// wrong: "ibm-hive" existed only in _test.go fixtures — it appears in no
 	// production config, in no cluster entry, and on none of the 51 fleet
 	// spokes (live clusters.json carries github_app_slug
-	// "kubestellar-hive-ghe" for vllm-d). Relaxing the rule for an invented
+	// "kubestellar-hive-ghe" for the heartbeat-only cluster). Relaxing the rule for an invented
 	// fixture left a GHE App under a non-"ghe" slug passing validation, which
 	// is precisely the shape this package exists to reject.
 	EnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
@@ -403,7 +403,7 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 	// disagree with each other.
 	if gh.AppID != 0 {
 		// An empty api_url is not a public one when base_url already names GHE:
-		// pooled/placeholder GHE hives and the vllm-d cluster record carry
+		// pooled/placeholder GHE hives and the heartbeat-only cluster's record carry
 		// exactly one of the two. Only claim a contradiction when api_url is
 		// populated, or when NEITHER url names the forge (the incident shape,
 		// which the app_id rule above catches on its own).
@@ -419,7 +419,7 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 		// explicit that a GHE hive legitimately carries
 		// api_url: https://github.ibm.com/api/v3 with base_url: "" (pooled and
 		// placeholder GHE hives all do), and the symmetric case — a declared GHE
-		// base_url with api_url unset — is the shape of the vllm-d cluster
+		// base_url with api_url unset — is the shape of the heartbeat-only cluster
 		// record. Treating either silence as "public github.com" makes these two
 		// rules fire on VALID configs.
 		//

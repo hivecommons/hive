@@ -1,7 +1,7 @@
 ---
 # Durable RBAC + InferencePool for the LIVE endpoint-picker (EPP) pod.
 #
-# Background (kubestellar/hive#2341): the running cluster (vllm-d) has an
+# Background (kubestellar/hive#2341): the running cluster (the heartbeat-only cluster) has an
 # ad-hoc EPP Deployment whose ServiceAccount is `hive-llm-d-epp` in namespace
 # `hive-inference`, started with:
 #     --pool-name=hive-vllm-pool --pool-namespace=hive-inference
