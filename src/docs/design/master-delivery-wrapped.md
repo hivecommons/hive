@@ -40,16 +40,16 @@ spokes there is no delivery path.
 `KubectlReachable()` (`src/pkg/hub/saas_provision.go:368-376`) tests `PullOnly` first and
 returns false unconditionally. Per the operator correction of 2026-08-14,
 `pull_only` is an **intentional architectural boundary on both clusters** — the
-hub is not meant to hold write credentials into `vllm-d` or `a-ks-wec2`. The
+hub is not meant to hold write credentials into the heartbeat-only clusters. The
 field's own doc comment already says this plainly: a pull-only cluster's spokes
 "connect outbound over the heartbeat and nothing here can kubectl into them"
 (`src/pkg/hub/saas_provision.go:207-208`).
 
 | Cluster | Spokes | `pull_only` | Reconcile reach |
 |---|---:|---|---|
-| `hive-oke` (in-cluster) | 22 | no | reachable |
-| `vllm-d` | 39 | **yes, by design** | unreachable |
-| `a-ks-wec2` | 5 | **yes, by design** | unreachable |
+| the hub-reachable cluster (in-cluster) | 22 | no | reachable |
+| a heartbeat-only cluster | 39 | **yes, by design** | unreachable |
+| another heartbeat-only cluster | 5 | **yes, by design** | unreachable |
 | **Total** | **66** | | **22 / 44** |
 
 All 44 are one homogeneous category. There is no "cheap RBAC win" subset.
@@ -430,7 +430,7 @@ Step 4's carrier has direct precedent. `HeartbeatResponse.PendingGateway`
 (`src/pkg/hub/heartbeat.go:1728-1733`) is a **secret** delivered on the heartbeat response,
 queued hub-side (`src/pkg/hub/openrouter.go:217`), drained on delivery, and its doc
 comment states its purpose: "the delivery channel for firewalled/heartbeat-only
-spokes (vllm-d) the hub cannot POST to directly ... The hub sends it once
+spokes (on a heartbeat-only cluster) the hub cannot POST to directly ... The hub sends it once
 (drained on delivery) rather than every beat, since it carries a secret key
 value." Wrapped-master delivery is the same shape with a strictly stronger
 payload — sealed rather than plaintext — so it should reuse the queue/drain
@@ -570,7 +570,7 @@ inconsistency, and it should carry a comment saying so, or a future tidy-up will
 
 ### What still needs owner buy-in
 
-Steps 1–5 need **nothing** from the owners of `vllm-d` or `a-ks-wec2` — no
+Steps 1–5 need **nothing** from the owners of the heartbeat-only clusters — no
 RBAC, no network, no manifest change. The spoke rolls itself via a mechanism
 already in use on those clusters.
 
@@ -578,7 +578,7 @@ Step 6 (the provisioning enrolment value) changes the manifest applied when a
 *new* hive is created on those clusters. That is a provisioning-time change on
 someone else's cluster and **does need their agreement**, though it grants the
 hub no new access — it adds a projected secret to a Deployment the operator
-already applies. → flag for `vllm-d` / `a-ks-wec2` owners.
+already applies. → flag for the heartbeat-only clusters owners.
 
 Nothing in this design asks either cluster to accept inbound connections from
 the hub, grant the hub RBAC, or weaken `pull_only`. That is the point.
@@ -740,7 +740,7 @@ stands unchanged.
   the wrapping private key and the master. Out of scope, and unchanged from
   today.
 - A hostile spoke *operator*. They legitimately control the pod. Unchanged.
-- Cluster admins on `vllm-d` / `a-ks-wec2`. They can read the PVC. Unchanged,
+- Cluster admins on the heartbeat-only clusters. They can read the PVC. Unchanged,
   and inherent to hosting on someone else's cluster.
 
 **Does rotation remain a remedy for a leaked master?**
@@ -975,7 +975,7 @@ hours (§3). These are policy numbers with no derivation behind them and should
 be set by whoever operates the rotation cadence. They must be named constants
 with comments recording the reasoning, per the house standard.
 
-**OQ-5 — Does step 6 have `vllm-d` / `a-ks-wec2` owner agreement?** It changes
+**OQ-5 — Does step 6 have the heartbeat-only clusters owner agreement?** It changes
 the provisioning manifest on their clusters, though it grants the hub no new
 access (§6). Steps 1–5 need nothing from them.
 
