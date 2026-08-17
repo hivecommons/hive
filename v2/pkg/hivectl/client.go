@@ -78,10 +78,28 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 		return nil, fmt.Errorf("Hive server URL must use http or https")
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
+	// Give the client its OWN transport rather than sharing the process-wide
+	// http.DefaultTransport (which a nil Transport silently uses).
+	//
+	// Sharing bit in CI: every parallel client test tears down its
+	// httptest.Server, and Server.Close() calls CloseIdleConnections on
+	// http.DefaultTransport — racing whichever OTHER parallel test has a
+	// request in flight on a pooled connection. Under a loaded runner that
+	// surfaced as a flaky "net/http: HTTP/1.x transport connection broken:
+	// http: CloseIdleConnections called" from an unrelated test. A per-client
+	// pool also means a hivectl embedder can never have its connections reaped
+	// by stray CloseIdleConnections calls elsewhere in the process. Clone()
+	// keeps all of DefaultTransport's dial/TLS/proxy defaults; the two-value
+	// assertion falls back to the shared default only if DefaultTransport is
+	// not a *http.Transport (it always is in practice).
+	var transport http.RoundTripper
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = t.Clone()
+	}
 	return &Client{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(token),
-		http:    &http.Client{Timeout: timeout},
+		http:    &http.Client{Timeout: timeout, Transport: transport},
 	}, nil
 }
 
