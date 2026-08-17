@@ -27,6 +27,29 @@ func captureStdout(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
+// reloadStore re-opens the beads store at dir, returning a handle that reflects
+// what is actually on disk right now.
+//
+// Every cmdX function opens its OWN store through openStore(), mutates it, and
+// persists. A *beads.Store handle created earlier in a test holds the in-memory
+// snapshot taken at NewStore time, and List/Ready read that map without ever
+// re-reading the file — so asserting through the original handle observes the
+// PRE-command state and reports a mutation that did happen as if it had not.
+// Four tests here did exactly that and failed from the day they were added;
+// nothing caught it because CI runs `go test ./pkg/...` and never ./cmd/....
+//
+// Re-opening is also the more faithful assertion: the real `bd` CLI is a
+// separate process per invocation, so reading persisted state is what an
+// operator actually observes.
+func reloadStore(t *testing.T, dir string) *beads.Store {
+	t.Helper()
+	s, err := beads.NewStore(dir)
+	if err != nil {
+		t.Fatalf("reopening beads store at %s: %v", dir, err)
+	}
+	return s
+}
+
 // --- resolveDir ---
 
 func TestResolveDirBDDIROverride(t *testing.T) {
@@ -238,8 +261,8 @@ func TestCmdCloseAndReopenViaUpdate(t *testing.T) {
 		cmdClose([]string{b.ID})
 	})
 
-	// Verify closed via list.
-	items := store.List(beads.ListFilter{})
+	// Verify closed via list, re-read from disk (cmdClose used its own store).
+	items := reloadStore(t, dir).List(beads.ListFilter{})
 	found := false
 	for _, item := range items {
 		if item.ID == b.ID {
@@ -258,7 +281,7 @@ func TestCmdCloseAndReopenViaUpdate(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--status", "open"})
 	})
 
-	items = store.List(beads.ListFilter{})
+	items = reloadStore(t, dir).List(beads.ListFilter{})
 	found = false
 	for _, item := range items {
 		if item.ID == b.ID {
@@ -291,7 +314,7 @@ func TestCmdUpdateMetadata(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--set-metadata", "finding_type=coverage-gap"})
 	})
 
-	items := store.List(beads.ListFilter{})
+	items := reloadStore(t, dir).List(beads.ListFilter{})
 	found := false
 	for _, item := range items {
 		if item.ID == b.ID {
@@ -309,7 +332,7 @@ func TestCmdUpdateMetadata(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--unset-metadata", "finding_type"})
 	})
 
-	items = store.List(beads.ListFilter{})
+	items = reloadStore(t, dir).List(beads.ListFilter{})
 	found = false
 	for _, item := range items {
 		if item.ID == b.ID {
@@ -342,7 +365,7 @@ func TestCmdUpdateClaim(t *testing.T) {
 		cmdUpdate([]string{b.ID, "--claim"})
 	})
 
-	items := store.List(beads.ListFilter{})
+	items := reloadStore(t, dir).List(beads.ListFilter{})
 	found := false
 	for _, item := range items {
 		if item.ID == b.ID {
@@ -376,7 +399,7 @@ func TestCmdReset(t *testing.T) {
 		cmdReset([]string{"--reason", "test reset"})
 	})
 
-	ready := store.Ready("")
+	ready := reloadStore(t, dir).Ready("")
 	if len(ready) != 0 {
 		t.Errorf("after reset, Ready() returned %d beads; want 0", len(ready))
 	}

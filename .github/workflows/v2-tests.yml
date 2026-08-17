@@ -34,8 +34,14 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: v2/go.sum
 
+      # ./cmd/... is included deliberately. It used to be ./pkg/... only, so no
+      # workflow anywhere ran the cmd tests — v2-ci.yml builds and vets but does
+      # not test. Four cmd/bd tests were consequently merged already-failing and
+      # stayed red on the default branch, undetected, because nothing ever ran
+      # them. Fixing those tests without also running them just resets the same
+      # trap. All of ./cmd/... passes under -short -race.
       - name: Test
-        run: go test ./pkg/... -short -race -count=1
+        run: go test ./pkg/... ./cmd/... -short -race -count=1
 
   create-issue-on-failure:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
