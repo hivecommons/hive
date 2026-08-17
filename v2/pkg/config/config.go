@@ -3496,17 +3496,31 @@ func (c *Config) applyDefaults() {
 		}
 	}
 	if len(c.Governor.Sensing.LoginPatterns) == 0 {
+		// Each pattern must match the CLI's own login CHROME, never ordinary
+		// English. The login-detector matches these against the agent's PANE —
+		// which contains the issue bodies, PR diffs and CI logs the agent is
+		// READING — so generic phrases pause an agent for merely discussing an
+		// auth error. The previous defaults ("authentication required",
+		// "unauthorized.*401", "session expired", "login required", "please
+		// log in", "token expired") did exactly that on a live hive: a
+		// ci-maintainer reading CI logs full of 401s and a supervisor
+		// summarising issues across 39 repos were paused repeatedly, and the
+		// two HIGHEST-cadence agents are hit hardest because the detector runs
+		// at kick time, so exposure scales with kick frequency. Reproduced on
+		// demand by typing "authentication required" into a healthy agent's
+		// input box (unsubmitted — just rendered on the pane) and kicking it.
 		c.Governor.Sensing.LoginPatterns = []string{
-			"please log in",
-			"authentication required",
-			"not logged in",
-			"login required",
-			"session expired",
-			"token expired",
-			"unauthorized.*401",
+			// claude: exact prompt strings from Claude Code's login screens.
+			"Please run /login",
+			"Not logged in",
+			// gh / copilot / gemini: the commands their CLIs tell the user to run.
 			"gh auth login",
 			"claude login",
 			"copilot auth",
+			"gemini auth login",
+			// bob: its API-key entry prompts.
+			"Enter Bob-Shell API Key",
+			"Paste your API key here",
 		}
 	}
 	if c.Governor.Sensing.TTLSeconds == 0 {
@@ -3720,7 +3734,18 @@ func IsInferenceBackend(backend string) bool {
 // `backend: watsonx` be accepted at config-set time and then fail at kick time
 // with "unknown backend: watsonx". Adding a backend in one place only is now a
 // visible omission rather than a silent accept-then-fail.
-var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini"}
+//
+// `agy` is the Antigravity CLI, Google's replacement for the Gemini CLI. Google
+// consolidated its CLI tooling under Antigravity at I/O 2026 and Gemini CLI
+// STOPPED SERVING personal and Google AI Pro accounts on 2026-06-18; only
+// customers holding paid Gemini Code Assist licences can still invoke it. The
+// `gemini` entry is therefore retained for those licence holders, but a hive
+// whose Google access is a Gemini/AI Pro subscription can only reach Google
+// through `agy`. It was already listed in config/backends.conf's
+// KNOWN_BACKENDS, so omitting it here reproduced exactly the accept-in-one-
+// place drift this list exists to prevent — except inverted: valid in the
+// shell config, rejected by the hub.
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy"}
 
 // IsCLIBackend returns true if the backend launches an agentic CLI binary.
 func IsCLIBackend(backend string) bool {

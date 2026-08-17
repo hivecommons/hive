@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,9 +43,9 @@ type BeadSynthesizer struct {
 	lifecycleManager *BeadLifecycleManager
 	graphStore       *GraphStore
 
-	mu       sync.Mutex
-	cancel   context.CancelFunc
-	running  bool
+	mu      sync.Mutex
+	cancel  context.CancelFunc
+	running bool
 }
 
 // SetGraphStore attaches a graph store so synthesized facts emit relationship triples.
@@ -729,6 +730,18 @@ type PREnricher struct {
 	logger   *slog.Logger
 	mu       sync.Mutex
 	cache    map[string]*gh.PullRequest
+	// misses records PR references that resolved to NOTHING, so they are not
+	// re-fetched. This matters most for fetchPRFromRepos, whose repo-probing
+	// fan-out costs len(repos) API calls per lookup — a stale bead referencing
+	// a PR that exists nowhere used to cost the FULL fan-out on every
+	// synthesizer cycle, forever. On a 39-repo hive that fan-out alone ran the
+	// GitHub App installation over its entire hourly allowance (measured:
+	// 235 GET /repos/*/*/pulls/{n} per minute during a pass, 60% of all API
+	// traffic), and once the allowance is gone every other subsystem 403s for
+	// the rest of the window. Bounded like cache; entries live for the
+	// enricher's lifetime — one synthesizer run — so a PR created mid-run is
+	// picked up next cycle.
+	misses map[string]bool
 }
 
 var (
@@ -744,6 +757,7 @@ func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.L
 		repos:    repos,
 		logger:   logger,
 		cache:    make(map[string]*gh.PullRequest),
+		misses:   make(map[string]bool),
 	}
 }
 
@@ -751,6 +765,9 @@ func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.L
 func (e *PREnricher) ClearCache() {
 	e.mu.Lock()
 	e.cache = make(map[string]*gh.PullRequest)
+	// Misses clear on the same boundary: a PR opened mid-cycle was legitimately
+	// absent when probed, and must become visible next cycle.
+	e.misses = make(map[string]bool)
 	e.mu.Unlock()
 }
 
@@ -844,10 +861,24 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 		e.mu.Unlock()
 		return cached
 	}
+	if e.misses[key] {
+		e.mu.Unlock()
+		return nil
+	}
 	e.mu.Unlock()
 
-	pr, _, err := e.ghClient.PullRequests.Get(ctx, owner, repo, number)
+	pr, resp, err := e.ghClient.PullRequests.Get(ctx, owner, repo, number)
 	if err != nil {
+		// Only a definitive 404 is a cacheable miss. A transient failure
+		// (rate limit, network) must stay retryable, or one bad window would
+		// wrongly blacklist real PRs for the rest of the run.
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			e.mu.Lock()
+			if len(e.misses) < prEnricherCacheSize {
+				e.misses[key] = true
+			}
+			e.mu.Unlock()
+		}
 		e.logger.Debug("failed to fetch PR for enrichment",
 			"owner", owner, "repo", repo, "number", number, "error", err)
 		return nil
@@ -863,13 +894,32 @@ func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int
 }
 
 // fetchPRFromRepos tries each configured repo to find the PR.
+//
+// This fan-out is the expensive path: len(repos) API calls to answer one
+// lookup, and the full count when the PR exists nowhere. The per-repo 404s are
+// negative-cached by fetchPR, so a miss costs the fan-out ONCE per run instead
+// of once per bead per cycle; the fan-out-level miss is cached here too so
+// repeated references to the same dead number skip the loop entirely.
 func (e *PREnricher) fetchPRFromRepos(ctx context.Context, owner string, number int) *gh.PullRequest {
+	fanKey := fmt.Sprintf("%s/*#%d", owner, number)
+	e.mu.Lock()
+	if e.misses[fanKey] {
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+
 	for _, repo := range e.repos {
 		pr := e.fetchPR(ctx, owner, repo, number)
 		if pr != nil {
 			return pr
 		}
 	}
+	e.mu.Lock()
+	if len(e.misses) < prEnricherCacheSize {
+		e.misses[fanKey] = true
+	}
+	e.mu.Unlock()
 	return nil
 }
 
