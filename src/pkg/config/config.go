@@ -63,6 +63,8 @@ type Config struct {
 	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	// Hooks configures state-triggered lifecycle, governor, and sweep hooks.
+	Hooks HooksConfig `yaml:"hooks,omitempty" json:"hooks,omitempty"`
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
