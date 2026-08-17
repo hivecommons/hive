@@ -152,3 +152,43 @@ func TestGatewayDoesNotSetFrameOptionsOrHSTS(t *testing.T) {
 			"this guard should be updated instead of just deleted")
 	}
 }
+
+// TestGatewayAuthRateLimiting pins the ingress throttle for the public
+// authentication paths tracked by issue #3906. Keep this check path-specific:
+// placing limit_req on the whole /api/ location would throttle ordinary
+// dashboard reads and still would not document which credential-bearing paths
+// are protected.
+func TestGatewayAuthRateLimiting(t *testing.T) {
+	conf := readNginxConf(t)
+
+	zone := regexp.MustCompile(`(?m)^\s*limit_req_zone\s+\$binary_remote_addr\s+zone=auth_limit:10m\s+rate=5r/m;`)
+	if !zone.MatchString(conf) {
+		t.Fatal("nginx.conf must define the per-client auth_limit zone at 5 requests per minute")
+	}
+	deviceFlowZone := regexp.MustCompile(`(?m)^\s*limit_req_zone\s+\$binary_remote_addr\s+zone=device_flow_limit:10m\s+rate=15r/m;`)
+	if !deviceFlowZone.MatchString(conf) {
+		t.Fatal("nginx.conf must define a device-flow zone at 15 requests per minute")
+	}
+
+	if !regexp.MustCompile(`(?m)^\s*limit_req_status\s+429;`).MatchString(conf) {
+		t.Fatal("nginx.conf must return 429 when an auth request exceeds its rate limit")
+	}
+
+	for _, tc := range []struct {
+		path string
+		zone string
+	}{
+		{path: "/api/auth/token", zone: "auth_limit"},
+		{path: "/api/gh-user-auth/", zone: "device_flow_limit"},
+		{path: "/sso", zone: "auth_limit"},
+	} {
+		tc := tc
+		t.Run(tc.path, func(t *testing.T) {
+			location := regexp.QuoteMeta(tc.path)
+			pattern := regexp.MustCompile(`(?ms)^\s*location\s+(?:=\s+)?` + location + `\s*\{.*?^\s*limit_req\s+zone=` + regexp.QuoteMeta(tc.zone) + `\s+burst=10\s+nodelay;`)
+			if !pattern.MatchString(conf) {
+				t.Errorf("nginx.conf auth location %q is missing limit_req zone=%s burst=10 nodelay", tc.path, tc.zone)
+			}
+		})
+	}
+}
