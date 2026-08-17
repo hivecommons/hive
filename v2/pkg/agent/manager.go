@@ -7222,13 +7222,28 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	// mintAgentTokenUnlocked — so release, mint, then re-verify under the
 	// re-acquired lock exactly as Start does. The deferred Unlock above still
 	// releases the lock re-acquired here on every return path.
+	//
+	// The lost-race check compares launchGen, NOT agent.State. Restart —
+	// unlike Start, which refuses running agents in its phase 1 — is
+	// routinely called ON a running agent (dashboard restart, SendKick's
+	// crashed-CLI recovery), and nothing on the restart path clears the
+	// pre-restart StateRunning. The original `State == StateRunning` form of
+	// this guard therefore misread the agent's OWN old state as "another
+	// path won the launch race" and returned nil after the CLI had already
+	// been killed and its session recreated — every restart of a running
+	// agent became a silent kill-without-relaunch, and a kick to a crashed
+	// CLI timed out waiting for a CLI that was never going to launch.
+	// launchGen increments on every completed launch, so a changed gen — and
+	// only a changed gen — proves a racing path actually launched while the
+	// lock was released.
+	genBeforeMint := agent.launchGen
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.mu.Lock()
 	if cur, ok := m.agents[name]; !ok || cur != agent {
 		return fmt.Errorf("agent %s removed during restart", name)
 	}
-	if agent.State == StateRunning {
+	if agent.launchGen != genBeforeMint {
 		// Another path won the launch race while we were unlocked.
 		return nil
 	}
