@@ -79,10 +79,12 @@ func TestGatewayConfDoesNotRelyOnConfD(t *testing.T) {
 // locations) paired with a human label for failure messages.
 //
 // X-Frame-Options and Content-Security-Policy are deliberately NOT included
-// here: the Go dashboard (pkg/dashboard/server.go) already sets XFO per-route
-// (DENY, or omits it in favour of a CSP frame-ancestors allowlist for
-// /api/snapshot/frame-ancestors), and a blanket nginx XFO would collide with
-// that per-document logic. CSP is tracked separately as issue #3315.
+// here: the Go dashboard (pkg/dashboard/server.go) and Node proxy (src/proxy/server.js)
+// already set CSP and XFO dynamically per-route (DENY, or omitted in favour of
+// a CSP frame-ancestors allowlist for /api/snapshot/frame-ancestors, plus per-document
+// script hashes, font/CDN allowlists, and WebSockets). A blanket nginx CSP or XFO
+// would collide with upstream per-document logic through browser header intersection
+// (issues #3315, #3822, #3941).
 // Strict-Transport-Security is also excluded: this file has no `ssl`/`443`
 // directive, so nginx never terminates TLS here, and asserting HSTS would
 // pin a header that describes a connection this config doesn't make.
