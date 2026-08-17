@@ -80,9 +80,10 @@ func TestGatewayConfDoesNotRelyOnConfD(t *testing.T) {
 //
 // X-Frame-Options and Content-Security-Policy are deliberately NOT included
 // here: the Go dashboard (pkg/dashboard/server.go) and Node proxy (src/proxy/server.js)
-// already set CSP and XFO dynamically per-route (DENY, or omitted in favour of
-// a CSP frame-ancestors allowlist for /api/snapshot/frame-ancestors, plus per-document
-// script hashes, font/CDN allowlists, and WebSockets). A blanket nginx CSP or XFO
+// own CSP and XFO for every route they serve (DENY, or omitted in favour of a CSP
+// frame-ancestors allowlist for /api/snapshot/frame-ancestors). Those headers are
+// tailored per document and evolve independently of this file (see each emitter's
+// own CSP-construction code for current specifics). A blanket nginx CSP or XFO
 // would collide with upstream per-document logic through browser header intersection
 // (issues #3315, #3822, #3941).
 // Strict-Transport-Security is also excluded: this file has no `ssl`/`443`
