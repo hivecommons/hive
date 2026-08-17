@@ -61,10 +61,12 @@ type Dependencies struct {
 	// IssueClaimed reports whether an open PR — hive-authored OR from an
 	// external contributor — already claims to fix the given issue
 	// (kubestellar/hive#3768). It is backed by the governor's duplicate-PR
-	// claim ledger, which parses `Fixes #N` / `Closes #N` references (and a
-	// branch-name heuristic) out of every open PR each eval cycle and persists
-	// them across restarts. The contribute selectTask consults it so an issue
-	// with a fix already in flight is never offered to another contributor.
+	// claim ledger, which parses `Fixes #N` / `Closes #N` references (a
+	// branch-name heuristic, and since #3980 non-closing `Refs #N` references
+	// as weak claims) out of every open PR each eval cycle and persists them
+	// across restarts. The contribute selectTask consults it so an issue with a
+	// fix already in flight is never offered to another contributor — including
+	// one whose PR deliberately did not claim to close it.
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)

@@ -188,3 +188,44 @@ func TestClaimedIssue_NoHookLeavesSelectionUnchanged(t *testing.T) {
 		t.Fatalf("expected first eligible issue #353 with no claim data, got #%d", msg.Number)
 	}
 }
+
+// referenceClaim is the #3980 signal: an open PR that is demonstrably working
+// the issue but deliberately did NOT claim to close it ("Refs #N"), because it
+// only partially addresses it. The agent-side FilterClaimedIssues ignores these;
+// the contribute queue must not.
+func referenceClaim(repo string, number int) ghpkg.IssueClaim {
+	return ghpkg.IssueClaim{
+		Repo: repo, Issue: number,
+		PRNumber: 3898, PRRepo: repo,
+		PRURL:      "https://github.com/projectbluefin/dakota/pull/3898",
+		PRAuthor:   "Danathar",
+		ObservedAt: time.Now(),
+		Reference:  true,
+	}
+}
+
+// TestClaimedIssue_ReferenceClaimSkipped replays #3980: the contributor's own
+// open PR referenced the issue without a closing keyword, so nothing suppressed
+// it and the queue re-offered the same work every cooldown window, forever.
+// A reference claim must withhold the issue and offer the next one instead.
+func TestClaimedIssue_ReferenceClaimSkipped(t *testing.T) {
+	hub, s := covK2Hub(t)
+	claimedIssueStatus(s)
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		if repo == "projectbluefin/dakota" && number == 353 {
+			return referenceClaim(repo, number), true
+		}
+		return ghpkg.IssueClaim{}, false
+	}
+
+	msg := hub.selectTask(claimedIssueConn())
+	if msg == nil {
+		t.Fatal("expected a message from selectTask")
+	}
+	if msg.Type != "task_assign" {
+		t.Fatalf("expected task_assign, got %q (reason %q)", msg.Type, msg.Reason)
+	}
+	if msg.Number != 360 {
+		t.Fatalf("reference-claimed issue was re-offered: got #%d, want #360", msg.Number)
+	}
+}

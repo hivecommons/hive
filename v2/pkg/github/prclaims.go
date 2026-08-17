@@ -89,6 +89,45 @@ type IssueClaim struct {
 	// recorded hive-authored claims — unmarshal as hive-authored (false),
 	// keeping their agent-side suppression intact across the upgrade.
 	ExternalAuthor bool `json:"external_author,omitempty"`
+	// Reference marks a WEAK claim, recovered from a non-closing reference
+	// ("Refs #N", "Part of #N") rather than a closing keyword
+	// (kubestellar/hive#3980). Such a PR is demonstrably working the issue but
+	// deliberately does not claim to close it — the correct convention when a
+	// PR only partially addresses an issue, or when the remainder is gated on a
+	// maintainer decision. Before this existed, writing `Refs #N` instead of
+	// `Fixes #N` made the work invisible to the guard, and the contribute queue
+	// re-offered the issue every cooldown window forever.
+	//
+	// Like ExternalAuthor, the field GRADES the claim rather than deciding for
+	// its consumers: the contribute queue honours reference claims (that is the
+	// loop being closed), while FilterClaimedIssues ignores them so agent work
+	// on a partially-addressed issue is never frozen behind a PR that never
+	// claimed to finish it. Also omitempty-false, so pre-#3980 ledgers unmarshal
+	// as strong claims and keep their existing suppression across the upgrade.
+	Reference bool `json:"reference,omitempty"`
+}
+
+// claimRank orders claims by evidential strength, highest first. It exists so
+// insertLocked can resolve key collisions with a single comparison instead of a
+// growing pile of pairwise special cases.
+//
+// A closing keyword outranks a bare reference (an explicit "this closes it" is
+// stronger evidence than "this is about it"), and within each tier a
+// hive-authored PR outranks an external one — the #3768 precedence rule, which
+// exists so the agent-side filter can never be blinded by an external PR racing
+// the map. Equal ranks let the later claim win, matching the pre-#3980 behavior
+// of a plain map assignment.
+func claimRank(c IssueClaim) int {
+	switch {
+	case !c.Reference && !c.ExternalAuthor:
+		return 3
+	case !c.Reference && c.ExternalAuthor:
+		return 2
+	case c.Reference && !c.ExternalAuthor:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Key identifies the issue a claim covers.
@@ -125,10 +164,18 @@ var claimRefPattern = regexp.MustCompile(
 // supplies the repository for bare `#N` references. Results are de-duplicated
 // and returned in first-seen order. A nil/empty text yields no claims.
 func ParseClaimedIssues(text, defaultRepo string) []ClaimedRef {
+	return parseRefs(claimRefPattern, text, defaultRepo)
+}
+
+// parseRefs is the shared body behind ParseClaimedIssues and
+// ParseReferencedIssues. Both patterns expose the same three capture groups
+// (keyword, optional owner/repo, issue number), so the extraction, repo
+// defaulting and de-duplication are identical and live here once.
+func parseRefs(pattern *regexp.Regexp, text, defaultRepo string) []ClaimedRef {
 	if text == "" {
 		return nil
 	}
-	matches := claimRefPattern.FindAllStringSubmatch(text, -1)
+	matches := pattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -161,6 +208,58 @@ func ParseClaimedIssues(text, defaultRepo string) []ClaimedRef {
 type ClaimedRef struct {
 	Repo  string
 	Issue int
+}
+
+// referenceKeywords are the idioms a PR uses to say "I am working on this
+// issue" WITHOUT claiming to close it (kubestellar/hive#3980). Longest
+// alternatives are listed first so the intended word wins the match.
+//
+// The set is deliberately narrow. "relates to", "related to" and "see" are
+// EXCLUDED: they mark a topical cross-reference ("unlike #12", "see #12 for
+// background"), not a statement that this PR does work on that issue, and
+// treating them as claims would let a passing mention withhold an issue from
+// the contribute queue.
+var referenceKeywords = []string{
+	"references", "referencing", "refs", "ref",
+	"addresses", "addressing", "addressed", "address",
+	"contributes to", "part of", "towards", "toward",
+}
+
+// referenceRefPattern matches a non-closing reference keyword followed by an
+// issue reference, allowing a bounded run of prose between the two:
+//
+//	(?i)                          case-insensitive
+//	\b(references|refs|...)\b     a reference keyword as a whole word
+//	[^.\n#]{0,40}?                lazy, bounded gap — see below
+//	(?:([\w.-]+/[\w.-]+))?#(\d+)  optional owner/repo prefix, then #N
+//
+// The gap exists because these keywords are written as prose, not as the
+// machine-readable trailer a closing keyword conventionally is. The real PR
+// that motivated #3980 reads "Addresses a `ci-maintainer` finding from the
+// #2364 advisory digest" — keyword and reference separated by six words. A
+// strict `keyword\s+#N` would miss it.
+//
+// The gap is bounded three ways so it cannot swallow a whole paragraph and
+// attach a keyword to an unrelated number further down: at most 40 characters,
+// lazily matched, and containing no '.', newline, or '#'. Excluding '.' stops
+// it crossing a sentence boundary; excluding '#' stops it skipping over a
+// nearer reference to reach a further one.
+//
+// A false positive here costs one issue not being OFFERED to the contribute
+// queue while that PR stays open, and is released as soon as the PR closes.
+// It cannot suppress agent work — FilterClaimedIssues ignores reference claims.
+var referenceRefPattern = regexp.MustCompile(
+	`(?i)\b(` + strings.Join(referenceKeywords, "|") + `)\b[^.\n#]{0,40}?(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+
+// ParseReferencedIssues extracts every issue this text REFERENCES without
+// claiming to close (kubestellar/hive#3980). defaultRepo supplies the
+// repository for bare `#N` references. Results are de-duplicated and returned
+// in first-seen order; nil/empty text yields no refs.
+//
+// It is the weak-evidence companion to ParseClaimedIssues and is only consulted
+// when that (and the branch-name heuristic) found nothing at all.
+func ParseReferencedIssues(text, defaultRepo string) []ClaimedRef {
+	return parseRefs(referenceRefPattern, text, defaultRepo)
 }
 
 // branchIssuePattern matches the branch-naming conventions agents use to encode
@@ -302,6 +401,26 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 					}
 				}
 
+				// Third and weakest tier (#3980): a PR that references an issue
+				// without a closing keyword ("Refs #N", "Part of #N") and whose
+				// branch name carries no issue number. Such a PR is working the
+				// issue but deliberately not claiming to finish it, and until
+				// now produced NO claim at all — so the contribute queue kept
+				// re-offering an issue whose work was already open in a PR.
+				//
+				// Ordered last on purpose. The two tiers above are unchanged and
+				// still win, so no claim that exists today changes its target or
+				// its strength; this only fills in PRs that previously yielded
+				// nothing. Marked Reference so FilterClaimedIssues can keep
+				// agent work flowing on a partially-addressed issue.
+				reference := false
+				if len(refs) == 0 {
+					if refRefs := ParseReferencedIssues(text, repo); len(refRefs) > 0 {
+						refs = refRefs
+						reference = true
+					}
+				}
+
 				for _, ref := range refs {
 					claims = append(claims, IssueClaim{
 						Repo:           ref.Repo,
@@ -312,6 +431,7 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 						PRAuthor:       author,
 						ObservedAt:     now,
 						ExternalAuthor: external,
+						Reference:      reference,
 					})
 				}
 			}
@@ -407,7 +527,7 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 // exclusively, as LoadClaimLedger does before publishing it).
 func (l *ClaimLedger) insertLocked(c IssueClaim) {
 	key := c.Key()
-	if existing, ok := l.claims[key]; ok && !existing.ExternalAuthor && c.ExternalAuthor {
+	if existing, ok := l.claims[key]; ok && claimRank(c) < claimRank(existing) {
 		return
 	}
 	l.claims[key] = c
@@ -556,7 +676,9 @@ func (l *ClaimLedger) Save() error {
 type RedStaleFunc func(prRepo string, prNumber int) bool
 
 // FilterClaimedIssues removes from result every issue an open hive-authored PR
-// already claims, logging each suppression with the claiming PR's URL.
+// already claims to CLOSE, logging each suppression with the claiming PR's URL.
+// External claims (#3768) and weak reference claims (#3980) are both skipped
+// here and exist for the contribute queue, which consults the ledger directly.
 //
 // redStale (may be nil) is Fix #3's release valve: when it reports the claiming
 // PR is red+stale, the issue is NOT suppressed — it is kept actionable so a
@@ -583,6 +705,18 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// pipeline. External claims exist for the contribute queue, which
 		// consults the ledger directly (dashboard selectTask).
 		if claim.ExternalAuthor {
+			kept = append(kept, issue)
+			continue
+		}
+		// #3980: a REFERENCE claim ("Refs #N") never suppresses agent work
+		// either. The claiming PR explicitly declined to say it closes the
+		// issue, so the issue is by definition not finished — freezing agent
+		// work behind it would strand exactly the partially-addressed issues
+		// this weak tier exists to notice. It still suppresses contribute
+		// dispatch, which consults the ledger directly (selectTask), because
+		// re-handing a contributor work its own open PR already covers is the
+		// waste #3980 reported.
+		if claim.Reference {
 			kept = append(kept, issue)
 			continue
 		}
