@@ -198,13 +198,12 @@ async function main() {
     assert.match(csp, /form-action 'self'/, "CSP must set form-action 'self'");
     assert.match(csp, /frame-ancestors 'none'/, 'CSP must deny framing by default');
 
-    // #3315 STAGED: script-src still carries 'unsafe-inline' because the
-    // dashboard is server-rendered with ~400 inline on*= handlers and several
-    // inline <script> blocks. This assertion documents the remaining exposure
-    // and MUST be inverted to a "does not contain" check by the follow-up that
-    // moves those handlers out of the markup. Failing here means the refactor
-    // landed and this guard needs flipping -- see #3315.
-    const scriptSrc = csp.split(';').map(s => s.trim()).find(s => s.startsWith('script-src'));
+    // #3848 part 1 landed: script-src is now scoped (see ADR-0016 and
+    // csp_script_src_elem.test.js, which owns the elem/attr assertions). What
+    // this test pins is the CSP2 FALLBACK, which deliberately keeps
+    // 'unsafe-inline' — hash-free — for pre-CSP3 browsers; dropping it there is
+    // the event-delegation refactor's moment (#3848), not before.
+    const scriptSrc = csp.split(';').map(s => s.trim()).find(s => s === 'script-src' || s.startsWith('script-src '));
     assert.ok(scriptSrc, 'CSP must declare an explicit script-src');
     assert.ok(
       scriptSrc.includes("'self'"),
