@@ -1,5 +1,13 @@
 # Provisioning a Hosted Hive
 
+> **Self-hosting a standalone hive (no hub)?** Most of this guide is about
+> **hub-attached** hosted hives on the KubeStellar-internal fleet (hive-oke /
+> vllm-d, shared hub, placeholder pools). If instead you are standing up your
+> **own** hub-less hive on your **own** cluster against your **own** repos, read
+> **[Standalone / self-hosted (no hub)](#standalone--self-hosted-no-hub)** below
+> and skip the hub-only Path A / Path B, `meta.json`, and placeholder-pool
+> sections — none of them apply to you.
+
 This guide documents how hosted hives are provisioned, covering both paths:
 
 - **Automated provisioning** — the hub creates everything itself, on any cluster
@@ -46,6 +54,195 @@ the target cluster.
   `/data/hub-registry.json`.
 - For manual (vllm-d) provisioning: the `system:openshift:scc:anyuid`
   ClusterRole must exist (it does by default on OpenShift).
+
+---
+
+## Standalone / self-hosted (no hub)
+
+This section is the **complete** path for the hub-less scenario: an operator
+("Joe") running their **own** hive on their **own** firewalled cluster, against
+their **own** repos, with **self-hosted inference** (litellm / vllm / llm-d) and
+**no attachment** to `hub.kubestellar.io`. Everything after this section (Path A,
+Path B, `meta.json`, placeholder pools, claiming, upgrade-via-hub) is
+**hub-only** and does **not** apply — skip it.
+
+### What "standalone" means
+
+A standalone hive has **no hub**. In `src/pkg/config/config.go` the `hub:` block
+is a `HubConfig` whose zero value has `Enabled: false`, so a config that simply
+omits `hub:` is already hub-less. Concretely, a standalone hive needs **none** of
+the hub plumbing the rest of this guide describes:
+
+- **No `HIVE_HUB_SECRET`, no `HIVE_HUB_URL`, no derived `HIVE_HEARTBEAT_KEY` /
+  `HIVE_SESSION_KEY` / `HIVE_SSO_KEY`** — those authenticate a spoke to a hub; a
+  hive with nothing to heartbeat to needs none of them.
+- **No `meta.json` / My-Hives / hub SaaS record** — there is no hub SaaS store.
+- **No claim / placeholder-pool / Upgrade steps** — placeholders and hub-driven
+  auto-upgrade are hub features. You upgrade the image yourself (below).
+
+Because there is no hub auth proxy in front of it, a standalone hive enforces its
+own dashboard login: `dashboard.hub_proxied: false` (the default) plus a
+`dashboard.authorized_users` allowlist and a `github.oauth_client_id` for the
+device-flow login. All three are covered in the swap checklist.
+
+### Install method: Kustomize
+
+Use the **Kustomize** overlays — a peer already built a base and a standalone
+overlay, so this is the least-effort, git-trackable path (no operator, no Helm
+values to reverse-engineer). The overlay layers two in-repo bases — the core
+workload (`src/deploy/k8s`) and an in-cluster OpenAI-compatible inference backend
+(`src/deploy/inference`, llama.cpp serving Qwen2.5-0.5B) — so you get a working
+model endpoint out of the box. See the overlay and its README here:
+
+- **Standalone overlay** —
+  [github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/standalone](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/standalone)
+  (annotated `patch-configmap.yaml`, `patch-pvc-storageclass.yaml`,
+  `patch-advisory-mode.yaml`, and a
+  [`README.md`](https://github.com/kubestellar/hive/blob/v4/src/deploy/kustomize/overlays/standalone/README.md)
+  with the full swap list).
+- **Filled-in example** ("Joe on Spyre") —
+  [github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/standalone/example-joe-spyre](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/standalone/example-joe-spyre).
+  Every value there is a placeholder — copy the shape, don't apply it verbatim.
+
+There are two flows. Pick based on whether you just want to *see it run* or
+you're doing a *real* deployment.
+
+**1. Remote quickstart (see the shape).** Kustomize can build straight from
+GitHub — no clone:
+
+```bash
+kubectl apply -k "https://github.com/kubestellar/hive/src/deploy/kustomize/overlays/standalone?ref=v4"
+```
+
+This applies the overlay with its **PLACEHOLDER** values (`YOUR_ORG`,
+`YOUR_OAUTH_CLIENT_ID`, `YOUR_RWX_STORAGE_CLASS`, …). It is only for seeing the
+manifest shape come up — it will **not** be a working hive, because the repo,
+storage class, OAuth app, and inference endpoint are all placeholders you must
+swap first.
+
+**2. Real path (clone → edit → apply).** This is the path you actually deploy,
+because you **must** swap values before it works:
+
+```bash
+git clone -b v4 https://github.com/kubestellar/hive.git
+cd hive/src/deploy/kustomize/overlays/standalone
+# Edit the placeholders — see "What you must swap" below:
+#   patch-configmap.yaml       (org/repos, owner login, OAuth client id, litellm endpoint)
+#   patch-pvc-storageclass.yaml (your RWX storage class)
+# Review the rendered manifests, then apply:
+kubectl kustomize .
+kubectl apply -k .
+kubectl -n hive rollout status deploy/hive
+kubectl -n hive-inference rollout status deploy/vllm
+```
+
+**Upgrading the image.** The base tracks `ghcr.io/kubestellar/hive:stable`. To
+pin a reviewed tag or digest (so upgrades are deliberate — there is no hub to
+auto-upgrade you), run from the overlay directory and re-apply:
+
+```bash
+kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive:<tag>
+# or a digest:  ...=ghcr.io/kubestellar/hive@sha256:<digest>
+kubectl apply -k .
+```
+
+**On OpenShift.** The standalone overlay does not create a Route or grant the
+`anyuid` SCC. The
+[`overlays/openshift`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift)
+overlay supplies exactly those two OpenShift-only deltas — a `Route` exposing the
+`dashboard` port (3002) and the `anyuid` SCC RoleBinding the pod needs (it starts
+as root to set up the ACMM iptables and chown the PVC). A standalone deployment
+on OpenShift composes **standalone + these platform deltas**. Two equivalent
+ways:
+
+- **Combined overlay (recommended):** in your own copy of the standalone
+  `kustomization.yaml`, add `route.yaml` and `anyuid-scc-rolebinding.yaml` as
+  additional resources — this is exactly what the
+  [`example-joe-spyre`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/standalone/example-joe-spyre)
+  overlay does (it adds its own `route.yaml`; add the SCC binding the same way).
+  Set the Route `spec.host` to your cluster's apps domain (or drop `host` to let
+  OpenShift auto-generate one).
+- **Apply both:** `kubectl apply -k <standalone>` then
+  `kubectl apply -k <openshift>` — but note the openshift overlay re-includes the
+  `src/deploy/k8s` base, so prefer the combined form to avoid re-applying the
+  base twice.
+
+### What you must swap
+
+Every value below is a placeholder in the overlay. Cited location is where the
+key is defined (config struct) and where you edit it (overlay file).
+
+| Swap | Default / placeholder | Where you edit it | Config location (`src/pkg/config/config.go`) |
+|---|---|---|---|
+| RWX/RWO `storageClassName` | `YOUR_RWX_STORAGE_CLASS` (example uses `ocs-storagecluster-cephfs`) | `patch-pvc-storageclass.yaml` | base `hive-data` PVC (`src/deploy/k8s/pvc.yaml`) — RWO is fine for the default single replica |
+| Route host domain (OpenShift) | `hive.apps.joes-cluster.example.com` (example) | `route.yaml` `spec.host` | `route.openshift.io/v1` Route |
+| `project.org` / `repos` / `primary_repo` | `YOUR_ORG` / `YOUR_REPO` | `patch-configmap.yaml` (`project:`) | `ProjectConfig` (`Org`, `Repos`, `PrimaryRepo`, `AIAuthor`) |
+| `dashboard.authorized_users` | `YOUR_GITHUB_LOGIN:owner` | `patch-configmap.yaml` (`dashboard:`) | `DashboardConfig.AuthorizedUsers` — first entry is the owner |
+| `github.oauth_client_id` | `YOUR_OAUTH_CLIENT_ID` | `patch-configmap.yaml` (`github:`) | `GitHubConfig.OAuthClientID`. The built-in default (`DefaultOAuthClientID`) is a **github.com** Hive App — if you use GitHub Enterprise (e.g. `github.ibm.com`) you must register your **own** OAuth App there and also set `project.forge` / `github.forge` to your host |
+| litellm `endpoint` + API key | in-cluster inference Service | `patch-configmap.yaml` (`governor.litellm.endpoint`) + the `hive-secrets` Secret | `LiteLLMConfig` under `Config.Governor` (`Endpoint`, `APIKeyEnv` → default `HIVE_LITELLM_API_KEY`, `APIKeyFile` → default `/secrets/litellm_api_key`, `DefaultModel`) |
+
+Also populate the base `hive-secrets` Secret with a GitHub App PEM **or**
+`HIVE_GITHUB_TOKEN`, and — if your inference endpoint needs auth — the key named
+by `governor.litellm.api_key_env` (default `HIVE_LITELLM_API_KEY`).
+
+### The NET_ADMIN decision (stated precisely)
+
+The base deployment **already requests** the `NET_ADMIN` capability
+(`src/deploy/k8s/deployment.yaml`) — the entrypoint uses it to install the
+forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy.
+
+- **Cluster GRANTS `NET_ADMIN` (most do):** nothing to do — the full,
+  fail-closed egress gate comes up automatically. This is the recommended
+  default.
+- **Cluster DENIES `NET_ADMIN`:** the entrypoint **FATALs** (exit 1, refusing to
+  start with an advisory-only capability model — `src/deploy/entrypoint.sh`
+  around line 770) and the pod crash-loops. The **only** escape hatch is setting
+  `HIVE_PROXY_ADVISORY_OK=true`, provided by the **commented-out**
+  [`patch-advisory-mode.yaml`](https://github.com/kubestellar/hive/blob/v4/src/deploy/kustomize/overlays/standalone/patch-advisory-mode.yaml)
+  — uncomment its `- path: patch-advisory-mode.yaml` line in your
+  `kustomization.yaml`.
+
+**Security trade-off (one honest sentence):** in advisory-only mode the MITM
+egress gate is best-effort rather than enforced, so an agent holding a raw token
+could bypass the proxy policy — acceptable for a single-tenant hive whose owner
+controls every repo and agent, but not a control you should silently disable on a
+shared one.
+
+### Firewall / egress (locked-down cluster)
+
+A standalone hive needs **no hub egress**. The minimal outbound allowlist is:
+
+- **Your repo's GitHub API host** — `api.github.com`, or your GHE instance's
+  `<host>/api/v3`.
+- **`ghcr.io`** (and its blob backend) — for the image pull.
+- **Your inference endpoint** — if it's in-cluster (the shipped
+  `src/deploy/inference` backend, or your own litellm/vllm Service) this is
+  **cluster-internal traffic, not external egress** at all.
+
+Hub hosts (`hub.kubestellar.io`) are **not** required. For the full egress matrix
+(ports, hosts, when each is needed) see
+[network-requirements.md](network-requirements.md); for the capability rationale
+see [net-admin-requirement.md](net-admin-requirement.md).
+
+### Agent backend
+
+Standalone uses a **self-hosted** agent backend, **not** the subscription-CLI
+backends (`copilot` / `claude`) the internal fleet's base ConfigMap uses. The
+overlay sets each agent's `backend: litellm` (valid enum values:
+`litellm` | `vllm` | `llm-d` | `watsonx`). The litellm connection config lives
+under `governor:` (`LiteLLMConfig` on `Config.Governor`):
+
+```yaml
+governor:
+  litellm:
+    endpoint: http://vllm-svc.hive-inference.svc.cluster.local:8000  # your OpenAI-compatible proxy
+    api_key_env: HIVE_LITELLM_API_KEY   # env var NAME holding the key (default)
+    default_model: qwen2.5-0.5b-instruct
+```
+
+Swap `backend: vllm` to hit `HIVE_VLLM_ENDPOINT` directly (the base deployment
+wires both `HIVE_VLLM_ENDPOINT` and `HIVE_LLMD_ENDPOINT`). Verify any key against
+`src/pkg/config/config.go` before adding it.
 
 ---
 
@@ -537,8 +734,15 @@ spec:
         # HIVE_HUB_SECRET. Manual provisioning MAY still set HIVE_HUB_SECRET as
         # shown below: the spoke derives the same sub-keys from it locally, so
         # heartbeats/SSO keep working. If you prefer least privilege, set the three
-        # HIVE_*_KEY vars instead (each = HMAC-SHA256(master, "hive-<domain>-v1")
-        # rendered as lowercase hex) and omit HIVE_HUB_SECRET entirely.
+        # HIVE_*_KEY vars instead (the hub derives them per-hive; the exact
+        # derivation lives in src/pkg/hub/hub_keys.go — heartbeat is HMAC-based
+        # while session/SSO are now Ed25519 asymmetric seeds, so do NOT assume a
+        # single HMAC(master, "hive-<domain>-v1") formula) and omit
+        # HIVE_HUB_SECRET entirely.
+        #
+        # HUB-ONLY: this whole HIVE_HUB_SECRET / derived-key block is irrelevant
+        # to a standalone (hub-less) hive — see "Standalone / self-hosted (no
+        # hub)" at the top of this guide.
         - { name: HIVE_HUB_SECRET, value: "${HUB_SECRET}" }
         - { name: HIVE_HUB_URL,    value: "https://hive.kubestellar.io" }
         # startupProbe keeps the liveness clock from starting until boot
