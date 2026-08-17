@@ -240,25 +240,16 @@ func (s *Store) evictOldClosed() {
 	}
 }
 
-// appendArchiveEntry writes one compact archive record, reporting whether the
-// record actually reached disk. Callers use that to decide whether removing the
-// bead is safe: an in-memory-only retirement is forgotten on restart.
+// appendArchiveEntry writes one archive record, reporting whether the record
+// actually reached disk. Callers use that to decide whether removing the bead
+// is safe: an in-memory-only retirement is forgotten on restart. The record
+// contents come from newArchivedBead — the same builder Archive() uses — so
+// eviction preserves exactly what archival preserves (#3971).
 func (s *Store) appendArchiveEntry(b *Bead) bool {
 	if b == nil {
 		return false
 	}
-	entry := ArchivedBead{
-		ID:          b.ID,
-		Title:       b.Title,
-		Type:        b.Type,
-		Priority:    b.Priority,
-		ExternalRef: b.ExternalRef,
-		ArchivedAt:  time.Now().UTC(),
-	}
-	if b.ClosedAt != nil {
-		entry.ClosedAt = b.ClosedAt.Time
-	}
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(newArchivedBead(b))
 	if err != nil {
 		return false
 	}
@@ -688,18 +679,54 @@ func (s *Store) Count() int {
 const archiveFileName = "archive.jsonl"
 
 // ArchivedBead is the compact representation written to the archive log.
+//
+// It carries the audit fields — Status, Actor, Metadata, CreatedAt — alongside
+// the identity fields. Earlier versions dropped these (#3971), which destroyed
+// the merge-outcome metadata (pr_merged, pr_ref, fix_attempts) and the
+// who/what/when needed to compute the ACMM advisor's MergeSuccessRate from
+// history (#3972). Heavy free-text fields (Notes) are still intentionally
+// excluded to keep archive entries compact.
 type ArchivedBead struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Type        BeadType  `json:"type"`
-	Priority    Priority  `json:"priority"`
-	ExternalRef string    `json:"external_ref,omitempty"`
-	ClosedAt    time.Time `json:"closed_at,omitempty"`
-	ArchivedAt  time.Time `json:"archived_at"`
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Type        BeadType               `json:"type"`
+	Status      Status                 `json:"status,omitempty"`
+	Priority    Priority               `json:"priority"`
+	Actor       string                 `json:"actor,omitempty"`
+	ExternalRef string                 `json:"external_ref,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   time.Time              `json:"created_at,omitempty"`
+	ClosedAt    time.Time              `json:"closed_at,omitempty"`
+	ArchivedAt  time.Time              `json:"archived_at"`
 }
 
-// Archive writes a compact summary of the bead to archive.jsonl, then removes
-// it from the store. This preserves an audit trail without the full bead weight.
+// newArchivedBead builds the archive record for a bead. It is the single
+// source of truth for what an archive entry contains, shared by Archive() and
+// the eviction path's appendArchiveEntry() so the two removal paths cannot
+// preserve different data (#3971): before this existed, each built its own
+// entry inline, and both silently dropped the audit fields.
+func newArchivedBead(b *Bead) ArchivedBead {
+	entry := ArchivedBead{
+		ID:          b.ID,
+		Title:       b.Title,
+		Type:        b.Type,
+		Status:      b.Status,
+		Priority:    b.Priority,
+		Actor:       b.Actor,
+		ExternalRef: b.ExternalRef,
+		Metadata:    b.Metadata,
+		CreatedAt:   b.CreatedAt.Time,
+		ArchivedAt:  time.Now().UTC(),
+	}
+	if b.ClosedAt != nil {
+		entry.ClosedAt = b.ClosedAt.Time
+	}
+	return entry
+}
+
+// Archive writes the bead's audit record (including status, actor, metadata,
+// and timestamps — see ArchivedBead) to archive.jsonl, then removes it from
+// the store. Notes are dropped to keep the archive compact.
 func (s *Store) Archive(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -709,19 +736,7 @@ func (s *Store) Archive(id string) error {
 		return fmt.Errorf("bead %s not found", id)
 	}
 
-	entry := ArchivedBead{
-		ID:          b.ID,
-		Title:       b.Title,
-		Type:        b.Type,
-		Priority:    b.Priority,
-		ExternalRef: b.ExternalRef,
-		ArchivedAt:  time.Now().UTC(),
-	}
-	if b.ClosedAt != nil {
-		entry.ClosedAt = b.ClosedAt.Time
-	}
-
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(newArchivedBead(b))
 	if err != nil {
 		return fmt.Errorf("marshaling archive entry: %w", err)
 	}
