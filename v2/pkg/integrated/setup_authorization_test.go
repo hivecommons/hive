@@ -306,6 +306,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 	binding, diff, err := BuildSetupAuthorizationBindingWithDiff(context.Background(), SetupAuthorizationRequest{
 		CheckoutDir: repository, Repository: "owner/repo", RepositoryID: "123", PullRequest: 7,
 		HeadRef: "hive/setup-123", HeadSHA: headSHA, BaseRef: "main", BaseSHA: baseSHA, AuthorizerID: 456,
+		WriterID: 456, WriterLogin: "setup-operator", WriterType: "User",
 		RequiredPresent: setupAuthorizationRequiredFiles, RequiredAbsent: setupAuthorizationRequiredAbsent,
 	})
 	if err != nil {
@@ -335,6 +336,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 		"HIVE_PULL_REQUEST": "7", "HIVE_PULL_REQUEST_URL": statusTarget, "HIVE_HEAD_REPOSITORY": "owner/repo", "HIVE_HEAD_REF": "hive/setup-123",
 		"HIVE_HEAD_SHA": headSHA, "HIVE_BASE_REPOSITORY": "owner/repo", "HIVE_BASE_REF": "main", "HIVE_BASE_SHA": baseSHA,
 		"HIVE_EXPECTED_HEAD_REF": "hive/setup-123", "HIVE_EXPECTED_BASE_REF": "main", "HIVE_AUTHORIZER_ID": "456",
+		"HIVE_WRITER_ID": "456", "HIVE_WRITER_LOGIN": "setup-operator", "HIVE_WRITER_TYPE": "user",
 		"HIVE_EXPECTED_UPGRADE_REF": "hive/upgrade-123", "HIVE_EXPECTED_ROLLBACK_REF": "hive/rollback-123", "HIVE_EXPECTED_AUTHORIZER_TRANSFER_REF": "hive/authorizer-transfer-123", "HIVE_EXPECTED_UNINSTALL_REF": "hive/uninstall-123",
 		"HIVE_TRANSFER_AUTHORIZER_ID": "456",
 		"HIVE_REQUIRED_FILES":         string(requiredJSON), "HIVE_REQUIRED_ABSENT": string(absentJSON), "HIVE_ALLOWED_FILES": string(allowedJSON),
@@ -384,6 +386,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 	uninstallBinding, uninstallDiff, err := BuildSetupAuthorizationBindingWithDiff(context.Background(), SetupAuthorizationRequest{
 		CheckoutDir: repository, Repository: "owner/repo", RepositoryID: "123", PullRequest: 7,
 		HeadRef: "hive/uninstall-123", HeadSHA: headSHA, BaseRef: "main", BaseSHA: uninstallBaseSHA, AuthorizerID: 456,
+		WriterID: 456, WriterLogin: "setup-operator", WriterType: "User",
 		RequiredAbsent: uninstallPaths,
 	})
 	if err != nil {

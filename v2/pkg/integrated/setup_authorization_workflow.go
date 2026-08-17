@@ -222,7 +222,7 @@ func setupAuthorizationWorkflowVerifierScript() string {
           const fs = require("fs");
 
           const domain = "hive.setup-diff-tree-blobs.v1";
-          const schema = "hive.setup-pr-authorization.v1";
+          const schema = "hive.setup-pr-authorization.v2";
           const diffAlgorithm = "hive.setup-diff-tree-blobs.v1+sha256";
           const contextPrefix = "hive/setup-authorized/";
           const sha40 = /^[a-f0-9]{40}$/u;
