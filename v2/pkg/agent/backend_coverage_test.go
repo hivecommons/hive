@@ -303,6 +303,28 @@ func TestBackendBinaryName_EverySupportedBackendResolves(t *testing.T) {
 	}
 }
 
+// TestBackendBinaryName_AgyLaunchesAntigravityCLI pins agy to its own binary.
+//
+// agy is the Antigravity CLI, Google's replacement for the Gemini CLI: Google
+// stopped serving Gemini CLI for personal and AI Pro accounts on 2026-06-18, so
+// for any hive whose Google access is a subscription rather than metered API
+// credits, agy is the ONLY reachable Google backend. It is emphatically not an
+// alias for gemini — different binary, different auth, different flags — so a
+// future tidy-up that folds it into the gemini derivation would silently break
+// every subscription-backed Google agent. This catches that.
+func TestBackendBinaryName_AgyLaunchesAntigravityCLI(t *testing.T) {
+	if !config.IsCLIBackend("agy") {
+		t.Fatal("precondition failed: \"agy\" is not a config.CLIBackends member")
+	}
+	got, err := backendBinaryName("agy")
+	if err != nil {
+		t.Fatalf("backendBinaryName(\"agy\") err = %v, want nil", err)
+	}
+	if got != "agy" {
+		t.Errorf("backendBinaryName(\"agy\") = %q, want \"agy\"", got)
+	}
+}
+
 // TestBackendBinaryName_CodexAndAiderLaunchTheirOwnBinaries pins the specific
 // regression: codex and aider are agentic CLIs of their own, not aliases and not
 // gateway backends, so each must exec a binary of its own name. If either were
