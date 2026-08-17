@@ -277,19 +277,37 @@ func TestFilterClaimedIssues(t *testing.T) {
 			wantRemaining:  []int{100},
 		},
 		{
-			// #3768 invariant preserved: an EXTERNAL claim (a contributor's PR)
-			// never suppresses agent work — only the contribute queue honours
-			// it. The hive-claim cases above are the positive control proving
-			// suppression still works when the claim IS hive-authored.
-			name:  "external claim never suppresses agent work",
+			// #3768→#3980: a FRESH external claim now DEFERS agent work (a
+			// contributor's open PR is a real "someone is on it" signal), so
+			// it suppresses within weakClaimAgentDeferralWindow…
+			name:  "fresh external claim defers agent work",
 			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
 			claims: []IssueClaim{{
 				Repo: "spyre-inference", Issue: 100,
 				PRNumber: 900, PRRepo: "spyre-inference",
-				PRURL:          "https://github.com/torch-spyre/spyre-inference/pull/900",
-				PRAuthor:       "outside-dev",
-				ObservedAt:     time.Now(),
-				ExternalAuthor: true,
+				PRURL:           "https://github.com/torch-spyre/spyre-inference/pull/900",
+				PRAuthor:        "outside-dev",
+				ObservedAt:      time.Now(),
+				FirstObservedAt: time.Now(),
+				ExternalAuthor:  true,
+			}},
+			wantSuppressed: 1,
+			wantRemaining:  nil,
+		},
+		{
+			// …while an AGED external claim releases: the #3768/#3792 junk-PR
+			// invariant survives in bounded form — a stranger's PR can delay
+			// the pipeline for at most the deferral window, never freeze it.
+			name:  "aged external claim releases agent work (bounded junk-PR guard)",
+			items: []Issue{{Repo: "spyre-inference", Number: 100, AgeMinutes: 5}},
+			claims: []IssueClaim{{
+				Repo: "spyre-inference", Issue: 100,
+				PRNumber: 900, PRRepo: "spyre-inference",
+				PRURL:           "https://github.com/torch-spyre/spyre-inference/pull/900",
+				PRAuthor:        "outside-dev",
+				ObservedAt:      time.Now(),
+				FirstObservedAt: time.Now().Add(-weakClaimAgentDeferralWindow - time.Hour),
+				ExternalAuthor:  true,
 			}},
 			wantSuppressed: 0,
 			wantRemaining:  []int{100},

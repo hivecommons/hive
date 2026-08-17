@@ -56,6 +56,25 @@ const (
 	// no secrets (issue and PR numbers only), so it is world-readable like the
 	// other operational state files under /data.
 	claimLedgerFileMode = 0o644
+
+	// weakClaimAgentDeferralWindow bounds how long a WEAK claim — one from an
+	// external (non-hive) author (#3768) or one parsed from a non-closing
+	// reference like `Refs #N` (#3980) — DEFERS the hive's own agent pipeline
+	// from taking the issue (see FilterClaimedIssues). Within the window the
+	// issue is suppressed exactly like a hive-authored `Fixes` claim, so an
+	// agent does not start duplicating work someone visibly has in flight
+	// (the dakota#353 shape, kubestellar/hive#3768). Once the claiming PR has
+	// been open past the window without merging, the issue is RELEASED even
+	// though the claim persists: this is what keeps a stranger's junk PR — or
+	// a stalled soft-reference PR — from freezing the hive's pipeline forever,
+	// the invariant #3792 protected with an unconditional external-claim
+	// bypass. 72h matches claimLedgerTTL: a claim that cannot be reconfirmed
+	// for that long dies anyway, so no weak claim ever outlives its deferral
+	// authority. Contribute-queue suppression (dashboard selectTask) is NOT
+	// window-bounded — it honours every open-PR claim for as long as the PR
+	// stays open, because handing a human contributor an issue that anyone's
+	// open PR already covers is pure waste (#3980).
+	weakClaimAgentDeferralWindow = 72 * time.Hour
 )
 
 // IssueClaim records that an open pull request authored by this hive already
@@ -89,6 +108,55 @@ type IssueClaim struct {
 	// recorded hive-authored claims — unmarshal as hive-authored (false),
 	// keeping their agent-side suppression intact across the upgrade.
 	ExternalAuthor bool `json:"external_author,omitempty"`
+	// SoftReference marks a claim parsed from a NON-closing reference keyword
+	// (`Refs #N`, `Part of #N`, … — see softRefPattern) rather than a GitHub
+	// closing keyword or the branch-name heuristic (kubestellar/hive#3980).
+	// A soft reference is exactly the convention a careful PR uses when it
+	// advances an issue without finishing it, so it must stop the contribute
+	// queue re-offering the issue (the #3980 token-burn loop) — but it is a
+	// weaker signal than `Fixes` and never HARD-gates the hive's own agent
+	// pipeline; FilterClaimedIssues only defers on it for a bounded window.
+	// omitempty-false back-compat mirrors ExternalAuthor: ledgers written
+	// before #3980 only ever held closing-keyword/branch claims, which
+	// correctly unmarshal as hard (false).
+	SoftReference bool `json:"soft_reference,omitempty"`
+	// FirstObservedAt is when this PR was FIRST seen making this claim, kept
+	// stable across re-observations of the same PR (insertLocked carries it
+	// forward), unlike ObservedAt which refreshes every scan. It anchors the
+	// weakClaimAgentDeferralWindow: "how long has this weak claim been
+	// deferring the agent pipeline" must age even while the claim keeps being
+	// re-confirmed. Zero on entries written before #3980; firstObserved()
+	// falls back to ObservedAt for those.
+	FirstObservedAt time.Time `json:"first_observed_at"`
+}
+
+// firstObserved returns when the claiming PR was first seen making this claim,
+// falling back to ObservedAt for ledger entries written before #3980 (whose
+// FirstObservedAt is zero). The fallback errs toward MORE deferral only by the
+// age the old entry had already accrued, never resets it.
+func (c IssueClaim) firstObserved() time.Time {
+	if c.FirstObservedAt.IsZero() {
+		return c.ObservedAt
+	}
+	return c.FirstObservedAt
+}
+
+// strength ranks a claim for ledger-slot precedence when several open PRs
+// claim the same issue. Higher wins. A hard (closing-keyword or branch-name)
+// claim outranks a soft reference, and within each, hive-authored outranks
+// external: the agent-side filter honours only hive-hard claims unbounded, so
+// letting any weaker claim overwrite one would blind FilterClaimedIssues and
+// re-open the duplicate-PR hole (#3768's precedence rule, generalized for
+// #3980). Every claim, whatever its rank, suppresses the contribute queue.
+func (c IssueClaim) strength() int {
+	s := 0
+	if !c.SoftReference {
+		s += 2
+	}
+	if !c.ExternalAuthor {
+		s++
+	}
+	return s
 }
 
 // Key identifies the issue a claim covers.
@@ -116,19 +184,55 @@ var closingKeywords = []string{
 //	\s*:?\s+                    optional colon, then whitespace
 //	(?:([\w.-]+/[\w.-]+))?#(\d+) optional owner/repo prefix, then #N
 //
-// Non-closing mentions ("see #12", "related to #12") deliberately do NOT match:
-// only a PR that claims to close an issue should suppress work on it.
+// Recognized non-closing mentions (`Refs #12`, `Part of #12`, …) match the
+// separate softRefPattern below (#3980); everything else ("see #12", a bare
+// changelog-style "#12") matches neither pattern and claims nothing.
 var claimRefPattern = regexp.MustCompile(
 	`(?i)\b(` + strings.Join(closingKeywords, "|") + `)\b\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+
+// softReferenceKeywords are the recognized NON-closing reference forms — the
+// convention a careful PR uses to link an issue it advances without claiming
+// to close it (kubestellar/hive#3980, e.g. PR #3898's deliberate "Refs #3498").
+// Regex fragments, not literals, because two forms are multi-word. The list is
+// deliberately closed: a bare `#N` mention or free prose ("see #12") must
+// never lock an issue, so only these keyword forms register.
+var softReferenceKeywords = []string{
+	`refs?`,            // Refs #N / Ref #N
+	`part\s+of`,        // Part of #N
+	`relate[sd]?\s+to`, // Relates to #N / Related to #N
+	`addresses`,        // Addresses #N
+}
+
+// softRefPattern matches a soft-reference keyword followed by an issue
+// reference, with the same case-insensitivity, optional colon, and cross-repo
+// (`owner/repo#N`) forms claimRefPattern supports.
+var softRefPattern = regexp.MustCompile(
+	`(?i)\b(` + strings.Join(softReferenceKeywords, "|") + `)\b\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)`)
 
 // ParseClaimedIssues extracts every issue this text claims to close. defaultRepo
 // supplies the repository for bare `#N` references. Results are de-duplicated
 // and returned in first-seen order. A nil/empty text yields no claims.
 func ParseClaimedIssues(text, defaultRepo string) []ClaimedRef {
+	return parseIssueRefs(claimRefPattern, text, defaultRepo)
+}
+
+// ParseSoftReferencedIssues extracts every issue this text references with a
+// recognized non-closing keyword (softReferenceKeywords). Same de-duplication
+// and cross-repo semantics as ParseClaimedIssues; the two sets may overlap
+// when a text says both `Fixes #N` and `refs #N` — FetchClaims resolves that
+// overlap in favour of the closing (hard) claim.
+func ParseSoftReferencedIssues(text, defaultRepo string) []ClaimedRef {
+	return parseIssueRefs(softRefPattern, text, defaultRepo)
+}
+
+// parseIssueRefs is the shared extractor behind both keyword families. The
+// pattern must expose the optional owner/repo prefix as group 2 and the issue
+// number as group 3, as claimRefPattern and softRefPattern both do.
+func parseIssueRefs(pattern *regexp.Regexp, text, defaultRepo string) []ClaimedRef {
 	if text == "" {
 		return nil
 	}
-	matches := claimRefPattern.FindAllStringSubmatch(text, -1)
+	matches := pattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -236,7 +340,9 @@ func (h HiveIdentity) IsZero() bool {
 }
 
 // FetchClaims lists open PRs across the client's configured repos and returns
-// the issue claims parsed from their titles and bodies. Claims from PRs the
+// the issue claims parsed from their titles and bodies — both closing-keyword
+// (hard) claims and non-closing soft references, the latter marked
+// SoftReference (#3980). Claims from PRs the
 // hive did not author are included and marked ExternalAuthor
 // (kubestellar/hive#3768): the contribute queue needs them to stop re-offering
 // an issue a human contributor's open PR already fixes, while
@@ -287,6 +393,12 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 				external := !identity.Matches(author)
 				// Title and body are both scanned: `Fixes #N` conventionally
 				// lives in the body, but many agents put it in the title.
+				// Note: draft PRs are included — PullRequests.List(state=open)
+				// returns them and nothing here filters on GetDraft(). That is
+				// deliberate: a draft is still "someone is on it" for offer
+				// suppression, and it is independent of fetchPRs' draft
+				// handling for the actionable list (#3963/#3970), which this
+				// scan does not share.
 				text := pr.GetTitle() + "\n" + pr.GetBody()
 				refs := ParseClaimedIssues(text, repo)
 
@@ -295,24 +407,47 @@ func (c *Client) FetchClaims(ctx context.Context, identity HiveIdentity) ([]Issu
 				// Body parsing cannot see those, but agents conventionally
 				// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
 				// head ref recovers the link. Only consulted when the body and
-				// title yielded nothing, so an explicit `Fixes #N` always wins.
+				// title yielded no CLOSING reference, so an explicit `Fixes #N`
+				// always wins — and a numeric branch still hard-claims exactly
+				// as it did before #3980 even when soft references are present.
 				if len(refs) == 0 {
 					if n, ok := issueFromBranchName(headRef(pr)); ok {
 						refs = []ClaimedRef{{Repo: repo, Issue: n}}
 					}
 				}
 
-				for _, ref := range refs {
+				appendClaim := func(ref ClaimedRef, soft bool) {
 					claims = append(claims, IssueClaim{
-						Repo:           ref.Repo,
-						Issue:          ref.Issue,
-						PRNumber:       pr.GetNumber(),
-						PRRepo:         repo,
-						PRURL:          pr.GetHTMLURL(),
-						PRAuthor:       author,
-						ObservedAt:     now,
-						ExternalAuthor: external,
+						Repo:            ref.Repo,
+						Issue:           ref.Issue,
+						PRNumber:        pr.GetNumber(),
+						PRRepo:          repo,
+						PRURL:           pr.GetHTMLURL(),
+						PRAuthor:        author,
+						ObservedAt:      now,
+						FirstObservedAt: now,
+						ExternalAuthor:  external,
+						SoftReference:   soft,
 					})
+				}
+
+				hardClaimed := make(map[string]bool, len(refs))
+				for _, ref := range refs {
+					hardClaimed[claimKey(ref.Repo, ref.Issue)] = true
+					appendClaim(ref, false)
+				}
+
+				// #3980: non-closing references (`Refs #N`, `Part of #N`, …)
+				// also claim — as SOFT claims. This is what makes PR #3898's
+				// deliberate "Refs #3498 — no Fixes keyword" visible to the
+				// contribute queue instead of the issue being re-offered every
+				// cooldown window. An issue this same PR already hard-claims
+				// is skipped: the closing claim is the stronger record.
+				for _, ref := range ParseSoftReferencedIssues(text, repo) {
+					if hardClaimed[claimKey(ref.Repo, ref.Issue)] {
+						continue
+					}
+					appendClaim(ref, true)
 				}
 			}
 			if resp == nil || resp.NextPage == 0 {
@@ -399,18 +534,38 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 	return l, nil
 }
 
-// insertLocked adds a claim to the map, resolving key collisions with
-// hive-precedence: when the same issue is claimed by both a hive-authored PR
-// and an external one (#3768), the hive-authored claim wins, so the agent-side
-// filter — which honours only hive claims — can never be blinded by an
-// external PR racing it to the map. Callers must hold l.mu (or own the ledger
-// exclusively, as LoadClaimLedger does before publishing it).
+// insertLocked adds a claim to the map, resolving key collisions by claim
+// strength: hard beats soft, and within each, hive-authored beats external
+// (#3768's hive-precedence rule, generalized for #3980's soft references).
+// A weaker claim can never overwrite a stronger one, so the agent-side filter
+// — which hard-suppresses only on hive-hard claims — can never be blinded by
+// a soft or external PR racing the stronger claim to the map. Equal-strength
+// claims replace (refreshing ObservedAt); when the SAME PR is re-observed,
+// its original FirstObservedAt is carried forward so the weak-claim deferral
+// window ages instead of resetting every scan. Callers must hold l.mu (or own
+// the ledger exclusively, as LoadClaimLedger does before publishing it).
 func (l *ClaimLedger) insertLocked(c IssueClaim) {
 	key := c.Key()
-	if existing, ok := l.claims[key]; ok && !existing.ExternalAuthor && c.ExternalAuthor {
-		return
+	if existing, ok := l.claims[key]; ok {
+		if c.strength() < existing.strength() {
+			return
+		}
+		c = carryFirstObserved(existing, c)
 	}
 	l.claims[key] = c
+}
+
+// carryFirstObserved preserves the earlier FirstObservedAt when the SAME PR is
+// re-observed making the same claim, so the weak-claim deferral window ages
+// across scans instead of resetting on every refresh (#3980). A DIFFERENT PR
+// keeps its own (fresh) FirstObservedAt: a new claiming PR earns a new window.
+func carryFirstObserved(existing, c IssueClaim) IssueClaim {
+	if existing.PRRepo == c.PRRepo && existing.PRNumber == c.PRNumber {
+		if first := existing.firstObserved(); c.FirstObservedAt.IsZero() || first.Before(c.FirstObservedAt) {
+			c.FirstObservedAt = first
+		}
+	}
+	return c
 }
 
 // SetTTL overrides the entry lifetime. Intended for tests.
@@ -492,10 +647,18 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if authoritative {
+		// The whole map is rebuilt, but a claim's FirstObservedAt must survive
+		// the rebuild when the same PR is re-observed — otherwise every scan
+		// would restart the weak-claim deferral window and it could never
+		// expire (#3980).
+		prev := l.claims
 		l.claims = make(map[string]IssueClaim, len(live))
 		for _, c := range live {
 			if c.Issue <= 0 || c.Repo == "" {
 				continue
+			}
+			if existing, ok := prev[c.Key()]; ok {
+				c = carryFirstObserved(existing, c)
 			}
 			l.insertLocked(c)
 		}
@@ -555,8 +718,13 @@ func (l *ClaimLedger) Save() error {
 // GENERIC: the predicate keys only off check state + commit staleness.
 type RedStaleFunc func(prRepo string, prNumber int) bool
 
-// FilterClaimedIssues removes from result every issue an open hive-authored PR
-// already claims, logging each suppression with the claiming PR's URL.
+// FilterClaimedIssues removes from result every issue an open PR already
+// claims, logging each suppression with the claiming PR's URL. A hive-authored
+// closing claim suppresses unconditionally (the original #3792 guard); a WEAK
+// claim — external authorship or a soft `Refs`-style reference (#3980) —
+// suppresses only within weakClaimAgentDeferralWindow of its first
+// observation, then releases the issue so no stranger's or stalled PR can
+// freeze the pipeline indefinitely.
 //
 // redStale (may be nil) is Fix #3's release valve: when it reports the claiming
 // PR is red+stale, the issue is NOT suppressed — it is kept actionable so a
@@ -577,20 +745,13 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			kept = append(kept, issue)
 			continue
 		}
-		// #3768: an EXTERNAL claim (a PR the hive did not author) never
-		// suppresses agent work — that is the guard's original rule, kept
-		// intact so a stranger's junk PR cannot freeze the hive's own
-		// pipeline. External claims exist for the contribute queue, which
-		// consults the ledger directly (dashboard selectTask).
-		if claim.ExternalAuthor {
-			kept = append(kept, issue)
-			continue
-		}
 		// Fix #3: release (do NOT suppress) when the claiming PR is red on a
 		// required check AND stale. The claiming PR lives in claim.PRRepo /
 		// claim.PRNumber (which may differ from the issue's repo for cross-repo
 		// closes). A healthy PR — green, pending, or a recently-moved head —
 		// fails this predicate and is still suppressed, exactly as before.
+		// Checked before the weak-claim deferral: a dead PR should not defer
+		// anything either.
 		if redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
 			kept = append(kept, issue)
 			if logger != nil {
@@ -604,6 +765,35 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 				)
 			}
 			continue
+		}
+		// WEAK claims — external authorship (#3768) or a non-closing soft
+		// reference (#3980) — DEFER agent work for a bounded window instead of
+		// the old all-or-nothing: #3768/#3792 let external claims through
+		// unconditionally so a stranger's junk PR could never freeze the
+		// pipeline, but that left the original dakota#353 duplicate shape
+		// alive across the agent/contributor seam (an agent could start an
+		// issue a contributor's open PR was already fixing). Within
+		// weakClaimAgentDeferralWindow of the claim's first observation the
+		// issue is suppressed like any other claim; past it, the issue is
+		// released even though the claim persists, so the junk-PR freeze is
+		// bounded rather than possible. Only a hive-authored closing claim
+		// (the hive's own live PR) suppresses without a window.
+		if claim.ExternalAuthor || claim.SoftReference {
+			if time.Since(claim.firstObserved()) >= weakClaimAgentDeferralWindow {
+				kept = append(kept, issue)
+				if logger != nil {
+					logger.Info("weak claim past deferral window: keeping issue actionable",
+						"repo", issue.Repo,
+						"issue", issue.Number,
+						"claimed_by_pr", claim.PRNumber,
+						"pr_repo", claim.PRRepo,
+						"pr_url", claim.PRURL,
+						"external_author", claim.ExternalAuthor,
+						"soft_reference", claim.SoftReference,
+					)
+				}
+				continue
+			}
 		}
 		suppressed++
 		if logger != nil {
