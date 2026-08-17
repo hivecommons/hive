@@ -97,6 +97,13 @@ jobs:
       # the PR. Requires `just`; the test SKIPs cleanly if it is ever absent.
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          # Pin explicitly: with no specifier the action resolves casey/just's
+          # latest release at RUN TIME, and that resolution broke fleet-wide on
+          # 2026-08-17 ("no release for just matching version specifier"),
+          # failing build-and-test on every branch/PR after all tests passed.
+          # Bump deliberately, not implicitly.
+          just-version: "1.58.0"
       - name: Contributor K8s Workload Generation
         working-directory: .
         run: bash v2/deploy/test_contribute_k8s_workload.sh
