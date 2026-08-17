@@ -7036,6 +7036,21 @@ func runHub(logger *slog.Logger) {
 
 	hubSrv := hub.NewHubServer(port, logger, gitShort, gitBranch)
 
+	// /api/reach (#3994) needs merged-PR metadata (merge SHA, changed
+	// files). The hub mode has no ambient GitHub client, so reuse the
+	// standard token client when credentials exist; without a token the
+	// endpoint reports 503 rather than serving fabricated data. The base
+	// branch is the hub's own running branch — the lineage its fleet runs.
+	if ghToken := os.Getenv("HIVE_GITHUB_TOKEN"); ghToken != "" {
+		reachGH := github.NewClient(ghToken, "kubestellar", []string{"hive"}, logger, "")
+		hubSrv.SetReachPRSource(hub.NewGitHubPRSource(reachGH, gitBranch))
+	}
+	// Wire 2a's heartbeat-fed registry store into the /api/reach endpoint
+	// (#3973 epic: producer #3993 → consumer #3994). Unconditional — the
+	// registry-backed reporter has no external dependencies, and without it
+	// the endpoint would keep answering from the empty stub forever.
+	hubSrv.SetReachReporter(hubSrv.RegistryReachReporter())
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

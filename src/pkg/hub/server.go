@@ -25,6 +25,7 @@ import (
 
 	"github.com/kubestellar/hive/pkg/auth"
 	"github.com/kubestellar/hive/pkg/openrouter"
+	"github.com/kubestellar/hive/pkg/reach"
 	"github.com/kubestellar/hive/pkg/tracing"
 )
 
@@ -1077,6 +1078,19 @@ type HubServer struct {
 	// owning account login. Nil means use the fleet App key. Tests replace it
 	// with a fake API.
 	githubInstallationAccount func(context.Context, int64) (string, error)
+
+	// reachReporter / reachPRSource / reachAncestry are the three injected
+	// dependencies of the read-only /api/reach endpoint (#3994, phase 2b of
+	// #3973). The reporter defaults to reach.StubReachReporter until phase
+	// 2a's heartbeat-fed store lands (its wiring is a one-line
+	// SetReachReporter call); the PR source is wired from runHub when GitHub
+	// credentials exist and the handler answers 503 while it is nil; the
+	// ancestry resolver defaults to the compare-API adapter over the same
+	// cache commit_order.go uses. Set before Start, read-only afterwards —
+	// see reach_api.go.
+	reachReporter reach.ReachReporter
+	reachPRSource reach.PRSource
+	reachAncestry reach.Ancestry
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1214,6 +1228,12 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		alerts:                  newAlertState(),
 		revokedSessions:         newRevokedSessions(),
 		urlHealth:               newURLHealthState(),
+		// /api/reach dependencies (#3994): the stub reporter answers an
+		// empty fleet until phase 2a's store is wired via SetReachReporter;
+		// the ancestry backend defaults to the compare-API adapter over
+		// commit_order.go's cache (no repo clone ships in the hub image).
+		reachReporter: &reach.StubReachReporter{},
+		reachAncestry: newReachAncestry(logger),
 	}
 
 	// Restore any persisted rotation BEFORE anything mints or verifies. A hub

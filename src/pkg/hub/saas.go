@@ -532,6 +532,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	// state (assigned && !claim_delivered) inside the handler.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-assignment", s.requireAdmin(s.handleResetAssignment))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
+	// PR reach telemetry (#3994): the read-only join of merged PRs against
+	// the commits/components the fleet reports actually running. The payload
+	// names hives fleet-wide — the same exposure class as cluster-health
+	// directly above, so the same requireAdmin gate.
+	s.mux.HandleFunc("GET /api/reach", s.requireAdmin(s.handleReach))
 	// Acknowledging a fleet alert is an operator action on the operator's own
 	// view, so it is admin-only (see alerts.go).
 	s.mux.HandleFunc("POST /api/saas/admin/alert-ack", s.requireAdmin(s.handleAlertAck))
