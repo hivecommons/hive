@@ -32,6 +32,7 @@ func helperSetupTempDirs(t *testing.T) func() {
 	oldProv := provisionRequestsDir
 	oldAutoUpgrade := hubAutoUpgradePath
 	oldUpgradePause := upgradePausePath
+	oldReachHistory := reachHistoryPath
 
 	saasUsersDir = filepath.Join(dir, "users")
 	saasHivesDir = filepath.Join(dir, "hives")
@@ -39,6 +40,7 @@ func helperSetupTempDirs(t *testing.T) func() {
 	provisionRequestsDir = filepath.Join(dir, "provision-requests")
 	hubAutoUpgradePath = filepath.Join(dir, "hub-auto-upgrade")
 	upgradePausePath = filepath.Join(dir, "upgrade-pause.json")
+	reachHistoryPath = filepath.Join(dir, "reach-history.json")
 
 	os.MkdirAll(saasUsersDir, 0o755)
 	os.MkdirAll(saasHivesDir, 0o755)
@@ -52,6 +54,7 @@ func helperSetupTempDirs(t *testing.T) func() {
 		provisionRequestsDir = oldProv
 		hubAutoUpgradePath = oldAutoUpgrade
 		upgradePausePath = oldUpgradePause
+		reachHistoryPath = oldReachHistory
 	}
 }
 

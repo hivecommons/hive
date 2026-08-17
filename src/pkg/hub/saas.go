@@ -8878,6 +8878,17 @@ const dashboardHTML = `<!DOCTYPE html>
         <div id="cluster-health-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px"></div>
       </div>
     </div>
+
+    <div id="reach-section" style="display:none;margin-top:48px">
+      <div onclick="toggleReach()" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:16px">
+        <span id="reach-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
+        <h2 style="font-size:1.3rem;color:var(--accent);margin:0">PR Reach</h2>
+        <span id="reach-summary-bar" style="font-size:0.8rem;color:var(--muted);margin-left:8px"></span>
+      </div>
+      <div id="reach-body" style="display:none">
+        <div class="table-wrap" id="reach-table-container"></div>
+      </div>
+    </div>
   </div>
 
   <footer class="footer">
@@ -15984,6 +15995,133 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    // --- PR Reach Panel (#3995, phase 2c of #3973) ---
+    // Admin-only, same contract as the Cluster Health panel above: hidden
+    // until /api/reach answers OK, hidden again on 403, collapse state in
+    // localStorage. Polls far slower than cluster health — every load fans
+    // out merged-PR + ancestry lookups hub-side (GitHub API), so 5 minutes
+    // is the courtesy floor, and reach itself moves at heartbeat cadence.
+    var REACH_POLL_MS = 300000;
+    var _reachCollapsed = localStorage.getItem('hive-reach-collapsed') !== 'false';
+
+    function toggleReach() {
+      _reachCollapsed = !_reachCollapsed;
+      localStorage.setItem('hive-reach-collapsed', _reachCollapsed ? 'true' : 'false');
+      var body = document.getElementById('reach-body');
+      var toggle = document.getElementById('reach-toggle');
+      if (body) body.style.display = _reachCollapsed ? 'none' : '';
+      if (toggle) toggle.style.transform = _reachCollapsed ? '' : 'rotate(90deg)';
+    }
+
+    /* Renders merge→first-execution latency compactly; null means nothing
+       qualifying has executed yet and must read as absent, never as 0. */
+    function reachLatency(seconds) {
+      if (seconds == null || !isFinite(seconds) || seconds < 0) return '<span style="color:var(--muted)">—</span>';
+      var SEC_PER_MIN = 60, SEC_PER_HOUR = 3600, SEC_PER_DAY = 86400;
+      if (seconds < SEC_PER_HOUR) return Math.round(seconds / SEC_PER_MIN) + 'm';
+      if (seconds < SEC_PER_DAY) return (seconds / SEC_PER_HOUR).toFixed(1) + 'h';
+      return (seconds / SEC_PER_DAY).toFixed(1) + 'd';
+    }
+
+    /* Renders the error-delta cell from a report's per-component deltas.
+       The measured flag is the contract (#3995): an unmeasured delta must be
+       DISTINGUISHABLE from a measured zero, so unmeasured renders as the word
+       "unmeasured", never as 0.0. Measured deltas show the worst (largest
+       magnitude) component, red when errors rose, green when they fell; the
+       tooltip itemizes every component either way. */
+    function reachDeltaCell(deltas) {
+      deltas = deltas || [];
+      var measured = deltas.filter(function(d) { return d && d.measured; });
+      var PCT = 100;
+      var tip = deltas.map(function(d) {
+        if (!d) return '';
+        if (!d.measured) return d.component + ': unmeasured';
+        return d.component + ': ' + (d.delta >= 0 ? '+' : '') + (d.delta * PCT).toFixed(2) +
+          'pp over ' + d.windows_compared + 'w (' + (d.error_rate_before * PCT).toFixed(2) +
+          '% -> ' + (d.error_rate_after * PCT).toFixed(2) + '%)';
+      }).filter(Boolean).join('\n');
+      if (!measured.length) {
+        return '<span style="color:var(--muted)" title="' + esc(tip || 'No deploy window observed yet, or not enough before/after history') + '">unmeasured</span>';
+      }
+      var worst = measured[0];
+      measured.forEach(function(d) { if (Math.abs(d.delta) > Math.abs(worst.delta)) worst = d; });
+      var color = worst.delta > 0 ? 'var(--red)' : (worst.delta < 0 ? 'var(--green)' : 'var(--muted)');
+      var sign = worst.delta >= 0 ? '+' : '';
+      return '<span style="color:' + color + ';font-family:monospace" title="' + esc(tip) + '">' +
+        sign + (worst.delta * PCT).toFixed(2) + 'pp</span>';
+    }
+
+    function renderReachRow(r) {
+      var comps = (r.attribution && r.attribution.components) || [];
+      var coveragePct = Math.round(((r.attribution && r.attribution.coverage) || 0) * 100);
+      var compCell = comps.length
+        ? '<span title="Attribution coverage ' + coveragePct + '% of changed files">' + esc(comps.join(', ')) + '</span>'
+        : '<span style="color:var(--muted)" title="No changed file maps to an instrumented component (docs/workflows/deploy)">unattributable</span>';
+      var hives = r.reach_hives || [];
+      var reachCell = r.reach_count
+        ? '<span title="' + esc(hives.join(', ')) + '">' + r.reach_count + '</span>'
+        : '<span style="color:var(--muted)">0</span>';
+      var flags = [];
+      if (r.never_ran) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" title="Merged and deployed, but no touched component has executed anywhere in ' + (r.never_ran_threshold_days || 0) + ' days — the category acceptance-rate cannot see">never ran</span>');
+      else if (!r.deployed) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="No hive reports running a commit containing this PR yet (merged is not deployed)">not deployed</span>');
+      if ((r.shared_with || []).length) flags.push('<span style="padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(128,191,255,0.15);color:#80bfff;border:1px solid rgba(128,191,255,0.3)" title="Co-deployed with PR ' + esc((r.shared_with || []).map(function(n) { return '#' + n; }).join(', ')) + ' — reach and deltas are shared by construction (D4)">shared</span>');
+      return '<tr>' +
+        '<td style="white-space:nowrap"><a href="https://github.com/kubestellar/hive/pull/' + r.pr + '" target="_blank">#' + r.pr + '</a>' +
+        (r.title ? ' <span style="color:var(--muted);font-size:0.75rem" title="' + esc(r.title) + '">' + esc(r.title.length > 48 ? r.title.slice(0, 48) + '…' : r.title) + '</span>' : '') + '</td>' +
+        '<td>' + compCell + '</td>' +
+        '<td>' + reachCell + '</td>' +
+        '<td>' + reachLatency(r.first_execution_latency_seconds) + '</td>' +
+        '<td>' + reachDeltaCell(r.error_deltas) + '</td>' +
+        '<td style="white-space:nowrap">' + (flags.join(' ') || '<span style="color:var(--muted)">—</span>') + '</td>' +
+        '</tr>';
+    }
+
+    async function loadReach() {
+      if (!_isAdmin) return;
+      try {
+        var resp = await fetch('/api/reach');
+        if (resp.status === 403) {
+          document.getElementById('reach-section').style.display = 'none';
+          return;
+        }
+        /* 503 = hub running without GitHub credentials: no PR facts exist, so
+           the section stays hidden rather than rendering an empty shell. */
+        if (!resp.ok) return;
+        var data = await resp.json();
+        document.getElementById('reach-section').style.display = '';
+
+        var reports = data.reports || [];
+        var summaryBar = document.getElementById('reach-summary-bar');
+        if (summaryBar) {
+          var neverRan = reports.filter(function(r) { return r.never_ran; }).length;
+          var reached = reports.filter(function(r) { return (r.reach_count || 0) > 0; }).length;
+          summaryBar.textContent = reports.length + ' merged PR' + (reports.length !== 1 ? 's' : '') +
+            ' · ' + (data.hives_reporting || 0) + ' hives reporting · ' + reached + ' reached' +
+            (neverRan ? ' · ' + neverRan + ' never ran' : '');
+        }
+
+        var body = document.getElementById('reach-body');
+        var toggle = document.getElementById('reach-toggle');
+        if (!_reachCollapsed) {
+          if (body) body.style.display = '';
+          if (toggle) toggle.style.transform = 'rotate(90deg)';
+        }
+
+        var container = document.getElementById('reach-table-container');
+        if (!container) return;
+        if (!reports.length) {
+          container.innerHTML = '<div style="color:var(--muted);font-size:0.85rem">No recently merged PRs to report on</div>';
+          return;
+        }
+        container.innerHTML =
+          '<table class="hive-table"><thead><tr>' +
+          '<th style="text-align:left">PR</th><th>Components</th><th title="Distinct hives running a commit containing the PR whose touched components executed since merge">Reach (hives)</th><th title="Merge to first qualifying execution anywhere in the fleet">First exec</th><th title="Span error-rate after vs before the PR&#39;s deploy window; unmeasured when either side lacks data (#3995)">Error Δ</th><th>Flags</th>' +
+          '</tr></thead><tbody>' + reports.map(renderReachRow).join('') + '</tbody></table>';
+      } catch(e) {
+        console.error('reach error:', e);
+      }
+    }
+
     async function loadClusters() {
       try {
         var resp = await fetch('/api/hub/clusters');
@@ -16240,6 +16378,7 @@ const dashboardHTML = `<!DOCTYPE html>
       await loadAdminUsers();
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
+      loadReach();
       loadClusters();
       handleOpenRouterReturn();
     }
@@ -16251,6 +16390,7 @@ const dashboardHTML = `<!DOCTYPE html>
     startAssignCounterTicker();
     setInterval(loadAdminUsers, POLL_INTERVAL_MS);
     setInterval(loadClusterHealth, CLUSTER_HEALTH_POLL_MS);
+    setInterval(loadReach, REACH_POLL_MS);
     var _refreshTimer = null;
     var REFRESH_DEBOUNCE_MS = 500;
     function debouncedRefresh() {

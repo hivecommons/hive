@@ -72,6 +72,15 @@ type PRReachReport struct {
 	// A PR with no attributable components (docs-only) never raises it.
 	NeverRan              bool `json:"never_ran"`
 	NeverRanThresholdDays int  `json:"never_ran_threshold_days"`
+
+	// ErrorDeltas (#3995, phase 2c) carries one per-component error-rate
+	// delta for this PR's deploy window — after-vs-before, D4-shared with the
+	// PRs in SharedWith by construction. Filled by AttachErrorDeltas AFTER
+	// window assignment (a lone PR cannot know its deploy window); nil when
+	// the PR has no observed deploy window or the analyzer has no history
+	// source. Entries with Measured=false are emitted, never dropped —
+	// "unmeasured" must stay distinguishable from "measured, zero delta".
+	ErrorDeltas []ComponentErrorDelta `json:"error_deltas,omitempty"`
 }
 
 // Analyzer joins merged-PR facts against the fleet's reach reports. All
@@ -81,6 +90,9 @@ type PRReachReport struct {
 type Analyzer struct {
 	Ancestry Ancestry
 	Reporter ReachReporter
+	// History is the fleet-level error-rate history (#3995); nil means no
+	// retention is available and ErrorDeltas legitimately stay nil.
+	History HistorySource
 	// NeverRanAfter is the never-ran grace period; zero means
 	// NeverRanThreshold() (env-tunable default).
 	NeverRanAfter time.Duration
@@ -166,4 +178,20 @@ func (a *Analyzer) Analyze(pr PRInfo) (PRReachReport, error) {
 		report.NeverRan = true
 	}
 	return report, nil
+}
+
+// AttachErrorDeltas fills report.ErrorDeltas (#3995) once the caller has
+// assigned the PR's deploy window via AssignWindows — deliberately a second
+// step, because the delta is keyed on the deploy window (D4) and Analyze runs
+// per-PR before windows exist. No-op without a history source or an observed
+// deploy window: an unmeasurable delta is ABSENT, never fabricated. Every
+// attributable component gets an entry, including unmeasured ones.
+func (a *Analyzer) AttachErrorDeltas(report *PRReachReport) {
+	if a == nil || a.History == nil || report == nil || report.DeployWindow == "" {
+		return
+	}
+	for _, component := range report.Attribution.Components {
+		report.ErrorDeltas = append(report.ErrorDeltas,
+			ComputeErrorDelta(a.History.ComponentWindows(component), component, report.DeployWindow))
+	}
 }

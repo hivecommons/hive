@@ -267,3 +267,109 @@ func TestCompareAncestry(t *testing.T) {
 		t.Error("empty ancestor: want error")
 	}
 }
+
+// TestHandleReachErrorDeltas (#3995, phase 2c): the handler attaches
+// per-component error-rate deltas from the retention store AFTER window
+// assignment, with exact numeric values — and a PR whose deploy window has no
+// retained before-history answers measured=false, never a fabricated zero.
+func TestHandleReachErrorDeltas(t *testing.T) {
+	mergedAt := time.Now().UTC().Add(-4 * time.Hour)
+	firstRun := mergedAt.Add(30 * time.Minute)
+
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	srv.reachPRSource = &fakeReachPRSource{prs: map[int]reach.PRInfo{
+		3995: {
+			Number:      3995,
+			MergeCommit: "cafe123",
+			MergedAt:    mergedAt,
+			Files:       []string{"src/pkg/hub/reach_history.go"},
+		},
+	}}
+	srv.reachReporter = &reach.StubReachReporter{Reports: map[string][]reach.ComponentReach{
+		"hive-a": {{Component: "hub", Commit: "beef456", SpansTotal: 7, FirstSeen: firstRun, LastSeen: firstRun}},
+	}}
+	srv.reachAncestry = &fakeReachAncestry{pairs: map[[2]string]bool{
+		{"cafe123", "beef456"}: true,
+	}}
+
+	// Retention: a mixed-fleet history — one hive still on the old build
+	// (the before regime), one on the deployed build (after). Before rate
+	// 10/100 = 0.10, after rate 30/100 = 0.30, delta +0.20 over 1 window.
+	store, _, _ := newTestHistoryStore(t)
+	now := time.Now().UTC()
+	store.Append("hive-b", histReport("hub", "01dc0de", now.Add(-3*time.Hour), 100, 10), now)
+	store.Append("hive-a", histReport("hub", "beef456", now.Add(-90*time.Minute), 100, 30), now)
+	srv.reachHistory = store
+
+	req := httptest.NewRequest("GET", "/api/reach?pr=3995", nil)
+	w := httptest.NewRecorder()
+	srv.handleReach(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+	// The wire shape is part of the contract: field names are what the
+	// dashboard table reads.
+	for _, key := range []string{"error_deltas", "error_rate_before", "error_rate_after", "windows_compared", "measured"} {
+		if !strings.Contains(w.Body.String(), key) {
+			t.Errorf("response missing %q:\n%s", key, w.Body.String())
+		}
+	}
+
+	var resp struct {
+		Reports []reach.PRReachReport `json:"reports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, w.Body.String())
+	}
+	if len(resp.Reports) != 1 {
+		t.Fatalf("Reports = %d, want 1", len(resp.Reports))
+	}
+	report := resp.Reports[0]
+	if report.DeployWindow != "beef456" {
+		t.Fatalf("DeployWindow = %q, want beef456", report.DeployWindow)
+	}
+	if len(report.ErrorDeltas) != 1 {
+		t.Fatalf("ErrorDeltas = %+v, want exactly one (component hub)", report.ErrorDeltas)
+	}
+	d := report.ErrorDeltas[0]
+	if d.Component != "hub" || !d.Measured {
+		t.Fatalf("delta = %+v, want measured for hub", d)
+	}
+	const eps = 1e-9
+	if diff := d.ErrorRateBefore - 0.10; diff > eps || diff < -eps {
+		t.Errorf("ErrorRateBefore = %v, want 0.10", d.ErrorRateBefore)
+	}
+	if diff := d.ErrorRateAfter - 0.30; diff > eps || diff < -eps {
+		t.Errorf("ErrorRateAfter = %v, want 0.30", d.ErrorRateAfter)
+	}
+	if diff := d.Delta - 0.20; diff > eps || diff < -eps {
+		t.Errorf("Delta = %v, want 0.20", d.Delta)
+	}
+	if d.WindowsCompared != 1 {
+		t.Errorf("WindowsCompared = %d, want 1", d.WindowsCompared)
+	}
+
+	// Converged-fleet case (the dominant one in production): wipe the old
+	// build's history so no before-side exists — the delta must come back
+	// present but UNMEASURED, with zeroed numbers.
+	converged, _, _ := newTestHistoryStore(t)
+	converged.Append("hive-a", histReport("hub", "beef456", now.Add(-90*time.Minute), 100, 30), now)
+	srv.reachHistory = converged
+
+	w = httptest.NewRecorder()
+	srv.handleReach(w, httptest.NewRequest("GET", "/api/reach?pr=3995", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("converged: got %d, body=%s", w.Code, w.Body.String())
+	}
+	resp.Reports = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("converged: bad JSON: %v", err)
+	}
+	if len(resp.Reports) != 1 || len(resp.Reports[0].ErrorDeltas) != 1 {
+		t.Fatalf("converged: deltas = %+v, want one entry", resp.Reports)
+	}
+	cd := resp.Reports[0].ErrorDeltas[0]
+	if cd.Measured || cd.Delta != 0 || cd.ErrorRateBefore != 0 || cd.ErrorRateAfter != 0 || cd.WindowsCompared != 0 {
+		t.Errorf("converged fleet delta = %+v, want unmeasured with zeroed numbers", cd)
+	}
+}

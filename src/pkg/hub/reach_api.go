@@ -319,7 +319,15 @@ func (s *HubServer) handleReach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analyzer := &reach.Analyzer{Ancestry: s.reachAncestry, Reporter: reporter}
+	// History (#3995, phase 2c) feeds the per-deploy-window error deltas.
+	// s.reachHistory is nil on bare test servers; both the interface hop and
+	// AttachErrorDeltas are nil-safe, and a nil history simply leaves
+	// ErrorDeltas absent — unmeasured, never fabricated.
+	var history reach.HistorySource
+	if s.reachHistory != nil {
+		history = s.reachHistory
+	}
+	analyzer := &reach.Analyzer{Ancestry: s.reachAncestry, Reporter: reporter, History: history}
 	resp := reachResponse{
 		GeneratedAt:     time.Now().UTC(),
 		HivesReporting:  len(reports),
@@ -337,6 +345,10 @@ func (s *HubServer) handleReach(w http.ResponseWriter, r *http.Request) {
 			report.DeployWindow = assignment.DeployedCommit
 			report.SharedWith = assignment.SharedWith
 		}
+		// Error-rate deltas (#3995) attach AFTER window assignment — the
+		// delta is keyed on the deploy window (D4), which Analyze alone
+		// cannot know. Shared across the PRs in SharedWith by construction.
+		analyzer.AttachErrorDeltas(&report)
 		resp.Reports = append(resp.Reports, report)
 	}
 

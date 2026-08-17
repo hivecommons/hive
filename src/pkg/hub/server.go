@@ -1091,6 +1091,12 @@ type HubServer struct {
 	reachReporter reach.ReachReporter
 	reachPRSource reach.PRSource
 	reachAncestry reach.Ancestry
+
+	// reachHistory is the fleet-level error-rate retention (#3995, phase 2c):
+	// hourly per-component activity buckets folded in on heartbeat receive,
+	// persisted to reachHistoryPath, read by /api/reach for before/after
+	// deltas. nil on bare test servers; every touch point is nil-safe.
+	reachHistory *reachHistoryStore
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -1234,6 +1240,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// commit_order.go's cache (no repo clone ships in the hub image).
 		reachReporter: &reach.StubReachReporter{},
 		reachAncestry: newReachAncestry(logger),
+		// Fleet error-rate history (#3995, phase 2c): loads its persisted
+		// ring from disk here, before the first heartbeat can append.
+		reachHistory: newReachHistoryStore(reachHistoryPath, logger),
 	}
 
 	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
@@ -1398,6 +1407,11 @@ func (s *HubServer) Start(port int) error {
 }
 
 func (s *HubServer) Shutdown(timeout time.Duration) error {
+	// Flush the reach history's final partial save interval (#3995) — the
+	// same durability courtesy the registry gets from its synchronous saves.
+	// Before the listener check: a server shut down before Start still owes
+	// its history a flush, and SaveNow is nil-safe and dirty-gated.
+	s.reachHistory.SaveNow()
 	s.httpMu.Lock()
 	srv := s.httpServer
 	s.httpMu.Unlock()
@@ -1670,6 +1684,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Component reach (#3993): sanitized + clipped, never the raw spoke
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
+	}
+
+	// Fleet error-rate history (#3995, phase 2c): fold this beat's rolling
+	// window_1h buckets into the hub's per-component retention ring. Runs on
+	// the SANITIZED report only, and only when the beat actually carried one
+	// — entry.ComponentReach is still the fresh value here; the carry-forward
+	// of a previous report (below) never reaches this call, so a restarting
+	// spoke's stale report is not re-appended (the dedupe cursor would refuse
+	// it anyway, but not appending is cheaper and clearer).
+	if entry.ComponentReach != nil {
+		s.reachHistory.Append(entry.ID, entry.ComponentReach, time.Now())
 	}
 
 	// Populate ClusterID and the authoritative ProvStatus from the SaaS hive

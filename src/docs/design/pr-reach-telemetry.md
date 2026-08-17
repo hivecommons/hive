@@ -99,14 +99,41 @@ per hive on the registry entry. Storage only: no endpoint, no mapping, no UI
 until #3994. The entry keys `component` / `commit` / `spans_total` /
 `spans_error` / `first_seen` / `last_seen` are 2b's fixed read interface.
 
-## What phase 2+ needs (deferred)
+Phase 2b implementation (#3994): the D3 mapping with the honest
+`unattributable` bucket (both path eras — `src/...` primary, `v2/...` legacy
+aliases, because merged-PR file lists are immutable), the ancestry join
+(compare-API adapter by default, real git via `HIVE_REACH_REPO_DIR`), D4
+deploy windows derived from commits hives REPORT RUNNING, first-execution
+latency, the never-ran flag, and `GET /api/reach` behind `requireAdmin`.
 
-- **Error-rate deltas pre/post merge**: compare span error status rates for a
-  component across the commit boundary that introduced a PR. Needs span status
-  discipline (`span.SetStatus` on failure paths) audited per component first.
-- **First-execution latency**: time from merge → first span carrying a
-  `hive.commit` that contains the PR. Needs a merge-SHA → containing-build
-  index (the hub already stores per-spoke `GitHash`; join there).
+Phase 2c implementation (#3995, final): error-rate deltas per deploy window,
+plus the reach table on the hub's /dashboard status surface. The hub keeps
+only each hive's LATEST report, so 2c adds bounded retention: on heartbeat
+receive, the report's rolling `window_1h` bucket (equivalent-period windows —
+cumulative-since-boot counts would compare unequal periods) folds into a
+fleet-level per-component ring of hourly buckets, summed per (hour, component,
+running commit) — 168 windows (7 days) per component, a fleet-level component
+cap, per-bucket commit fan-out cap, oldest-first eviction, over-cap input
+clipped AND logged. A per-(component, hive) cursor dedupes re-reports of the
+same rolling window (heartbeats beat faster than windows roll). Persisted in
+its own file, `/data/reach-history.json`, atomic writes on a dirty-gated
+cadence, re-bounded on load. The delta per (component, deploy-window): error
+ratio in windows AFTER the deployed commit first appears (that commit's spans
+only, so staggered-rollout old-binary traffic never dilutes it) vs an EQUAL
+count of windows immediately BEFORE (the whole old regime); `measured=false`
+whenever either side lacks data — on a fleet that auto-converges in ~a minute,
+a commit older than the retained history legitimately reads unmeasured, and
+that must never be rendered as a zero delta. Known limitation, accepted: the
+windows are fleet sums, so one high-volume spoke can skew a window's ratio.
+
+## Deferred beyond the epic
+
+- **Advisor wiring**: reach-derived advisor inputs (e.g. a NeverRanFraction
+  with the `(value, measured)` shape) need a data path from the hub's fleet
+  store to the spoke-side advisor (`buildACMMStatusInputs`), which does not
+  exist — the spoke cannot see fleet reach, and fabricating an always-
+  unmeasured field helps nobody. Follow-up, deliberately not forced into 2c;
+  reach-derived signals must never gate promotion while unmeasurable.
 - **Per-hive distinct counts**: `count_distinct(hive.id)` per (commit,
   component) — the raw data lands with phase 1, the aggregation/query layer is
   future work.
