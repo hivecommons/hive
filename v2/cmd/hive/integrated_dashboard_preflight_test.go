@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
@@ -111,18 +109,12 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := dashboardPreflightReceipt{
-		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v2", Repository: request.Repository, RepositoryID: "123",
+		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v1", Repository: request.Repository, RepositoryID: "123",
 		StateRoot: stateDir, VisualHiveRef: request.VisualHiveRef, Provider: request.Provider, ProviderBinary: "/release/codex",
-		ProviderArgs: append([]string(nil), normalized.ProviderArgs...), ProviderModel: "gpt-5.6-sol",
+		ProviderArgs:  append([]string(nil), normalized.ProviderArgs...),
 		VisualCommand: "/release/node", VisualArgs: []string{"/release/visual-hive.mjs"},
 		HiveCommit: strings.Repeat("1", 40), HiveExecutableSHA256: strings.Repeat("2", 64), ProviderBinarySHA256: strings.Repeat("3", 64),
 		VisualCommandSHA256: strings.Repeat("4", 64), VisualEntrypointSHA256: strings.Repeat("5", 64), ImageDigest: "sha256:" + strings.Repeat("6", 64),
-		OperatorID: 1, OperatorLogin: "test-owner", WriterID: 1, WriterLogin: "test-owner", WriterType: "User",
-		RuntimeBindingDigest: strings.Repeat("0", 64), QualityProbe: agent.QualityRuntimeProbeResult{
-			Agent: "quality", UID: 2006, Home: "/data/home", CodexHome: "/data/.codex-quality", Backend: "codex",
-			Model: "gpt-5.6-sol", CommandSHA256: strings.Repeat("7", 64), ApprovalPolicy: "never",
-			ToolCall: "read-only-local-file", OutputSHA256: strings.Repeat("8", 64),
-		},
 		TestedAt: now, ExpiresAt: now.Add(dashboardPreflightValidity),
 	}
 	receipt.BindingSHA256, err = dashboardPreflightBinding(request, receipt)
@@ -155,17 +147,6 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 	}
 	if err := requireDashboardPreflightReceipt(context.Background(), setup); err != nil {
 		t.Fatalf("matching hosted preflight receipt was rejected: %v", err)
-	}
-	tampered := receipt
-	tampered.QualityProbe.ApprovalPolicy = "on-request"
-	if err := saveDashboardPreflightReceipt(integratedStateRoot(), tampered); err != nil {
-		t.Fatal(err)
-	}
-	if err := requireDashboardPreflightReceipt(context.Background(), setup); err == nil {
-		t.Fatal("tampered unattended approval policy was accepted")
-	}
-	if err := saveDashboardPreflightReceipt(integratedStateRoot(), receipt); err != nil {
-		t.Fatal(err)
 	}
 	setup.VisualHiveRef = strings.Repeat("b", 40)
 	if err := requireDashboardPreflightReceipt(context.Background(), setup); err == nil || !strings.Contains(err.Error(), "different setup inputs") {
@@ -207,52 +188,6 @@ func TestHostedStorageProbeLeavesNoTemporaryFile(t *testing.T) {
 	}
 }
 
-func TestHostedPreflightReceiptRejectsLinkedDirectoryAndFile(t *testing.T) {
-	t.Run("linked directory", func(t *testing.T) {
-		useTemporaryHostedHiveState(t)
-		path, err := dashboardPreflightReceiptPath(integratedStateRoot(), "owner/repository")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(filepath.Dir(path)), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(t.TempDir(), filepath.Dir(path)); err != nil {
-			if os.IsPermission(err) {
-				t.Skipf("symlink creation unavailable: %v", err)
-			}
-			t.Fatal(err)
-		}
-		if err := saveDashboardPreflightReceipt(integratedStateRoot(), dashboardPreflightReceipt{Repository: "owner/repository"}); err == nil || !strings.Contains(err.Error(), "must be a real directory") {
-			t.Fatalf("linked receipt directory was accepted: %v", err)
-		}
-	})
-
-	t.Run("linked file", func(t *testing.T) {
-		useTemporaryHostedHiveState(t)
-		path, err := dashboardPreflightReceiptPath(integratedStateRoot(), "owner/repository")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		target := filepath.Join(t.TempDir(), "receipt.json")
-		if err := os.WriteFile(target, []byte("{}\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(target, path); err != nil {
-			if os.IsPermission(err) {
-				t.Skipf("symlink creation unavailable: %v", err)
-			}
-			t.Fatal(err)
-		}
-		if _, _, err := readDashboardPreflightReceiptFile(path); err == nil || !strings.Contains(err.Error(), "regular non-link file") {
-			t.Fatalf("linked receipt file was accepted: %v", err)
-		}
-	})
-}
-
 func TestHostedPreflightRejectsExistingControllerLease(t *testing.T) {
 	stateDir := t.TempDir()
 	leasePath := filepath.Join(stateDir, "integrated", "daemon.lease")
@@ -262,71 +197,8 @@ func TestHostedPreflightRejectsExistingControllerLease(t *testing.T) {
 	if err := os.WriteFile(leasePath, []byte("stale-or-live\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
+	if err := ensureNoVisualRuntimeBeforeSetup(stateDir); err == nil || !strings.Contains(err.Error(), "ownership lease already exists") {
 		t.Fatalf("existing controller lease was accepted: %v", err)
-	}
-}
-
-func TestHostedPreflightAllowsExactManagedRuntimeForRebind(t *testing.T) {
-	stateDir := t.TempDir()
-	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
-	manager, _, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
-		return &fakeNormalVisualRuntime{binding: binding}
-	})
-	if active, err := manager.Ensure(context.Background()); err != nil || !active {
-		t.Fatalf("activate exact managed runtime: active=%v err=%v", active, err)
-	}
-	original := dashboardNormalVisualRuntime.Load()
-	dashboardNormalVisualRuntime.Store(manager)
-	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(original) })
-	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", true); err == nil || !strings.Contains(err.Error(), "missing its authoritative ownership lease") {
-		t.Fatalf("active runtime without its ownership lease was accepted: %v", err)
-	}
-	lease, err := claimNormalVisualDaemonLease(stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { releaseDaemonLease(lease) })
-
-	active, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true)
-	if err != nil || !active {
-		t.Fatalf("exact managed update runtime rejected: %v", err)
-	}
-	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "other/repository", true); err == nil {
-		t.Fatal("different repository runtime accepted for managed update")
-	}
-	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", false); err == nil {
-		t.Fatal("fresh setup accepted an existing runtime")
-	}
-}
-
-func TestHostedPreflightAllowsLeaseFreeIntakeRuntimeForManagedAuthorityTransition(t *testing.T) {
-	stateDir := t.TempDir()
-	installed := testInstalledNormalVisualContract(t, stateDir)
-	installed.Automation = integrated.AutomationIssues
-	contract := &testNormalVisualContract{config: installed, exists: true}
-	manager, _, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
-		return &fakeNormalVisualRuntime{binding: binding}
-	})
-	if active, err := manager.Ensure(context.Background()); err != nil || !active {
-		t.Fatalf("activate exact managed intake runtime: active=%v err=%v", active, err)
-	}
-	original := dashboardNormalVisualRuntime.Load()
-	dashboardNormalVisualRuntime.Store(manager)
-	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(original) })
-
-	active, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "OWNER/REPOSITORY", true)
-	if err != nil || !active {
-		t.Fatalf("lease-free intake runtime rejected for managed authority transition: active=%v err=%v", active, err)
-	}
-
-	lease, err := claimNormalVisualDaemonLease(stateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { releaseDaemonLease(lease) })
-	if _, err := ensureNoVisualRuntimeBeforeSetup(stateDir, "owner/repository", true); err == nil || !strings.Contains(err.Error(), "intake-only controller unexpectedly holds") {
-		t.Fatalf("unexpected intake-only ownership lease was accepted: %v", err)
 	}
 }
 
@@ -343,52 +215,9 @@ func TestHostedPreflightRejectsManagedContractWithoutDurableState(t *testing.T) 
 	}))
 	defer server.Close()
 	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repository"}, slog.Default())
-	_, err := ensureManagedRepositoryContractBeforeSetup(context.Background(), client, t.TempDir(), "owner/repository", 123, "owner", "repository", "main")
+	err := ensureNoManagedRepositoryContractBeforeSetup(context.Background(), client, "owner", "repository", "main")
 	if err == nil || !strings.Contains(err.Error(), "setup-reset") {
 		t.Fatalf("orphaned managed contract was accepted by hosted preflight: %v", err)
-	}
-}
-
-func TestHostedPreflightAcceptsExactManagedContractUpdate(t *testing.T) {
-	stateRoot := t.TempDir()
-	checkout := filepath.Join(stateRoot, "integrated", "checkout")
-	contractPath := filepath.Join(checkout, ".hive", "integrated.json")
-	if err := os.MkdirAll(filepath.Dir(contractPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	contract := []byte("{\"schema_version\":\"hive.integrated.v1\",\"repository_id\":\"123\"}\n")
-	if err := os.WriteFile(contractPath, contract, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := integrated.NewStore(filepath.Join(stateRoot, "integrated"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save(integrated.Config{
-		Repository: "Owner/Repository", RepositoryID: "123", DefaultBranch: "main",
-		StateDir: stateRoot, CheckoutDir: checkout, SetupPRNumber: 9,
-		SetupHeadSHA: strings.Repeat("a", 40),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if request.URL.Path == "/repos/owner/repository/contents/.hive/integrated.json" {
-			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"type": "file", "path": ".hive/integrated.json", "name": "integrated.json",
-				"encoding": "base64", "content": base64.StdEncoding.EncodeToString(contract),
-			})
-			return
-		}
-		http.Error(writer, `{\"message\":\"not found\"}`, http.StatusNotFound)
-	}))
-	defer server.Close()
-	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repository"}, slog.Default())
-	managed, err := ensureManagedRepositoryContractBeforeSetup(
-		context.Background(), client, stateRoot, "owner/repository", 123, "owner", "repository", "main",
-	)
-	if err != nil || !managed {
-		t.Fatalf("exact managed contract update rejected: managed=%v err=%v", managed, err)
 	}
 }
 
@@ -397,22 +226,5 @@ func TestLocalSetupDoesNotRequireHostedPreflightReceipt(t *testing.T) {
 	request := dashboard.IntegratedSetupRequest{Repository: "owner/repository", Provider: "codex", VisualHiveRef: strings.Repeat("a", 40)}
 	if err := requireDashboardPreflightReceipt(context.Background(), request); err != nil {
 		t.Fatalf("ordinary local setup was changed by hosted preflight: %v", err)
-	}
-}
-
-func TestNormalizeDashboardPreflightProviderDefaultsModelForIssues(t *testing.T) {
-	normalized, err := normalizeDashboardPreflightProvider("codex", integrated.AutomationIssues)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(normalized.ProviderArgs) != 1 || normalized.ProviderArgs[0] != "--model=gpt-5.6-sol" {
-		t.Fatalf("issues preflight did not bind the audited Codex default: %v", normalized.ProviderArgs)
-	}
-}
-
-func TestVerifyDashboardPreflightProviderRejectsMissingModelCleanly(t *testing.T) {
-	_, err := verifyDashboardPreflightProvider(context.Background(), "/unused/codex", nil)
-	if err == nil || !strings.Contains(err.Error(), "configured Codex model is missing") || strings.Contains(err.Error(), "%!w") {
-		t.Fatalf("unexpected missing-model diagnostic: %v", err)
 	}
 }

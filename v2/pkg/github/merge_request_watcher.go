@@ -204,10 +204,8 @@ func (c *Client) ProcessMergeRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn func() time.Time) {
-	data, fileUID, err := readAgentRequest(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		c.writeMergeResult(path, MergeResponse{OK: false, Error: "invalid request file: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
-		_ = os.Rename(path, path+".bad")
 		return // vanished between ReadDir and here — fine
 	}
 	var req MergeRequest
@@ -222,6 +220,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// AUTHORIZE before merging — same policy as a direct merge would need: the
 	// request's agent must own the file AND be merge-capable at the hive's ACMM
 	// level. A nil authorizer fails closed.
+	fileUID := statUID(data, path)
 	if c.mergeAuthz == nil {
 		c.denyMergeRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return

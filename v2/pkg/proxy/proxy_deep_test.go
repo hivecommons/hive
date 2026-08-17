@@ -386,11 +386,9 @@ func TestProxyHTTPRepoFilterBlocked(t *testing.T) {
 
 	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
 
-	// PATCH an existing issue in a repo not in the allowed list, then close so
-	// proxyHTTP sees EOF. Direct issue creation has its own stronger hard-deny
-	// rule and therefore cannot exercise the repository filter.
+	// POST to a repo not in the allowed list, then close so proxyHTTP sees EOF
 	go func() {
-		fmt.Fprintf(clientConn, "PATCH /repos/org/forbidden-repo/issues/123 HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 2\r\n\r\n{}")
+		fmt.Fprintf(clientConn, "POST /repos/org/forbidden-repo/issues HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: 2\r\n\r\n{}")
 		// Give proxyHTTP time to read and respond, then close to unblock ReadAll
 		time.Sleep(200 * time.Millisecond)
 		clientConn.Close()

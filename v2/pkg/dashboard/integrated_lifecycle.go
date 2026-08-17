@@ -57,16 +57,16 @@ func (s *Server) handleIntegratedRead(w http.ResponseWriter, r *http.Request, op
 		jsonError(w, "integrated lifecycle is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	operator, repository, ok := s.authorizeIntegratedOwner(w, r)
+	token, repository, ok := s.authorizeIntegratedOwner(w, r)
 	if !ok {
 		return
 	}
 	result, err := s.deps.IntegratedLifecycleFunc(r.Context(), IntegratedLifecycleRequest{
 		Repository: repository,
 		Operation:  operation,
-	}, operator)
+	}, token)
 	if err != nil {
-		s.writeIntegratedLifecycleError(w, r, operation, repository, err)
+		s.writeIntegratedLifecycleError(w, r, operation, repository, token, err)
 		return
 	}
 	s.auditFromRequest(r, "integrated_"+operation, "", auditDetail("repository", repository))
@@ -97,7 +97,7 @@ func (s *Server) handleIntegratedBaseline(w http.ResponseWriter, r *http.Request
 		jsonError(w, "integrated lifecycle is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	operator, repository, ok := s.authorizeIntegratedOwner(w, r)
+	token, repository, ok := s.authorizeIntegratedOwner(w, r)
 	if !ok {
 		return
 	}
@@ -109,9 +109,9 @@ func (s *Server) handleIntegratedBaseline(w http.ResponseWriter, r *http.Request
 		Repository: repository,
 		Operation:  operation,
 		Baseline:   approval,
-	}, operator)
+	}, token)
 	if err != nil {
-		s.writeIntegratedLifecycleError(w, r, operation, repository, err)
+		s.writeIntegratedLifecycleError(w, r, operation, repository, token, err)
 		return
 	}
 	detail := auditDetail("repository", repository)
@@ -152,7 +152,7 @@ func (s *Server) handleIntegratedControl(w http.ResponseWriter, r *http.Request,
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	operator, repository, ok := s.authorizeIntegratedOwner(w, r)
+	token, repository, ok := s.authorizeIntegratedOwner(w, r)
 	if !ok {
 		return
 	}
@@ -167,9 +167,9 @@ func (s *Server) handleIntegratedControl(w http.ResponseWriter, r *http.Request,
 		RequestID:          request.RequestID,
 		ExpectedPlanSHA256: request.ExpectedPlanSHA256,
 		Baseline:           nil,
-	}, operator)
+	}, token)
 	if err != nil {
-		s.writeIntegratedLifecycleError(w, r, request.Operation, repository, err)
+		s.writeIntegratedLifecycleError(w, r, request.Operation, repository, token, err)
 		return
 	}
 	s.auditFromRequest(r, "integrated_control_"+map[bool]string{false: "plan", true: "apply"}[apply], "", auditDetail(
@@ -254,13 +254,13 @@ func decodeIntegratedJSON(w http.ResponseWriter, r *http.Request, target any) bo
 	return true
 }
 
-func (s *Server) writeIntegratedLifecycleError(w http.ResponseWriter, r *http.Request, operation, repository string, err error) {
+func (s *Server) writeIntegratedLifecycleError(w http.ResponseWriter, r *http.Request, operation, repository, token string, err error) {
 	reference := digestSetupError(err)
 	s.auditFromRequest(r, "integrated_"+strings.ReplaceAll(operation, "-", "_")+"_failed", "", auditDetail(
 		"repository", repository,
 		"error_sha256", reference,
 	))
-	jsonError(w, "integrated lifecycle operation failed: "+scrubIntegratedLifecycleError(err, "")+" (reference "+reference[:12]+")", http.StatusConflict)
+	jsonError(w, "integrated lifecycle operation failed: "+scrubIntegratedLifecycleError(err, token)+" (reference "+reference[:12]+")", http.StatusConflict)
 }
 
 func scrubIntegratedLifecycleError(err error, token string) string {

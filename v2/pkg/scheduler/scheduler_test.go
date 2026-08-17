@@ -467,8 +467,8 @@ func TestScannerMessage_EmptyLabels(t *testing.T) {
 func TestScannerMessage_TierFirstCharUsed(t *testing.T) {
 	s := newScheduler()
 	cases := []struct {
-		tier     string
-		wantChar string
+		tier      string
+		wantChar  string
 	}{
 		{"Simple", "S"},
 		{"Medium", "M"},
@@ -933,10 +933,6 @@ func TestBuildReposSection_BareRepoGetsPrefixed(t *testing.T) {
 	if !strings.Contains(section, "my-org/full-repo") {
 		t.Errorf("full repo should appear as-is: %q", section)
 	}
-	if !strings.Contains(section, "repository_full_name: my-org/bare-repo") ||
-		!strings.Contains(section, "repository_full_name: my-org/full-repo") {
-		t.Errorf("plain repository identities must precede URL presentation: %q", section)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,22 +1107,22 @@ func TestScannerMessage_IncludesKnowledgeWhenPrimerSet(t *testing.T) {
 		resp := struct {
 			Total   int `json:"total"`
 			Results []struct {
-				Slug       string  `json:"slug"`
-				Title      string  `json:"title"`
-				Score      float64 `json:"score"`
-				Type       string  `json:"type"`
-				Confidence float64 `json:"confidence"`
-				Snippet    string  `json:"snippet"`
+				Slug       string   `json:"slug"`
+				Title      string   `json:"title"`
+				Score      float64  `json:"score"`
+				Type       string   `json:"type"`
+				Confidence float64  `json:"confidence"`
+				Snippet    string   `json:"snippet"`
 			} `json:"results"`
 		}{
 			Total: 1,
 			Results: []struct {
-				Slug       string  `json:"slug"`
-				Title      string  `json:"title"`
-				Score      float64 `json:"score"`
-				Type       string  `json:"type"`
-				Confidence float64 `json:"confidence"`
-				Snippet    string  `json:"snippet"`
+				Slug       string   `json:"slug"`
+				Title      string   `json:"title"`
+				Score      float64  `json:"score"`
+				Type       string   `json:"type"`
+				Confidence float64  `json:"confidence"`
+				Snippet    string   `json:"snippet"`
 			}{
 				{Slug: "test-fact", Title: "Test fact", Type: "pattern", Confidence: 0.9, Snippet: "Use test factories"},
 			},

@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,7 +59,7 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 		jsonError(w, "invalid integrated setup request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	operator, repository, ok := s.authorizeIntegratedOwner(w, r)
+	token, repository, ok := s.authorizeIntegratedOwner(w, r)
 	if !ok {
 		return
 	}
@@ -73,9 +73,9 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 	if apply {
 		action = "integrated_setup_apply"
 	}
-	result, err := s.deps.IntegratedSetupFunc(r.Context(), request, operator)
+	result, err := s.deps.IntegratedSetupFunc(r.Context(), request, token)
 	if err != nil {
-		s.writeIntegratedLifecycleError(w, r, strings.TrimPrefix(action, "integrated_"), request.Repository, err)
+		s.writeIntegratedLifecycleError(w, r, strings.TrimPrefix(action, "integrated_"), request.Repository, token, err)
 		return
 	}
 	s.auditFromRequest(r, action, "", auditDetail(
@@ -88,36 +88,54 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 	jsonResponse(w, result)
 }
 
-func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request) (github.AuthenticatedUserIdentity, string, bool) {
+func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "integrated lifecycle is unavailable", http.StatusServiceUnavailable)
-		return github.AuthenticatedUserIdentity{}, "", false
+		return "", "", false
 	}
 	if s.authToken == "" && !s.directRouteAuthzEnabled() {
 		jsonError(w, "integrated lifecycle requires an authenticated dashboard", http.StatusUnauthorized)
-		return github.AuthenticatedUserIdentity{}, "", false
+		return "", "", false
 	}
-	if !requireOwnerRole(w, r) {
-		return github.AuthenticatedUserIdentity{}, "", false
+	role := strings.TrimSpace(r.Header.Get("X-Hive-Role"))
+	if role != "owner" {
+		jsonError(w, "only the hive owner may manage the integrated lifecycle", http.StatusForbidden)
+		return "", "", false
+	}
+	tokenLoader := func() (string, error) {
+		tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
+		return strings.TrimSpace(string(tokenData)), err
+	}
+	if s.deps.IntegratedSetupTokenFunc != nil {
+		tokenLoader = s.deps.IntegratedSetupTokenFunc
+	}
+	token, err := tokenLoader()
+	if err != nil || strings.TrimSpace(token) == "" {
+		jsonError(w, "owner GitHub authorization is required; complete the dashboard GitHub device-flow sign-in first", http.StatusConflict)
+		return "", "", false
+	}
+	authorizer := func(value string) (string, error) {
+		user, validateErr := github.ValidateToken(value, s.deps.Config.GitHub.ResolvedAPIURL())
+		if validateErr != nil {
+			return "", validateErr
+		}
+		if user == nil {
+			return "", errors.New("GitHub user is unavailable")
+		}
+		return strings.TrimSpace(user.Login), nil
+	}
+	if s.deps.IntegratedSetupAuthorizerFunc != nil {
+		authorizer = s.deps.IntegratedSetupAuthorizerFunc
+	}
+	username, err := authorizer(token)
+	if err != nil || username == "" {
+		jsonError(w, "saved owner GitHub authorization is invalid; sign in again through the dashboard", http.StatusConflict)
+		return "", "", false
 	}
 	actor := strings.TrimSpace(r.Header.Get("X-Hive-User"))
-	if actor == "" {
-		jsonError(w, "the authenticated dashboard owner identity is unavailable", http.StatusConflict)
-		return github.AuthenticatedUserIdentity{}, "", false
-	}
-	resolver := func(ctx context.Context, login string) (github.AuthenticatedUserIdentity, error) {
-		if s.deps.GHClient == nil {
-			return github.AuthenticatedUserIdentity{}, errors.New("GitHub App writer is unavailable")
-		}
-		return s.deps.GHClient.ResolveHumanNumericUser(ctx, login)
-	}
-	if s.deps.IntegratedOperatorResolverFunc != nil {
-		resolver = s.deps.IntegratedOperatorResolverFunc
-	}
-	operator, err := resolver(r.Context(), actor)
-	if err != nil || operator.ID <= 0 || !strings.EqualFold(operator.Login, actor) || !strings.EqualFold(operator.Type, "User") {
-		jsonError(w, "the authenticated dashboard owner could not be bound to an exact numeric GitHub identity", http.StatusConflict)
-		return github.AuthenticatedUserIdentity{}, "", false
+	if actor != "" && !strings.EqualFold(actor, username) {
+		jsonError(w, "the active dashboard owner does not match the saved GitHub setup authorizer", http.StatusForbidden)
+		return "", "", false
 	}
 	repository := strings.TrimSpace(s.deps.Config.Project.PrimaryRepo)
 	if repository == "" && len(s.deps.Config.Project.Repos) > 0 {
@@ -131,9 +149,9 @@ func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) {
 		jsonError(w, "the hive has no exact repository configured for the integrated lifecycle", http.StatusConflict)
-		return github.AuthenticatedUserIdentity{}, "", false
+		return "", "", false
 	}
-	return operator, repository, true
+	return token, repository, true
 }
 
 func validateIntegratedSetupRequest(request IntegratedSetupRequest, apply bool) error {

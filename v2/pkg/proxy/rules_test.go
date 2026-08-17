@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -28,7 +27,7 @@ func TestAllowedByMode(t *testing.T) {
 
 		// ── ISSUES_ONLY: issues yes, PRs no ──
 		{"issues-only allows GET", agent.ModeIssuesOnly, "GET", "/repos/org/repo/issues", true},
-		{"issues-only routes POST issue through Hive", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues", false},
+		{"issues-only allows POST issue", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues", true},
 		{"issues-only allows PATCH issue", agent.ModeIssuesOnly, "PATCH", "/repos/org/repo/issues/42", true},
 		{"issues-only allows comment", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/comments", true},
 		{"issues-only allows label", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/42/labels", true},
@@ -40,7 +39,7 @@ func TestAllowedByMode(t *testing.T) {
 
 		// ── ISSUES_AND_PRS: issues + PRs, no merge ──
 		{"prs allows GET", agent.ModeIssuesAndPRs, "GET", "/repos/org/repo/pulls", true},
-		{"prs routes POST issue through Hive", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/issues", false},
+		{"prs allows POST issue", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/issues", true},
 		// Direct PR creation is a hard deny for every mode — agents use hive-open-pr.
 		{"prs blocks direct POST pull", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", false},
 		{"prs allows PATCH pull", agent.ModeIssuesAndPRs, "PATCH", "/repos/org/repo/pulls/42", true},
@@ -53,7 +52,7 @@ func TestAllowedByMode(t *testing.T) {
 
 		// ── ISSUES_PRS_MERGE: everything allowed ──
 		{"merge allows GET", agent.ModeIssuesPRsMerge, "GET", "/repos/org/repo/issues", true},
-		{"merge routes POST issue through Hive", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues", false},
+		{"merge allows POST issue", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues", true},
 		// Even merge mode cannot POST /pulls directly — hive-open-pr is the only path.
 		{"merge blocks direct POST pull", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
 		// H1 (CWE-863): even merge mode cannot PUT /pulls/{n}/merge directly — it
@@ -89,9 +88,8 @@ func TestGraphQLAllowed(t *testing.T) {
 	}{
 		{"advisory allows query", agent.ModeAdvisory, `{"query":"query { repository(owner:\"org\",name:\"repo\") { issues { totalCount } } }"}`, true, false},
 		{"advisory blocks mutation", agent.ModeAdvisory, `{"query":"mutation { createIssue(input:{repositoryId:\"R_1\",title:\"test\"}) { issue { id } } }"}`, false, true},
-		{"issues-only routes createIssue through Hive", agent.ModeIssuesOnly, `{"query":"mutation { createIssue(input:{repositoryId:\"R_1\",title:\"test\"}) { issue { id } } }"}`, false, true},
-		{"issues-and-prs routes createIssue through Hive", agent.ModeIssuesAndPRs, `{"query":"mutation { createIssue(input:{}) { issue { id } } }"}`, false, true},
-		{"issues-only allows unrelated mutation", agent.ModeIssuesOnly, `{"query":"mutation { addComment(input:{}) { clientMutationId } }"}`, true, true},
+		{"issues-only allows mutation", agent.ModeIssuesOnly, `{"query":"mutation { createIssue(input:{repositoryId:\"R_1\",title:\"test\"}) { issue { id } } }"}`, true, true},
+		{"issues-and-prs allows mutation", agent.ModeIssuesAndPRs, `{"query":"mutation { createIssue(input:{}) { issue { id } } }"}`, true, true},
 		{"advisory blocks malformed json", agent.ModeAdvisory, `not json`, false, false},
 		{"advisory allows empty query", agent.ModeAdvisory, `{"query":"{ viewer { login } }"}`, true, false},
 	}
@@ -106,17 +104,6 @@ func TestGraphQLAllowed(t *testing.T) {
 				t.Errorf("GraphQLAllowed(%v) isMutation = %v, want %v", tt.mode, isMutation, tt.wantMutate)
 			}
 		})
-	}
-}
-
-func TestGraphQLCreateIssueCarriesHiveDirective(t *testing.T) {
-	body := []byte(`{"query":"mutation { createIssue(input:{}) { issue { id } } }"}`)
-	msg, denied := GraphQLDeniedMessage(body)
-	if !denied || !strings.Contains(msg, "hive-open-issue") {
-		t.Fatalf("createIssue denial should direct the agent to Hive, denied=%v msg=%q", denied, msg)
-	}
-	if msg, denied := GraphQLDeniedMessage([]byte(`{"query":"mutation { addComment(input:{}) { clientMutationId } }"}`)); denied || msg != "" {
-		t.Fatalf("unrelated mutation received issue-create denial: denied=%v msg=%q", denied, msg)
 	}
 }
 

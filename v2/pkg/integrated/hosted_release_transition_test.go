@@ -384,26 +384,6 @@ func advanceHostedReleaseTransitionToPullRecorded(t *testing.T, fixture hostedRe
 	return saveLoadHostedReleaseTransition(t, fixture.store, intent)
 }
 
-func TestHostedReleaseTransitionPullBindsAppStatusWriterSeparatelyFromHumanActor(t *testing.T) {
-	candidate := HostedReleaseTransitionCandidateConfig(Config{
-		SetupAuthorizationActorID: 456, SetupAuthorizationActorLogin: "owner",
-		SetupAuthorizationWriterID: 202, SetupAuthorizationWriterLogin: "hive-test[bot]", SetupAuthorizationWriterType: "Bot",
-		SetupAuthorizationAppID: 99, SetupAuthorizationInstallationID: 77,
-	})
-	intent := HostedReleaseTransitionIntent{
-		Repository: "owner/repo", SetupPRNumber: 17, SetupPRURL: "https://github.com/owner/repo/pull/17",
-		SetupAuthorizationContext:  SetupAuthorizationContextPrefix + strings.Repeat("e", 64),
-		SetupAuthorizationStatusID: 701, SetupAuthorizationCreatorID: 202, CandidateConfig: &candidate,
-	}
-	if !validHostedTransitionPull(intent) {
-		t.Fatal("App status writer was incorrectly required to equal the human setup actor")
-	}
-	intent.SetupAuthorizationCreatorID = 456
-	if validHostedTransitionPull(intent) {
-		t.Fatal("human setup actor was accepted as the App-written status creator")
-	}
-}
-
 func advanceHostedReleaseTransitionToSetupPrepared(t *testing.T, fixture hostedReleaseTransitionFixture) HostedReleaseTransitionIntent {
 	t.Helper()
 	intent := advanceHostedReleaseTransitionToSourceStatusVerified(t, fixture)

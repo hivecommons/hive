@@ -43,9 +43,6 @@ type AuthorizerTransferIntent struct {
 	OldAuthorizerLogin   string        `json:"old_authorizer_login"`
 	NewAuthorizerID      int64         `json:"new_authorizer_id"`
 	NewAuthorizerLogin   string        `json:"new_authorizer_login"`
-	WriterID             int64         `json:"writer_id,omitempty"`
-	WriterLogin          string        `json:"writer_login,omitempty"`
-	WriterType           string        `json:"writer_type,omitempty"`
 	Reason               string        `json:"reason"`
 	Branch               string        `json:"branch"`
 	BaseSHA              string        `json:"base_sha"`
@@ -65,13 +62,12 @@ type AuthorizerTransferIntent struct {
 }
 
 type AuthorizerTransferOptions struct {
-	StateDir           string
-	NewAuthorizer      string
-	Reason             string
-	Cancel             bool
-	GitHub             *hivegithub.Client
-	GitTransportToken  string
-	AuthorizationActor hivegithub.AuthenticatedUserIdentity
+	StateDir          string
+	NewAuthorizer     string
+	Reason            string
+	Cancel            bool
+	GitHub            *hivegithub.Client
+	GitTransportToken string
 }
 
 type AuthorizerTransferResult struct {
@@ -146,11 +142,6 @@ func validateAuthorizerTransferIntent(intent AuthorizerTransferIntent) error {
 	if _, err := hex.DecodeString(intent.SourceConfigDigest); err != nil {
 		return fmt.Errorf("setup authorizer transfer source config digest is invalid")
 	}
-	if (intent.WriterID <= 0 && (strings.TrimSpace(intent.WriterLogin) != "" || strings.TrimSpace(intent.WriterType) != "")) ||
-		(intent.WriterID > 0 && (strings.TrimSpace(intent.WriterLogin) == "" ||
-			(!strings.EqualFold(intent.WriterType, "User") && !strings.EqualFold(intent.WriterType, "Bot")))) {
-		return fmt.Errorf("setup authorizer transfer writer binding is invalid")
-	}
 	allowed := map[string]bool{}
 	for _, path := range managedSetupFilesForMode(intent.VisualHive, normalizedExecutionMode(intent.ExecutionMode)) {
 		allowed[path] = true
@@ -181,12 +172,8 @@ func validateAuthorizerTransferIntent(intent AuthorizerTransferIntent) error {
 		}
 		return nil
 	}
-	expectedCreator := intent.WriterID
-	if expectedCreator <= 0 { // Legacy PAT intent written before actor/writer separation.
-		expectedCreator = intent.OldAuthorizerID
-	}
-	if intent.AuthorizationStatus <= 0 || intent.AuthorizationCreator != expectedCreator || intent.AuthorizedAt.IsZero() {
-		return fmt.Errorf("authorized setup authorizer transfer lacks exact writer status evidence")
+	if intent.AuthorizationStatus <= 0 || intent.AuthorizationCreator != intent.OldAuthorizerID || intent.AuthorizedAt.IsZero() {
+		return fmt.Errorf("authorized setup authorizer transfer lacks exact old-actor status evidence")
 	}
 	return nil
 }
@@ -248,16 +235,12 @@ func RunAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOption
 	if config.SetupAuthorizationActorID <= 0 {
 		return fail(fmt.Errorf("the installed setup has no numeric authorizer to transfer"))
 	}
-	current, err := resolveManagedOperatorIdentity(ctx, options.GitHub, config, options.AuthorizationActor, "setup-authorizer-transfer")
+	current, err := options.GitHub.AuthenticatedNumericUser(ctx)
 	if err != nil {
 		return fail(err)
 	}
 	if current.ID != config.SetupAuthorizationActorID {
 		return fail(fmt.Errorf("setup authorizer transfer is bound to current GitHub user ID %d, but the authenticated user is %d", config.SetupAuthorizationActorID, current.ID))
-	}
-	writer, err := authorizerTransferWriter(config, AuthorizerTransferIntent{}, current)
-	if err != nil {
-		return fail(err)
 	}
 	target, err := options.GitHub.ResolveHumanNumericUser(ctx, options.NewAuthorizer)
 	if err != nil {
@@ -298,7 +281,6 @@ func RunAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOption
 	}
 	candidate := config
 	candidate.SetupAuthorizationActorID = target.ID
-	candidate.SetupAuthorizationActorLogin = target.Login
 	candidate.SetupAuthorizationPreviousActorID = current.ID
 	candidate.SetupBranch = branch
 	candidate.SetupPRNumber, candidate.SetupPRURL = 0, ""
@@ -343,7 +325,6 @@ func RunAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOption
 		SchemaVersion: authorizerTransferIntentSchema, Phase: authorizerTransferPrepared,
 		Repository: config.Repository, RepositoryID: config.RepositoryID, DefaultBranch: defaultBranch, VisualHive: config.VisualHive, ExecutionMode: config.ExecutionMode, SourceConfigDigest: sourceDigest,
 		OldAuthorizerID: current.ID, OldAuthorizerLogin: current.Login, NewAuthorizerID: target.ID, NewAuthorizerLogin: target.Login,
-		WriterID: writer.ID, WriterLogin: writer.Login, WriterType: writer.Type,
 		Reason: options.Reason, Branch: branch, BaseSHA: baseSHA, HeadSHA: strings.ToLower(strings.TrimSpace(headSHA)),
 		Marker: marker, ChangedFiles: changedFiles, PreparedAt: time.Now().UTC(),
 	}
@@ -367,7 +348,7 @@ func resumeAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOpt
 	if err := validateAuthorizerTransferBinding(intent, config); err != nil {
 		return fail(err)
 	}
-	current, err := resolveManagedOperatorIdentity(ctx, options.GitHub, config, options.AuthorizationActor, "setup-authorizer-transfer")
+	current, err := options.GitHub.AuthenticatedNumericUser(ctx)
 	if err != nil {
 		return fail(err)
 	}
@@ -432,14 +413,9 @@ func resumeAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOpt
 	if snapshot.Merged && current.ID != intent.OldAuthorizerID && current.ID != intent.NewAuthorizerID {
 		return fail(fmt.Errorf("merged transfer finalization requires the exact old or explicitly designated new authorizer identity"))
 	}
-	writer, err := authorizerTransferWriter(config, intent, current)
-	if err != nil {
-		return fail(err)
-	}
 	statusRequest := hivegithub.SetupAuthorizationStatusRequest{
 		Repository: intent.Repository, HeadSHA: intent.HeadSHA, Context: intent.AuthorizationContext,
-		TargetURL: intent.PRURL, ExpectedCreatorID: writer.ID,
-		ExpectedCreatorLogin: writer.Login, ExpectedCreatorType: writer.Type,
+		TargetURL: intent.PRURL, ExpectedCreatorID: intent.OldAuthorizerID,
 	}
 	status, statusErr := options.GitHub.VerifySetupAuthorizationStatus(ctx, statusRequest)
 	if statusErr != nil {
@@ -449,9 +425,6 @@ func resumeAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOpt
 		authorizationConfig := config
 		authorizationConfig.SetupBranch = intent.Branch
 		authorizationConfig.SetupAuthorizationActorID = intent.OldAuthorizerID
-		authorizationConfig.SetupAuthorizationWriterID = writer.ID
-		authorizationConfig.SetupAuthorizationWriterLogin = writer.Login
-		authorizationConfig.SetupAuthorizationWriterType = writer.Type
 		authorization, err := authorizeManagedSetupPullRequest(ctx, store, options.GitHub, integratedPolicy(config), authorizationConfig, string(OperationAuthorizerTransfer), config.CheckoutDir, intent.Branch, intent.HeadSHA, intent.PRURL, intent.PRNumber)
 		if err != nil {
 			return fail(err)
@@ -461,8 +434,8 @@ func resumeAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOpt
 		}
 		status = authorization.Status
 	}
-	if status.CreatorID != writer.ID || status.StatusID <= 0 || status.Context != intent.AuthorizationContext {
-		return fail(fmt.Errorf("setup authorizer transfer status is not the exact App/PAT writer authorization"))
+	if status.CreatorID != intent.OldAuthorizerID || status.StatusID <= 0 || status.Context != intent.AuthorizationContext {
+		return fail(fmt.Errorf("setup authorizer transfer status is not the exact old-actor authorization"))
 	}
 	if intent.Phase != authorizerTransferAuthorized || intent.AuthorizationStatus != status.StatusID || intent.AuthorizationCreator != status.CreatorID {
 		intent.Phase, intent.AuthorizationStatus, intent.AuthorizationCreator, intent.AuthorizedAt = authorizerTransferAuthorized, status.StatusID, status.CreatorID, time.Now().UTC()
@@ -520,7 +493,7 @@ func cancelAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOpt
 	if config.SetupAuthorizationActorID != intent.OldAuthorizerID {
 		return fail(fmt.Errorf("setup authorizer transfer has already advanced local authority; cancellation is forbidden and exact finalization is required"))
 	}
-	current, err := resolveManagedOperatorIdentity(ctx, options.GitHub, config, options.AuthorizationActor, "cancel-setup-authorizer-transfer")
+	current, err := options.GitHub.AuthenticatedNumericUser(ctx)
 	if err != nil {
 		return fail(err)
 	}
@@ -568,7 +541,6 @@ func bindAuthorizerTransferPull(ctx context.Context, config Config, intent Autho
 	binding, diff, err := BuildSetupAuthorizationBindingWithDiff(ctx, SetupAuthorizationRequest{
 		CheckoutDir: config.CheckoutDir, Repository: config.Repository, RepositoryID: config.RepositoryID, PullRequest: snapshot.Number,
 		HeadRef: intent.Branch, HeadSHA: intent.HeadSHA, BaseRef: intent.DefaultBranch, BaseSHA: intent.BaseSHA, AuthorizerID: intent.OldAuthorizerID,
-		WriterID: intent.WriterID, WriterLogin: intent.WriterLogin, WriterType: intent.WriterType,
 		RequiredPresent: authorizerTransferRequiredFiles(config), RequiredAbsent: authorizerTransferAbsentFiles(config),
 	})
 	if err != nil {
@@ -626,24 +598,13 @@ func validateAuthorizerTransferBinding(intent AuthorizerTransferIntent, config C
 		!validAuthorizerTransferMarker(intent.Marker, config.Repository, intent.OldAuthorizerID, intent.NewAuthorizerID) {
 		return fmt.Errorf("durable setup authorizer transfer no longer matches repository identity")
 	}
-	if intent.WriterID > 0 {
-		writer, ok := setupAuthorizationWriter(config)
-		legacyPAT := config.SetupAuthorizationAppID == 0 && config.SetupAuthorizationInstallationID == 0 &&
-			intent.WriterID == config.SetupAuthorizationActorID && strings.EqualFold(intent.WriterType, "User") &&
-			(strings.TrimSpace(config.SetupAuthorizationActorLogin) == "" || strings.EqualFold(config.SetupAuthorizationActorLogin, intent.WriterLogin))
-		if (!ok || writer.ID != intent.WriterID || !strings.EqualFold(writer.Login, intent.WriterLogin) || !strings.EqualFold(writer.Type, intent.WriterType)) && !legacyPAT {
-			return fmt.Errorf("durable setup authorizer transfer no longer matches its GitHub writer")
-		}
-	}
 	if config.SetupAuthorizationActorID == intent.NewAuthorizerID {
-		if (strings.TrimSpace(config.SetupAuthorizationActorLogin) != "" && !strings.EqualFold(config.SetupAuthorizationActorLogin, intent.NewAuthorizerLogin)) ||
-			config.SetupBranch != intent.Branch || config.SetupPRNumber != intent.PRNumber || config.SetupPRURL != intent.PRURL {
+		if config.SetupBranch != intent.Branch || config.SetupPRNumber != intent.PRNumber || config.SetupPRURL != intent.PRURL {
 			return fmt.Errorf("partially finalized setup authorizer transfer does not match durable pull identity")
 		}
 		return nil
 	}
-	if config.SetupAuthorizationActorID != intent.OldAuthorizerID ||
-		(strings.TrimSpace(config.SetupAuthorizationActorLogin) != "" && !strings.EqualFold(config.SetupAuthorizationActorLogin, intent.OldAuthorizerLogin)) {
+	if config.SetupAuthorizationActorID != intent.OldAuthorizerID {
 		return fmt.Errorf("durable setup authorizer transfer old actor no longer matches local authority")
 	}
 	digest, err := authorizerTransferSourceConfigDigest(config)
@@ -654,29 +615,6 @@ func validateAuthorizerTransferBinding(intent AuthorizerTransferIntent, config C
 		return fmt.Errorf("durable setup policy changed while authorizer transfer was pending")
 	}
 	return nil
-}
-
-func authorizerTransferWriter(config Config, intent AuthorizerTransferIntent, current hivegithub.AuthenticatedUserIdentity) (hivegithub.AuthenticatedUserIdentity, error) {
-	if intent.WriterID > 0 {
-		writer := hivegithub.AuthenticatedUserIdentity{ID: intent.WriterID, Login: intent.WriterLogin, Type: intent.WriterType}
-		if err := validateAuthorizerTransferBinding(intent, config); err != nil {
-			return hivegithub.AuthenticatedUserIdentity{}, err
-		}
-		return writer, nil
-	}
-	writer, ok := setupAuthorizationWriter(config)
-	if !ok {
-		return hivegithub.AuthenticatedUserIdentity{}, fmt.Errorf("setup authorizer transfer requires an exact GitHub writer binding")
-	}
-	if strings.TrimSpace(writer.Login) == "" && config.SetupAuthorizationAppID == 0 && config.SetupAuthorizationInstallationID == 0 &&
-		writer.ID == current.ID && strings.EqualFold(current.Type, "User") {
-		writer = current
-	}
-	if writer.ID <= 0 || strings.TrimSpace(writer.Login) == "" ||
-		(!strings.EqualFold(writer.Type, "User") && !strings.EqualFold(writer.Type, "Bot")) {
-		return hivegithub.AuthenticatedUserIdentity{}, fmt.Errorf("setup authorizer transfer requires a complete GitHub writer binding")
-	}
-	return writer, nil
 }
 
 func authorizerTransferSourceConfigDigest(config Config) (string, error) {
@@ -693,7 +631,6 @@ func authorizerTransferSourceConfigDigest(config Config) (string, error) {
 func authorizerTransferCandidate(config Config, intent AuthorizerTransferIntent) Config {
 	candidate := config
 	candidate.SetupAuthorizationActorID = intent.NewAuthorizerID
-	candidate.SetupAuthorizationActorLogin = intent.NewAuthorizerLogin
 	candidate.SetupAuthorizationPreviousActorID = intent.OldAuthorizerID
 	candidate.SetupBranch, candidate.SetupPRNumber, candidate.SetupPRURL = intent.Branch, intent.PRNumber, intent.PRURL
 	return candidate
@@ -754,7 +691,7 @@ func rejectPendingAuthorizerTransfer(store *Store, stateDir, operation string) e
 }
 
 func authorizerTransferAuditDetail(intent AuthorizerTransferIntent, actor, suffix string) string {
-	value := fmt.Sprintf("actor=%s old=%s/%d new=%s/%d writer=%s/%d/%s branch=%s head=%s pr=%d reason=%q", actor, intent.OldAuthorizerLogin, intent.OldAuthorizerID, intent.NewAuthorizerLogin, intent.NewAuthorizerID, intent.WriterLogin, intent.WriterID, intent.WriterType, intent.Branch, intent.HeadSHA, intent.PRNumber, intent.Reason)
+	value := fmt.Sprintf("actor=%s old=%s/%d new=%s/%d branch=%s head=%s pr=%d reason=%q", actor, intent.OldAuthorizerLogin, intent.OldAuthorizerID, intent.NewAuthorizerLogin, intent.NewAuthorizerID, intent.Branch, intent.HeadSHA, intent.PRNumber, intent.Reason)
 	if strings.TrimSpace(suffix) != "" {
 		value += " " + strings.TrimSpace(suffix)
 	}

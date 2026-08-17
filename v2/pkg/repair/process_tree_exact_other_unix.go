@@ -8,6 +8,6 @@ import (
 	"os/exec"
 )
 
-func startExactRepairProcessTree(context.Context, *exec.Cmd, codexProviderFileIdentity, codexProviderFileIdentity) (func() error, error) {
+func startExactRepairProcessTree(context.Context, *exec.Cmd, codexProviderFileIdentity) (func() error, error) {
 	return nil, errors.New("exact specialist process-tree containment is unavailable on this Unix host")
 }

@@ -1,4 +1,4 @@
-ARG VISUAL_HIVE_REF=a488292edfeb04fa4b2902782522ce4d9b79606f
+ARG VISUAL_HIVE_REF=1de3765924043ba87d46f200e8883b9233d94a18
 
 FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS visual-hive-builder
 ARG VISUAL_HIVE_REF
@@ -395,7 +395,6 @@ COPY v2/deploy/hive-panes.sh /usr/local/bin/hive-panes
 COPY bin/gh-app-token.sh bin/hive-config.sh bin/agent-launch.sh bin/git-credential-hive.sh /usr/local/bin/
 COPY bin/hive-open-pr.sh /usr/local/bin/hive-open-pr
 COPY bin/hive-merge.sh /usr/local/bin/hive-merge
-COPY bin/hive-open-issue.sh /usr/local/bin/hive-open-issue
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
 # SDK-based copilot model discovery helper (see Layer 3b). Invoked as
 # `node /usr/local/bin/copilot-models.mjs` by the dashboard, so no exec bit.
@@ -403,8 +402,7 @@ COPY bin/copilot-models.mjs /usr/local/bin/copilot-models.mjs
 COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
-    /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge \
-    /usr/local/bin/hive-open-issue
+    /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
 
 # SECURITY (audit F5-egress / refs #2674, #2678, #3760): the hive process needs
 # CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can stamp SO_MARK on its

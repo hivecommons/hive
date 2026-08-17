@@ -41,7 +41,7 @@ func TestAllowedByModeExtended(t *testing.T) {
 		{"advisory cannot create issues", agent.ModeAdvisory, "POST", "/repos/org/repo/issues", false},
 		{"advisory cannot create PRs", agent.ModeAdvisory, "POST", "/repos/org/repo/pulls", false},
 
-		{"issues-only routes issue creation through Hive", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues", false},
+		{"issues-only can create issues", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues", true},
 		{"issues-only can comment", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/1/comments", true},
 		{"issues-only cannot create PRs", agent.ModeIssuesOnly, "POST", "/repos/org/repo/pulls", false},
 
@@ -82,7 +82,7 @@ func TestGraphQLAllowedExtended(t *testing.T) {
 	}{
 		{"query in advisory", agent.ModeAdvisory, `{"query":"{ viewer { login } }"}`, true, false},
 		{"mutation in advisory", agent.ModeAdvisory, `{"query":"mutation { createIssue(...) { ... } }"}`, false, true},
-		{"createIssue in issues-only routes through Hive", agent.ModeIssuesOnly, `{"query":"mutation { createIssue(...) { ... } }"}`, false, true},
+		{"mutation in issues-only", agent.ModeIssuesOnly, `{"query":"mutation { createIssue(...) { ... } }"}`, true, true},
 		{"invalid json", agent.ModeAdvisory, `not json`, false, false},
 		{"empty query", agent.ModeAdvisory, `{"query":""}`, true, false},
 		{"multi-line mutation", agent.ModeAdvisory, `{"query":"query Q { viewer { login } }\nmutation M { createIssue { id } }"}`, false, true},

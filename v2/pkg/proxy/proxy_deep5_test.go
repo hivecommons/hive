@@ -21,10 +21,10 @@ import (
 func TestExtractSNISessionIDTruncatesCipherSuites(t *testing.T) {
 	// Session ID so large that there's no room for cipher suites length
 	chBody := make([]byte, 0, 40)
-	chBody = append(chBody, 0x03, 0x03)          // version
+	chBody = append(chBody, 0x03, 0x03) // version
 	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 2)                   // session ID length = 2
-	chBody = append(chBody, 0xAA)                // only 1 byte of session ID (truncated)
+	chBody = append(chBody, 2)  // session ID length = 2
+	chBody = append(chBody, 0xAA) // only 1 byte of session ID (truncated)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -44,10 +44,10 @@ func TestExtractSNISessionIDTruncatesCipherSuites(t *testing.T) {
 func TestExtractSNITruncatedCipherSuites(t *testing.T) {
 	// Build a ClientHello where cipher suites length points past the data
 	chBody := make([]byte, 0, 128)
-	chBody = append(chBody, 0x03, 0x03)          // version
+	chBody = append(chBody, 0x03, 0x03) // version
 	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 0)                   // session ID len = 0
-	chBody = append(chBody, 0x00, 0xFF)          // cipher suites length = 255 (way past data)
+	chBody = append(chBody, 0) // session ID len = 0
+	chBody = append(chBody, 0x00, 0xFF) // cipher suites length = 255 (way past data)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -69,9 +69,9 @@ func TestExtractSNITruncatedCompression(t *testing.T) {
 	chBody := make([]byte, 0, 128)
 	chBody = append(chBody, 0x03, 0x03)
 	chBody = append(chBody, make([]byte, 32)...)
-	chBody = append(chBody, 0)                      // session ID
+	chBody = append(chBody, 0) // session ID
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites (2 bytes)
-	chBody = append(chBody, 0xFF)                   // compression methods length = 255 (past data)
+	chBody = append(chBody, 0xFF) // compression methods length = 255 (past data)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -93,10 +93,10 @@ func TestExtractSNITruncatedExtensionsLen(t *testing.T) {
 	chBody := make([]byte, 0, 128)
 	chBody = append(chBody, 0x03, 0x03)
 	chBody = append(chBody, make([]byte, 32)...)
-	chBody = append(chBody, 0)                      // session ID
+	chBody = append(chBody, 0) // session ID
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites
-	chBody = append(chBody, 0x01, 0x00)             // compression
-	chBody = append(chBody, 0x00)                   // only 1 byte of extensions length (need 2)
+	chBody = append(chBody, 0x01, 0x00) // compression
+	chBody = append(chBody, 0x00) // only 1 byte of extensions length (need 2)
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -252,7 +252,7 @@ func TestExtractSNITruncatedName(t *testing.T) {
 func TestExtractSNITruncatedSessionID(t *testing.T) {
 	// After random (34 bytes), session ID length byte goes past data
 	chBody := make([]byte, 0, 35)
-	chBody = append(chBody, 0x03, 0x03)          // version
+	chBody = append(chBody, 0x03, 0x03)     // version
 	chBody = append(chBody, make([]byte, 32)...) // random
 	// No session ID length byte — end of data
 
@@ -617,11 +617,10 @@ func TestProxyHTTPSuccessfulRoundtrip(t *testing.T) {
 
 	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
 
-	// Request 1: allowed POST (comment on an existing issue). New issue
-	// creation is mediated by hive-open-issue.
-	body := `{"body":"diagnosis"}`
+	// Request 1: allowed POST (create issue)
+	body := `{"title":"test"}`
 	go func() {
-		fmt.Fprintf(clientConn, "POST /repos/org/repo/issues/7/comments HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+		fmt.Fprintf(clientConn, "POST /repos/org/repo/issues HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
 		// After getting response, close
 		time.Sleep(300 * time.Millisecond)
 		clientConn.Close()

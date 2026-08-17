@@ -159,14 +159,11 @@ assert_contains "$ENTRYPOINT" \
 
 # 11. An explicit writable HIVE_CONFIG remains writable after root setup.
 assert_contains "$ENTRYPOINT" \
-  'chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY"' \
-  "custom and persistent runtime config ownership are normalized"
+  'chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"' \
+  "custom config and backup ownership are normalized"
 assert_contains "$ENTRYPOINT" \
-  'chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY"' \
-  "custom and persistent runtime config are writable only by ordinary Hive"
-assert_not_contains_literal "$ENTRYPOINT" \
-  'HIVE_CONFIG_BACKUP' \
-  "removed runtime-config alias cannot silently skip PVC ownership repair"
+  'chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"' \
+  "custom config is writable only by ordinary Hive"
 
 # 12. Image seed files must not recreate root-owned runtime paths after the
 # mounted volume ownership repair.

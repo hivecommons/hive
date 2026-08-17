@@ -24,11 +24,7 @@ func hostedRuntimeConfigFixture(t *testing.T, root string, release HostedRelease
 		VisualHiveRepo: "DavidDiaz0317/visual-hive", VisualHiveRef: release.VisualHiveCommit, VisualHiveConfigDigest: strings.Repeat("d", 64),
 		TestCommands: [][]string{{"npm", "test"}}, AllowedRepairPaths: []string{"tests/**"},
 		AllowedAutoMergePaths: []string{"tests/**"}, CheckoutDir: filepath.Join(root, "old-checkout"), StateDir: root,
-		Paused: false, SetupAuthorizationActorID: 99, SetupAuthorizationActorLogin: "Owner",
-		SetupAuthorizationWriterID: 202, SetupAuthorizationWriterLogin: "hive-test[bot]", SetupAuthorizationWriterType: "Bot",
-		SetupAuthorizationAppID: 303, SetupAuthorizationInstallationID: 404,
-		SetupAuthorizationPermissionDigest: strings.Repeat("5", 64), SetupAuthorizationAppBindingDigest: strings.Repeat("6", 64),
-		InstalledAt: time.Now().UTC(),
+		Paused: false, SetupAuthorizationActorID: 99, InstalledAt: time.Now().UTC(),
 	}
 	return bindHostedWorkflowDigest(t, config)
 }
@@ -77,16 +73,6 @@ func TestPrepareHostedRuntimeTransitionsOnlyFromExactManagedPredecessor(t *testi
 	}
 	if prepared.PreviousHostedRelease == nil || !equalHostedReleaseIdentity(*prepared.PreviousHostedRelease, previous) {
 		t.Fatalf("hosted runtime lost its exact predecessor binding: %+v", prepared.PreviousHostedRelease)
-	}
-	if prepared.SetupAuthorizationActorLogin != candidate.SetupAuthorizationActorLogin ||
-		prepared.SetupAuthorizationWriterID != candidate.SetupAuthorizationWriterID ||
-		prepared.SetupAuthorizationWriterLogin != candidate.SetupAuthorizationWriterLogin ||
-		prepared.SetupAuthorizationWriterType != candidate.SetupAuthorizationWriterType ||
-		prepared.SetupAuthorizationAppID != candidate.SetupAuthorizationAppID ||
-		prepared.SetupAuthorizationInstallationID != candidate.SetupAuthorizationInstallationID ||
-		prepared.SetupAuthorizationPermissionDigest != candidate.SetupAuthorizationPermissionDigest ||
-		prepared.SetupAuthorizationAppBindingDigest != candidate.SetupAuthorizationAppBindingDigest {
-		t.Fatalf("hosted runtime lost the operator/App writer binding: %+v", prepared)
 	}
 
 	if err := store.Save(durable); err != nil {

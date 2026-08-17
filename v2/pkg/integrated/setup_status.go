@@ -64,14 +64,9 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 		requiredPresent = append(requiredPresent, ".github/workflows/visual-hive-pr.yml", "docs/visual-hive.md", "visual-hive.config.yaml")
 		requiredAbsent = append(requiredAbsent, standaloneVisualHiveWriterWorkflowPaths()...)
 	}
-	writer, writerBound := setupAuthorizationWriter(config)
-	if !writerBound {
-		return result, fmt.Errorf("setup authorization has no exact GitHub writer binding")
-	}
 	binding, diff, err := BuildSetupAuthorizationBindingWithDiff(ctx, SetupAuthorizationRequest{
 		CheckoutDir: checkout, Repository: config.Repository, RepositoryID: config.RepositoryID, PullRequest: pullNumber,
 		HeadRef: branch, HeadSHA: expectedHead, BaseRef: config.DefaultBranch, BaseSHA: baseSHA, AuthorizerID: config.SetupAuthorizationActorID,
-		WriterID: writer.ID, WriterLogin: writer.Login, WriterType: writer.Type,
 		RequiredPresent: requiredPresent, RequiredAbsent: requiredAbsent,
 	})
 	if err != nil {
@@ -99,13 +94,12 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 	}
 	status, err := client.EnsureSetupAuthorizationStatus(ctx, hivegithub.SetupAuthorizationStatusRequest{
 		Repository: config.Repository, HeadSHA: expectedHead, Context: statusContext, TargetURL: live.GetHTMLURL(),
-		Description: fmt.Sprintf("Hive exact %s PR #%d diff %.12s", operation, pullNumber, diff.SHA256), ExpectedCreatorID: writer.ID,
-		ExpectedCreatorLogin: writer.Login, ExpectedCreatorType: writer.Type,
+		Description: fmt.Sprintf("Hive exact %s PR #%d diff %.12s", operation, pullNumber, diff.SHA256), ExpectedCreatorID: config.SetupAuthorizationActorID,
 	})
 	if err != nil {
 		return result, fmt.Errorf("authorize exact setup pull request status: %w", err)
 	}
-	detail := fmt.Sprintf("operation=%s pr=%d head=%s base=%s branch=%s diff=%s context=%s actor_id=%d writer_id=%d writer_login=%s writer_type=%s status_id=%d reused=%t recovered=%t", operation, pullNumber, expectedHead, baseSHA, branch, diff.SHA256, statusContext, config.SetupAuthorizationActorID, writer.ID, writer.Login, writer.Type, status.StatusID, status.Reused, status.Recovered)
+	detail := fmt.Sprintf("operation=%s pr=%d head=%s base=%s branch=%s diff=%s context=%s actor_id=%d status_id=%d reused=%t recovered=%t", operation, pullNumber, expectedHead, baseSHA, branch, diff.SHA256, statusContext, config.SetupAuthorizationActorID, status.StatusID, status.Reused, status.Recovered)
 	if err := store.AuditStrict(AuditEntry{Action: "bind_setup_status", Allowed: true, Repository: config.Repository, Detail: detail}); err != nil {
 		return result, fmt.Errorf("persist exact setup status audit: %w", err)
 	}

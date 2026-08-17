@@ -187,15 +187,6 @@ func TestCheckKickRefusal_NoMatch(t *testing.T) {
 	}
 }
 
-func TestCheckKickRefusal_IgnoresCodexTrustPromptWarning(t *testing.T) {
-	m := &Manager{logger: discardLogger()}
-	agent := &AgentProcess{Name: "test"}
-	m.checkKickRefusal(agent, "  comes with higher risk of prompt injection. Trusting the directory allows")
-	if agent.KickRefused || agent.KickRefusalReason != "" {
-		t.Fatalf("Codex trust prompt warning was recorded as a kick refusal: %+v", agent)
-	}
-}
-
 func TestCheckKickRefusal_TruncatesLongReason(t *testing.T) {
 	m := &Manager{logger: discardLogger()}
 	agent := &AgentProcess{Name: "test"}

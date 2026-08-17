@@ -45,22 +45,11 @@ type Client struct {
 	canaryFailClosed bool
 	canaryRegistry   *ioscan.CanaryRegistry
 	canaryLeakFunc   func(ioscan.CanaryLeak)
-	appWriterMu      sync.RWMutex
 	appBotLogin      string // "<app-slug>[bot]" when the client authenticates as a GitHub App
-	appWriterID      int64
-	appWriterType    string
-	appWriterBinding string
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
-	// issueAuthz is the equivalent fail-closed gate for mediated agent issue
-	// requests. Direct agent issue creation is denied by the proxy.
-	issueAuthz IssueRequestAuthorizer
-	// issueCreateMu serializes the list-before-create transaction used by the
-	// mediated issue watcher. Without it, concurrent controller/watcher passes
-	// can both observe an absent marker and create duplicate GitHub issues.
-	issueCreateMu sync.Mutex
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
 	// carry the "hold" label (F6). It is consulted server-side from authoritative
 	// hive config (the ACMM level), NOT trusted from a client flag — the
@@ -166,66 +155,7 @@ func (c *Client) SetAppBotLogin(login string) {
 	if c == nil {
 		return
 	}
-	c.appWriterMu.Lock()
-	defer c.appWriterMu.Unlock()
 	c.appBotLogin = strings.TrimSpace(login)
-}
-
-// AppBotLogin returns the configured GitHub App bot account. It is deliberately
-// read-only: callers may bind receipts and verify authorship, but only the
-// authenticated runtime initializer may replace the client that carries it.
-func (c *Client) AppBotLogin() string {
-	if c == nil {
-		return ""
-	}
-	c.appWriterMu.RLock()
-	defer c.appWriterMu.RUnlock()
-	return strings.TrimSpace(c.appBotLogin)
-}
-
-// SetVerifiedAppWriter binds a raw installation-token client created by Hive's
-// setup subprocess to the root-sealed App writer identity handed off by the
-// authenticated dashboard process.
-func (c *Client) SetVerifiedAppWriter(identity AuthenticatedUserIdentity, bindingDigest string) error {
-	if c == nil || identity.ID <= 0 || strings.TrimSpace(identity.Login) == "" || !strings.EqualFold(identity.Type, "Bot") ||
-		!regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(strings.ToLower(strings.TrimSpace(bindingDigest))) {
-		return fmt.Errorf("verified GitHub App writer binding is invalid")
-	}
-	c.appWriterMu.Lock()
-	defer c.appWriterMu.Unlock()
-	c.appBotLogin = strings.TrimSpace(identity.Login)
-	c.appWriterID = identity.ID
-	c.appWriterType = strings.TrimSpace(identity.Type)
-	c.appWriterBinding = strings.ToLower(strings.TrimSpace(bindingDigest))
-	return nil
-}
-
-func (c *Client) verifiedAppWriter(identity AuthenticatedUserIdentity) bool {
-	if c == nil {
-		return false
-	}
-	c.appWriterMu.RLock()
-	defer c.appWriterMu.RUnlock()
-	return c.appWriterID == identity.ID && strings.EqualFold(c.appBotLogin, identity.Login) &&
-		strings.EqualFold(c.appWriterType, identity.Type) && c.appWriterBinding != ""
-}
-
-// VerifyAppWriterBinding lets integrated lifecycle code prove that an
-// explicitly supplied human operator is paired with the exact root-sealed App
-// writer used by this client. It exposes no token and grants no new identity.
-func (c *Client) VerifyAppWriterBinding(identity AuthenticatedUserIdentity, bindingDigest string) error {
-	bindingDigest = strings.ToLower(strings.TrimSpace(bindingDigest))
-	if c == nil {
-		return fmt.Errorf("GitHub App writer is not bound to this exact dashboard runtime")
-	}
-	c.appWriterMu.RLock()
-	defer c.appWriterMu.RUnlock()
-	if c.appWriterID != identity.ID || !strings.EqualFold(c.appBotLogin, identity.Login) ||
-		!strings.EqualFold(c.appWriterType, identity.Type) || c.appWriterBinding == "" ||
-		bindingDigest == "" || c.appWriterBinding != bindingDigest {
-		return fmt.Errorf("GitHub App writer is not bound to this exact dashboard runtime")
-	}
-	return nil
 }
 
 type Issue struct {

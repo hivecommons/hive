@@ -34,7 +34,7 @@ var ErrNoSuccessfulVisualHivePullRequestRun = errors.New("no successful Visual H
 // VisualHivePullRequestProducerCommit is the only audited runtime-sidecar
 // producer admitted by the exact PR lane. Updating it requires a deliberate
 // proof review; ordinary trusted-bundle imports retain their independent pin.
-const VisualHivePullRequestProducerCommit = "a488292edfeb04fa4b2902782522ce4d9b79606f"
+const VisualHivePullRequestProducerCommit = "1de3765924043ba87d46f200e8883b9233d94a18"
 
 // VisualHivePullRequestBundleRequest carries only independently knowable
 // repository, PR, workflow, App, and producer pins. The verifier discovers the

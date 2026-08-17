@@ -39,30 +39,6 @@ func TestLoadAuthoritativeVisualWorkContractUsesCurrentStateRegistry(t *testing.
 	}
 }
 
-func TestLoadAuthoritativeVisualWorkContractIsDormantAfterManagedSelectionRetirement(t *testing.T) {
-	home := t.TempDir()
-	root := filepath.Join(home, ".hive")
-	stateDir := filepath.Join(t.TempDir(), "uninstalled")
-	writeVisualWorkContractFixture(t, stateDir, "owner/uninstalled")
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("HIVE_STATE_DIR", "")
-	if err := integrated.RememberCurrentState(root, stateDir); err != nil {
-		t.Fatal(err)
-	}
-	if removed, err := integrated.ForgetCurrentState(root, stateDir); err != nil || !removed {
-		t.Fatalf("retire exact managed selection: removed=%t err=%v", removed, err)
-	}
-	if err := os.RemoveAll(stateDir); err != nil {
-		t.Fatal(err)
-	}
-
-	installed, exists, err := loadAuthoritativeVisualWorkContract()
-	if err != nil || exists || installed.Repository != "" {
-		t.Fatalf("managed uninstall remained selected: installed=%+v exists=%t err=%v", installed, exists, err)
-	}
-}
-
 func TestLoadAuthoritativeVisualWorkContractTreatsEmptyScaffoldAsDormant(t *testing.T) {
 	stateDir := t.TempDir()
 	if _, err := integrated.NewStore(filepath.Join(stateDir, "integrated")); err != nil {

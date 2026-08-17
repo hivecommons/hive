@@ -425,8 +425,8 @@ func TestSpecialistEnvironmentRemovesWriterCredentialsAndIsolatesGitHub(t *testi
 	modeFile := manager.agentModeFile(agent)
 	if info, err := os.Stat(modeFile); err != nil {
 		t.Fatalf("private specialist mode file: %v", err)
-	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
-		t.Fatalf("specialist mode file permissions = %o, want 640", info.Mode().Perm())
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("specialist mode file permissions = %o, want 600", info.Mode().Perm())
 	}
 }
 

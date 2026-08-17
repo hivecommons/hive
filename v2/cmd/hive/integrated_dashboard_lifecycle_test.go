@@ -48,21 +48,6 @@ func writeDashboardLifecycleContract(t *testing.T) string {
 	return stateDir
 }
 
-func TestDashboardLifecycleMutationRequiresCompleteAppPermissions(t *testing.T) {
-	runtimeSnapshot := testLiveAppRuntimeSnapshot()
-	delete(runtimeSnapshot.App.Permissions, "workflows")
-	if err := requireDashboardLifecycleMutationPermissions(dashboard.IntegratedLifecycleRequest{Operation: "control-apply"}, runtimeSnapshot); err == nil || !strings.Contains(err.Error(), "workflows") {
-		t.Fatalf("mutation accepted an App without Workflows write: %v", err)
-	}
-	if err := requireDashboardLifecycleMutationPermissions(dashboard.IntegratedLifecycleRequest{Operation: "control-plan"}, runtimeSnapshot); err != nil {
-		t.Fatalf("read-only lifecycle plan was incorrectly blocked: %v", err)
-	}
-	runtimeSnapshot.App.Permissions["workflows"] = "write"
-	if err := requireDashboardLifecycleMutationPermissions(dashboard.IntegratedLifecycleRequest{Operation: "baseline-approve"}, runtimeSnapshot); err != nil {
-		t.Fatalf("complete App permission set was rejected: %v", err)
-	}
-}
-
 func installDashboardLifecycleFakes(t *testing.T) {
 	t.Helper()
 	originalRunner := dashboardLifecycleCLIRunner

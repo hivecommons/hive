@@ -202,7 +202,6 @@ func TestStart_LaunchCodexUsesUnattendedBeadsSandbox(t *testing.T) {
 		"--sandbox", "workspace-write",
 		"-c", "sandbox_workspace_write.network_access=true",
 		"--disable", "enable_mcp_apps",
-		"-c", "projects.\"" + filepath.ToSlash(filepath.Join(workDir, "quality")) + "\".trust_level=\"trusted\"",
 		"--add-dir", beadsDir,
 		"--ask-for-approval", "never",
 	}

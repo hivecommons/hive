@@ -59,25 +59,11 @@ type dashboardLifecycleRequestRecord struct {
 	ErrorSHA256 string          `json:"error_sha256,omitempty"`
 }
 
-func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.IntegratedLifecycleRequest, credential any) (map[string]any, error) {
-	_, legacyTestCredential := credential.(string)
-	operator, runtimeSnapshot, token, err := resolveDashboardLifecycleCredential(ctx, request.Repository, credential)
-	if err != nil {
-		return nil, err
-	}
-	if runtimeSnapshot.Mode == "app" && (request.Operation == "control-apply" || request.Operation == "baseline-approve") {
-		runtimeSnapshot, err = refreshLiveGitHubAppRuntime(ctx, runtimeSnapshot)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := requireDashboardLifecycleMutationPermissions(request, runtimeSnapshot); err != nil {
-		return nil, err
-	}
+func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	stateDir := ""
 	if request.Operation == "status" || request.Operation == "doctor" {
 		if _, exists, contractErr := loadAuthoritativeVisualWorkContract(); contractErr == nil && !exists {
-			return dashboardIntegratedUninstalledRead(ctx, request, runtimeSnapshot)
+			return dashboardIntegratedUninstalledRead(ctx, request, token)
 		}
 	}
 	if request.Action == "setup-reset" || request.Action == "setup-reset-finalize" {
@@ -122,68 +108,22 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 		}
 		return result, runErr
 	case "baseline-plan":
-		result, runErr := integrated.ApproveSetupBaseline(ctx, integrated.ApproveSetupBaselineOptions{
-			StateDir: stateDir, PlanOnly: true, GitHub: runtimeSnapshot.Client, GitTransportToken: token, AuthorizationActor: operator,
-		})
-		if runErr != nil {
-			return nil, runErr
-		}
-		return dashboardLifecycleResultMap(result)
+		result, _, runErr := dashboardLifecycleCLIRunner(ctx, []string{
+			"approve-baseline", "--state-dir", stateDir, "--plan", "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
+		}, token, false)
+		return result, runErr
 	case "baseline-approve":
 		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
 		defer cancel()
-		return runDashboardBaselineApproval(mutationCtx, stateDir, request, operator, runtimeSnapshot, token, legacyTestCredential)
+		return runDashboardBaselineApproval(mutationCtx, stateDir, request, token)
 	case "control-plan":
-		return dashboardIntegratedControlPlan(ctx, stateDir, request, operator, runtimeSnapshot, token)
+		return dashboardIntegratedControlPlan(ctx, stateDir, request, token)
 	case "control-apply":
 		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
 		defer cancel()
-		return runDashboardIntegratedControl(mutationCtx, stateDir, request, operator, runtimeSnapshot, token, legacyTestCredential)
+		return runDashboardIntegratedControl(mutationCtx, stateDir, request, token)
 	default:
 		return nil, fmt.Errorf("unsupported integrated dashboard operation %q", request.Operation)
-	}
-}
-
-func requireDashboardLifecycleMutationPermissions(request dashboard.IntegratedLifecycleRequest, runtimeSnapshot liveGitHubRuntimeSnapshot) error {
-	if runtimeSnapshot.Mode != "app" || (request.Operation != "control-apply" && request.Operation != "baseline-approve") {
-		return nil
-	}
-	if err := runtimeSnapshot.App.RequireVisualHivePermissions(); err != nil {
-		return fmt.Errorf("live GitHub App permissions do not permit integrated lifecycle mutation: %w", err)
-	}
-	return nil
-}
-
-func resolveDashboardLifecycleCredential(ctx context.Context, repository string, credential any) (hivegithub.AuthenticatedUserIdentity, liveGitHubRuntimeSnapshot, string, error) {
-	switch value := credential.(type) {
-	case hivegithub.AuthenticatedUserIdentity:
-		runtimeSnapshot, err := currentDashboardGitHubRuntime()
-		if err != nil {
-			return value, liveGitHubRuntimeSnapshot{}, "", err
-		}
-		if !strings.EqualFold(runtimeSnapshot.Repository, repository) {
-			return value, liveGitHubRuntimeSnapshot{}, "", fmt.Errorf("live GitHub runtime belongs to %s, not %s", runtimeSnapshot.Repository, repository)
-		}
-		token, err := runtimeSnapshot.Token(ctx)
-		if err != nil {
-			return value, liveGitHubRuntimeSnapshot{}, "", fmt.Errorf("mint live GitHub writer token: %w", err)
-		}
-		if strings.TrimSpace(token) == "" {
-			return value, liveGitHubRuntimeSnapshot{}, "", errors.New("mint live GitHub writer token: empty token")
-		}
-		return value, runtimeSnapshot, token, nil
-	case string: // Narrow legacy test seam; dashboard handlers never pass tokens.
-		token := strings.TrimSpace(value)
-		if token == "" {
-			return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, "", errors.New("test GitHub token is empty")
-		}
-		operator := hivegithub.AuthenticatedUserIdentity{ID: 1, Login: "test-owner", Type: "User"}
-		return operator, liveGitHubRuntimeSnapshot{
-			Client: dashboardLifecycleGitHubClient(token), Token: func(context.Context) (string, error) { return token, nil },
-			Mode: "pat", Repository: repository, RepositoryID: 1, Writer: operator, BindingDigest: strings.Repeat("0", 64),
-		}, token, nil
-	default:
-		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, "", errors.New("dashboard lifecycle credential is invalid")
 	}
 }
 
@@ -195,7 +135,7 @@ func durableDashboardLifecycleContext(parent context.Context) (context.Context, 
 	return context.WithTimeout(context.WithoutCancel(parent), dashboardLifecycleMutationTimeout)
 }
 
-func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.IntegratedLifecycleRequest, runtimeSnapshot liveGitHubRuntimeSnapshot) (map[string]any, error) {
+func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	stateDir, err := dashboardSetupResetStateDir(request.Repository)
 	if err != nil {
 		return nil, err
@@ -224,7 +164,7 @@ func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.I
 		}
 	}
 	plan, planErr := integrated.PlanOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
-		Repository: request.Repository, StateDir: stateDir, GitHub: runtimeSnapshot.Client,
+		Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
 	})
 	if planErr == nil {
 		result["orphaned_setup"] = map[string]any{
@@ -258,11 +198,7 @@ func augmentDashboardIntegratedRead(result map[string]any, repository, stateDir 
 		result["hosted_preflight"] = map[string]any{
 			"ready": receipt.ExpiresAt.After(dashboardPreflightNow()), "binding_sha256": receipt.BindingSHA256,
 			"state_root": receipt.StateRoot, "visual_hive_ref": receipt.VisualHiveRef,
-			"operator_id": receipt.OperatorID, "operator_login": receipt.OperatorLogin,
-			"writer_id": receipt.WriterID, "writer_login": receipt.WriterLogin, "writer_type": receipt.WriterType,
-			"app_id": receipt.AppID, "installation_id": receipt.InstallationID, "permission_digest": receipt.PermissionDigest,
-			"runtime_binding_digest": receipt.RuntimeBindingDigest,
-			"tested_at":              receipt.TestedAt, "expires_at": receipt.ExpiresAt,
+			"tested_at": receipt.TestedAt, "expires_at": receipt.ExpiresAt,
 		}
 	} else if err != nil {
 		digest := sha256.Sum256([]byte(err.Error()))
@@ -273,24 +209,6 @@ func augmentDashboardIntegratedRead(result map[string]any, repository, stateDir 
 	if _, exists := result["orphaned_setup"]; !exists {
 		result["orphaned_setup"] = map[string]any{"detected": false, "recovery_available": false}
 	}
-	if runtimeSnapshot, ok := func() (liveGitHubRuntimeSnapshot, bool) {
-		store := dashboardLiveGitHubRuntime.Load()
-		if store == nil {
-			return liveGitHubRuntimeSnapshot{}, false
-		}
-		return store.Current()
-	}(); ok {
-		result["github_runtime"] = map[string]any{
-			"mode": runtimeSnapshot.Mode, "repository": runtimeSnapshot.Repository, "repository_id": runtimeSnapshot.RepositoryID,
-			"writer_id": runtimeSnapshot.Writer.ID, "writer_login": runtimeSnapshot.Writer.Login, "writer_type": runtimeSnapshot.Writer.Type,
-			"app_id": runtimeSnapshot.App.AppID, "installation_id": runtimeSnapshot.App.InstallationID,
-			"permission_digest": runtimeSnapshot.App.PermissionDigest, "permissions": runtimeSnapshot.App.Permissions,
-			"binding_digest": runtimeSnapshot.BindingDigest, "revision": runtimeSnapshot.Revision,
-		}
-	} else {
-		result["github_runtime"] = map[string]any{"ready": false}
-	}
-	result["visual_runtime"] = dashboardNormalVisualRuntime.Load().RuntimeStatus()
 }
 
 func dashboardIntegratedStateDir(repository, action string) (string, error) {
@@ -320,12 +238,12 @@ func dashboardIntegratedStateDir(repository, action string) (string, error) {
 	return installed.StateDir, nil
 }
 
-func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, operator hivegithub.AuthenticatedUserIdentity, runtimeSnapshot liveGitHubRuntimeSnapshot, token string) (map[string]any, error) {
+func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	if request.Action == "" {
 		return nil, errors.New("integrated control plan requires an exact action")
 	}
 	if request.Action == "setup-reset" || request.Action == "setup-reset-finalize" {
-		return dashboardOrphanedSetupResetPlan(ctx, stateDir, request, operator, runtimeSnapshot)
+		return dashboardOrphanedSetupResetPlan(ctx, stateDir, request, token)
 	}
 	status, _, err := dashboardLifecycleCLIRunner(ctx, []string{
 		"status", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
@@ -340,16 +258,12 @@ func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, reques
 	}
 	statusSum := sha256.Sum256(statusBytes)
 	plan := map[string]any{
-		"schema_version":         "hive.dashboard-integrated-control-plan.v1",
-		"repository":             request.Repository,
-		"operation":              request.Action,
-		"request_id":             request.RequestID,
-		"current_status_sha256":  hex.EncodeToString(statusSum[:]),
-		"current_status":         status,
-		"operator_id":            operator.ID,
-		"operator_login":         strings.ToLower(strings.TrimSpace(operator.Login)),
-		"writer_id":              runtimeSnapshot.Writer.ID,
-		"runtime_binding_digest": runtimeSnapshot.BindingDigest,
+		"schema_version":        "hive.dashboard-integrated-control-plan.v1",
+		"repository":            request.Repository,
+		"operation":             request.Action,
+		"request_id":            request.RequestID,
+		"current_status_sha256": hex.EncodeToString(statusSum[:]),
+		"current_status":        status,
 	}
 	if request.Action == "repair-retire" {
 		retirement, retirementErr := dashboardLifecyclePlanRetirement(ctx)
@@ -359,15 +273,11 @@ func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, reques
 		plan["repair_retirement"] = retirement
 	}
 	planBinding := map[string]any{
-		"schema_version":         plan["schema_version"],
-		"repository":             request.Repository,
-		"operation":              request.Action,
-		"request_id":             request.RequestID,
-		"current_status_sha256":  plan["current_status_sha256"],
-		"operator_id":            operator.ID,
-		"operator_login":         strings.ToLower(strings.TrimSpace(operator.Login)),
-		"writer_id":              runtimeSnapshot.Writer.ID,
-		"runtime_binding_digest": runtimeSnapshot.BindingDigest,
+		"schema_version":        plan["schema_version"],
+		"repository":            request.Repository,
+		"operation":             request.Action,
+		"request_id":            request.RequestID,
+		"current_status_sha256": plan["current_status_sha256"],
 	}
 	if retirement, exists := plan["repair_retirement"]; exists {
 		planBinding["repair_retirement"] = retirement
@@ -420,7 +330,7 @@ func dashboardStableControlStatus(status map[string]any) map[string]any {
 	return binding
 }
 
-func runDashboardIntegratedControl(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, operator hivegithub.AuthenticatedUserIdentity, runtimeSnapshot liveGitHubRuntimeSnapshot, token string, legacyTestCredential bool) (map[string]any, error) {
+func runDashboardIntegratedControl(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	ledgerStateDir := dashboardLifecycleLedgerStateDir(stateDir, request.Action)
 	replay, terminal, recoverStale, err := replayDashboardLifecycleMutation(
 		ledgerStateDir, request.RequestID, request.Action, request.ExpectedPlanSHA256,
@@ -431,7 +341,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 	planSHA256 := request.ExpectedPlanSHA256
 	var authorizedRetirement *normalservice.RepairRetirementPlan
 	if !recoverStale {
-		plan, planErr := dashboardIntegratedControlPlan(ctx, stateDir, request, operator, runtimeSnapshot, token)
+		plan, planErr := dashboardIntegratedControlPlan(ctx, stateDir, request, token)
 		if planErr != nil {
 			return nil, planErr
 		}
@@ -488,46 +398,25 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 					return nil, fmt.Errorf("quiesce normal Visual Hive runtime before %s: %w", request.Action, stopErr)
 				}
 			}
-			beadDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
-			if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
-				beadDirs = normalVisualRuntime.BeadDirs()
-			}
-			deleteState := request.Action == "uninstall-finalize"
-			if legacyTestCredential {
-				args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
-				for _, directory := range beadDirs {
-					args = append(args, "--beads-dir", directory)
+			args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
+			if request.Action != "uninstall-cancel" {
+				beadDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
+				if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
+					beadDirs = normalVisualRuntime.BeadDirs()
 				}
-				if deleteState {
-					args = append(args, "--delete-state")
-				}
-				if request.Action == "uninstall-cancel" {
-					args = append(args, "--cancel")
-				}
-				result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
-				return result, runErr
-			}
-			selectionCleared := false
-			if deleteState {
-				selectionCleared, err = integrated.ForgetCurrentState(integratedStateRoot(), stateDir)
-				if err != nil {
-					return nil, fmt.Errorf("retire current repository selection before uninstall finalization: %w", err)
+				for _, dir := range beadDirs {
+					if strings.TrimSpace(dir) != "" {
+						args = append(args, "--beads-dir", dir)
+					}
 				}
 			}
-			managementResult, runErr := integrated.RunManagement(ctx, integrated.ManagementOptions{
-				Operation: integrated.OperationUninstall, StateDir: stateDir, LifecycleBeadsDirs: beadDirs,
-				DeleteState: deleteState, Cancel: request.Action == "uninstall-cancel", GitHub: runtimeSnapshot.Client,
-				GitTransportToken: token, AuthorizationActor: operator,
-			})
-			if runErr != nil && selectionCleared {
-				if info, statErr := os.Stat(stateDir); statErr == nil && info.IsDir() {
-					_ = integrated.RememberCurrentState(integratedStateRoot(), stateDir)
-				}
+			switch request.Action {
+			case "uninstall-finalize":
+				args = append(args, "--delete-state")
+			case "uninstall-cancel":
+				args = append(args, "--cancel")
 			}
-			result, encodeErr := dashboardLifecycleResultMap(managementResult)
-			if encodeErr != nil {
-				return nil, encodeErr
-			}
+			result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
 			if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); runErr != nil && normalVisualRuntime != nil {
 				if _, resumeErr := normalVisualRuntime.ResumeReconciliation(ctx); resumeErr != nil {
 					slog.Default().Warn("restore normal Visual Hive runtime after failed uninstall mutation", "error", resumeErr)
@@ -539,8 +428,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			return result, runErr
 		case "setup-reset":
 			result, resetErr := integrated.PrepareOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
-				Repository: request.Repository, StateDir: stateDir, GitHub: runtimeSnapshot.Client, GitTransportToken: token,
-				AuthorizationActor: operator, RuntimeBindingDigest: runtimeSnapshot.BindingDigest,
+				Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
 			}, request.ExpectedPlanSHA256)
 			if resetErr != nil {
 				return nil, resetErr
@@ -559,7 +447,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 		case "setup-reset-finalize":
 			result, finalizeErr := integrated.RunManagement(ctx, integrated.ManagementOptions{
 				Operation: integrated.OperationUninstall, StateDir: stateDir, DeleteState: true,
-				GitHub: runtimeSnapshot.Client, GitTransportToken: token, AuthorizationActor: operator,
+				GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
 			})
 			if finalizeErr != nil {
 				return nil, finalizeErr
@@ -600,7 +488,7 @@ func dashboardLifecycleLedgerStateDir(stateDir, action string) string {
 	}
 }
 
-func dashboardOrphanedSetupResetPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, operator hivegithub.AuthenticatedUserIdentity, runtimeSnapshot liveGitHubRuntimeSnapshot) (map[string]any, error) {
+func dashboardOrphanedSetupResetPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	if request.Action == "setup-reset-finalize" {
 		store, storeErr := integrated.NewStore(filepath.Join(stateDir, "integrated"))
 		if storeErr != nil {
@@ -618,11 +506,16 @@ func dashboardOrphanedSetupResetPlan(ctx context.Context, stateDir string, reque
 			"operation": request.Action, "request_id": request.RequestID, "cleanup_branch": intent.Branch,
 			"cleanup_commit_sha": intent.CleanupCommitSHA, "pr_number": intent.PRNumber, "diff_digest": intent.DiffDigest,
 		}
-		return bindDashboardOrphanPlan(binding, operator, runtimeSnapshot)
+		data, marshalErr := json.Marshal(binding)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		digest := sha256.Sum256(data)
+		binding["plan_sha256"] = hex.EncodeToString(digest[:])
+		return binding, nil
 	}
 	plan, err := integrated.PlanOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
-		Repository: request.Repository, StateDir: stateDir, GitHub: runtimeSnapshot.Client,
-		AuthorizationActor: operator, RuntimeBindingDigest: runtimeSnapshot.BindingDigest,
+		Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
 	})
 	if err != nil {
 		return nil, err
@@ -638,21 +531,6 @@ func dashboardOrphanedSetupResetPlan(ctx context.Context, stateDir string, reque
 	response["operation"] = request.Action
 	response["request_id"] = request.RequestID
 	return response, nil
-}
-
-func bindDashboardOrphanPlan(plan map[string]any, operator hivegithub.AuthenticatedUserIdentity, runtimeSnapshot liveGitHubRuntimeSnapshot) (map[string]any, error) {
-	delete(plan, "plan_sha256")
-	plan["operator_id"] = operator.ID
-	plan["operator_login"] = strings.ToLower(strings.TrimSpace(operator.Login))
-	plan["writer_id"] = runtimeSnapshot.Writer.ID
-	plan["runtime_binding_digest"] = runtimeSnapshot.BindingDigest
-	data, err := json.Marshal(plan)
-	if err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256(data)
-	plan["plan_sha256"] = hex.EncodeToString(digest[:])
-	return plan, nil
 }
 
 func planDashboardRepairRetirement(ctx context.Context) (normalservice.RepairRetirementPlan, error) {
@@ -671,48 +549,30 @@ func retireDashboardRepair(ctx context.Context, expected *normalservice.RepairRe
 	return normalVisualRuntime.RetireRepair(ctx, expected)
 }
 
-func runDashboardBaselineApproval(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, operator hivegithub.AuthenticatedUserIdentity, runtimeSnapshot liveGitHubRuntimeSnapshot, token string, legacyTestCredential bool) (map[string]any, error) {
+func runDashboardBaselineApproval(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	approval := request.Baseline
 	if approval == nil {
 		return nil, errors.New("baseline approval bindings are missing")
 	}
+	args := []string{
+		"approve-baseline", "--state-dir", stateDir,
+		"--repo-id", approval.RepositoryID,
+		"--run-id", fmt.Sprint(approval.CaptureRunID),
+		"--artifact-id", fmt.Sprint(approval.ArtifactID),
+		"--pr", fmt.Sprint(approval.PRNumber),
+		"--head", approval.HeadSHA,
+		"--base", approval.BaseSHA,
+		"--diff-digest", approval.DiffDigest,
+		"--candidate-digest", approval.CandidateDigest,
+		"--actor-id", fmt.Sprint(approval.ActorID),
+		"--plan-digest", approval.PlanDigest,
+		"--reason", approval.Reason,
+		"--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
+	}
 	return runDashboardLifecycleMutation(stateDir, approval.RequestID, "baseline-approve", approval.PlanDigest, func() (map[string]any, error) {
-		if legacyTestCredential {
-			args := []string{
-				"approve-baseline", "--state-dir", stateDir, "--repo-id", approval.RepositoryID,
-				"--run-id", fmt.Sprintf("%d", approval.CaptureRunID), "--artifact-id", fmt.Sprintf("%d", approval.ArtifactID),
-				"--pr", fmt.Sprintf("%d", approval.PRNumber), "--head", approval.HeadSHA, "--base", approval.BaseSHA,
-				"--diff-digest", approval.DiffDigest, "--candidate-digest", approval.CandidateDigest,
-				"--actor-id", fmt.Sprintf("%d", approval.ActorID), "--plan-digest", approval.PlanDigest,
-				"--reason", approval.Reason, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
-			}
-			result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
-			return result, runErr
-		}
-		result, runErr := integrated.ApproveSetupBaseline(ctx, integrated.ApproveSetupBaselineOptions{
-			StateDir: stateDir, ExpectedRepositoryID: approval.RepositoryID, ExpectedCaptureRunID: approval.CaptureRunID,
-			ExpectedArtifactID: approval.ArtifactID, ExpectedPRNumber: approval.PRNumber, ExpectedHeadSHA: approval.HeadSHA,
-			ExpectedBaseSHA: approval.BaseSHA, ExpectedDiffDigest: approval.DiffDigest, ExpectedCandidateDigest: approval.CandidateDigest,
-			ExpectedActorID: approval.ActorID, ExpectedPlanDigest: approval.PlanDigest, Reason: approval.Reason,
-			GitHub: runtimeSnapshot.Client, GitTransportToken: token, AuthorizationActor: operator,
-		})
-		if runErr != nil {
-			return nil, runErr
-		}
-		return dashboardLifecycleResultMap(result)
+		result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
+		return result, runErr
 	})
-}
-
-func dashboardLifecycleResultMap(value any) (map[string]any, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	result := map[string]any{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func triggerDashboardVisualCycle(ctx context.Context) error {

@@ -246,34 +246,6 @@ func TestMergeRequestWatcher_BadJSONQuarantined(t *testing.T) {
 	}
 }
 
-func TestMergeRequestWatcher_RejectsSymlinkRequest(t *testing.T) {
-	merges := 0
-	srv := newMergeMockServer(t, 0, &merges)
-	defer srv.Close()
-	c := testMergeClient(t, srv.URL)
-
-	dir := t.TempDir()
-	mergeRequestDirForTest = dir
-	defer func() { mergeRequestDirForTest = "" }()
-
-	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, []byte(`{"repo":"o/r","number":42,"agent":"scanner"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	request := filepath.Join(dir, "scanner-1.json")
-	if err := os.Symlink(target, request); err != nil {
-		t.Skipf("symlink unsupported: %v", err)
-	}
-	c.ProcessMergeRequestsOnce(context.Background())
-
-	if merges != 0 {
-		t.Fatal("symlink request must not merge")
-	}
-	if _, err := os.Lstat(request + ".bad"); err != nil {
-		t.Fatalf("symlink request should be quarantined as .bad: %v", err)
-	}
-}
-
 // --- Fix #2: re-engagement on a failing-required-check terminal merge failure ---
 
 func TestIsRequiredCheckMergeBlocker(t *testing.T) {

@@ -38,7 +38,6 @@ type ApproveSetupBaselineOptions struct {
 	GitHub                  *hivegithub.Client
 	GitTransportToken       string
 	HostedAuthority         HostedOperatorAuthority
-	AuthorizationActor      hivegithub.AuthenticatedUserIdentity
 }
 
 type ApproveSetupBaselineResult struct {
@@ -133,12 +132,7 @@ func ApproveSetupBaseline(ctx context.Context, options ApproveSetupBaselineOptio
 	if options.PlanOnly {
 		operation = "approve-baseline-plan"
 	}
-	var actor hivegithub.AuthenticatedUserIdentity
-	if options.AuthorizationActor.ID > 0 || strings.TrimSpace(options.AuthorizationActor.Login) != "" {
-		actor, err = resolveManagedOperatorIdentity(ctx, options.GitHub, config, options.AuthorizationActor, operation)
-	} else {
-		actor, err = resolveOperatorIdentity(ctx, options.GitHub, options.HostedAuthority, config.Repository, operation)
-	}
+	actor, err := resolveOperatorIdentity(ctx, options.GitHub, options.HostedAuthority, config.Repository, operation)
 	if err != nil {
 		return result, err
 	}

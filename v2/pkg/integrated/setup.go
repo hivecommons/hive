@@ -109,13 +109,7 @@ type SetupOptions struct {
 	AutoMergeRiskExplicit  bool
 	GitHub                 *hivegithub.Client
 	GitTransportToken      string
-	// AuthorizationActor is the accountable human. AuthorizationWriter is the
-	// exact principal whose credential performs GitHub mutations. They are equal
-	// for standalone PAT usage and deliberately distinct for dashboard App mode.
-	AuthorizationActor  hivegithub.AuthenticatedUserIdentity
-	AuthorizationWriter hivegithub.AuthenticatedUserIdentity
-	AuthorizationApp    hivegithub.AppRuntimeIdentity
-	Policy              automation.Policy
+	Policy                 automation.Policy
 }
 
 type setupPRClient interface {
@@ -272,12 +266,9 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	if strings.TrimSpace(inspection.RepositoryID) == "" {
 		return result, fmt.Errorf("GitHub did not return the immutable repository ID for %s; refusing setup mutations", options.Repository)
 	}
-	authorizer, writer, appIdentity, err := resolveSetupAuthorizationIdentities(ctx, options)
+	authorizer, err := options.GitHub.AuthenticatedNumericUser(ctx)
 	if err != nil {
 		return result, err
-	}
-	if appIdentity.RepositoryID > 0 && fmt.Sprintf("%d", appIdentity.RepositoryID) != strings.TrimSpace(inspection.RepositoryID) {
-		return result, fmt.Errorf("GitHub App writer repository ID %d does not match inspected repository ID %s", appIdentity.RepositoryID, inspection.RepositoryID)
 	}
 	if options.VisualHive {
 		if err := VerifyVisualHiveWorkflowCommits(ctx, options.GitHub, options.VisualHiveRepo, options.VisualHiveRef); err != nil {
@@ -389,17 +380,9 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		AllowedAutoMergePaths: append([]string(nil), options.AllowedAutoMergePaths...),
 		AllowedAutoMergeRisk:  append([]automation.RiskTier(nil), options.AllowedAutoMergeRisk...),
 		CheckoutDir:           checkout, StateDir: options.StateDir, SetupBranch: setupBranch,
-		Paused:                             options.ExecutionMode == ExecutionHosted && !options.Start,
-		SetupAuthorizationActorID:          authorizer.ID,
-		SetupAuthorizationActorLogin:       authorizer.Login,
-		SetupAuthorizationWriterID:         writer.ID,
-		SetupAuthorizationWriterLogin:      writer.Login,
-		SetupAuthorizationWriterType:       writer.Type,
-		SetupAuthorizationAppID:            appIdentity.AppID,
-		SetupAuthorizationInstallationID:   appIdentity.InstallationID,
-		SetupAuthorizationPermissionDigest: appIdentity.PermissionDigest,
-		SetupAuthorizationAppBindingDigest: appIdentity.BindingDigest,
-		InstalledAt:                        time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		Paused:                    options.ExecutionMode == ExecutionHosted && !options.Start,
+		SetupAuthorizationActorID: authorizer.ID,
+		InstalledAt:               time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	if options.VisualHive {
 		config.VisualHiveConfigDigest, err = visualHiveConfigDigest(checkout)
@@ -428,14 +411,6 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		config.AllowedRepairPaths = append([]string(nil), prior.AllowedRepairPaths...)
 		if prior.SetupAuthorizationActorID > 0 {
 			config.SetupAuthorizationActorID = prior.SetupAuthorizationActorID
-			config.SetupAuthorizationActorLogin = prior.SetupAuthorizationActorLogin
-			config.SetupAuthorizationWriterID = prior.SetupAuthorizationWriterID
-			config.SetupAuthorizationWriterLogin = prior.SetupAuthorizationWriterLogin
-			config.SetupAuthorizationWriterType = prior.SetupAuthorizationWriterType
-			config.SetupAuthorizationAppID = prior.SetupAuthorizationAppID
-			config.SetupAuthorizationInstallationID = prior.SetupAuthorizationInstallationID
-			config.SetupAuthorizationPermissionDigest = prior.SetupAuthorizationPermissionDigest
-			config.SetupAuthorizationAppBindingDigest = prior.SetupAuthorizationAppBindingDigest
 		}
 	}
 	if config.ExecutionMode == ExecutionHosted {
@@ -480,19 +455,6 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	// proposed head would make the out-of-band status unverifiable.
 	if hasPrior && prior.SetupAuthorizationActorID > 0 && authorizer.ID != prior.SetupAuthorizationActorID && strings.TrimSpace(diff) != "" {
 		return result, fmt.Errorf("managed setup changes are bound to GitHub user ID %d, but the current authenticated user is %d; rerun with the recorded setup authorizer (an identical cross-user rerun remains a no-op)", prior.SetupAuthorizationActorID, authorizer.ID)
-	}
-	if hasPrior && strings.TrimSpace(diff) != "" {
-		priorWriter, writerBound := setupAuthorizationWriter(prior)
-		if !writerBound && strings.EqualFold(writer.Type, "Bot") {
-			return result, fmt.Errorf("legacy setup has no explicit App writer binding; use the managed upgrade/rebind lifecycle before an App-backed mutation")
-		}
-		if writerBound && (priorWriter.ID != writer.ID || !strings.EqualFold(priorWriter.Login, writer.Login) || !strings.EqualFold(priorWriter.Type, writer.Type)) {
-			return result, fmt.Errorf("managed setup changes are bound to GitHub writer %s (%d), but the current writer is %s (%d); use managed rebind", priorWriter.Login, priorWriter.ID, writer.Login, writer.ID)
-		}
-		if prior.SetupAuthorizationAppID != appIdentity.AppID || prior.SetupAuthorizationInstallationID != appIdentity.InstallationID ||
-			!strings.EqualFold(prior.SetupAuthorizationAppBindingDigest, appIdentity.BindingDigest) {
-			return result, fmt.Errorf("managed setup App/installation identity changed; use managed rebind")
-		}
 	}
 	if !options.DirectBootstrap && updateSetupAuthorizationBranchForManagedChange(&config, branch, diff) {
 		if err := writeManagedFiles(checkout, config, inspection); err != nil {
@@ -781,45 +743,37 @@ func VerifyVisualHiveWorkflowCommits(ctx context.Context, client *hivegithub.Cli
 }
 
 type installedRepositoryConfig struct {
-	SchemaVersion                      string                 `json:"schema_version"`
-	Repository                         string                 `json:"repository"`
-	RepositoryID                       string                 `json:"repository_id"`
-	DefaultBranch                      string                 `json:"default_branch"`
-	Coverage                           Coverage               `json:"coverage"`
-	Automation                         Automation             `json:"automation"`
-	Provider                           string                 `json:"provider"`
-	ExecutionMode                      ExecutionMode          `json:"execution_mode"`
-	RunIntervalSeconds                 int64                  `json:"run_interval_seconds"`
-	HostedSchedule                     string                 `json:"hosted_schedule,omitempty"`
-	HostedStateBranch                  string                 `json:"hosted_state_branch,omitempty"`
-	HiveReleaseRepository              string                 `json:"hive_release_repository,omitempty"`
-	HiveReleaseVersion                 string                 `json:"hive_release_version,omitempty"`
-	HiveCommit                         string                 `json:"hive_commit,omitempty"`
-	DistributionManifestSHA256         string                 `json:"distribution_manifest_sha256,omitempty"`
-	HostedControllerProtocol           int                    `json:"hosted_controller_protocol,omitempty"`
-	HostedWorkflowSHA256               string                 `json:"hosted_workflow_sha256,omitempty"`
-	PreviousHostedRelease              *HostedReleaseIdentity `json:"previous_hosted_release,omitempty"`
-	ACMMLevel                          int                    `json:"acmm_level"`
-	MaxActiveIssues                    int                    `json:"max_active_issues"`
-	MaxRepairAttempts                  int                    `json:"max_repair_attempts"`
-	VisualHive                         bool                   `json:"visual_hive"`
-	VisualHiveRepo                     string                 `json:"visual_hive_repository"`
-	VisualHiveRef                      string                 `json:"visual_hive_ref"`
-	VisualHiveConfigDigest             string                 `json:"visual_hive_config_digest,omitempty"`
-	TestCommands                       [][]string             `json:"test_commands"`
-	AllowedRepairPaths                 []string               `json:"allowed_repair_paths"`
-	AllowedAutoMergePaths              []string               `json:"allowed_auto_merge_paths"`
-	AllowedAutoMergeRisk               []automation.RiskTier  `json:"allowed_auto_merge_risk"`
-	SetupAuthorizationActorID          int64                  `json:"setup_authorization_actor_id"`
-	SetupAuthorizationActorLogin       string                 `json:"setup_authorization_actor_login,omitempty"`
-	SetupAuthorizationWriterID         int64                  `json:"setup_authorization_writer_id,omitempty"`
-	SetupAuthorizationWriterLogin      string                 `json:"setup_authorization_writer_login,omitempty"`
-	SetupAuthorizationWriterType       string                 `json:"setup_authorization_writer_type,omitempty"`
-	SetupAuthorizationAppID            int64                  `json:"setup_authorization_app_id,omitempty"`
-	SetupAuthorizationInstallationID   int64                  `json:"setup_authorization_installation_id,omitempty"`
-	SetupAuthorizationPermissionDigest string                 `json:"setup_authorization_permission_digest,omitempty"`
-	SetupAuthorizationAppBindingDigest string                 `json:"setup_authorization_app_binding_digest,omitempty"`
-	SetupAuthorizationPreviousActorID  int64                  `json:"setup_authorization_previous_actor_id,omitempty"`
+	SchemaVersion                     string                 `json:"schema_version"`
+	Repository                        string                 `json:"repository"`
+	RepositoryID                      string                 `json:"repository_id"`
+	DefaultBranch                     string                 `json:"default_branch"`
+	Coverage                          Coverage               `json:"coverage"`
+	Automation                        Automation             `json:"automation"`
+	Provider                          string                 `json:"provider"`
+	ExecutionMode                     ExecutionMode          `json:"execution_mode"`
+	RunIntervalSeconds                int64                  `json:"run_interval_seconds"`
+	HostedSchedule                    string                 `json:"hosted_schedule,omitempty"`
+	HostedStateBranch                 string                 `json:"hosted_state_branch,omitempty"`
+	HiveReleaseRepository             string                 `json:"hive_release_repository,omitempty"`
+	HiveReleaseVersion                string                 `json:"hive_release_version,omitempty"`
+	HiveCommit                        string                 `json:"hive_commit,omitempty"`
+	DistributionManifestSHA256        string                 `json:"distribution_manifest_sha256,omitempty"`
+	HostedControllerProtocol          int                    `json:"hosted_controller_protocol,omitempty"`
+	HostedWorkflowSHA256              string                 `json:"hosted_workflow_sha256,omitempty"`
+	PreviousHostedRelease             *HostedReleaseIdentity `json:"previous_hosted_release,omitempty"`
+	ACMMLevel                         int                    `json:"acmm_level"`
+	MaxActiveIssues                   int                    `json:"max_active_issues"`
+	MaxRepairAttempts                 int                    `json:"max_repair_attempts"`
+	VisualHive                        bool                   `json:"visual_hive"`
+	VisualHiveRepo                    string                 `json:"visual_hive_repository"`
+	VisualHiveRef                     string                 `json:"visual_hive_ref"`
+	VisualHiveConfigDigest            string                 `json:"visual_hive_config_digest,omitempty"`
+	TestCommands                      [][]string             `json:"test_commands"`
+	AllowedRepairPaths                []string               `json:"allowed_repair_paths"`
+	AllowedAutoMergePaths             []string               `json:"allowed_auto_merge_paths"`
+	AllowedAutoMergeRisk              []automation.RiskTier  `json:"allowed_auto_merge_risk"`
+	SetupAuthorizationActorID         int64                  `json:"setup_authorization_actor_id"`
+	SetupAuthorizationPreviousActorID int64                  `json:"setup_authorization_previous_actor_id,omitempty"`
 }
 
 // VerifyInstalledSetup proves that the exact durable policy and immutable pin
@@ -875,16 +829,8 @@ func verifyInstalledSetupAtRef(ctx context.Context, client *hivegithub.Client, c
 		MaxActiveIssues:            config.MaxActiveIssues, MaxRepairAttempts: config.MaxRepairAttempts, VisualHive: config.VisualHive,
 		VisualHiveRepo: config.VisualHiveRepo, VisualHiveRef: config.VisualHiveRef, VisualHiveConfigDigest: config.VisualHiveConfigDigest, TestCommands: config.TestCommands,
 		AllowedRepairPaths: config.AllowedRepairPaths, AllowedAutoMergePaths: config.AllowedAutoMergePaths, AllowedAutoMergeRisk: config.AllowedAutoMergeRisk,
-		SetupAuthorizationActorID:          config.SetupAuthorizationActorID,
-		SetupAuthorizationActorLogin:       config.SetupAuthorizationActorLogin,
-		SetupAuthorizationWriterID:         config.SetupAuthorizationWriterID,
-		SetupAuthorizationWriterLogin:      config.SetupAuthorizationWriterLogin,
-		SetupAuthorizationWriterType:       config.SetupAuthorizationWriterType,
-		SetupAuthorizationAppID:            config.SetupAuthorizationAppID,
-		SetupAuthorizationInstallationID:   config.SetupAuthorizationInstallationID,
-		SetupAuthorizationPermissionDigest: config.SetupAuthorizationPermissionDigest,
-		SetupAuthorizationAppBindingDigest: config.SetupAuthorizationAppBindingDigest,
-		SetupAuthorizationPreviousActorID:  config.SetupAuthorizationPreviousActorID,
+		SetupAuthorizationActorID:         config.SetupAuthorizationActorID,
+		SetupAuthorizationPreviousActorID: config.SetupAuthorizationPreviousActorID,
 	}
 	if !reflect.DeepEqual(installed, expected) {
 		return fmt.Errorf("target branch managed setup does not match the durable local policy; merge the current setup/upgrade PR before running Hive")
@@ -2465,15 +2411,7 @@ func writeManagedFiles(root string, config Config, inspection RepositoryInspecti
 		"visual_hive_config_digest": config.VisualHiveConfigDigest,
 		"test_commands":             config.TestCommands, "allowed_repair_paths": config.AllowedRepairPaths,
 		"allowed_auto_merge_paths": config.AllowedAutoMergePaths, "allowed_auto_merge_risk": config.AllowedAutoMergeRisk,
-		"setup_authorization_actor_id":           config.SetupAuthorizationActorID,
-		"setup_authorization_actor_login":        config.SetupAuthorizationActorLogin,
-		"setup_authorization_writer_id":          config.SetupAuthorizationWriterID,
-		"setup_authorization_writer_login":       config.SetupAuthorizationWriterLogin,
-		"setup_authorization_writer_type":        config.SetupAuthorizationWriterType,
-		"setup_authorization_app_id":             config.SetupAuthorizationAppID,
-		"setup_authorization_installation_id":    config.SetupAuthorizationInstallationID,
-		"setup_authorization_permission_digest":  config.SetupAuthorizationPermissionDigest,
-		"setup_authorization_app_binding_digest": config.SetupAuthorizationAppBindingDigest,
+		"setup_authorization_actor_id": config.SetupAuthorizationActorID,
 	}
 	if config.SetupAuthorizationPreviousActorID > 0 {
 		repositoryConfig["setup_authorization_previous_actor_id"] = config.SetupAuthorizationPreviousActorID

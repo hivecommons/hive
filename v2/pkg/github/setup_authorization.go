@@ -37,14 +37,12 @@ type AuthenticatedUserIdentity struct {
 // setup head. ExpectedCreatorID must come from AuthenticatedNumericUser before
 // the managed workflow containing that ID is committed.
 type SetupAuthorizationStatusRequest struct {
-	Repository           string
-	HeadSHA              string
-	Context              string
-	TargetURL            string
-	Description          string
-	ExpectedCreatorID    int64
-	ExpectedCreatorLogin string
-	ExpectedCreatorType  string
+	Repository        string
+	HeadSHA           string
+	Context           string
+	TargetURL         string
+	Description       string
+	ExpectedCreatorID int64
 }
 
 // SetupAuthorizationStatusResult is the read-back proof. Recovered indicates
@@ -114,8 +112,7 @@ func (c *Client) VerifySetupAuthorizationStatus(ctx context.Context, request Set
 	request.HeadSHA = strings.ToLower(strings.TrimSpace(request.HeadSHA))
 	request.Context = strings.ToLower(strings.TrimSpace(request.Context))
 	request.TargetURL = strings.TrimSpace(request.TargetURL)
-	expected := expectedSetupStatusCreator(request)
-	if !setupAuthorizationStatusSHA.MatchString(request.HeadSHA) || !setupAuthorizationStatusContext.MatchString(request.Context) || expected.ID <= 0 || request.TargetURL == "" {
+	if !setupAuthorizationStatusSHA.MatchString(request.HeadSHA) || !setupAuthorizationStatusContext.MatchString(request.Context) || request.ExpectedCreatorID <= 0 || request.TargetURL == "" {
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("setup status verification requires an exact head SHA, canonical authorization context, pull-request target, and expected creator ID")
 	}
 	latest, found, err := c.latestSetupAuthorizationStatus(ctx, owner, repository, request.HeadSHA, request.Context)
@@ -125,7 +122,7 @@ func (c *Client) VerifySetupAuthorizationStatus(ctx context.Context, request Set
 	if !found {
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("latest exact-head setup authorization status is absent")
 	}
-	if err := validLatestSetupAuthorizationStatus(latest, request.Context, request.TargetURL, expected); err != nil {
+	if err := validLatestSetupAuthorizationStatus(latest, request.Context, request.TargetURL, request.ExpectedCreatorID); err != nil {
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("latest exact-head setup authorization status is invalid: %w", err)
 	}
 	identity := AuthenticatedUserIdentity{ID: latest.GetCreator().GetID(), Login: latest.GetCreator().GetLogin(), Type: latest.GetCreator().GetType()}
@@ -148,34 +145,25 @@ func (c *Client) EnsureSetupAuthorizationStatus(ctx context.Context, request Set
 	request.Context = strings.ToLower(strings.TrimSpace(request.Context))
 	request.TargetURL = strings.TrimSpace(request.TargetURL)
 	request.Description = strings.TrimSpace(request.Description)
-	expected := expectedSetupStatusCreator(request)
-	if !setupAuthorizationStatusSHA.MatchString(request.HeadSHA) || !setupAuthorizationStatusContext.MatchString(request.Context) || expected.ID <= 0 {
+	if !setupAuthorizationStatusSHA.MatchString(request.HeadSHA) || !setupAuthorizationStatusContext.MatchString(request.Context) || request.ExpectedCreatorID <= 0 {
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("setup status requires an exact head SHA, canonical authorization context, and expected creator ID")
 	}
 	if request.TargetURL == "" || len(request.Description) == 0 || len(request.Description) > 140 {
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("setup status requires a target URL and a 1-140 character description")
 	}
-	identity := expected
-	if strings.EqualFold(expected.Type, "Bot") {
-		if strings.TrimSpace(expected.Login) == "" || !c.verifiedAppWriter(expected) {
-			return SetupAuthorizationStatusResult{}, fmt.Errorf("setup status App writer is not bound to the verified dashboard handoff")
-		}
-	} else {
-		var err error
-		identity, err = c.AuthenticatedNumericUser(ctx)
-		if err != nil {
-			return SetupAuthorizationStatusResult{}, err
-		}
-		if identity.ID != expected.ID || (expected.Login != "" && !strings.EqualFold(identity.Login, expected.Login)) {
-			return SetupAuthorizationStatusResult{}, fmt.Errorf("authenticated setup authorizer ID %d does not match workflow-bound ID %d", identity.ID, expected.ID)
-		}
+	identity, err := c.AuthenticatedNumericUser(ctx)
+	if err != nil {
+		return SetupAuthorizationStatusResult{}, err
+	}
+	if identity.ID != request.ExpectedCreatorID {
+		return SetupAuthorizationStatusResult{}, fmt.Errorf("authenticated setup authorizer ID %d does not match workflow-bound ID %d", identity.ID, request.ExpectedCreatorID)
 	}
 
 	latest, found, err := c.latestSetupAuthorizationStatus(ctx, owner, repository, request.HeadSHA, request.Context)
 	if err != nil {
 		return SetupAuthorizationStatusResult{}, err
 	}
-	if found && validLatestSetupAuthorizationStatus(latest, request.Context, request.TargetURL, identity) == nil {
+	if found && validLatestSetupAuthorizationStatus(latest, request.Context, request.TargetURL, identity.ID) == nil {
 		return setupAuthorizationStatusResult(latest, identity, true, false), nil
 	}
 
@@ -185,7 +173,7 @@ func (c *Client) EnsureSetupAuthorizationStatus(ctx context.Context, request Set
 	if createErr == nil {
 		if response == nil || response.StatusCode != http.StatusCreated {
 			createErr = fmt.Errorf("create exact setup authorization status returned no HTTP 201 response")
-		} else if validationErr := validLatestSetupAuthorizationStatus(created, request.Context, request.TargetURL, identity); validationErr != nil {
+		} else if validationErr := validLatestSetupAuthorizationStatus(created, request.Context, request.TargetURL, identity.ID); validationErr != nil {
 			// The mutation may have succeeded even if an intermediary stripped or
 			// damaged the response body. Treat it as ambiguous and recover only
 			// through an exact-head status read-back.
@@ -206,7 +194,7 @@ func (c *Client) EnsureSetupAuthorizationStatus(ctx context.Context, request Set
 		}
 		return SetupAuthorizationStatusResult{}, fmt.Errorf("created setup authorization status was absent during exact-head read-back")
 	}
-	if err := validLatestSetupAuthorizationStatus(readBack, request.Context, request.TargetURL, identity); err != nil {
+	if err := validLatestSetupAuthorizationStatus(readBack, request.Context, request.TargetURL, identity.ID); err != nil {
 		if createErr != nil {
 			return SetupAuthorizationStatusResult{}, errors.Join(fmt.Errorf("create exact setup authorization status: %w", createErr), fmt.Errorf("recover exact setup authorization status: %w", err))
 		}
@@ -235,7 +223,7 @@ func (c *Client) latestSetupAuthorizationStatus(ctx context.Context, owner, repo
 	return nil, false, fmt.Errorf("setup authorization status discovery exceeded %d bounded pages", setupAuthorizationStatusPages)
 }
 
-func validLatestSetupAuthorizationStatus(status *gh.RepoStatus, expectedContext, expectedTargetURL string, expectedCreator AuthenticatedUserIdentity) error {
+func validLatestSetupAuthorizationStatus(status *gh.RepoStatus, expectedContext, expectedTargetURL string, expectedCreatorID int64) error {
 	if status == nil {
 		return fmt.Errorf("status is absent")
 	}
@@ -251,24 +239,14 @@ func validLatestSetupAuthorizationStatus(status *gh.RepoStatus, expectedContext,
 	if strings.TrimSpace(status.GetTargetURL()) != strings.TrimSpace(expectedTargetURL) {
 		return fmt.Errorf("latest exact status target URL %q does not match %q", status.GetTargetURL(), expectedTargetURL)
 	}
-	expectedType := strings.TrimSpace(expectedCreator.Type)
-	if expectedType == "" {
-		expectedType = "User"
-	}
-	if status.Creator == nil || status.Creator.GetID() != expectedCreator.ID || strings.TrimSpace(status.Creator.GetLogin()) == "" ||
-		(expectedCreator.Login != "" && !strings.EqualFold(strings.TrimSpace(status.Creator.GetLogin()), expectedCreator.Login)) ||
-		!strings.EqualFold(strings.TrimSpace(status.Creator.GetType()), expectedType) {
+	if status.Creator == nil || status.Creator.GetID() != expectedCreatorID || strings.TrimSpace(status.Creator.GetLogin()) == "" || !strings.EqualFold(strings.TrimSpace(status.Creator.GetType()), "User") {
 		creatorID, creatorLogin, creatorType := int64(0), "", ""
 		if status.Creator != nil {
 			creatorID, creatorLogin, creatorType = status.Creator.GetID(), status.Creator.GetLogin(), status.Creator.GetType()
 		}
-		return fmt.Errorf("latest exact status creator login=%q id=%d type=%q does not match expected writer login=%q id=%d type=%q", creatorLogin, creatorID, creatorType, expectedCreator.Login, expectedCreator.ID, expectedType)
+		return fmt.Errorf("latest exact status creator login=%q id=%d type=%q does not match expected human user %d", creatorLogin, creatorID, creatorType, expectedCreatorID)
 	}
 	return nil
-}
-
-func expectedSetupStatusCreator(request SetupAuthorizationStatusRequest) AuthenticatedUserIdentity {
-	return AuthenticatedUserIdentity{ID: request.ExpectedCreatorID, Login: strings.TrimSpace(request.ExpectedCreatorLogin), Type: strings.TrimSpace(request.ExpectedCreatorType)}
 }
 
 func setupAuthorizationStatusResult(status *gh.RepoStatus, identity AuthenticatedUserIdentity, reused, recovered bool) SetupAuthorizationStatusResult {

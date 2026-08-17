@@ -95,7 +95,7 @@ func startRepairProcessTree(ctx context.Context, command *exec.Cmd) (func() erro
 	}, nil
 }
 
-func startExactRepairProcessTree(ctx context.Context, command *exec.Cmd, _, _ codexProviderFileIdentity) (func() error, error) {
+func startExactRepairProcessTree(ctx context.Context, command *exec.Cmd, _ codexProviderFileIdentity) (func() error, error) {
 	return startRepairProcessTree(ctx, command)
 }
 

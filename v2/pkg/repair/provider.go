@@ -202,12 +202,7 @@ func (p CodexProvider) healthAttestation(ctx context.Context) (*codexProviderIde
 	// operator-specific login check. This lets release CI prove the exact native
 	// artifact and active platform sandbox without storing model credentials,
 	// while Health still refuses to authorize Run until login succeeds.
-	// Exercise the health probe behind the same sealed outer process-tree
-	// boundary used by the governed specialist child. Hosted Hive carries
-	// ambient CAP_NET_ADMIN for its in-process proxy; invoking Codex's inner
-	// Bubblewrap directly would make Bubblewrap reject that inherited
-	// capability before the deterministic probe can run.
-	if err := verifyCodexProviderHealthContainment(ctx, p, securedProvider, attestation); err != nil {
+	if err := verifyCodexPlatformContainmentWithEnvironment(ctx, securedProvider.Command, securedProvider.commandEnvironment()); err != nil {
 		return nil, fmt.Errorf("Codex no-model platform containment health check failed before model accounting: %w", err)
 	}
 	if attestation.Auth.Path == "" && !codexProviderIsTestExecutable(p.Command) {
@@ -228,19 +223,6 @@ func (p CodexProvider) healthAttestation(ctx context.Context) (*codexProviderIde
 		return nil, fmt.Errorf("Codex executable identity changed during Health: %w", err)
 	}
 	return attestation.authorizationCopy(), nil
-}
-
-func verifyCodexProviderHealthContainment(ctx context.Context, configured, secured CodexProvider, attestation *codexProviderIdentityAttestation) error {
-	if codexSpecialistExactHealthRequired(runtime.GOOS, codexProviderIsTestExecutable(configured.Command)) {
-		return verifyCodexPlatformContainmentWithExactProcessTree(
-			ctx,
-			secured.Command,
-			secured.commandEnvironment(),
-			attestation.SealedContainmentHelper,
-			attestation.SealedCapabilityDropHelper,
-		)
-	}
-	return verifyCodexPlatformContainmentWithEnvironment(ctx, secured.Command, secured.commandEnvironment())
 }
 
 func (p CodexProvider) Run(ctx context.Context, _ string, prompt string) (ProviderResult, error) {

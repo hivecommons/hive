@@ -5,22 +5,21 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 func TestIntegratedPreflightUsesOwnerBoundRepository(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
+	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
 	called := false
-	deps.IntegratedPreflightFunc = func(_ context.Context, request IntegratedPreflightRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
+	deps.IntegratedPreflightFunc = func(_ context.Context, request IntegratedPreflightRequest, token string) (map[string]any, error) {
 		called = true
-		if operator.ID != 101 || !strings.EqualFold(operator.Login, "alice") || request.Repository != "owner/repository" || request.RequestID != "preflight-cycle-a-001" ||
+		if token != "saved-token" || request.Repository != "owner/repository" || request.RequestID != "preflight-cycle-a-001" ||
 			request.Provider != "codex" || request.VisualHiveRef != strings.Repeat("a", 40) || request.Coverage != "comprehensive" ||
 			request.Automation != "repair-pr" || request.MaxActiveIssues == nil || *request.MaxActiveIssues != 3 {
-			t.Fatalf("unexpected preflight request: operator=%+v request=%+v", operator, request)
+			t.Fatalf("unexpected preflight request: token=%q request=%+v", token, request)
 		}
 		return map[string]any{"schema_version": "test.preflight.v1", "ready": true}, nil
 	}
@@ -37,8 +36,9 @@ func TestIntegratedPreflightRejectsViewerUnknownFieldsAndInvalidBinding(t *testi
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	configureIntegratedOwnerIdentity(deps, "alice")
-	deps.IntegratedPreflightFunc = func(context.Context, IntegratedPreflightRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
+	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
+	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
+	deps.IntegratedPreflightFunc = func(context.Context, IntegratedPreflightRequest, string) (map[string]any, error) {
 		t.Fatal("invalid preflight must not reach the callback")
 		return nil, nil
 	}

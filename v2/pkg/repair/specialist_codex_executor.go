@@ -157,7 +157,7 @@ func verifyCodexSpecialistExactProcessTree(ctx context.Context, provider CodexPr
 	securedProvider := sealed.provider()
 	securedProvider.runtimeEnvironment = privateRuntime.environment
 	return verifyCodexPlatformContainmentWithExactProcessTree(
-		ctx, securedProvider.Command, securedProvider.commandEnvironment(), sealed.SealedContainmentHelper, sealed.SealedCapabilityDropHelper,
+		ctx, securedProvider.Command, securedProvider.commandEnvironment(), sealed.SealedContainmentHelper,
 	)
 }
 

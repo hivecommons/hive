@@ -81,9 +81,6 @@ func setupAuthorizationWorkflowJob(config Config) string {
           HIVE_EXPECTED_UNINSTALL_REF: __EXPECTED_UNINSTALL_REF__
           HIVE_EXPECTED_BASE_REF: __EXPECTED_BASE_REF__
           HIVE_AUTHORIZER_ID: "__AUTHORIZER_ID__"
-          HIVE_WRITER_ID: "__WRITER_ID__"
-          HIVE_WRITER_LOGIN: "__WRITER_LOGIN__"
-          HIVE_WRITER_TYPE: "__WRITER_TYPE__"
           HIVE_TRANSFER_AUTHORIZER_ID: "__TRANSFER_AUTHORIZER_ID__"
           HIVE_REQUIRED_FILES: '__REQUIRED_FILES__'
           HIVE_REQUIRED_ABSENT: '__REQUIRED_ABSENT__'
@@ -115,9 +112,6 @@ __VERIFIER_SCRIPT__
 		"__EXPECTED_UNINSTALL_REF__", managedOperationBranch(string(OperationUninstall), config.RepositoryID),
 		"__EXPECTED_BASE_REF__", config.DefaultBranch,
 		"__AUTHORIZER_ID__", strconv.FormatInt(config.SetupAuthorizationActorID, 10),
-		"__WRITER_ID__", strconv.FormatInt(effectiveSetupAuthorizationWriter(config).ID, 10),
-		"__WRITER_LOGIN__", strings.ToLower(effectiveSetupAuthorizationWriter(config).Login),
-		"__WRITER_TYPE__", strings.ToLower(effectiveSetupAuthorizationWriter(config).Type),
 		"__TRANSFER_AUTHORIZER_ID__", strconv.FormatInt(transferAuthorizerID, 10),
 		"__REQUIRED_FILES__", string(requiredJSON),
 		"__REQUIRED_ABSENT__", string(absentJSON),
@@ -222,7 +216,7 @@ func setupAuthorizationWorkflowVerifierScript() string {
           const fs = require("fs");
 
           const domain = "hive.setup-diff-tree-blobs.v1";
-          const schema = "hive.setup-pr-authorization.v2";
+          const schema = "hive.setup-pr-authorization.v1";
           const diffAlgorithm = "hive.setup-diff-tree-blobs.v1+sha256";
           const contextPrefix = "hive/setup-authorized/";
           const sha40 = /^[a-f0-9]{40}$/u;
@@ -381,15 +375,12 @@ func setupAuthorizationWorkflowVerifierScript() string {
               const repositoryID = String(process.env.HIVE_REPOSITORY_ID || "");
               const pullRequest = Number(process.env.HIVE_PULL_REQUEST || "0");
               let authorizerID = String(process.env.HIVE_AUTHORIZER_ID || "");
-              const writerID = String(process.env.HIVE_WRITER_ID || "");
-              const writerLogin = String(process.env.HIVE_WRITER_LOGIN || "").toLowerCase();
-              const writerType = String(process.env.HIVE_WRITER_TYPE || "").toLowerCase();
               const transferAuthorizerID = String(process.env.HIVE_TRANSFER_AUTHORIZER_ID || "");
               const headSHA = String(process.env.HIVE_HEAD_SHA || "").toLowerCase();
               const baseSHA = String(process.env.HIVE_BASE_SHA || "").toLowerCase();
               const headRef = String(process.env.HIVE_HEAD_REF || "");
               const baseRef = String(process.env.HIVE_BASE_REF || "");
-              if (!sha40.test(headSHA) || !sha40.test(baseSHA) || !/^[1-9][0-9]*$/u.test(repositoryID) || !/^[1-9][0-9]*$/u.test(authorizerID) || !/^[1-9][0-9]*$/u.test(transferAuthorizerID) || !/^[1-9][0-9]*$/u.test(writerID) || !["user", "bot"].includes(writerType) || (writerType === "bot" && !writerLogin) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) throw new Error("invalid immutable setup event identity");
+              if (!sha40.test(headSHA) || !sha40.test(baseSHA) || !/^[1-9][0-9]*$/u.test(repositoryID) || !/^[1-9][0-9]*$/u.test(authorizerID) || !/^[1-9][0-9]*$/u.test(transferAuthorizerID) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) throw new Error("invalid immutable setup event identity");
               if (baseRef !== process.env.HIVE_EXPECTED_BASE_REF || String(process.env.HIVE_HEAD_REPOSITORY || "").toLowerCase() !== repository || String(process.env.HIVE_BASE_REPOSITORY || "").toLowerCase() !== repository) throw new Error("pull request is not the expected same-repository managed operation");
               if (headRef === process.env.HIVE_EXPECTED_UNINSTALL_REF) {
                 operation = "uninstall";
@@ -422,9 +413,6 @@ func setupAuthorizationWorkflowVerifierScript() string {
                 base_ref: baseRef,
                 base_sha: baseSHA,
                 authorizer_id: authorizerID,
-                writer_id: writerID,
-                writer_login: writerLogin,
-                writer_type: writerType,
                 diff_algorithm: diffAlgorithm,
                 diff_sha256: diffDigest,
                 required_files: files,
@@ -442,7 +430,7 @@ func setupAuthorizationWorkflowVerifierScript() string {
               }
               const creator = status && status.creator;
               const exact = status && String(status.state || "").toLowerCase() === "success" && String(status.context || "").toLowerCase() === context &&
-                creator && String(creator.id || "") === writerID && (!writerLogin || String(creator.login || "").toLowerCase() === writerLogin) && String(creator.type || "").toLowerCase() === writerType &&
+                creator && String(creator.id || "") === authorizerID && String(creator.type || "").toLowerCase() === "user" &&
                 String(status.target_url || "") === String(process.env.HIVE_PULL_REQUEST_URL || "");
               if (!exact) throw new Error("latest exact-head setup status was absent or did not match creator/target/state");
               output(true, context, bindingDigest, diffDigest, operation);

@@ -240,7 +240,7 @@ func startCodexAttestedProcess(ctx context.Context, provider CodexProvider, atte
 		// fence. Production Linux uses the attested/sealed Bubblewrap PID
 		// namespace; Windows uses a kill-on-close Job Object. Native test
 		// providers model Codex directly and retain the ordinary test boundary.
-		wait, err = startExactRepairProcessTree(commandCtx, command, sealed.SealedContainmentHelper, sealed.SealedCapabilityDropHelper)
+		wait, err = startExactRepairProcessTree(commandCtx, command, sealed.SealedContainmentHelper)
 	} else {
 		wait, err = startRepairProcessTree(commandCtx, command)
 	}
