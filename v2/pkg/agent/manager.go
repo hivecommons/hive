@@ -1473,6 +1473,17 @@ func paneShowsConsentScreen(pane string) bool {
 	if pane == "" || strings.Contains(pane, cliWorkingMarker) {
 		return false
 	}
+	// A known startup-blocking menu is not a ready prompt either. The generic
+	// test below needs the "Enter to confirm" footer AND a "❯"-marked line;
+	// codex renders neither (its footer is "Press enter to continue" and its
+	// marker is "›" U+203A), so its update menu read as READY. Everything that
+	// gates on readiness — the startup kick, caveman activation — then typed
+	// into the menu, and the Enter confirmed its pre-selected option:
+	// "1. Update now", which runs `npm install -g` as the agent UID, fails, and
+	// kills the CLI. Blocking on these lets the prompt watcher answer them.
+	if paneHasBlockingPrompt(pane) {
+		return true
+	}
 	if strings.Contains(pane, bypassConsentTitle) && strings.Contains(pane, bypassConsentDefaultOption) {
 		return true
 	}
@@ -1778,7 +1789,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		agent.cancel = cancel
 		go m.pollTmuxOutputForAgent(agent, agentCtx)
 
-		if backend == "copilot" {
+		if backendHasBlockingPrompts(backend) {
 			go m.watchForTrustPromptForAgent(agent, agentCtx)
 		}
 		if isInference {
@@ -1869,7 +1880,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	agent.cancel = cancel
 	go m.pollTmuxOutputForAgent(agent, agentCtx)
 
-	if backend == "copilot" {
+	if backendHasBlockingPrompts(backend) {
 		go m.watchForTrustPromptForAgent(agent, agentCtx)
 	}
 
@@ -2125,8 +2136,172 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	}
 }
 
-// watchForTrustPromptForAgent monitors a tmux session for Copilot's "Confirm folder trust"
-// prompt using the agent's tmux socket.
+// blockingPrompt is a startup-blocking modal that must be answered with a
+// SPECIFIC numbered option rather than a bare Enter or a generic
+// navigate-away-from-"No" heuristic.
+//
+// The generic heuristic in dismissInferencePrompts steers away from options
+// containing "no"/"exit" and otherwise confirms whatever is selected. That is
+// wrong for menus whose DEFAULT selection is affirmative but harmful — most
+// notably codex's update prompt, where the pre-selected option shells out to
+// `npm install -g`. Answering those needs the exact key, so each entry names
+// the one prompt it answers and nothing else is ever blind-fired at.
+//
+// This mirrors blockingPromptKey() in bin/contributor-relay.sh, which solved
+// the same problem contributor-side. The hub had no equivalent.
+type blockingPrompt struct {
+	// backend this prompt belongs to. Prompts are matched only against the
+	// backend that actually renders them, so a codex pattern can never fire at
+	// a claude pane that happens to contain similar words.
+	backend string
+	// match reports whether this prompt is the one on screen. All conditions
+	// must hold, so a prompt is only answered when positively identified.
+	match func(pane string) bool
+	key   string // the option to type before Enter
+	label string // for the audit log
+}
+
+var blockingPrompts = []blockingPrompt{
+	{
+		backend: "copilot",
+		// Copilot: "Confirm folder trust" → 2. Yes, and remember for future
+		// sessions. Remembering is what stops it recurring on every restart.
+		match: func(p string) bool {
+			return strings.Contains(p, "Confirm folder trust") || strings.Contains(p, "Do you trust the files")
+		},
+		key:   "2",
+		label: "copilot folder trust",
+	},
+	{
+		backend: "agy",
+		// agy (Antigravity CLI): "Do you trust the contents of this project?"
+		// An arrow-key menu whose affirmative option is ALREADY selected, so a
+		// bare Enter is correct and there is no numbered option to type. It
+		// blocks startup exactly like the codex/copilot trust dialogs.
+		match: func(p string) bool {
+			return strings.Contains(p, "Do you trust the contents of this project")
+		},
+		key:   "",
+		label: "agy project trust",
+	},
+	{
+		backend: "codex",
+		// codex: "Do you trust the contents of this directory?" → 1. Yes, continue.
+		match: func(p string) bool {
+			return strings.Contains(p, "Do you trust the contents of this directory")
+		},
+		key:   "1",
+		label: "codex directory trust",
+	},
+	{
+		backend: "codex",
+		// codex: "✨ Update available! x -> y" → 3. Skip until next version.
+		//
+		// Deliberately NOT "1. Update now", which is the PRE-SELECTED option:
+		// it runs `npm install -g @openai/codex` as the unprivileged agent UID,
+		// which fails with EACCES and takes the CLI down with it — on every
+		// launch, indefinitely, until a human intervenes. Even where it could
+		// succeed it is slow, needs network, can fail half-way, and drifts the
+		// CLI version out from under the image.
+		//
+		// "Skip until next version" is chosen over a plain "Skip" because it
+		// persists: a plain Skip re-prompts on the very next launch.
+		match: func(p string) bool {
+			return strings.Contains(p, "Update available!") && strings.Contains(p, "Skip until next version")
+		},
+		key:   "3",
+		label: codexUpdatePromptLabel,
+	},
+}
+
+// blockingPromptTailLines bounds how much of the pane a prompt may be matched
+// in. captureTmuxPaneForAgent returns SCROLLBACK, not just the visible screen,
+// so matching the whole capture answers prompts that have long since scrolled
+// away: after a codex CLI died, its update menu stayed in history and the
+// watcher typed "3" into the bash shell that replaced it, once every poll,
+// forever. A live modal is always at the bottom of the pane, so only the tail
+// is eligible.
+const blockingPromptTailLines = 25
+
+// paneTail returns the last n non-blank lines of a captured pane.
+func paneTail(pane string, n int) string {
+	lines := strings.Split(pane, "\n")
+	kept := make([]string, 0, n)
+	for i := len(lines) - 1; i >= 0 && len(kept) < n; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		kept = append(kept, lines[i])
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	return strings.Join(kept, "\n")
+}
+
+// blockingPromptKey returns the keystroke that dismisses whatever known
+// startup-blocking modal this backend currently has on screen, and whether one
+// was recognised. Only the tail of the pane is considered — see
+// blockingPromptTailLines.
+func blockingPromptKey(backend, pane string) (key, label string, ok bool) {
+	tail := paneTail(pane, blockingPromptTailLines)
+	for _, p := range blockingPrompts {
+		if p.backend == backend && p.match(tail) {
+			return p.key, p.label, true
+		}
+	}
+	return "", "", false
+}
+
+// paneHasBlockingPrompt reports whether ANY known blocking prompt is on the
+// pane, regardless of backend. Used by the readiness gate, which does not know
+// the backend; the patterns are specific enough that a false positive only
+// delays readiness rather than mis-firing a keystroke.
+func paneHasBlockingPrompt(pane string) bool {
+	tail := paneTail(pane, blockingPromptTailLines)
+	for _, p := range blockingPrompts {
+		if p.match(tail) {
+			return true
+		}
+	}
+	return false
+}
+
+// backendHasBlockingPrompts reports whether any known startup-blocking prompt
+// belongs to this backend, and so whether the watcher is worth running for it.
+//
+// Derived from the table rather than hardcoded: the watcher used to be gated on
+// `backend == "copilot"`, which is why codex agents were never rescued from
+// their update menu even after the menu itself was understood. Adding a prompt
+// for a new backend now enables the watcher for it automatically.
+func backendHasBlockingPrompts(backend string) bool {
+	for _, p := range blockingPrompts {
+		if p.backend == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// codexUpdatePromptLabel identifies the codex update menu in blockingPrompts.
+//
+// NOTE: answering "skip until next version" is deliberate, and updating in
+// place is NOT a viable alternative here. The prompt's own "1. Update now"
+// runs `npm install -g @openai/codex`, which needs write access to
+// /usr/local/lib/node_modules (root:root). Neither the agent UID nor the hub
+// process has it — attempting the install from the hub fails with the same
+// exit status 243. "Skip until next version" persists in each agent's
+// CODEX_HOME, so the prompt is answered once per agent and does not recur.
+// Updating the CLI belongs to the image build, not to a running agent.
+const codexUpdatePromptLabel = "codex update prompt"
+
+// watchForTrustPromptForAgent monitors a tmux session for startup-blocking
+// modal prompts using the agent's tmux socket, and answers each with the
+// specific option that unblocks it (see blockingPrompts).
+//
+// Originally this handled only Copilot's folder-trust dialog. It covers codex's
+// trust and update menus too, because those block startup exactly the same way
+// and the update menu's default answer is actively destructive.
 func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.Context) {
 	const (
 		trustPollInterval = 2 * time.Second
@@ -2137,6 +2312,13 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 	ticker := time.NewTicker(trustPollInterval)
 	defer ticker.Stop()
 
+	// A prompt is answered at most ONCE. The pane keeps rendering the menu for
+	// a beat after the keystroke, so a second poll matched it again and typed
+	// the option a second time — by then the CLI was at its input prompt, so
+	// "3" was submitted as a user message and answered ("Three."), burning
+	// tokens and polluting the conversation.
+	answered := make(map[string]bool, len(blockingPrompts))
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -2145,12 +2327,20 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 			return
 		case <-ticker.C:
 			output := m.captureTmuxPaneForAgent(agent)
-			if strings.Contains(output, "Confirm folder trust") || strings.Contains(output, "Do you trust the files") {
+			if key, label, ok := blockingPromptKey(agent.effectiveBackend(), output); ok && !answered[label] {
+				answered[label] = true
 				time.Sleep(paneCaptureSleep)
-				m.tmuxSendKeysForAgent(agent, "2")
-				time.Sleep(enterDelay)
+				// An empty key means the affirmative option is already selected
+				// and Enter alone answers it (agy). Typing a digit there would
+				// be stray input, not a selection.
+				if key != "" {
+					m.tmuxSendKeysForAgent(agent, key)
+					time.Sleep(enterDelay)
+				}
 				m.tmuxSendKeysForAgent(agent, "Enter")
-				m.logger.Info("auto-answered folder trust prompt", "agent", agent.Name)
+				m.logger.Info("auto-answered blocking prompt",
+					"agent", agent.Name, "prompt", label, "option", key)
+
 				time.Sleep(trustCooldown)
 			}
 		}
@@ -4217,6 +4407,22 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
 func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 	for i := 0; i < enterCount; i++ {
+		// The repeat exists only to make sure a typed line actually RAN — it is
+		// insurance against a pane that swallowed the first Enter. Once
+		// something is on screen asking a question, further Enters stop being
+		// insurance and become an answer.
+		//
+		// This was not theoretical. Enter #1 runs the launch line, codex boots
+		// and renders "✨ Update available!" with "1. Update now" PRE-SELECTED,
+		// and Enters #2 and #3 confirmed it — running `npm install -g` as the
+		// agent UID, which fails with EACCES and kills the CLI. It recurred on
+		// every launch, and it happens within milliseconds, so no poll-based
+		// watcher can get there first.
+		if i > 0 && paneHasBlockingPrompt(m.captureVisiblePaneForAgent(agent)) {
+			m.logger.Info("stopping repeat Enter: a prompt is awaiting an answer",
+				"agent", agent.Name, "sent", i)
+			return
+		}
 		_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "Enter").Run()
 		if i < enterCount-1 {
 			time.Sleep(enterDelay)
