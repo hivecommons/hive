@@ -616,6 +616,22 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		b.WriteString(fmt.Sprintf("\n⚠️ %d SLA VIOLATIONS (>30 min)\n", actionable.Issues.SLAViolations))
 	}
 
+	// Surfaces exactly the work step 2 already asks for ("Close stale drafts
+	// (>48h, needs-rebase + dco-no, or fix already merged)") — which had
+	// nothing to act on before, since fetchPRs drops every draft before this
+	// prompt is ever built. See kubestellar/hive#3963.
+	if len(actionable.PRs.StaleDrafts) > 0 {
+		b.WriteString(fmt.Sprintf("\nYOUR STALE DRAFT PRs (%d, >48h old — finish, mark ready, or close):\n", len(actionable.PRs.StaleDrafts)))
+		for _, d := range actionable.PRs.StaleDrafts {
+			title := d.Title
+			const maxDraftTitleRunes = 70
+			if runes := []rune(title); len(runes) > maxDraftTitleRunes {
+				title = string(runes[:maxDraftTitleRunes])
+			}
+			b.WriteString(fmt.Sprintf("  %s#%d %s\n", d.Repo, d.Number, title))
+		}
+	}
+
 	if knowledgeSection := s.primeKnowledge(scannerIssues); knowledgeSection != "" {
 		b.WriteString("\n")
 		b.WriteString(knowledgeSection)

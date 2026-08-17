@@ -264,6 +264,15 @@ type IssueResult struct {
 type PRResult struct {
 	Count int           `json:"count"`
 	Items []PullRequest `json:"items"`
+	// StaleDrafts are the App's OWN draft PRs older than staleDraftAfter.
+	// Ordinary drafts (someone's in-progress work, human or agent) are
+	// excluded from Items entirely and stay that way here — nobody should be
+	// nagged about work they are actively doing. This list exists because the
+	// scanner kick prompt already instructs: "Close stale drafts (>48h,
+	// needs-rebase + dco-no, or fix already merged)" — but fetchPRs drops
+	// EVERY draft before the agent ever sees it, so that instruction had
+	// nothing to act on. See kubestellar/hive#3963.
+	StaleDrafts []PullRequest `json:"stale_drafts,omitempty"`
 }
 
 type HoldResult struct {
@@ -381,6 +390,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	var allIssues []Issue
 	var allPRs []PullRequest
 	var holdItems []HoldItem
+	var allStaleDrafts []PullRequest
 	totalByRepo := make(map[string]RepoCounts)
 
 	repos := c.getRepos()
@@ -397,7 +407,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
+		prs, heldPRs, staleDrafts, prTotal, err := c.fetchPRs(ctx, repo)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -407,6 +417,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		}
 		allPRs = append(allPRs, prs...)
 		holdItems = append(holdItems, heldPRs...)
+		allStaleDrafts = append(allStaleDrafts, staleDrafts...)
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
 	}
@@ -445,8 +456,9 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		SLAViolations: slaViolations,
 	}
 	result.PRs = PRResult{
-		Count: len(allPRs),
-		Items: allPRs,
+		Count:       len(allPRs),
+		Items:       allPRs,
+		StaleDrafts: allStaleDrafts,
 	}
 	result.Hold = HoldResult{
 		Issues: holdIssueCount,
@@ -529,7 +541,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 	return actionable, held, totalIssues, nil
 }
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, totalPRs int, err error) {
+// staleDraftAfter matches the age threshold the scanner kick prompt already
+// names ("Close stale drafts (>48h, ...)"). A draft newer than this may still
+// be someone's active work-in-progress; older than this, it is more likely an
+// agent that opened a WIP PR and moved on. Only the App's OWN drafts are aged
+// this way — a human's stale draft is their call, not ours to nag about.
+const staleDraftAfter = 48 * time.Hour
+
+func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, staleDrafts []PullRequest, totalPRs int, err error) {
+	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
@@ -540,7 +560,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -568,6 +588,19 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		}
 
 		if pr.GetDraft() {
+			author := safeGetLogin(pr.GetUser())
+			if strings.EqualFold(author, c.appBotLogin) && now.Sub(pr.GetCreatedAt().Time) > staleDraftAfter {
+				staleDrafts = append(staleDrafts, PullRequest{
+					Repo:      repo,
+					Number:    pr.GetNumber(),
+					Title:     pr.GetTitle(),
+					Author:    author,
+					Labels:    labels,
+					Draft:     true,
+					CreatedAt: pr.GetCreatedAt().Time,
+					URL:       pr.GetHTMLURL(),
+				})
+			}
 			continue
 		}
 
@@ -594,7 +627,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		})
 	}
 
-	return actionable, held, totalPRs, nil
+	return actionable, held, staleDrafts, totalPRs, nil
 }
 
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit
