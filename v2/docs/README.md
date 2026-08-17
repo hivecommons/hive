@@ -2,19 +2,19 @@
 
 Documentation for the current Hive line (branch `v4`; the code and docs live under the historically named `v2/` directory — the doubled `v2` in repo paths is the directory name, not a branch). The `v2` branch was retired in August 2026.
 
-Start with [Architecture](../architecture.md) for the system overview, then use the topic guides below.
+Start with [Architecture](architecture.md) for the system overview, then use the topic guides below.
 
 ## Operations
 
-- [Manual provisioning](../manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
+- [Manual provisioning](manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
 - [Self-hosted hub deployment](https://github.com/kubestellar/hive/blob/v4/v2/docs/hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](https://github.com/kubestellar/hive/blob/v4/v2/docs/net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](https://github.com/kubestellar/hive/blob/v4/v2/docs/config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](https://github.com/kubestellar/hive/blob/v4/v2/docs/operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
-- [Release channels](../release-channels.md) — `stable`/`candidate`/`edge` moving image tags, switching a hive to a channel, and the `stable (v4)` version pill.
+- [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, switching a hive to a channel, and the `stable (v4)` version pill.
 - [The `auto-update` Compose profile](https://github.com/kubestellar/hive/blob/v4/v2/docs/auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
 - [Environment variable reference](https://github.com/kubestellar/hive/blob/v4/v2/docs/env-vars.md) — centralized list of runtime, deployment, hub, backup, and contributor environment variables.
-- [Troubleshooting](../troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
+- [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, and GitHub credential checks.
 - [Cross-cluster migration](https://github.com/kubestellar/hive/blob/v4/v2/docs/cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
 - [Dashboard route and health checks](https://github.com/kubestellar/hive/blob/v4/v2/docs/health-checks.md) — `dashboard-route-rbac.yaml`, `route_exists`, listener probes, and alert behavior.
 - [Network and port requirements](https://github.com/kubestellar/hive/blob/v4/v2/docs/network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
@@ -23,7 +23,7 @@ Start with [Architecture](../architecture.md) for the system overview, then use 
 - [Token collection and usage tracking](https://github.com/kubestellar/hive/blob/v4/v2/docs/token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
 - [Notifications](https://github.com/kubestellar/hive/blob/v4/v2/docs/notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](https://github.com/kubestellar/hive/blob/v4/discord/README.md).
 - [Public snapshots](https://github.com/kubestellar/hive/blob/v4/v2/docs/snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
-- [hivectl](../hivectl.md) — command-line client for the dashboard API.
+- [hivectl](hivectl.md) — command-line client for the dashboard API.
 - [`bd` beads CLI](https://github.com/kubestellar/hive/blob/v4/v2/docs/beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](https://github.com/kubestellar/hive/blob/v4/v2/docs/backup-restore.md) — `hive-backup`, Kubernetes CronJob, and spoke backup scope.
 - [Deployment helper scripts](https://github.com/kubestellar/hive/blob/v4/v2/docs/deployment-scripts.md) — Proxmox LXC and blue-green Compose helpers.
@@ -35,13 +35,13 @@ Start with [Architecture](../architecture.md) for the system overview, then use 
 
 ## Contributors and access
 
-- [ClankeR contributor relay](../contributor-relay.md) — local contributor setup, multi-hub subscriptions, and role requests.
+- [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, and role requests.
 - [Contributor trust tiers and delegated agent roles](https://github.com/kubestellar/hive/blob/v4/v2/docs/contributor-trust-and-roles.md) — newcomer/contributor/trusted/merger/advisor semantics, **Acting as**, grants, and delegatable roles.
 - [Credly badges](https://github.com/kubestellar/hive/blob/v4/v2/docs/credly-badges.md) — planned integration design; currently a placeholder mapping only.
 
 ## Configuration and agents
 
-- [Agent configuration](../agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
+- [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
 - [Supervisor agent](https://github.com/kubestellar/hive/blob/v4/v2/docs/supervisor.md) — supervisor policy modes, bead roles, and when to enable the orchestration lane.
 - [Custom dashboard stylesheets](https://github.com/kubestellar/hive/blob/v4/v2/docs/custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Portable AgentDefinition format](https://github.com/kubestellar/hive/blob/v4/v2/AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
@@ -49,7 +49,7 @@ Start with [Architecture](../architecture.md) for the system overview, then use 
 - [Agent peer-awareness logging (pluk)](https://github.com/kubestellar/hive/blob/v4/v2/docs/agent-logging.md) — pluk log format, `hive-panes`, availability, and retention.
 - [Strategy Lab (Nous)](https://github.com/kubestellar/hive/blob/v4/v2/docs/strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/v2/docs/github-app-setup.md) — app creation, permissions, Setup URL, and `/gh-setup`.
-- [ACMM policy matrix](../acmm-policy-matrix.md) — capability levels and policy modes.
+- [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [Inception](https://github.com/kubestellar/hive/blob/v4/v2/docs/inception.md) — operator guide to the L1 brainstorm/inception workflow: phases, API, and template variables.
 - [ACMM policy fragments](https://github.com/kubestellar/hive/blob/v4/examples/acmm/README.md) — per-level ACMM policy references.
 - [Sandbox isolation and agent guardrails](https://github.com/kubestellar/hive/blob/v4/v2/docs/sandbox-isolation.md) — isolation layers and operator guardrail notes.
@@ -62,7 +62,7 @@ Start with [Architecture](../architecture.md) for the system overview, then use 
 
 ## Architecture and design
 
-- [Architecture](../architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
+- [Architecture](architecture.md) — process model, governor loop, guardrails, hub/spoke, and walkthrough.
 - [CNCF reference architecture](https://github.com/kubestellar/hive/blob/v4/v2/docs/cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Knowledge system design](https://github.com/kubestellar/hive/blob/v4/v2/docs/design/knowledge-system.md) — llm-wiki layers, subscriptions, and APIs.
 - [Trajectory review](https://github.com/kubestellar/hive/blob/v4/v2/docs/trajectory-review.md) — trajectory safety lane and review signals.
@@ -73,7 +73,7 @@ Some documents describe planned or design-only work rather than live features. T
 
 ## Security (v4)
 
-- [Security model — operator guide](../security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
+- [Security model — operator guide](security-model.md) — Ed25519-only sessions/SSO, per-hive keys, master key rotation, forced proxy egress and `CAP_NET_ADMIN`, privilege model, and supply-chain posture.
 - [Security threat model](https://github.com/kubestellar/hive/blob/v4/v2/docs/security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
 - [Architecture Decision Records](https://github.com/kubestellar/hive/blob/v4/v2/docs/adr/README.md) — lightweight ADR process and records 0001-0010.
 - [Intent verification](https://github.com/kubestellar/hive/blob/v4/v2/docs/intent-verification.md) — tier-based change authorization for merge eligibility.
