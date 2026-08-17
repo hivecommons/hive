@@ -300,7 +300,7 @@ type ContributeWSHub struct {
 	// mu-guarded to match taskGen's reasoning above: it is touched from the
 	// upgrade path and from deferred cleanup, and must never contend with or
 	// re-enter h.mu.
-	pendingConns atomic.Int64
+	pendingConns   atomic.Int64
 	activityMu     sync.RWMutex
 	activity       []ActivityEntry
 	server         *Server
@@ -1878,27 +1878,36 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	h.mu.RLock()
 	count := len(h.connections)
 	h.mu.RUnlock()
-	if int64(count)+h.pendingConns.Load() >= maxWSConnections {
+	// Reserve the pending slot atomically as part of the admission check,
+	// BEFORE the upgrade handshake. The old order (check Load(), upgrade, then
+	// Add(1)) had a TOCTOU window: the 101 response reaches the client before
+	// the counter moves, so a burst of dials could each pass the check against
+	// the stale count and briefly push the total past the cap — observed as a
+	// flake in TestF9_UnauthenticatedConnectionsCountTowardCap (#3908).
+	// Add-then-check leaves no such window: once a dial completes, its slot is
+	// already counted, and concurrent handlers each see the other's
+	// reservation.
+	if int64(count)+h.pendingConns.Add(1) > maxWSConnections {
+		h.pendingConns.Add(-1)
 		http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
 		return
 	}
-
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		h.logger.Warn("ws upgrade failed", "error", err)
-		return
-	}
-	// Held for the whole handler: a socket occupies a slot from upgrade until
-	// this function returns, whether it authenticates, times out, or errors.
-	// Released exactly once, here, so no early return can leak a slot and
-	// permanently shrink the cap.
-	h.pendingConns.Add(1)
+	// Held for the whole handler: a socket occupies a slot from reservation
+	// until this function returns, whether it upgrades, authenticates, times
+	// out, or errors. Released exactly once so no early return can leak a slot
+	// and permanently shrink the cap.
 	pendingReleased := false
 	defer func() {
 		if !pendingReleased {
 			h.pendingConns.Add(-1)
 		}
 	}()
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Warn("ws upgrade failed", "error", err)
+		return
+	}
 	conn.SetReadLimit(wsMaxMessageSize)
 
 	connID := randomHex(8)
