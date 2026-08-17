@@ -6,6 +6,16 @@ Status: DESIGN ONLY. No implementation. This document extends
 Decision of record: **Option D** from `MASTER-DELIVERY-OPTIONS-2026-08-14.md`
 (2026-08-14). Options A and B are rejected; see §2.
 
+> **§11 status (2026-08-17):** OQ-1 through OQ-5 were all decided by the
+> operator on 2026-08-14 — OQ-1
+> ([comment](https://github.com/kubestellar/hive/pull/3833#issuecomment-5294455083))
+> and OQ-2→OQ-5
+> ([comment](https://github.com/kubestellar/hive/pull/3833#issuecomment-5295761881)),
+> which closed this document's merge gate ("Implementation is unblocked").
+> Stage 1 (X25519 sealed-box primitive + spoke wrap-key lifecycle) has since
+> landed as #3873. This design remains the reference record; it is not
+> updated post hoc as later stages ship.
+
 ## The problem
 
 `master-key-rotation.md` describes a rotation mechanism that is complete on the
@@ -13,7 +23,7 @@ hub and delivers nothing to two thirds of the fleet.
 
 Every reconciled per-hive value is a pure function of the master plus the hive
 ID. A spoke holding `HIVE_HUB_SECRET` and `HIVE_ID` self-derives all of them:
-the heartbeat bearer (`SpokeHeartbeatKey`, `v2/pkg/hub/hub_keys.go:485-496`), the invite
+the heartbeat bearer (`SpokeHeartbeatKey`, `src/pkg/hub/hub_keys.go:485-496`), the invite
 key (`SpokeInviteKey`, `:535-544`), the session key (`spokeDomainKey`,
 `:443-448`), and even the SSO public key — because it holds the master, it
 regenerates the hub's *private* seed via `SSOSigningSeedFromMaster`
@@ -27,13 +37,13 @@ normally while the lane was dead, and why the 44 pull-only spokes work today.
 master after rotation is the lane's only irreplaceable job, and on 44 of 66
 spokes there is no delivery path.
 
-`KubectlReachable()` (`v2/pkg/hub/saas_provision.go:368-376`) tests `PullOnly` first and
+`KubectlReachable()` (`src/pkg/hub/saas_provision.go:368-376`) tests `PullOnly` first and
 returns false unconditionally. Per the operator correction of 2026-08-14,
 `pull_only` is an **intentional architectural boundary on both clusters** — the
 hub is not meant to hold write credentials into `vllm-d` or `a-ks-wec2`. The
 field's own doc comment already says this plainly: a pull-only cluster's spokes
 "connect outbound over the heartbeat and nothing here can kubectl into them"
-(`v2/pkg/hub/saas_provision.go:207-208`).
+(`src/pkg/hub/saas_provision.go:207-208`).
 
 | Cluster | Spokes | `pull_only` | Reconcile reach |
 |---|---:|---|---|
@@ -80,7 +90,7 @@ migration step, and it does not appear anywhere below.
 is rejected** for the reason recorded in the options paper: it makes the
 heartbeat bearer a master-exfiltration primitive. The bearer is
 `derivePerHiveKey(master, infoHeartbeatKey, hiveID)`
-(`v2/pkg/hub/hub_keys.go:350`) — master-derived. An attacker holding a leaked master
+(`src/pkg/hub/hub_keys.go:350`) — master-derived. An attacker holding a leaked master
 derives any hive's bearer, heartbeats as that hive, and is handed each new
 master as the operator rotates. Rotation stops evicting them, which is the
 property rotation exists to provide. B closes F19 by making RESIDUAL-1
@@ -94,8 +104,8 @@ this document and the answer is qualified.
 
 ### Algorithm choice: X25519, not Ed25519
 
-The repo's existing asymmetric material is Ed25519 (`v2/pkg/hub/sso.go`, `v2/pkg/hub/hub_cookie.go`,
-`v2/pkg/hub/hub_pubkey_generations.go`). **Ed25519 is a signing key and cannot encrypt.**
+The repo's existing asymmetric material is Ed25519 (`src/pkg/hub/sso.go`, `src/pkg/hub/hub_cookie.go`,
+`src/pkg/hub/hub_pubkey_generations.go`). **Ed25519 is a signing key and cannot encrypt.**
 Reusing it here would require either the Ed25519→X25519 birational map — which
 is sharp-edged, easy to get wrong, and creates a key used in two algorithms —
 or an ad-hoc scheme. Neither is acceptable for the one payload whose compromise
@@ -108,13 +118,13 @@ age-style sealed box:
 
 | Component | Choice | Justification |
 |---|---|---|
-| KEM | X25519 (`crypto/ecdh`, `X25519()`) | Stdlib since Go 1.20; module is on Go 1.25.6 (`v2/go.mod`). No new dependency. 32-byte keys, hex-encodable like every existing env value. |
+| KEM | X25519 (`crypto/ecdh`, `X25519()`) | Stdlib since Go 1.20; module is on Go 1.25.6 (`src/go.mod`). No new dependency. 32-byte keys, hex-encodable like every existing env value. |
 | Ephemeral | Fresh sender keypair per wrap | Gives forward secrecy against later compromise of the hub's state and makes each ciphertext independently sealed. |
 | KDF | HKDF-SHA256 over the shared secret, both public keys, and a context label | Binds the ciphertext to both parties. |
-| AEAD | AES-256-GCM, 96-bit nonce | Stdlib, constant-time on the relevant hardware, and the repo already uses AES-256-GCM for `hubbackup` (`v2/pkg/hubbackup/backup.go`). Precedent, not novelty. |
+| AEAD | AES-256-GCM, 96-bit nonce | Stdlib, constant-time on the relevant hardware, and the repo already uses AES-256-GCM for `hubbackup` (`src/pkg/hubbackup/backup.go`). Precedent, not novelty. |
 
 `x/crypto/hkdf` is deliberately **not** a direct module dependency today — the
-comment at `v2/pkg/hub/hub_keys.go:31-33` records that as a considered choice, with
+comment at `src/pkg/hub/hub_keys.go:31-33` records that as a considered choice, with
 HMAC-SHA256 single-block expansion used instead. This design should follow that
 precedent rather than reverse it: a single-block HMAC-SHA256 expansion is
 sufficient here for the same reason it is sufficient there (fixed, unique
@@ -135,17 +145,17 @@ ambiguous (`master-key-rotation.md:461-463`).
 
 This mirrors an established pattern rather than inventing one. The spoke
 already persists private key material on the same PVC at the same mode:
-`spokeAppKeyPath = "/data/gh-app-key.pem"` (`v2/cmd/hive/main.go:99`) and
+`spokeAppKeyPath = "/data/gh-app-key.pem"` (`src/cmd/hive/main.go:99`) and
 `spokeAppKeyDir = "/data"` (`:104`), with `spokeAppKeyFileMode = 0o600`
 (`:116`) and the comment "signing material must never be readable by anything
 else sharing the PVC or the pod" (`:114-115`). `/data` is the PVC mount in the spoke template
-(`v2/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`v2/cmd/hive/main.go:5297`)
+(`src/pkg/hub/saas_provision.go:2585`), and `/data/hive-id` (`src/cmd/hive/main.go:5297`)
 already establishes that identity-critical state persists there across
 restarts.
 
 Following that precedent, the path should be a `var` not a `const`, so tests
 can redirect it and exercise the real resolution order — the reason given at
-`v2/cmd/hive/main.go:95-97`.
+`src/cmd/hive/main.go:95-97`.
 
 ### First boot, pod roll, PVC loss
 
@@ -202,13 +212,13 @@ and not to an attacker who heartbeated first.
 ### What the heartbeat bearer already proves
 
 The bearer is verified by `verifyHeartbeatBearerAcrossGenerations`
-(`v2/pkg/hub/hub_keys.go:339-366`). Every candidate is
+(`src/pkg/hub/hub_keys.go:339-366`). Every candidate is
 `derivePerHiveKey(g.Secret, infoHeartbeatKey, hiveID)` (`:350`), and the
 function's banner states the invariant: "identity-bound under EVERY generation
 ... There is deliberately no code path here that derives without hiveID; if one
 ever appears, F2 is re-opened" (`:322-327`). `handleHeartbeat` verifies the
 bearer against the *claimed* `hive_id` after parsing the body
-(`v2/pkg/hub/server.go:1406`; the N1 comment at `:1395-1405` explains why the check must
+(`src/pkg/hub/server.go:1406`; the N1 comment at `:1395-1405` explains why the check must
 follow the parse — the per-hive bearer is derived from the claimed ID, so the
 ID must be parsed and validated first).
 
@@ -350,11 +360,11 @@ in and there is no out-of-band hub channel.
 Provisioning is the moment a spoke is created, and the hub controls the
 manifest even for pull-only clusters — the manifest is applied by an operator
 context, not by the hub. The template already injects per-hive secret material
-(`v2/pkg/hub/saas_provision.go:1966-1986`: `HeartbeatKey`, `SessionKey`, `SSOPublicKey`,
+(`src/pkg/hub/saas_provision.go:1966-1986`: `HeartbeatKey`, `SessionKey`, `SSOPublicKey`,
 `TerminalKey`, `InviteKey`), and the `/secrets` read-only projected mount
-(`v2/pkg/hub/saas_provision.go:2763`) already carries private key material at provision
+(`src/pkg/hub/saas_provision.go:2763`) already carries private key material at provision
 time — `spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"`
-(`v2/cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
+(`src/cmd/hive/main.go:98`), which the spoke holds "from its very first boot —
 before any heartbeat has run" (`:108`).
 
 So there is an existing, precedented channel for giving a spoke a secret at
@@ -410,15 +420,15 @@ initiate a connection to a spoke.**
 Step 1 is the only one needing a spoke image roll, and it needs **no hub
 action at all** — which is precisely why it works for pull-only clusters. The
 spoke's image is updated by its existing self-upgrade path
-(`HeartbeatResponse.SwitchToTag`, `v2/pkg/hub/heartbeat.go:1694-1698` (field at `:1698`)), whose doc comment
+(`HeartbeatResponse.SwitchToTag`, `src/pkg/hub/heartbeat.go:1694-1698` (field at `:1698`)), whose doc comment
 records that this exists for exactly this reason: "Used for branch switches on
 clusters the hub can't reach over kubectl — the spoke has in-cluster RBAC
 (hive-self-upgrade role) to patch its own deployment." The delivery mechanism
 for the fix is one the pull-only boundary already accommodates.
 
 Step 4's carrier has direct precedent. `HeartbeatResponse.PendingGateway`
-(`v2/pkg/hub/heartbeat.go:1728-1733`) is a **secret** delivered on the heartbeat response,
-queued hub-side (`v2/pkg/hub/openrouter.go:217`), drained on delivery, and its doc
+(`src/pkg/hub/heartbeat.go:1728-1733`) is a **secret** delivered on the heartbeat response,
+queued hub-side (`src/pkg/hub/openrouter.go:217`), drained on delivery, and its doc
 comment states its purpose: "the delivery channel for firewalled/heartbeat-only
 spokes (vllm-d) the hub cannot POST to directly ... The hub sends it once
 (drained on delivery) rather than every beat, since it carries a secret key
@@ -431,7 +441,7 @@ structure rather than invent one. The "send once, drained" property should
 
 `42dd2cce` already built the interlock and it is exactly the right shape.
 `PerHiveEnvStatus` carries `UnreachableHives`, `UnreachableClusters` and
-`FleetFullyObserved` (`v2/pkg/hub/perhive_env_reconcile.go:552-580`), with
+`FleetFullyObserved` (`src/pkg/hub/perhive_env_reconcile.go:552-580`), with
 `FleetFullyObserved = out.ConsideredHives > 0 && out.UnreachableHives == 0`
 (`:673`) — failing closed on a zero-considered sweep, because "I looked at
 nothing" is not "I looked at everything". `SafeToRetirePrevious` is gated on it
@@ -482,16 +492,16 @@ instructive and because a future reader may otherwise re-derive it.
 hives that survived a status filter:
 
 ```go
-// v2/pkg/hub/perhive_env_reconcile.go:427-429
+// src/pkg/hub/perhive_env_reconcile.go:427-429
 func perHiveEnvSweepEligible(status string) bool {
 	return strings.TrimSpace(status) != "provisioning"
 }
 ```
 
 It is incremented only after that filter passes
-(`v2/pkg/hub/perhive_env_reconcile.go:811-816`) and published as
+(`src/pkg/hub/perhive_env_reconcile.go:811-816`) and published as
 `out.ConsideredHives = s.perHiveEnvConsidered`
-(`v2/pkg/hub/perhive_env_reconcile.go:665`). A hive in `provisioning` is
+(`src/pkg/hub/perhive_env_reconcile.go:665`). A hive in `provisioning` is
 therefore absent from **both** sides of the equality, and `0 == 0` is true.
 That is exactly the paused-spoke-leaves-the-denominator failure that
 `master-key-rotation.md:216-227` warns about and that this section claimed to
@@ -499,11 +509,11 @@ have avoided.
 
 And a `provisioning` hive *can* already hold master-derived material: the
 template injects it at provision time
-(`v2/pkg/hub/saas_provision.go:1966-1986`), i.e. before the status leaves
+(`src/pkg/hub/saas_provision.go:1966-1986`), i.e. before the status leaves
 `provisioning`. So the exclusion is not harmless here.
 
 Note *why* the exclusion is safe for the existing counters and not for this
-one. The doc comment at `v2/pkg/hub/perhive_env_reconcile.go:381-426` justifies
+one. The doc comment at `src/pkg/hub/perhive_env_reconcile.go:381-426` justifies
 it as "a cheap-cycle optimisation, not a safety gate", and that is correct **for
 a Deployment-read numerator**: a hive the sweep never reads records no
 observation, so it can never count as converged. A pin-store numerator does not
@@ -522,7 +532,7 @@ equality goes **true** while a *different* hive is unpinned. The existing code
 is deliberate about this hazard: `perHiveEnvGeneration` takes its attribution
 "from the SAME read that produced the drift list, so the two can never describe
 different moments"
-(`v2/pkg/hub/perhive_env_reconcile.go:877-879`).
+(`src/pkg/hub/perhive_env_reconcile.go:877-879`).
 
 **The corrected clause.** Do not compare counts. Carry unpinned hives the way
 `UnreachableHives` is carried — a counter incremented **inside the same sweep
@@ -541,13 +551,13 @@ SafeToRetirePrevious = hasPrevious
 
 This preserves the pattern every existing clause already uses — a `== 0` floor
 or a `> 0` liveness check, never an equality between two separately-sourced
-totals (`v2/pkg/hub/perhive_env_reconcile.go:752-757`, and `FleetFullyObserved
+totals (`src/pkg/hub/perhive_env_reconcile.go:752-757`, and `FleetFullyObserved
 = out.ConsideredHives > 0 && out.UnreachableHives == 0` at `:673`). It cannot go
 true on a zero sweep, and a hive present in the registry with no pin is
 *counted* rather than silently absent.
 
 Increment it at the same point `noteUnreachable` is
-(`v2/pkg/hub/perhive_env_reconcile.go:803-809`).
+(`src/pkg/hub/perhive_env_reconcile.go:803-809`).
 
 **And count it before the status filter, not after.** `HivesWithoutPinnedWrapKey`
 must be incremented for every hive returned by `listSaaSHives()`, including
@@ -582,11 +592,11 @@ Trace what reads `HIVE_HUB_SECRET` on a spoke at boot:
 
 | Reader | Location | Still needed once a wrapped master arrives? |
 |---|---|---|
-| `spokeDomainKey` (session key) | `v2/pkg/hub/hub_keys.go:443-448` | No — dedicated var, or the delivered master |
-| `SpokeHeartbeatKey` lane 2 | `v2/pkg/hub/hub_keys.go:489-495` | **Yes at first boot** — see below |
-| `SpokeInviteKey` lane 2 | `v2/pkg/hub/hub_keys.go:539-543` | No |
-| `SpokeSSOPublicKey` lane 2 | `v2/pkg/hub/hub_keys.go:567` | No |
-| `provisionMasterSecret` | `v2/pkg/hub/hub_keys.go:584-592` | Hub-side only; not a spoke reader |
+| `spokeDomainKey` (session key) | `src/pkg/hub/hub_keys.go:443-448` | No — dedicated var, or the delivered master |
+| `SpokeHeartbeatKey` lane 2 | `src/pkg/hub/hub_keys.go:489-495` | **Yes at first boot** — see below |
+| `SpokeInviteKey` lane 2 | `src/pkg/hub/hub_keys.go:539-543` | No |
+| `SpokeSSOPublicKey` lane 2 | `src/pkg/hub/hub_keys.go:567` | No |
+| `provisionMasterSecret` | `src/pkg/hub/hub_keys.go:584-592` | Hub-side only; not a spoke reader |
 
 The blocker is the second row and it is circular in exactly the way the brief
 anticipates:
@@ -595,20 +605,20 @@ anticipates:
 > master.**
 
 If `HIVE_HUB_SECRET` is stripped and `HIVE_HEARTBEAT_KEY` is present, the spoke
-authenticates on lane 1 (`v2/pkg/hub/hub_keys.go:486-488`) and never needs the master —
+authenticates on lane 1 (`src/pkg/hub/hub_keys.go:486-488`) and never needs the master —
 fine. But after a rotation, `HIVE_HEARTBEAT_KEY` is stale. On a reachable spoke
 the reconcile lane patches it. **On a pull-only spoke nothing patches it**, and
 the spoke cannot self-derive a fresh one without the master. So it must
 authenticate with the *old* bearer, which works only while the previous
 generation is still acceptable (`acceptableGenerations`,
-`v2/pkg/hub/hub_generations.go:222-242`, default 7 days).
+`src/pkg/hub/hub_generations.go:222-242`, default 7 days).
 
 This yields a workable but strictly bounded property:
 
 - **A pull-only spoke can have `HIVE_HUB_SECRET` stripped** once it holds a
   pinned wrapping key and a valid `HIVE_HEARTBEAT_KEY`.
 - **It must then receive and apply each wrapped master within
-  `defaultVerifyWindow`** (7 days, `v2/pkg/hub/hub_generations.go:118`), because after that
+  `defaultVerifyWindow`** (7 days, `src/pkg/hub/hub_generations.go:118`), because after that
   its old bearer stops verifying and it has no way to derive a new one.
 - **A spoke that is paused, offline, or fails to decrypt for longer than the
   verify window is permanently stranded** and requires operator intervention on
@@ -640,10 +650,10 @@ adversarial review compose, and the composition is what makes (b) unacceptable:
    which is the correct behaviour, and is precisely what prevents that spoke from
    ever receiving a wrapped master.
 4. Retirement is unconditional and runs on the hub clock
-   (`v2/pkg/hub/hub_generations.go:222-242`,
-   `v2/pkg/hub/hub_generations_retire.go:238-244`), so the attacker simply waits
+   (`src/pkg/hub/hub_generations.go:222-242`,
+   `src/pkg/hub/hub_generations_retire.go:238-244`), so the attacker simply waits
    out `defaultVerifyWindow` (7 days,
-   `v2/pkg/hub/hub_generations.go:118`).
+   `src/pkg/hub/hub_generations.go:118`).
 5. Under (b) the spoke's master is already stripped, so when its old bearer stops
    verifying it has no way to derive a new one. It is **permanently stranded**.
 
@@ -681,8 +691,8 @@ assessment is (c). **Operator's call.**
 ## 8. Failure modes, all fail-closed
 
 The governing principle is the one already stated for `VerifyUntil.IsZero()`
-meaning ALREADY EXPIRED (`v2/pkg/hub/hub_generations.go:232-238`) and for the
-absent-versus-unreadable distinction (`v2/pkg/hub/hub_generations_store.go:175-198`): a
+meaning ALREADY EXPIRED (`src/pkg/hub/hub_generations.go:232-238`) and for the
+absent-versus-unreadable distinction (`src/pkg/hub/hub_generations_store.go:175-198`): a
 state that cannot be trusted must never quietly widen what is accepted or
 revert what is current.
 
@@ -695,14 +705,14 @@ revert what is current.
 | Hub queue drained but spoke never applied | Hub re-queues until the spoke's heartbeat **acks the applied generation ID**. | This is where `PendingGateway`'s "send once, drained on delivery" must **not** be copied. Delivery is not application. Ack on generation ID, not on receipt. |
 | PVC loss on the spoke | New keypair generated + published; differs from pin → refused per row 2 → operator re-pins. Spoke continues on its existing master meanwhile. | Indistinguishable from attack, so treated as attack, with an operator escape hatch. Availability cost accepted deliberately. |
 | Clock skew | Wrapping-key overlap and `VerifyUntil` are both hub-evaluated on the hub clock. The spoke never makes an expiry decision. | Single clock. A spoke with a skewed clock cannot extend its own acceptance window. |
-| Hub has no pinned key for a hive at rotation time | Rotation proceeds (retirement is unconditional by design, `v2/pkg/hub/hub_generations_retire.go:238-244`) but `SafeToRetirePrevious` stays false and the alert names the hive. | Matches the existing anti-pin property: an unconverged spoke must not be able to hold a superseded master open indefinitely. |
+| Hub has no pinned key for a hive at rotation time | Rotation proceeds (retirement is unconditional by design, `src/pkg/hub/hub_generations_retire.go:238-244`) but `SafeToRetirePrevious` stays false and the alert names the hive. | Matches the existing anti-pin property: an unconverged spoke must not be able to hold a superseded master open indefinitely. |
 
 Two notes on the last row. Retirement remaining unconditional is deliberate and
-should not be weakened by this design — `v2/pkg/hub/hub_generations_retire.go:238-244`
+should not be weakened by this design — `src/pkg/hub/hub_generations_retire.go:238-244`
 argues it correctly. Option D's job is to make convergence *achievable* for the
 44, not to make retirement wait for them.
 
-And the `maxLiveGenerations = 2` bound (`v2/pkg/hub/hub_generations.go:107`) is unaffected:
+And the `maxLiveGenerations = 2` bound (`src/pkg/hub/hub_generations.go:107`) is unaffected:
 wrapping does not add generations, it adds a delivery mechanism for the one
 being introduced. The two-HMAC trial-verification bound argued at `:92-99`
 stands unchanged.
@@ -748,25 +758,25 @@ resolved-looking sentence this document elsewhere refuses to write. Precisely:
 
 | | Timeline |
 |---|---|
-| **Evicted immediately at rotation** | All *future* masters. The bearer for N+1 is derived from master N+1 (`v2/pkg/hub/hub_keys.go:485-496`), which is sealed to a pinned key the attacker does not hold. They cannot obtain N+1 or anything after it. |
+| **Evicted immediately at rotation** | All *future* masters. The bearer for N+1 is derived from master N+1 (`src/pkg/hub/hub_keys.go:485-496`), which is sealed to a pinned key the attacker does not hold. They cannot obtain N+1 or anything after it. |
 | **Retained for `defaultVerifyWindow` (7 days)** | Everything master N itself derives, **fleet-wide**, until generation N leaves `acceptableGenerations`. |
 
 Generation N remains live for verification for 7 days after rotation
-(`defaultVerifyWindow`, `v2/pkg/hub/hub_generations.go:118`), excluded only on
-the hub clock (`v2/pkg/hub/hub_generations.go:222-242`). During that window an
+(`defaultVerifyWindow`, `src/pkg/hub/hub_generations.go:118`), excluded only on
+the hub clock (`src/pkg/hub/hub_generations.go:222-242`). During that window an
 attacker holding master N retains, for **every hive in the fleet**:
 
 - **Heartbeat impersonation of any hive.**
   `verifyHeartbeatBearerAcrossGenerations` accepts any live generation
-  (`v2/pkg/hub/hub_keys.go:339-366`, loop at `:348`).
-- **Invite signing.** `SpokeInviteKey` (`v2/pkg/hub/hub_keys.go:535-544`) is
+  (`src/pkg/hub/hub_keys.go:339-366`, loop at `:348`).
+- **Invite signing.** `SpokeInviteKey` (`src/pkg/hub/hub_keys.go:535-544`) is
   symmetric and both minted and verified spoke-side.
 - **Session and terminal cookies.** `spokeDomainKey`
-  (`v2/pkg/hub/hub_keys.go:443-448`) is the verify key. Cookie lifetime is
+  (`src/pkg/hub/hub_keys.go:443-448`) is the verify key. Cookie lifetime is
   `cookieMaxAgeDays` = 7 days, which is exactly why `defaultVerifyWindow` is 7
-  days (`v2/pkg/hub/hub_generations.go:109-118`).
+  days (`src/pkg/hub/hub_generations.go:109-118`).
 - **Fleet-wide SSO minting.** The sharpest one.
-  `SSOSigningSeedFromMaster` (`v2/pkg/hub/hub_keys.go:576-578`) yields the
+  `SSOSigningSeedFromMaster` (`src/pkg/hub/hub_keys.go:576-578`) yields the
   Ed25519 **private** seed; its own doc comment at `:570-575` states "This is
   PRIVATE-key material: it can mint SSO tokens".
 
@@ -880,7 +890,7 @@ Ranked, because these are where I would expect the failure:
 ### Regression replays
 
 - **F2 replay.** Assert no code path derives a wrapping-key trust decision
-  without `hiveID`, mirroring the banner at `v2/pkg/hub/hub_keys.go:314-327`. If a
+  without `hiveID`, mirroring the banner at `src/pkg/hub/hub_keys.go:314-327`. If a
   publication can be accepted without an identity-bound bearer, F2 is re-opened
   through a new door.
 - **F19 replay.** Assert the wrap path reads the hub's *live* generation set,
@@ -957,7 +967,7 @@ assessment: (c). **Operator's call**, since it trades availability against
 exposure.
 
 **OQ-3 — HKDF as a module dependency, or single-block HMAC-SHA256 expansion?**
-(§3). `v2/pkg/hub/hub_keys.go:31-33` deliberately avoided the dependency. Following
+(§3). `src/pkg/hub/hub_keys.go:31-33` deliberately avoided the dependency. Following
 precedent is defensible and so is deviating; it should be decided explicitly.
 
 **OQ-4 — Wrapping-key max age and overlap window.** Suggested 90 days / 24
@@ -973,10 +983,10 @@ access (§6). Steps 1–5 need nothing from them.
 
 - It does not weaken `pull_only`, request RBAC, or assume any inbound path.
 - It does not make retirement conditional on convergence
-  (`v2/pkg/hub/hub_generations_retire.go:238-244`).
+  (`src/pkg/hub/hub_generations_retire.go:238-244`).
 - It does not change `maxLiveGenerations`, `VerifyUntil` semantics, or the
   heartbeat bearer format — the last of which is a contract with deployed
-  Deployments (`v2/pkg/hub/hub_keys.go:300-306`).
+  Deployments (`src/pkg/hub/hub_keys.go:300-306`).
 - It does not fix F19 or F20. Those remain prerequisites; this design describes
   what F19's convergence should *deliver to* once it works.
 
