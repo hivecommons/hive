@@ -354,8 +354,21 @@ type ContributeWSHub struct {
 	// A permanent failure (msg.Permanent) counts as permanentFailureWeight toward
 	// the threshold. Guarded by completedMu.
 	consecutiveFailures map[string]int
-	completedMu         sync.Mutex
-	selectMu            sync.Mutex
+	// noPRStreaks counts CONSECUTIVE no-PR completions per "repo#number"
+	// (kubestellar/hive#3980). Each one doubles the next no-PR cooldown
+	// (advanceNoPRStreakLocked), so an issue that keeps "completing" with
+	// nothing to ship — e.g. the #2547 shape, where the shippable parts
+	// merged and the rest is maintainer-gated but the issue stays open —
+	// backs off geometrically instead of burning a full contributor task
+	// cycle every completedNoPRCooldownHours forever. Deliberately a
+	// SEPARATE map from completedTasks: the loop's signature is precisely
+	// that the completion entry EXPIRES (and is swept) before the next
+	// dispatch, so the streak must survive that sweep. Reset by a completion
+	// that ships a verified PR, or by noPRStreakResetAfter of quiet. Guarded
+	// by completedMu.
+	noPRStreaks map[string]noPRStreakRecord
+	completedMu sync.Mutex
+	selectMu    sync.Mutex
 	// assignmentTimes records, per contributor identity (identityOf), the wall-clock
 	// times of the task_assign messages that identity has been handed. It backs the
 	// #2436/#2566 per-tier rate gate: tier_limits.max_per_hour / max_per_day were
@@ -545,6 +558,17 @@ const completedTaskCooldownHours = 168
 // the same day.
 const completedNoPRCooldownHours = 4
 
+// noPRStreakResetAfter is how long a no-PR completion streak (#3980) survives
+// without another no-PR completion before it forgets itself and the next
+// no-PR cooldown starts back at completedNoPRCooldownHours. It must be LONGER
+// than the streak's own cooldown cap (the with-PR cooldown, default
+// completedTaskCooldownHours = 168h): the whole point is that the issue is
+// only re-dispatched AFTER its escalated cooldown expires, so a reset window
+// shorter than the cap would wipe the streak before the capped re-offer ever
+// happened and the backoff could never reach — or hold — its ceiling. Two
+// weeks = 2× the default cap, so one full capped cycle plus slack.
+const noPRStreakResetAfter = 14 * 24 * time.Hour
+
 // failedTaskCooldownMinutes is the SHORT cooldown applied to an issue when a
 // contributor reports task_failed (#2435). It is deliberately far shorter than
 // the completion cooldowns above: a failure is often purely environmental
@@ -612,6 +636,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		completedTaskPRURL:    make(map[string]string),
 		failedTasks:           make(map[string]time.Time),
 		consecutiveFailures:   make(map[string]int),
+		noPRStreaks:           make(map[string]noPRStreakRecord),
 		assignmentTimes:       make(map[string][]time.Time),
 		leases:                make(map[string]*taskLease),
 		yankExclusions:        make(map[string]time.Time),
@@ -621,6 +646,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	}
 	hub.loadCompletedTasks()
 	hub.loadFailedTasks()
+	hub.loadNoPRStreaks()
 	hub.loadActivity()
 	go hub.cleanupLoop()
 	return hub
@@ -719,6 +745,103 @@ type completedTaskRecord struct {
 }
 
 const failedTasksFile = "/data/contributors/failed-tasks.json"
+
+const noPRStreaksFile = "/data/contributors/no-pr-streaks.json"
+
+// noPRStreakRecord is the in-memory and on-disk shape of one no-PR completion
+// streak (#3980). LastAt is the most recent no-PR completion; the streak is
+// discarded once it is older than noPRStreakResetAfter — enforced lazily on
+// advance, on save, and on load, so a hub bounce cannot resurrect a stale
+// streak and the map cannot grow without bound.
+type noPRStreakRecord struct {
+	Count  int       `json:"count"`
+	LastAt time.Time `json:"last_at"`
+}
+
+func (h *ContributeWSHub) loadNoPRStreaks() {
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	data, err := os.ReadFile(noPRStreaksFile)
+	if err != nil {
+		return
+	}
+	records := make(map[string]noPRStreakRecord)
+	if json.Unmarshal(data, &records) != nil {
+		return
+	}
+	for k, rec := range records {
+		if rec.Count <= 0 || rec.LastAt.IsZero() {
+			continue
+		}
+		if time.Since(rec.LastAt) >= noPRStreakResetAfter {
+			continue
+		}
+		if h.noPRStreaks != nil {
+			h.noPRStreaks[k] = rec
+		}
+	}
+	h.logger.Info("[contribute-ws] loaded no-PR streaks", "count", len(h.noPRStreaks))
+}
+
+func (h *ContributeWSHub) saveNoPRStreaks() {
+	h.completedMu.Lock()
+	saved := make(map[string]noPRStreakRecord, len(h.noPRStreaks))
+	for k, rec := range h.noPRStreaks {
+		if time.Since(rec.LastAt) >= noPRStreakResetAfter {
+			continue
+		}
+		saved[k] = rec
+	}
+	h.completedMu.Unlock()
+	data, err := json.Marshal(saved)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] no-PR streaks marshal failed", "error", err)
+		return
+	}
+	os.MkdirAll("/data/contributors", 0o755)
+	tmpPath := noPRStreaksFile + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		h.logger.Warn("[contribute-ws] no-PR streaks write failed", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, noPRStreaksFile); err != nil {
+		h.logger.Warn("[contribute-ws] no-PR streaks rename failed", "error", err)
+	}
+}
+
+// advanceNoPRStreakLocked books one more consecutive no-PR completion against
+// key and returns the escalated cooldown to apply (#3980): the base
+// completedNoPRCooldownHours doubled per prior streak entry, capped at the
+// operator's with-PR cooldown. 4h → 8h → 16h → … keeps the original "another
+// contributor can retry soon" behavior for a first idle completion, while an
+// issue that repeatedly yields "nothing to ship" — however a future parsing
+// gap lets that happen — converges to at most one wasted task cycle per
+// with-PR cooldown period instead of one every 4h forever. Callers must hold
+// completedMu.
+func (h *ContributeWSHub) advanceNoPRStreakLocked(key string, ceiling time.Duration) time.Duration {
+	if h.noPRStreaks == nil {
+		h.noPRStreaks = make(map[string]noPRStreakRecord)
+	}
+	rec := h.noPRStreaks[key]
+	if rec.Count > 0 && time.Since(rec.LastAt) >= noPRStreakResetAfter {
+		rec = noPRStreakRecord{}
+	}
+	rec.Count++
+	rec.LastAt = time.Now()
+	h.noPRStreaks[key] = rec
+
+	cooldown := completedNoPRCooldownHours * time.Hour
+	for i := 1; i < rec.Count; i++ {
+		if cooldown >= ceiling {
+			break
+		}
+		cooldown *= 2
+	}
+	if cooldown > ceiling {
+		cooldown = ceiling
+	}
+	return cooldown
+}
 
 // failedTaskRecord is the on-disk shape of one failed-task entry (#2435). It
 // preserves the last-failure time and the running consecutive-failure count so a
@@ -873,20 +996,35 @@ func (h *ContributeWSHub) saveCompletedTasks() {
 // the full completedTaskCooldownHours (real work landed — don't re-dispatch for
 // a week), while a completion WITHOUT one — the agent merely returned to idle —
 // gets the short completedNoPRCooldownHours so an issue where nothing shipped
-// is not locked out for a week. The chosen expiry is stored per task and honored
+// is not locked out for a week. Since #3980 that short cooldown escalates on
+// CONSECUTIVE no-PR completions of the same issue (see advanceNoPRStreakLocked)
+// so a correct "nothing to ship" verdict cannot loop every 4h indefinitely.
+// The chosen expiry is stored per task and honored
 // by isTaskInCooldown; the prURL is retained for stats/audit and #2356
 // duplicate detection.
 func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL string) {
 	key := fmt.Sprintf("%s#%d", repo, number)
-	cooldown := completedNoPRCooldownHours * time.Hour
-	if prURL != "" {
-		// The WITH-PR period is operator-tunable (Config.Hub.ContributeCooldownHours,
-		// default completedTaskCooldownHours). We still RECORD this even when cooldown
-		// is disabled — isTaskInCooldown short-circuits the gating, so the history is
-		// kept for stats/audit but never excludes the issue.
-		cooldown = h.configuredWithPRCooldown()
-	}
+	// The WITH-PR period is operator-tunable (Config.Hub.ContributeCooldownHours,
+	// default completedTaskCooldownHours). We still RECORD this even when cooldown
+	// is disabled — isTaskInCooldown short-circuits the gating, so the history is
+	// kept for stats/audit but never excludes the issue. It also caps the no-PR
+	// escalation below. Read before taking completedMu: it walks server config,
+	// which the lock has no business covering.
+	withPRCooldown := h.configuredWithPRCooldown()
 	h.completedMu.Lock()
+	var cooldown time.Duration
+	if prURL != "" {
+		cooldown = withPRCooldown
+		// A shipped, verified PR ends any no-PR streak: the issue's next no-PR
+		// completion (if any) starts back at the short base cooldown.
+		delete(h.noPRStreaks, key)
+	} else {
+		// #3980: repeated no-PR completions escalate geometrically (4h → 8h →
+		// …, capped at the with-PR cooldown) so a "nothing to ship" loop —
+		// e.g. an issue whose remaining work is maintainer-gated (#2547) —
+		// cannot burn a full contributor task cycle every 4h forever.
+		cooldown = h.advanceNoPRStreakLocked(key, withPRCooldown)
+	}
 	h.completedTasks[key] = time.Now()
 	if h.completedTaskCooldown != nil {
 		h.completedTaskCooldown[key] = cooldown
@@ -913,6 +1051,7 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	}
 	h.completedMu.Unlock()
 	h.saveCompletedTasks()
+	h.saveNoPRStreaks()
 	if failureCleared {
 		h.saveFailedTasks()
 	}
