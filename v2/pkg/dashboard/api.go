@@ -298,8 +298,15 @@ var (
 )
 
 // defaultUpstreamBranch is the fallback branch for the self-version check
-// when the build did not inject a branch (e.g. local `go run`).
-const defaultUpstreamBranch = "v2"
+// when the build did not inject a branch (e.g. local `go run`), and for the
+// clone command on the contribute onboarding page.
+//
+// v4, not v2: v2 is no longer maintained, so a build with no injected branch
+// was comparing itself against — and telling contributors to clone — a branch
+// that no longer receives the code this binary is built from. This is the same
+// stale-constant defect upgradeBranchOrDefault documents in pkg/hub, where a
+// hardcoded "v2" default resolved upgrade targets against a foreign branch.
+const defaultUpstreamBranch = "v4"
 
 func SetGitVersion(hash, short string) {
 	versionHash = hash

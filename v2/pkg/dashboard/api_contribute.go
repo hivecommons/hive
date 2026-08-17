@@ -785,7 +785,16 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	projectNameJS := jsStringLiteral(projectName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	// {{HIVE_BRANCH}} is substituted into the TEMPLATE, before Fprintf renders
+	// it, so the onboarding clone command names the branch this hub is actually
+	// built from instead of a hardcoded one (kubestellar/hive#3990).
+	//
+	// It is a pre-pass rather than another %s because this format string carries
+	// eleven positional arguments across several thousand lines; inserting a
+	// verb mid-template would renumber every argument after it. Substituting on
+	// the template also means no rendered value — project name, Host header —
+	// can ever contain the sentinel and be rewritten by it.
+	fmt.Fprintf(w, strings.ReplaceAll(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
 <style>
 /* Michroma display face, base64-embedded (no network fonts). Used ONLY by the
@@ -1877,7 +1886,7 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 <pre id="copy-cmds" style="color:#e6edf3;font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
 # Use the OS / CLI / Mode / Runtime selectors above to customize.
 brew install just gh
-git clone -b v2 https://github.com/kubestellar/hive && cd hive
+git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive
 export HIVE_HUB=%s
 # Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.
 just contribute-setup claude
@@ -1922,14 +1931,14 @@ linux:'curl --proto \'=https\' --tlsv1.2 -sSf https://just.systems/install.sh | 
 windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
 };
 var roleHelp='# Optional: export HIVE_AGENT_ROLE=scanner (or a granted privileged role such as ci-maintainer) to claim a spoke-agent lane.\n';
-var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
-var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
+var containerTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive';
+var hostTpl='PREREQ\nINSTALL\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\njust contribute-hive CLI local';
 // Kubernetes (#2549): register locally, then generate + apply a headless
 // contributor workload (Deployment, #2660) into a cluster you already have.
 // just contribute-k8s prints the manifest; it never touches your cluster on
 // its own, so you can read it before piping to kubectl. Only the headless-
 // capable backends run this way (see K8S_HEADLESS_BACKENDS).
-var k8sTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
+var k8sTpl='PREREQ\ngit clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\nROLEHELPjust contribute-setup CLI\n# Review the manifest, then apply into your current kube-context:\njust contribute-k8s hive-contributor | kubectl apply -f -\nkubectl -n hive-contributor rollout status deploy/hive-contributor';
 // Backends with a verified headless (non-interactive) entry point — must match
 // HEADLESS_BACKENDS in bin/contributor-relay.sh and the Justfile. A pod has no
 // TTY, so only these run in a cluster; anything else refuses work at startup.
@@ -2086,7 +2095,7 @@ function defaultPromptFor(v){
     'The hive hub is: '+hubURL+'\n\n'+
     'Please walk me through, step by step, using the official setup:\n'+
     '  1. Install the prerequisites (just, gh) for my OS.\n'+
-    '  2. git clone -b v2 https://github.com/kubestellar/hive && cd hive\n'+
+    '  2. git clone -b {{HIVE_BRANCH}} https://github.com/kubestellar/hive && cd hive\n'+
     '  3. export HIVE_HUB='+hubURL+'\n'+
     '     For multiple hives, HIVE_HUB can be comma-separated when HIVE_REGISTRATION_TOKEN has matching tokens in the same order.\n'+
     '  4. just contribute-setup '+v+'\n'+
@@ -5924,7 +5933,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
+</body></html>`, "{{HIVE_BRANCH}}", upstreamBranch()), projectName, michromaFontFaceCSS, customStyleHeadHTML, projectName, len(profiles), tierBoxes.String(), hubURL, hubURLJS, projectNameJS, tierTableRows, customStyleNoticeHTML)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
