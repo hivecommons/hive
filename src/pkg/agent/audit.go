@@ -20,6 +20,7 @@ const (
 	AuditAgentRemoved     = "agent_removed"
 	AuditAgentBackendSet  = "agent_backend_changed"
 	AuditAgentModelSet    = "agent_model_changed"
+	AuditToolApproval     = "tool_approval"
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than

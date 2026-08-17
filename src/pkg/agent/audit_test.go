@@ -286,3 +286,18 @@ func TestFormatAuditDetailIsStableAndOrdered(t *testing.T) {
 		t.Error("empty fields should render as the empty string")
 	}
 }
+
+func TestFormatAuditDetail_ToolApproval(t *testing.T) {
+	fields := auditFields(
+		"rationale", "read-only inspection tool auto-approved",
+		"acmm_level", 4,
+		"tool", "Read",
+		"decision", "auto-approve",
+	)
+	got := FormatAuditDetail(fields)
+	want := "acmm_level=4, decision=auto-approve, rationale=read-only inspection tool auto-approved, tool=Read"
+	if got != want {
+		t.Errorf("FormatAuditDetail(tool approval) =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
