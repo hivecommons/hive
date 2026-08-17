@@ -214,6 +214,96 @@ test('bob never receives --model even when AGENT_MODEL is set', () => {
   } finally { teardown(relay); }
 });
 
+// --- agy pane classification: stale narration must not pin WORKING ---------
+//
+// Verbatim shape of a real wedged pane (kubestellar/hive): agy had finished the
+// turn and printed its no_work_needed verdict, and was sitting at its idle
+// prompt. One line of narration left over from the PREVIOUS task — "I am
+// running the pkg/agent tests…" — kept the whole-pane isWorking scan true, so
+// the relay never reported completion, kept renewing the hub's task lease, and
+// the contributor had to Ctrl-C to get any further work.
+const AGY_WEDGED_PANE = [
+  'Edit(~/hive/src/pkg/agent/manager_test.go)',
+  'Bash(cd src && go test ./pkg/agent)',
+  '',
+  'I am running the pkg/agent tests with the shortened temp directory path to verify they now pass locally as well.',
+  // The turn continues for a while after that line — in the pane this fixture
+  // came from it sat 36 rows above the bottom, far outside any sane tail.
+  ...Array.from({ length: 20 }, (_, i) => `  ok  github.com/kubestellar/hive/pkg/thing${i}  0.0${i}s`),
+  '',
+  '  HIVE_VERDICT: no_work_needed — standing living document tracker, not an actionable task',
+  '────────────────────────────────────────────',
+  '>',
+  '────────────────────────────────────────────',
+  '? for shortcuts',
+].join('\n');
+
+test('agy at its idle prompt is COMPLETE even with stale narration on screen', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_WEDGED_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'a finished agy turn must not read as working just because an older line says "running"');
+  } finally { teardown(relay); }
+});
+
+test('agy still reads as WORKING while activity is in the tail', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const busy = [
+      'HIVE_VERDICT: no_work_needed — an older, finished turn',
+      '',
+      'Bash(go build ./...)',
+      'Reading src/pkg/agent/manager.go',
+    ].join('\n');
+    assert.strictEqual(
+      relay.classifyTmuxPane(busy), relay.PANE_STATE_WORKING,
+      'agy with fresh activity at the bottom of the pane must stay WORKING');
+  } finally { teardown(relay); }
+});
+
+// --- Pane stall backstop ---------------------------------------------------
+//
+// The hub's wedged-worker reclaim only catches a relay that goes SILENT; one
+// that keeps reporting "working" renews the lease forever. These pin the
+// relay-side half: an unchanging pane eventually stops claiming progress.
+test('an unchanging pane trips the stall backstop; any change resets it', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const past = () => relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    assert.strictEqual(relay.paneStalled(['same']), false, 'first sighting only records the fingerprint');
+    past();
+    assert.strictEqual(relay.paneStalled(['same']), true, 'unchanged pane past the timeout is stalled');
+    assert.strictEqual(relay.paneStalled(['different']), false, 'a changed pane restarts the clock');
+    past();
+    assert.strictEqual(relay.paneStalled(['different']), true);
+    // An empty capture is a missing pane, not a stalled agent.
+    assert.strictEqual(relay.paneStalled([]), false);
+    past();
+    assert.strictEqual(relay.paneStalled([]), false, 'an empty capture must never trip the backstop');
+  } finally { teardown(relay); }
+});
+
+test('a stalled pane hands the task back as an environment failure', () => {
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-stall');
+    relay.__stallTick();   // records the fingerprint, reports working
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // same pane past the timeout -> give the task back
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, got ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].failure_kind, 'environment',
+      'a frozen pane says nothing about the WORK, so the failure is the environment kind');
+    assert.match(failed[0].reason, /no pane activity/);
+    assert.strictEqual(relay.getCurrentTask(), null, 'the relay must let go of the task, not keep renewing its lease');
+  } finally { teardown(relay); }
+});
+
 test('agy pairs --effort with --model, and omits it when no model is set', () => {
   // agy warns "--model <m> requires --effort (available: low, medium, high)"
   // and then IGNORES the model, so the two flags must travel together. Mirrors

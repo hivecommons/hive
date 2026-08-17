@@ -1227,9 +1227,25 @@ function classifyTmuxPane(text) {
     hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
     isWorking = /Reading|Writing|Bash|Editing|thinking|running/i.test(text);
   } else if (BACKEND === 'agy') {
+    // Scope the activity check to the TAIL, exactly as the claude branch above
+    // does. agy narrates in plain English inside the transcript ("I am running
+    // the pkg/agent tests…", "Analyzing…"), and those lines stay on screen after
+    // the turn ends. A whole-pane, case-insensitive scan for bare verbs
+    // therefore reads a FINISHED turn as still working — forever, since the
+    // stale line never scrolls off on its own. Observed live: a pane with
+    // hasIdlePrompt=true was pinned to WORKING by a single narration line left
+    // over from the PREVIOUS task, so the relay never reported completion and
+    // kept renewing the hub's task lease; the contributor had to Ctrl-C.
+    //
+    // The marker SET is deliberately unchanged — only the window it looks at.
+    // Narrowing which verbs count would need a live agy turn to verify against,
+    // and getting that wrong would be the opposite (and worse) bug: reporting a
+    // busy agent as idle. The stall backstop in progressTick() covers whatever
+    // this still misses.
+    const agyTail = text.split('\n').slice(-15).join('\n');
     hasIdlePrompt = /\? for shortcuts/.test(text);
     hasCompletionMarker = true;
-    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(text);
+    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
   } else {
     hasIdlePrompt = />\s*$|\$\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
@@ -1279,6 +1295,53 @@ function relaunchCLI() {
   // a prompt must hand its task back rather than sit on it silently.
   armCLIReadyWait();
   return launchCmd;
+}
+
+// --- Pane stall backstop ------------------------------------------------
+//
+// A relay that BELIEVES it is working renews the hub's task lease on every
+// progress report, so the hub's wedged-worker reclaim (wsTaskTimeout +
+// cleanupLoop in src/pkg/dashboard/contribute_ws.go) can never fire against it.
+// That guard only catches a relay that goes SILENT — a crash or a hang. A relay
+// stuck in a false "working" belief keeps the lease alive forever, the task
+// stays in-progress, no further work is offered, and the only way out is a
+// human pressing Ctrl-C. That is not a state a contributor should have to
+// notice, let alone fix by hand.
+//
+// So: if the pane content has not CHANGED at all for this long while we are
+// reporting "working", stop asserting progress we cannot substantiate and hand
+// the task back as an `environment` failure — the honest verdict, since a
+// frozen pane tells us nothing about whether the work itself was done. The hub
+// then requeues it through its normal release path.
+//
+// Deliberately generous: a real agent can sit on one silent command (a long
+// test suite, a slow clone) for many minutes without drawing anything new.
+const PANE_STALL_TIMEOUT_MS = Number(process.env.HIVE_PANE_STALL_TIMEOUT_MS) || 20 * 60 * 1000;
+
+let lastPaneFingerprint = null;
+let lastPaneChangeAt = 0;
+
+function resetPaneStallClock() {
+  lastPaneFingerprint = null;
+  lastPaneChangeAt = Date.now();
+}
+
+// paneStalled records the current pane content and reports whether it has been
+// byte-for-byte identical for longer than PANE_STALL_TIMEOUT_MS.
+function paneStalled(tmuxLines) {
+  const fingerprint = Array.isArray(tmuxLines) ? tmuxLines.join('\n') : String(tmuxLines || '');
+  const now = Date.now();
+  if (fingerprint !== lastPaneFingerprint) {
+    lastPaneFingerprint = fingerprint;
+    lastPaneChangeAt = now;
+    return false;
+  }
+  // An empty capture means tmux told us nothing (session gone, capture failed).
+  // That is not evidence of a stalled AGENT, and other paths already handle a
+  // missing pane, so never let it trip this backstop.
+  if (!fingerprint) return false;
+  if (!lastPaneChangeAt) { lastPaneChangeAt = now; return false; }
+  return now - lastPaneChangeAt >= PANE_STALL_TIMEOUT_MS;
 }
 
 function flushPendingTask() {
@@ -1373,6 +1436,9 @@ function startProgressReporting() {
   if (taskTimeoutHandle) clearTimeout(taskTimeoutHandle);
   if (!taskAssignedAt) taskAssignedAt = Date.now();
   lastProgressTick = Date.now();
+  // Every task starts with a clean stall clock — the previous task's pane
+  // fingerprint says nothing about this one.
+  resetPaneStallClock();
 
   taskTimeoutHandle = setTimeout(() => {
     if (currentTask) {
@@ -1506,6 +1572,15 @@ function progressTick() {
       tmux_output: tmuxLines,
     });
   } else {
+    // Stall backstop: a pane frozen this long is not evidence of work, and
+    // continuing to report "working" would renew the hub's lease forever.
+    if (paneStalled(tmuxLines)) {
+      failCurrentTask(
+        `no pane activity for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)} minutes — the agent CLI is not visibly working`,
+        { kind: 'environment' }
+      );
+      return;
+    }
     send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
   }
 }
@@ -1824,6 +1899,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     PANE_STATE_IDLE_COMPLETE,
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
+    paneStalled,
+    resetPaneStallClock,
+    PANE_STALL_TIMEOUT_MS,
+    // Backdate the stall clock so a test can cross the timeout without
+    // sleeping — the two ticks it needs otherwise land in the same millisecond.
+    __agePaneStallClock: (ms) => { lastPaneChangeAt -= ms; },
+    // Run a progress tick past the startup grace period, as __crashTick does,
+    // so the stall backstop can be exercised without waiting it out.
+    __stallTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     cleanup,
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
