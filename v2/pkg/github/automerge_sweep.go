@@ -33,25 +33,50 @@ const selfAuthoredSweepBudgetShare = 0.25
 // interval is sized against.
 const githubAppHourlyRateLimit = 6900
 
+// selfAuthoredSweepCandidateAllowance is the per-tick request allowance for
+// per-CANDIDATE calls, on top of the one list call per repo. Listing is not the
+// whole cost of a tick: every open App-authored non-draft PR costs a
+// PullRequests.Get in trySweepSelfAuthoredPR, plus a second re-verify Get on
+// the ones that reach the merge step. Sizing the interval on repo count alone
+// therefore understates a tick — on the hive this was measured on, candidate
+// Gets outnumbered list calls whenever the App had a backlog of open PRs.
+//
+// This is an ALLOWANCE, not a measurement: candidates vary tick to tick, and a
+// static budget that covers the common case beats a dynamic ticker for
+// reviewability. A hive holding more open App PRs than this simply runs
+// slightly hotter within its share; the share itself still bounds the damage.
+const selfAuthoredSweepCandidateAllowance = 32
+
 // selfAuthoredSweepInterval sizes the sweep tick so a hive with many repos
 // cannot exhaust its GitHub rate limit just by looking for merge candidates.
 //
-// Each tick lists open PRs for EVERY configured repo, so cost scales with repo
-// count while the fixed 10s tick did not. A 45-repo hive therefore issued
-// 45 x 360 = 16,200 requests/hour against a 6,900/hour limit — 2.3x over,
-// before a single agent made a call. Observed live: the sweep 403'd
-// continuously, go-github then short-circuited every request until the recorded
-// reset ("not making remote request"), and NO PR merged for a full day on a
-// hive that had merged 767 previously.
+// Cost per tick is roughly repos + candidates: one list call per configured
+// repo, plus one Get per open App-authored PR (and a re-verify Get per merge).
+// The fixed 10s tick scaled none of this. A 45-repo hive issued 45 x 360 =
+// 16,200 list requests/hour against a 6,900/hour limit — 2.3x over on the list
+// calls alone, before candidate Gets and before a single agent made a call.
+// Observed live: the sweep 403'd continuously, go-github then short-circuited
+// every request until the recorded reset ("not making remote request"), and
+// the App's own PRs stopped merging entirely.
 //
-// Small hives are unaffected: the fixed interval remains the floor, so a
-// 1-4 repo hive still sweeps every 10s exactly as before.
+// Small hives are unaffected: the fixed interval remains the floor, so a hive
+// with a handful of repos still sweeps every 10s exactly as before.
+// selfAuthoredSweepSmallHiveRepos: at or below this many repos the fixed 10s
+// tick is kept as-is. The budget-share math above would slow even a 1-repo hive
+// (1 list + the candidate allowance per tick lands it over a 25% share at 10s),
+// but a small hive's ABSOLUTE spend is comfortably inside the 6,900/hour limit
+// — the share exists to stop many-repo hives starving everything else, a
+// failure mode small hives cannot produce. Keeping their tick unchanged also
+// keeps this change a no-op for the common quick-start deployment.
+const selfAuthoredSweepSmallHiveRepos = 4
+
 func selfAuthoredSweepInterval(repos int) time.Duration {
-	if repos <= 0 {
+	if repos <= selfAuthoredSweepSmallHiveRepos {
 		return selfAuthoredAutoMergeSweepInterval
 	}
 	budget := float64(githubAppHourlyRateLimit) * selfAuthoredSweepBudgetShare
-	seconds := float64(repos) * 3600.0 / budget
+	perTick := float64(repos + selfAuthoredSweepCandidateAllowance)
+	seconds := perTick * 3600.0 / budget
 	interval := time.Duration(seconds * float64(time.Second))
 	if interval < selfAuthoredAutoMergeSweepInterval {
 		return selfAuthoredAutoMergeSweepInterval

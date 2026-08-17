@@ -22,10 +22,21 @@ func TestSelfAuthoredSweepInterval_StaysWithinRateBudget(t *testing.T) {
 			t.Fatalf("repos=%d: non-positive interval %v", repos, interval)
 		}
 		ticksPerHour := time.Hour.Seconds() / interval.Seconds()
-		reqPerHour := ticksPerHour * float64(repos)
-		// The floor applies below the budget-derived interval, so only assert
-		// the budget where the budget is the binding constraint.
-		if interval > selfAuthoredAutoMergeSweepInterval && reqPerHour > budget*1.05 {
+		// Cost model: one list per repo plus the per-candidate Get allowance.
+		reqPerHour := ticksPerHour * float64(repos+selfAuthoredSweepCandidateAllowance)
+		if repos <= selfAuthoredSweepSmallHiveRepos {
+			// Small hives keep the fixed tick by design; the allowance is an
+			// upper bound sized for many-repo hives and over-penalises a hive
+			// that will rarely hold a fraction of that many open App PRs. Only
+			// the list-call cost is structural there — assert THAT stays well
+			// inside the full limit.
+			if listPerHour := ticksPerHour * float64(repos); listPerHour > githubAppHourlyRateLimit/2 {
+				t.Errorf("repos=%d: %.0f list req/hour is not comfortably inside %d/hour (interval %v)",
+					repos, listPerHour, githubAppHourlyRateLimit, interval)
+			}
+			continue
+		}
+		if reqPerHour > budget*1.05 {
 			t.Errorf("repos=%d: %.0f req/hour exceeds the %.0f/hour share (interval %v)",
 				repos, reqPerHour, budget, interval)
 		}
@@ -65,7 +76,7 @@ func TestSelfAuthoredSweepInterval_ScalesWithRepos(t *testing.T) {
 // the 45-repo hive must land well inside its budget rather than 2.3x over it.
 func TestSelfAuthoredSweepInterval_RealWorldCase(t *testing.T) {
 	interval := selfAuthoredSweepInterval(45)
-	reqPerHour := (time.Hour.Seconds() / interval.Seconds()) * 45
+	reqPerHour := (time.Hour.Seconds() / interval.Seconds()) * float64(45+selfAuthoredSweepCandidateAllowance)
 	if reqPerHour > githubAppHourlyRateLimit {
 		t.Fatalf("45 repos: %.0f req/hour still exceeds %d/hour (interval %v)",
 			reqPerHour, githubAppHourlyRateLimit, interval)
