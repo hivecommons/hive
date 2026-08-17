@@ -6,30 +6,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/github"
 )
+
+func configureIntegratedOwnerIdentity(deps *Dependencies, login string) {
+	deps.IntegratedOperatorResolverFunc = func(context.Context, string) (github.AuthenticatedUserIdentity, error) {
+		return github.AuthenticatedUserIdentity{ID: 101, Login: login, Type: "User"}, nil
+	}
+}
 
 func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.Org = "owner"
 	deps.Config.Project.PrimaryRepo = "repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(token string) (string, error) {
-		if token != "saved-token" {
-			t.Fatalf("setup callback received unexpected token")
-		}
-		return "alice", nil
-	}
+	configureIntegratedOwnerIdentity(deps, "alice")
 	called := false
-	deps.IntegratedSetupFunc = func(_ context.Context, request IntegratedSetupRequest, token string) (map[string]any, error) {
+	deps.IntegratedSetupFunc = func(_ context.Context, request IntegratedSetupRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
 		called = true
-		if token != "saved-token" || request.Repository != "owner/repository" ||
+		if operator.ID != 101 || !strings.EqualFold(operator.Login, "alice") || request.Repository != "owner/repository" ||
 			request.RequestID != "setup-cycle-a-001" ||
 			request.Coverage != "essential" || request.Automation != "repair-pr" ||
 			request.Provider != "codex" || request.VisualHiveRef != strings.Repeat("a", 40) ||
 			request.MaxActiveIssues == nil || *request.MaxActiveIssues != 3 ||
 			request.ExpectedPlanSHA256 != "" {
-			t.Fatalf("unexpected setup request: token=%q request=%+v", token, request)
+			t.Fatalf("unexpected setup request: operator=%+v request=%+v", operator, request)
 		}
 		return map[string]any{"schema_version": "test.plan.v1"}, nil
 	}
@@ -44,8 +46,8 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 		"visual_hive_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "Alice")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK || !called {
@@ -57,9 +59,8 @@ func TestIntegratedSetupApplyRequiresExactPlanDigest(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("apply callback must not run without the exact plan digest")
 		return nil, nil
 	}
@@ -80,9 +81,8 @@ func TestIntegratedSetupRejectsDifferentDashboardActor(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("setup callback must not run for a different dashboard actor")
 		return nil, nil
 	}
@@ -96,11 +96,11 @@ func TestIntegratedSetupRejectsDifferentDashboardActor(t *testing.T) {
 		"visual_hive_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Hive-Role", "owner")
 	request.Header.Set("X-Hive-User", "bob")
+	markOwnerRequest(request)
 	server.mux.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "does not match") {
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "exact numeric GitHub identity") {
 		t.Fatalf("mismatch status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
@@ -109,9 +109,8 @@ func TestIntegratedSetupRejectsReadOnlyViewerAndUnknownFields(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("setup callback must not run")
 		return nil, nil
 	}
@@ -141,9 +140,8 @@ func TestIntegratedSetupRejectsInvalidActiveIssueLimit(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		t.Fatal("setup callback must not run for an invalid active issue limit")
 		return nil, nil
 	}
@@ -167,9 +165,8 @@ func TestIntegratedSetupScrubsSavedTokenFromErrors(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
-	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-setup-token", nil }
-	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
-	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+	configureIntegratedOwnerIdentity(deps, "alice")
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, github.AuthenticatedUserIdentity) (map[string]any, error) {
 		return nil, &testIntegratedLifecycleError{message: "provider rejected token saved-setup-token and sk-proj-secretvalue"}
 	}
 

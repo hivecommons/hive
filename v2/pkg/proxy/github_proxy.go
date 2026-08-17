@@ -837,7 +837,9 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			allowed, isMutation := GraphQLAllowed(mode, body)
 			if !allowed {
 				blocked = true
-				if isMutation {
+				if msg, denied := GraphQLDeniedMessage(body); denied {
+					blockReason = msg
+				} else if isMutation {
 					blockReason = "graphql mutation"
 				} else {
 					blockReason = "graphql"

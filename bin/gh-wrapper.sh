@@ -29,19 +29,13 @@ set -euo pipefail
 REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 [[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
-HIVE_CONTRIBUTOR_MODE_MARKER="${HIVE_CONTRIBUTOR_MODE_MARKER:-/etc/hive/contributor-mode}"
+CONTRIBUTOR_MODE_MARKER="/etc/hive/contributor-mode"
 
-# Contributor mode comes from a root-owned marker file at the image
-# boundary. The env var HIVE_CONTRIBUTOR_MODE is caller-controlled and
-# must never switch token injection or PR routing.
-#
-# SECURITY (#3249, re-landing #3321/fb87b4c7 on v4): this guard shipped on v2
-# but was dropped from v4 by a v2->v4 sync merge that resolved bin/gh-wrapper.sh
-# in favour of the v4 side. The marker tests and the contributor Dockerfile's
-# `touch /etc/hive/contributor-mode` both survived the sync, so the regression
-# suite kept asserting a boundary the wrapper no longer enforced.
+# Contributor mode is an image property, not a caller-controlled environment
+# toggle. Keep this path constant: an agent can set its own environment and must
+# not be able to redirect the trust check to an agent-writable marker.
 _contributor_mode() {
-  [[ -f "$HIVE_CONTRIBUTOR_MODE_MARKER" ]]
+  [[ -f "$CONTRIBUTOR_MODE_MARKER" ]]
 }
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
@@ -283,44 +277,70 @@ fi
 
 # ── Helpers: author validation for the list gate ──
 
-# Extract the --author value from the args array. Returns the value on stdout
-# on success (exit 0) or nothing on failure (exit 1).
+# Extract the effective --author/-A value from the args array. GitHub CLI uses
+# the last repeated value, so this deliberately scans the whole argv instead of
+# returning the first match. Returns the value on stdout on success (exit 0) or
+# nothing on failure (exit 1).
 _extract_author() {
-  local i
+  local i author_value="" found=false
   for ((i=0; i<${#args[@]}; i++)); do
-    if [[ "${args[$i]}" = --author=* ]]; then
-      printf '%s\n' "${args[$i]#--author=}"
-      return 0
+    if [[ "${args[$i]}" = --author=* || "${args[$i]}" = -A=* ]]; then
+      author_value="${args[$i]#*=}"
+      found=true
+      continue
     fi
-    if [[ "${args[$i]}" = --author ]]; then
+    if [[ "${args[$i]}" = -A?* ]]; then
+      author_value="${args[$i]#-A}"
+      found=true
+      continue
+    fi
+    if [[ "${args[$i]}" = --author || "${args[$i]}" = -A ]]; then
       if [[ $((i+1)) -lt ${#args[@]} ]] && [[ "${args[$((i+1))]}" != -* ]]; then
-        printf '%s\n' "${args[$((i+1))]}"
-        return 0
+        author_value="${args[$((i+1))]}"
+        found=true
       fi
     fi
   done
+  if $found; then
+    printf '%s\n' "$author_value"
+    return 0
+  fi
   return 1
 }
 
-# Resolve the bot's GitHub login (cached per invocation for performance).
+# Resolve the authenticated GitHub login. Initialize the cache internally so a
+# caller-controlled environment cannot seed a trusted identity.
+HIVE_AUTH_LOGIN_CACHED=""
 _resolve_self_login() {
-  if [[ -n "${HIVE_BOT_LOGIN_CACHED:-}" ]]; then
-    printf '%s\n' "$HIVE_BOT_LOGIN_CACHED"
-    return
+  if [[ -n "$HIVE_AUTH_LOGIN_CACHED" ]]; then
+    printf '%s\n' "$HIVE_AUTH_LOGIN_CACHED"
+    return 0
   fi
-  if [[ -n "${HIVE_BOT_LOGIN:-}" ]]; then
-    HIVE_BOT_LOGIN_CACHED="$HIVE_BOT_LOGIN"
-    printf '%s\n' "$HIVE_BOT_LOGIN_CACHED"
-    return
+
+  local login
+  if ! login="$("$REAL_GH" api user --jq '.login' 2>/dev/null)"; then
+    return 1
   fi
-  if [[ -x "$REAL_GH" ]] && [[ -n "${GH_TOKEN:-}" ]]; then
-    HIVE_BOT_LOGIN_CACHED="$("$REAL_GH" api user -q '.login' 2>/dev/null || true)"
-    if [[ -n "$HIVE_BOT_LOGIN_CACHED" ]]; then
-      printf '%s\n' "$HIVE_BOT_LOGIN_CACHED"
-      return
-    fi
+  if [[ -z "$login" ]]; then
+    return 1
   fi
-  printf '%s\n' ""
+
+  HIVE_AUTH_LOGIN_CACHED="$login"
+  printf '%s\n' "$HIVE_AUTH_LOGIN_CACHED"
+}
+
+_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+_author_matches_login() {
+  local requested_lc login_lc requested_base login_base
+  requested_lc="$(_lower "$1")"
+  login_lc="$(_lower "$2")"
+  requested_base="${requested_lc%\[bot\]}"
+  login_base="${login_lc%\[bot\]}"
+
+  [[ "$requested_lc" = "$login_lc" || "$requested_base" = "$login_base" ]]
 }
 
 # ── READ/WRITE SPLIT for GitHub lookups (fixes #2356; addresses #2393 item 6) ──
@@ -335,28 +355,25 @@ _resolve_self_login() {
 # Block gh issue list and gh pr list for NON-contributor hive agents (they consume
 # assigned work from actionable.json). Contributors are exempt so they can look
 # before they leap. `--author` self-listing is allowed only when the author value
-# matches the current agent/bot identity (fixes #3072).
+# matches the authenticated token identity (fixes #3072 and #3096).
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
-  if _contributor_mode; then
-    : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356)
-  elif author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
-    self_login="$(_resolve_self_login)"
-    if [[ -n "$self_login" ]] && [[ "$author_value" = "$self_login" ]]; then
-      : # Match: exact bot login
-    elif [[ -n "$self_login" ]] && [[ "$author_value" = "${self_login%\[bot\]}" ]]; then
-      : # Match: bot login without [bot] suffix
-    elif [[ -n "${HIVE_AGENT:-}" ]] && [[ "$author_value" = "${HIVE_AGENT}" ]]; then
-      : # Match: agent name
-    elif [[ -n "${HIVE_AGENT_DISPLAY_NAME:-}" ]] && [[ "$author_value" = "${HIVE_AGENT_DISPLAY_NAME}" ]]; then
-      : # Match: agent display name
-    elif [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && [[ "$author_value" = "${HIVE_CONTRIBUTOR_USERNAME}" ]]; then
-      : # Match: contributor username (self-listing in contributor mode)
+  if author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
+    if [[ "$author_value" = "@me" ]]; then
+      : # GitHub resolves @me server-side to the authenticated token identity.
+    elif ! _resolve_self_login >/dev/null; then
+      echo "⛔ BLOCKED: gh $subcmd list --author requires authenticated GitHub identity." >&2
+      echo "Could not resolve the current token identity with 'gh api user --jq .login'." >&2
+      exit 1
+    elif _author_matches_login "$author_value" "$HIVE_AUTH_LOGIN_CACHED"; then
+      : # Match: authenticated login, case-insensitive, with optional [bot] suffix.
     else
-      echo "⛔ BLOCKED: gh $subcmd list --author must match the current bot/agent identity." >&2
-      echo "--author '$author_value' does not match the current identity." >&2
-      echo "Use --author with your own bot login or agent name to list your own items." >&2
+      echo "⛔ BLOCKED: gh $subcmd list --author must match the authenticated GitHub identity." >&2
+      echo "--author '$author_value' does not match token identity '$HIVE_AUTH_LOGIN_CACHED'." >&2
+      echo "Use --author @me or your authenticated login to list your own items." >&2
       exit 1
     fi
+  elif _contributor_mode; then
+    : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
   else
     echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
     echo "Read /var/run/hive-metrics/actionable.json instead." >&2
@@ -375,26 +392,6 @@ else
 fi
 ACMM_LEVEL="${HIVE_ACMM_LEVEL:-0}"
 ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
-
-# ── Route `gh pr create` through the hive so the PR is App-bot-authored ──
-# An agent running `gh pr create` would author the PR as whatever identity the gh
-# token / Copilot login resolves to (the login USER, not the App bot). Redirect
-# to hive-open-pr, which drops a request file the hive's watcher opens with the
-# App installation token → authored by "<slug>[bot]". The watcher enforces the
-# SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
-# WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
-# their OWN identity by design, so their gh pr create must pass through unchanged.
-if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
-  if command -v hive-open-pr >/dev/null 2>&1; then
-    # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
-    # the same --repo/--head/--base/--title/--body shape and ignores the rest.
-    exec hive-open-pr "$@"
-  fi
-  # If the wrapper somehow isn't installed, fail loud rather than silently
-  # opening the PR as the wrong identity (hard switch: no gh-pr-create fallback).
-  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
-  exit 1
-fi
 
 # Helper: capture advisory finding to JSONL for governor digest
 _capture_advisory_finding() {
@@ -463,14 +460,8 @@ if [ -n "$AGENT_MODE" ]; then
         echo "🔧 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_AND_PRS mode. Merging requires human approval." >&2
         exit 1
       fi
-      # NOTE (F6): This hold-label block is DEAD for `pr create`. A non-contributor
-      # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
-      # 160), which REPLACES this process — execution never reaches here for the
-      # create path. The hold label is now applied AUTHORITATIVELY server-side, in
-      # v2/pkg/github/pr_request_watcher.go, after the hive's App-bot opens the PR,
-      # keyed on the real hive ACMM level (L3/L4/L5). Do NOT rely on this line to
-      # gate anything; it is retained only so `args` stays well-formed for any
-      # non-create pr subcommand that still falls through.
+      # The hold label is also applied authoritatively server-side after an
+      # authorized create is handed to Hive's App-backed request watcher.
       if [ "$ACMM_LEVEL" = "5" ] && [ "$subcmd" = "pr" ] && [ "$action" = "create" ]; then
         args+=("--label" "hold")
       fi
@@ -534,6 +525,30 @@ else
       exit 1
     fi
   fi
+fi
+
+# Route authorized `gh pr create` through Hive so the PR is App-bot-authored.
+# This must remain AFTER mode/ACMM enforcement: redirecting first would let an
+# invalid or restricted mode reach lifecycle intake before this wrapper had
+# authorized the operation. Contributors remain exempt because they fork and
+# open PRs under their own identity by design.
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
+  if command -v hive-open-pr >/dev/null 2>&1; then
+    exec hive-open-pr "$@"
+  fi
+  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
+  exit 1
+fi
+
+# Route authorized ordinary-agent issue creation through Hive as well. Besides
+# preserving App authorship, this is the deterministic cross-path duplicate
+# guard. It intentionally follows authorization for the same reason as PRs.
+if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && ! _contributor_mode; then
+  if command -v hive-open-issue >/dev/null 2>&1; then
+    exec hive-open-issue "$@"
+  fi
+  echo "BLOCKED: hive-open-issue not found; cannot open an issue through Hive's duplicate guard." >&2
+  exit 1
 fi
 
 # Enforce merge gate — only PRs in merge-eligible.json can be merged

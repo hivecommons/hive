@@ -249,7 +249,8 @@ func TestSetupAuthorizationCanonicalJSONGolden(t *testing.T) {
 	binding := SetupAuthorizationBinding{
 		SchemaVersion: SetupAuthorizationSchema, Repository: "owner/repo", RepositoryID: "123", PullRequest: 7,
 		HeadRef: "hive/setup-123", HeadSHA: strings.Repeat("a", 40), BaseRef: "main", BaseSHA: strings.Repeat("b", 40),
-		AuthorizerID: "456", DiffAlgorithm: SetupAuthorizationDiffAlgorithm, DiffSHA256: strings.Repeat("c", 64),
+		AuthorizerID: "456", WriterID: "456", WriterLogin: "owner", WriterType: "user",
+		DiffAlgorithm: SetupAuthorizationDiffAlgorithm, DiffSHA256: strings.Repeat("c", 64),
 		RequiredFiles: []SetupAuthorizationFile{{
 			Path: ".hive/integrated.json", Mode: "100644", BlobOID: strings.Repeat("d", 40), Size: 12, ContentSHA256: strings.Repeat("e", 64),
 		}},
@@ -259,7 +260,7 @@ func TestSetupAuthorizationCanonicalJSONGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expectedJSON = `{"schema_version":"hive.setup-pr-authorization.v1","repository":"owner/repo","repository_id":"123","pull_request":7,"head_ref":"hive/setup-123","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","base_ref":"main","base_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","authorizer_id":"456","diff_algorithm":"hive.setup-diff-tree-blobs.v1+sha256","diff_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","required_files":[{"path":".hive/integrated.json","mode":"100644","blob_oid":"dddddddddddddddddddddddddddddddddddddddd","size":12,"content_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"required_absent":[".github/workflows/visual-hive-issue-lifecycle.yml"]}`
+	const expectedJSON = `{"schema_version":"hive.setup-pr-authorization.v2","repository":"owner/repo","repository_id":"123","pull_request":7,"head_ref":"hive/setup-123","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","base_ref":"main","base_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","authorizer_id":"456","writer_id":"456","writer_login":"owner","writer_type":"user","diff_algorithm":"hive.setup-diff-tree-blobs.v1+sha256","diff_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","required_files":[{"path":".hive/integrated.json","mode":"100644","blob_oid":"dddddddddddddddddddddddddddddddddddddddd","size":12,"content_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"required_absent":[".github/workflows/visual-hive-issue-lifecycle.yml"]}`
 	if string(data) != expectedJSON {
 		t.Fatalf("canonical JSON changed:\n got %s\nwant %s", data, expectedJSON)
 	}
@@ -267,7 +268,7 @@ func TestSetupAuthorizationCanonicalJSONGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expectedDigest = "337ef60e6987f66830f57807648f830a05c00686f7fec8ad531e85dd0c25df1a"
+	const expectedDigest = "7ce830f90f6ed1d53fd15cc1ea584e6262b33fa7582582d9edfbb0498232ca2b"
 	if digest != expectedDigest {
 		t.Fatalf("canonical binding digest changed: got %s want %s", digest, expectedDigest)
 	}
@@ -305,6 +306,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 	binding, diff, err := BuildSetupAuthorizationBindingWithDiff(context.Background(), SetupAuthorizationRequest{
 		CheckoutDir: repository, Repository: "owner/repo", RepositoryID: "123", PullRequest: 7,
 		HeadRef: "hive/setup-123", HeadSHA: headSHA, BaseRef: "main", BaseSHA: baseSHA, AuthorizerID: 456,
+		WriterID: 456, WriterLogin: "setup-operator", WriterType: "User",
 		RequiredPresent: setupAuthorizationRequiredFiles, RequiredAbsent: setupAuthorizationRequiredAbsent,
 	})
 	if err != nil {
@@ -334,6 +336,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 		"HIVE_PULL_REQUEST": "7", "HIVE_PULL_REQUEST_URL": statusTarget, "HIVE_HEAD_REPOSITORY": "owner/repo", "HIVE_HEAD_REF": "hive/setup-123",
 		"HIVE_HEAD_SHA": headSHA, "HIVE_BASE_REPOSITORY": "owner/repo", "HIVE_BASE_REF": "main", "HIVE_BASE_SHA": baseSHA,
 		"HIVE_EXPECTED_HEAD_REF": "hive/setup-123", "HIVE_EXPECTED_BASE_REF": "main", "HIVE_AUTHORIZER_ID": "456",
+		"HIVE_WRITER_ID": "456", "HIVE_WRITER_LOGIN": "setup-operator", "HIVE_WRITER_TYPE": "user",
 		"HIVE_EXPECTED_UPGRADE_REF": "hive/upgrade-123", "HIVE_EXPECTED_ROLLBACK_REF": "hive/rollback-123", "HIVE_EXPECTED_AUTHORIZER_TRANSFER_REF": "hive/authorizer-transfer-123", "HIVE_EXPECTED_UNINSTALL_REF": "hive/uninstall-123",
 		"HIVE_TRANSFER_AUTHORIZER_ID": "456",
 		"HIVE_REQUIRED_FILES":         string(requiredJSON), "HIVE_REQUIRED_ABSENT": string(absentJSON), "HIVE_ALLOWED_FILES": string(allowedJSON),
@@ -383,6 +386,7 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 	uninstallBinding, uninstallDiff, err := BuildSetupAuthorizationBindingWithDiff(context.Background(), SetupAuthorizationRequest{
 		CheckoutDir: repository, Repository: "owner/repo", RepositoryID: "123", PullRequest: 7,
 		HeadRef: "hive/uninstall-123", HeadSHA: headSHA, BaseRef: "main", BaseSHA: uninstallBaseSHA, AuthorizerID: 456,
+		WriterID: 456, WriterLogin: "setup-operator", WriterType: "User",
 		RequiredAbsent: uninstallPaths,
 	})
 	if err != nil {

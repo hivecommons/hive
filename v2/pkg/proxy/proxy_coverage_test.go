@@ -97,8 +97,11 @@ func TestAllowedByModeIssueOperations(t *testing.T) {
 	if AllowedByMode(agent.ModeAdvisory, "POST", "/repos/org/repo/issues") {
 		t.Error("ADVISORY should NOT allow creating issues")
 	}
-	if !AllowedByMode(agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues") {
-		t.Error("ISSUES_ONLY should allow creating issues")
+	if AllowedByMode(agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues") {
+		t.Error("direct POST /issues must route through hive-open-issue")
+	}
+	if msg, denied := DeniedMessage("POST", "/repos/org/repo/issues"); !denied || !strings.Contains(msg, "hive-open-issue") {
+		t.Errorf("POST /issues should carry a hive-open-issue directive; got denied=%v msg=%q", denied, msg)
 	}
 	if !AllowedByMode(agent.ModeIssuesOnly, "PATCH", "/repos/org/repo/issues/42") {
 		t.Error("ISSUES_ONLY should allow patching issues")

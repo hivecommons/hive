@@ -27,7 +27,7 @@ func TestExactLinuxProcessTreeReapsDetachedClosedHandleDescendantOnLeaderExit(t 
 	root := t.TempDir()
 	marker := filepath.Join(root, "normal-heartbeat")
 	command := detachedLinuxHeartbeatCommand(context.Background(), root, marker, false)
-	wait, err := startExactRepairProcessTree(context.Background(), command, helper)
+	wait, err := startExactRepairProcessTree(context.Background(), command, helper, codexProviderFileIdentity{})
 	if err != nil {
 		t.Fatalf("start exact process tree: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestExactLinuxProcessTreeReapsDetachedClosedHandleDescendantOnCancellation(
 	marker := filepath.Join(root, "cancel-heartbeat")
 	ctx, cancel := context.WithCancel(context.Background())
 	command := detachedLinuxHeartbeatCommand(ctx, root, marker, true)
-	wait, err := startExactRepairProcessTree(ctx, command, helper)
+	wait, err := startExactRepairProcessTree(ctx, command, helper, codexProviderFileIdentity{})
 	if err != nil {
 		t.Fatalf("start exact process tree: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestExactLinuxProcessTreeSacrificialParentHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := detachedLinuxHeartbeatCommand(context.Background(), root, marker, true)
-	if _, err := startExactRepairProcessTree(context.Background(), command, helper); err != nil {
+	if _, err := startExactRepairProcessTree(context.Background(), command, helper, codexProviderFileIdentity{}); err != nil {
 		t.Fatal(err)
 	}
 	waitForLinuxHeartbeat(t, marker)
@@ -147,12 +147,49 @@ func TestExactLinuxProcessTreeRejectsChangedSealedHelperBeforePayloadLaunch(t *t
 	sentinel := filepath.Join(root, "payload-ran")
 	command := exec.CommandContext(context.Background(), "/bin/sh", "-c", "touch -- \"$1\"", "sh", sentinel)
 	command.Dir = root
-	if _, err := startExactRepairProcessTree(context.Background(), command, sealed); err == nil ||
+	if _, err := startExactRepairProcessTree(context.Background(), command, sealed, codexProviderFileIdentity{}); err == nil ||
 		(!strings.Contains(err.Error(), "changed") && !strings.Contains(err.Error(), "revalidate")) {
 		t.Fatalf("changed helper did not fail closed before launch: %v", err)
 	}
 	if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("payload ran after helper identity drift: %v", err)
+	}
+}
+
+func TestExactLinuxProcessTreeUsesAttestedCapabilityDropExecWhenAmbientCapabilityIsPresent(t *testing.T) {
+	root := t.TempDir()
+	helperPath := filepath.Join(root, "bwrap")
+	dropperPath := filepath.Join(root, "setpriv")
+	marker := filepath.Join(root, "payload-ran")
+	if err := os.WriteFile(helperPath, []byte("#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropperPath, []byte("#!/bin/sh\n[ \"$1\" = \"--inh-caps=-all\" ] || exit 81\n[ \"$2\" = \"--ambient-caps=-all\" ] || exit 82\n[ \"$3\" = \"--\" ] || exit 83\nshift 3\nexec \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := inspectCodexProviderFile(helperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropper, err := inspectCodexProviderFile(dropperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("/bin/sh", "-c", "printf pass > \"$1\"", "sh", marker)
+	command.Dir = root
+	if err := configureExactLinuxProcessTreeCommand(command, helper, codexProviderFileIdentity{}, true); err == nil || !strings.Contains(err.Error(), "capability-drop helper") {
+		t.Fatalf("ambient launch without attested dropper did not fail closed: %v", err)
+	}
+	command = exec.Command("/bin/sh", "-c", "printf pass > \"$1\"", "sh", marker)
+	command.Dir = root
+	if err := configureExactLinuxProcessTreeCommand(command, helper, dropper, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "pass" {
+		t.Fatalf("capability-drop exec did not preserve the exact payload: data=%q err=%v", data, err)
 	}
 }
 

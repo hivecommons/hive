@@ -158,6 +158,51 @@ func TestUpsertRepairPullRequestWaitsForManagedBranchRefAfterPush(t *testing.T) 
 	}
 }
 
+func TestWaitForManagedBranchHeadRetriesNewRefNotFound(t *testing.T) {
+	expectedHead := strings.Repeat("a", 40)
+	refCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method != http.MethodGet || request.URL.Path != "/repos/owner/repo/git/ref/heads/hive/setup-new" {
+			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+			return
+		}
+		refCalls++
+		if refCalls <= 2 {
+			http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		writeManagedRef(writer, "hive/setup-new", expectedHead)
+	}))
+	defer server.Close()
+
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	if err := client.waitForManagedBranchHead(context.Background(), "owner", "repo", "hive/setup-new", expectedHead); err != nil {
+		t.Fatalf("new managed branch did not converge after transient 404: %v", err)
+	}
+	if refCalls != 3 {
+		t.Fatalf("ref calls = %d, want 3", refCalls)
+	}
+}
+
+func TestWaitForManagedBranchHeadDoesNotRetryForbidden(t *testing.T) {
+	refCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		refCalls++
+		http.Error(writer, `{"message":"Forbidden"}`, http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	err := client.waitForManagedBranchHead(context.Background(), "owner", "repo", "hive/setup-new", strings.Repeat("a", 40))
+	if err == nil || !strings.Contains(err.Error(), "verify managed branch") {
+		t.Fatalf("forbidden branch lookup = %v, want immediate verification failure", err)
+	}
+	if refCalls != 1 {
+		t.Fatalf("forbidden ref calls = %d, want 1", refCalls)
+	}
+}
+
 func TestUpsertSetupPullRequestWaitsForExactStateBoundPriorHead(t *testing.T) {
 	marker := "<!-- hive-setup: owner/repo -->"
 	priorHead := strings.Repeat("9", 40)

@@ -288,7 +288,7 @@ func TestHandleConnectDirectGitHub(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-// ---------- proxyHTTP: allowed POST with body draining ----------
+// ---------- proxyHTTP: allowed issue-comment POST with body draining ----------
 
 func TestProxyHTTPAllowedPOSTWithBody(t *testing.T) {
 	p := newTestProxy()
@@ -299,9 +299,9 @@ func TestProxyHTTPAllowedPOSTWithBody(t *testing.T) {
 
 	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeIssuesAndPRs)
 
-	body := `{"title":"test issue"}`
+	body := `{"body":"diagnosis"}`
 	go func() {
-		fmt.Fprintf(clientConn, "POST /repos/org/repo/issues HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+		fmt.Fprintf(clientConn, "POST /repos/org/repo/issues/7/comments HTTP/1.1\r\nHost: api.github.com\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
 	}()
 
 	go func() {

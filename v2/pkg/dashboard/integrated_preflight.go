@@ -37,7 +37,7 @@ func (s *Server) handleIntegratedPreflight(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "invalid integrated preflight request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	token, repository, ok := s.authorizeIntegratedOwner(w, r)
+	operator, repository, ok := s.authorizeIntegratedOwner(w, r)
 	if !ok {
 		return
 	}
@@ -46,9 +46,9 @@ func (s *Server) handleIntegratedPreflight(w http.ResponseWriter, r *http.Reques
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	result, err := s.deps.IntegratedPreflightFunc(r.Context(), request, token)
+	result, err := s.deps.IntegratedPreflightFunc(r.Context(), request, operator)
 	if err != nil {
-		s.writeIntegratedLifecycleError(w, r, "preflight", repository, token, err)
+		s.writeIntegratedLifecycleError(w, r, "preflight", repository, err)
 		return
 	}
 	s.auditFromRequest(r, "integrated_preflight", "", auditDetail(

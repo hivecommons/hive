@@ -22,7 +22,7 @@ import (
 const (
 	// SetupAuthorizationSchema is the canonical payload signed by Hive's
 	// out-of-band exact-head commit status.
-	SetupAuthorizationSchema = "hive.setup-pr-authorization.v1"
+	SetupAuthorizationSchema = "hive.setup-pr-authorization.v2"
 	// SetupAuthorizationDiffAlgorithm is deliberately object based. Unlike a
 	// textual patch, this encoding does not depend on Git's hunk heuristics,
 	// attributes, locale, or installed Git version.
@@ -41,6 +41,7 @@ var (
 	setupAuthorizationRepo    = regexp.MustCompile(`^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
 	setupAuthorizationRefPart = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	setupAuthorizationOID     = regexp.MustCompile(`^[a-f0-9]{40}([a-f0-9]{24})?$`)
+	setupAuthorizationLogin   = regexp.MustCompile(`^[a-z0-9-]+(?:\[bot\])?$`)
 )
 
 // SetupAuthorizationFile binds one required regular file to its raw Git blob.
@@ -69,6 +70,9 @@ type SetupAuthorizationBinding struct {
 	BaseRef        string                   `json:"base_ref"`
 	BaseSHA        string                   `json:"base_sha"`
 	AuthorizerID   string                   `json:"authorizer_id"`
+	WriterID       string                   `json:"writer_id"`
+	WriterLogin    string                   `json:"writer_login"`
+	WriterType     string                   `json:"writer_type"`
 	DiffAlgorithm  string                   `json:"diff_algorithm"`
 	DiffSHA256     string                   `json:"diff_sha256"`
 	RequiredFiles  []SetupAuthorizationFile `json:"required_files"`
@@ -88,6 +92,9 @@ type SetupAuthorizationRequest struct {
 	BaseRef         string
 	BaseSHA         string
 	AuthorizerID    int64
+	WriterID        int64
+	WriterLogin     string
+	WriterType      string
 	RequiredPresent []string
 	RequiredAbsent  []string
 }
@@ -127,7 +134,13 @@ func BuildSetupAuthorizationBindingWithDiff(ctx context.Context, request SetupAu
 	if strings.TrimSpace(request.CheckoutDir) == "" {
 		return SetupAuthorizationBinding{}, SetupDiffEvidence{}, fmt.Errorf("setup authorization checkout directory is required")
 	}
-	if !setupAuthorizationRepo.MatchString(repository) || !setupAuthorizationID.MatchString(strings.TrimSpace(request.RepositoryID)) || request.PullRequest <= 0 || request.AuthorizerID <= 0 {
+	if request.WriterID <= 0 {
+		request.WriterID = request.AuthorizerID
+		request.WriterType = "User"
+	}
+	writerLogin := strings.ToLower(strings.TrimSpace(request.WriterLogin))
+	writerType := strings.ToLower(strings.TrimSpace(request.WriterType))
+	if !setupAuthorizationRepo.MatchString(repository) || !setupAuthorizationID.MatchString(strings.TrimSpace(request.RepositoryID)) || request.PullRequest <= 0 || request.AuthorizerID <= 0 || request.WriterID <= 0 {
 		return SetupAuthorizationBinding{}, SetupDiffEvidence{}, fmt.Errorf("setup authorization repository, immutable repository ID, pull request, and authorizer ID are required")
 	}
 	if !validSetupAuthorizationRef(request.HeadRef) || !validSetupAuthorizationRef(request.BaseRef) || !setupAuthorizationSHA.MatchString(headSHA) || !setupAuthorizationSHA.MatchString(baseSHA) {
@@ -149,7 +162,8 @@ func BuildSetupAuthorizationBindingWithDiff(ctx context.Context, request SetupAu
 		SchemaVersion: SetupAuthorizationSchema,
 		Repository:    repository, RepositoryID: strings.TrimSpace(request.RepositoryID), PullRequest: request.PullRequest,
 		HeadRef: strings.TrimSpace(request.HeadRef), HeadSHA: headSHA, BaseRef: strings.TrimSpace(request.BaseRef), BaseSHA: baseSHA,
-		AuthorizerID: strconv.FormatInt(request.AuthorizerID, 10), DiffAlgorithm: diff.Algorithm, DiffSHA256: diff.SHA256,
+		AuthorizerID: strconv.FormatInt(request.AuthorizerID, 10), WriterID: strconv.FormatInt(request.WriterID, 10), WriterLogin: writerLogin, WriterType: writerType,
+		DiffAlgorithm: diff.Algorithm, DiffSHA256: diff.SHA256,
 		RequiredFiles: required, RequiredAbsent: absent,
 	}
 	if err := binding.Validate(); err != nil {
@@ -196,7 +210,9 @@ func (binding SetupAuthorizationBinding) Validate() error {
 		return fmt.Errorf("unsupported setup authorization schema or diff algorithm")
 	}
 	if binding.Repository != strings.ToLower(strings.TrimSpace(binding.Repository)) || !setupAuthorizationRepo.MatchString(binding.Repository) ||
-		!setupAuthorizationID.MatchString(binding.RepositoryID) || binding.PullRequest <= 0 || !setupAuthorizationID.MatchString(binding.AuthorizerID) {
+		!setupAuthorizationID.MatchString(binding.RepositoryID) || binding.PullRequest <= 0 || !setupAuthorizationID.MatchString(binding.AuthorizerID) ||
+		!setupAuthorizationID.MatchString(binding.WriterID) || (binding.WriterLogin != "" && !setupAuthorizationLogin.MatchString(binding.WriterLogin)) ||
+		(binding.WriterType != "user" && binding.WriterType != "bot") || (binding.WriterType == "bot" && binding.WriterLogin == "") {
 		return fmt.Errorf("invalid setup authorization repository, repository ID, pull request, or authorizer ID")
 	}
 	if !validSetupAuthorizationRef(binding.HeadRef) || !validSetupAuthorizationRef(binding.BaseRef) ||

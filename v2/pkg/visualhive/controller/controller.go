@@ -1069,6 +1069,9 @@ func (controller *Controller) resumeAppliedWork(
 		if bead == nil {
 			continue
 		}
+		if controller.reconcileAuthoritativeIssueClosure(ctx, router, store, bead, work, packet, finding, evidenceErr, &result) {
+			continue
+		}
 		state := visualBeadAdmissionState(bead)
 		decision, recorded := visualBeadAdmissionDecision(bead)
 		controlledDecisionState := state == "denied" || strings.HasPrefix(state, "admitted_") || strings.HasPrefix(state, "held_manual_review")
@@ -1149,19 +1152,7 @@ func (controller *Controller) resumeAppliedWork(
 		}
 		safeExecution := evidenceErr == nil && validationReady
 		repairReady := safeExecution && !manualLifecycleHold && len(policyDeniedFiles) == 0 && treeErr == nil && baseTreeSHA != "" && len(allowedPaths) > 0 && len(work.ValidationCommands) > 0
-		activeWIP := 0
-		if store != nil {
-			for _, candidate := range store.List(beads.ListFilter{}) {
-				if candidate.ID == bead.ID {
-					continue
-				}
-				candidateStage := visualBeadAdmissionState(candidate)
-				if candidate.Status == beads.StatusOpen || candidate.Status == beads.StatusInProgress ||
-					candidateStage == "admitted_awaiting_issue" || candidateStage == "admitted_dispatch_pending" || candidateStage == "admitted_repair_held" || candidateStage == "admitted_manual_review_held" {
-					activeWIP++
-				}
-			}
-		}
+		activeWIP := visualActiveWIP(store, bead.ID)
 		runtimePaused := controller.roles != nil && controller.roles.IsPaused(work.Role)
 		request := governor.WorkAdmissionRequest{
 			SourceExternalRef: work.SourceExternalRef, PacketDigest: packet.PacketDigest,
@@ -1361,6 +1352,77 @@ func (controller *Controller) resumeAppliedWork(
 	return result
 }
 
+// reconcileAuthoritativeIssueClosure handles issue reconciliation before
+// ordinary work admission. An exact verified absence is not new agent work,
+// so pausing or removing the finding's specialist role must not strand the
+// issue that Hive previously published. GitHub authority is still enforced by
+// the installed automation policy and the immutable lifecycle issue writer.
+func (controller *Controller) reconcileAuthoritativeIssueClosure(
+	ctx context.Context,
+	router *visualRoleBeadRouter,
+	store *beads.Store,
+	bead *beads.Bead,
+	work visualhive.AdmittedVisualWork,
+	packet visualhive.VerifiedPacketIdentity,
+	finding visualhive.FindingLifecycle,
+	evidenceErr error,
+	result *Result,
+) bool {
+	if work.ObservationState != "absent" || (finding.Status != visualhive.StatusResolved && finding.Status != visualhive.StatusIssueClosed) {
+		return false
+	}
+	state := visualBeadAdmissionState(bead)
+	syncedStage := "authoritative_lifecycle_synced"
+	if finding.HumanReviewRequired || finding.ObservationHumanReviewRequired || strings.TrimSpace(finding.ManualReviewKind) != "" || !work.RoutingAllowed {
+		syncedStage = "held_manual_review_lifecycle_synced"
+	}
+	if finding.Status == visualhive.StatusIssueClosed && finding.PendingIssueAction == "" {
+		if terminalLifecycleStage(state) && (bead.Status == beads.StatusClosed || bead.Status == beads.StatusDone) {
+			return true
+		}
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, syncedStage, "verified absence already closed the existing issue", result)
+		return true
+	}
+	if finding.Status != visualhive.StatusResolved || finding.PendingIssueAction != visualhive.OutboxCloseIssue {
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", "resolved finding has no exact pending issue-close intent", result)
+		return true
+	}
+	if evidenceErr != nil {
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", "verified reconciliation evidence is unavailable: "+evidenceErr.Error(), result)
+		return true
+	}
+	repairAuthorized := controller.installed.Automation == integrated.AutomationRepairPR || controller.installed.Automation == integrated.AutomationAutoMerge
+	issueAuthorized := controller.installed.Automation == integrated.AutomationIssues || repairAuthorized
+	if !issueAuthorized {
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", "installed authority does not permit issue lifecycle reconciliation", result)
+		return true
+	}
+	if controller.issueClient == nil {
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", "normal issue writer is unavailable", result)
+		return true
+	}
+	if _, err := controller.lifecycle.QueueAuthoritativeIssueClose(work.RepositoryFingerprint, packet); err != nil {
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", err.Error(), result)
+		return true
+	}
+	policy := integrated.PolicyForConfig(controller.installed)
+	if controller.normalACMM < policy.ACMMLevel {
+		policy.ACMMLevel = controller.normalACMM
+	}
+	outbox := visualhive.ProcessOutboxForFinding(ctx, controller.lifecycle, router, policy, controller.issueClient, work.RepositoryFingerprint)
+	closed, exists := controller.lifecycle.Finding(work.RepositoryFingerprint)
+	if outbox.Failed > 0 || outbox.Denied > 0 || !exists || closed.PendingIssueAction != "" || closed.Status != visualhive.StatusIssueClosed {
+		detail := "authoritative issue synchronization incomplete"
+		if len(outbox.Errors) > 0 {
+			detail += ": " + strings.Join(outbox.Errors, "; ")
+		}
+		controller.persistAndAuditLifecycleStage(ctx, store, bead, work, "authoritative_lifecycle_held", detail, result)
+		return true
+	}
+	controller.persistAndAuditLifecycleStage(ctx, store, bead, work, syncedStage, "verified absence closed the existing issue independently of specialist runtime state", result)
+	return true
+}
+
 func repairPolicyDeniedFiles(affectedFiles, allowedPatterns []string) []string {
 	denied := make([]string, 0, len(affectedFiles))
 	for _, candidate := range affectedFiles {
@@ -1479,6 +1541,45 @@ func (controller *Controller) persistAndAuditStage(
 	if err := controller.recordAudit(ctx, AuditEvent{
 		Stage: stage, SourceExternalRef: work.SourceExternalRef, RepositoryFingerprint: work.RepositoryFingerprint,
 		Decision: &decision, Detail: detail,
+	}); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+		return false
+	}
+	return true
+}
+
+func (controller *Controller) persistAndAuditLifecycleStage(
+	ctx context.Context,
+	store *beads.Store,
+	bead *beads.Bead,
+	work visualhive.AdmittedVisualWork,
+	stage, detail string,
+	result *Result,
+) bool {
+	if bead == nil || result == nil {
+		return false
+	}
+	if err := controller.markStage(store, bead.ID, stage, detail); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+		return false
+	}
+	persisted := store.FindByExternalRef(work.SourceExternalRef)
+	if persisted == nil || visualBeadAdmissionState(persisted) != stage {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s stage was not durably persisted", stage))
+		return false
+	}
+	if terminalLifecycleStage(stage) {
+		if persisted.Status != beads.StatusClosed && persisted.Status != beads.StatusDone {
+			result.Errors = append(result.Errors, "authoritative lifecycle reconciliation did not retire its normal bead")
+			return false
+		}
+	} else if persisted.Status != beads.StatusBlocked {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s stage did not remain controller-held", stage))
+		return false
+	}
+	if err := controller.recordAudit(ctx, AuditEvent{
+		Stage: stage, SourceExternalRef: work.SourceExternalRef, RepositoryFingerprint: work.RepositoryFingerprint,
+		Detail: detail,
 	}); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 		return false
@@ -1692,6 +1793,32 @@ func visualBeadAdmissionState(bead *beads.Bead) string {
 	}
 	state, _ := bead.Metadata["visual_hive_admission_state"].(string)
 	return strings.TrimSpace(state)
+}
+
+// visualActiveWIP counts only work owned by the Visual Hive controller. The
+// installed max_active_issues limit bounds this controller's issue/repair
+// lifecycle; ordinary Hive advisory and agent work can share the same role
+// store, but must not consume that independent budget.
+func visualActiveWIP(store *beads.Store, excludeID string) int {
+	if store == nil {
+		return 0
+	}
+	active := 0
+	for _, candidate := range store.List(beads.ListFilter{}) {
+		if candidate == nil || candidate.ID == excludeID || candidate.Metadata == nil {
+			continue
+		}
+		owned, _ := candidate.Metadata["visual_hive_controller_owned"].(bool)
+		if !owned {
+			continue
+		}
+		stage := visualBeadAdmissionState(candidate)
+		if candidate.Status == beads.StatusOpen || candidate.Status == beads.StatusInProgress ||
+			stage == "admitted_awaiting_issue" || stage == "admitted_dispatch_pending" || stage == "admitted_repair_held" || stage == "admitted_manual_review_held" {
+			active++
+		}
+	}
+	return active
 }
 
 func visualBeadAdmissionDecision(bead *beads.Bead) (governor.WorkAdmissionDecision, bool) {
@@ -2015,7 +2142,7 @@ func markVisualBeadStage(store *beads.Store, id, state, detail string) error {
 		return errors.New("selected role bead is unavailable")
 	}
 	update := func(bead *beads.Bead) {
-		if state != "admitted_lifecycle_synced" && state != "held_manual_review_lifecycle_synced" {
+		if !terminalLifecycleStage(state) {
 			bead.Status = beads.StatusBlocked
 			bead.ClosedAt = nil
 		}
@@ -2028,10 +2155,19 @@ func markVisualBeadStage(store *beads.Store, id, state, detail string) error {
 			delete(bead.Metadata, "visual_hive_dispatch_deferral_json")
 		}
 	}
-	if state == "admitted_lifecycle_synced" || state == "held_manual_review_lifecycle_synced" {
+	if terminalLifecycleStage(state) {
 		return store.CloseWithUpdate(id, update)
 	}
 	return store.Update(id, update)
+}
+
+func terminalLifecycleStage(state string) bool {
+	switch state {
+	case "admitted_lifecycle_synced", "held_manual_review_lifecycle_synced", "authoritative_lifecycle_synced":
+		return true
+	default:
+		return false
+	}
 }
 
 func persistVisualDispatchEnvelope(store *beads.Store, id string, envelope DispatchEnvelope) error {

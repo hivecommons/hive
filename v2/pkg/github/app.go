@@ -397,6 +397,15 @@ type InstallationInfo struct {
 	InstallationID int64
 	Account        string // login of the org/user the installation belongs to
 	IssuesPerm     string // granted issues permission: "read", "write", or "" (none)
+	ActionsPerm    string // granted Actions permission
+	WorkflowsPerm  string // granted workflow-file permission
+	ChecksPerm     string // granted checks permission
+	StatusesPerm   string // granted commit-status permission
+	ContentsPerm   string // granted repository-contents permission
+	PullsPerm      string // granted pull-request permission
+	MetadataPerm   string // granted repository-metadata permission
+	AppID          int64
+	AppSlug        string
 }
 
 // VerifyInstallation resolves the configured installation and returns the
@@ -423,6 +432,15 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 		InstallationID: a.installationID,
 		Account:        inst.GetAccount().GetLogin(),
 		IssuesPerm:     inst.GetPermissions().GetIssues(),
+		ActionsPerm:    inst.GetPermissions().GetActions(),
+		WorkflowsPerm:  inst.GetPermissions().GetWorkflows(),
+		ChecksPerm:     inst.GetPermissions().GetChecks(),
+		StatusesPerm:   inst.GetPermissions().GetStatuses(),
+		ContentsPerm:   inst.GetPermissions().GetContents(),
+		PullsPerm:      inst.GetPermissions().GetPullRequests(),
+		MetadataPerm:   inst.GetPermissions().GetMetadata(),
+		AppID:          inst.GetAppID(),
+		AppSlug:        inst.GetAppSlug(),
 	}, nil
 }
 

@@ -344,16 +344,23 @@ func (c *Client) waitForManagedBranchHead(ctx context.Context, owner, repo, bran
 	}
 	var observedHeadSHA string
 	for attempt := 0; attempt < managedPullHeadRefreshAttempts; attempt++ {
-		ref, _, err := c.client.Git.GetRef(ctx, owner, repo, "heads/"+branch)
+		ref, response, err := c.client.Git.GetRef(ctx, owner, repo, "heads/"+branch)
 		if err != nil {
-			return fmt.Errorf("verify managed branch %s: %w", branch, err)
-		}
-		if ref.GetRef() != "refs/heads/"+branch {
-			return fmt.Errorf("managed branch %s resolved to unexpected ref %q", branch, ref.GetRef())
-		}
-		observedHeadSHA = strings.TrimSpace(ref.GetObject().GetSHA())
-		if strings.EqualFold(observedHeadSHA, expectedHeadSHA) {
-			return nil
+			// A newly pushed branch can briefly return 404 from GitHub's REST
+			// ref endpoint even though the git transport already accepted it.
+			// Retry only that exact eventual-consistency response; permission,
+			// authentication, rate-limit, and other failures remain immediate.
+			if response == nil || response.StatusCode != http.StatusNotFound || attempt == managedPullHeadRefreshAttempts-1 {
+				return fmt.Errorf("verify managed branch %s: %w", branch, err)
+			}
+		} else {
+			if ref.GetRef() != "refs/heads/"+branch {
+				return fmt.Errorf("managed branch %s resolved to unexpected ref %q", branch, ref.GetRef())
+			}
+			observedHeadSHA = strings.TrimSpace(ref.GetObject().GetSHA())
+			if strings.EqualFold(observedHeadSHA, expectedHeadSHA) {
+				return nil
+			}
 		}
 		if attempt == managedPullHeadRefreshAttempts-1 {
 			break

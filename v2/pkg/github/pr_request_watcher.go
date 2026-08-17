@@ -118,7 +118,7 @@ func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAutho
 	// writable by every agent. The forge-check still holds: the watcher reads each
 	// file's OWNING UID, which is the agent that wrote it — group-writability lets
 	// them write, it does not let one agent forge another's ownership.
-	if err := os.Chmod(prRequestDir(), 0o2775); err != nil {
+	if err := os.Chmod(prRequestDir(), 0o3775); err != nil {
 		c.logger.Warn("pr-request watcher: could not set group-writable perms on request dir; agents may be unable to open PRs",
 			slog.String("dir", prRequestDir()), slog.String("error", err.Error()))
 	}
@@ -164,9 +164,11 @@ func (c *Client) ProcessPRRequestsOnce(ctx context.Context) {
 }
 
 func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func() time.Time) {
-	data, err := os.ReadFile(path)
+	data, fileUID, err := readAgentRequest(path)
 	if err != nil {
-		return // vanished between ReadDir and here — fine
+		c.writePRResult(path, PRResponse{OK: false, Error: "invalid request file: " + err.Error(), At: nowFn().UTC().Format(time.RFC3339)})
+		_ = os.Rename(path, path+".bad")
+		return
 	}
 	var req PRRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -178,13 +180,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
 	}
+	if !c.managesRepository(req.Repo) {
+		c.denyPRRequest(path, req, "repository is outside this Hive's configured project scope", nowFn)
+		return
+	}
 
 	// AUTHORIZE before opening — the watcher must enforce the SAME policy as the
 	// direct `gh pr create` path: the request's agent must own the file (an agent
 	// can only speak for itself) AND be push-capable at the hive's ACMM level.
 	// The owning UID comes from the file's stat, which the requester cannot forge
 	// without actually running as that UID. A nil authorizer fails closed.
-	fileUID := statUID(data, path)
 	if c.prAuthz == nil {
 		c.denyPRRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
@@ -275,23 +280,8 @@ func (c *Client) denyPRRequest(path string, req PRRequest, reason string, nowFn 
 		slog.String("head", req.Head), slog.String("reason", reason))
 }
 
-// statUID returns the UID that owns the request file. On the (Linux) container
-// this is a real UID that a forging process cannot fake without running as it.
-// data is unused but kept in the signature so a future non-stat proof (e.g. an
-// embedded signed token) can slot in without touching call sites.
-func statUID(_ []byte, path string) int {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return -1
-	}
-	return fileOwnerUID(fi)
-}
-
 func (c *Client) writePRResult(reqPath string, resp PRResponse) {
-	out := strings.TrimSuffix(reqPath, ".json") + ".result.json"
-	if b, err := json.MarshalIndent(resp, "", "  "); err == nil {
-		_ = os.WriteFile(out, b, 0o644)
-	}
+	_ = writeWatcherResult(reqPath, resp)
 }
 
 // WritePRRequest is a helper (used by tests and any in-process caller) to drop a

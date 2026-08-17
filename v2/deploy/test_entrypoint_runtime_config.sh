@@ -114,6 +114,32 @@ check "both PVC writes target the new name" "2" "$writes_new"
 writes_legacy="$(grep -c 'cp "\$HIVE_CONFIG_PATH" "\$HIVE_CONFIG_RUNTIME_LEGACY"' "$ENTRYPOINT" || true)"
 check "no PVC write targets the legacy name" "0" "$writes_legacy"
 
+# 9. A read-only ConfigMap fallback must reach the Go process itself. The image
+# CMD still contains --config /etc/hive/hive.yaml, so merely exporting
+# HIVE_CONFIG is insufficient: the explicit old flag wins. The shipped launch
+# appends the selected PVC path last, preserving all other arguments.
+check "read-only runtime fallback reaches hive as final config flag" \
+  'hive "$@" --config "$HIVE_CONFIG" &' \
+  "$(grep -F 'hive "$@" --config "$HIVE_CONFIG" &' "$ENTRYPOINT" | sed 's/^  //' || true)"
+
+# 10. The ordinary writable/seed path remains unchanged and does not gain a
+# second config flag.
+check "ordinary writable config launch remains unchanged" \
+  'hive "$@" &' \
+  "$(grep -F '  hive "$@" &' "$ENTRYPOINT" | sed 's/^  //' || true)"
+
+# 11. The root setup re-execs the entrypoint as dev. The effective HIVE_CONFIG
+# may already point at the PVC by then, so the original seed path must survive
+# in a distinct exported variable or the final-config comparison becomes a
+# false no-op and the image CMD wins again.
+check "entrypoint preserves original config path across privilege re-exec" \
+  'HIVE_ENTRYPOINT_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"' \
+  "$(grep -F '  HIVE_ENTRYPOINT_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"' "$ENTRYPOINT" | sed 's/^  //' || true)"
+
+check "effective config comparison uses preserved original path" \
+  'HIVE_CONFIG_PATH="$HIVE_ENTRYPOINT_CONFIG_PATH"' \
+  "$(grep -F 'HIVE_CONFIG_PATH="$HIVE_ENTRYPOINT_CONFIG_PATH"' "$ENTRYPOINT" || true)"
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

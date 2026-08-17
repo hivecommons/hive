@@ -150,17 +150,20 @@ type denyRule struct {
 	Msg         string // agent-facing directive surfaced in the 403 body
 }
 
-// denyRules are checked BEFORE the mode rules. Two cases are hard-denied for
+// denyRules are checked BEFORE the mode rules. Three cases are hard-denied for
 // EVERY agent mode:
 //
-//  1. Direct PR creation: a POST /repos/*/pulls — whether from `gh pr create`
+//  1. Direct issue creation: a POST /repos/*/issues must use the Hive-mediated
+//     issue request path so attribution and duplicate checks cannot be bypassed.
+//
+//  2. Direct PR creation: a POST /repos/*/pulls — whether from `gh pr create`
 //     or the GitHub MCP create_pull_request/create_pull_request_with_copilot
 //     tool — authors the PR as the Copilot login user, not the App bot.
 //     Blocking it here forces agents to use `hive-open-pr`, which the hive
 //     fulfills with the App token so the PR is authored by the App bot. This
 //     closes the MCP path the gh-wrapper redirect cannot see.
 //
-//  2. Direct PR merge: a PUT /repos/*/pulls/{n}/merge (H1, CWE-863). Permitting
+//  3. Direct PR merge: a PUT /repos/*/pulls/{n}/merge (H1, CWE-863). Permitting
 //     this at ModeIssuesPRsMerge on a UID-derived mode check ALONE let an
 //     injected merge-mode agent `gh api -X PUT .../merge` any reachable PR,
 //     bypassing the bound merge relay's fail-closed SHA pin + merge-eligible
@@ -170,10 +173,17 @@ type denyRule struct {
 //     deny (GraphQLAllowed treats it as a mutation), so neither REST nor GraphQL
 //     is an agent-reachable merge bypass.
 //
-// In BOTH cases the hive's OWN call (CreatePR / MergePR) does NOT traverse this
+// In all cases the hive's OWN call (CreateIssue / CreatePR / MergePR) does NOT traverse this
 // agent proxy — it originates from the hive process (owner UID), which the
 // forced-egress iptables redirect exempts — so the relay is unaffected.
+const issueCreateDenyMessage = "direct issue creation is disabled for agents — use `hive-open-issue --repo <owner/repo> --title <title> --body <body> --label <label>` so Hive enforces attribution and duplicate checks. Do NOT use a raw REST, GraphQL, or MCP create_issue call."
+
 var denyRules = []denyRule{
+	{
+		PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`),
+		Method:      "POST",
+		Msg:         issueCreateDenyMessage,
+	},
 	{
 		PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`),
 		Method:      "POST",
@@ -261,6 +271,7 @@ type graphQLRequest struct {
 }
 
 var graphQLMutationRe = regexp.MustCompile(`(?m)^\s*mutation\b`)
+var graphQLCreateIssueRe = regexp.MustCompile(`(?i)\bcreateIssue\s*\(`)
 
 // graphQLMergeMutationRe matches mutations that merge a pull request. Merging is
 // the highest-privilege write and must require the same mode as the REST
@@ -301,6 +312,10 @@ func GraphQLAllowed(mode agent.AgentMode, body []byte) (bool, bool) {
 
 	// Classify the mutation and require the matching capability tier.
 	switch {
+	case graphQLCreateIssueRe.MatchString(query):
+		// Issue creation must pass through hive-open-issue and the central
+		// request watcher, regardless of the caller's mutation tier.
+		return false, true
 	case graphQLMergeMutationRe.MatchString(query):
 		return mode >= agent.ModeIssuesPRsMerge, true
 	case graphQLPRWriteMutationRe.MatchString(query):
@@ -308,4 +323,14 @@ func GraphQLAllowed(mode agent.AgentMode, body []byte) (bool, bool) {
 	default:
 		return mode >= agent.ModeIssuesOnly, true
 	}
+}
+
+// GraphQLDeniedMessage supplies the same actionable directive as the REST
+// hard deny when a client spells issue creation as a GraphQL mutation.
+func GraphQLDeniedMessage(body []byte) (string, bool) {
+	var req graphQLRequest
+	if json.Unmarshal(body, &req) != nil || !graphQLCreateIssueRe.MatchString(req.Query) {
+		return "", false
+	}
+	return issueCreateDenyMessage, true
 }

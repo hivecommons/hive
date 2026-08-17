@@ -17,7 +17,12 @@ import (
 	"sync"
 )
 
-const maxCodexProviderExecutableBytes = 512 << 20
+const (
+	maxCodexProviderExecutableBytes = 512 << 20
+	codexBundledResourcesDirectory  = "codex-resources"
+	codexBundledContainmentHelper   = "bwrap"
+	codexCapabilityDropHelper       = "setpriv"
+)
 
 type codexProviderFileIdentity struct {
 	Path   string `json:"path"`
@@ -26,17 +31,20 @@ type codexProviderFileIdentity struct {
 }
 
 type codexProviderIdentityAttestation struct {
-	ConfigKey               string
-	IdentitySHA256          string
-	Command                 codexProviderFileIdentity
-	Prefix                  []string
-	PrefixArtifacts         []codexProviderFileIdentity
-	Auth                    codexProviderFileIdentity
-	ContainmentHelper       codexProviderFileIdentity
-	SealedCommand           codexProviderFileIdentity
-	SealRoot                string
-	SealedContainmentHelper codexProviderFileIdentity
-	ContainmentHelperRoot   string
+	ConfigKey                  string
+	IdentitySHA256             string
+	Command                    codexProviderFileIdentity
+	Prefix                     []string
+	PrefixArtifacts            []codexProviderFileIdentity
+	Auth                       codexProviderFileIdentity
+	ContainmentHelper          codexProviderFileIdentity
+	CapabilityDropHelper       codexProviderFileIdentity
+	SealedCommand              codexProviderFileIdentity
+	SealRoot                   string
+	SealedContainmentHelper    codexProviderFileIdentity
+	ContainmentHelperRoot      string
+	SealedCapabilityDropHelper codexProviderFileIdentity
+	CapabilityDropHelperRoot   string
 }
 
 var codexProviderAttestations = struct {
@@ -125,6 +133,10 @@ func prepareCodexProviderAttestation(provider CodexProvider) (*codexProviderIden
 	if err != nil {
 		return nil, err
 	}
+	capabilityDropHelper, err := attestCodexCapabilityDropHelper()
+	if err != nil {
+		return nil, err
+	}
 	if err := validateCodexProviderPrefix(provider.Prefix); err != nil {
 		return nil, err
 	}
@@ -165,41 +177,34 @@ func prepareCodexProviderAttestation(provider CodexProvider) (*codexProviderIden
 	}
 
 	identityBytes, err := json.Marshal(struct {
-		Command           codexProviderFileIdentity   `json:"command"`
-		Prefix            []string                    `json:"prefix"`
-		PrefixArtifacts   []codexProviderFileIdentity `json:"prefix_artifacts"`
-		Auth              codexProviderFileIdentity   `json:"auth"`
-		ContainmentHelper codexProviderFileIdentity   `json:"containment_helper"`
-	}{Command: commandIdentity, Prefix: append([]string(nil), provider.Prefix...), PrefixArtifacts: prefixArtifacts, Auth: authIdentity, ContainmentHelper: containmentHelper})
+		Command              codexProviderFileIdentity   `json:"command"`
+		Prefix               []string                    `json:"prefix"`
+		PrefixArtifacts      []codexProviderFileIdentity `json:"prefix_artifacts"`
+		Auth                 codexProviderFileIdentity   `json:"auth"`
+		ContainmentHelper    codexProviderFileIdentity   `json:"containment_helper"`
+		CapabilityDropHelper codexProviderFileIdentity   `json:"capability_drop_helper"`
+	}{Command: commandIdentity, Prefix: append([]string(nil), provider.Prefix...), PrefixArtifacts: prefixArtifacts, Auth: authIdentity, ContainmentHelper: containmentHelper, CapabilityDropHelper: capabilityDropHelper})
 	if err != nil {
 		return nil, fmt.Errorf("encode Codex provider identity: %w", err)
 	}
 	identityDigest := sha256.Sum256(identityBytes)
 	identitySHA := hex.EncodeToString(identityDigest[:])
-	sealedPath, sealRoot, sealErr := sealCodexProviderExecutable(commandIdentity, identitySHA)
-	if sealErr != nil {
-		return nil, sealErr
-	}
-	sealedCommand, err := inspectCodexProviderFile(sealedPath)
+	sealedCommand, sealedHelper, sealRoot, helperRoot, err := sealCodexProviderRuntime(commandIdentity, containmentHelper, identitySHA)
 	if err != nil {
-		_ = cleanupCodexProviderSeal(sealRoot, sealedPath)
-		return nil, fmt.Errorf("verify sealed Codex provider executable: %w", err)
+		return nil, err
 	}
-	if sealedCommand.SHA256 != commandIdentity.SHA256 || sealedCommand.Bytes != commandIdentity.Bytes {
-		_ = cleanupCodexProviderSeal(sealRoot, sealedPath)
-		return nil, fmt.Errorf("sealed Codex provider executable does not match its attested source")
-	}
-	sealedHelper, helperRoot, err := sealCodexContainmentHelper(containmentHelper)
+	sealedCapabilityDropHelper, capabilityDropHelperRoot, err := sealCodexCapabilityDropHelper(capabilityDropHelper)
 	if err != nil {
-		_ = cleanupCodexProviderSeal(sealRoot, sealedPath)
+		_ = cleanupCodexProviderRuntimeSeal(sealRoot, sealedCommand.Path, sealedHelper.Path)
 		return nil, err
 	}
 	return &codexProviderIdentityAttestation{
 		ConfigKey: key, IdentitySHA256: identitySHA, Command: commandIdentity,
 		Prefix: append([]string(nil), provider.Prefix...), PrefixArtifacts: prefixArtifacts,
-		Auth: authIdentity, ContainmentHelper: containmentHelper,
+		Auth: authIdentity, ContainmentHelper: containmentHelper, CapabilityDropHelper: capabilityDropHelper,
 		SealedCommand: sealedCommand, SealRoot: sealRoot,
 		SealedContainmentHelper: sealedHelper, ContainmentHelperRoot: helperRoot,
+		SealedCapabilityDropHelper: sealedCapabilityDropHelper, CapabilityDropHelperRoot: capabilityDropHelperRoot,
 	}, nil
 }
 
@@ -288,6 +293,29 @@ func attestCodexContainmentHelper(command string, commandIdentity codexProviderF
 	if codexProviderIsTestExecutable(command) {
 		return commandIdentity, nil
 	}
+	return attestCodexLinuxContainmentHelper(commandIdentity)
+}
+
+func attestCodexLinuxContainmentHelper(commandIdentity codexProviderFileIdentity) (codexProviderFileIdentity, error) {
+	commandRoot := filepath.Dir(commandIdentity.Path)
+	bundledCandidates := []string{filepath.Join(commandRoot, codexBundledResourcesDirectory, codexBundledContainmentHelper)}
+	if filepath.Base(commandRoot) == "bin" {
+		bundledCandidates = append(bundledCandidates, filepath.Join(filepath.Dir(commandRoot), codexBundledResourcesDirectory, codexBundledContainmentHelper))
+	}
+	for _, bundledPath := range bundledCandidates {
+		if _, err := os.Lstat(bundledPath); err == nil {
+			identity, inspectErr := inspectCodexProviderFile(bundledPath)
+			if inspectErr != nil {
+				return codexProviderFileIdentity{}, fmt.Errorf("attest packaged Codex Linux bwrap executable: %w", inspectErr)
+			}
+			if !codexProviderExecutableCanBeSealed(identity.Path) {
+				return codexProviderFileIdentity{}, errors.New("packaged Codex Linux bwrap helper must be a reviewed native executable")
+			}
+			return identity, nil
+		} else if !os.IsNotExist(err) {
+			return codexProviderFileIdentity{}, fmt.Errorf("inspect packaged Codex Linux bwrap executable: %w", err)
+		}
+	}
 	resolved, err := exec.LookPath("bwrap")
 	if err != nil {
 		return codexProviderFileIdentity{}, fmt.Errorf("Codex Linux containment requires a bounded ordinary bwrap executable: %w", err)
@@ -306,6 +334,36 @@ func attestCodexContainmentHelper(command string, commandIdentity codexProviderF
 	return identity, nil
 }
 
+// attestCodexCapabilityDropHelper binds the native setpriv executable used to
+// clear an ambient container capability immediately before Bubblewrap execs.
+// It is optional on ordinary Linux hosts: the exact launch path requires it
+// only when the current Hive thread actually carries an ambient capability.
+func attestCodexCapabilityDropHelper() (codexProviderFileIdentity, error) {
+	if runtime.GOOS != "linux" {
+		return codexProviderFileIdentity{}, nil
+	}
+	resolved, err := exec.LookPath(codexCapabilityDropHelper)
+	if err != nil {
+		return codexProviderFileIdentity{}, nil
+	}
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return codexProviderFileIdentity{}, fmt.Errorf("resolve Codex capability-drop helper symlinks: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return codexProviderFileIdentity{}, fmt.Errorf("resolve absolute Codex capability-drop helper: %w", err)
+	}
+	identity, err := inspectCodexProviderFile(resolved)
+	if err != nil {
+		return codexProviderFileIdentity{}, fmt.Errorf("attest Codex capability-drop helper: %w", err)
+	}
+	if !codexProviderExecutableCanBeSealed(identity.Path) {
+		return codexProviderFileIdentity{}, errors.New("Codex capability-drop helper must be a reviewed native executable")
+	}
+	return identity, nil
+}
+
 func (attestation *codexProviderIdentityAttestation) revalidate(ctx context.Context) error {
 	if err := attestation.revalidateSource(ctx); err != nil {
 		return err
@@ -318,6 +376,12 @@ func (attestation *codexProviderIdentityAttestation) revalidate(ctx context.Cont
 		sealedHelper, inspectErr := inspectCodexProviderFile(attestation.SealedContainmentHelper.Path)
 		if inspectErr != nil || sealedHelper != attestation.SealedContainmentHelper || sealedHelper.SHA256 != attestation.ContainmentHelper.SHA256 || sealedHelper.Bytes != attestation.ContainmentHelper.Bytes {
 			return fmt.Errorf("Hive-sealed Codex containment helper changed after Health")
+		}
+	}
+	if attestation.CapabilityDropHelper.Path != "" {
+		sealedHelper, inspectErr := inspectCodexProviderFile(attestation.SealedCapabilityDropHelper.Path)
+		if inspectErr != nil || sealedHelper != attestation.SealedCapabilityDropHelper || sealedHelper.SHA256 != attestation.CapabilityDropHelper.SHA256 || sealedHelper.Bytes != attestation.CapabilityDropHelper.Bytes {
+			return fmt.Errorf("Hive-sealed Codex capability-drop helper changed after Health")
 		}
 	}
 	return nil
@@ -343,6 +407,12 @@ func (attestation *codexProviderIdentityAttestation) revalidateSource(ctx contex
 			return fmt.Errorf("Codex containment helper changed after Health")
 		}
 	}
+	if attestation.CapabilityDropHelper.Path != "" {
+		actual, inspectErr := inspectCodexProviderFile(attestation.CapabilityDropHelper.Path)
+		if inspectErr != nil || actual != attestation.CapabilityDropHelper {
+			return fmt.Errorf("Codex capability-drop helper changed after Health")
+		}
+	}
 	if attestation.Auth.Path != "" {
 		actual, inspectErr := inspectCodexProviderBoundedFile(attestation.Auth.Path, 2<<20, true)
 		if inspectErr != nil || actual != attestation.Auth {
@@ -360,29 +430,28 @@ func (attestation *codexProviderIdentityAttestation) authorizationCopy() *codexP
 	copy.SealRoot = ""
 	copy.SealedContainmentHelper = codexProviderFileIdentity{}
 	copy.ContainmentHelperRoot = ""
+	copy.SealedCapabilityDropHelper = codexProviderFileIdentity{}
+	copy.CapabilityDropHelperRoot = ""
 	return &copy
 }
 
 func (attestation *codexProviderIdentityAttestation) sealForRun() (*codexProviderIdentityAttestation, error) {
-	sealedPath, sealRoot, err := sealCodexProviderExecutable(attestation.Command, attestation.IdentitySHA256)
+	sealedCommand, sealedHelper, sealRoot, helperRoot, err := sealCodexProviderRuntime(attestation.Command, attestation.ContainmentHelper, attestation.IdentitySHA256)
 	if err != nil {
 		return nil, err
 	}
-	sealedCommand, err := inspectCodexProviderFile(sealedPath)
-	if err != nil || sealedCommand.SHA256 != attestation.Command.SHA256 || sealedCommand.Bytes != attestation.Command.Bytes {
-		_ = cleanupCodexProviderSeal(sealRoot, sealedPath)
-		return nil, fmt.Errorf("verify per-run sealed Codex provider executable")
+	sealedCapabilityDropHelper, capabilityDropHelperRoot, err := sealCodexCapabilityDropHelper(attestation.CapabilityDropHelper)
+	if err != nil {
+		_ = cleanupCodexProviderRuntimeSeal(sealRoot, sealedCommand.Path, sealedHelper.Path)
+		return nil, err
 	}
 	copy := attestation.authorizationCopy()
 	copy.SealedCommand = sealedCommand
 	copy.SealRoot = sealRoot
-	sealedHelper, helperRoot, err := sealCodexContainmentHelper(attestation.ContainmentHelper)
-	if err != nil {
-		_ = cleanupCodexProviderSeal(sealRoot, sealedPath)
-		return nil, err
-	}
 	copy.SealedContainmentHelper = sealedHelper
 	copy.ContainmentHelperRoot = helperRoot
+	copy.SealedCapabilityDropHelper = sealedCapabilityDropHelper
+	copy.CapabilityDropHelperRoot = capabilityDropHelperRoot
 	return copy, nil
 }
 
@@ -392,10 +461,12 @@ func (attestation *codexProviderIdentityAttestation) cleanupSeal() error {
 	}
 	var result error
 	if attestation.SealRoot != "" || attestation.SealedCommand.Path != "" {
-		result = errors.Join(result, cleanupCodexProviderSeal(attestation.SealRoot, attestation.SealedCommand.Path))
-	}
-	if attestation.ContainmentHelperRoot != "" || attestation.SealedContainmentHelper.Path != "" {
+		result = errors.Join(result, cleanupCodexProviderRuntimeSeal(attestation.SealRoot, attestation.SealedCommand.Path, attestation.SealedContainmentHelper.Path))
+	} else if attestation.ContainmentHelperRoot != "" || attestation.SealedContainmentHelper.Path != "" {
 		result = errors.Join(result, cleanupCodexContainmentHelperSeal(attestation.ContainmentHelperRoot, attestation.SealedContainmentHelper.Path))
+	}
+	if attestation.CapabilityDropHelperRoot != "" || attestation.SealedCapabilityDropHelper.Path != "" {
+		result = errors.Join(result, cleanupCodexCapabilityDropHelperSeal(attestation.CapabilityDropHelperRoot, attestation.SealedCapabilityDropHelper.Path))
 	}
 	return result
 }
@@ -553,6 +624,47 @@ func sealCodexProviderExecutable(identity codexProviderFileIdentity, identitySHA
 	return sealCodexBoundedExecutable(identity, "hive-codex-provider-seals-", identitySHA+filepath.Ext(identity.Path))
 }
 
+// sealCodexProviderRuntime places the attested containment helper in the
+// resource layout expected by the packaged Codex binary. The private runtime
+// intentionally does not expose the ambient system PATH, so Codex must find
+// bwrap beside its own Hive-sealed executable as codex-resources/bwrap.
+func sealCodexProviderRuntime(command, helper codexProviderFileIdentity, identitySHA string) (codexProviderFileIdentity, codexProviderFileIdentity, string, string, error) {
+	commandPath, sealRoot, err := sealCodexProviderExecutable(command, identitySHA)
+	if err != nil {
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", err
+	}
+	sealedCommand, err := inspectCodexProviderFile(commandPath)
+	if err != nil || sealedCommand.SHA256 != command.SHA256 || sealedCommand.Bytes != command.Bytes {
+		_ = cleanupCodexProviderSeal(sealRoot, commandPath)
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", errors.New("verify sealed Codex provider executable")
+	}
+	if helper.Path == "" {
+		return sealedCommand, codexProviderFileIdentity{}, sealRoot, "", nil
+	}
+	resourcesRoot := filepath.Join(sealRoot, codexBundledResourcesDirectory)
+	if err := os.Mkdir(resourcesRoot, 0o700); err != nil {
+		_ = cleanupCodexProviderSeal(sealRoot, commandPath)
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", fmt.Errorf("create sealed Codex resource directory: %w", err)
+	}
+	if err := os.Chmod(resourcesRoot, 0o700); err != nil {
+		_ = os.Remove(resourcesRoot)
+		_ = cleanupCodexProviderSeal(sealRoot, commandPath)
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", fmt.Errorf("protect sealed Codex resource directory: %w", err)
+	}
+	helperPath, err := sealCodexBoundedExecutableInto(helper, resourcesRoot, codexBundledContainmentHelper)
+	if err != nil {
+		_ = os.Remove(resourcesRoot)
+		_ = cleanupCodexProviderSeal(sealRoot, commandPath)
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", fmt.Errorf("seal Codex bundled containment helper: %w", err)
+	}
+	sealedHelper, err := inspectCodexProviderFile(helperPath)
+	if err != nil || sealedHelper.SHA256 != helper.SHA256 || sealedHelper.Bytes != helper.Bytes {
+		_ = cleanupCodexProviderRuntimeSeal(sealRoot, commandPath, helperPath)
+		return codexProviderFileIdentity{}, codexProviderFileIdentity{}, "", "", errors.New("verify sealed Codex bundled containment helper")
+	}
+	return sealedCommand, sealedHelper, sealRoot, resourcesRoot, nil
+}
+
 func sealCodexContainmentHelper(identity codexProviderFileIdentity) (codexProviderFileIdentity, string, error) {
 	if identity.Path == "" {
 		return codexProviderFileIdentity{}, "", nil
@@ -565,6 +677,22 @@ func sealCodexContainmentHelper(identity codexProviderFileIdentity) (codexProvid
 	if err != nil || sealed.SHA256 != identity.SHA256 || sealed.Bytes != identity.Bytes {
 		_ = cleanupCodexContainmentHelperSeal(root, path)
 		return codexProviderFileIdentity{}, "", errors.New("verify sealed Codex containment helper")
+	}
+	return sealed, root, nil
+}
+
+func sealCodexCapabilityDropHelper(identity codexProviderFileIdentity) (codexProviderFileIdentity, string, error) {
+	if identity.Path == "" {
+		return codexProviderFileIdentity{}, "", nil
+	}
+	path, root, err := sealCodexBoundedExecutable(identity, "hive-codex-capdrop-seals-", codexCapabilityDropHelper)
+	if err != nil {
+		return codexProviderFileIdentity{}, "", err
+	}
+	sealed, err := inspectCodexProviderFile(path)
+	if err != nil || sealed.SHA256 != identity.SHA256 || sealed.Bytes != identity.Bytes {
+		_ = cleanupCodexCapabilityDropHelperSeal(root, path)
+		return codexProviderFileIdentity{}, "", errors.New("verify sealed Codex capability-drop helper")
 	}
 	return sealed, root, nil
 }
@@ -585,46 +713,124 @@ func sealCodexBoundedExecutable(identity codexProviderFileIdentity, rootPrefix, 
 		_ = os.Remove(sealRoot)
 		return "", "", fmt.Errorf("protect Hive-owned Codex executable seal directory: %w", err)
 	}
-	destination := filepath.Join(sealRoot, destinationName)
+	destination, err := sealCodexBoundedExecutableInto(identity, sealRoot, destinationName)
+	if err != nil {
+		_ = os.Remove(sealRoot)
+		return "", "", err
+	}
+	return destination, sealRoot, nil
+}
+
+func sealCodexBoundedExecutableInto(identity codexProviderFileIdentity, destinationRoot, destinationName string) (string, error) {
+	if identity.Path == "" || !filepath.IsAbs(destinationRoot) || filepath.Base(destinationName) != destinationName || destinationName == "." || destinationName == "" {
+		return "", errors.New("invalid Codex executable seal destination")
+	}
+	rootInfo, err := os.Lstat(destinationRoot)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("Codex executable seal destination is not an ordinary directory")
+	}
+	rootReparse, reparseErr := codexProviderPathIsReparsePoint(destinationRoot)
+	if reparseErr != nil || rootReparse {
+		return "", errors.New("Codex executable seal destination is linked")
+	}
+	actual, err := inspectCodexProviderFile(identity.Path)
+	if err != nil || actual != identity {
+		return "", errors.New("attested Codex executable changed before sealing")
+	}
+	destination := filepath.Join(destinationRoot, destinationName)
 	source, err := os.Open(identity.Path)
 	if err != nil {
-		_ = os.Remove(sealRoot)
-		return "", "", fmt.Errorf("open attested Codex executable: %w", err)
+		return "", fmt.Errorf("open attested Codex executable: %w", err)
 	}
 	defer source.Close()
-	temporary, err := os.CreateTemp(sealRoot, "seal-*.tmp")
+	temporary, err := os.CreateTemp(destinationRoot, "seal-*.tmp")
 	if err != nil {
-		_ = os.Remove(sealRoot)
-		return "", "", fmt.Errorf("create Codex executable seal: %w", err)
+		return "", fmt.Errorf("create Codex executable seal: %w", err)
 	}
 	if err := temporary.Chmod(0o500); err != nil {
 		_ = temporary.Close()
 		_ = os.Remove(temporary.Name())
-		_ = os.Remove(sealRoot)
-		return "", "", fmt.Errorf("protect temporary Codex executable seal: %w", err)
+		return "", fmt.Errorf("protect temporary Codex executable seal: %w", err)
 	}
 	written, copyErr := io.Copy(temporary, io.LimitReader(source, maxCodexProviderExecutableBytes+1))
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if copyErr != nil || syncErr != nil || closeErr != nil || written != identity.Bytes {
 		_ = os.Remove(temporary.Name())
-		_ = os.Remove(sealRoot)
-		return "", "", fmt.Errorf("write Codex executable seal")
+		return "", errors.New("write Codex executable seal")
 	}
 	if err := os.Rename(temporary.Name(), destination); err != nil {
 		_ = os.Remove(temporary.Name())
-		_ = os.Remove(sealRoot)
-		return "", "", fmt.Errorf("activate Codex executable seal: %w", err)
+		return "", fmt.Errorf("activate Codex executable seal: %w", err)
 	}
 	if err := os.Chmod(destination, 0o500); err != nil {
-		_ = cleanupCodexSealedExecutable(sealRoot, destination, rootPrefix)
-		return "", "", fmt.Errorf("protect Codex executable seal: %w", err)
+		_ = os.Remove(destination)
+		return "", fmt.Errorf("protect Codex executable seal: %w", err)
 	}
-	return destination, sealRoot, nil
+	return destination, nil
 }
 
 func cleanupCodexProviderSeal(root, executable string) error {
 	return cleanupCodexSealedExecutable(root, executable, "hive-codex-provider-seals-")
+}
+
+func cleanupCodexProviderRuntimeSeal(root, executable, helper string) error {
+	if helper == "" {
+		return cleanupCodexProviderSeal(root, executable)
+	}
+	root, executable, helper = filepath.Clean(root), filepath.Clean(executable), filepath.Clean(helper)
+	resourcesRoot := filepath.Join(root, codexBundledResourcesDirectory)
+	if root == "" || executable == "" || !filepath.IsAbs(root) || filepath.Dir(executable) != root ||
+		helper != filepath.Join(resourcesRoot, codexBundledContainmentHelper) || !strings.HasPrefix(filepath.Base(root), "hive-codex-provider-seals-") {
+		return errors.New("refuse unsafe Codex provider runtime seal cleanup")
+	}
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	rootReparse, rootReparseErr := codexProviderPathIsReparsePoint(root)
+	resourcesInfo, resourcesErr := os.Lstat(resourcesRoot)
+	resourcesReparse, resourcesReparseErr := codexProviderPathIsReparsePoint(resourcesRoot)
+	if rootReparseErr != nil || resourcesErr != nil || resourcesReparseErr != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || rootReparse ||
+		!resourcesInfo.IsDir() || resourcesInfo.Mode()&os.ModeSymlink != 0 || resourcesReparse {
+		return errors.New("refuse linked or replaced Codex provider runtime seal cleanup")
+	}
+	rootEntries, rootReadErr := os.ReadDir(root)
+	resourceEntries, resourceReadErr := os.ReadDir(resourcesRoot)
+	if rootReadErr != nil || resourceReadErr != nil || len(rootEntries) != 2 || len(resourceEntries) != 1 {
+		return errors.New("refuse Codex provider runtime seal cleanup with unexpected inventory")
+	}
+	wantCommand, wantResources := false, false
+	for _, entry := range rootEntries {
+		switch entry.Name() {
+		case filepath.Base(executable):
+			wantCommand = !entry.IsDir() && entry.Type()&os.ModeSymlink == 0
+		case codexBundledResourcesDirectory:
+			wantResources = entry.IsDir() && entry.Type()&os.ModeSymlink == 0
+		}
+	}
+	if !wantCommand || !wantResources || resourceEntries[0].Name() != codexBundledContainmentHelper || resourceEntries[0].IsDir() || resourceEntries[0].Type()&os.ModeSymlink != 0 {
+		return errors.New("refuse Codex provider runtime seal cleanup with unexpected inventory")
+	}
+	if _, err := inspectCodexProviderFile(executable); err != nil {
+		return errors.New("refuse Codex provider runtime seal cleanup for non-ordinary executable")
+	}
+	if _, err := inspectCodexProviderFile(helper); err != nil {
+		return errors.New("refuse Codex provider runtime seal cleanup for non-ordinary containment helper")
+	}
+	if err := os.Remove(helper); err != nil {
+		return err
+	}
+	if err := os.Remove(resourcesRoot); err != nil {
+		return err
+	}
+	if err := os.Remove(executable); err != nil {
+		return err
+	}
+	return os.Remove(root)
 }
 
 func cleanupCodexContainmentHelperSeal(root, executable string) error {
@@ -632,6 +838,13 @@ func cleanupCodexContainmentHelperSeal(root, executable string) error {
 		return nil
 	}
 	return cleanupCodexSealedExecutable(root, executable, "hive-codex-helper-seals-")
+}
+
+func cleanupCodexCapabilityDropHelperSeal(root, executable string) error {
+	if root == "" && executable == "" {
+		return nil
+	}
+	return cleanupCodexSealedExecutable(root, executable, "hive-codex-capdrop-seals-")
 }
 
 func cleanupCodexSealedExecutable(root, executable, rootPrefix string) error {

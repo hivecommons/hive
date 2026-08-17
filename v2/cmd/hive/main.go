@@ -850,6 +850,9 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) == 3 && (os.Args[1] == writeOperatorHandoffCommand || os.Args[1] == consumeOperatorHandoffCommand || os.Args[1] == removeOperatorHandoffCommand) {
+		os.Exit(runDashboardOperatorHandoffChild(os.Args[1], os.Args[2], os.Stdin, os.Stdout))
+	}
 	if len(os.Args) > 1 && os.Args[1] == repair.ContainmentProbeCommand {
 		os.Exit(repair.RunContainmentProbeChild())
 	}
@@ -1078,6 +1081,17 @@ func main() {
 		}
 		if staticGitToken != "" {
 			normalGitTransportToken = func(context.Context) (string, error) { return staticGitToken, nil }
+		}
+	}
+	liveGitHubRuntime := &liveGitHubRuntimeStore{}
+	dashboardLiveGitHubRuntime.Store(liveGitHubRuntime)
+	defer dashboardLiveGitHubRuntime.Store(nil)
+	if ghClient != nil && normalGitTransportToken != nil {
+		if snapshot, runtimeErr := publishConfiguredGitHubRuntime(ctx, liveGitHubRuntime, ghClient, appAuth, normalGitTransportToken, cfg); runtimeErr != nil {
+			logger.Warn("live GitHub runtime is not yet ready for Visual Hive", "error", runtimeErr)
+		} else {
+			logger.Info("live GitHub runtime published", "mode", snapshot.Mode, "repository", snapshot.Repository,
+				"writer", snapshot.Writer.Login, "binding", snapshot.BindingDigest, "revision", snapshot.Revision)
 		}
 	}
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
@@ -1403,6 +1417,7 @@ func main() {
 			return l >= acmmHoldGatedMinLevel && l <= acmmHoldGatedMaxLevel
 		}
 		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, holdLabel, nil)
+		ghClient.StartIssueRequestWatcher(ctx, agentMgr.AuthorizeIssueOpen, nil)
 		// Merge relay: agents request merges by dropping a file (hive-merge)
 		// instead of calling the GitHub MCP merge_pull_request tool, whose GraphQL
 		// mutation GitHub rejects for App tokens ("Resource not accessible by
@@ -1817,8 +1832,8 @@ func main() {
 		ProcessContext: ctx, NormalConfig: cfg, Governor: gov,
 		BeadStores: beadStores, LifecycleBeadDirs: lifecycleBeadsDirs,
 		BeadsRoot: beadsRootDir, HiveID: cfg.HiveID,
-		AgentManager: agentMgr, GitHub: ghClient, Scheduler: sched,
-		GitTransportToken: normalGitTransportToken, Dashboard: dashSrv, Logger: logger,
+		AgentManager: agentMgr, Scheduler: sched,
+		GitHubRuntime: liveGitHubRuntime.Current, Dashboard: dashSrv, Logger: logger,
 	})
 	if runtimeManagerErr != nil {
 		logger.Error("normal Visual Hive runtime manager unavailable", "error", runtimeManagerErr)
@@ -2254,6 +2269,7 @@ func main() {
 		}
 	}
 
+	dashboardPreflightQualityRuntimeProbe = agentMgr.ProbeQualityRuntime
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
 		Config:            cfg,
 		AgentMgr:          agentMgr,
@@ -2337,9 +2353,17 @@ func main() {
 			if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 				newClient.SetRequiredChecks(set)
 			}
+			newTokenSource := newAppAuth.Token
+			if snapshot, publishErr := publishConfiguredGitHubRuntime(ctx, liveGitHubRuntime, newClient, newAppAuth, newTokenSource, cfg); publishErr != nil {
+				liveGitHubRuntime.Clear()
+				logger.Warn("GitHub App reinitialized, but its Visual Hive runtime is not ready", "error", publishErr)
+			} else {
+				logger.Info("live GitHub runtime republished after dashboard App recovery", "binding", snapshot.BindingDigest, "revision", snapshot.Revision)
+			}
 
 			ghClient = newClient
 			appAuth = newAppAuth
+			normalGitTransportToken = newTokenSource
 			agentMgr.SetAppAuth(newAppAuth)
 			dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 			logger.Info("github client reinitialized via config API", "app_id", newAppID, "installation_id", newInstallationID)
@@ -2360,9 +2384,22 @@ func main() {
 			}
 			return nil
 		},
-		IntegratedSetupFunc:     runDashboardIntegratedSetup,
-		IntegratedPreflightFunc: runDashboardIntegratedPreflight,
-		IntegratedLifecycleFunc: runDashboardIntegratedLifecycle,
+		IntegratedSetupFunc: func(ctx context.Context, request dashboard.IntegratedSetupRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
+			return runDashboardIntegratedSetup(ctx, request, operator)
+		},
+		IntegratedPreflightFunc: func(ctx context.Context, request dashboard.IntegratedPreflightRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
+			return runDashboardIntegratedPreflight(ctx, request, operator)
+		},
+		IntegratedLifecycleFunc: func(ctx context.Context, request dashboard.IntegratedLifecycleRequest, operator github.AuthenticatedUserIdentity) (map[string]any, error) {
+			return runDashboardIntegratedLifecycle(ctx, request, operator)
+		},
+		IntegratedOperatorResolverFunc: func(ctx context.Context, login string) (github.AuthenticatedUserIdentity, error) {
+			runtimeSnapshot, err := currentDashboardGitHubRuntime()
+			if err != nil {
+				return github.AuthenticatedUserIdentity{}, err
+			}
+			return runtimeSnapshot.Client.ResolveHumanNumericUser(ctx, login)
+		},
 		// Same key resolution as boot (initGitHubAuth) and the heartbeat apply
 		// path: without it, the dashboard Set ID handler gated reinit on the
 		// raw key_file, which is deliberately empty on hub-delivered per-app-id
@@ -2660,6 +2697,7 @@ func main() {
 		// Capture the outgoing GitHub App identity before the coordinator
 		// publishes the replacement so auth can be rebuilt when it changes.
 		prevGitHub := cfg.GitHub
+		previousIntegratedRepository := configuredGitHubRuntimeRepository(cfg)
 
 		// Preserve runtime-only fields that are not authoritative in YAML.
 		if err := configCoordinator.Replace(newCfg, func(current, candidate *config.Config) error {
@@ -2717,6 +2755,18 @@ func main() {
 
 		initAgentConfigDrivenSystems(cfg)
 
+		// A readiness receipt binds the exact agent/model/runtime configuration.
+		// Any accepted config replacement retires it before a setup mutation can
+		// reuse stale Quality or GitHub runtime evidence.
+		for _, repository := range []string{previousIntegratedRepository, configuredGitHubRuntimeRepository(cfg)} {
+			if repository == "" {
+				continue
+			}
+			if receiptErr := removeDashboardPreflightReceipt(repository); receiptErr != nil && !os.IsNotExist(receiptErr) {
+				logger.Warn("retire hosted readiness receipt after config reload", "repository", repository, "error", receiptErr)
+			}
+		}
+
 		// Rebuild GitHub App auth when its identity changed. AppAuth captures
 		// app_id/installation_id at construction, so without this a corrected
 		// installation_id in hive.yaml keeps minting tokens for the OLD
@@ -2725,8 +2775,13 @@ func main() {
 			prevGitHub.InstallationID != cfg.GitHub.InstallationID ||
 			prevGitHub.KeyFile != cfg.GitHub.KeyFile ||
 			prevGitHub.APIURL != cfg.GitHub.APIURL {
-			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
-				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+			// Hub-delivered App keys intentionally need not be persisted in
+			// github.key_file. Resolve the active key exactly as boot and heartbeat
+			// do, otherwise an accepted config reload leaves the old App runtime
+			// installed until a pod restart.
+			reloadKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
+			if cfg.GitHub.HasUsableApp() && reloadKeyFile != "" {
+				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, reloadKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
 				} else {
@@ -2738,8 +2793,10 @@ func main() {
 					if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 						newClient.SetRequiredChecks(set)
 					}
+					newTokenSource := newAppAuth.Token
 					ghClient = newClient
 					appAuth = newAppAuth
+					normalGitTransportToken = newTokenSource
 					agentMgr.SetAppAuth(newAppAuth)
 					agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
 					agentMgr.SetSandboxPRClient(newClient)
@@ -2750,6 +2807,17 @@ func main() {
 					)
 				}
 			}
+		}
+		// Repository and owner bindings can change without changing the App
+		// identity. Republish after every accepted configuration replacement so
+		// the integrated runtime never keeps a stale repository snapshot. A
+		// mismatched or incomplete App is cleared fail-closed; ordinary Hive
+		// remains available while the operator repairs the App binding.
+		if snapshot, publishErr := publishConfiguredGitHubRuntime(ctx, liveGitHubRuntime, ghClient, appAuth, normalGitTransportToken, cfg); publishErr != nil {
+			liveGitHubRuntime.Clear()
+			logger.Warn("configuration reloaded, but its Visual Hive GitHub runtime is not ready", "error", publishErr)
+		} else {
+			logger.Info("live GitHub runtime republished after config reload", "binding", snapshot.BindingDigest, "revision", snapshot.Revision)
 		}
 
 		refreshDashboard()
@@ -3919,8 +3987,16 @@ func main() {
 				if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 					newClient.SetRequiredChecks(set)
 				}
+				newTokenSource := newAppAuth.Token
+				if snapshot, publishErr := publishConfiguredGitHubRuntime(ctx, liveGitHubRuntime, newClient, newAppAuth, newTokenSource, committed); publishErr != nil {
+					liveGitHubRuntime.Clear()
+					logger.Warn("heartbeat App recovery did not satisfy the Visual Hive runtime contract", "error", publishErr)
+				} else {
+					logger.Info("live GitHub runtime republished after heartbeat recovery", "binding", snapshot.BindingDigest, "revision", snapshot.Revision)
+				}
 				ghClient = newClient
 				appAuth = newAppAuth
+				normalGitTransportToken = newTokenSource
 				agentMgr.SetAppAuth(newAppAuth)
 				dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 				dashSrv.SetGitHubAppRequired(false)

@@ -1757,7 +1757,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			if agent.specialistReady {
 				launchCmd = codexSpecialistLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name))
 			} else {
-				launchCmd = codexAgentLaunchCmd(binary, model, agent.Config.BeadsDir)
+				launchCmd = codexAgentLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name), agent.Config.BeadsDir)
 			}
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -2685,6 +2685,12 @@ var kickRefusalPatterns = []string{
 
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
 	lower := strings.ToLower(line)
+	// Codex prints this exact warning while asking whether a Hive-owned agent
+	// workspace is trusted. It describes a risk; it is not the model refusing a
+	// delivered Hive task.
+	if strings.Contains(lower, "comes with higher risk of prompt injection. trusting the directory allows") {
+		return
+	}
 	for _, pattern := range kickRefusalPatterns {
 		if strings.Contains(lower, strings.ToLower(pattern)) {
 			agent.KickRefused = true
@@ -3484,7 +3490,6 @@ func (m *Manager) sendKick(name string, message string, specialistTaskID string)
 	_, span := tracing.StartSpan(context.Background(), "agent.send_kick",
 		attribute.String("agent.name", name))
 	defer span.End()
-
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -5827,11 +5832,15 @@ func (m *Manager) ClearAllModeOverrides() {
 	}
 }
 
-// agentStateFileMode is owner-only. These files sit in the pod-shared /tmp and
-// carry per-agent CONTROL state — the enforcement mode the gh wrapper reads, and
-// the bootstrap prompt goose is launched with — so anything group- or
-// world-writable lets one agent steer another.
+// Bootstrap prompt files sit in the pod-shared /tmp and remain owner-only.
 const agentStateFileMode = 0o600
+
+// Mode files are policy, not credentials. The Hive process owns and rewrites
+// them while isolated agent UIDs and the in-process GitHub proxy both need to
+// read the current value. Hosted agents share the non-privileged node group,
+// so group-read (never group-write) preserves hot reload without allowing an
+// agent to steer another agent. Bootstrap prompts remain owner-only above.
+const agentModeFileMode = 0o640
 
 // writeAgentStateFile writes per-agent control state to a shared-/tmp path
 // without following symlinks.
@@ -6087,24 +6096,55 @@ func writeInferenceConfigFile(path string, data []byte) error {
 }
 
 func writeAgentStateFile(path string, data []byte) error {
+	return writeAgentControlFile(path, data, agentStateFileMode, -1)
+}
+
+func writeAgentModeFile(path string, data []byte) error {
+	return writeAgentControlFile(path, data, agentModeFileMode, -1)
+}
+
+func writeModeFileForAgent(path string, data []byte, agentUID int) error {
+	// The hosted entrypoint assigns each isolated agent a primary group whose
+	// numeric GID equals its UID, and adds the Hive process to that group. Bind
+	// the mode file to that one group so only Hive can write it and only the
+	// intended agent can read it. UID 0 is the shared-UID/local fallback.
+	agentGID := -1
+	if agentUID > 0 {
+		agentGID = agentUID
+	}
+	return writeAgentControlFile(path, data, agentModeFileMode, agentGID)
+}
+
+func writeAgentControlFile(path string, data []byte, mode os.FileMode, groupID int) error {
 	f, err := os.OpenFile(path,
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW,
 		agentStateFileMode)
 	if err != nil {
 		return err
 	}
+	// O_CREATE honours its mode only for a new file. Tighten an existing file
+	// before writing or changing its group so an upgrade cannot briefly expose
+	// new policy bytes through a legacy permissive mode. Keep all mutation on
+	// the no-followed descriptor so another UID cannot swap the predictable
+	// /tmp path between verification and chmod/chown.
+	if err := f.Chmod(agentStateFileMode); err != nil {
+		f.Close()
+		return err
+	}
+	if groupID >= 0 {
+		if err := f.Chown(-1, groupID); err != nil {
+			f.Close()
+			return err
+		}
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
-	// O_CREATE honours the mode only when the file did not already exist, so an
-	// existing 0644 file from a previous release keeps its old mode without
-	// this. Chmod through the still-open descriptor: O_NOFOLLOW only proved the
-	// path was not a symlink at OPEN time, so a path-based os.Chmod after Close
-	// left a window in shared /tmp where the pathname could be swapped for a
-	// symlink and the mode change applied to the link target (TOCTOU, #3175).
-	// f.Chmod acts on the inode we opened, closing that window.
-	if err := f.Chmod(agentStateFileMode); err != nil {
+	// Apply the requested final mode through the still-open descriptor. This
+	// preserves the upstream TOCTOU fix while allowing mode files to become
+	// group-readable and keeping bootstrap state owner-only.
+	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}
@@ -6132,7 +6172,7 @@ func (m *Manager) SyncModeFiles(level int) {
 		// Per-agent path (specialists keep theirs under the agent workdir) but
 		// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
 		modeFile := m.agentModeFile(agent)
-		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
+		if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
 	}
@@ -6238,6 +6278,36 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 	}
 	if !m.agentMode(agent).CanPush() {
 		return fmt.Errorf("agent %q is not push-capable at this ACMM level (mode %s) — advisory agents may not open PRs",
+			agentName, m.agentMode(agent).String())
+	}
+	return nil
+}
+
+// AuthorizeIssueOpen applies the same UID forge-resistance as AuthorizePROpen,
+// but uses the narrower CanCreateIssues capability. The issue-request watcher
+// is the only ordinary-agent issue creation path, so this check cannot be
+// bypassed by choosing a different CLI or MCP client.
+func (m *Manager) AuthorizeIssueOpen(agentName string, fileUID int) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("no agent named in the request")
+	}
+	if m.uidMap != nil && fileUID > 0 {
+		owner := m.uidMap.LookupByUID(fileUID)
+		if owner == "" {
+			return fmt.Errorf("request file owned by unknown uid %d (not a registered agent)", fileUID)
+		}
+		if owner != agentName {
+			return fmt.Errorf("request claims agent %q but file is owned by agent %q (uid %d)", agentName, owner, fileUID)
+		}
+	}
+	m.mu.RLock()
+	agent := m.agents[agentName]
+	m.mu.RUnlock()
+	if agent == nil {
+		return fmt.Errorf("unknown agent %q", agentName)
+	}
+	if !m.agentMode(agent).CanCreateIssues() {
+		return fmt.Errorf("agent %q cannot create issues at this ACMM level (mode %s)",
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
@@ -6426,7 +6496,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// Per-agent path (specialists keep theirs under the agent workdir) but
 	// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
 	modeFile := m.agentModeFile(agent)
-	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
+	if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
 	// Plain proxy URL without userinfo — Claude Code's native binary fails
@@ -6583,7 +6653,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 func (m *Manager) specialistAgentEnvironmentPairs(agent *AgentProcess, backend, model, displayName string) []agentEnvPair {
 	mode := m.agentMode(agent)
 	modeFile := m.agentModeFile(agent)
-	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o600); err != nil {
+	if err := writeModeFileForAgent(modeFile, []byte(mode.String()), agent.UID); err != nil {
 		m.logger.Warn("specialist mode file write failed", "file", modeFile, "error", err)
 	}
 	isolationRoot := filepath.Join(m.workDir, ".hive-specialist-isolation", agent.Name)
@@ -7626,7 +7696,7 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	case "codex":
-		return codexAgentLaunchCmd(binary, model, "")
+		return codexAgentLaunchCmd(binary, model, "", "")
 	default:
 		cmd := binary
 		if model != "" {
@@ -7637,13 +7707,18 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 }
 
 // codexAgentLaunchCmd keeps ordinary long-lived Codex agents unattended while
-// preserving a workspace-write sandbox. Ordinary agents use gh and the shared
-// beads checkout directly, so they need network access and an explicit grant
-// for the configured beads directory. Built-in MCP apps stay disabled: their
-// separate approval surface can otherwise stop an unattended agent even when
-// the command approval policy is never. This intentionally does not use the
-// dangerous sandbox bypass flag.
-func codexAgentLaunchCmd(binary, model, beadsDir string) string {
+// preserving a workspace-write sandbox. The exact Hive-owned agent workspace
+// is explicitly trusted for this invocation: --ask-for-approval=never governs
+// tool calls but does not dismiss Codex's separate first-open directory trust
+// screen, which otherwise parks a fresh hosted agent before its first task.
+// The override is scoped to that one workspace and is not persisted into the
+// shared credential home. Ordinary agents use gh and the shared beads checkout
+// directly, so they also need network access and an explicit grant for the
+// configured beads directory. Built-in MCP apps stay disabled: their separate
+// approval surface can otherwise stop an unattended agent even when the command
+// approval policy is never. This intentionally does not use the dangerous
+// sandbox bypass flag.
+func codexAgentLaunchCmd(binary, model, workspaceDir, beadsDir string) string {
 	cmd := binary
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -7651,6 +7726,10 @@ func codexAgentLaunchCmd(binary, model, beadsDir string) string {
 	cmd += " --sandbox workspace-write"
 	cmd += " -c sandbox_workspace_write.network_access=true"
 	cmd += " --disable enable_mcp_apps"
+	if workspaceDir != "" {
+		trustOverride := fmt.Sprintf(`projects.%q.trust_level="trusted"`, filepath.ToSlash(filepath.Clean(workspaceDir)))
+		cmd += " -c " + specialistShellArgument(trustOverride)
+	}
 	if beadsDir != "" {
 		cmd += " --add-dir " + specialistShellArgument(beadsDir)
 	}

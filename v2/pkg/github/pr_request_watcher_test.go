@@ -260,3 +260,43 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 		})
 	}
 }
+
+func TestPRRequestWatcher_RejectsRepositoryOutsideHiveScope(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := testClient(t, server.URL)
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	path, err := WritePRRequest(dir, PRRequest{
+		Repo: "other/repository", Head: "scanner/out-of-scope", Title: "must not open", Agent: "scanner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.ProcessPRRequestsOnce(context.Background())
+	if requests != 0 {
+		t.Fatalf("out-of-scope PR request made %d GitHub calls", requests)
+	}
+	resultData, err := os.ReadFile(strings.TrimSuffix(path, ".json") + ".result.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result PRResponse
+	if err := json.Unmarshal(resultData, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || !strings.Contains(result.Error, "outside this Hive's configured project scope") {
+		t.Fatalf("unexpected out-of-scope result: %+v", result)
+	}
+	if _, err := os.Stat(path + ".denied"); err != nil {
+		t.Fatalf("out-of-scope request was not quarantined: %v", err)
+	}
+}

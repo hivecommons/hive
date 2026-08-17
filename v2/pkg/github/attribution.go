@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// This file is the invocation-attribution trail for artifacts the hive itself
-// creates on GitHub: agent PRs opened by the PR-request watcher and issues the
-// hive creates (advisory issue, dashboard ACMM-gap issues). It exists because
+// This file is the invocation-attribution trail for artifacts Hive creates on
+// GitHub: agent PRs and issues opened by request watchers, plus Hive-owned
+// advisory and dashboard ACMM-gap issues. It exists because
 // an operator looking at an agent-authored PR previously had no way to answer
 // "which backend/model produced this?" — the App-bot author is deterministic
 // by design, so the invocation metadata must be recorded separately.
@@ -41,6 +41,9 @@ const (
 	// AuditActionAgentPRCreated is the audit action recorded when the
 	// PR-request watcher opens a PR on an agent's behalf.
 	AuditActionAgentPRCreated = "agent_pr_created"
+	// AuditActionAgentIssueCreated is recorded when the issue-request watcher
+	// creates or reuses an issue on an agent's behalf.
+	AuditActionAgentIssueCreated = "agent_issue_created"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"

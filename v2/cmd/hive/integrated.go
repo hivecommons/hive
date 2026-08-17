@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -610,12 +611,28 @@ func runIntegratedManagement(command string, args []string) int {
 	client := hivegithub.NewClient(token, "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)), *githubAPIURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	selectionCleared := false
+	if command == "uninstall" && *deleteState {
+		var clearErr error
+		selectionCleared, clearErr = integrated.ForgetCurrentState(integratedStateRoot(), *stateDir)
+		if clearErr != nil {
+			fmt.Fprintln(os.Stderr, "uninstall could not durably retire its current repository selection:", clearErr)
+			return 1
+		}
+	}
 	result, err := integrated.RunManagement(ctx, integrated.ManagementOptions{
 		Operation: integrated.ManagementOperation(command), StateDir: *stateDir, VisualHiveRef: visualRef,
 		VisualHiveCommand: managementRuntimeCommand, VisualHiveArgs: managementRuntimeArgs,
 		LifecycleBeadsDirs: append([]string(nil), lifecycleBeadsDirs...), DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
 	})
 	if err != nil {
+		if selectionCleared {
+			if info, statErr := os.Stat(*stateDir); statErr == nil && info.IsDir() {
+				if restoreErr := integrated.RememberCurrentState(integratedStateRoot(), *stateDir); restoreErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore current repository selection after failed uninstall finalization: %w", restoreErr))
+				}
+			}
+		}
 		shouldRestart := shouldRestartManagementScheduler(command, *stateDir)
 		if wasRunning && shouldRestart {
 			_, _ = ensureIntegratedDaemonStarted(*stateDir, restartInterval)
@@ -768,6 +785,9 @@ func runSetupCommand(args []string) int {
 	jsonOutput := flags.Bool("json", false, "emit machine-readable JSON")
 	githubTokenEnv := flags.String("github-token-env", "HIVE_GITHUB_TOKEN", "environment variable containing GitHub token")
 	githubAPIURL := flags.String("github-api-url", "", "optional GitHub Enterprise API URL")
+	dashboardOperatorHandoffPath := flags.String("dashboard-operator-handoff", "", "internal root-sealed dashboard operator handoff")
+	dashboardRequestID := flags.String("dashboard-request-id", "", "internal dashboard request binding")
+	dashboardPlanSHA256 := flags.String("dashboard-plan-sha256", "", "internal dashboard plan binding")
 	var providerArgs stringListFlag
 	var visualArgs stringListFlag
 	var autoMergePaths stringListFlag
@@ -878,6 +898,28 @@ func runSetupCommand(args []string) int {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		client = hivegithub.NewClient(token, "", nil, logger, *githubAPIURL)
 	}
+	var dashboardHandoff dashboardOperatorHandoff
+	hasDashboardHandoff := strings.TrimSpace(*dashboardOperatorHandoffPath) != "" || strings.TrimSpace(*dashboardRequestID) != "" || strings.TrimSpace(*dashboardPlanSHA256) != ""
+	if hasDashboardHandoff {
+		if client == nil || strings.TrimSpace(*dashboardOperatorHandoffPath) == "" || !dashboardOperatorRequestIDPattern.MatchString(*dashboardRequestID) || !dashboardOperatorDigestPattern.MatchString(strings.ToLower(strings.TrimSpace(*dashboardPlanSHA256))) {
+			fmt.Fprintln(os.Stderr, "setup failed: dashboard operator handoff is incomplete or invalid")
+			return 2
+		}
+		handoffCtx, handoffCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var handoffErr error
+		dashboardHandoff, handoffErr = consumeDashboardOperatorHandoff(handoffCtx, *dashboardOperatorHandoffPath, *repository, *dashboardRequestID, *dashboardPlanSHA256)
+		handoffCancel()
+		if handoffErr != nil {
+			fmt.Fprintln(os.Stderr, "setup failed: consume dashboard operator handoff:", handoffErr)
+			return 2
+		}
+		if strings.EqualFold(dashboardHandoff.Writer.Type, "Bot") {
+			if err := client.SetVerifiedAppWriter(dashboardHandoff.Writer, dashboardHandoff.App.BindingDigest); err != nil {
+				fmt.Fprintln(os.Stderr, "setup failed: bind dashboard App writer:", err)
+				return 2
+			}
+		}
+	}
 	if !*planOnly {
 		if client == nil {
 			fmt.Fprintf(os.Stderr, "GitHub authorization is required. Set %s or sign in once with gh auth login.\n", *githubTokenEnv)
@@ -957,6 +999,7 @@ func runSetupCommand(args []string) int {
 		ExpectedSeedSHA: *expectedSeedSHA, ReviewedBaselineDigest: *reviewedBaselineDigest,
 		VisualHiveCommand: *visualCommand, VisualHiveArgs: append([]string(nil), visualArgs...),
 		VisualHiveRepo: *visualRepo, VisualHiveRef: *visualRef, GitHub: client, GitTransportToken: token,
+		AuthorizationActor: dashboardHandoff.Actor, AuthorizationWriter: dashboardHandoff.Writer, AuthorizationApp: dashboardHandoff.App,
 		MaxActiveIssues:        *maxActiveIssues,
 		MaxRepairAttempts:      *maxRepairAttempts,
 		AllowedAutoMergePaths:  append([]string(nil), autoMergePaths...),

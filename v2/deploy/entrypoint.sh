@@ -46,7 +46,16 @@ export HIVE_PROXY_EGRESS_MARK="${HIVE_PROXY_EGRESS_MARK:-0x1112}"
 # losing owner customisations with no warning. The old name is picked up
 # read-only until the first save writes the new one, after which both
 # exist and the new one wins.
-HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+# Preserve the operator-provided/seed path across the root -> dev re-exec.
+# HIVE_CONFIG may be changed below to the durable PVC fallback. Without a
+# separate immutable value, the second entrypoint pass mistakes that fallback
+# for the original path, leaves the image CMD's --config flag in place, and the
+# Go process keeps reading the read-only ConfigMap seed.
+if [ -z "${HIVE_ENTRYPOINT_CONFIG_PATH:-}" ]; then
+  HIVE_ENTRYPOINT_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
+  export HIVE_ENTRYPOINT_CONFIG_PATH
+fi
+HIVE_CONFIG_PATH="$HIVE_ENTRYPOINT_CONFIG_PATH"
 HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
 HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
 
@@ -306,8 +315,12 @@ if [ "$(id -u)" = "0" ]; then
   # driver's inherited mountpoint mode.
   chmod 0750 /data 2>/dev/null || true
   chown dev:node /home/dev 2>/dev/null || true
-  chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
-  chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
+  # The Kubernetes first-boot seed is copied to the persistent runtime path
+  # above while this process is still root. Normalize both current and legacy
+  # runtime names before dropping privileges so dashboard/ACMM saves cannot be
+  # stranded behind a root-owned PVC file.
+  chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null || true
+  chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" "$HIVE_CONFIG_RUNTIME_LEGACY" 2>/dev/null || true
 
   # Ensure the PVC secrets dir the dashboard writes API keys into
   # (/data/secrets/litellm_api_key) exists and is owned by the dev user.
@@ -1183,7 +1196,19 @@ elif [ -f /data/proxy-ca.pem ]; then
 fi
 
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
-hive "$@" &
+# The image CMD includes --config /etc/hive/hive.yaml. When that ConfigMap
+# mount is read-only and a durable runtime config already exists, the boot
+# selection above exports HIVE_CONFIG to the PVC path. Passing only the
+# original CMD would silently override that selection, so Save(), watcher,
+# pack reconciliation, setup, status, and doctor would all keep targeting the
+# read-only seed. Append the effective path last; Go's flag parser applies the
+# final value. Preserve every operator-provided argument and keep the ordinary
+# writable/config-seed path byte-for-byte unchanged.
+if [ -n "${HIVE_CONFIG:-}" ] && [ "$HIVE_CONFIG" != "$HIVE_CONFIG_PATH" ]; then
+  hive "$@" --config "$HIVE_CONFIG" &
+else
+  hive "$@" &
+fi
 HIVE_PID=$!
 
 sleep 1

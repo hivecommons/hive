@@ -388,7 +388,7 @@ flowchart TB
 | Running config | `/data/hive.yaml.dashboard` (overlay) + `/data/hive.yaml.runtime`; seed `/etc/hive/hive.yaml` | Authoritative runtime config lives on the PVC; precedence is documented in [config layering](config-layering.md) |
 | Pipeline outputs | `/var/run/hive-metrics/{actionable,merge-eligible,pipeline-run}.json` | Deterministic pre-kick artifacts |
 | Knowledge graph | `/data/graph/knowledge.db` + `/data/vaults/` | Facts, primers, inception scaffolds |
-| Secrets | `/secrets/gh-app-key.pem`, `/data/gh-user-token`, `/data/proxy-ca.pem` | GitHub App key, user token, MITM CA |
+| Secrets | `/secrets/gh-app-key.pem`, `/data/gh-user-token`, `/data/proxy-ca.pem` | GitHub App key, legacy/ordinary-dashboard user token, MITM CA. Integrated hosted lifecycle writes use the App; the authenticated human identity is passed through a one-use root-owned handoff rather than persisted here. |
 | Per-agent mode | `/tmp/.hive-mode-<agent>` | Hot-reloadable proxy enforcement mode; per-agent `gh` wrapper denials are configured with [restriction files](../../config/restrictions/README.md) |
 
 ---
