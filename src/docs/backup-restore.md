@@ -1,19 +1,25 @@
 # Hive backup and restore
 
-Hive has two backup paths with different scopes.
+Hive has two backup paths with different scopes: nightly encrypted hub disaster-recovery archives, and on-demand per-spoke backups an owner can download from the dashboard.
 
 ## Hub disaster recovery: `hive-backup`
 
-`src/cmd/hive-backup` creates encrypted hub disaster-recovery archives. It captures:
+`src/cmd/hive-backup` creates encrypted hub disaster-recovery archives — everything needed to rebuild a hub. It captures:
 
-- hub SaaS state under `/data/saas/**`;
-- `/data/hub-registry.json`;
+- hub SaaS state under `/data/saas/**` (users, hives, keys);
+- `/data/hub-registry.json`, the fleet registry;
 - required hub Kubernetes Secrets — a missing `hive-hub-secrets`, `oci-api-key`, or `hive-hub-kubeconfigs` **fails the backup**, while a missing `hive-hub-tls` only warns (cert-manager can reissue it);
-- each spoke's authoritative config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or legacy `hive.yaml.bak`, `hive-id`) and GitHub App key files.
+- each spoke's authoritative config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or legacy `hive.yaml.bak`, `hive-id`) and GitHub App key files, read from the spoke via `kubectl exec`. Spokes that could not be read are recorded honestly in `MANIFEST.json` under `spoke_errors` rather than silently dropped.
 
 It deliberately excludes regenerable bulk state such as hub `nous/`, `home/`, `beads/`, and `logs/` so a nightly fleet backup stays small and restorable.
 
-`HIVE_BACKUP_KEY` is required and must be an AES-256 key, 64-character hex or base64 encoded (deliberately independent of `/data/saas/hmac.key`, which is itself backup payload). Escrow it outside the cluster; a backup encrypted by a key that only exists in the lost cluster is not recoverable.
+The archive is a tar.gz sealed with AES-256-GCM. Every run re-downloads and verifies the archive that actually landed in object storage before pruning old archives — a run that cannot self-verify fails rather than reporting a good backup.
+
+### The `HIVE_BACKUP_KEY` escrow gate
+
+`HIVE_BACKUP_KEY` is required and must be an AES-256 key, 64 hex characters (deliberately independent of `/data/saas/hmac.key`, which is itself backup payload — deriving the backup key from it would make the archive undecryptable in exactly the disaster it exists for). It has **no default**: an unset key aborts the run rather than writing plaintext.
+
+> **Escrow the key outside the cluster.** A backup encrypted by a key that only exists in the lost cluster is not recoverable.
 
 ```bash
 openssl rand -hex 32   # generate the value to store as HIVE_BACKUP_KEY
@@ -30,7 +36,7 @@ Environment:
 
 | Variable | Purpose |
 |---|---|
-| `HIVE_BACKUP_KEY` | Required AES-256 key, hex encoded. |
+| `HIVE_BACKUP_KEY` | Required AES-256 key, 64 hex characters. No default. |
 | `HIVE_BACKUP_BUCKET` | OCI Object Storage bucket. |
 | `HIVE_BACKUP_DATA_DIR` | Hub data directory; default `/data`. |
 | `HIVE_BACKUP_RETENTION` | Archive count to retain; default `30`. |
@@ -38,7 +44,11 @@ Environment:
 | `HIVE_KUBECONFIG_DIR` | Mounted kubeconfig directory for remote spoke clusters; default `/etc/hive/kubeconfigs`. |
 | `HIVE_BACKUP_OCI_ENDPOINT` | OCI Object Storage endpoint override; defaults to the regional endpoint. |
 
-`extract` decrypts into a directory and verifies hashes. It does **not** mutate a live cluster. A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Any `spoke_errors` in the manifest are honest gaps: those spokes were not captured and need separate recovery.
+## Restore
+
+`hive-backup verify -file <archive>` checks integrity: the GCM auth tag rejects a wrong key or any bit-flip. `hive-backup extract -file <archive> -dest ./restore` decrypts into a directory and verifies hashes. Neither mutates a live cluster.
+
+A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Any `spoke_errors` in the manifest are honest gaps: those spokes were not captured and need separate recovery.
 
 ## Kubernetes CronJob
 
@@ -49,7 +59,7 @@ Environment:
 - a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/kubestellar/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/kubestellar/hive/pull/3810));
 - ConfigMap `hive-hub-backup-config` with object-storage bucket (default `hive-hub-backups`, inherited silently if you don't edit it) and retention.
 
-Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment.
+Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment. Archives upload to OCI Object Storage, so allow egress to `objectstorage.<region>.oraclecloud.com` from the hub.
 
 ## Owner-triggered spoke backup
 
