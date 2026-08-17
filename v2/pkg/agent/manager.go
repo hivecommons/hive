@@ -621,14 +621,18 @@ func (m *Manager) agentMintIssuerLocked() AgentMintIssuer {
 	return m.agentMint
 }
 
-const (
-	// agentTokenCacheDir is the directory holding per-agent credential caches. It
-	// mirrors the App-token cache dir (pkg/github) so both credentials live under
-	// one agent-owned tree.
-	agentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
-	// agentTokenCachePerms restricts a per-agent credential file to owner-only.
-	agentTokenCachePerms = 0o600
-)
+// agentTokenCacheDir is the directory holding per-agent credential caches. It
+// mirrors the App-token cache dir (pkg/github) so both credentials live under
+// one agent-owned tree.
+//
+// A var (not const) so tests can point the cache at a writable temp dir,
+// matching the ModeFileGlob/SharedRepoParent/GooseLogsDir seam convention
+// (/var/run is not writable in CI). Production value is unchanged and nothing
+// on the launch path mutates it.
+var agentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
+
+// agentTokenCachePerms restricts a per-agent credential file to owner-only.
+const agentTokenCachePerms = 0o600
 
 // AgentMintTokenCachePath returns the per-agent mint-token cache file path. It
 // sits beside the GitHub App token cache but is a distinct file so the two
