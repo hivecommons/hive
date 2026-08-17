@@ -1811,6 +1811,55 @@ test('the relay declares the same protocol version the hub speaks', () => {
   } finally { teardown(relay); }
 });
 
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#1861 / #3842 (audit N14) — the relay must never target the
+// hub's full-privilege installation-token cache, and a failed token write must
+// degrade, not crash the relay mid-assignment.
+// ---------------------------------------------------------------------------
+
+test('default token cache path is never the hub shared gh-app-token.cache', () => {
+  // Empty override forces the relay's built-in default (|| is falsy on '').
+  const relay = loadRelay({ env: { HIVE_GH_TOKEN_CACHE: '' } });
+  try {
+    assert.ok(relay.GH_TOKEN_CACHE, 'expected GH_TOKEN_CACHE exported in test mode');
+    assert.notStrictEqual(path.basename(relay.GH_TOKEN_CACHE), 'gh-app-token.cache',
+      'the relay defaulted its token write path to the hub\'s full-privilege ' +
+      `installation-token cache: ${relay.GH_TOKEN_CACHE} — a relay on a hive ` +
+      'host would clobber it (as root) or crash on EACCES (as anyone else)');
+  } finally { teardown(relay); }
+});
+
+test('task_assign with an unwritable token cache path does not crash the relay', () => {
+  // Parent "directory" is a regular file, so mkdirSync and writeFileSync both
+  // fail no matter what uid the test runs as.
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(scratchRoot, 'relay-badcache-'));
+  const fileAsDir = path.join(tmp, 'blocker');
+  fs.writeFileSync(fileAsDir, 'not a directory');
+  const relay = loadRelay({ env: { HIVE_GH_TOKEN_CACHE: path.join(fileAsDir, 'token.cache') } });
+  try {
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign',
+      task_id: 'tok-1',
+      kind: 'issue',
+      repo: 'foo/bar',
+      number: 7,
+      title: 'token write failure must degrade',
+      prompt: 'do the thing',
+      github_token: 'scoped-task-token',
+    }));
+    const accepted = relay.__sent.find(m => m.type === 'task_accepted');
+    assert.ok(accepted,
+      'task_assign must survive an unwritable token cache and still accept the task');
+  } finally {
+    teardown(relay);
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
 // ---------------------------------------------------------------------------
 
 let failed = 0;

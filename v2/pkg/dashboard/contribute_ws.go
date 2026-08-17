@@ -126,6 +126,17 @@ type ContributorConnection struct {
 	// client). Stored read-only and surfaced on FleetClanker; NEVER used to route
 	// or gate work.
 	capabilities *ContributorCapabilities
+	// lastFailure is the most recent task_failed this connection reported
+	// (#2547): the reason it sent, the self-declared failure kind, and which
+	// task. Nil until the connection has failed a task.
+	//
+	// Until now task_failed's reason was written to the hub log and dropped, so
+	// "this client cannot run the work" and "the agent got the work wrong"
+	// reached an operator as the same event distinguished only by terminal
+	// scrollback. Stored read-only and surfaced on FleetClanker exactly like
+	// lastIdleReason (#2546); NEVER used to route, gate, or adjust a work item's
+	// failure cooldown.
+	lastFailure *ContributorFailure
 	// pendingToken is the scoped, expiring GitHub credential minted for currentTask
 	// but NOT yet delivered to the relay (kubestellar/hive#2537). The credential no
 	// longer travels inside task_assign; it is held here until the task's acceptance
@@ -170,18 +181,28 @@ func (c *ContributorConnection) send(msg WSMessage) error {
 }
 
 type WSMessage struct {
-	Type              string   `json:"type"`
-	Seq               int      `json:"seq,omitempty"`
-	Nonce             string   `json:"nonce,omitempty"`
-	ContributorID     string   `json:"contributor_id,omitempty"`
-	TrustTier         string   `json:"trust_tier,omitempty"`
-	Permissions       []string `json:"permissions,omitempty"`
-	Reason            string   `json:"reason,omitempty"`
-	Message           string   `json:"message,omitempty"`
-	RegistrationToken string   `json:"registration_token,omitempty"`
-	CLIBackend        string   `json:"cli_backend,omitempty"`
-	Model             string   `json:"model,omitempty"`
-	TaskID            string   `json:"task_id,omitempty"`
+	Type          string   `json:"type"`
+	Seq           int      `json:"seq,omitempty"`
+	Nonce         string   `json:"nonce,omitempty"`
+	ContributorID string   `json:"contributor_id,omitempty"`
+	TrustTier     string   `json:"trust_tier,omitempty"`
+	Permissions   []string `json:"permissions,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	// FailureKind is the OPTIONAL, client-declared cause of a task_failed
+	// (#2547): "environment" (the client's runtime could not run the work) or
+	// "task" (the work was attempted and failed on its merits). Absent — which
+	// is what every relay written before this sends — normalizes to
+	// "unspecified" and is treated exactly as today.
+	//
+	// Self-reported and advisory, like Capabilities below. It is recorded and
+	// shown to operators; it does NOT affect selection, admission, or the
+	// failure cooldown. See NormalizeTaskFailureKind.
+	FailureKind       string `json:"failure_kind,omitempty"`
+	Message           string `json:"message,omitempty"`
+	RegistrationToken string `json:"registration_token,omitempty"`
+	CLIBackend        string `json:"cli_backend,omitempty"`
+	Model             string `json:"model,omitempty"`
+	TaskID            string `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
 	// on task_progress / task_complete / task_failed. The hub rejects any completion or
@@ -300,7 +321,7 @@ type ContributeWSHub struct {
 	// mu-guarded to match taskGen's reasoning above: it is touched from the
 	// upgrade path and from deferred cleanup, and must never contend with or
 	// re-enter h.mu.
-	pendingConns atomic.Int64
+	pendingConns   atomic.Int64
 	activityMu     sync.RWMutex
 	activity       []ActivityEntry
 	server         *Server
@@ -1602,6 +1623,13 @@ type FleetClanker struct {
 	// Surfaced read-only exactly like CLIBackend/Model/Role so the Operations tab
 	// COULD display it; it is NEVER used to route or gate work.
 	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
+	// LastFailure is the most recent task failure this clanker reported (#2547),
+	// surfaced read-only so an operator can attribute a run of failures instead
+	// of inferring the cause from a tmux tail. Its Kind is SELF-REPORTED by the
+	// client and advisory — the hub records and displays it, and never routes,
+	// gates, or adjusts a work item's failure cooldown on it. Nil until this
+	// connection has failed a task.
+	LastFailure *ContributorFailure `json:"last_failure,omitempty"`
 	// LabelInterests (#2677) mirrors the contributor's own OPT-IN label-affinity
 	// list (#2637, ContributorProfile.LabelInterests) so an operator can see
 	// fleet-wide who prefers what without cross-referencing each profile
@@ -1700,6 +1728,17 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		}
 		compat := peerProtocolCompat(declaredVersion)
 		fc.Protocol = &compat
+		// #2547: same treatment for the last reported failure — a copy, with the
+		// client's free-text reason redacted and bounded. Reason is the only
+		// CLIENT-CONTROLLED free text on this snapshot: it is an error string the
+		// relay chose, so it can carry a token it happened to print, and it has no
+		// length the client is obliged to respect. Both are handled here, at the
+		// boundary where it becomes operator-visible.
+		if c.lastFailure != nil {
+			failCopy := *c.lastFailure
+			failCopy.Reason = truncateFailureReason(redactTokens(failCopy.Reason))
+			fc.LastFailure = &failCopy
+		}
 		if c.profile != nil {
 			fc.ContributorID = c.profile.ContributorID
 			fc.GitHubUsername = c.profile.GitHubUsername
@@ -1895,27 +1934,36 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	h.mu.RLock()
 	count := len(h.connections)
 	h.mu.RUnlock()
-	if int64(count)+h.pendingConns.Load() >= maxWSConnections {
+	// Reserve the pending slot atomically as part of the admission check,
+	// BEFORE the upgrade handshake. The old order (check Load(), upgrade, then
+	// Add(1)) had a TOCTOU window: the 101 response reaches the client before
+	// the counter moves, so a burst of dials could each pass the check against
+	// the stale count and briefly push the total past the cap — observed as a
+	// flake in TestF9_UnauthenticatedConnectionsCountTowardCap (#3908).
+	// Add-then-check leaves no such window: once a dial completes, its slot is
+	// already counted, and concurrent handlers each see the other's
+	// reservation.
+	if int64(count)+h.pendingConns.Add(1) > maxWSConnections {
+		h.pendingConns.Add(-1)
 		http.Error(w, "too many WebSocket connections", http.StatusServiceUnavailable)
 		return
 	}
-
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		h.logger.Warn("ws upgrade failed", "error", err)
-		return
-	}
-	// Held for the whole handler: a socket occupies a slot from upgrade until
-	// this function returns, whether it authenticates, times out, or errors.
-	// Released exactly once, here, so no early return can leak a slot and
-	// permanently shrink the cap.
-	h.pendingConns.Add(1)
+	// Held for the whole handler: a socket occupies a slot from reservation
+	// until this function returns, whether it upgrades, authenticates, times
+	// out, or errors. Released exactly once so no early return can leak a slot
+	// and permanently shrink the cap.
 	pendingReleased := false
 	defer func() {
 		if !pendingReleased {
 			h.pendingConns.Add(-1)
 		}
 	}()
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Warn("ws upgrade failed", "error", err)
+		return
+	}
 	conn.SetReadLimit(wsMaxMessageSize)
 
 	connID := randomHex(8)
@@ -2614,11 +2662,34 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						// counts more toward the quarantine threshold.
 						h.recordTaskFailure(failedTask.Repo, failedTask.Number, msg.Permanent)
 					}
+					// #2547: keep the failure reason instead of only logging it, so an
+					// operator can tell a work item that failed on its merits from one
+					// that landed on a client whose environment could not run it. The
+					// kind is self-reported and advisory — recorded and displayed, never
+					// acted on. Note this is stored AFTER recordTaskFailure above and
+					// deliberately does not influence it: the cooldown must not depend
+					// on a client-controlled value (that is ROUTE, still undecided).
+					failureKind := NormalizeTaskFailureKind(msg.FailureKind)
+					contributor.mu.Lock()
+					contributor.lastFailure = &ContributorFailure{
+						TaskID:    msg.TaskID,
+						Kind:      failureKind,
+						Reason:    msg.Reason,
+						Permanent: msg.Permanent,
+						At:        time.Now().UTC().Format(time.RFC3339),
+					}
+					if failedTask != nil {
+						contributor.lastFailure.Repo = failedTask.Repo
+						contributor.lastFailure.Number = failedTask.Number
+					}
+					contributor.mu.Unlock()
+
 					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task failed",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
 						"reason", msg.Reason,
+						"failure_kind", failureKind,
 						"permanent", msg.Permanent,
 					)
 					contributor.mu.Lock()

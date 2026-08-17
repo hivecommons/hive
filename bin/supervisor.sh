@@ -59,44 +59,72 @@ log() { hive_log "$*"; }
 
 LAUNCHER="/tmp/.supervisor-launch-${SESSION}.sh"
 
+# SECURITY (#3940, CWE-532): agent-launch.sh pipes the CLI's stderr through a
+# token scrubber before it reaches the pane/log files. A direct launch_cmd
+# (e.g. "/usr/bin/copilot --allow-all ...") exec'd raw bypasses that pipe, so
+# a token-shaped value on stderr would land in logs in plaintext. Route every
+# command that is not already agent-launch.sh through its --exec passthrough —
+# the same wrapper and the same scrub pipe as the standard path.
+scrub_wrapped_cmd() {
+  local cmd="$1" wrapper=""
+  case "$cmd" in
+    *agent-launch.sh*) printf '%s' "$cmd"; return 0 ;;  # already wrapped
+  esac
+  if [[ -x "${_SUP_SCRIPT_DIR}/agent-launch.sh" ]]; then
+    wrapper="${_SUP_SCRIPT_DIR}/agent-launch.sh"
+  elif command -v agent-launch.sh >/dev/null 2>&1; then
+    wrapper="$(command -v agent-launch.sh)"
+  fi
+  if [[ -z "$wrapper" ]]; then
+    # Last resort: keep the agent launchable, but say the scrub is missing.
+    log "WARNING: agent-launch.sh not found — launching '$cmd' WITHOUT stderr token scrubbing (#3940)"
+    printf '%s' "$cmd"
+    return 0
+  fi
+  printf '%s --exec %s' "$wrapper" "$cmd"
+}
+
 write_launcher() {
   local prompt_file="/tmp/.supervisor-prompt-${SESSION}.txt"
   printf '%s' "$AGENT_LOOP_PROMPT" > "$prompt_file"
+
+  local exec_cmd
+  exec_cmd="$(scrub_wrapped_cmd "$ACTIVE_LAUNCH_CMD")"
 
   case "$CLI" in
     claude)
       cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD "\$(cat $prompt_file)"
+exec $exec_cmd "\$(cat $prompt_file)"
 LAUNCH
       ;;
     copilot)
       cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD -i "\$(cat $prompt_file)"
+exec $exec_cmd -i "\$(cat $prompt_file)"
 LAUNCH
       ;;
     gemini)
       cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD -i "\$(cat $prompt_file)"
+exec $exec_cmd -i "\$(cat $prompt_file)"
 LAUNCH
       ;;
     goose)
       cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD --prompt "\$(cat $prompt_file)"
+exec $exec_cmd --prompt "\$(cat $prompt_file)"
 LAUNCH
       ;;
     *)
       cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD "\$(cat $prompt_file)"
+exec $exec_cmd "\$(cat $prompt_file)"
 LAUNCH
       ;;
   esac
@@ -118,10 +146,12 @@ PROMPT_DELIVERED=""
 is_paused() { hive_is_paused "$SESSION"; }
 
 write_paused_launcher() {
+  local exec_cmd
+  exec_cmd="$(scrub_wrapped_cmd "$ACTIVE_LAUNCH_CMD")"
   cat > "$LAUNCHER" << LAUNCH
 #!/bin/bash
 cd "$WORKDIR"
-exec $ACTIVE_LAUNCH_CMD
+exec $exec_cmd
 LAUNCH
   chmod +x "$LAUNCHER"
 }

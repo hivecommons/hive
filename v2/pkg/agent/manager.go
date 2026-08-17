@@ -863,6 +863,45 @@ func (m *Manager) ResolveAgent(nameOrID string) string {
 	return nameOrID
 }
 
+// mintAgentTokenUnlocked mints the per-agent tier-scoped GitHub App token
+// (WriteAgentToken) and the opt-in short-lived mint token for the agent. It is
+// the single mint step every (re)launch path — Start, Resume, Restart,
+// RestartWithBootstrap — runs before launchInTmux (#3962: previously only
+// Start minted, so an agent relaunched via Resume/Restart never got a token
+// until the whole process restarted; its cache file stayed 0 bytes and gh/git
+// push failed silently).
+//
+// MUST be called with m.mu RELEASED. WriteAgentToken makes an outbound GitHub
+// API call (through the MITM egress proxy, which the production incident
+// showed can hang), and issueAgentMintToken can do the same. Holding m.mu
+// across a hang stalls AllStatuses()/the heartbeat for the WHOLE fleet — the
+// exact liveness flap Start's phase split was built to avoid. The function
+// reads only immutable agent identity (Name, UID) and Config via agentMode,
+// and writes no m.mu-guarded AgentProcess field, so running it lock-free is
+// race-free. m.appAuth is read without the lock exactly as Start's unlocked
+// phase always did: it is injected once at wiring time, before agents start.
+func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProcess) {
+	if m.appAuth == nil || agent.UID <= 0 {
+		return
+	}
+	tier := m.agentMode(agent).TokenTier()
+	if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+		// Be precise about the blast radius. Since audit H3 the shared-cache
+		// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
+		// longer fall back to /var/run/hive-metrics/gh-app-token.cache (the
+		// FULL installation token, now owner-only 0600). They FAIL LOUD when
+		// the per-agent scoped token is absent rather than silently
+		// escalating this agent to full privilege. So a delivery failure here
+		// means this agent's GitHub writes (gh + git push) will fail until
+		// token delivery is repaired — not a silent privilege escalation.
+		m.logger.Warn("per-agent scoped token NOT delivered — this agent's GitHub writes (gh + git push) will FAIL (no shared-cache fallback by design; see audit H3)",
+			"agent", agent.Name, "tier", tier, "error", err)
+	}
+	// Additionally issue an opt-in short-lived mint token (no-op when the mint
+	// is disabled). This is additive and fail-safe — it never blocks launch.
+	m.issueAgentMintToken(agent.Name, tier, agent.UID)
+}
+
 func (m *Manager) Start(ctx context.Context, name string) error {
 	// PHASE 1 — brief critical section: map lookup, the pure in-memory
 	// decisions (running/sandbox), and claiming the per-agent launch guard.
@@ -983,29 +1022,9 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		}
 	}
 
-	if m.appAuth != nil && agent.UID > 0 {
-		// Runs with m.mu RELEASED: WriteAgentToken mints a scoped token via an
-		// outbound GitHub API call (through the MITM egress proxy, which the
-		// production incident showed can hang), and issueAgentMintToken can do
-		// the same. Neither writes an m.mu-guarded AgentProcess field, so a hang
-		// here no longer stalls AllStatuses()/the heartbeat while holding m.mu.
-		tier := m.agentMode(agent).TokenTier()
-		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
-			// Be precise about the blast radius. Since audit H3 the shared-cache
-			// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
-			// longer fall back to /var/run/hive-metrics/gh-app-token.cache (the
-			// FULL installation token, now owner-only 0600). They FAIL LOUD when
-			// the per-agent scoped token is absent rather than silently
-			// escalating this agent to full privilege. So a delivery failure here
-			// means this agent's GitHub writes (gh + git push) will fail until
-			// token delivery is repaired — not a silent privilege escalation.
-			m.logger.Warn("per-agent scoped token NOT delivered — this agent's GitHub writes (gh + git push) will FAIL (no shared-cache fallback by design; see audit H3)",
-				"agent", agent.Name, "tier", tier, "error", err)
-		}
-		// Additionally issue an opt-in short-lived mint token (no-op when the mint
-		// is disabled). This is additive and fail-safe — it never blocks launch.
-		m.issueAgentMintToken(agent.Name, tier, agent.UID)
-	}
+	// Runs with m.mu RELEASED — see mintAgentTokenUnlocked for why holding
+	// m.mu across the outbound mint calls caused a fleet-wide liveness flap.
+	m.mintAgentTokenUnlocked(ctx, agent)
 
 	// PHASE 3 — launchInTmux. It was written to be called WITH m.mu held: it
 	// mutates m.mu-guarded AgentProcess fields (State, StartedAt, HasLaunched,
@@ -6664,6 +6683,25 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 			m.mu.Unlock()
 			return err
 		}
+		// #3962: mint the per-agent token in an UNLOCKED window before the
+		// relaunch, mirroring Start's phase split. Resume used to call
+		// launchInTmux without ever minting, so a resumed agent ran with an
+		// empty token cache (gh/git push dead) until the whole process
+		// restarted. The mint must not run under m.mu — see
+		// mintAgentTokenUnlocked — so release, mint, then re-verify under the
+		// re-acquired lock exactly as Start does.
+		m.mu.Unlock()
+		m.mintAgentTokenUnlocked(ctx, agent)
+		m.mu.Lock()
+		if cur, ok := m.agents[name]; !ok || cur != agent {
+			m.mu.Unlock()
+			return fmt.Errorf("agent %s removed during resume", name)
+		}
+		if agent.State == StateRunning {
+			// Another path won the launch race while we were unlocked.
+			m.mu.Unlock()
+			return nil
+		}
 		err := m.launchInTmux(ctx, agent)
 		m.mu.Unlock()
 		return err
@@ -6883,6 +6921,12 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	}
 	m.mu.Unlock()
 
+	// #3962: mint the per-agent token in this already-unlocked window,
+	// mirroring Start's phase split. RestartWithBootstrap relaunches via
+	// launchInTmux directly, so without this the relaunched agent kept (or
+	// never got) a token — see mintAgentTokenUnlocked.
+	m.mintAgentTokenUnlocked(ctx, agent)
+
 	// Wait for the new shell to initialize before sending the launch command.
 	// Without this, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the
 	// shell isn't ready to process command substitution yet.
@@ -6892,6 +6936,12 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Re-verify under the re-acquired lock: a concurrent Stop/Remove during
+	// the unlocked window could have deleted this agent from the map (same
+	// guard Start applies after its unlocked phase).
+	if cur, ok := m.agents[name]; !ok || cur != agent {
+		return fmt.Errorf("agent %s removed during restart", name)
+	}
 	return m.launchInTmux(ctx, agent)
 }
 
@@ -7158,6 +7208,24 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	if agent.Paused {
 		agent.State = StatePaused
 		m.logger.Info("agent restart preserving paused state", "name", name)
+		return nil
+	}
+
+	// #3962: mint the per-agent token in an UNLOCKED window before the
+	// relaunch, mirroring Start's phase split. Restart used to call
+	// launchInTmux without ever minting, so a restarted agent ran with an
+	// empty/stale token cache. The mint must not run under m.mu — see
+	// mintAgentTokenUnlocked — so release, mint, then re-verify under the
+	// re-acquired lock exactly as Start does. The deferred Unlock above still
+	// releases the lock re-acquired here on every return path.
+	m.mu.Unlock()
+	m.mintAgentTokenUnlocked(ctx, agent)
+	m.mu.Lock()
+	if cur, ok := m.agents[name]; !ok || cur != agent {
+		return fmt.Errorf("agent %s removed during restart", name)
+	}
+	if agent.State == StateRunning {
+		// Another path won the launch race while we were unlocked.
 		return nil
 	}
 
