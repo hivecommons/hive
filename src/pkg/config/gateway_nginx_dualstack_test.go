@@ -184,10 +184,27 @@ func TestGatewayAuthRateLimiting(t *testing.T) {
 	} {
 		tc := tc
 		t.Run(tc.path, func(t *testing.T) {
+			// Capture the location's own block body ([^}]* -- these auth
+			// locations contain no nested braces) so both assertions are
+			// scoped INSIDE the block, not satisfied by a directive that
+			// happens to appear later in the file.
 			location := regexp.QuoteMeta(tc.path)
-			pattern := regexp.MustCompile(`(?ms)^\s*location\s+(?:=\s+)?` + location + `\s*\{.*?^\s*limit_req\s+zone=` + regexp.QuoteMeta(tc.zone) + `\s+burst=10\s+nodelay;`)
-			if !pattern.MatchString(conf) {
+			block := regexp.MustCompile(`(?ms)^\s*location\s+(?:=\s+)?` + location + `\s*\{([^}]*)\}`)
+			m := block.FindStringSubmatch(conf)
+			if m == nil {
+				t.Fatalf("nginx.conf is missing a dedicated location block for %q", tc.path)
+			}
+			body := m[1]
+			if !regexp.MustCompile(`(?m)^\s*limit_req\s+zone=` + regexp.QuoteMeta(tc.zone) + `\s+burst=10\s+nodelay;`).MatchString(body) {
 				t.Errorf("nginx.conf auth location %q is missing limit_req zone=%s burst=10 nodelay", tc.path, tc.zone)
+			}
+			// proxy_pass is NOT inherited into nested locations. Without its
+			// own proxy_pass the block terminates the request and nginx falls
+			// back to static-file serving: every auth path 404s and login is
+			// bricked while this structural test stays green. Pin the
+			// directive inside the block itself.
+			if !regexp.MustCompile(`(?m)^\s*proxy_pass\s+http://hive_api;`).MatchString(body) {
+				t.Errorf("nginx.conf auth location %q must carry its own proxy_pass (nested locations do not inherit it; omitting it 404s the auth path)", tc.path)
 			}
 		})
 	}
