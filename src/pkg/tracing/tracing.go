@@ -222,9 +222,23 @@ func Tracer(name string) trace.Tracer {
 // Every span automatically carries hive.component derived from its name (see
 // SpanComponent), so package-level reach (#3973) is queryable without any
 // call-site changes.
+//
+// Every span ALSO increments the in-process reach counters (#3993) — even when
+// no exporter is configured and the underlying span is a no-op. That is design
+// D2 of #3973: reach must be reported by every spoke, and the `otel:` exporter
+// is opt-in, so counting cannot depend on it. The returned span is a thin
+// wrapper that observes End/SetStatus for the error counter; the context
+// carries the underlying span, so child spans and any span read back via
+// trace.SpanFromContext behave exactly as before (a status set through the
+// context rather than the returned handle is invisible to reach, which is
+// acceptable at component granularity — every call site in-tree uses the
+// returned handle).
 func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
-	attrs = append(attrs, attribute.String(AttrHiveComponent, SpanComponent(name)))
-	return Tracer(instrumentationName).Start(ctx, name, trace.WithAttributes(attrs...))
+	component := SpanComponent(name)
+	attrs = append(attrs, attribute.String(AttrHiveComponent, component))
+	ctx, span := Tracer(instrumentationName).Start(ctx, name, trace.WithAttributes(attrs...))
+	recordReachStart(component)
+	return ctx, &reachSpan{Span: span, component: component}
 }
 
 // SpanComponent extracts the coarse component from a span name: the prefix

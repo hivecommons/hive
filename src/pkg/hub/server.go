@@ -25,6 +25,7 @@ import (
 
 	"github.com/kubestellar/hive/pkg/auth"
 	"github.com/kubestellar/hive/pkg/openrouter"
+	"github.com/kubestellar/hive/pkg/tracing"
 )
 
 //go:embed static/*
@@ -296,6 +297,19 @@ type RegistryEntry struct {
 	// fleetStatsMaxAge. Zero means the spoke is too old to report it, which is
 	// treated as "not stale" so an upgrade does not blank the strip.
 	FleetStatsCollectedAt time.Time `json:"fleetStatsCollectedAt,omitempty"`
+	// ComponentReach is the LATEST component-reach report from this hive's
+	// spoke (#3993, phase 2a of #3973): per (component, running commit) span
+	// counters aggregated in-process on the spoke and carried on the
+	// heartbeat. Persisted with the registry so fleet reach survives hub
+	// restarts. STORAGE ONLY at this phase — no endpoint, no PR mapping, no
+	// ancestry join, no UI reads it until #3994; the JSON entry keys
+	// (component / commit / spans_total / spans_error / first_seen /
+	// last_seen) are 2b's fixed read interface. Always the sanitized/clipped
+	// product of sanitizeComponentReach, never the raw payload. nil means the
+	// spoke has never reported reach (old spoke, or no spans yet) — "no
+	// data", never "zero reach". Carried forward across beats that omit it so
+	// a spoke restart does not blank the last real report.
+	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -1633,6 +1647,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// Preserve nil (old spoke, unknown) vs a real count — journey stage
 		// detection depends on telling those two apart.
 		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
+		// Component reach (#3993): sanitized + clipped, never the raw spoke
+		// report — see sanitizeComponentReach for the bounds. Storage only.
+		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
 	}
 
 	// Populate ClusterID and the authoritative ProvStatus from the SaaS hive
@@ -1786,6 +1803,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			if entry.FleetStatsCollectedAt.IsZero() {
 				entry.FleetStatsCollectedAt = h.FleetStatsCollectedAt
+			}
+			// Carry the last real component-reach report forward when this
+			// beat omits one (#3993) — a restarting spoke reports nil until
+			// its counters warm back up from /data/reach-state.json, and
+			// overwriting with nil would blank the hive's reach history for
+			// that gap. Same pattern as the fleet-stat counts above.
+			if entry.ComponentReach == nil && h.ComponentReach != nil {
+				entry.ComponentReach = h.ComponentReach
 			}
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {

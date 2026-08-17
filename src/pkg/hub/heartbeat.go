@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/tracing"
 )
 
 const (
@@ -717,6 +719,18 @@ type HeartbeatPayload struct {
 	// reporting it harmlessly and to describe what per-app-id files a spoke holds.
 	// It carries fingerprints ONLY — never key material.
 	GitHubAppKeysHeld map[string]string `json:"github_app_keys_held,omitempty"`
+	// ComponentReach carries the spoke's in-process component reach counters
+	// (#3993, phase 2a of #3973): per (component, running commit) span counts
+	// that increment REGARDLESS of whether an OTel exporter is configured, so
+	// every spoke reports — including the pull-only fleet a span backend can
+	// never see (design D1/D2). The hub stores the latest report per hive,
+	// storage only: nothing joins, maps, or renders it until #3994. Spoke-side
+	// the entry count is capped at tracing.MaxReachComponents and the hub
+	// clips oversized reports to the same cap on receive (a hostile spoke
+	// must not grow hub memory). omitempty: a spoke that has recorded no
+	// spans yet, or one too old to report reach, sends nothing — which the
+	// hub reads as "no data", never as an error and never as zero reach.
+	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness

@@ -128,6 +128,14 @@ const spokeAppKeyFileMode = 0o600
 // process exit.
 const traceShutdownTimeout = 5 * time.Second
 
+// reachStatePath is where the component reach counters (#3993) persist on the
+// PVC. Deliberately its OWN file, not the main /data/hive-state.json (#3973
+// resolved OQ-2): reach state is append-mostly telemetry keyed by the running
+// commit, and a parse failure in it must never take agent/governor state down
+// with it (or vice versa). Written on the same cadence as the main state file
+// (persistState), loaded once at boot.
+const reachStatePath = "/data/reach-state.json"
+
 // perAppIDKeyPath returns the on-disk path of the key file a spoke uses for a
 // specific app_id — /data/gh-app-key-<appid>.pem. This is what lets one spoke
 // hold BOTH the github.com App key AND its cluster's GitHub Enterprise App key
@@ -1039,6 +1047,15 @@ func main() {
 		logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
 	} else if otelCfg.Enabled {
 		logger.Info("otel tracing enabled", "endpoint", otelCfg.Endpoint, "service_name", otelCfg.ServiceNameOrDefault())
+	}
+	// Component reach counters (#3993): resume this commit's counters from the
+	// PVC before any span can start. Independent of the otel block above —
+	// counters increment with or without an exporter (design D2 of #3973), so
+	// this runs unconditionally and a load failure only costs history, never
+	// counting. Counters persisted by a DIFFERENT commit are dropped inside
+	// LoadReachState: a new binary starts fresh keys naturally.
+	if err := tracing.LoadReachState(reachStatePath, gitShort, logger); err != nil {
+		logger.Warn("reach state load failed; starting with fresh counters", "error", err)
 	}
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), traceShutdownTimeout)
@@ -3340,6 +3357,13 @@ func main() {
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
 				GitHubAppKeysHeld: heldPerAppIDKeyFingerprints(),
+				// Component reach counters (#3993, phase 2a of #3973): per
+				// (component, running commit) span counts aggregated in-process,
+				// exporter or not (D2) — the heartbeat is the only channel that
+				// reaches every spoke, pull-only ones included (D1). nil until
+				// the first span, which the hub reads as "no data", never as
+				// zero reach. Capped at tracing.MaxReachComponents entries.
+				ComponentReach: tracing.ReachSnapshot(),
 			}
 		}, heartbeatSendInterval, logger, hub.RestartSpokeCallback(func() {
 			if up := time.Since(processStartedAt); up < spokeRestartMinUptime {
@@ -5548,6 +5572,13 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {
 		logger.Error("failed to persist state", "error", err)
+	}
+
+	// Component reach counters (#3993) ride the SAME save cadence as the main
+	// state file but live in their own file (reachStatePath — resolved OQ-2 of
+	// #3973), so a reach write failure never corrupts agent/governor state.
+	if err := tracing.SaveReachState(reachStatePath); err != nil {
+		logger.Error("failed to persist reach state", "error", err)
 	}
 
 	// Reconcile the persisted pause field from the authoritative live manager

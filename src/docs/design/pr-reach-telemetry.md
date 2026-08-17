@@ -1,6 +1,7 @@
 # PR reach telemetry (#3973)
 
-Status: phase 1 landed (version-stamped spans + component attribute); phases 2+ pending.
+Status: phase 1 landed (version-stamped spans + component attribute); phase 2
+design accepted (2a implemented; 2b #3994 / 2c #3995 pending).
 
 ## The problem
 
@@ -64,6 +65,39 @@ This is deliberately coarse: it answers "has the subsystem this PR touched
 executed on a build containing it, and on how many hives" — not "did this exact
 diff's lines run." Line/function-level attribution is out of scope for phase 1
 (cost and cardinality; see the issue's options list).
+
+## Phase 2 (accepted)
+
+The four design decisions, accepted in #3973:
+
+- **D1 — Aggregation is spoke-side and rides the heartbeat.** A span-backend
+  query can never see the pull-only spokes, and the `otel:` exporter is opt-in
+  — most spokes export nowhere. A hub-side span query would report ~0 reach
+  for most of the fleet and call it "unused": the anchoring-rule trap, one
+  level up. The heartbeat is the outbound channel every spoke already opens.
+- **D2 — Reach counters are independent of the OTel exporter.** They hook the
+  same `tracing.StartSpan` call sites but count in-process regardless of
+  exporter config. Every spoke reports; zero new network dependencies. Spans
+  remain the deep-inspection layer where backends exist.
+- **D3 — PR→component mapping with an honest `unattributable` bucket** (2b):
+  `v2/pkg/<name>/**` → `<name>`; `v2/cmd/hive/**` → `main`; `v2/proxy/**` →
+  `proxy`; workflows/deploy/docs → `unattributable`, reported, never dropped.
+- **D4 — Co-attribution when PRs batch into one deploy** (2c): PRs sharing a
+  deploy window share reach and error-deltas by construction, labeled shared.
+  No fake precision.
+
+Phase 2a implementation (#3993): per-(component, running commit) counters —
+`spans_total`, `spans_error` (span ended with error status), `first_seen`,
+`last_seen`, cumulative-since-boot plus a rolling 1h bucket — capped at
+`tracing.MaxReachComponents` (64) with overflow counted and truncation logged,
+never silent. Persisted to `/data/reach-state.json` (its own file, not the
+main state file — resolved OQ-2) on the existing state-save cadence; commit
+keying means a new binary starts fresh keys naturally. The heartbeat carries
+the report as `component_reach`; the hub sanitizes and clips it (same 64-entry
+cap — a hostile spoke must not grow hub memory) and stores the latest report
+per hive on the registry entry. Storage only: no endpoint, no mapping, no UI
+until #3994. The entry keys `component` / `commit` / `spans_total` /
+`spans_error` / `first_seen` / `last_seen` are 2b's fixed read interface.
 
 ## What phase 2+ needs (deferred)
 
