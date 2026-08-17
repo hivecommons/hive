@@ -27,6 +27,54 @@ ENV_DIR="/etc/hive"
 REPO_DIR="/tmp/hive"
 LOG="/var/log/hive.log"
 
+# ── Supply-chain pins (issue #3945) ──────────────────────────────────────────
+# Nothing downloaded by this script is executed (or trusted as a signing key)
+# until its SHA-256 matches one of the pins below. Fail closed on mismatch.
+#
+# NodeSource APT signing key, as published at
+# https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key — pinned
+# 2026-08-17. Must stay in lockstep with the same pin in
+# v2/Dockerfile.contributor (NODESOURCE_KEY_SHA256). Before bumping,
+# re-verify the new key against NodeSource's documented fingerprint
+# (6F71 F525 2828 41EE DAF8 51B4 2F59 B5F9 9B1B E0B4):
+#   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sha256sum
+NODESOURCE_KEY_SHA256="b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d"
+# Node.js major to install. The old `curl | bash` of setup_lts.x resolved
+# "LTS" server-side (24.x as of 2026-08-17); pin the same major explicitly so
+# adding the APT repo ourselves installs exactly what the script installed.
+NODESOURCE_NODE_MAJOR="24"
+# SHA-256 of https://ollama.ai/install.sh (redirects to ollama.com), pinned
+# 2026-08-17. Ollama publishes no signature/checksum for this script, so the
+# pin is the reviewed script's digest. When upstream ships a new script the
+# install warns and skips; review the new script, then refresh with:
+#   curl -fsSL https://ollama.ai/install.sh | sha256sum
+OLLAMA_INSTALL_SHA256="25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
+# SHA-256 of the Goose CLI installer
+# https://github.com/block/goose/releases/download/stable/download_cli.sh,
+# pinned 2026-08-17. Same refresh procedure as the Ollama pin:
+#   curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | sha256sum
+GOOSE_INSTALL_SHA256="ab5ae40513348ec4e6047cc7338040aab2df5246800c111d22065766ba6013f0"
+
+# fetch_verified <url> <expected-sha256> <dest-file>
+# Downloads url to dest and verifies its SHA-256 against the pin. Returns
+# non-zero (and removes dest) on download failure or digest mismatch, naming
+# expected vs got — callers must NOT use dest unless this succeeded.
+fetch_verified() {
+  local url="$1" expected="$2" dest="$3" got
+  if ! curl -fsSL -o "$dest" "$url" 2>/dev/null; then
+    fail "download failed: $url"
+    rm -f "$dest"
+    return 1
+  fi
+  got=$(sha256sum "$dest" | awk '{print $1}')
+  if [[ "$got" != "$expected" ]]; then
+    fail "SHA-256 mismatch for $url — refusing to use it (expected ${expected}, got ${got}). If upstream legitimately changed, review the new content and refresh the pin in bin/hive.sh."
+    rm -f "$dest"
+    return 1
+  fi
+  return 0
+}
+
 RED='\033[0;31m'; YLW='\033[1;33m'; GRN='\033[0;32m'
 CYN='\033[0;36m'; BLD='\033[1m'; RST='\033[0m'
 
@@ -231,14 +279,23 @@ install_tools() {
     case "$_b" in copilot|claude|gemini) need_node=1; break;; esac
   done
   if [[ $need_node -eq 1 ]] && ! command -v npm &>/dev/null; then
-    info "Installing Node.js (LTS) via NodeSource signed APT repo..."
-    # SECURITY: avoid curl|bash (supply-chain RCE risk). Instead, add the
+    info "Installing Node.js ${NODESOURCE_NODE_MAJOR}.x via NodeSource signed APT repo..."
+    # SECURITY (#3945): avoid curl|bash (supply-chain RCE risk). Add the
     # NodeSource GPG key and APT source directly so apt verifies package
-    # signatures before installing.  No third-party script runs as root.
-    # NodeSource GPG fingerprint: 9FD3 B784 BC1C 6FC3 1A8A 0A1C 1655 A0AB 6857 4701
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg 2>/dev/null
-    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_lts.x nodistro main" \
+    # signatures before installing — no third-party script runs as root — and
+    # verify the key itself against the pinned SHA-256 BEFORE trusting it
+    # (mirrors the NODESOURCE_KEY_SHA256 check in v2/Dockerfile.contributor).
+    # Without the key pin, a compromised deb.nodesource.com or a DNS hijack
+    # could swap in a malicious signing key that apt would then trust for
+    # every nodejs package.
+    local _ns_key
+    _ns_key=$(mktemp)
+    fetch_verified "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
+      "$NODESOURCE_KEY_SHA256" "$_ns_key" \
+      || die "NodeSource GPG key failed verification — not installing Node.js"
+    sudo gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg "$_ns_key" 2>/dev/null
+    rm -f "$_ns_key"
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODESOURCE_NODE_MAJOR}.x nodistro main" \
       | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
     sudo apt-get update -qq 2>/dev/null
     sudo apt-get install -y nodejs &>/dev/null
@@ -294,9 +351,18 @@ install_tools() {
             || warn "gemini install failed — run: npm i -g @google/gemini-cli"
           ;;
         goose)
-          curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
-            | bash &>/dev/null && ok "goose installed" \
-            || warn "goose install failed — see https://github.com/block/goose"
+          # SECURITY (#3945): same treatment as the Ollama installer — verify
+          # the pinned SHA-256 (GOOSE_INSTALL_SHA256 above) before executing.
+          local _goose_script
+          _goose_script=$(mktemp)
+          if fetch_verified "https://github.com/block/goose/releases/download/stable/download_cli.sh" \
+              "$GOOSE_INSTALL_SHA256" "$_goose_script"; then
+            bash "$_goose_script" &>/dev/null && ok "goose installed" \
+              || warn "goose install failed — see https://github.com/block/goose"
+          else
+            warn "goose install skipped — installer failed integrity verification (see above)"
+          fi
+          rm -f "$_goose_script"
           ;;
         *)
           warn "Unknown backend '$backend' — skipping auto-install"
@@ -320,18 +386,21 @@ install_tools() {
         ollama)
           if ! command -v ollama &>/dev/null; then
             info "Installing ollama..."
-            # SECURITY: download to a temp file instead of piping directly
-            # to bash (supply-chain mitigation; see issue #3945). The Ollama
-            # project does not currently publish release checksums for the
-            # install script, so full hash-pinning requires a manual update.
+            # SECURITY (#3945): download to a temp file and verify the pinned
+            # SHA-256 (OLLAMA_INSTALL_SHA256 above) BEFORE executing — never
+            # curl|bash. Fail closed: on mismatch the script is not run.
             # For production deployments, install ollama from the pinned
             # tarball instead: https://ollama.ai/download/ollama-linux-amd64
             local _ollama_script
             _ollama_script=$(mktemp)
-            curl -fsSL https://ollama.ai/install.sh -o "$_ollama_script" 2>/dev/null \
-              && bash "$_ollama_script" &>/dev/null \
-              && ok "ollama installed" \
-              || warn "ollama install failed — see https://ollama.ai"
+            if fetch_verified "https://ollama.ai/install.sh" \
+                "$OLLAMA_INSTALL_SHA256" "$_ollama_script"; then
+              bash "$_ollama_script" &>/dev/null \
+                && ok "ollama installed" \
+                || warn "ollama install failed — see https://ollama.ai"
+            else
+              warn "ollama install skipped — installer failed integrity verification (see above)"
+            fi
             rm -f "$_ollama_script"
           else
             ok "ollama $(ollama --version 2>/dev/null || echo '')"
