@@ -1120,6 +1120,21 @@
     .lc-event .lc-time { color: var(--muted); font-size: 0.7rem; margin-left: auto; flex: 0 0 auto; }
     .lc-empty { color: var(--muted); font-size: 0.85rem; padding: 6px 0; }
 
+    /* ── PR reach telemetry table (#3995, phase 2c of #3973) ── */
+    .reach-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 4px; }
+    .reach-table th { text-align: left; padding: 6px 10px; color: var(--muted); font-weight: 600; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+    .reach-table td { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); vertical-align: middle; }
+    .reach-table tr:last-child td { border-bottom: none; }
+    .reach-pr-title { font-weight: 600; color: var(--text); }
+    .reach-pr-num { font-family: var(--font-mono); font-size: 0.72rem; color: var(--blue); }
+    .reach-comp-badge { display: inline-block; font-size: 0.65rem; font-family: var(--font-mono); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-right: 4px; }
+    .reach-badge-neverran { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); font-size: 0.62rem; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 6px; }
+    .reach-delta-pos { color: var(--red); font-weight: 600; }
+    .reach-delta-neg { color: var(--green); font-weight: 600; }
+    .reach-delta-zero { color: var(--muted); font-weight: 600; }
+    .reach-shared-tag { font-size: 0.65rem; color: var(--muted); font-style: italic; }
+    .reach-empty { color: var(--muted); font-size: 0.85rem; padding: 6px 0; }
+
     /* Repos */
     .repos { margin-bottom: 24px; }
     .repos h2 { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber); margin-bottom: 8px; }
@@ -3149,6 +3164,13 @@
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('acmm-reco-section')"><span class="section-chevron">▼</span> ⬆️ Ready to level up? <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">advisory</span></h2>
     <div class="section-body">
       <div id="acmm-reco-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
+    </div>
+  </div>
+
+  <div id="reach-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('reach-section')"><span class="section-chevron">▼</span> 📡 PR Reach Telemetry <span style="font-size:0.6em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--muted) 18%, transparent);color:var(--muted)">production reach</span></h2>
+    <div class="section-body">
+      <div id="reach-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px"></div>
     </div>
   </div>
 
@@ -8618,9 +8640,107 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
-    // Prime both panels and poll them on a modest independent interval. Do not
+    // PANEL C — PR reach telemetry table (#3995, phase 2c of #3973).
+    function renderReach(dto) {
+      const section = document.getElementById('reach-section');
+      const card = document.getElementById('reach-card');
+      if (!section || !card) return;
+      dto = dto || {};
+      const reports = Array.isArray(dto.reports) ? dto.reports : [];
+
+      if (reports.length === 0) {
+        section.style.display = '';
+        card.innerHTML = `<div class="reach-empty">No PR reach data available yet. Reach telemetry accumulates as spokes report heartbeat activity.</div>`;
+        applySectionCollapse('reach-section');
+        return;
+      }
+
+      section.style.display = '';
+      const rows = reports.map((r) => {
+        r = r || {};
+        const pr = r.pr ? `#${r.pr}` : '—';
+        const title = escapeHtml(r.title || '');
+        const components = Array.isArray(r.attribution?.components) ? r.attribution.components : [];
+        const compsHtml = components.length
+          ? components.map(c => `<span class="reach-comp-badge">${escapeHtml(c)}</span>`).join('')
+          : '<span style="color:var(--muted);font-style:italic">unattributable</span>';
+
+        let windowHtml = escapeHtml(r.deploy_window || '—');
+        if (Array.isArray(r.shared_with) && r.shared_with.length > 0) {
+          windowHtml += ` <span class="reach-shared-tag">(shared w/ ${r.shared_with.map(p => `#${p}`).join(', ')})</span>`;
+        }
+
+        const reachHives = Number(r.reach_count) || 0;
+        const reachHtml = r.deployed
+          ? `<span style="font-weight:600;color:${reachHives > 0 ? 'var(--green)' : 'var(--muted)'}">${reachHives} hive${reachHives === 1 ? '' : 's'}</span>`
+          : `<span style="color:var(--muted)">not deployed</span>`;
+
+        let deltaHtml = '<span style="color:var(--muted)">—</span>';
+        if (typeof r.error_rate_delta === 'number') {
+          const deltaPct = (r.error_rate_delta * 100).toFixed(1);
+          if (r.error_rate_delta > 0.0001) {
+            deltaHtml = `<span class="reach-delta-pos">+${deltaPct}%</span>`;
+          } else if (r.error_rate_delta < -0.0001) {
+            deltaHtml = `<span class="reach-delta-neg">${deltaPct}%</span>`;
+          } else {
+            deltaHtml = `<span class="reach-delta-zero">0.0%</span>`;
+          }
+        }
+
+        let statusHtml = '';
+        if (r.never_ran) {
+          statusHtml = `<span class="reach-badge-neverran">Never Ran</span>`;
+        } else if (r.first_execution_latency_seconds != null) {
+          const latSec = Number(r.first_execution_latency_seconds);
+          let latStr = `${Math.round(latSec)}s`;
+          if (latSec >= 86400) latStr = `${(latSec / 86400).toFixed(1)}d`;
+          else if (latSec >= 3600) latStr = `${(latSec / 3600).toFixed(1)}h`;
+          else if (latSec >= 60) latStr = `${(latSec / 60).toFixed(1)}m`;
+          statusHtml = `<span style="color:var(--text);font-size:0.75rem">${latStr}</span>`;
+        } else if (r.deployed) {
+          statusHtml = `<span style="color:var(--muted);font-size:0.72rem">deployed</span>`;
+        } else {
+          statusHtml = `<span style="color:var(--muted);font-size:0.72rem">merged</span>`;
+        }
+
+        return `<tr>
+          <td><span class="reach-pr-num">${escapeHtml(pr)}</span> <span class="reach-pr-title">${title}</span></td>
+          <td>${compsHtml}</td>
+          <td>${windowHtml}</td>
+          <td>${reachHtml}</td>
+          <td>${deltaHtml}</td>
+          <td>${statusHtml}</td>
+        </tr>`;
+      }).join('');
+
+      card.innerHTML = `<table class="reach-table">
+        <thead>
+          <tr>
+            <th>PR</th>
+            <th>Components</th>
+            <th>Deploy Window</th>
+            <th>Reach</th>
+            <th>Error Δ</th>
+            <th>Status / Latency</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+      applySectionCollapse('reach-section');
+    }
+
+    async function fetchReach() {
+      try {
+        const r = await fetch('/api/reach?recent=10');
+        if (!r.ok) return;
+        const dto = await r.json();
+        renderReach(dto);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+
+    // Prime panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchACMMReco(); fetchLifecycle(); }
+    function v4RefreshPanels() { fetchACMMReco(); fetchLifecycle(); fetchReach(); }
     v4RefreshPanels();
     setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
 

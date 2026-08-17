@@ -152,3 +152,23 @@ func TestAcceptsGzip(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticIndex_ReachTelemetrySurface(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, marker := range []string{
+		"reach-section",
+		"reach-card",
+		"reach-table",
+		"renderReach",
+		"fetchReach",
+		"/api/reach?recent=10",
+	} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("static index.html missing reach surface marker: %q", marker)
+		}
+	}
+}

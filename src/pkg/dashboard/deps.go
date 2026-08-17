@@ -15,6 +15,7 @@ import (
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/governor"
 	"github.com/kubestellar/hive/pkg/knowledge"
+	"github.com/kubestellar/hive/pkg/reach"
 	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/tokens"
 )
@@ -39,8 +40,13 @@ type Dependencies struct {
 	// Nil is safe: Snapshot() on a nil collector reports ready=false and the
 	// advisor leaves the signal at its conservative zero.
 	FleetStats      *FleetStatsCollector
-	BeadSynthesizer *knowledge.BeadSynthesizer
-	BeadStores      map[string]*beads.Store
+	// ReachReportsFunc provides the PR reach reports for the ACMM advisor
+	// and the /api/reach status surface (#3995, phase 2c of #3973).
+	// Nil is safe: Snapshot()/reach-rate on nil reports measured=false and the
+	// advisor leaves the signal at its conservative zero.
+	ReachReportsFunc func() []reach.PRReachReport
+	BeadSynthesizer  *knowledge.BeadSynthesizer
+	BeadStores       map[string]*beads.Store
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot

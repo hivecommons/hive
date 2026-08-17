@@ -27,6 +27,7 @@ type StatusInputs struct {
 	CoveragePct      float64
 	GreenStreak      int
 	MergeSuccessRate float64
+	PRReachRate      float64
 	ActionableIssues int
 	HoldCount        int
 	HasQualityAgent  bool
@@ -42,6 +43,7 @@ func RecommendFromStatus(in StatusInputs) Recommendation {
 		CoveragePct:      in.CoveragePct,
 		GreenStreak:      in.GreenStreak,
 		MergeSuccessRate: in.MergeSuccessRate,
+		PRReachRate:      in.PRReachRate,
 		ActionableIssues: in.ActionableIssues,
 		HoldCount:        in.HoldCount,
 		HasQualityAgent:  in.HasQualityAgent,

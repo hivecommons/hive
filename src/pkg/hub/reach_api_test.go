@@ -199,6 +199,59 @@ func TestHandleReachSinglePR(t *testing.T) {
 	}
 }
 
+func TestHandleReachErrorDeltas(t *testing.T) {
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	mergedAt := time.Now().Add(-2 * time.Hour)
+	firstRun := mergedAt.Add(30 * time.Minute)
+
+	srv.reachPRSource = &fakeReachPRSource{prs: map[int]reach.PRInfo{
+		1001: {
+			Number:      1001,
+			Title:       "hub: fix error handling",
+			MergeCommit: "m1001",
+			MergedAt:    mergedAt,
+			Files:       []string{"src/pkg/hub/reach.go"},
+		},
+	}}
+
+	srv.reachReporter = &reach.StubReachReporter{Reports: map[string][]reach.ComponentReach{
+		"hive-1": {
+			{Component: "hub", Commit: "c_old", SpansTotal: 100, SpansError: 10, FirstSeen: mergedAt.Add(-4 * time.Hour), LastSeen: mergedAt.Add(-2 * time.Hour)},
+			{Component: "hub", Commit: "c_new", SpansTotal: 200, SpansError: 4, FirstSeen: firstRun, LastSeen: time.Now()},
+		},
+	}}
+	srv.reachAncestry = &fakeReachAncestry{pairs: map[[2]string]bool{
+		{"m1001", "c_new"}: true,
+	}}
+
+	req := httptest.NewRequest("GET", "/api/reach?pr=1001", nil)
+	w := httptest.NewRecorder()
+	srv.handleReach(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Reports []reach.PRReachReport `json:"reports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(resp.Reports) != 1 {
+		t.Fatalf("got %d reports, want 1", len(resp.Reports))
+	}
+	rep := resp.Reports[0]
+	if rep.ErrorRateBefore == nil || *rep.ErrorRateBefore != 0.10 {
+		t.Errorf("ErrorRateBefore = %v, want 0.10", rep.ErrorRateBefore)
+	}
+	if rep.ErrorRateAfter == nil || *rep.ErrorRateAfter != 0.02 {
+		t.Errorf("ErrorRateAfter = %v, want 0.02", rep.ErrorRateAfter)
+	}
+	if rep.ErrorRateDelta == nil || *rep.ErrorRateDelta != -0.08 {
+		t.Errorf("ErrorRateDelta = %v, want -0.08", rep.ErrorRateDelta)
+	}
+}
+
 // TestCompareAncestry pins the compare-API adapter to commit_order.go's
 // exact semantics ("ahead"/"identical" = contained), its shared permanent
 // cache, and its errors-are-not-cached discipline.

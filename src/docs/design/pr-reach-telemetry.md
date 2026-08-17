@@ -1,7 +1,8 @@
 # PR reach telemetry (#3973)
 
-Status: phase 1 landed (version-stamped spans + component attribute); phase 2
-design accepted (2a implemented; 2b #3994 / 2c #3995 pending).
+Status: Phase 1 landed (version-stamped spans + component attribute); Phase 2
+complete (2a spoke-side counters in #3993; 2b PR mapping & ancestry join in
+#3994; 2c error-rate deltas, status table, & ACMM advisor wiring in #3995).
 
 ## The problem
 
@@ -50,9 +51,9 @@ changes:
   the existing `<component>.<operation>` naming convention
   (`governor.eval_cycle` → `governor`, `pr.merged` → `pr`).
 
-## The coarse PR → reach mapping (phase 1 granularity)
+## The coarse PR → reach mapping
 
-Per the options weighed in #3973, phase 1 is **package-level**, not per-PR:
+Per the options weighed in #3973, mapping is **package-level**, not per-PR:
 
 1. A PR's changed files map to packages (`src/pkg/governor/...` → `governor`,
    `src/cmd/hive/...` → the components whose spans main.go emits).
@@ -66,7 +67,7 @@ executed on a build containing it, and on how many hives" — not "did this exac
 diff's lines run." Line/function-level attribution is out of scope for phase 1
 (cost and cardinality; see the issue's options list).
 
-## Phase 2 (accepted)
+## Phase 2 Implementation
 
 The four design decisions, accepted in #3973:
 
@@ -80,48 +81,46 @@ The four design decisions, accepted in #3973:
   exporter config. Every spoke reports; zero new network dependencies. Spans
   remain the deep-inspection layer where backends exist.
 - **D3 — PR→component mapping with an honest `unattributable` bucket** (2b):
-  `v2/pkg/<name>/**` → `<name>`; `v2/cmd/hive/**` → `main`; `v2/proxy/**` →
+  `src/pkg/<name>/**` → `<name>`; `src/cmd/hive/**` → `main`; `src/proxy/**` →
   `proxy`; workflows/deploy/docs → `unattributable`, reported, never dropped.
 - **D4 — Co-attribution when PRs batch into one deploy** (2c): PRs sharing a
   deploy window share reach and error-deltas by construction, labeled shared.
   No fake precision.
 
-Phase 2a implementation (#3993): per-(component, running commit) counters —
-`spans_total`, `spans_error` (span ended with error status), `first_seen`,
-`last_seen`, cumulative-since-boot plus a rolling 1h bucket — capped at
-`tracing.MaxReachComponents` (64) with overflow counted and truncation logged,
-never silent. Persisted to `/data/reach-state.json` (its own file, not the
-main state file — resolved OQ-2) on the existing state-save cadence; commit
-keying means a new binary starts fresh keys naturally. The heartbeat carries
-the report as `component_reach`; the hub sanitizes and clips it (same 64-entry
-cap — a hostile spoke must not grow hub memory) and stores the latest report
-per hive on the registry entry. Storage only: no endpoint, no mapping, no UI
-until #3994. The entry keys `component` / `commit` / `spans_total` /
-`spans_error` / `first_seen` / `last_seen` are 2b's fixed read interface.
+### Phase 2a (#3993)
+Per-(component, running commit) counters — `spans_total`, `spans_error` (span ended
+with error status), `first_seen`, `last_seen`, cumulative-since-boot plus a rolling
+1h bucket — capped at `tracing.MaxReachComponents` (64) with overflow counted and
+truncation logged. Persisted to `/data/reach-state.json`. Spoke heartbeats include
+`component_reach`, which the hub sanitizes and indexes.
 
-## What phase 2+ needs (deferred)
+### Phase 2b (#3994)
+Ancestry-joined reach metrics:
+- `PRReachReport` with `Attribution`, `DeployWindow`, `SharedWith` (D4 co-attribution),
+  `ReachHives`, `ReachCount`, `FirstExecution`, `FirstExecutionLatencySeconds`, and
+  `NeverRan` flag with grace period suppression.
+- `GET /api/reach` endpoint behind `requireAdmin`.
 
-- **Error-rate deltas pre/post merge**: compare span error status rates for a
-  component across the commit boundary that introduced a PR. Needs span status
-  discipline (`span.SetStatus` on failure paths) audited per component first.
-- **First-execution latency**: time from merge → first span carrying a
-  `hive.commit` that contains the PR. Needs a merge-SHA → containing-build
-  index (the hub already stores per-spoke `GitHash`; join there).
-- **Per-hive distinct counts**: `count_distinct(hive.id)` per (commit,
-  component) — the raw data lands with phase 1, the aggregation/query layer is
-  future work.
-- **Finer-than-package mapping**, if ever justified: per-function span naming
-  or PR-annotation of spans. Explicitly rejected for phase 1.
-
-Non-goals at any phase soon: dashboards, an aggregation service, new HTTP
-endpoints. Phase 1 is emit-only; queries run in whatever OTLP backend the
-collector feeds.
+### Phase 2c (#3995)
+- **Error-rate delta pre/post deploy**: Computes `ErrorRateBefore`, `ErrorRateAfter`,
+  and `ErrorRateDelta` across the commit boundary ($C_{\text{prev}} \to C_{\text{curr}}$)
+  per (component, deploy-window), including full `ComponentErrorDeltas` breakdown.
+- **ACMM Advisor wiring**: `PRReachRate` is wired alongside `MergeSuccessRate`
+  (#3972) in `acmmadvisor.Signals` and `StatusInputs`. Reach answers "did anyone use it",
+  merge-success answers "did it last", acceptance answers "did I approve it" —
+  complements, never collapsed into one number. Zero when unmeasured (never-fabricate).
+- **Status surface reach table**: Rendered on the existing status surface alongside
+  ACMM recommendation and lifecycle timeline in `src/pkg/dashboard/static/index.html`.
 
 ## Testing
 
-`pkg/tracing/tracing_test.go` asserts: commit/image attributes present on the
-resource (`newResource`), placeholder `unknown` version omitted, empty image
-omitted, `hive.component` auto-attached by `StartSpan`, and the span-name →
-component mapping. Version *injection* is the linker's job (Dockerfile
-`-ldflags -X main.gitShort=...`); tests cover the plumbing function, not the
-linker.
+Comprehensive test suites across the reach pipeline:
+- `pkg/tracing/reach_test.go`: Spoke counters, persistence, overflow cap, and rolling window.
+- `pkg/reach/mapping_test.go`: File-to-component mapping and attribution coverage.
+- `pkg/reach/windows_test.go`: Deploy window derivation and D4 co-attribution assignment.
+- `pkg/reach/metrics_test.go`: Ancestry join, latency, and never-ran grace periods.
+- `pkg/reach/error_rate_test.go`: Pre/post deploy error deltas and PR reach rate.
+- `pkg/acmmadvisor/acmmadvisor_test.go`: Reach rate threshold evaluations and pass-through.
+- `pkg/hub/reach_api_test.go`: Hub `/api/reach` authentication, join, and error deltas.
+- `pkg/dashboard/api_reach_test.go`: Spoke dashboard `/api/reach` handler and advisor wiring.
+- `pkg/dashboard/static_index_test.go`: Static status surface reach table markup and handlers.

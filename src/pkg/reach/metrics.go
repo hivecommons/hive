@@ -72,6 +72,14 @@ type PRReachReport struct {
 	// A PR with no attributable components (docs-only) never raises it.
 	NeverRan              bool `json:"never_ran"`
 	NeverRanThresholdDays int  `json:"never_ran_threshold_days"`
+
+	// Error-rate deltas per (component, deploy-window) (#3995, phase 2c of #3973):
+	// rolling error ratio after vs. equivalent window before — defect-escape signal.
+	// Shared across co-deployed PRs (D4).
+	ErrorRateBefore      *float64              `json:"error_rate_before,omitempty"`
+	ErrorRateAfter       *float64              `json:"error_rate_after,omitempty"`
+	ErrorRateDelta       *float64              `json:"error_rate_delta,omitempty"`
+	ComponentErrorDeltas []ComponentErrorDelta `json:"component_error_deltas,omitempty"`
 }
 
 // Analyzer joins merged-PR facts against the fleet's reach reports. All

@@ -5,6 +5,7 @@ import (
 
 	"github.com/kubestellar/hive/pkg/acmmadvisor"
 	"github.com/kubestellar/hive/pkg/config"
+	"github.com/kubestellar/hive/pkg/reach"
 )
 
 // qualityAgentName is the config-level name of the quality/coverage agent that
@@ -86,6 +87,15 @@ func (s *Server) buildACMMStatusInputs() acmmadvisor.StatusInputs {
 		if rate, measured := mergeSuccessRateFromFleetStats(s.deps.FleetStats); measured {
 			in.MergeSuccessRate = rate
 		}
+		// PR reach rate (#3995, phase 2c of #3973): read from reach data.
+		// Reach answers "did anyone use it", merge-success answers "did it
+		// last", and acceptance answers "did I approve it" — complements, never
+		// collapsed into one number. When reach data is unavailable or the
+		// window holds no deployed attributable PRs, signal stays at zero
+		// ("unknown / not yet earned") following the never-fabricate contract.
+		if rate, measured := prReachRateFromDeps(s.deps); measured {
+			in.PRReachRate = rate
+		}
 	}
 
 	// Live queue/coverage signals come from the most recent status snapshot the
@@ -113,6 +123,18 @@ func hasQualityAgent(cfg *config.Config) bool {
 	}
 	_, ok := cfg.Agents[qualityAgentName]
 	return ok
+}
+
+// prReachRateFromDeps derives the advisor's PR reach rate signal from reach
+// data (#3995, phase 2c of #3973). Nil-safe: a nil deps or nil reach function
+// reports measured=false, and the caller leaves the signal at its conservative
+// zero instead of fabricating a rate.
+func prReachRateFromDeps(deps *Dependencies) (rate float64, measured bool) {
+	if deps == nil || deps.ReachReportsFunc == nil {
+		return 0, false
+	}
+	reports := deps.ReachReportsFunc()
+	return reach.PRReachRate(reports)
 }
 
 // mergeSuccessRateFromFleetStats derives the advisor's baseline merge-success

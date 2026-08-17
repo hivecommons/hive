@@ -14,6 +14,7 @@ func readySignals(currentLevel int) Signals {
 		CoveragePct:      100,
 		GreenStreak:      100,
 		MergeSuccessRate: 1.0,
+		PRReachRate:      1.0,
 		ActionableIssues: 0,
 		HoldCount:        0,
 		HasQualityAgent:  true,
@@ -181,6 +182,10 @@ func TestRecommend_BoundaryValues(t *testing.T) {
 		{"holds one over L6 ceil", func(s *Signals) { s.HoldCount = maxHoldsL6 + 1 }, 5, false},
 		{"coverage exactly at L3 floor", func(s *Signals) { s.CoveragePct = coverageFloorL3 }, 2, true},
 		{"coverage just below L3 floor", func(s *Signals) { s.CoveragePct = coverageFloorL3 - 0.1 }, 2, false},
+		{"reach rate exactly at L5", func(s *Signals) { s.PRReachRate = reachRateL5 }, 4, true},
+		{"reach rate just below L5", func(s *Signals) { s.PRReachRate = reachRateL5 - 0.001 }, 4, false},
+		{"reach rate exactly at L6", func(s *Signals) { s.PRReachRate = reachRateL6 }, 5, true},
+		{"reach rate just below L6", func(s *Signals) { s.PRReachRate = reachRateL6 - 0.001 }, 5, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -290,6 +295,7 @@ func TestRecommendFromStatus_PassThrough(t *testing.T) {
 		CoveragePct:      95,
 		GreenStreak:      20,
 		MergeSuccessRate: 0.99,
+		PRReachRate:      0.90,
 		ActionableIssues: 2,
 		HoldCount:        1,
 		HasQualityAgent:  true,

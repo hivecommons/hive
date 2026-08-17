@@ -337,6 +337,7 @@ func (s *HubServer) handleReach(w http.ResponseWriter, r *http.Request) {
 			report.DeployWindow = assignment.DeployedCommit
 			report.SharedWith = assignment.SharedWith
 		}
+		reach.ComputeErrorDeltas(&report, deployed, reports)
 		resp.Reports = append(resp.Reports, report)
 	}
 
