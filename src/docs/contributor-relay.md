@@ -1,6 +1,28 @@
 # ClankeR contributor relay
 
-ClankeR lets a contributor lend their local AI CLI subscription to a hive. The relay connects to `/contribute`, receives one task at a time, runs the selected CLI in the contributor's environment, and reports completion/PR metadata back to the hive.
+ClankeR lets a contributor lend their local AI CLI subscription to a hive. A contributor runs a small relay process on their machine; the hive assigns it real work — issues from the project's queue — and the contributor's agent executes each task locally with the CLI and model of their choice, reporting completion/PR metadata back over a WebSocket.
+
+The relay turns a hive from a fixed set of resident agents into an elastic swarm: the admin curates *what* is offered (which repos, which labels, which models are acceptable), and contributors decide *how* it gets done (their CLI, their model, their compute, their tokens). The relay connects to `/api/contribute/ws`, receives one task at a time, runs the selected CLI in the contributor's environment, and reports the result back.
+
+## How it fits together
+
+```mermaid
+sequenceDiagram
+    participant H as Hive<br/>(Governor Config → Hub tab<br/>curates the work queue)
+    participant R as Contributor machine<br/>(contributor relay + your CLI/model,<br/>tmux session)
+
+    R->>H: connect wss://<hive>/api/contribute/ws<br/>(registration token, CLI backend, model)
+    H-->>R: accept — or reject if the model<br/>fails the Model Filter
+    H->>R: task assign (queued issue + short-lived GitHub token)
+    loop while task runs
+        R->>H: progress (every 2 min) + heartbeat (30 s)
+    end
+    R->>H: result (PR opened / success / failure)
+```
+
+- The **work queue** is built from the hive's monitored repos: open, actionable issues that pass the admin's filters. The current depth is visible on the Hub tab and at `GET /api/contribute/status` (as `actionable_items`).
+- The **relay** authenticates with a registration token, receives one task at a time, drives the local CLI inside a tmux session, injects a short-lived GitHub token for the PR, and reports the result. It heartbeats every 30 s and reconnects with exponential backoff; a task is abandoned if it exceeds 30 minutes.
+- Every contributor has a **trust tier** with per-tier rate limits. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
 
 ## Basic setup
 
@@ -13,6 +35,19 @@ just contribute-hive
 ```
 
 `compose-contributor.yaml`, `Dockerfile.contributor`, and the `just contribute-hive` recipe are the reference container path. Native mode is available through `just contribute-hive <backend> local` when a container runtime is not desired.
+
+`contribute-setup` is one-time per hive: it registers you (your GitHub identity plus a registration token stored in `${HOME}/.config/hive/contributor.env`), authenticates `gh`, and verifies the CLI backend you chose. Every hive also serves a landing page at **`https://<hive-dashboard>/contribute`** with live queue stats and copy-paste setup commands tailored to the CLI you pick.
+
+`contribute-hive` starts the relay in one of two modes:
+
+```bash
+just contribute-hive               # containerized (recommended) — relay + CLI in docker or podman
+just contribute-hive claude local  # host mode — relay + CLI directly on your machine, in a tmux session
+```
+
+Containerized mode auto-detects the runtime — docker first, then podman — and can be forced with `export HIVE_CONTAINER_RUNTIME=podman`.
+
+Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
 ## Docker Compose workflow
 
@@ -33,15 +68,59 @@ Important environment variables:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `HIVE_HUB` | value from `contributor.env`, else public hub default | WebSocket hub(s) to subscribe to. Use comma-separated URLs for multi-hub mode. Direct Compose reads the registered value from the mounted config file. |
-| `HIVE_REGISTRATION_TOKEN` | value from `contributor.env` | Registration token(s), positional with `HIVE_HUB` when multiple hubs are listed. Required; run `just contribute-setup` / `just contribute-register` first. |
-| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `litellm`, `agy`, etc., depending on image support and credentials). `agy` is not in the contributor image and cannot inherit a sign-in, so run it with `just contribute-hive agy local`. |
+| `HIVE_REGISTRATION_TOKEN` | value from `contributor.env` | Registration token(s), positional with `HIVE_HUB` when multiple hubs are listed. Required; run `just contribute-setup` first. |
+| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `pi`, `aider`, `litellm`, `agy`, depending on image support and credentials). `agy` is not in the contributor image and cannot inherit a sign-in, so run it with `just contribute-hive agy local`. |
+| `AGENT_MODEL` | unset (backend default) | Optional model override passed to the contributor agent (e.g. `claude-sonnet-4-6`, `gpt-4o`, `gemini-2.5-pro`). Declared to the hive when the relay connects. |
 | `AGENT_REASONING_EFFORT` | unset | Reasoning effort override. Consumed by `codex` (`-c model_reasoning_effort`) and by `agy` (`--effort low\|medium\|high`, required whenever a model is set, else agy ignores the model). Ignored by other backends. |
-| `AGENT_MODEL` | unset | Optional model override passed to the contributor agent. |
 | `CONTRIBUTOR_MODE` | `interactive` | `interactive` keeps a tmux/TTY session. `headless` is for one-shot/no-TTY task delivery. |
+| `HIVE_AGENT_SESSION` | `contributor` | tmux session name for interactive mode. |
 
 To change hubs for direct Compose, re-run the registration/setup flow for the target hub or edit `${HOME}/.config/hive/contributor.env` so `HIVE_HUB` and `HIVE_REGISTRATION_TOKEN` stay matched.
 
-Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables. Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
+Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables (`HIVE_LITELLM_ENDPOINT`, `HIVE_LITELLM_API_KEY` — exported locally, never sent to the hive).
+
+## Choosing a CLI backend
+
+The relay speaks to whatever backend you set up — pass it to `contribute-setup` and (in host mode) to `contribute-hive`:
+
+| Backend | Notes |
+| --- | --- |
+| `claude` | Claude Code (`npm i -g @anthropic-ai/claude-code`) |
+| `copilot` | GitHub Copilot CLI |
+| `goose` | Goose, defaulting to a local model via Ollama — fully local inference (`export GOOSE_PROVIDER=ollama GOOSE_MODEL=phi4`) |
+| `codex` | Codex CLI |
+| `pi` | Pi |
+| `aider` | Aider |
+| `bob` | Bob shell (needs `BOBSHELL_API_KEY`) |
+| `litellm` | Claude Code pointed at **your own LiteLLM proxy**: `export HIVE_LITELLM_ENDPOINT=… HIVE_LITELLM_API_KEY=…` (exported locally, never sent to the hive) |
+| `agy` | Antigravity — host mode only; it signs in through an interactive Google OAuth flow with no API-key mode, so a container cannot inherit its credentials |
+
+## Choosing a model
+
+Set the model before starting the relay:
+
+```bash
+export AGENT_MODEL=claude-sonnet-4-6   # or gpt-4o, gemini-2.5-pro, …
+just contribute-hive
+```
+
+(`GOOSE_MODEL` is honored for goose.) The model is declared to the hive when the relay connects. If the hive's Model Filter rejects it, the relay prints the hive's accepted patterns and exits — switch models and reconnect:
+
+```text
+This hive accepts the following models:
+  - claude-opus*
+  - claude-sonnet*
+Set your model: export AGENT_MODEL=<model>
+```
+
+## What happens on a task
+
+1. The hive assigns an issue that fits your trust tier's rate limits and passes the admin's filters.
+2. The relay writes the task context, injects a short-lived GitHub token, and drives your CLI in a tmux session (attach to it to watch — or intervene).
+3. Progress is reported back every 2 minutes; the result (PR opened, success/failure) is reported when the CLI finishes.
+4. Completed tasks that open a PR count toward automatic tier promotion — and toward the hive's public `/leaderboard`.
+
+Contributors never hold long-lived repo credentials: the relay receives short-lived GitHub tokens per task, and API keys for the contributor's own model provider never leave their machine.
 
 ## Multi-hub subscription
 
@@ -68,6 +147,48 @@ just contribute-hive
 
 The hive may override the request with an owner-assigned role. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md) for tier, grant, and allow-list requirements.
 
+## Admin: configuring the queue (Governor Config → Hub)
+
+Everything an admin controls lives on one tab: **Governor Config → Hub**, below the hub registration settings. A queue-count badge shows how many issues currently qualify. These settings persist on the hub configuration (`PUT /api/config/governor/hub`).
+
+### Kill switch
+
+| Control | Config key | Effect |
+|---|---|---|
+| **Suspend Contributions** | `contribute_suspended` | Stops assigning tasks immediately. Connected contributors stay online but idle. Use this instead of revoking people when you need a pause (release freeze, incident). |
+
+### What gets queued
+
+Only issues that pass **all** of these filters are offered to contributors:
+
+| Control | Config key | Behavior |
+|---|---|---|
+| **Repos for Contribute** | `disabled_repos` | Per-repo toggle. A monitored repo serves work unless it is listed in `disabled_repos`; newly added repos default to **on**. |
+| **Label filter** | `contribute_labels_mode` + `contribute_deny_labels` | Set `contribute_labels_mode` to `deny` (default) so listed labels exclude an issue (e.g. `hold`, `wontfix`, `duplicate`), or to `allow` so an issue must carry one of the listed labels to queue (e.g. `good-first-issue`, `help-wanted`). |
+| **Deny Titles** | `contribute_deny_titles` | Title patterns to exclude. Supports `*`-wildcards (`*dashboard*`, `epic:*`) and slash-delimited regex (`/renovate/`, always case-insensitive). |
+| **Deny Authors** | `contribute_deny_authors` | Issues opened by these authors are excluded (e.g. `dependabot*`, `renovate[bot]`). Same wildcard/regex syntax as Deny Titles. |
+
+The legacy `contribute_allow_labels` field is retained only for one-time migration into `contribute_deny_labels` + `contribute_labels_mode`; configure the label filter through those two keys.
+
+### Which models are acceptable
+
+Contributors declare their CLI backend and model when the relay connects. The **Model Filter** decides whether that connection is accepted:
+
+| Control | Config key | Behavior |
+|---|---|---|
+| **Allowed Models** | `contribute_allow_models` | Patterns for acceptable models — presets (`claude-opus*`, `claude-sonnet*`, `gpt-4o*`, `gemini*`, `deepseek*`, …) or custom wildcards/regex. **Empty list = all models accepted.** |
+| **Reject Unknown Models** | `contribute_reject_unknown_models` | When on (and the allowlist is non-empty), a contributor whose model matches nothing on the list is rejected **at connect time**. The rejection message echoes the accepted patterns, so the contributor knows what to switch to. |
+
+This is the admin's quality floor: a hive doing subtle refactors can require `claude-opus*`/`claude-sonnet*`, while a hive full of `good-first-issue` label work can accept anything, including local Ollama models.
+
+### Trust tiers and individual controls
+
+Each trust tier can be toggled on/off and given its own rate limits (`0` = unlimited); tiers promote automatically as contributors complete tasks that open PRs. Admins can also promote, demote, or revoke individual contributors from the dashboard's contributor list (`GET /api/contributors`, with `PUT /api/contributors/{id}/trust` and `POST /api/contributors/{id}/revoke`); revoked contributors cannot reconnect. Completed-task counts and standings are public on the hive's `/leaderboard`. Tier names, promotion thresholds, and delegated roles are documented in [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
+
+### Filter timing
+
+- **Queue-time vs. connect-time.** Repo, label, title, and author filters apply when the queue is next built, so tightening them affects the *next* queue build. The Model Filter applies at connect time, so tightening it affects the *next* connection, not agents already mid-task.
+- **Suspending vs. revoking.** Suspension idles everyone and is instant to undo; revocation is per-contributor and blocks reconnection.
 
 ## Kubernetes contributor workload
 
@@ -77,7 +198,7 @@ The hive may override the request with an owner-assigned role. See [Contributor 
 just contribute-setup claude
 just contribute-k8s                          # default namespace hive-contributor
 just contribute-k8s my-namespace relay.yaml  # write a manifest
-just contribute-k8s my-namespace relay.yaml v2  # pin image tag
+just contribute-k8s my-namespace relay.yaml v4  # pin image tag
 kubectl apply -f relay.yaml
 kubectl -n my-namespace rollout status deploy/hive-contributor
 ```
@@ -135,3 +256,7 @@ Versions are `MAJOR.MINOR`. A MINOR difference is purely additive — the older 
 A relay that declares no version at all reads as `unknown` and is **not** treated as incompatible — that is what every relay written before the versioned handshake sends.
 
 Both surfaces render nothing when the versions agree, so a healthy fleet stays quiet. The in-tree relay and hub always match (a test fails the build if they drift); the comparison exists for third-party relays and for deployments running a hub and relay from different releases.
+
+## Custom stylesheets
+
+The contributor leaderboard and spoke dashboard accept a shareable custom stylesheet parameter, letting a hive brand its public surfaces from a public GitHub repo. See [Custom stylesheets](custom-stylesheets.md) for the accepted `owner/repo/path.css@ref` form, the server-side sanitizer rules, scoping, and the size cap.
