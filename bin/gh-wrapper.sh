@@ -243,7 +243,7 @@ fi
 # Read mode from file first (updated by Manager on mode change), fallback to env var.
 AGENT_NAME_GW="${HIVE_AGENT:-${HIVE_AGENT_ID:-unknown}}"
 MODE_FILE="/tmp/.hive-mode-${AGENT_NAME_GW}"
-if [ -f "$MODE_FILE" ]; then
+if [ -f "$MODE_FILE" ] && [ -r "$MODE_FILE" ]; then
   AGENT_MODE="$(cat "$MODE_FILE")"
 else
   AGENT_MODE="${HIVE_AGENT_MODE:-}"

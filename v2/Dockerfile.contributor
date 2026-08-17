@@ -73,12 +73,25 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
     which bob && \
     rm -f /tmp/bobshell.tgz
 
-# Install gh CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    > /etc/apt/sources.list.d/github-cli.list \
-  && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+# Install gh CLI — pinned to the same version as v2/Dockerfile to ensure
+# reproducible builds and prevent silent version drift via apt stable.
+# SHA256 values from https://github.com/cli/cli/releases for each arch tarball.
+# Bump GH_VERSION + both SHA256 ARGs in sync with v2/Dockerfile when upgrading.
+ARG GH_VERSION=2.74.0
+ARG GH_SHA256_AMD64=e55c9d49dc49c0b0fef0a9acd3510482fd9e27ff52ae80f8a6e838cd25b4cd89
+ARG GH_SHA256_ARM64=221222bd00281ab993f7e2c19b9f3f2482d66fa759baedcd8668785c940c8df7
+RUN ARCH="$(dpkg --print-architecture)" \
+  && case "$ARCH" in \
+       amd64) GH_SHA256="$GH_SHA256_AMD64" ;; \
+       arm64) GH_SHA256="$GH_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for gh: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL --retry 8 --retry-delay 5 --retry-max-time 300 --retry-connrefused --retry-all-errors \
+       -o /tmp/gh.tar.gz \
+       "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
+  && echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c - \
+  && tar xz --strip-components=2 -C /usr/local/bin -f /tmp/gh.tar.gz "gh_${GH_VERSION}_linux_${ARCH}/bin/gh" \
+  && rm -f /tmp/gh.tar.gz
 
 # Install Goose CLI (Block's AI agent)
 # Version pinned — was fetching releases/latest which resolves to HEAD at

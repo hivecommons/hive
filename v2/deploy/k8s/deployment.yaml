@@ -20,6 +20,12 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: hive
+      securityContext:
+        # Limit syscall attack surface without breaking su-exec UID switching.
+        # runAsNonRoot is intentionally omitted: the entrypoint starts as root
+        # before su-exec drops to dev (UID 1001) and then to per-agent UIDs.
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: hive
           image: hive:latest
@@ -42,13 +48,11 @@ spec:
                 secretKeyRef:
                   name: hive-secrets
                   key: HIVE_GITHUB_TOKEN
-                  optional: true
             - name: HIVE_DASHBOARD_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: hive-secrets
                   key: HIVE_DASHBOARD_TOKEN
-                  optional: true
             - name: HIVE_VLLM_ENDPOINT
               value: "http://vllm-svc.hive-inference.svc.cluster.local:8000"
             - name: HIVE_LLMD_ENDPOINT
@@ -105,6 +109,15 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          securityContext:
+            # Drop NET_RAW: hive never sends raw packets. Keep SETUID/SETGID
+            # and allowPrivilegeEscalation because the SUID su-exec helper
+            # switches from dev (UID 1001) to per-agent UIDs at runtime.
+            # readOnlyRootFilesystem is not set: hive writes logs/data to disk.
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop:
+                - NET_RAW
       volumes:
         - name: config
           configMap:

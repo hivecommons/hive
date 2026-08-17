@@ -38,6 +38,24 @@ const (
 	bobStateDirGroupRWX os.FileMode = 0o070
 )
 
+// ModeFileGlob matches the per-agent GitHub-mode files the Manager writes
+// (/tmp/.hive-mode-<agent>) and the enforcement layer reads: gh-wrapper.sh,
+// git-credential-hive.sh, and the MITM proxy. The Manager writes them as the
+// hive uid but the shell readers run as per-agent UIDs, so the files must be
+// world-readable; a restrictive umask at write time leaves them 0600, which
+// blocks every push (an unreadable mode file killed git-credential-hive.sh
+// under set -e — #3881/#3882). The watcher re-widens them each tick so a
+// running pod self-heals without operator intervention.
+//
+// A var (not const) so tests can point the scan at a writable temp pattern,
+// matching WatchedHomeDirs/SharedRepoParent. Production value is unchanged.
+var ModeFileGlob = "/tmp/.hive-mode-*"
+
+// modeFileReadBits is `a+r` — the read access every mode-file consumer needs.
+// ORed into the existing perms, never narrowing owner bits, so an
+// already-correct 0644 file is left byte-identical and the scan idempotent.
+const modeFileReadBits os.FileMode = 0o444
+
 // bobStateDirBase is the directory name bob uses for both its shared-HOME state
 // (/data/home/.bob) and its per-agent workdir state (/data/agents/<name>/.bob).
 // The watcher recognizes an entry as a bob state dir by this basename so it can
@@ -200,6 +218,8 @@ func fixPermissions(logger *slog.Logger) {
 	// write/commit/push and therefore open PRs. fixEntry already brings each
 	// dir to >=0770 and each file to >=0660 for the node group (and skips
 	// symlinks), which is exactly what the clone (created 0755 dev:node) needs.
+	fixModeFiles(logger)
+
 	roots := append([]string{}, WatchedHomeDirs...)
 	roots = append(roots, sharedRepoClones()...)
 	for _, root := range roots {
@@ -228,6 +248,52 @@ func fixPermissions(logger *slog.Logger) {
 				"error", err,
 			)
 		}
+	}
+}
+
+// fixModeFiles re-widens the per-agent mode files (ModeFileGlob) to be
+// world-readable. This is the running-pod remediation for #3882: the Manager's
+// WriteFile mode is umask-filtered at creation and ignored for existing files,
+// so a pod whose mode files came out 0600 stays broken across restarts;
+// this scan repairs them within one tick.
+//
+// SECURITY: /tmp is sticky and world-writable, so an agent can pre-create a
+// name matching the glob. Only regular, non-symlink files owned by the hive
+// uid are touched (os.Chmod follows symlinks — CWE-59, same guard as
+// fixEntry), and the only change ever made is adding read bits.
+func fixModeFiles(logger *slog.Logger) {
+	paths, err := filepath.Glob(ModeFileGlob)
+	if err != nil {
+		return
+	}
+	for _, path := range paths {
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+			continue
+		}
+		stat, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != uint32(os.Getuid()) {
+			continue
+		}
+		perm := fi.Mode().Perm()
+		if perm&modeFileReadBits == modeFileReadBits {
+			continue
+		}
+		newPerm := perm | modeFileReadBits
+		if err := os.Chmod(path, newPerm); err != nil {
+			logger.Warn("permissions watcher: chmod mode file failed; agents cannot read their GitHub mode and pushes will be blocked",
+				"path", path,
+				"old_mode", perm.String(),
+				"want_mode", newPerm.String(),
+				"error", err,
+			)
+			continue
+		}
+		logger.Info("permissions watcher: fixed mode file permissions",
+			"path", path,
+			"old_mode", perm.String(),
+			"new_mode", newPerm.String(),
+		)
 	}
 }
 

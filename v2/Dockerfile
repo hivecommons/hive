@@ -136,7 +136,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # 1.0.59 is the last version where removing the binary falls back to the
 # Node.js path, which respects NODE_EXTRA_CA_CERTS.
 ARG COPILOT_VERSION=1.0.59
-RUN npm install -g @github/copilot@${COPILOT_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@github/copilot@${COPILOT_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
 # Remove the native Rust binary so copilot falls back to the Node.js path.
 # The Rust binary embeds its own TLS stack (rustls + webpki-roots) which rejects
@@ -152,7 +153,8 @@ RUN rm -f /usr/local/lib/node_modules/@github/copilot/node_modules/@github/copil
 # reject the proxy CA). Tolerant of failure like the copilot layer: discovery
 # falls back to the raw HTTP probe when the SDK is absent.
 ARG COPILOT_SDK_VERSION=1.0.8
-RUN npm install -g @github/copilot-sdk@${COPILOT_SDK_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@github/copilot-sdk@${COPILOT_SDK_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot SDK install failed — skipping"
 
 # --- Layer 4: OpenAI Codex CLI (pinned; backend: codex + live model discovery) ---
@@ -204,7 +206,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
 ARG PI_VERSION=0.84.1
-RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force || \
+RUN npm install -g --ignore-scripts --no-fund --no-audit \
+    "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
 
 # --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
@@ -306,7 +309,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "specify-cli==${SPECIFY_
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
 # pluk (TypeScript): structured event streaming for AI agent tmux sessions
 ARG PLUK_VERSION=0.8.0
-RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
+RUN npm install -g --ignore-scripts --no-fund --no-audit "@kubestellar/pluk@${PLUK_VERSION}" && npm cache clean --force
 RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chown dev:node /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 2770 /var/run/pluk/logs /var/run/pluk/commands

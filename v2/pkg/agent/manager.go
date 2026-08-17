@@ -4872,6 +4872,11 @@ func (m *Manager) SyncModeFiles(level int) {
 		modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", name)
 		if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
+		} else if err := os.Chmod(modeFile, 0o644); err != nil {
+			// WriteFile's mode is umask-filtered at creation and ignored for an
+			// existing file, but the enforcement readers (gh-wrapper.sh,
+			// git-credential-hive.sh) run as per-agent UIDs and need world-read.
+			m.logger.Warn("SyncModeFiles: chmod failed", "file", modeFile, "error", err)
 		}
 	}
 }
@@ -5093,6 +5098,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
 	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
+	} else if err := os.Chmod(modeFile, 0o644); err != nil {
+		// WriteFile's mode is umask-filtered at creation and ignored for an
+		// existing file, but the enforcement readers (gh-wrapper.sh,
+		// git-credential-hive.sh) run as per-agent UIDs and need world-read.
+		m.logger.Warn("agentBootstrapEnv: mode file chmod failed", "file", modeFile, "error", err)
 	}
 	// Plain proxy URL without userinfo — Claude Code's native binary fails
 	// to open a socket when the URL contains username:password@ (FailedToOpenSocket).
