@@ -53,6 +53,29 @@ trend_marker() {
 die()   { fail "$*"; exit 1; }
 hdr()   { echo -e "\n${BLD}$*${RST}"; }
 
+# SECURITY (#3940, CWE-532): agent-launch.sh pipes agent CLI stderr through a
+# token scrubber; a direct CLI command bypasses it. Wrap any direct command in
+# `agent-launch.sh --exec <cmd>` — the same wrapper and scrub pipe as
+# supervised agents — instead of running/persisting it raw. Falls back to the
+# raw command (with a warning) only if agent-launch.sh cannot be found.
+wrap_launch_cmd() {
+  local cmd="$1" wrapper=""
+  case "$cmd" in
+    *agent-launch.sh*) echo "$cmd"; return 0 ;;  # already wrapped
+  esac
+  if [[ -x "${_HIVE_SCRIPT_DIR}/agent-launch.sh" ]]; then
+    wrapper="${_HIVE_SCRIPT_DIR}/agent-launch.sh"
+  elif command -v agent-launch.sh &>/dev/null; then
+    wrapper="$(command -v agent-launch.sh)"
+  fi
+  if [[ -z "$wrapper" ]]; then
+    warn "agent-launch.sh not found — using '$cmd' WITHOUT stderr token scrubbing (#3940)"
+    echo "$cmd"
+    return 0
+  fi
+  echo "$wrapper --exec $cmd"
+}
+
 # Detect CLI binary from tmux pane process tree via /proc
 detect_cli_from_proc() {
   local session="$1" pane_pid child_cmd
@@ -539,7 +562,10 @@ start_supervisor() {
   if [[ -z "$bin" || -z "$perm" ]]; then
     die "Unknown CLI: $cli. Supported: $KNOWN_BACKENDS"
   fi
-  launch_cmd="/usr/bin/$bin $perm --model $model_name"
+  # SECURITY (#3940, CWE-532): route the direct CLI command through
+  # agent-launch.sh --exec so its stderr token scrub pipe applies — never
+  # type the raw CLI into the pane (see wrap_launch_cmd).
+  launch_cmd="$(wrap_launch_cmd "/usr/bin/$bin $perm --model $model_name")"
 
   local ready_marker
   case "$cli" in
@@ -1111,7 +1137,10 @@ cmd_switch() {
   fi
   local switch_model
   switch_model=$(normalize_model_for_backend "$backend" "claude-opus-4-6")
-  launch_cmd="/usr/bin/$bin $perm --model $switch_model"
+  # SECURITY (#3940, CWE-532): persist the launch command wrapped in
+  # agent-launch.sh --exec so every consumer of AGENT_LAUNCH_CMD inherits
+  # the stderr token scrub pipe (see wrap_launch_cmd).
+  launch_cmd="$(wrap_launch_cmd "/usr/bin/$bin $perm --model $switch_model")"
 
   info "Switching $agent → $backend"
 

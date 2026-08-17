@@ -8,6 +8,14 @@
 #   AGENT_LAUNCH_CMD="agent-launch.sh --backend claude --model claude-opus-4.6"
 #   AGENT_LAUNCH_CMD="agent-launch.sh --backend codex --model gpt-5.6-luna --reasoning-effort low"
 #
+# Direct-command passthrough (issue #3940, CWE-532): a custom launch_cmd such
+# as "/usr/bin/copilot --allow-all --model claude-opus-4.6" must NOT be exec'd
+# raw — that bypasses the stderr token scrubbing below. Route it through:
+#   agent-launch.sh --exec /usr/bin/copilot --allow-all --model claude-opus-4.6
+# Everything after --exec is run verbatim as the agent CLI command, through
+# the SAME scrub pipe as backend launches. supervisor.sh wraps any direct
+# AGENT_LAUNCH_CMD this way automatically.
+#
 # Or override with env vars:
 #   AGENT_BACKEND=copilot AGENT_MODEL=claude-opus-4.6 agent-launch.sh
 #
@@ -71,45 +79,59 @@ BACKEND="${AGENT_BACKEND:-claude}"
 MODEL="${AGENT_MODEL:-}"
 REASONING_EFFORT="${AGENT_REASONING_EFFORT:-}"
 EXTRA_ARGS=()
+DIRECT_CMD=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)  BACKEND="$2"; shift 2 ;;
     --model)    MODEL="$2"; shift 2 ;;
     --reasoning-effort) REASONING_EFFORT="$2"; shift 2 ;;
+    --exec)     shift; DIRECT_CMD=("$@"); break ;;
     *)          EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
 
-CMD=$(backend_binary "$BACKEND")
-PERM_FLAG=$(backend_perm_flag "$BACKEND")
-MODEL_FLAG="--model"
+if [[ ${#DIRECT_CMD[@]} -gt 0 ]]; then
+  # Direct passthrough (#3940): run the given command verbatim, but through
+  # the SAME stderr scrub pipe below that backend launches use. This is the
+  # single scrub implementation — never exec a custom launch_cmd raw.
+  # BACKEND is derived from the binary name so the per-CLI env preparation
+  # below (codex CODEX_HOME, copilot PAT) applies identically to direct
+  # commands.
+  CMD="${DIRECT_CMD[0]}"
+  BACKEND="$(basename "$CMD")"
+  FULL_CMD=("${DIRECT_CMD[@]}")
+else
+  CMD=$(backend_binary "$BACKEND")
+  PERM_FLAG=$(backend_perm_flag "$BACKEND")
+  MODEL_FLAG="--model"
 
-# amazonq and goose don't support --model
-case "$BACKEND" in
-  amazonq|goose) MODEL_FLAG="" ;;
-esac
+  # amazonq and goose don't support --model
+  case "$BACKEND" in
+    amazonq|goose) MODEL_FLAG="" ;;
+  esac
 
-if [[ -z "$CMD" || -z "$PERM_FLAG" ]]; then
-  echo "Unknown backend: $BACKEND" >&2
-  echo "Supported: $KNOWN_BACKENDS" >&2
-  exit 1
-fi
+  if [[ -z "$CMD" || -z "$PERM_FLAG" ]]; then
+    echo "Unknown backend: $BACKEND" >&2
+    echo "Supported: $KNOWN_BACKENDS" >&2
+    exit 1
+  fi
 
-PERM_ARGS=()
-if [[ -n "$PERM_FLAG" ]]; then
-  read -r -a PERM_ARGS <<< "$PERM_FLAG"
-fi
-FULL_CMD=("$CMD" "${PERM_ARGS[@]}")
-if [[ -n "$MODEL" && -n "$MODEL_FLAG" ]]; then
-  MODEL=$(normalize_model_for_backend "$BACKEND" "$MODEL")
-  FULL_CMD+=("$MODEL_FLAG" "$MODEL")
-fi
-if [[ "$BACKEND" == "codex" && -n "$REASONING_EFFORT" ]]; then
-  FULL_CMD+=("-c" "model_reasoning_effort=\"${REASONING_EFFORT}\"")
-fi
-if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-  FULL_CMD+=("${EXTRA_ARGS[@]}")
+  PERM_ARGS=()
+  if [[ -n "$PERM_FLAG" ]]; then
+    read -r -a PERM_ARGS <<< "$PERM_FLAG"
+  fi
+  FULL_CMD=("$CMD" "${PERM_ARGS[@]}")
+  if [[ -n "$MODEL" && -n "$MODEL_FLAG" ]]; then
+    MODEL=$(normalize_model_for_backend "$BACKEND" "$MODEL")
+    FULL_CMD+=("$MODEL_FLAG" "$MODEL")
+  fi
+  if [[ "$BACKEND" == "codex" && -n "$REASONING_EFFORT" ]]; then
+    FULL_CMD+=("-c" "model_reasoning_effort=\"${REASONING_EFFORT}\"")
+  fi
+  if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    FULL_CMD+=("${EXTRA_ARGS[@]}")
+  fi
 fi
 
 # Codex CLI: give each agent its OWN CODEX_HOME rather than the shared

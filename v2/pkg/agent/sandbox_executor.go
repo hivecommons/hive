@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/outputschema"
 	"github.com/kubestellar/hive/v2/pkg/pushbroker"
 	"github.com/kubestellar/hive/v2/pkg/sandbox"
@@ -132,6 +133,15 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 	})
+	// SECURITY (#3940, CWE-532): the agent CLI (notably one supplied via a
+	// direct launch_cmd override, which never passes through agent-launch.sh's
+	// stderr scrubber) can emit token-shaped values on stdout/stderr — e.g.
+	// during an auth failure. Scrub with the canonical logscrub patterns at
+	// this single boundary, BEFORE the output is persisted to the transcript
+	// or returned in the kick result, so both the normal backend path and the
+	// launch_cmd path are covered structurally.
+	sres.Stdout = logscrub.ScrubString(sres.Stdout)
+	sres.Stderr = logscrub.ScrubString(sres.Stderr)
 	res.Sandbox = sres
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		res.TimedOut = true
