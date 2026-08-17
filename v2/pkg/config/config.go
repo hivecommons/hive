@@ -3496,17 +3496,31 @@ func (c *Config) applyDefaults() {
 		}
 	}
 	if len(c.Governor.Sensing.LoginPatterns) == 0 {
+		// Each pattern must match the CLI's own login CHROME, never ordinary
+		// English. The login-detector matches these against the agent's PANE —
+		// which contains the issue bodies, PR diffs and CI logs the agent is
+		// READING — so generic phrases pause an agent for merely discussing an
+		// auth error. The previous defaults ("authentication required",
+		// "unauthorized.*401", "session expired", "login required", "please
+		// log in", "token expired") did exactly that on a live hive: a
+		// ci-maintainer reading CI logs full of 401s and a supervisor
+		// summarising issues across 39 repos were paused repeatedly, and the
+		// two HIGHEST-cadence agents are hit hardest because the detector runs
+		// at kick time, so exposure scales with kick frequency. Reproduced on
+		// demand by typing "authentication required" into a healthy agent's
+		// input box (unsubmitted — just rendered on the pane) and kicking it.
 		c.Governor.Sensing.LoginPatterns = []string{
-			"please log in",
-			"authentication required",
-			"not logged in",
-			"login required",
-			"session expired",
-			"token expired",
-			"unauthorized.*401",
+			// claude: exact prompt strings from Claude Code's login screens.
+			"Please run /login",
+			"Not logged in",
+			// gh / copilot / gemini: the commands their CLIs tell the user to run.
 			"gh auth login",
 			"claude login",
 			"copilot auth",
+			"gemini auth login",
+			// bob: its API-key entry prompts.
+			"Enter Bob-Shell API Key",
+			"Paste your API key here",
 		}
 	}
 	if c.Governor.Sensing.TTLSeconds == 0 {
