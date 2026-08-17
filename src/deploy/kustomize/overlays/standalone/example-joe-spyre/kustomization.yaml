@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE overlay — a filled-in copy of the standalone overlay showing the
+# finished shape for a fictional user "Joe" deploying to a Spyre cluster.
+#
+# ⚠️  EVERY value below is an EXAMPLE. Replace them with your own before using.
+#     This directory exists to show what a completed standalone overlay looks
+#     like — copy it, don't apply it verbatim.
+#
+# It is one directory DEEPER than the standalone overlay, so the base paths gain
+# one `../` segment: ../../../../k8s and ../../../../inference.
+# ─────────────────────────────────────────────────────────────────────────────
+
+resources:
+  - ../../../../k8s
+  - ../../../../inference
+  # EXAMPLE: Joe is on OpenShift, so he exposes the dashboard with a Route.
+  # On plain Kubernetes use an Ingress instead. Replace the host in route.yaml.
+  - route.yaml
+
+# EXAMPLE: pin a reviewed digest. Replace with a digest you have reviewed, or
+# remove to track the `stable` channel.
+images:
+  - name: ghcr.io/kubestellar/hive
+    newName: ghcr.io/kubestellar/hive
+    newTag: stable
+
+patches:
+  - path: patch-configmap.yaml
+  - path: patch-pvc-storageclass.yaml
+  # Joe's cluster GRANTS NET_ADMIN, so advisory mode is NOT enabled here (the
+  # full fail-closed security gate is used). Uncomment only on a cluster that
+  # denies NET_ADMIN — see ../README.md "The NET_ADMIN decision".
+  # - path: patch-advisory-mode.yaml

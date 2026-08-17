@@ -1,0 +1,9 @@
+# EXAMPLE PVC storage-class patch. ⚠️  Replace with a class on YOUR cluster.
+# Joe's cluster is OpenShift Data Foundation, so he uses the CephFS RWX class.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hive-data
+  namespace: hive
+spec:
+  storageClassName: ocs-storagecluster-cephfs

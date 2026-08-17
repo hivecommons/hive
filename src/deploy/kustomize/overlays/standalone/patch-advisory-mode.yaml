@@ -1,0 +1,34 @@
+# NET_ADMIN escape hatch — the crash-loop workaround for locked-down clusters.
+#
+# ⚠️  This patch is NOT applied by default. It is referenced (commented out) in
+# kustomization.yaml. Uncomment that line ONLY if your cluster DENIES the
+# NET_ADMIN capability the base already requests.
+#
+# Why it exists:
+#   The base deployment requests CAP_NET_ADMIN so the entrypoint can install the
+#   forced-proxy-egress iptables REDIRECT that enforces the ACMM MITM proxy. On
+#   a cluster that GRANTS NET_ADMIN (most do), you need NOTHING here — the full
+#   security gate comes up automatically.
+#
+#   On a cluster that DENIES NET_ADMIN, the entrypoint cannot establish the
+#   redirect and FATALs (exit 1, "refusing to start ... capability model would
+#   be advisory-only") — a fail-CLOSED crash loop. Setting
+#   HIVE_PROXY_ADVISORY_OK=true tells it to start anyway in ADVISORY-ONLY mode.
+#
+# SECURITY TRADE-OFF: advisory mode means the MITM egress gate is best-effort,
+# not enforced — an agent with a raw token could bypass the proxy. Only enable
+# this when you understand and accept that. The env var name is verified against
+# src/deploy/entrypoint.sh (HIVE_PROXY_ADVISORY_OK).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive
+  namespace: hive
+spec:
+  template:
+    spec:
+      containers:
+        - name: hive
+          env:
+            - name: HIVE_PROXY_ADVISORY_OK
+              value: "true"

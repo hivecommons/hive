@@ -1,0 +1,90 @@
+# Standalone (self-hosted, hub-less) Hive overlay
+
+This Kustomize overlay deploys a **self-hosted Hive** — the "Joe" scenario: an
+operator running their own Hive against their own repos, with **no connection to
+the kubestellar hub**. It layers on the two in-repo bases:
+
+| Base | What it provides |
+|------|------------------|
+| `../../../k8s` | Core Hive workload: namespace, ConfigMap, Secret, PVC, RBAC, Deployment, Service. |
+| `../../../inference` | An in-cluster OpenAI-compatible inference backend (llama.cpp serving Qwen2.5-0.5B) plus EPP RBAC — so you get a working model endpoint without an external provider. |
+
+The overlay only adds **deltas**; it never edits the bases. A concrete,
+filled-in copy lives in [`example-joe-spyre/`](./example-joe-spyre) for
+reference.
+
+## What you MUST swap
+
+All placeholders are UPPER_SNAKE_CASE. Search for them before applying:
+
+| Placeholder | File | What to put |
+|-------------|------|-------------|
+| `YOUR_ORG`, `YOUR_REPO` | `patch-configmap.yaml` (`project:`) | Your GitHub org and repo(s). `primary_repo` must be one of `repos`. |
+| `YOUR_BOT_LOGIN` | `patch-configmap.yaml` (`project.ai_author`) | The GitHub login the agents author PRs as. |
+| `YOUR_GITHUB_LOGIN` | `patch-configmap.yaml` (`dashboard.authorized_users`) | Your GitHub login. First entry is the owner (read-write). |
+| `YOUR_OAUTH_CLIENT_ID` | `patch-configmap.yaml` (`github.oauth_client_id`) | Client ID of a GitHub OAuth App for device-flow dashboard login. For GHE, also set `github.forge` / `project.forge` to your host. |
+| litellm `endpoint` | `patch-configmap.yaml` (`governor.litellm.endpoint`) | Your OpenAI-compatible endpoint. Defaults to the in-cluster inference Service. |
+| `YOUR_RWX_STORAGE_CLASS` | `patch-pvc-storageclass.yaml` | A storage class on your cluster (RWO is fine for the default single replica). |
+| Route host (OpenShift) | see below | If you also want a Route, add the openshift overlay or set `spec.host`. |
+
+Also populate `hive-secrets` (from the base) with a GitHub App PEM **or**
+`HIVE_GITHUB_TOKEN`, and — if your litellm/inference endpoint needs auth —
+the key named by `governor.litellm.api_key_env` (default `HIVE_LITELLM_API_KEY`)
+or mounted at `api_key_file` (default `/secrets/litellm_api_key`).
+
+## The NET_ADMIN decision
+
+The base Deployment requests `CAP_NET_ADMIN`. The Hive entrypoint uses it to
+install a forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM
+proxy (the security gate that stops an agent bypassing the proxy with a raw
+token).
+
+- **Cluster GRANTS NET_ADMIN (most do):** do nothing. The full gate comes up
+  automatically. This is the recommended, fail-closed default.
+- **Cluster DENIES NET_ADMIN:** the entrypoint FATALs and the pod crash-loops
+  (`FATAL: refusing to start ... capability model would be advisory-only`). To
+  start anyway in **advisory-only** mode, uncomment the
+  `- path: patch-advisory-mode.yaml` line in `kustomization.yaml`. That sets
+  `HIVE_PROXY_ADVISORY_OK=true`. **Trade-off:** the egress gate becomes
+  best-effort, not enforced — an agent could bypass the proxy. Only do this if
+  you accept that.
+
+See `src/docs/net-admin-requirement.md` for the full explanation.
+
+## Install
+
+```bash
+# Review the rendered manifests first:
+kubectl kustomize src/deploy/kustomize/overlays/standalone
+
+# Apply:
+kubectl apply -k src/deploy/kustomize/overlays/standalone
+
+# Watch it come up:
+kubectl -n hive rollout status deploy/hive
+kubectl -n hive-inference rollout status deploy/vllm
+```
+
+## Pinning / upgrading the image
+
+The base tracks `ghcr.io/kubestellar/hive:stable`. To pin a reviewed digest (so
+upgrades are deliberate), run from this overlay directory:
+
+```bash
+kustomize edit set image \
+  ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@sha256:<digest>
+```
+
+That writes an `images:` entry into `kustomization.yaml` (git-tracked). To
+upgrade, bump the digest and re-apply:
+
+```bash
+kubectl apply -k src/deploy/kustomize/overlays/standalone
+```
+
+## Exposing the dashboard
+
+This overlay does not create an Ingress or Route. On OpenShift, use the
+`../openshift` overlay (or add a Route with your `spec.host`) which targets the
+base Service `hive` port `dashboard` (3002). On plain Kubernetes, add your own
+Ingress to the same Service/port.
