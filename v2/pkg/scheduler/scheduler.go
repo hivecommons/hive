@@ -260,7 +260,7 @@ func (s *Scheduler) substituteTemplateWithPolicy(template string, actionable *gi
 		"ISSUE_LIST":            lit(issueList),
 		"PR_LIST":               lit(prList),
 		"AUTHORIZED_REPOS":      lit(s.buildReposSection()),
-		"GH_AUTH":               lit(s.ghAuthInstructions(agentName)),
+		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
@@ -645,7 +645,7 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 	b.WriteString("[agent:supervisor]\n")
 	b.WriteString(fmt.Sprintf("MONITORING PASS %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions("supervisor"))
+	b.WriteString(s.ghAuthInstructions())
 	b.WriteString(s.reposSection())
 
 	b.WriteString("ROLE: You are the SUPERVISOR. Your job is to MONITOR other agents, NOT to fix issues yourself.\n")
@@ -728,13 +728,40 @@ func (s *Scheduler) buildCIFailingList() string {
 }
 
 // ghAuthInstructions tells the agent how to authenticate each tool class.
-// The per-agent token file is 0600, owned by the agent's UID, and scoped to
-// the agent's trust tier — pointing gh at it preserves both enforcement
-// layers (tier-scoped token + proxy mode inspection). Never point agents at
-// the shared gh-app-token.cache: reading it skips the credential helper's
-// UID/mode gate and hands every agent an unscoped token.
-func (s *Scheduler) ghAuthInstructions(agentName string) string {
-	return fmt.Sprintf(`## Project Authentication
+//
+// The answer for every class is THE AGENT DOES NOTHING (#1861): git is served
+// by the credential helper, and gh by the wrapper the image installs AS `+"`gh`"+`
+// (v2/Dockerfile: COPY bin/gh-wrapper.sh /usr/local/bin/gh), which reads
+// HIVE_AGENT_TOKEN_CACHE and exports the agent's tier-scoped App token itself,
+// per invocation. No token material has to reach the agent for either tool.
+//
+// This block used to instruct every agent to run
+// `+"`export GH_TOKEN=$(cat .../agent-tokens/gh-token-<agent>.cache)`"+`, which was
+// wrong three ways:
+//
+//   - It put a live App installation token into the agent's OWN reasoning and
+//     transcript — the exact exposure #3842/#3889 removed from the native-install
+//     prompt, differing only in blast radius (tier-scoped here, fleet-wide there).
+//     A token in the transcript is one prompt injection from exfiltration, and
+//     #1861's whole goal is that agents hold no token material.
+//   - It was redundant. The wrapper had already injected the same token before
+//     the agent's command ran.
+//   - It could BREAK the session. bin/agent-launch.sh deliberately leaves
+//     GH_TOKEN unset because "Copilot CLI uses GH_TOKEN for its own Copilot API
+//     auth, which rejects GitHub App server-to-server tokens" — so a Copilot-
+//     backed agent following this instruction could lose model auth. The final
+//     bullet below already said the Copilot CLI owns that variable, contradicting
+//     the instruction four lines above it.
+//
+// Keep this block free of any token path or GH_TOKEN assignment. Both hive
+// tools authenticate the agent without its participation; anything that tells
+// an agent to fetch, read, echo or export a credential is a regression, and
+// TestGHAuthInstructions_NeverHandsTheAgentAToken pins that.
+// The agent name is no longer a parameter: nothing in this block is per-agent
+// any more, which is the point — there is no per-agent path for the agent to
+// read, because the hive applies the per-agent token on its behalf.
+func (s *Scheduler) ghAuthInstructions() string {
+	return `## Project Authentication
 
 - The GitHub App is the WRITE GATE. Every write to GitHub — opening or updating
   an issue or PR, commenting, and merging — goes through this hive's GitHub App
@@ -745,7 +772,7 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 - Writes are authored by the App bot identity, not a personal account. Do not
   set git user.name/user.email to a human, and do not pass 'gh pr create' or
   'git commit' an explicit --author: let the App identity stand.
-- To OPEN A PULL REQUEST, use `+"`hive-open-pr`"+` — the hive opens it with the
+- To OPEN A PULL REQUEST, use ` + "`hive-open-pr`" + ` — the hive opens it with the
   App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
     hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
@@ -755,15 +782,19 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 - git push / git fetch: run them normally. A credential helper supplies the
   App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
-- gh CLI: export your per-agent token first:
-    export GH_TOKEN=$(cat /var/run/hive-metrics/agent-tokens/gh-token-%s.cache)
-  It is scoped to YOUR tier and is an App installation token. Never read another
-  agent's token file or the shared gh-app-token.cache.
-- A missing GH_TOKEN at session start is expected (the Copilot CLI owns that
-  variable) — it is never a blocker. All GitHub traffic flows through the
-  hive proxy either way.
+- gh CLI: just run ` + "`gh`" + `. Authentication is already handled for you — the hive
+  wraps every gh call and applies YOUR tier-scoped App token to it. You do not
+  need, and must not set up, any credential of your own: do NOT export GH_TOKEN,
+  and do NOT go looking for, read, or echo a token file — not one of your own,
+  not another agent's, not a shared one. There is no token file you are meant
+  to open. A token you put on a command line is a token in your transcript, and
+  exporting GH_TOKEN can break the Copilot CLI's own auth, which owns that
+  variable. If gh reports an auth problem, report it — do not go find a token.
+- A missing GH_TOKEN at session start is therefore expected and is never a
+  blocker — it is what "already handled for you" looks like from inside the
+  session. All GitHub traffic flows through the hive proxy either way.
 
-`, agentName)
+`
 }
 
 func (s *Scheduler) reposSection() string {
@@ -868,7 +899,7 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 	b.WriteString("[agent:architect]\n")
 	b.WriteString("Full architect pass — refactor/perf scan across all repos.\n\n")
 
-	b.WriteString(s.ghAuthInstructions("architect"))
+	b.WriteString(s.ghAuthInstructions())
 
 	architectIssues := filterByLane(issues, "architect")
 	if len(architectIssues) > 0 {
@@ -922,7 +953,7 @@ func (s *Scheduler) buildOutreachMessage(actionable *github.ActionableResult) st
 	b.WriteString("[agent:outreach]\n")
 	b.WriteString(fmt.Sprintf("Full outreach pass. Time: %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions("outreach"))
+	b.WriteString(s.ghAuthInstructions())
 
 	b.WriteString("YOUR RESPONSIBILITIES:\n")
 	b.WriteString("  1. Open PRs on external repos to promote adoption (awesome-lists, adopters files, install guides)\n")
@@ -947,7 +978,7 @@ func (s *Scheduler) buildSecCheckMessage(actionable *github.ActionableResult) st
 	b.WriteString("[agent:sec-check]\n")
 	b.WriteString(fmt.Sprintf("Security review pass. Time: %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions("sec-check"))
+	b.WriteString(s.ghAuthInstructions())
 
 	b.WriteString("YOUR RESPONSIBILITIES:\n")
 	b.WriteString("  1. Scan repos for security vulnerabilities (OWASP top 10, dependency CVEs)\n")

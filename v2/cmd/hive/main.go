@@ -1304,6 +1304,25 @@ func main() {
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
+	// Treat any configured gateway name as an inference-routable backend so an
+	// agent with backend: <gateway> routes through it. Resolution is live
+	// (reads cfg on each call) so gateways added from the Model Gateways tab
+	// take effect without a restart.
+	//
+	// Wired HERE — immediately after the manager is constructed — and not in
+	// the proxy/dashboard wiring further down, because SetBackendOverride
+	// validates backend names against this predicate. The persisted-state
+	// replay (restoreAgentRuntimeState, below) re-applies saved backend
+	// overrides long before the dashboard wiring runs, and with the predicate
+	// still unset every gateway-named override was rejected there — silently,
+	// while the model override beside it restored fine. That is the #3961
+	// asymmetric revert: an agent switched to a gateway backend came back on
+	// its config backend but with the switched model still applied, producing
+	// launch-dead hybrids like `pi --model gpt-5.6-luna`.
+	agentMgr.SetGatewayBackendChecker(func(backend string) bool {
+		return cfg.Governor.ResolveGateway(backend) != nil &&
+			!strings.EqualFold(backend, "") // empty is the default, not a named backend
+	})
 	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
 	// pointer (the config watcher swaps its contents in place on reload), so a
 	// key added via the Secret mount, the PVC file, or a config edit takes
@@ -1465,75 +1484,7 @@ func main() {
 		logger.Warn("failed to load persisted state", "error", stateErr)
 	} else if saved != nil {
 		savedIssueCosts = saved.IssueCosts
-		for name, as := range saved.Agents {
-			if _, inConfig := cfg.Agents[name]; !inConfig {
-				logger.Info("skipping saved state for agent not in config", "agent", name)
-				continue
-			}
-			if as.Paused {
-				reason := as.PausedReason
-				if reason == "" {
-					reason = "persisted pause state"
-				}
-				trigger := as.PausedTrigger
-				if trigger == "" {
-					trigger = "state-restore"
-				}
-				_ = agentMgr.Pause(name, trigger, reason)
-				if as.PausedAt != nil {
-					agentMgr.SeedPauseState(name, *as.PausedAt, trigger, reason)
-				}
-			}
-			if as.PinnedCLI != "" {
-				_ = agentMgr.PinCLI(name, as.PinnedCLI)
-			}
-			if as.PinnedModel != "" {
-				_ = agentMgr.PinModel(name, as.PinnedModel)
-			}
-			if as.ModelOverride != "" {
-				agentMgr.SetModelOverride(name, as.ModelOverride)
-				logger.Info("model override restored", "agent", name, "model", as.ModelOverride)
-			}
-			if as.BackendOverride != "" {
-				agentMgr.SetBackendOverride(name, as.BackendOverride)
-				logger.Info("backend override restored", "agent", name, "backend", as.BackendOverride)
-			}
-			if as.RestartCount > 0 {
-				agentMgr.SeedRestartCount(name, as.RestartCount)
-			}
-			if as.LastKick != nil {
-				agentMgr.SeedLastKick(name, *as.LastKick)
-			}
-			if len(as.KickHistory) > 0 {
-				records := make([]agent.KickRecord, len(as.KickHistory))
-				for i, ke := range as.KickHistory {
-					records[i] = agent.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Snippet: ke.Snippet}
-				}
-				agentMgr.SeedKickHistory(name, records)
-			}
-			if agentCfg, ok := cfg.Agents[name]; ok {
-				if as.DisplayName != "" && agentCfg.DisplayName == "" {
-					agentCfg.DisplayName = as.DisplayName
-				}
-				if as.Description != "" && agentCfg.Description == "" {
-					agentCfg.Description = as.Description
-				}
-				if as.Enabled != nil {
-					agentCfg.Enabled = *as.Enabled
-				}
-				if as.ClearOnKick != nil {
-					agentCfg.ClearOnKick = *as.ClearOnKick
-				}
-				if as.StaleTimeout != nil {
-					agentCfg.StaleTimeout = *as.StaleTimeout
-				}
-				if as.RestartStrategy != "" {
-					agentCfg.RestartStrategy = as.RestartStrategy
-				}
-				cfg.Agents[name] = agentCfg
-				_ = agentMgr.UpdateConfig(name, agentCfg)
-			}
-		}
+		restoreAgentRuntimeState(saved, cfg, agentMgr, logger)
 		// Re-establish the fleet breaker AFTER per-agent pauses are restored
 		// above: the agents it held are already back in the paused state (with
 		// PausedTrigger == fleet-breaker from their persisted pause), so this
@@ -2818,14 +2769,10 @@ func main() {
 			}
 		}
 		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
-		// Treat any configured gateway name as an inference-routable backend so
-		// an agent with backend: <gateway> routes through it. Resolution is live
-		// (reads cfg on each call) so gateways added from the Model Gateways tab
-		// take effect without a restart.
-		agentMgr.SetGatewayBackendChecker(func(backend string) bool {
-			return cfg.Governor.ResolveGateway(backend) != nil &&
-				!strings.EqualFold(backend, "") // empty is the default, not a named backend
-		})
+		// The gateway-name predicate (SetGatewayBackendChecker) is wired right
+		// after the manager is constructed — see the comment there (#3961): it
+		// must be live before the persisted-state replay re-applies saved
+		// backend overrides, which happens well before this point.
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
 				// Named model gateway (OpenRouter, a second LiteLLM, etc.): resolve

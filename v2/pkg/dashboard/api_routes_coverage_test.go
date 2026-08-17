@@ -39,7 +39,9 @@ func TestCovG2_HistoryTrendsTimeline(t *testing.T) {
 
 func TestCovG2_TokenAccess(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doGet(s, "/api/token-access")
+	// Owner role required since #3936: the access log contains full gh-command
+	// lines and must not be visible to non-owner authenticated users.
+	rec := doOwnerGet(s, "/api/token-access")
 	if rec.Code != http.StatusOK {
 		t.Errorf("token-access status = %d", rec.Code)
 	}

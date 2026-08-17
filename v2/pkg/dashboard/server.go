@@ -865,10 +865,17 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
 		// SECURITY (#3315): script-src still carries 'unsafe-inline' because the
-		// dashboard is server-rendered HTML with ~400 inline on*= handlers and
+		// dashboard is server-rendered HTML with inline on*= handlers and
 		// several inline <script> blocks (static/index.html, api_contribute.go,
 		// the device-flow login page below). Dropping it today would blank the
-		// UI, so it is staged behind a nonce/handler refactor — see #3315.
+		// UI, so it is staged behind a nonce/handler refactor — see #3315/#3848.
+		// Measured on v4 for #3848: 437 inline on*= attributes in
+		// static/index.html plus ~145 more BUILT AS STRINGS inside the page's
+		// own JavaScript and injected through 169 innerHTML/insertAdjacentHTML
+		// sites. A nonce cannot cover ANY of them — nonces apply to <script>
+		// elements, never to event-handler attributes — so completing script-src
+		// is an event-delegation refactor of the SPA, not a nonce threading
+		// exercise. TestCSPScriptSrcUnsafeInlineIsStaged stays as the tripwire.
 		//
 		// What IS enforced here: the secret that 'unsafe-inline' used to expose
 		// is gone. The dashboard token is never rendered into the page (see
@@ -876,8 +883,30 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// inline-script XSS has no token to steal from the served HTML.
 		// form-action 'self' is added to stop an injected <form> from posting
 		// credentials off-origin, which does NOT depend on inline scripts.
+		//
+		// style-src (#3848 part 2) is scoped as TWO directives rather than one
+		// blanket allowance, because the two halves have different futures:
+		//
+		//   style-src-attr 'unsafe-inline'  — the 2061 inline style="" attributes.
+		//     ACCEPTED, permanently, and not a staging compromise: CSP has no
+		//     nonce or hash form for attribute-level styles, so there is no
+		//     policy that both allows them and constrains them. Closing this
+		//     would mean deleting every style attribute in the UI. See
+		//     ADR-0015 for the rationale and the residual risk.
+		//
+		//   style-src-elem 'self' 'unsafe-inline' — the 7 inline <style> elements.
+		//     CLOSABLE, unlike the attributes: <style> elements do take hashes.
+		//     Left open today because tightening it while script-src still
+		//     allows inline script buys nothing — anyone who can inject <style>
+		//     can inject <script> — so it is sequenced AFTER script-src, where
+		//     it starts to matter. TestCSPStyleSrcElemUnsafeInlineIsStaged is
+		//     its tripwire, mirroring the script-src one.
+		//
+		// Both are listed AFTER the style-src fallback, which browsers without
+		// CSP3 support use instead; the effective policy is identical either way,
+		// so this split names the decision without changing behaviour.
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors "+frameAncestors)
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		next.ServeHTTP(w, r)
 	})

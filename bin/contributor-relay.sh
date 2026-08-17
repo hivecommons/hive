@@ -21,7 +21,7 @@
 'use strict';
 
 const WebSocket = require('ws');
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -43,8 +43,19 @@ const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
+// Where the hub-delivered, task-scoped token is written (injectGhToken). This
+// deliberately does NOT default to /var/run/hive-metrics/gh-app-token.cache:
+// that filename is the hub's FULL-privilege installation-token cache
+// (bin/gh-app-token.sh, root-owned 0600 since audit H3). A relay started on a
+// host that also runs hive-hub components (native install) would either
+// clobber that cache with a short-lived repo-scoped token (relay running as
+// root) or die on EACCES trying (any other uid — the write was uncaught), and
+// detectCapabilities() would misreport the hub's own cache as this relay's
+// credential. Distinct filename, same directory, so the contributor container
+// (which owns /var/run/hive-metrics — v2/Dockerfile.contributor) behaves as
+// before. See kubestellar/hive#1861 / #3842 (audit N14).
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
-  ? '/var/run/hive-metrics/gh-app-token.cache'
+  ? '/var/run/hive-metrics/contributor-gh-token.cache'
   : '/tmp/hive-gh-token.cache');
 const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
 
@@ -123,9 +134,16 @@ const TASK_UNAVAILABLE_RETRY_MS = 30000;
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
 // optional — an older hub simply ignores it) and the hub advertises its own
-// version + capability set back on auth_ok. Keep in step with
-// contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go.
-const RELAY_PROTOCOL_VERSION = '1.1';
+// version + capability set back on auth_ok.
+//
+// MUST equal contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go:
+// the hub and this relay ship from the same tree, so they speak the same version
+// by construction. That was previously only a comment, and it drifted — #2600
+// shipped both at 1.1, #2671 bumped the hub to 1.2 for credential_after_accept
+// (handled by the token_refresh case below) and left this at 1.1, so the relay
+// under-declared itself for months with nothing to notice. It is now pinned by
+// TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
+const RELAY_PROTOCOL_VERSION = '1.2';
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -161,6 +179,9 @@ const hubs = rawHubList.map((url, i) => ({
   reconnectTimer: null,
   authenticated: false,
   authFailed: false,
+  // #2547: set once we have reported a contributor-protocol difference with
+  // this hub, so a reconnect loop does not repeat the same advisory line.
+  protocolDriftReported: false,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -222,7 +243,17 @@ function advanceActiveHub(fromHub) {
 function injectGhToken(token) {
   const dir = path.dirname(GH_TOKEN_CACHE);
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-  fs.writeFileSync(GH_TOKEN_CACHE, token, { mode: 0o600 });
+  // A failed write must never throw out of handleMessage: task_assign calls
+  // this before task_accepted is sent, so an unwritable cache path (EACCES on
+  // a root-owned directory, HIVE_GH_TOKEN_CACHE pointing somewhere bad) would
+  // crash the relay on every assignment that carries a token — a crash loop,
+  // not a degraded mode. The agent can still work with its own GH_TOKEN, so
+  // log loudly and carry on.
+  try {
+    fs.writeFileSync(GH_TOKEN_CACHE, token, { mode: 0o600 });
+  } catch (e) {
+    console.error(`Failed to write GitHub token cache ${GH_TOKEN_CACHE}: ${e.message} — continuing without it`);
+  }
 }
 
 const CLI_READY_POLL_MS = 2000;
@@ -264,8 +295,127 @@ function detectCapabilities() {
       caps.credential_type = 'pat';
     }
   } catch (_) { /* ignore */ }
+  // Agent CLI version: the hub schema, the operator docs and the Operations row
+  // ("cli 1.2.3") have carried this field since the declare half shipped, but the
+  // relay never populated it — so the one axis #2547's own evidence names first
+  // ("an agent CLI old enough to lack a flag the prompt assumes") was the one an
+  // operator could not see. Best-effort: omitted entirely when the probe fails.
+  const cliVersion = detectAgentCLIVersion();
+  if (cliVersion) caps.agent_cli_version = cliVersion;
   cachedCapabilities = caps;
   return caps;
+}
+
+// CLI_VERSION_PROBE_TIMEOUT_MS bounds the `<cli> --version` probe. Generous
+// enough for a Node/Python CLI's cold start, short enough that a wedged binary
+// costs a couple of seconds rather than the handshake.
+const CLI_VERSION_PROBE_TIMEOUT_MS = 3000;
+// CLI_VERSION_MAX_LEN bounds what we are willing to REPORT. The value is another
+// program's stdout, so it is arbitrary text; the hub bounds it again on receipt
+// (ContributorCapabilities.Sanitized) because no hub should trust a client to
+// have done this.
+const CLI_VERSION_MAX_LEN = 64;
+
+// detectAgentCLIVersion asks the agent CLI this relay drives for its version.
+//
+// Best-effort and deliberately quiet: any failure — binary absent, flag
+// unsupported, CLI wedged, output unusable — yields '' and the field is simply
+// omitted, which reads as "unknown" and is exactly what every relay written
+// before this change reports. Declaring nothing must always remain a working
+// answer (#2547: no default may read silence as incapacity).
+//
+// stdin is closed (`ignore`) so a CLI that mistakes --version for an interactive
+// launch gets EOF and exits rather than waiting on a terminal nobody is at;
+// stderr is discarded so a warning banner cannot end up declared as a version.
+function detectAgentCLIVersion() {
+  try {
+    // resolveBackend() maps the backend NAME to its actual binary (litellm →
+    // claude), and is the same resolution the launch path uses — so the version
+    // reported is the version of the CLI that will really run the work.
+    const bin = (resolveBackend().cmd || BACKEND).trim();
+    if (!bin) return '';
+    const out = execFileSync(bin, ['--version'], {
+      encoding: 'utf8',
+      timeout: CLI_VERSION_PROBE_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      killSignal: 'SIGKILL',
+    });
+    return sanitizeDeclaredValue(out);
+  } catch (_) {
+    // Nothing to log: an absent or unprobeable CLI is an ordinary, supported
+    // state here, not a fault.
+    return '';
+  }
+}
+
+// sanitizeDeclaredValue reduces a CLI's version output to one short, printable
+// line fit to declare. Takes the first non-empty line (CLIs append update
+// nudges and banners), strips control characters, collapses whitespace, and
+// truncates. The hub renders declarations into an operator row, so a multi-line
+// or unbounded value would be its problem rather than ours.
+function sanitizeDeclaredValue(raw) {
+  if (typeof raw !== 'string') return '';
+  const line = raw.split('\n').map(s => s.trim()).find(Boolean) || '';
+  const clean = line.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Truncate by code POINT, not code unit, so a value carrying an astral
+  // character is never cut into a lone surrogate on the way out.
+  const points = Array.from(clean);
+  return points.length > CLI_VERSION_MAX_LEN
+    ? points.slice(0, CLI_VERSION_MAX_LEN).join('').trim()
+    : clean;
+}
+
+// parseProtocolVersion mirrors the hub's parser (contribute_protocol_compat.go):
+// strict "MAJOR.MINOR", both non-negative integers, nothing after the minor.
+// Anything else returns null so an unrecognised shape is reported as unparseable
+// rather than coerced into a confident, wrong comparison.
+function parseProtocolVersion(v) {
+  var m = /^\s*(\d+)\.(\d+)\s*$/.exec(String(v == null ? '' : v));
+  if (!m) return null;
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
+}
+
+// classifyPeerProtocol compares a peer's declared version against ours and
+// returns the same verdict vocabulary the hub uses, so the two sides describe a
+// mismatch identically: 'unknown' | 'current' | 'older' | 'newer' |
+// 'incompatible' | 'malformed'. 'unknown' (peer stated nothing) is the
+// backward-compatible default and is never treated as a fault.
+//
+// The verdict always describes THE PEER, so the same 'older' means "the hub is
+// older" here and "the client is older" on the hub side. That is deliberate —
+// one vocabulary, each side reading it about the other — and every message
+// built from it names both versions explicitly so it cannot be misread.
+function classifyPeerProtocol(peer, self) {
+  if (!peer || !String(peer).trim()) return 'unknown';
+  var p = parseProtocolVersion(peer);
+  if (!p) return 'malformed';
+  var s = parseProtocolVersion(self);
+  if (!s) return 'unknown';
+  if (p.major !== s.major) return 'incompatible';
+  if (p.minor < s.minor) return 'older';
+  if (p.minor > s.minor) return 'newer';
+  return 'current';
+}
+
+// warnOnProtocolDrift reports, once per hub for the life of this process, that
+// the hub speaks a
+// different contributor-protocol version than this relay (kubestellar/hive#2547).
+// Purely informational: nothing below changes what we send, what we ask for, or
+// whether we stay connected — a version is not a gate on either side. Silent when
+// the versions agree or the hub is unversioned, so a healthy connection logs
+// nothing extra and an old hub is not nagged about a field it never had.
+function warnOnProtocolDrift(hub, hubVersion) {
+  if (hub.protocolDriftReported) return;
+  var verdict = classifyPeerProtocol(hubVersion, RELAY_PROTOCOL_VERSION);
+  if (verdict === 'current' || verdict === 'unknown') return;
+  hub.protocolDriftReported = true;
+  var detail = {
+    older: `hub ${hubVersion} is behind this relay ${RELAY_PROTOCOL_VERSION} — features this relay knows about may not be deployed there`,
+    newer: `hub ${hubVersion} is ahead of this relay ${RELAY_PROTOCOL_VERSION} — the hub may support features this relay does not use yet`,
+    incompatible: `hub ${hubVersion} differs from this relay ${RELAY_PROTOCOL_VERSION} in MAJOR version — the wire contract differs and behaviour is undefined; consider updating the relay`,
+    malformed: `hub announced an unparseable protocol version; expected MAJOR.MINOR`,
+  }[verdict];
+  console.warn(`Protocol ${verdict}: ${detail}. Continuing normally — this is advisory and nothing is gated on it.`);
 }
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
@@ -414,7 +564,9 @@ function runHeadlessTask(task) {
     const reason = `backend '${BACKEND}' has no headless (non-interactive) mode; supported: ${Object.keys(HEADLESS_BACKENDS).join(', ')}`;
     console.error(`Headless dispatch refused: ${reason}`);
     writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });
-    failCurrentTask(reason, { permanent: true });
+    // environment: this relay's configured backend has no headless entry point;
+    // the work item itself is unjudged.
+    failCurrentTask(reason, { permanent: true, kind: 'environment' });
     return;
   }
 
@@ -680,7 +832,8 @@ function armCLIReadyWait() {
     // contributor silently working on someone else's issue.
     pendingTask = null;
     if (currentTask) {
-      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true });
+      // environment: the agent CLI never reached its prompt on this host.
+      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true, kind: 'environment' });
     }
     // Keep waiting. The CLI may still come up (a slow login, an operator
     // attaching to clear a prompt we don't recognize), and when it does the
@@ -1112,14 +1265,26 @@ function restartBackoffMs(attempt) {
   return Math.min(TASK_RESTART_BASE_BACKOFF_MS * Math.pow(2, attempt - 1), TASK_RESTART_MAX_BACKOFF_MS);
 }
 
+// failCurrentTask reports the active task as failed.
+//
+// opts.kind (kubestellar/hive#2547) optionally states WHY: 'environment' when
+// this client's own runtime could not run the work (the CLI never started, it
+// crashed, the backend has no headless mode) versus 'task' when the work was
+// attempted and failed on its merits. Omit it when the cause is genuinely
+// ambiguous — the hub normalizes absent to 'unspecified', and guessing would be
+// worse than saying nothing, since an operator reads this to attribute failures.
+//
+// It is advisory: the hub records and displays it and does not route, gate, or
+// change the work item's failure cooldown on it. Older hubs ignore the field.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
+  const kind = (opts && opts.kind) || undefined;
   const taskId = currentTask.task_id;
   const taskGen = currentTask.task_gen;
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}: ${reason}`);
-  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, tmux_output: tmuxLines });
+  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}${kind ? ` [${kind}]` : ''}: ${reason}`);
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, failure_kind: kind, tmux_output: tmuxLines });
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1202,7 +1367,8 @@ function progressTick() {
       } catch (e) {
         console.error('Failed to restart CLI:', e.message);
       }
-      failCurrentTask('CLI process exited — restarted');
+      // environment: the agent CLI process died; nothing was judged about the work.
+      failCurrentTask('CLI process exited — restarted', { kind: 'environment' });
       return;
     }
   } catch (_) {}
@@ -1305,6 +1471,18 @@ function handleMessage(data, hub) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
+      // #2547 (peer-compatibility): both sides have STATED a version since #2567,
+      // but neither COMPARED them, so "an old relay against a new hub" was still
+      // only detectable by watching it misbehave. Say it once, plainly, on the
+      // contributor's own terminal — this is the half of the detection the hub
+      // log cannot deliver, because the person running the relay is usually not
+      // the person reading the hub.
+      //
+      // Advisory in BOTH directions: we never refuse to connect, never stop
+      // asking for work, and never change what we send. A relay that downgraded
+      // itself on a version mismatch would strand its own contributor for a
+      // difference that is, by the additive-versioning rule, usually harmless.
+      warnOnProtocolDrift(hub, msg.protocol_version);
       hub.authenticated = true;
       hub.authFailed = false;
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
@@ -1551,7 +1729,12 @@ process.on('SIGINT', () => { cleanup(); process.exit(0); });
 if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   module.exports = {
     buildLaunchCommand,
+    detectCapabilities,
+    detectAgentCLIVersion,
+    sanitizeDeclaredValue,
     handleMessage,
+    injectGhToken,
+    GH_TOKEN_CACHE,
     tmuxSendKeys,
     flushPendingTask,
     relaunchCLI,
@@ -1586,6 +1769,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
     getHubs: () => hubs,
+    // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the
+    // relay-side half of "both sides can detect an incompatible peer" is tested
+    // behaviourally here, not just asserted to exist from the Go side.
+    RELAY_PROTOCOL_VERSION,
+    parseProtocolVersion,
+    classifyPeerProtocol,
+    warnOnProtocolDrift,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,
@@ -1601,5 +1791,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getHeadlessChild: () => headlessChild,
   };
 } else {
+  // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
+  // is called from the auth_challenge handler, and the hub bounds a handshake at
+  // 30s (wsAuthTimeout); doing the probes here keeps every one of them — backend
+  // resolution and the `--version` call added for the CLI version — off the auth
+  // path entirely, where a slow host could otherwise eat that budget. Failures are
+  // already absorbed field-by-field, so this cannot stop the relay starting.
+  detectCapabilities();
   connect();
 }

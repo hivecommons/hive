@@ -1443,6 +1443,12 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-interests{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:3px;font-size:.68rem;color:#6e7681}
 .clanker-interests-label{color:#6e7681}
 .clanker-interest-chip{display:inline-flex;padding:1px 7px;border-radius:999px;font-size:.68rem;background:rgba(46,160,67,.12);color:#3fb950;border:1px solid rgba(46,160,67,.3)}
+/* #2547 peer compatibility: the hub-vs-client protocol comparison, rendered ONLY
+   when the versions actually differ so a healthy fleet stays quiet. Amber (not
+   red) on purpose — a drifted peer is still fully served; this is a notice, not
+   an error state, and must not read as "this clanker is broken/blocked". */
+.clanker-proto{margin-top:3px;font-size:.68rem;color:#d29922}
+.clanker-proto.incompatible{color:#f85149}
 /* #2637 owner roster: an OWNER-facing aggregate of which labels connected
    contributors subscribe to, and who — so the owner can label matching issues to
    route work. Reuses the green .cc-interest-chip affinity color. Read-only. */
@@ -4278,6 +4284,33 @@ function capabilityLine(caps){
   if(!parts.length)return '';
   return '<div class="clanker-sub clanker-declares" title="Self-declared by the client. Advisory only — the hub records and shows it but never routes, gates, or trusts work on it.">declares: '+parts.join(' &middot; ')+'</div>';
 }
+// protocolLine (#2547 peer-compatibility criterion) renders the hub-vs-client
+// contributor-protocol comparison the fleet snapshot derives. Until now the ops
+// row showed the client's declared "proto 1.1" with NOTHING to compare it
+// against, so an operator could not tell a current relay from one three minors
+// behind — the issue's "the only way to learn that an old relay is talking to a
+// new hub is to watch it misbehave", still true after both sides gained a version.
+//
+// It returns '' unless there is genuinely something to say: an exact match and an
+// undeclared version (every relay predating the versioned handshake) both render
+// nothing, so this adds no noise to a healthy fleet and no shaming of an old
+// client that works fine. The mismatch flag is the server's own boolean, so the
+// UI does not re-derive the verdict set.
+//
+// Advisory ONLY. A drifted or even majorly-incompatible peer is admitted and
+// assigned work exactly as before — the title text says so explicitly, because a
+// warning-coloured line an operator cannot act on invites them to invent a
+// remedy (disabling the contributor) that the hub never asked for.
+function protocolLine(p){
+  if(!p||!p.mismatch)return '';
+  var label={older:'older than this hub',newer:'newer than this hub',
+    incompatible:'INCOMPATIBLE with this hub',malformed:'unparseable'}[p.verdict];
+  if(!label)return '';
+  var cls='clanker-proto'+(p.verdict==='incompatible'?' incompatible':'');
+  var shown=p.peer?esc(p.peer):'(none)';
+  return '<div class="'+cls+'" title="'+esc(p.detail||'')+' The hub does not gate on this — the client is served exactly as before.">'+
+    'protocol: client '+shown+' &middot; hub '+esc(p.hub||'')+' &middot; '+label+'</div>';
+}
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
@@ -4394,6 +4427,10 @@ function renderClankers(list){
     // used to route or gate work — see capabilityLine() for the "self-declared" note
     // that keeps that visible at the point of use (per the issue's risk section).
     var capsLine=capabilityLine(c.capabilities);
+    // #2547 (peer-compatibility): the declared protocol version above is only
+    // meaningful next to the hub's own. Renders nothing when they agree or when
+    // the client declared none, so this is silent for a healthy fleet.
+    var protoLine=protocolLine(c.protocol);
     // #2677: this contributor's own label interests, read-only, so the operator
     // gets a fleet-wide view of who prefers what without cross-referencing each
     // profile separately (the data already travels in this same fleet snapshot).
@@ -4445,7 +4482,7 @@ function renderClankers(list){
     var rowTitle=c.role_mismatch?(' title="'+esc(c.role_mismatch)+'"'):'';
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"'+rowTitle+'><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
-      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+interestsLine+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+capsLine+protoLine+interestsLine+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }

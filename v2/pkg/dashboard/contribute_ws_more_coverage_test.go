@@ -290,10 +290,13 @@ func TestF9_UnauthenticatedConnectionsCountTowardCap(t *testing.T) {
 		open = append(open, c)
 	}
 
-	// Positive control: the pre-auth sockets must actually be tracked. If they
-	// are not, the assertion below would be testing nothing.
-	if got := hub.pendingConns.Load(); got == 0 {
-		t.Fatalf("test is vacuous: %d unauthenticated sockets are open but pendingConns is 0", len(open))
+	// Positive control: every pre-auth socket must already be tracked. The
+	// server reserves the pending slot before it writes the 101 handshake, so
+	// once Dial has returned for all of them the count is exactly the cap — no
+	// polling needed. Anything less would make the over-cap assertion below
+	// vacuous (and was the race behind the #3908 flake).
+	if got := hub.pendingConns.Load(); got != maxWSConnections {
+		t.Fatalf("test is vacuous: %d unauthenticated sockets are open but pendingConns is %d", len(open), got)
 	}
 	// None of them authenticated, so the authenticated map must still be empty.
 	hub.mu.RLock()

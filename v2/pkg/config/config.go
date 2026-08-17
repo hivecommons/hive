@@ -3496,17 +3496,31 @@ func (c *Config) applyDefaults() {
 		}
 	}
 	if len(c.Governor.Sensing.LoginPatterns) == 0 {
+		// Each pattern must match the CLI's own login CHROME, never ordinary
+		// English. The login-detector matches these against the agent's PANE —
+		// which contains the issue bodies, PR diffs and CI logs the agent is
+		// READING — so generic phrases pause an agent for merely discussing an
+		// auth error. The previous defaults ("authentication required",
+		// "unauthorized.*401", "session expired", "login required", "please
+		// log in", "token expired") did exactly that on a live hive: a
+		// ci-maintainer reading CI logs full of 401s and a supervisor
+		// summarising issues across 39 repos were paused repeatedly, and the
+		// two HIGHEST-cadence agents are hit hardest because the detector runs
+		// at kick time, so exposure scales with kick frequency. Reproduced on
+		// demand by typing "authentication required" into a healthy agent's
+		// input box (unsubmitted — just rendered on the pane) and kicking it.
 		c.Governor.Sensing.LoginPatterns = []string{
-			"please log in",
-			"authentication required",
-			"not logged in",
-			"login required",
-			"session expired",
-			"token expired",
-			"unauthorized.*401",
+			// claude: exact prompt strings from Claude Code's login screens.
+			"Please run /login",
+			"Not logged in",
+			// gh / copilot / gemini: the commands their CLIs tell the user to run.
 			"gh auth login",
 			"claude login",
 			"copilot auth",
+			"gemini auth login",
+			// bob: its API-key entry prompts.
+			"Enter Bob-Shell API Key",
+			"Paste your API key here",
 		}
 	}
 	if c.Governor.Sensing.TTLSeconds == 0 {
@@ -3720,7 +3734,18 @@ func IsInferenceBackend(backend string) bool {
 // `backend: watsonx` be accepted at config-set time and then fail at kick time
 // with "unknown backend: watsonx". Adding a backend in one place only is now a
 // visible omission rather than a silent accept-then-fail.
-var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini"}
+//
+// `agy` is the Antigravity CLI, Google's replacement for the Gemini CLI. Google
+// consolidated its CLI tooling under Antigravity at I/O 2026 and Gemini CLI
+// STOPPED SERVING personal and Google AI Pro accounts on 2026-06-18; only
+// customers holding paid Gemini Code Assist licences can still invoke it. The
+// `gemini` entry is therefore retained for those licence holders, but a hive
+// whose Google access is a Gemini/AI Pro subscription can only reach Google
+// through `agy`. It was already listed in config/backends.conf's
+// KNOWN_BACKENDS, so omitting it here reproduced exactly the accept-in-one-
+// place drift this list exists to prevent — except inverted: valid in the
+// shell config, rejected by the hub.
+var CLIBackends = []string{"claude", "copilot", "goose", "codex", "pi", "bob", "aider", "gemini", "agy"}
 
 // IsCLIBackend returns true if the backend launches an agentic CLI binary.
 func IsCLIBackend(backend string) bool {
@@ -4167,24 +4192,36 @@ func (c *Config) saveLocked() error {
 	// temp file and renaming. Rename breaks Docker bind mounts because it
 	// replaces the inode — the host file is never updated, so acmm_level
 	// and other runtime changes are lost on container restart.
+	//
+	// #3961: a source-path failure must NOT abort the save. On deployments
+	// that mount the config read-only (a ConfigMap mounted straight at
+	// /etc/hive/hive.yaml — the issue's k3s case), this write can NEVER
+	// succeed, and returning here skipped exactly the two layers that DO
+	// survive a pod restart: the PVC runtime config (which the entrypoint
+	// boots from in both K8s steady state and Docker/LXC) and the dashboard
+	// overlay (the K8s first-boot/reprovision merge input). The old early
+	// return therefore made every runtime change — pause state, operator
+	// model/backend ownership, ACMM level, gateway saves — evaporate on
+	// every restart, while spamming "failed to persist" on every save.
+	// Record the failure, keep writing the durable layers, and report
+	// success iff the state will actually survive a restart.
+	var srcErr error
 	f, err := os.OpenFile(c.SourcePath, os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		// File may not exist yet — fall back to create. Continue below so
 		// the PVC backup and dashboard overlay are still written.
 		if writeErr := os.WriteFile(c.SourcePath, data, 0o644); writeErr != nil {
-			return fmt.Errorf("writing config (create fallback): %w", writeErr)
+			srcErr = fmt.Errorf("writing config (create fallback): %w", writeErr)
 		}
 	} else {
 		if _, err := f.Write(data); err != nil {
 			f.Close()
-			return fmt.Errorf("writing config: %w", err)
-		}
-		if err := f.Sync(); err != nil {
+			srcErr = fmt.Errorf("writing config: %w", err)
+		} else if err := f.Sync(); err != nil {
 			f.Close()
-			return fmt.Errorf("syncing config: %w", err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("closing config: %w", err)
+			srcErr = fmt.Errorf("syncing config: %w", err)
+		} else if err := f.Close(); err != nil {
+			srcErr = fmt.Errorf("closing config: %w", err)
 		}
 	}
 
@@ -4196,11 +4233,13 @@ func (c *Config) saveLocked() error {
 	// Always written under the new name. The legacy file is never written,
 	// renamed or removed here — see RuntimeConfigFileLegacy.
 	runtimePath := RuntimeConfigFile
+	var runtimeErr error
 	if err := os.WriteFile(runtimePath, data, 0o644); err != nil {
 		// Common cause: init container created the file as root, runtime user
 		// can't overwrite. Remove and retry so runtime state is not silently lost.
 		os.Remove(runtimePath)
 		if retryErr := os.WriteFile(runtimePath, data, 0o644); retryErr != nil {
+			runtimeErr = retryErr
 			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
 			log.Printf("[config] PVC runtime config written to %s (recovered from permission error)", runtimePath)
@@ -4209,8 +4248,22 @@ func (c *Config) saveLocked() error {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
 	}
 
-	c.saveDashboardOverlay()
-	return nil
+	overlayErr := c.saveDashboardOverlay()
+
+	if srcErr == nil {
+		return nil
+	}
+	// The primary config path failed — a read-only mount, not a transient
+	// error, in every observed case. When the boot-durable layers were both
+	// written (the overlay write is a no-op outside Kubernetes), the state
+	// WILL survive a restart, so this save has done its job: say so once per
+	// failure mode instead of letting every caller raise a false
+	// "will be lost on restart" alert on every save.
+	if runtimeErr == nil && overlayErr == nil {
+		log.Printf("[config] primary config path %s is not writable (%v) — state persisted to the PVC layers instead and will survive restarts (see RuntimeConfigFile)", c.SourcePath, srcErr)
+		return nil
+	}
+	return srcErr
 }
 
 // RuntimeConfigFile is where Save() persists the full runtime config on the
@@ -4228,7 +4281,10 @@ func (c *Config) saveLocked() error {
 //
 // ".runtime" is accurate for both; ".bak" implied "the restorable backup",
 // which is true only of the Kubernetes half.
-const RuntimeConfigFile = "/data/hive.yaml.runtime"
+// A package var (not const) only so tests can point it at a temp dir; it
+// never changes at runtime in production (same convention as
+// DashboardOverlayFile below).
+var RuntimeConfigFile = "/data/hive.yaml.runtime"
 
 // RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
 //
@@ -4265,8 +4321,12 @@ func IsKubernetesPod() bool {
 }
 
 // saveDashboardOverlay writes the secret-free PVC overlay in Kubernetes
-// mode. Failures are logged, never fatal: the primary save already
-// succeeded, the overlay only affects persistence across pod restarts.
+// mode. Failures are logged, never fatal — but they ARE returned (#3961):
+// when the primary config path is unwritable (read-only ConfigMap mount)
+// the overlay and the runtime config are the only layers that survive a pod
+// restart, so saveLocked needs to know whether this write landed before it
+// can report the save as durable. Outside Kubernetes it returns nil (the
+// overlay is not part of the boot path there).
 //
 // The write MUST be atomic (temp file + rename), unlike saveLocked()'s
 // inode-preserving write to the bind-mounted primary config. DashboardOverlayFile
@@ -4282,44 +4342,45 @@ func IsKubernetesPod() bool {
 // would pass the guard and revert a dashboard-installed GitHub App to the
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
-func (c *Config) saveDashboardOverlay() {
+func (c *Config) saveDashboardOverlay() error {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
-		return
+		return nil
 	}
 	data, err := c.dashboardOverlayBytes()
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
-		return
+		return err
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
 	const overlayFileMode = 0o644
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, overlayFileMode)
 	if err != nil {
 		log.Printf("[config] warning: failed to open dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
-		return
+		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		log.Printf("[config] warning: failed to write dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
-		return
+		return err
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		log.Printf("[config] warning: failed to fsync dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
-		return
+		return err
 	}
 	if err := f.Close(); err != nil {
 		log.Printf("[config] warning: failed to close dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
-		return
+		return err
 	}
 	if err := os.Rename(tmpPath, DashboardOverlayFile); err != nil {
 		log.Printf("[config] warning: failed to rename dashboard overlay into place %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
-		return
+		return err
 	}
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
+	return nil
 }
 
 // dashboardOverlayBytes marshals the config with env-derived secret VALUES

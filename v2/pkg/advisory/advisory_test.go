@@ -485,13 +485,30 @@ func TestBuildDigestFromBeadsDedupesCosmeticVariants(t *testing.T) {
 
 func TestFormatDigestMarkdownCapsPerAgentTypeGroups(t *testing.T) {
 	base := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	// Titles must be wordy paraphrases DISTINCT enough to survive
+	// collapseNearDuplicates (pairwise Jaccard < nearDuplicateThreshold):
+	// the render cap exists precisely for restatements the dedup layer
+	// cannot safely merge, so the fixture models that population.
+	titles := []string{
+		"checkout action rejects pinned tag",
+		"artifact upload exceeds quota",
+		"matrix expansion misses arm runners",
+		"cache restore corrupts vendor tree",
+		"release job skips signing step",
+		"nightly trigger drifted to wrong branch",
+		"lint step downloads unpinned binary",
+		"e2e teardown leaks kind clusters",
+	}
+	if len(titles) != maxFindingsPerAgentType+3 {
+		t.Fatalf("fixture needs %d titles, has %d", maxFindingsPerAgentType+3, len(titles))
+	}
 	var findings []Finding
-	for i := 0; i < maxFindingsPerAgentType+3; i++ {
+	for i, title := range titles {
 		findings = append(findings, Finding{
 			Agent:     "ci-maintainer",
 			Severity:  "critical",
 			Type:      "ci-failure",
-			Title:     fmt.Sprintf("workflow broken variant %c", 'A'+i),
+			Title:     title,
 			Timestamp: base.Add(time.Duration(i) * time.Hour),
 		})
 	}
@@ -506,11 +523,11 @@ func TestFormatDigestMarkdownCapsPerAgentTypeGroups(t *testing.T) {
 	if !contains(md, "…plus 3 more [ci-failure] findings from ci-maintainer") {
 		t.Errorf("missing collapse line for the capped group:\n%s", md)
 	}
-	// Newest survive, oldest collapse: H (newest) rendered, A (oldest) not.
-	if !contains(md, "workflow broken variant H") {
+	// Newest survive, oldest collapse.
+	if !contains(md, titles[len(titles)-1]) {
 		t.Error("newest finding in the capped group must render")
 	}
-	if contains(md, "workflow broken variant A") {
+	if contains(md, titles[0]) {
 		t.Error("oldest finding beyond the cap must be collapsed, not rendered")
 	}
 	if !contains(md, "coverage gate failing") {
