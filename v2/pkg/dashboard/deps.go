@@ -31,8 +31,16 @@ type Dependencies struct {
 	Nous             *NousState
 	Scheduler        *scheduler.Scheduler
 	MetricsCollector *MetricsCollector
-	BeadSynthesizer  *knowledge.BeadSynthesizer
-	BeadStores       map[string]*beads.Store
+	// FleetStats is the spoke's fleet-stat contribution collector (PRs
+	// merged/rejected over the trailing 90-day window, cached, refreshed on a
+	// 30-minute timer). The ACMM advisor derives its baseline merge-success
+	// rate from this cache (#3972), so wiring the SAME collector the heartbeat
+	// already uses keeps the advisor read-only and adds zero GitHub traffic.
+	// Nil is safe: Snapshot() on a nil collector reports ready=false and the
+	// advisor leaves the signal at its conservative zero.
+	FleetStats      *FleetStatsCollector
+	BeadSynthesizer *knowledge.BeadSynthesizer
+	BeadStores      map[string]*beads.Store
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot

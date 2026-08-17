@@ -2150,17 +2150,21 @@ func main() {
 	}
 
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
-		Config:                cfg,
-		AgentMgr:              agentMgr,
-		Governor:              gov,
-		GHClient:              ghClient,
-		GHAppAuth:             appAuth,
-		Tokens:                tokenCollector,
-		Knowledge:             knowledgeAPI,
-		Inception:             inceptionEngine,
-		Nous:                  nousState,
-		Scheduler:             sched,
-		MetricsCollector:      metricsCollector,
+		Config:           cfg,
+		AgentMgr:         agentMgr,
+		Governor:         gov,
+		GHClient:         ghClient,
+		GHAppAuth:        appAuth,
+		Tokens:           tokenCollector,
+		Knowledge:        knowledgeAPI,
+		Inception:        inceptionEngine,
+		Nous:             nousState,
+		Scheduler:        sched,
+		MetricsCollector: metricsCollector,
+		// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
+		// the heartbeat reads, so its merge-success signal reuses the existing
+		// 30-minute collect loop instead of issuing a second GitHub fetch.
+		FleetStats:            fleetStatsCollector,
 		BeadSynthesizer:       beadSynth,
 		BeadStores:            beadStores,
 		BeadStoreLoadFailures: beadStoreLoadFailures,

@@ -25,6 +25,45 @@ type FleetContribCounts struct {
 	CVEsClosed int `json:"cves_closed"`
 }
 
+// BaselineMergeSuccessRate returns the fraction (0.0–1.0) of this window's
+// resolved PRs that merged — PRsMerged / (PRsMerged + PRsRejected) — plus a
+// measured flag. It is the phase-1 merge-success signal for the ACMM advisor
+// (#3972): a plain landed-vs-rejected ratio over the counts the fleet-stats
+// collector already gathers, with no extra API traffic.
+//
+// measured is false when the window holds no resolved PRs at all. Callers must
+// then treat the rate as UNKNOWN — never as a perfect 1.0 or a failing 0.0 —
+// because the advisor uses this value as an autonomy gate and must not act on
+// a number that was never observed (the "never fabricate" contract in
+// pkg/dashboard buildACMMStatusInputs).
+//
+// Known weaknesses, kept deliberately (they are why the survival term exists
+// as follow-up):
+//   - Gameable by PR size: optimizing for acceptance rewards tiny, safe
+//     changes (the console's self-improvement loop literally learned "keep
+//     changes under 50 lines for best acceptance rate" — Goodhart observed
+//     in-project).
+//   - Measures one maintainer's judgment at merge time, not the change's
+//     actual quality.
+//   - Censored: it only counts proposed work, so it says nothing about harm
+//     from work that merged — this metric was green throughout the 2026-08-14
+//     fleet outage.
+//   - The denominator's is:closed is:unmerged search counts superseded and
+//     duplicate PRs as non-successes. That is intended: stricter, and harder
+//     to game by re-proposing the same change.
+//
+// "Baseline" in the name leaves room for a survival-adjusted variant
+// ("merged AND not reverted within N days") to slot in beside it. That term
+// is blocked on #3971 — beads archival currently destroys the post-merge
+// history it needs — and is tracked as the #3972 follow-up.
+func (c FleetContribCounts) BaselineMergeSuccessRate() (rate float64, measured bool) {
+	resolved := c.PRsMerged + c.PRsRejected
+	if resolved <= 0 {
+		return 0, false
+	}
+	return float64(c.PRsMerged) / float64(resolved), true
+}
+
 // fleetStatsWindowDays is the trailing window (in days) over which merged and
 // rejected PR counts are measured. Ninety days keeps the number current
 // ("what has the fleet done lately") without being a lifetime figure that only

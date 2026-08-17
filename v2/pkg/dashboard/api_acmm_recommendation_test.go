@@ -8,6 +8,7 @@ import (
 
 	"github.com/kubestellar/hive/v2/pkg/acmmadvisor"
 	"github.com/kubestellar/hive/v2/pkg/config"
+	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
 )
 
 // TestHandleACMMRecommendationEmpty verifies the endpoint is safe with a
@@ -133,9 +134,70 @@ func TestBuildACMMStatusInputs_ReadsLiveSignals(t *testing.T) {
 	if in.CoveragePct != 88 {
 		t.Fatalf("CoveragePct = %v, want 88", in.CoveragePct)
 	}
-	// Signals the hive does not track must remain zero (never fabricated).
+	// GreenStreak is still untracked and must remain zero (never fabricated).
+	// MergeSuccessRate must also read zero here: no fleet-stats collector is
+	// wired into deps, so the signal is unknown, not measured (#3972).
 	if in.GreenStreak != 0 || in.MergeSuccessRate != 0 {
 		t.Fatalf("GreenStreak/MergeSuccessRate should be 0, got %d / %v", in.GreenStreak, in.MergeSuccessRate)
+	}
+}
+
+// TestBuildACMMStatusInputs_MergeSuccessRate verifies the #3972 wiring: when
+// the fleet-stats collector holds a completed collect, the advisor input is
+// the real merged/(merged+rejected) ratio — no longer the hardcoded zero —
+// and when counts are absent or the window is empty the input stays at the
+// honest, conservative zero instead of a fabricated rate.
+func TestBuildACMMStatusInputs_MergeSuccessRate(t *testing.T) {
+	cases := []struct {
+		name string
+		fc   *FleetStatsCollector
+		want float64
+	}{
+		{
+			name: "measured ratio flows through",
+			// 30 merged / 10 rejected over the window → 0.75. Before #3972
+			// this input was hardcoded to 0, so this case fails against the
+			// unfixed behavior.
+			fc:   &FleetStatsCollector{counts: ghpkg.FleetContribCounts{PRsMerged: 30, PRsRejected: 10}, ready: true},
+			want: 0.75,
+		},
+		{
+			name: "nil collector stays zero",
+			fc:   nil,
+			want: 0,
+		},
+		{
+			name: "collector never collected stays zero",
+			fc:   &FleetStatsCollector{},
+			want: 0,
+		},
+		{
+			name: "empty window stays zero, not a fabricated 1.0",
+			// A successful collect that found no resolved PRs: the rate is
+			// unknown, and the advisor must not see a measured value.
+			fc:   &FleetStatsCollector{counts: ghpkg.FleetContribCounts{}, ready: true},
+			want: 0,
+		},
+		{
+			name: "all rejected reads as measured zero",
+			fc:   &FleetStatsCollector{counts: ghpkg.FleetContribCounts{PRsRejected: 5}, ready: true},
+			want: 0,
+		},
+		{
+			name: "all merged reads as measured 1.0",
+			fc:   &FleetStatsCollector{counts: ghpkg.FleetContribCounts{PRsMerged: 4}, ready: true},
+			want: 1.0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer()
+			s.deps = &Dependencies{FleetStats: tc.fc}
+			in := s.buildACMMStatusInputs()
+			if in.MergeSuccessRate != tc.want {
+				t.Fatalf("MergeSuccessRate = %v, want %v", in.MergeSuccessRate, tc.want)
+			}
+		})
 	}
 }
 

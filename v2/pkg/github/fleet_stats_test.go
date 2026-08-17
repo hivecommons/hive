@@ -69,6 +69,58 @@ func TestSearchCVEPRCount(t *testing.T) {
 	}
 }
 
+// TestBaselineMergeSuccessRate covers the phase-1 merge-success ratio (#3972):
+// the normal mixed case, both degenerate all-merged / all-rejected extremes
+// (which ARE measured — 1.0 and 0.0 are real observations when PRs resolved in
+// the window), and the empty window, which must report measured=false so the
+// ACMM advisor never gates autonomy on a rate that was never observed.
+func TestBaselineMergeSuccessRate(t *testing.T) {
+	tests := []struct {
+		name         string
+		counts       FleetContribCounts
+		wantRate     float64
+		wantMeasured bool
+	}{
+		{
+			name:         "normal mix",
+			counts:       FleetContribCounts{PRsMerged: 30, PRsRejected: 10},
+			wantRate:     0.75,
+			wantMeasured: true,
+		},
+		{
+			name: "zero denominator is unmeasured, not 1.0 or 0.0",
+			// No resolved PRs in the window: the rate is UNKNOWN. Reporting a
+			// number here would fabricate an autonomy-gate signal.
+			counts:       FleetContribCounts{},
+			wantRate:     0,
+			wantMeasured: false,
+		},
+		{
+			name:         "all merged",
+			counts:       FleetContribCounts{PRsMerged: 7},
+			wantRate:     1.0,
+			wantMeasured: true,
+		},
+		{
+			name:         "all rejected",
+			counts:       FleetContribCounts{PRsRejected: 5},
+			wantRate:     0.0,
+			wantMeasured: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rate, measured := tt.counts.BaselineMergeSuccessRate()
+			if measured != tt.wantMeasured {
+				t.Fatalf("measured = %v, want %v", measured, tt.wantMeasured)
+			}
+			if rate != tt.wantRate {
+				t.Errorf("rate = %v, want %v", rate, tt.wantRate)
+			}
+		})
+	}
+}
+
 func TestComputeFleetContribCounts(t *testing.T) {
 	tests := []struct {
 		name      string
