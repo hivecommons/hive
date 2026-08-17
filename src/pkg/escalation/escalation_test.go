@@ -67,6 +67,18 @@ func TestSweep_GreenResetsAndAbsencePrunes(t *testing.T) {
 	}
 }
 
+func TestExcerpt_ReturnsStoredEvidenceOrEmpty(t *testing.T) {
+	s := Load(filepath.Join(t.TempDir(), "streaks.json"))
+
+	s.Sweep([]Observation{obs("org/repo", 7, "sha1", true)}, 3)
+	if got := s.Excerpt("org/repo", 7); got != "ReferenceError: seedMission is not defined" {
+		t.Fatalf("Excerpt = %q, want the stored CI evidence", got)
+	}
+	if got := s.Excerpt("org/repo", 8); got != "" {
+		t.Fatalf("Excerpt for an unknown PR = %q, want empty", got)
+	}
+}
+
 func TestCommentBody_LeadsWithEvidence(t *testing.T) {
 	body := CommentBody(3, []string{"Coverage Suite", "build-gate"}, "ReferenceError: seedMission is not defined")
 	for _, want := range []string{"3 distinct fix attempts", "Coverage Suite", "seedMission is not defined", NeedsHumanLabel} {
