@@ -342,6 +342,33 @@ func TestBoolWord(t *testing.T) {
 	}
 }
 
+func TestRecommend_PRReachRate(t *testing.T) {
+	// L5 when PRReachMeasured=true but rate below 50% -> stays
+	s5 := readySignals(4)
+	s5.PRReachMeasured = true
+	s5.PRReachRate = 0.40
+	rec5 := Recommend(s5)
+	if rec5.Advise != AdviseStay {
+		t.Errorf("L5 with low PR reach rate should stay, got %q", rec5.Advise)
+	}
+
+	// L5 when PRReachMeasured=true and rate >= 50% -> raises
+	s5.PRReachRate = 0.60
+	rec5Passed := Recommend(s5)
+	if rec5Passed.Advise != AdviseRaise {
+		t.Errorf("L5 with sufficient PR reach rate should raise, got %q", rec5Passed.Advise)
+	}
+
+	// L5 when PRReachMeasured=false -> never-fabricate contract does not block
+	s5Unmeasured := readySignals(4)
+	s5Unmeasured.PRReachMeasured = false
+	s5Unmeasured.PRReachRate = 0.0
+	rec5Unmeasured := Recommend(s5Unmeasured)
+	if rec5Unmeasured.Advise != AdviseRaise {
+		t.Errorf("L5 unmeasured PR reach should not block raise, got %q", rec5Unmeasured.Advise)
+	}
+}
+
 // ── small test helpers ──────────────────────────────────────────────────────
 
 func unmetNames(rec Recommendation) map[string]bool {

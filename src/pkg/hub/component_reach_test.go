@@ -234,3 +234,41 @@ func TestSanitizeComponentReach_NilAndEmpty(t *testing.T) {
 		t.Errorf("sanitizeComponentReach(empty) = %+v, want nil", got)
 	}
 }
+
+func TestHeartbeatComponentReach_HistoryBoundedAndPersisted(t *testing.T) {
+	var history []tracing.ReachReport
+
+	// Append reports across different commits
+	for i := 0; i < 60; i++ {
+		report := &tracing.ReachReport{
+			Entries: []tracing.ReachEntry{
+				{
+					Component:  "governor",
+					Commit:     fmt.Sprintf("commit-%d", i),
+					SpansTotal: int64(10 + i),
+				},
+			},
+		}
+		history = appendComponentReachHistory(history, report)
+	}
+
+	// Must be bounded by maxReachHistoryEntriesPerHive (50)
+	if len(history) != maxReachHistoryEntriesPerHive {
+		t.Fatalf("history length = %d, want %d", len(history), maxReachHistoryEntriesPerHive)
+	}
+
+	// Should contain latest entries (from commit-10 to commit-59)
+	if history[0].Entries[0].Commit != "commit-10" {
+		t.Errorf("oldest retained commit = %s, want commit-10", history[0].Entries[0].Commit)
+	}
+	if history[len(history)-1].Entries[0].Commit != "commit-59" {
+		t.Errorf("newest retained commit = %s, want commit-59", history[len(history)-1].Entries[0].Commit)
+	}
+
+	// Appending identical report should deduplicate
+	lenBefore := len(history)
+	history = appendComponentReachHistory(history, &history[len(history)-1])
+	if len(history) != lenBefore {
+		t.Errorf("duplicate report was not deduplicated: before=%d after=%d", lenBefore, len(history))
+	}
+}

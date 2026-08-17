@@ -1,7 +1,7 @@
 # PR reach telemetry (#3973)
 
 Status: phase 1 landed (version-stamped spans + component attribute); phase 2
-design accepted (2a implemented; 2b #3994 / 2c #3995 pending).
+complete (2a heartbeat store #3993, 2b PR join / ancestry #3994, 2c error-rate deltas + ACMM advisor #3995).
 
 ## The problem
 

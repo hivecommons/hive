@@ -311,6 +311,11 @@ type RegistryEntry struct {
 	// data", never "zero reach". Carried forward across beats that omit it so
 	// a spoke restart does not blank the last real report.
 	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
+	// ComponentReachHistory retains bounded historical component-reach reports
+	// from this hive's spoke (#3973, phase 2c) so error-rate deltas across deploy
+	// windows can compare pre-deploy vs post-deploy error rates.
+	// Bounded, capped per-hive (maxReachHistoryEntriesPerHive), sanitized, and persisted.
+	ComponentReachHistory []tracing.ReachReport `json:"component_reach_history,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -1832,6 +1837,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
 			}
+			// Update and boundedly retain component reach history (#3973, phase 2c).
+			entry.ComponentReachHistory = appendComponentReachHistory(h.ComponentReachHistory, entry.ComponentReach)
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
 				branchForLatest = "v2"

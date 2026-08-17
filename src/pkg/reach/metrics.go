@@ -72,6 +72,10 @@ type PRReachReport struct {
 	// A PR with no attributable components (docs-only) never raises it.
 	NeverRan              bool `json:"never_ran"`
 	NeverRanThresholdDays int  `json:"never_ran_threshold_days"`
+
+	// ErrorDelta is the defect-escape signal: error-rate change across the
+	// commit boundary that introduced this PR (#3973, phase 2c).
+	ErrorDelta *ErrorRateDelta `json:"error_delta,omitempty"`
 }
 
 // Analyzer joins merged-PR facts against the fleet's reach reports. All
@@ -165,5 +169,27 @@ func (a *Analyzer) Analyze(pr PRInfo) (PRReachReport, error) {
 		now().Sub(pr.MergedAt) >= grace {
 		report.NeverRan = true
 	}
+
+	// Compute phase 2c error rate delta across deploy boundary
+	var allReports [][]ComponentReach
+	if a.Reporter != nil {
+		for _, list := range a.Reporter.LatestReach() {
+			allReports = append(allReports, list)
+		}
+		if hr, ok := a.Reporter.(HistoryReachReporter); ok {
+			for _, listOfLists := range hr.HistoryReach() {
+				for _, list := range listOfLists {
+					allReports = append(allReports, list)
+				}
+			}
+		}
+	}
+	if len(allReports) > 0 && len(report.Attribution.Components) > 0 && report.Deployed {
+		delta := ComputeErrorDelta(report.Attribution.Components, pr.MergeCommit, pr.MergeCommit, a.Ancestry, allReports)
+		report.ErrorDelta = &delta
+	} else {
+		report.ErrorDelta = &ErrorRateDelta{Measured: false}
+	}
+
 	return report, nil
 }

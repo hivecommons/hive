@@ -39,6 +39,11 @@ const (
 	// is capped at 256; a report claiming more than a few times that is not
 	// describing a real registry.
 	maxReachOverflowComponents = 1024
+
+	// maxReachHistoryEntriesPerHive bounds the number of historical component-reach
+	// reports retained per hive (phase 2c of #3973). A hostile spoke cannot exhaust
+	// hub memory by sending rapid, varied heartbeats.
+	maxReachHistoryEntriesPerHive = 50
 )
 
 // truncateReachRunes caps s at n runes. Rune-based like sanitizeField, so a
@@ -115,4 +120,40 @@ func sanitizeComponentReach(in *tracing.ReachReport) *tracing.ReachReport {
 		return nil
 	}
 	return out
+}
+
+// appendComponentReachHistory appends a sanitized reach report to the bounded
+// history slice, deduplicating identical consecutive reports and enforcing the
+// maxReachHistoryEntriesPerHive FIFO cap (#3973, phase 2c).
+func appendComponentReachHistory(history []tracing.ReachReport, report *tracing.ReachReport) []tracing.ReachReport {
+	if report == nil || len(report.Entries) == 0 {
+		return history
+	}
+
+	// De-duplicate if identical to latest entry
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		if sameReachReport(last, *report) {
+			return history
+		}
+	}
+
+	history = append(history, *report)
+	if len(history) > maxReachHistoryEntriesPerHive {
+		history = history[len(history)-maxReachHistoryEntriesPerHive:]
+	}
+	return history
+}
+
+func sameReachReport(a, b tracing.ReachReport) bool {
+	if len(a.Entries) != len(b.Entries) || a.OverflowSpans != b.OverflowSpans || a.OverflowComponents != b.OverflowComponents {
+		return false
+	}
+	for i := range a.Entries {
+		ea, eb := a.Entries[i], b.Entries[i]
+		if ea.Component != eb.Component || ea.Commit != eb.Commit || ea.SpansTotal != eb.SpansTotal || ea.SpansError != eb.SpansError || ea.FirstSeen != eb.FirstSeen || ea.LastSeen != eb.LastSeen {
+			return false
+		}
+	}
+	return true
 }

@@ -85,6 +85,11 @@ const (
 	mergeRateL4 = 0.70 // L3→L4.
 	mergeRateL5 = 0.85 // L4→L5.
 	mergeRateL6 = 0.95 // L5→L6: near-flawless track record for full autonomy.
+
+	// PR reach rate thresholds (phase 2c, #3973/#3995). Evaluated only when
+	// PR reach is measured in the fleet (never-fabricate contract).
+	reachRateL5 = 0.50 // L4→L5: 50% of deployed PRs executed when measured.
+	reachRateL6 = 0.80 // L5→L6: 80% of deployed PRs executed when measured.
 )
 
 // ── Backlog / hold thresholds ───────────────────────────────────────────────
@@ -132,6 +137,13 @@ type Signals struct {
 	// MergeSuccessRate is the fraction (0.0–1.0) of recent PRs that merged
 	// cleanly. Values outside [0,1] are clamped defensively.
 	MergeSuccessRate float64
+	// PRReachRate is the fraction (0.0-1.0) of deployed PRs whose attributable
+	// components were observed executing in the fleet (#3973/#3995).
+	PRReachRate float64
+	// PRReachMeasured reports whether PR reach was measured in the fleet.
+	// Follows the never-fabricate contract: when false, PR reach is unmeasured
+	// and does not block level-up.
+	PRReachMeasured bool
 	// ActionableIssues is the count of open actionable issues the hive has
 	// surfaced but not yet resolved (a backlog ceiling, lower is better).
 	ActionableIssues int
@@ -301,7 +313,7 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 		// L4→L5 (Adaptive → Semi-Automated): the system now proposes PRs at
 		// scale. Strong coverage, a long streak, a high merge rate, and a
 		// controlled backlog / hold queue.
-		return []Criterion{
+		crit := []Criterion{
 			boolCriterion("Quality agent present", s.HasQualityAgent,
 				"Semi-automated PRs require an active quality agent."),
 			floorPctCriterion("Test coverage", s.CoveragePct, coverageFloorL5,
@@ -315,12 +327,17 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 			ceilIntCriterion("Open holds", s.HoldCount, maxHoldsL5,
 				"Humans must be draining the hold queue, not drowning in it."),
 		}
+		if s.PRReachMeasured {
+			crit = append(crit, floorRateCriterion("PR reach rate", s.PRReachRate, reachRateL5,
+				"At least 50% of deployed PRs must execute in production when measured."))
+		}
+		return crit
 	default: // target == 6
 		// L5→L6 (Semi-Automated → Fully Autonomous): the strictest gate. Full
 		// autonomy (auto-merge on green) requires meeting the real 90% coverage
 		// gate, a long streak, a near-flawless merge rate, a near-empty backlog,
 		// and almost no outstanding holds.
-		return []Criterion{
+		crit := []Criterion{
 			boolCriterion("Quality agent present", s.HasQualityAgent,
 				"Full autonomy requires an active quality agent."),
 			floorPctCriterion("Test coverage", s.CoveragePct, coverageFloorL6,
@@ -334,6 +351,11 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 			ceilIntCriterion("Open holds", s.HoldCount, maxHoldsL6,
 				"Almost no unreviewed holds before removing the hold gate."),
 		}
+		if s.PRReachMeasured {
+			crit = append(crit, floorRateCriterion("PR reach rate", s.PRReachRate, reachRateL6,
+				"At least 80% of deployed PRs must execute in production when measured."))
+		}
+		return crit
 	}
 }
 

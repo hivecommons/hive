@@ -33,12 +33,23 @@ type ReachReporter interface {
 	LatestReach() map[string][]ComponentReach
 }
 
+// HistoryReachReporter extends ReachReporter to expose historical reach reports
+// across previous deploy windows (#3973, phase 2c).
+type HistoryReachReporter interface {
+	ReachReporter
+	// HistoryReach returns, per hive ID, the historical component_reach reports
+	// ordered chronologically.
+	HistoryReach() map[string][][]ComponentReach
+}
+
 // StubReachReporter is the placeholder implementation used until phase 2a
 // lands: it reports an empty fleet, so every PR legitimately shows zero
 // reach rather than fabricated data. It also serves as the test double.
 type StubReachReporter struct {
 	// Reports, when non-nil, is returned verbatim (tests populate it).
 	Reports map[string][]ComponentReach
+	// History, when non-nil, is returned verbatim by HistoryReach.
+	History map[string][][]ComponentReach
 }
 
 // LatestReach implements ReachReporter.
@@ -47,4 +58,12 @@ func (s *StubReachReporter) LatestReach() map[string][]ComponentReach {
 		return map[string][]ComponentReach{}
 	}
 	return s.Reports
+}
+
+// HistoryReach implements HistoryReachReporter.
+func (s *StubReachReporter) HistoryReach() map[string][][]ComponentReach {
+	if s == nil || s.History == nil {
+		return map[string][][]ComponentReach{}
+	}
+	return s.History
 }

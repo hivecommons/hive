@@ -233,6 +233,46 @@ func (r registryReachReporter) LatestReach() map[string][]reach.ComponentReach {
 	return out
 }
 
+func (r registryReachReporter) HistoryReach() map[string][][]reach.ComponentReach {
+	r.s.mu.RLock()
+	defer r.s.mu.RUnlock()
+	out := make(map[string][][]reach.ComponentReach)
+	for _, h := range r.s.registry.Hives {
+		if len(h.ComponentReachHistory) == 0 {
+			continue
+		}
+		var historyList [][]reach.ComponentReach
+		for _, rep := range h.ComponentReachHistory {
+			if len(rep.Entries) == 0 {
+				continue
+			}
+			list := make([]reach.ComponentReach, 0, len(rep.Entries))
+			for _, e := range rep.Entries {
+				fs, errF := time.Parse(time.RFC3339, e.FirstSeen)
+				ls, errL := time.Parse(time.RFC3339, e.LastSeen)
+				if errF != nil || errL != nil {
+					continue
+				}
+				list = append(list, reach.ComponentReach{
+					Component:  e.Component,
+					Commit:     e.Commit,
+					SpansTotal: e.SpansTotal,
+					SpansError: e.SpansError,
+					FirstSeen:  fs,
+					LastSeen:   ls,
+				})
+			}
+			if len(list) > 0 {
+				historyList = append(historyList, list)
+			}
+		}
+		if len(historyList) > 0 {
+			out[h.ID] = historyList
+		}
+	}
+	return out
+}
+
 // reachResponse is the /api/reach payload.
 type reachResponse struct {
 	GeneratedAt time.Time `json:"generated_at"`
