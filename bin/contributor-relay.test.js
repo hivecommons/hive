@@ -1449,7 +1449,8 @@ const CODEX_COMPLETED_NO_WORK_PANE = [
   // Codex may leave many old tool rows above the completed turn.
   ...Array.from({ length: 20 }, (_, i) => `  checked upstream evidence ${i}`),
   '',
-  'HIVE_VERDICT: no_work_needed — upstream PR #4066 already implements issue #4065.',
+  // Codex prefixes completed assistant output with this bullet in tmux.
+  '• HIVE_VERDICT: no_work_needed — upstream PR #4066 already implements issue #4065.',
   '─ Worked for 1m 59s ─',
   '',
   '› ',
@@ -1489,6 +1490,17 @@ test('codex no-work verdict is COMPLETE despite stale activity in scrollback', (
     assert.strictEqual(
       relay.classifyTmuxPane(CODEX_COMPLETED_NO_WORK_PANE), relay.PANE_STATE_IDLE_COMPLETE,
       'an old Codex Running row must not keep a completed no-work turn in WORKING');
+  } finally { teardown(relay); }
+});
+
+test('a bullet-prefixed Codex no-work verdict is reported as task_complete', () => {
+  const relay = loadRelay({ backend: 'codex', paneText: CODEX_COMPLETED_NO_WORK_PANE });
+  try {
+    assignTask(relay, 'ct-codex-no-work');
+    relay.__crashTick();
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'the live Codex pane shape must complete the task rather than remain working');
+    assert.strictEqual(complete.verdict, 'no_work_needed');
   } finally { teardown(relay); }
 });
 

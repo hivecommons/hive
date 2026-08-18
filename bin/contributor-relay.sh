@@ -1180,8 +1180,10 @@ function detectNoWorkVerdict(lines) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
   // Anchored at line start: the task PROMPT quotes the marker mid-sentence
   // ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
-  // that instruction echo from reading as the agent's own verdict.
-  const VERDICT_RE = /^\s*HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
+  // that instruction echo from reading as the agent's own verdict. Codex
+  // renders its completed assistant messages with a leading bullet, which is
+  // presentation chrome rather than part of the verdict.
+  const VERDICT_RE = /^\s*(?:•\s*)?HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
   // Scan newest-first so the agent's final conclusion wins over anything it
   // merely quoted or considered earlier in the transcript.
   for (let i = lines.length - 1; i >= 0; i--) {
