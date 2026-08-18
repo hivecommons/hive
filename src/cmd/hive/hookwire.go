@@ -186,10 +186,10 @@ func (a *notifierAdapter) Send(title, message, priority string) {
 	a.n.Send(title, message, notify.Priority(priority))
 }
 
-// hookPauseTrigger is the paused_trigger provenance value recorded when a hook
-// pauses an agent. It makes "why is this agent paused?" answerable from the
-// pause record alone, distinguishing a hook-driven pause from an operator's or
-// the governor's — the same provenance discipline as #4041.
+// hookPauseTrigger is the PausedTrigger stamped when a hook pauses an agent.
+// It makes "why is this agent paused?" answerable from the pause record alone,
+// distinguishing a hook-driven pause from an operator's, the login-detector's,
+// or the fleet-breaker's — the provenance discipline #4041/#4055 established.
 const hookPauseTrigger = "hook"
 
 // hookPauseTriggerFor derives the paused_trigger provenance value for a
@@ -226,7 +226,28 @@ func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string
 	// It is human-readable provenance, not a machine-readable causation
 	// chain; a pause routed through the manager loses the structured cause
 	// unless the emitter is given it directly.
-	return a.mgr.Pause(agentName, hookPauseTriggerFor(cause), reason)
+	//
+	// PauseBy rather than Pause (#4055): a hook-driven pause must not appear
+	// anonymous, because "paused, actor unknown" is exactly the state #4041
+	// found indistinguishable from a malfunction days later. The acting
+	// identity is the HOOK, not a person — PauseBy's contract is "never
+	// fabricate" a human actor, so hookPauseActor is an explicitly
+	// non-human identity that cannot be mistaken for a dashboard user.
+	return a.mgr.PauseBy(agentName, hookPauseTriggerFor(cause), reason, hookPauseActor(cause))
+}
+
+// hookPauseActor is the PausedBy identity recorded for a hook-driven pause.
+//
+// It is deliberately NOT a username. PauseBy documents `by` as the acting user
+// and warns against fabricating one, so this returns a clearly-machine
+// identity ("hook:<name>") that a reader — or the fleet view — cannot confuse
+// with a person, while still answering "what paused this agent?" without a
+// join against the audit log.
+func hookPauseActor(cause hooks.Causation) string {
+	if cause.HookName == "" {
+		return hookPauseTrigger
+	}
+	return hookPauseTrigger + ":" + cause.HookName
 }
 
 // annotatorAdapter records hook annotations on the EXISTING lifecycle timeline

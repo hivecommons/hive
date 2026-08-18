@@ -231,3 +231,27 @@ func TestHookPauseTriggerNamesTheResponsibleHook(t *testing.T) {
 		t.Errorf("expected %q, got %q", hookPauseTrigger, got)
 	}
 }
+
+// TestHookPauseActorIsNonHumanAndAttributed adopts #4055's PausedBy: a
+// hook-driven pause must not land anonymous (the "paused, actor unknown" state
+// #4041 found indistinguishable from a malfunction), but it also must not
+// fabricate a human actor, which is what PauseBy's contract forbids.
+func TestHookPauseActorIsNonHumanAndAttributed(t *testing.T) {
+	got := hookPauseActor(hooks.Causation{Depth: 1, HookName: "pause-on-red"})
+
+	if got == "" {
+		t.Error("a hook-driven pause must record an actor, not land anonymous")
+	}
+	if !strings.HasPrefix(got, hookPauseTrigger+":") {
+		t.Errorf("the actor must be a machine identity a reader cannot mistake "+
+			"for a dashboard user, got %q", got)
+	}
+	if !strings.Contains(got, "pause-on-red") {
+		t.Errorf("the actor should name the responsible hook, got %q", got)
+	}
+
+	// Unnamed hook: still non-anonymous, still clearly not a person.
+	if got := hookPauseActor(hooks.Causation{}); got != hookPauseTrigger {
+		t.Errorf("expected %q, got %q", hookPauseTrigger, got)
+	}
+}

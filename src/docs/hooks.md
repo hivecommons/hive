@@ -113,7 +113,9 @@ The window is *sliding and half-open*: the guarantee is "at most `limit` firings
 | `upgrade_pause` | the #3836 upgrade kill switch flips (`to` is `on`/`off`) | `to`, `actor`, `reason` |
 | `review_rejected` | a human rejects a review's output as low quality | `agent`, `repo`, `actor`, `reason`, `model`, `backend`, `pin`, `acmm_level`, `attrs.pr`, `attrs.model_knob_url` |
 
-For `agent_paused`/`agent_resumed`, `trigger` carries the `paused_trigger` provenance, so you can tell an operator pause from a governor pause from the login-detector's. A hook-driven pause records `hook:<hook-name>`.
+For `agent_paused`/`agent_resumed`, `trigger` carries the `paused_trigger` provenance, so you can tell an operator pause from a governor pause from the login-detector's.
+
+A hook-driven pause records both halves of the #4055 provenance: `paused_trigger` is `hook:<hook-name>`, and `paused_by` is the same machine identity rather than empty or a fabricated user. A hook pause is therefore never anonymous in the fleet view — "paused, actor unknown" is precisely the state that proved indistinguishable from a malfunction — while still being unmistakably not a person.
 
 ### Adding a transition
 
