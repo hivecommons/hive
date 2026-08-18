@@ -597,7 +597,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure the PR body cites the issue it addresses: `Fixes #<issue>` only if this PR fully resolves it; if `<issue>` is an epic or multi-phase tracker and this PR completes just one phase, use `Refs #<issue>` or `Part of #<issue>` instead — those keywords do not auto-close on merge. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 
@@ -721,7 +721,12 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
   'git commit' an explicit --author: let the App identity stand.
 - To OPEN A PULL REQUEST, use `+"`hive-open-pr`"+` — the hive opens it with the
   App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
-    hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
+    hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body citing the issue>"
+  Cite the issue correctly: `+"`Fixes #N`"+` / `+"`Closes #N`"+` ONLY if this PR is the
+  final phase and fully resolves issue N — those keywords auto-close it on
+  merge. If N is an epic or multi-phase tracker and this PR completes only
+  part of it, use `+"`Refs #N`"+` or `+"`Part of #N`"+` instead (non-closing), so the
+  tracker stays open until every listed phase actually lands.
   Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
   or raw 'gh pr create' — those author the PR as the Copilot login user. 'gh pr create'
   is auto-redirected to hive-open-pr, but prefer calling hive-open-pr directly.
