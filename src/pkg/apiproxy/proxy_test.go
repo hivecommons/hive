@@ -504,6 +504,89 @@ func TestSSEWithNoRecognisedEvents(t *testing.T) {
 	}
 }
 
+// ---- auth gate ----
+
+// A configured host key is never used for an unauthenticated caller. The
+// request must be rejected before it reaches the upstream or request logger.
+func TestServeHTTPRejectsUnauthenticatedCaller(t *testing.T) {
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer upstream.Close()
+
+	rec := &eventRecorder{}
+	p, err := New(upstream.URL, rec.handler, "host-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-opus-4"}`))
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("unauthenticated request reached upstream %d time(s)", upstreamCalls)
+	}
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("unauthenticated request was logged: %+v", got)
+	}
+}
+
+// A caller with valid auth remains eligible for proxying and receives the
+// normal upstream response.
+func TestServeHTTPAllowsAuthenticatedCaller(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p, err := New(upstream.URL, nil, "host-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	callerAuth := "Bearer " + strings.Repeat("c", 40)
+	req.Header.Set("Authorization", callerAuth)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if gotAuth != callerAuth {
+		t.Fatalf("upstream Authorization = %q, want caller credential", gotAuth)
+	}
+}
+
+// With no configured host key, the proxy remains an unauthenticated relay.
+func TestServeHTTPWithoutConfiguredKeyAllowsUnauthenticatedCaller(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p, err := New(upstream.URL, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+}
+
 // ---- errorHandler ----
 
 // An unreachable upstream must yield 502 rather than a hang or a panic.

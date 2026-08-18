@@ -21,7 +21,7 @@ func proxyAuthTokenFromEnv(getenv func(string) string, warnf func(string, ...any
 	}
 	authToken = getenv("ANTHROPIC_API_KEY")
 	if authToken != "" {
-		warnf("[sec-check WARNING] PROXY_AUTH_TOKEN is unset; falling back to ANTHROPIC_API_KEY. Unauthenticated callers will be granted the host Anthropic key. Set PROXY_AUTH_TOKEN to restrict access.")
+		warnf("[sec-check WARNING] PROXY_AUTH_TOKEN is unset; falling back to ANTHROPIC_API_KEY to enable the proxy auth gate. Unauthenticated callers will be rejected. Set PROXY_AUTH_TOKEN explicitly to avoid using the host Anthropic key as the gate token.")
 	}
 	return authToken
 }
