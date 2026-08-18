@@ -1927,6 +1927,71 @@ type SensingConfig struct {
 	PullbackSeconds    int      `yaml:"pullback_seconds"`
 }
 
+// defaultLoginPatterns is the built-in login-detector pattern set (#3959):
+// every entry matches a CLI's own login CHROME, never ordinary English, so an
+// agent is not paused for merely reading or discussing an auth error. It is a
+// named var (not an inline literal in applyDefaults) so persistence can
+// recognize "this list IS the default" and skip writing it — see
+// redactedForPersist, which is what keeps the default set from being
+// materialized into saved configs and pinned there forever (#4041).
+var defaultLoginPatterns = []string{
+	// claude: exact prompt strings from Claude Code's login screens.
+	"Please run /login",
+	"Not logged in",
+	// gh / copilot / gemini: the commands their CLIs tell the user to run.
+	"gh auth login",
+	"claude login",
+	"copilot auth",
+	"gemini auth login",
+	// bob: its API-key entry prompts.
+	"Enter Bob-Shell API Key",
+	"Paste your API key here",
+}
+
+// legacyDefaultLoginPatterns is the pre-#3959 default login-detector list,
+// frozen verbatim (values AND order) as it shipped from the day the field
+// existed until da9f6ff2. It exists only for migration: every hive that saved
+// its config in that window has this exact list materialized as explicit
+// values (Save() marshals defaults along with everything else), which
+// permanently defeated the #3959 defaults fix because defaults only apply to
+// an empty list (#4041). Never extend or reorder it — a byte-identical match
+// is the evidence that the list carries no operator intent.
+var legacyDefaultLoginPatterns = []string{
+	"please log in",
+	"authentication required",
+	"not logged in",
+	"login required",
+	"session expired",
+	"token expired",
+	"unauthorized.*401",
+	"gh auth login",
+	"claude login",
+	"copilot auth",
+}
+
+// IsLegacyDefaultLoginPatterns reports whether list is byte-identical (same
+// entries, same order) to the pre-#3959 default login-pattern set. Exported
+// because cmd/hive's legacy state-overrides migration replays a persisted
+// sensing_login list over the loaded config, which is the same materialized-
+// defaults hazard applyDefaults migrates in the config file itself (#4041).
+func IsLegacyDefaultLoginPatterns(list []string) bool {
+	return stringSlicesEqual(list, legacyDefaultLoginPatterns)
+}
+
+// stringSlicesEqual is an exact element-wise comparison (no normalization —
+// migration must only ever fire on a byte-identical match).
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 type HealthConfig struct {
 	HealthcheckInterval int  `yaml:"healthcheck_interval"`
 	RestartCooldown     int  `yaml:"restart_cooldown"`
@@ -3650,6 +3715,19 @@ func (c *Config) applyDefaults() {
 			"resets [0-9]+(:[0-9]+)?[aApP][mM]",
 		}
 	}
+	// #4041: hives that saved their config while the pre-#3959 defaults were
+	// in effect have that generic list MATERIALIZED as explicit values in
+	// their persisted config (Save() marshals the whole struct, defaults
+	// included), and "defaults only apply to an empty list" meant the #3959
+	// fix could never reach them — a live hosted hive's quality agent flapped
+	// on `(?i)copilot auth` for days with restart_count 83. A list that is
+	// byte-identical to the old default set expresses no operator intent, so
+	// treat it as "default": drop it and let the corrected defaults apply. A
+	// list that differs in ANY way is an operator's, and stays verbatim.
+	if IsLegacyDefaultLoginPatterns(c.Governor.Sensing.LoginPatterns) {
+		log.Printf("[config] migrating login_patterns: persisted list matches the pre-#3959 defaults verbatim — dropping it so the corrected defaults apply (customized lists are never touched)")
+		c.Governor.Sensing.LoginPatterns = nil
+	}
 	if len(c.Governor.Sensing.LoginPatterns) == 0 {
 		// Each pattern must match the CLI's own login CHROME, never ordinary
 		// English. The login-detector matches these against the agent's PANE —
@@ -3664,19 +3742,7 @@ func (c *Config) applyDefaults() {
 		// at kick time, so exposure scales with kick frequency. Reproduced on
 		// demand by typing "authentication required" into a healthy agent's
 		// input box (unsubmitted — just rendered on the pane) and kicking it.
-		c.Governor.Sensing.LoginPatterns = []string{
-			// claude: exact prompt strings from Claude Code's login screens.
-			"Please run /login",
-			"Not logged in",
-			// gh / copilot / gemini: the commands their CLIs tell the user to run.
-			"gh auth login",
-			"claude login",
-			"copilot auth",
-			"gemini auth login",
-			// bob: its API-key entry prompts.
-			"Enter Bob-Shell API Key",
-			"Paste your API key here",
-		}
+		c.Governor.Sensing.LoginPatterns = append([]string(nil), defaultLoginPatterns...)
 	}
 	if c.Governor.Sensing.TTLSeconds == 0 {
 		c.Governor.Sensing.TTLSeconds = defaultSensingTTLSeconds
@@ -4570,6 +4636,18 @@ func (c *Config) redactedForPersist() *Config {
 	cp := *c
 	cp.OTel.Headers = envRedactedHeaders(cp.OTel.Headers)
 	cp.Tracing.Headers = envRedactedHeaders(cp.Tracing.Headers)
+	// #4041: never write the built-in login-pattern defaults as explicit
+	// values. applyDefaults fills LoginPatterns on load, so by save time the
+	// in-memory list always LOOKS explicit; marshaling it pins today's
+	// defaults into the persisted config, where "defaults only apply to an
+	// empty list" freezes them forever — exactly how every pre-#3959 hive
+	// ended up stuck with the false-positive-prone generic list. A list equal
+	// to the current defaults expresses no operator intent: persist it as
+	// absent so future default fixes reach existing hives. An operator-
+	// customized list differs from the defaults and is persisted verbatim.
+	if stringSlicesEqual(cp.Governor.Sensing.LoginPatterns, defaultLoginPatterns) {
+		cp.Governor.Sensing.LoginPatterns = nil
+	}
 	return &cp
 }
 

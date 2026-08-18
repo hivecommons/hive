@@ -6793,7 +6793,13 @@ func applyConfigOverrides(cfg *config.Config, o *snapshot.ConfigOverrides) {
 	if len(o.SensingCLIExclude) > 0 {
 		cfg.Governor.Sensing.CLIExcludePatterns = o.SensingCLIExclude
 	}
-	if len(o.SensingLogin) > 0 {
+	// #4041: a persisted sensing_login that is byte-identical to the
+	// pre-#3959 default set carries no operator intent — it is the old
+	// defaults materialized by an earlier save. Replaying it here would
+	// re-pin the false-positive-prone generic patterns over the corrected
+	// code defaults the config layer just applied. Skip it; a genuinely
+	// customized list still replays verbatim.
+	if len(o.SensingLogin) > 0 && !config.IsLegacyDefaultLoginPatterns(o.SensingLogin) {
 		cfg.Governor.Sensing.LoginPatterns = o.SensingLogin
 	}
 	if o.SensingTTL != nil {
