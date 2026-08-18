@@ -275,6 +275,108 @@ assert_reached "read-only gh api reaches gh" \
 assert_blocked "pr merge passes the surface gate and is held by eligibility" \
   "$(run_wrapper "ISSUES_PRS_MERGE" 5 -- pr merge 123)" eligibility
 
+# ── #4043: label injection is best-effort, never a wall ──────────────────────
+# The edit/create arms append the agent/hive provenance labels. When the label
+# does not exist on the target repo, gh fails the WHOLE operation with
+# "'<label>' not found" — which took down a fleet owner's edit lane. The
+# wrapper must retry without labels. This stub simulates gh's behavior by
+# failing any invocation that carries a label-injection flag; the wrapper runs
+# under `set -e`, so these tests also pin that the retry is not dead code.
+echo "-- label injection falls back instead of failing the operation (#4043) --"
+LABEL_STUB="${WORK}/gh-stub-labelfail"
+cat >"$LABEL_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG}"
+case " $* " in
+  *" --add-label "*|*" --label "*) exit 1 ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$LABEL_STUB"
+
+# run_label_wrapper <args...> — like run_wrapper but with the label-failing
+# stub, and it reports the LAST stub invocation so the assertions can prove the
+# retry dropped the injected labels. Per-repo ensure caches live in /tmp; clear
+# ours so the label-create calls are deterministic.
+run_label_wrapper() {
+  : >"$STUB_LOG"
+  rm -f /tmp/.hive-labels-ensured-owner_repo
+  local out rc last
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$LABEL_STUB" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  rm -f /tmp/.hive-labels-ensured-owner_repo
+  last="$(tail -n 1 "$STUB_LOG" 2>/dev/null)"
+  echo "exit=${rc} last=${last}"
+}
+
+result="$(run_label_wrapper pr edit 5 --repo owner/repo --title x)"
+if [[ "$result" == "exit=0 last=pr edit 5 --repo owner/repo --title x" ]]; then
+  echo "  PASS: pr edit retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+result="$(run_label_wrapper issue edit 7 --repo owner/repo --add-assignee z)"
+if [[ "$result" == "exit=0 last=issue edit 7 --repo owner/repo --add-assignee z" ]]; then
+  echo "  PASS: issue edit retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: issue edit retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+result="$(run_label_wrapper issue create --repo owner/repo --title t --body b)"
+if [[ "$result" == exit=0* && "$result" != *"--label"* ]]; then
+  echo "  PASS: issue create retries without injected labels and succeeds"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: issue create retries without injected labels and succeeds"
+  echo "        got '$result', want exit=0 with an unlabeled final retry"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── #4043: empty per-agent token cache must fail LOUD, not go unauthenticated ─
+# A pre-created-but-not-yet-minted (0-byte) cache passed the old -f check and
+# exported an EMPTY GH_TOKEN, sending every call out unauthenticated. Direct
+# invocation (not run_wrapper) because the harness treats this gate's message
+# as a harness error elsewhere.
+echo "-- empty token cache fails loud (#4043) --"
+EMPTY_CACHE="${WORK}/empty-token"
+: >"$EMPTY_CACHE"
+out="$(
+  HIVE_GH_WRAPPER_REAL_GH="$STUB" \
+  STUB_LOG="$STUB_LOG" \
+  HIVE_AGENT="testagent" \
+  HIVE_AGENT_ID="testagent" \
+  HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+  HIVE_AGENT_TOKEN_CACHE="$EMPTY_CACHE" \
+  HIVE_CONTRIBUTOR_MODE="false" \
+  bash "$WRAPPER" issue view 1 --repo owner/repo 2>&1
+)"
+rc=$?
+if [[ $rc -eq 1 && "$out" == *"per-agent scoped GitHub token not available"* ]]; then
+  echo "  PASS: empty token cache blocks with the fail-loud message"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: empty token cache blocks with the fail-loud message"
+  echo "        got rc=$rc out='$out'"
+  FAIL=$((FAIL + 1))
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1

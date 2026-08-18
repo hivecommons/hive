@@ -67,17 +67,28 @@ if ! _contributor_mode; then
   # back to either would silently escalate every agent to full privilege and
   # defeat per-agent tier scoping. A missing scoped token must FAIL LOUD so the
   # operator fixes token delivery — it must never quietly escalate.
-  if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
+  # -r and -s as well as -f (#4043): an unreadable cache made the `cat` inside
+  # the `export` assignment fail with its status MASKED by export's own exit 0
+  # (so even `set -e` never saw it), and an empty pre-created cache (pod rolled,
+  # token not yet re-minted) passed -f outright — both exported an EMPTY
+  # GH_TOKEN and sent every gh call out UNAUTHENTICATED ("please run gh auth
+  # login"), instead of the fail-loud this gate promises.
+  if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" && -r "${HIVE_AGENT_TOKEN_CACHE}" && -s "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
   else
-    echo "⛔ BLOCKED: per-agent scoped GitHub token not available (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
+    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
     echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
     echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
     exit 1
   fi
-  printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
+  # The group wraps the append so a failed REDIRECTION is silenced too: `>> f
+  # 2>/dev/null` only mutes the printf, and when the log's directory is not
+  # writable by the agent UID the shell's own "Permission denied" line leaked
+  # into stderr on EVERY gh call, priming agents to read later denials as
+  # permission errors (#4043).
+  { printf '{"ts":"%s","agent":"%s","uid":%d,"op":"gh","cmd":"gh %s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${HIVE_AGENT:-unknown}" "$(id -u)" "$*" \
-    >> "$TOKEN_ACCESS_LOG" 2>/dev/null || true
+    >> "$TOKEN_ACCESS_LOG"; } 2>/dev/null || true
 fi
 
 # Contributor mode — extra restrictions for remote contributor agents
@@ -784,9 +795,15 @@ if [[ -n "$AGENT_NAME" ]]; then
   fi
 
   # Ensure labels exist on the repo (cached per-session to avoid repeated API calls).
-  LABEL_CACHE="/tmp/.hive-labels-ensured"
+  #
+  # The cache MUST be keyed per target repo (#4043): a single global flag meant
+  # whichever repo an agent touched first got the labels created, and every
+  # other repo was skipped for the life of the pod — leaving the injected
+  # hive/<id> label missing there, which made every `gh pr edit`/`gh issue edit`
+  # on those repos fail with "'hive/<id>' not found". Verified live on a fleet
+  # owner's hive: only the first-touched repos carried the current label.
+  LABEL_CACHE_BASE="/tmp/.hive-labels-ensured"
   _ensure_labels() {
-    [[ -f "$LABEL_CACHE" ]] && return 0
     local repo_flag=""
     for arg in "${args[@]}"; do
       case "$arg" in
@@ -796,13 +813,18 @@ if [[ -n "$AGENT_NAME" ]]; then
       esac
     done
     [[ "$repo_flag" = "next" ]] && repo_flag=""
+    # owner/repo → owner_repo; repo names are [A-Za-z0-9_.-] so '/' is the only
+    # separator to neutralize. No --repo means "current directory's repo" —
+    # cache that under its own key rather than sharing one with named repos.
+    local cache="${LABEL_CACHE_BASE}-${repo_flag//\//_}"
+    [[ -f "$cache" ]] && return 0
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_DISPLAY_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
     if [[ -n "$HIVE_INSTANCE_ID" ]]; then
       "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
     fi
-    touch "$LABEL_CACHE"
+    touch "$cache"
   }
 
   # Extract issue/PR number and repo from args (for post-action labeling).
@@ -826,8 +848,13 @@ if [[ -n "$AGENT_NAME" ]]; then
     issue/create|pr/create)
       _ensure_labels
       _inject_identity
-      "$REAL_GH" "${args[@]}" --label "$LABELS_CSV"
-      rc=$?
+      # `|| rc=$?` (not `cmd; rc=$?`): this script runs under `set -e`, so a
+      # bare failing gh exited the wrapper BEFORE rc was ever read — the
+      # unlabeled retry below was dead code, and a missing injected label
+      # failed the whole create (#4043). gh resolves label names before
+      # mutating, so the retry cannot double-create.
+      rc=0
+      "$REAL_GH" "${args[@]}" --label "$LABELS_CSV" || rc=$?
       if [ $rc -ne 0 ]; then
         exec "$REAL_GH" "${args[@]}"
       fi
@@ -835,7 +862,18 @@ if [[ -n "$AGENT_NAME" ]]; then
       ;;
     issue/edit|pr/edit)
       _ensure_labels
-      exec "$REAL_GH" "$@" --add-label "$LABELS_CSV"
+      # Label injection is provenance metadata, not a security gate. gh applies
+      # an edit atomically, so a missing label (repo not yet ensured, create
+      # denied, label deleted) failed the ENTIRE edit with "'<label>' not found"
+      # — agents read that as a permissions failure and route around the wrapper
+      # (#4043). Mirror the create arm: try labeled, retry unlabeled on failure.
+      # `|| rc=$?` keeps the retry alive under `set -e` (see create arm above).
+      rc=0
+      "$REAL_GH" "$@" --add-label "$LABELS_CSV" || rc=$?
+      if [ $rc -ne 0 ]; then
+        exec "$REAL_GH" "$@"
+      fi
+      exit $rc
       ;;
     pr/merge)
       _ensure_labels
