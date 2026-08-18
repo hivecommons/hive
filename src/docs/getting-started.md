@@ -20,6 +20,8 @@ None of the level guidance below works until your hive is connected to your git 
 
 > **On GitHub Enterprise (IBM, corporate)?** Setup is slightly different: point Hive at your **GHE host URL**, not github.com. The Forge App install flow lives on your enterprise host.
 
+> 💡 **Tip: name your hive like a team member.** The `ai_author` field is the login your agents use when opening PRs. Pick a name that signals what it does — `hive-bot`, `your-repo-ai`, `proj-assistant`. A clear name means your team immediately knows which PRs are agent-authored vs human-authored.
+
 ---
 
 ## Common gotchas (so you don't panic)
@@ -51,6 +53,8 @@ You can always shorten cadences later once you know how fast an agent is burning
 
 This is a journey, not a sprint. Slow cadences = sustainable automation. Fast cadences = burned budget and noise.
 
+> 💡 **Tip: cadences aren't just about tokens.** Long cadences also mean agents produce fewer, higher-quality findings instead of flooding you with marginal ones. A scanner that runs every 15 minutes might re-flag the same issue 50 times. A scanner on a 12h cadence files it once and moves on.
+
 ---
 
 ## The advisory issue: start here every time
@@ -60,6 +64,8 @@ Every hive creates a tracking/advisory issue in your repo. This is the central l
 **Start here every time you check in on your hive:** open the advisory issue in your repo (it's pinned — look for it in your issues). This is your hive's journal. Every finding, every action, every note the agents leave is summarized here.
 
 Read it like a weekly digest, not a to-do list. You don't have to act on everything — just stay oriented.
+
+> 💡 **Tip: the advisory issue is a great standup input.** Every Monday morning, open it and skim the last week's entries. It takes 5 minutes and gives you a clear picture of what's been happening in your repo without reading every commit.
 
 > 💡 **Power tip: feed it to your own AI tools.** The advisory issue isn't just for reading — it's the perfect input for your own agents. If you use Copilot, Claude, Cursor, or any other AI tool, paste the advisory issue into your conversation: *"Here's what my hive found this week — help me prioritize"* or *"Pick the three findings most likely to cause a production bug."* Your hive's findings + your own AI tools = faster triage. Think of the advisory issue as your hive's report card — readable by humans and by other AI agents alike.
 
@@ -134,6 +140,8 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 **Be patient:** After changing a cadence or un-pausing an agent, wait 5–10 minutes before assuming something is wrong.
 
+> 💡 **Tip: one agent at a time.** When you un-pause agents at a new level, don't un-pause them all on the same day. Un-pause one, watch it for 3–4 days, then add the next. You'll understand each agent's personality before the noise from multiple agents overlaps.
+
 **When to move up:** **2–3 weeks minimum.** Run L2 for real: read the beads, act on a few findings yourself, and understand what the agents are seeing before you give them any write access. When you agree with their findings more than half the time, you're ready for L3. Don't rush this.
 
 ## L3 — Build Your Safety Net
@@ -151,9 +159,15 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 **Building tests:** This is quality's big moment. Expect a few PRs per week — that's normal, not slow. Review every one, even the ones you don't merge. Reading them teaches you what quality thinks is missing. Merge the good ones; these tests will later *correct the agents* and keep their output honest.
 
+> 💡 **Tip: the 3-issue rule.** When quality starts opening PRs, don't review them all at once. Pick the three smallest ones. Merge one, decline one, leave one. This teaches the agent what you value faster than reading 20 PRs and ignoring them all.
+
+> 💡 **Tip: the hold label is a conversation.** You don't just approve or decline a held PR. You can edit it, add comments, push commits on top of it. The agent will see your changes on the next run and learn from the diff.
+
 **Be patient:** After setting the level to 3 in the Governor config, give it a heartbeat cycle (5–10 minutes) before expecting PRs. Then settle in — this level is measured in weeks, not days.
 
 **When to move up:** **3–4 weeks.** Let quality build your test suite. Get comfortable approving or declining hold-labeled PRs before adding more agents. Move up when your CI runs real tests and reviewing held PRs feels routine.
+
+> 💡 **Tip: customize before you escalate.** Before moving from L3 to L4, take 30 minutes to edit each agent's policy template. Add your coding conventions, your preferred test framework, your off-limits directories. Agents follow instructions literally — the more specific you are, the better the output.
 
 ## L4 — Issues and Security
 
@@ -167,6 +181,10 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 ⚠️ **Set cadences first:** Gear icon on sec-check → all modes to **12h or 1d** before it runs. Security scans are token-hungry.
 
 **Using the findings:** Read the issues agents file. Add a 👍 to the ones that match your priorities — the agents will pick up the signal. You don't have to respond to everything.
+
+> 💡 **Tip: your advisory issue is a living document.** Don't just read it — react to findings with 👍/👎. Agents use these signals to prioritize. A finding with 5 👍 reactions gets picked up sooner than one with none.
+
+> 💡 **Tip: scanner finds, quality fixes.** Scanner flags bugs. Quality fixes test gaps. They're a team. At L4, watch for scanner filing an issue and quality filing a PR that addresses it — that's the closed-loop feedback working.
 
 **Shoring up security:** Sec-check's first run will probably find things. Don't panic. Read each finding, fix the critical ones yourself, and let sec-check open PRs for the medium ones — they'll have hold labels, so you approve before anything merges.
 
@@ -186,6 +204,8 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 ⚠️ **Set cadences first:** Every newly un-paused agent gets the gear treatment: all modes **12h or 1d**. More agents running = faster token burn, so this matters more than ever.
 
 **Using the findings:** Batch-review on a schedule (say, twice a week). Approve the PRs you like, decline the ones you don't, 👍 the issues that match your roadmap.
+
+> 💡 **Tip: batch-review in one sitting.** Reviewing ten agent PRs in a single hour teaches you the agents' patterns faster than reviewing one per day. Patterns jump out when the PRs sit side by side — repeated habits, favorite files, blind spots.
 
 **Building tests:** By now, quality should have already added tests for your main flows. If it hasn't, go back to L3 habits before moving on — L6 depends on it.
 
@@ -209,6 +229,8 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 **Building tests:** Keep improving your tests — they're your only gatekeeper now. Every test you add makes the automation safer.
 
 **Be patient:** Trust the loop. If a bad PR merges, that's a signal to add a test, not to panic and drop levels.
+
+> 💡 **Tip: L6 doesn't mean you're done reviewing.** Even at full automation, read the merged PRs weekly. Not to intervene — to calibrate. If you see a pattern you don't like (agents always touching the same file, tests that are too shallow), update the policy template and the next run corrects course.
 
 **When to move up:** There is no up. You made it. 🐝
 
@@ -251,3 +273,7 @@ That's it. You now understand the full end-to-end of how Hive works — one trus
 **Checking what agents are doing:** Live Activity feed (dashboard → Activity tab) shows what's running right now. If an agent looks stuck, check cadence — it may just not be scheduled to run yet.
 
 **If something looks wrong:** Wait 10 minutes. Most issues are just agents waiting for their next heartbeat cycle. If it's still wrong after 10 minutes, check the advisory issue for error messages before filing a support request.
+
+> 💡 **Tip: pausing is free.** Pausing an agent never loses its findings or its learning — everything picks up where it left off. Going on vacation? Big refactor week? Pause aggressively and resume when you're back. The hive waits for you.
+
+> 💡 **Tip: dropping a level is a feature, not a failure.** Planning a big architectural change? Drop from L4 to L3 (or L3 to L2) while the dust settles, then move back up. Levels are a dial, not a ladder you fall off.
