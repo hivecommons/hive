@@ -14670,18 +14670,15 @@ function burnAreaChart() {
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;
       if (repoDisplay) window._primaryRepo = repoDisplay;
       // Read-only issue-filter note under Repositories. Present in /api/config
-      // only when project.issue_filter is configured; textContent (never
+      // only when project.issue_filter is configured (edit it on Governor
+      // Configuration → Labels, "Required labels"); textContent (never
       // innerHTML) because label names are repo-controlled text.
       const iflt = cfg.issue_filter || null;
       const ifltReq = (iflt && iflt.require_labels) || [];
-      const ifltExc = (iflt && iflt.exclude_labels) || [];
-      if (ifltReq.length || ifltExc.length) {
+      if (ifltReq.length) {
         const note = document.getElementById('repos-issue-filter');
         if (note) {
-          const parts = [];
-          if (ifltReq.length) parts.push('agents only work issues labeled: ' + ifltReq.join(', '));
-          if (ifltExc.length) parts.push('never issues labeled: ' + ifltExc.join(', '));
-          note.textContent = '🏷️ Issue filter active — ' + parts.join(' · ');
+          note.textContent = '🏷️ Issue filter active — agents only work issues labeled: ' + ifltReq.join(', ');
           note.style.display = '';
         }
       }
@@ -15322,7 +15319,7 @@ function burnAreaChart() {
         case 'General': return renderGovGeneral();
         case 'Agents': return renderGovAgents(d.agents || []);
         case 'Thresholds': return renderGovThresholds(d);
-        case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || []);
+        case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
         case 'Budget': return renderGovBudget(d.budget || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
@@ -18536,7 +18533,7 @@ function burnAreaChart() {
       }
     }
 
-    function renderGovLabels(labels, holdLabels) {
+    function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
         `<div class="config-list-item" style="opacity:0.7"><span>${esc(l)}</span><span style="font-size:0.65rem;color:var(--muted);margin-left:auto;margin-right:8px">permanent</span></div>`
@@ -18544,8 +18541,16 @@ function burnAreaChart() {
       const list = labels.map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" onclick="removeListItem('labels','list',${i})">✕</button></div>`
       ).join('');
+      // Required labels (allow-list) — the OPPOSITE polarity from the exempt
+      // list above: exempt = "never touch these", required = "ONLY touch
+      // these". Stored as project.issue_filter.require_labels and enforced at
+      // the actionable scan, not just in prompts.
+      const reqList = (requireLabels || []).map((l, i) =>
+        `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" onclick="removeListItem('labels','require',${i})">✕</button></div>`
+      ).join('');
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Labels that filter issues from the actionable issues list and PRs from the mergeable PRs list. Agents receive these filtered lists as variable substitutions in their kick prompts.</p>
+        <h4 style="margin:0 0 6px">Exempt labels (deny-list)</h4>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
         <p style="font-size:0.7rem;color:var(--muted);margin-bottom:8px;font-style:italic">Permanent labels cannot be removed. Hold labels also appear in the On Hold section of the dashboard.</p>
         <div class="config-list">
           ${staticList}
@@ -18554,6 +18559,15 @@ function burnAreaChart() {
           <div class="config-list-add">
             <input type="text" id="cfg-label-input" placeholder="label name" title="GitHub label name to exempt from actionable issues and mergeable PRs.">
             <button onclick="addListItem('labels','list','cfg-label-input')" title="Add this label to the exempt list">+ Add</button>
+          </div>
+        </div>
+        <h4 style="margin:18px 0 6px">Required labels (allow-list)</h4>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">The opposite polarity: when this list is non-empty, agents may <b>only</b> initiate work on issues carrying at least one of these labels — "only work approved issues". Empty = every issue is eligible (the default). Exempt labels above still win on conflict; PRs and the Hold list are unaffected. Matching is exact (case-insensitive).</p>
+        <div class="config-list">
+          ${reqList || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No required labels — agents may work every actionable issue</div>'}
+          <div class="config-list-add">
+            <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
+            <button onclick="addListItem('labels','require','cfg-require-label-input')" title="Add this label to the required (allow) list">+ Add</button>
           </div>
         </div>`;
     }
@@ -19408,9 +19422,15 @@ function burnAreaChart() {
         _configState.data.hooks[key].push(val);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (!_configState.data.labels) _configState.data.labels = [];
-        _configState.data.labels.push(val);
-        markDirty('labels', 'labels', _configState.data.labels);
+        if (key === 'require') {
+          if (!_configState.data.requireLabels) _configState.data.requireLabels = [];
+          _configState.data.requireLabels.push(val);
+          markDirty('labels', 'require_labels', _configState.data.requireLabels);
+        } else {
+          if (!_configState.data.labels) _configState.data.labels = [];
+          _configState.data.labels.push(val);
+          markDirty('labels', 'labels', _configState.data.labels);
+        }
       } else if (section === 'repos') {
         // Repos go through the async host-check + App-access workflow, which
         // owns input clearing and re-render on success. Return here so the
@@ -19427,8 +19447,13 @@ function burnAreaChart() {
         _configState.data.hooks[key].splice(index, 1);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        _configState.data.labels.splice(index, 1);
-        markDirty('labels', 'labels', _configState.data.labels);
+        if (key === 'require') {
+          _configState.data.requireLabels.splice(index, 1);
+          markDirty('labels', 'require_labels', _configState.data.requireLabels);
+        } else {
+          _configState.data.labels.splice(index, 1);
+          markDirty('labels', 'labels', _configState.data.labels);
+        }
       } else if (section === 'repos') {
         _configState.data.repos.splice(index, 1);
         markDirty('repos', 'repos', _configState.data.repos);

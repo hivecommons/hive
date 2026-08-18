@@ -58,39 +58,6 @@ func TestIssueFilterAdmits_RequireAnyOf(t *testing.T) {
 	}
 }
 
-// TestIssueFilterAdmits_ExcludeWinsOverRequire: an issue carrying BOTH a
-// required and an excluded label is refused — exclusion is the stronger claim.
-func TestIssueFilterAdmits_ExcludeWinsOverRequire(t *testing.T) {
-	f := IssueFilterConfig{
-		RequireLabels: []string{"approved"},
-		ExcludeLabels: []string{"no-ai"},
-	}
-	if !f.Admits([]string{"approved"}) {
-		t.Error("positive control failed: approved-only issue refused")
-	}
-	if f.Admits([]string{"approved", "no-ai"}) {
-		t.Error("exclude label did not win over require label")
-	}
-	if f.Admits([]string{"no-ai"}) {
-		t.Error("excluded issue admitted")
-	}
-}
-
-// TestIssueFilterAdmits_ExcludeOnly: exclude without require admits everything
-// except the excluded labels.
-func TestIssueFilterAdmits_ExcludeOnly(t *testing.T) {
-	f := IssueFilterConfig{ExcludeLabels: []string{"wontfix"}}
-	if !f.Admits([]string{"bug"}) {
-		t.Error("exclude-only filter refused an ordinary issue")
-	}
-	if !f.Admits(nil) {
-		t.Error("exclude-only filter refused an unlabeled issue")
-	}
-	if f.Admits([]string{"WontFix"}) {
-		t.Error("excluded label admitted (case-insensitivity)")
-	}
-}
-
 // TestIssueFilterAdmits_ConfigWhitespaceTrimmed: a stray space in YAML must not
 // silently disable an approval gate.
 func TestIssueFilterAdmits_ConfigWhitespaceTrimmed(t *testing.T) {
@@ -101,12 +68,12 @@ func TestIssueFilterAdmits_ConfigWhitespaceTrimmed(t *testing.T) {
 }
 
 func TestIssueFilterEqual(t *testing.T) {
-	a := IssueFilterConfig{RequireLabels: []string{"x"}, ExcludeLabels: []string{"y"}}
-	if !a.Equal(IssueFilterConfig{RequireLabels: []string{"x"}, ExcludeLabels: []string{"y"}}) {
+	a := IssueFilterConfig{RequireLabels: []string{"x", "y"}}
+	if !a.Equal(IssueFilterConfig{RequireLabels: []string{"x", "y"}}) {
 		t.Error("identical filters reported unequal")
 	}
 	if a.Equal(IssueFilterConfig{RequireLabels: []string{"x"}}) {
-		t.Error("filters with different exclude sets reported equal")
+		t.Error("filters with different require sets reported equal")
 	}
 	if (IssueFilterConfig{}).Equal(a) {
 		t.Error("zero filter reported equal to a configured one")

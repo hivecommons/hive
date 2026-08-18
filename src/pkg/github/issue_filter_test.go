@@ -21,12 +21,12 @@ func filterTestIssues() []wireIssue {
 			Labels: []wireLabel{{Name: "bug"}, {Name: "approved-for-agents"}}, CreatedAt: hoursAgo(3)},
 		{Number: 2, Title: "unapproved work", User: wireUser{"bob"},
 			Labels: []wireLabel{{Name: "bug"}}, CreatedAt: hoursAgo(2)},
-		{Number: 3, Title: "approved but vetoed", User: wireUser{"carol"},
+		{Number: 3, Title: "approved but exempted", User: wireUser{"carol"},
 			Labels: []wireLabel{{Name: "approved-for-agents"}, {Name: "no-ai"}}, CreatedAt: hoursAgo(1)},
 	}
 }
 
-func enumerateWithFilter(t *testing.T, f config.IssueFilterConfig) *ActionableResult {
+func enumerateWithFilter(t *testing.T, f config.IssueFilterConfig, exempt []string) *ActionableResult {
 	t.Helper()
 	org, repo := "testorg", "testrepo"
 	mux := buildMux(t, org, repo, filterTestIssues(), nil)
@@ -34,6 +34,9 @@ func enumerateWithFilter(t *testing.T, f config.IssueFilterConfig) *ActionableRe
 	t.Cleanup(server.Close)
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetIssueFilter(f)
+	if len(exempt) > 0 {
+		c.SetExemptLabels(exempt)
+	}
 	result, err := c.EnumerateActionable(context.Background())
 	if err != nil {
 		t.Fatalf("EnumerateActionable: %v", err)
@@ -50,12 +53,12 @@ func actionableNumbers(result *ActionableResult) map[int]bool {
 }
 
 // TestEnumerateActionable_IssueFilterRequireLabel: with require_labels set,
-// only the labeled issue becomes actionable. Positive control (issue #1 IS
+// only labeled issues become actionable. Positive control (issue #1 IS
 // admitted) plus a count floor, so the test cannot pass by admitting nothing.
 func TestEnumerateActionable_IssueFilterRequireLabel(t *testing.T) {
 	result := enumerateWithFilter(t, config.IssueFilterConfig{
 		RequireLabels: []string{"approved-for-agents"},
-	})
+	}, nil)
 	nums := actionableNumbers(result)
 	if !nums[1] {
 		t.Error("positive control failed: issue #1 carries the required label but is not actionable")
@@ -68,19 +71,22 @@ func TestEnumerateActionable_IssueFilterRequireLabel(t *testing.T) {
 	}
 }
 
-// TestEnumerateActionable_IssueFilterExcludeWins: an issue carrying both the
-// required label and an excluded label is refused.
-func TestEnumerateActionable_IssueFilterExcludeWins(t *testing.T) {
+// TestEnumerateActionable_ExemptWinsOverRequire pins the ONE-exclusion-story
+// composition: the exclude polarity lives in governor.labels.exempt (the
+// dashboard Labels tab), not in issue_filter, and it runs BEFORE the require
+// gate — so an issue carrying both an exempt label and the approval label
+// stays excluded. This is the "exclude wins over require" conflict rule,
+// delivered by the pre-existing mechanism rather than a duplicate one.
+func TestEnumerateActionable_ExemptWinsOverRequire(t *testing.T) {
 	result := enumerateWithFilter(t, config.IssueFilterConfig{
 		RequireLabels: []string{"approved-for-agents"},
-		ExcludeLabels: []string{"no-ai"},
-	})
+	}, []string{"no-ai"})
 	nums := actionableNumbers(result)
 	if !nums[1] {
 		t.Error("positive control failed: issue #1 refused")
 	}
 	if nums[3] {
-		t.Error("issue #3 carries an excluded label but entered the actionable set — exclude must win over require")
+		t.Error("issue #3 carries a governor exempt label but entered the actionable set — exemption must win over the require gate")
 	}
 	if nums[2] {
 		t.Error("issue #2 lacks the required label but entered the actionable set")
@@ -94,7 +100,7 @@ func TestEnumerateActionable_IssueFilterExcludeWins(t *testing.T) {
 // no filter configured (the state of every existing hive), enumeration is
 // byte-for-byte the old behavior — all three issues actionable.
 func TestEnumerateActionable_NoIssueFilterUnchanged(t *testing.T) {
-	result := enumerateWithFilter(t, config.IssueFilterConfig{})
+	result := enumerateWithFilter(t, config.IssueFilterConfig{}, nil)
 	if got := result.Issues.Count; got != 3 {
 		t.Errorf("Issues.Count = %d, want 3 — absent filter must change nothing", got)
 	}

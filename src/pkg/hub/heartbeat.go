@@ -1937,8 +1937,9 @@ type HeartbeatProjectConfig struct {
 	// Empty = leave the spoke's github.api_url unchanged (public github.com is
 	// the spoke's own default), so this never blanks a working config.
 	GitHubAPIURL string `json:"github_api_url,omitempty"`
-	// IssueFilter delivers the per-hive project.issue_filter (require/exclude
-	// label sets gating which issues agents may initiate work on). It rides
+	// IssueFilter delivers the per-hive project.issue_filter (the
+	// require_labels allow-list gating which issues agents may initiate work
+	// on; exclusion stays governor.labels.exempt, spoke-owned). It rides
 	// this struct because it is part of the same project identity as
 	// org/repos. nil = the hub is not speaking to this field — the spoke keeps
 	// its locally configured filter, so the hub's every-beat echo can never

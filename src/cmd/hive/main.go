@@ -3962,8 +3962,7 @@ func main() {
 			// delivery. A non-nil but EMPTY filter is an explicit clear.
 			if pc.IssueFilter != nil && !cfg.Project.IssueFilter.Equal(*pc.IssueFilter) {
 				logger.Info("adopting issue filter from hub heartbeat",
-					"require_labels", pc.IssueFilter.RequireLabels,
-					"exclude_labels", pc.IssueFilter.ExcludeLabels)
+					"require_labels", pc.IssueFilter.RequireLabels)
 				cfg.Project.IssueFilter = *pc.IssueFilter
 			}
 			// Adopt a GitHub Enterprise API URL when the hub sends one. Empty

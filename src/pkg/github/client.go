@@ -34,8 +34,11 @@ type Client struct {
 	reposMu      sync.RWMutex
 	repos        []string
 	exemptLabels []string
-	// issueFilter is the operator's project.issue_filter (require/exclude
-	// label sets) gating which issues become actionable at all. Enforced in
+	// issueFilter is the operator's project.issue_filter (require_labels
+	// allow-list) gating which issues become actionable at all. The exclude
+	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
+	// the dashboard Labels tab), the pre-existing single exclusion mechanism,
+	// which fetchIssues applies first so it wins on conflict. Enforced in
 	// fetchIssues — the choice point where issues enter the actionable set —
 	// so everything downstream (governor counts, scheduler kicks, plan-from-
 	// label, the contribute queue) inherits it and no agent-side re-listing
@@ -541,14 +544,17 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			continue
 		}
 
-		// project.issue_filter — THE choice point for label-gated agent work.
-		// An issue the filter refuses never becomes actionable: it is invisible
-		// to the governor's queue counts, every kick prompt, plan-from-label,
-		// and the contribute queue, so no downstream consumer (or prompt-
-		// injected agent re-listing the repo) can select it. Zero-value filter
-		// admits everything — pre-existing behavior, verified by regression
-		// tests. Deliberately AFTER the hold check so held issues keep
-		// appearing in the Hold list exactly as before.
+		// project.issue_filter (require_labels) — THE choice point for
+		// label-gated agent work. An issue the filter refuses never becomes
+		// actionable: it is invisible to the governor's queue counts, every
+		// kick prompt, plan-from-label, and the contribute queue, so no
+		// downstream consumer (or prompt-injected agent re-listing the repo)
+		// can select it. Zero-value filter admits everything — pre-existing
+		// behavior, verified by regression tests. Deliberately AFTER the
+		// hold/exempt checks: held issues keep appearing in the Hold list
+		// exactly as before, and the EXCLUDE polarity stays the sole property
+		// of governor.labels.exempt (the dashboard Labels tab) — which
+		// therefore wins over the require gate by construction.
 		if !issueFilter.Admits(labels) {
 			continue
 		}

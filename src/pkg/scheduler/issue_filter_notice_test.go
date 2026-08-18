@@ -29,7 +29,6 @@ func newSchedulerWithFilter(f config.IssueFilterConfig) *Scheduler {
 func TestScannerMessage_IssueFilterNoticePresent(t *testing.T) {
 	s := newSchedulerWithFilter(config.IssueFilterConfig{
 		RequireLabels: []string{"approved-for-agents"},
-		ExcludeLabels: []string{"no-ai"},
 	})
 	msg := s.buildScannerMessage(nil, emptyActionable())
 	if !strings.Contains(msg, "ISSUE FILTER") {
@@ -37,9 +36,6 @@ func TestScannerMessage_IssueFilterNoticePresent(t *testing.T) {
 	}
 	if !strings.Contains(msg, "approved-for-agents") {
 		t.Errorf("scanner kick does not name the required label:\n%s", msg)
-	}
-	if !strings.Contains(msg, "no-ai") {
-		t.Errorf("scanner kick does not name the excluded label:\n%s", msg)
 	}
 }
 

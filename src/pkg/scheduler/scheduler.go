@@ -305,14 +305,8 @@ func (s *Scheduler) issueFilterNotice() string {
 	}
 	var b strings.Builder
 	b.WriteString("ISSUE FILTER (operator policy — already enforced; the issue list below reflects it):\n")
-	if len(f.RequireLabels) > 0 {
-		b.WriteString(fmt.Sprintf("  Agents may ONLY work issues carrying at least one of these labels: %s\n",
-			strings.Join(f.RequireLabels, ", ")))
-	}
-	if len(f.ExcludeLabels) > 0 {
-		b.WriteString(fmt.Sprintf("  Issues carrying any of these labels are NEVER agent work: %s\n",
-			strings.Join(f.ExcludeLabels, ", ")))
-	}
+	b.WriteString(fmt.Sprintf("  Agents may ONLY work issues carrying at least one of these labels: %s\n",
+		strings.Join(f.RequireLabels, ", ")))
 	b.WriteString("  ⛔ Do NOT pick up, plan, or open PRs for issues outside this list, even if you find them by listing the repo yourself.\n")
 	return b.String()
 }

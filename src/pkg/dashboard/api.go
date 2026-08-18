@@ -4069,8 +4069,13 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"repoCount":           repoCount,
 		"labels":              cfg.Governor.Labels.Exempt,
 		"holdLabels":          github.HoldLabels,
-		"repos":               repos,
-		"primaryRepo":         primaryRepo,
+		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
+		// project.issue_filter.require_labels — when non-empty, agents may
+		// ONLY initiate work on issues carrying at least one of them. Edited
+		// on the same Labels tab so operators have one place for label policy.
+		"requireLabels": cfg.Project.IssueFilter.RequireLabels,
+		"repos":         repos,
+		"primaryRepo":   primaryRepo,
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -4357,40 +4362,63 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Both label polarities save through this one endpoint (the Labels tab
+	// edits both). POINTER-typed so an absent key means "unchanged" — a save
+	// that only touched the require list must not wipe the exempt list to
+	// empty, and vice versa.
 	var body struct {
-		Labels []string `json:"labels"`
+		Labels        *[]string `json:"labels"`
+		RequireLabels *[]string `json:"require_labels"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if err := validateGovernorLabels(body.Labels); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+	if body.Labels != nil {
+		if err := validateGovernorLabels(*body.Labels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.RequireLabels != nil {
+		if err := validateGovernorLabels(*body.RequireLabels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
-	filtered := make([]string, 0, len(body.Labels))
-	for _, l := range body.Labels {
-		isPermanent := false
-		for _, h := range github.HoldLabels {
-			if l == h {
-				isPermanent = true
-				break
+	if body.Labels != nil {
+		filtered := make([]string, 0, len(*body.Labels))
+		for _, l := range *body.Labels {
+			isPermanent := false
+			for _, h := range github.HoldLabels {
+				if l == h {
+					isPermanent = true
+					break
+				}
+			}
+			for _, p := range github.PermanentExemptLabels {
+				if l == p {
+					isPermanent = true
+					break
+				}
+			}
+			if !isPermanent {
+				filtered = append(filtered, l)
 			}
 		}
-		for _, p := range github.PermanentExemptLabels {
-			if l == p {
-				isPermanent = true
-				break
-			}
-		}
-		if !isPermanent {
-			filtered = append(filtered, l)
+		s.deps.Config.Governor.Labels.Exempt = filtered
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetExemptLabels(filtered)
 		}
 	}
-	s.deps.Config.Governor.Labels.Exempt = filtered
-	if s.deps.GHClient != nil {
-		s.deps.GHClient.SetExemptLabels(filtered)
+	if body.RequireLabels != nil {
+		// The require gate (project.issue_filter): empty list = filter off.
+		// Takes effect on the next enumeration via the scan client.
+		s.deps.Config.Project.IssueFilter.RequireLabels = *body.RequireLabels
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
+		}
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)

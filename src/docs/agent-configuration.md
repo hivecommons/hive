@@ -302,30 +302,35 @@ Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM 
 
 Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
-## Issue label filtering: gating agent work on approval labels
+## Label policy: which issues agents may work
 
-By default a hive treats **every open issue** in its repos as candidate work. Some projects want the opposite: a maintainer reviews each issue and applies an approval label, and only then may automation touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work.) `project.issue_filter` is that gate:
+There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:
+
+| Polarity | Config | Meaning |
+|---|---|---|
+| **Exempt (deny-list)** | `governor.labels.exempt` (+ permanent `hold`/`on-hold`/`hold/review`, `do-not-merge`) | "**Never** touch issues labeled with these." Everything else is eligible. This has always existed. |
+| **Required (allow-list)** | `project.issue_filter.require_labels` | "**Only** touch issues labeled with these." Empty = every issue is eligible. **This is what "only work approved issues" means.** |
+
+By default a hive treats **every open issue** in its repos as candidate work. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work; an exempt list cannot express that policy, because it can only name what to avoid, not demand a label be present.)
 
 ```yaml
 project:
   org: my-org
   repos: [my-org/common]
   issue_filter:
-    require_labels: [approved-for-agents]   # only these issues are agent work
-    exclude_labels: [no-ai, needs-design]   # these never are, even if approved
+    require_labels: [approved-for-agents]   # agents may ONLY work these issues
 ```
 
 Semantics:
 
-- **Absent/empty filter = no filtering** — existing hives are unchanged; there is no default-on gate.
-- `require_labels`: an issue must carry **at least one** of these to be eligible. Matching is case-insensitive and exact.
-- `exclude_labels`: an issue carrying **any** of these is never eligible. Exclusion wins over require on conflict.
+- **Absent/empty `require_labels` = no gate** — existing hives are unchanged; there is no default-on filtering.
+- An issue must carry **at least one** required label to be eligible. Matching is case-insensitive and **exact** (a prefix like `approved-for-agents-maybe` does not satisfy `approved-for-agents` — prefix matching would over-admit through an approval gate).
+- **Exempt wins on conflict**: an issue carrying both an exempt label and a required label stays excluded. There is deliberately no separate `exclude_labels` field — the exempt list *is* the exclusion mechanism, applied first.
+- PRs and the Hold list are unaffected: open PRs are in-flight work, and held issues still appear under On Hold.
 
-The filter is enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and is never offered to contributors, so a confused (or prompt-injected) agent re-listing the repo cannot select it. Kick prompts additionally state the active policy so agents know the list is intentionally short. The dashboard shows the active filter read-only under **Repositories**, and hub-managed hives can receive the filter with their project config over the heartbeat.
+Both polarities are enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and cannot be re-selected by a confused (or prompt-injected) agent re-listing the repo. Kick prompts additionally state the active require policy so agents know the list is intentionally short. Both lists are edited on the Labels tab; an active require gate is also noted read-only under **Repositories**, and hub-managed hives can receive `issue_filter` with their project config over the heartbeat.
 
-This composes with, and does not change, the pre-existing label behaviors: `hold`/`on-hold` still parks items in the Hold list, `do-not-merge` and `governor.labels.exempt` still exclude items outright.
-
-**Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter` is the agent-side gate; configure both if you want the same label to govern both lanes.
+**Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
 ## When to add what
 
