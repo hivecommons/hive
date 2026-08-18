@@ -1,12 +1,40 @@
 # Zero to Automation: Getting Started with Hive
 
-Hive is a team of AI agents that watch your repo and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**.
+Hive is a team of AI agents that watch your repo and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**. And here's the most important thing to know before you start: **the goal is trust, not level.**
 
 ## The Hive Way
 
 > Hive is not a fire-and-forget automation tool. It's a trust-building process. You run each level long enough to understand what the agents are doing and agree with their judgment — then you give them a little more autonomy. Most people spend 2–3 weeks at L2, 3–4 weeks at L3, 4–5 weeks at L4. By the time you reach L5 or L6, you won't be surprised by what the agents produce — because you've been watching them work for months. **That's the point.**
 
 The biggest mistake new users make: seeing agent output and either (a) panicking, or (b) immediately jumping to a higher level to get more automation. Neither is right. Read, review, and let trust build at its own pace.
+
+## Trust > Level. Always.
+
+> You do not need to reach L6. Ever. L6 is full automation — agents merging code without human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent PRs they don't understand.
+>
+> **The goal is trust, not level.**
+
+## What this guide doesn't cover (and why)
+
+> Hive is deeply configurable. There are agent policy templates, knowledge layers, custom agents, issue label filters, multi-repo setups, and a lot more. This guide doesn't cover any of that — and that's intentional. You don't need any of it to start. The goal of your first few months is to get comfortable with one or two agents at a low level, not to explore every feature. Features will still be there when you're ready for them.
+
+## What to expect (and what not to)
+
+✅ **Expect:**
+
+- A slow start — days or weeks before anything meaningful happens
+- Findings you already knew about — agents often surface obvious things first
+- Some findings you disagree with — that's normal, decline them and move on
+- PRs with hold labels — you control every merge below L6
+- Gradual improvement in finding quality as agents learn your codebase
+
+❌ **Don't expect:**
+
+- Instant results — this is a months-long investment
+- Agents to understand your codebase immediately — they learn over time
+- Every finding to be worth acting on — triage is part of the job
+- L6 to be the destination — most mature teams settle happily at L4 or L5
+- Agents to replace human judgment — they augment it
 
 ---
 
@@ -250,9 +278,9 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 
 **Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with hold labels). Review and merge the ones you like.
 
-**Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned.
+**Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned — *if* you ever want them at all. L4 or L5 forever is a perfectly good place to live.
 
-This is a marathon, not a sprint. The teams who get the most out of Hive are the ones who resist the urge to rush. Set long cadences. Read the advisory issue weekly. **Move up a level when it feels boring — not when it feels exciting.**
+This is a marathon, not a sprint. The teams who get the most out of Hive are the ones who resist the urge to rush. Set long cadences. Read the advisory issue weekly. **Move up a level when it feels boring — not when it feels exciting.** And remember: the goal is trust, not level.
 
 That's it. You now understand the full end-to-end of how Hive works — one trust level at a time. 🐝
 
@@ -277,3 +305,7 @@ That's it. You now understand the full end-to-end of how Hive works — one trus
 > 💡 **Tip: pausing is free.** Pausing an agent never loses its findings or its learning — everything picks up where it left off. Going on vacation? Big refactor week? Pause aggressively and resume when you're back. The hive waits for you.
 
 > 💡 **Tip: dropping a level is a feature, not a failure.** Planning a big architectural change? Drop from L4 to L3 (or L3 to L2) while the dust settles, then move back up. Levels are a dial, not a ladder you fall off.
+
+---
+
+> The teams who get the most from Hive aren't the ones who reached L6 fastest. They're the ones who spent the most time at L2 and L3, reading findings, building intuition, and learning what the agents are good at. **Slow down. The automation will still be there when you're ready.** 🐝
