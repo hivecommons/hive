@@ -327,8 +327,13 @@ func TestReconcilePRAttribution_AppendsTrailer(t *testing.T) {
 	if len(audits) != 1 {
 		t.Fatalf("expected 1 audit entry, got %d", len(audits))
 	}
-	if audits[0].action != AuditActionAgentPRCreated {
-		t.Errorf("audit action = %q, want %q", audits[0].action, AuditActionAgentPRCreated)
+	if audits[0].action != AuditActionPRAttributionReconciled {
+		t.Errorf("audit action = %q, want %q", audits[0].action, AuditActionPRAttributionReconciled)
+	}
+	// Must NOT be the creation action: the hive did not create this PR, and the
+	// audit log's create→merge loop would count it as one that never happened.
+	if audits[0].action == AuditActionAgentPRCreated {
+		t.Error("a reconciled contributor PR must not be audited as a hive PR creation")
 	}
 	if !strings.Contains(audits[0].detail, "effort=high") || !strings.Contains(audits[0].detail, "reconciled=true") {
 		t.Errorf("audit detail = %q", audits[0].detail)
@@ -361,34 +366,83 @@ func TestReconcilePRAttribution_IdempotentAlreadyHasTrailer(t *testing.T) {
 	}
 }
 
-func TestReconcilePRAttribution_TrailerOffStillAudits(t *testing.T) {
-	var edited string
-	var editCount int
-	srv := reconcilePRMock(t, "Fixes #10", &edited, &editCount)
-	defer srv.Close()
-	c := testClient(t, srv.URL)
+func TestReconcilePRAttribution_AuditsOnlyWhenAnEditLands(t *testing.T) {
+	// The reconcile path audits only when it actually edits a PR. This is
+	// deliberately UNLIKE the creation path (pr_request_watcher), which audits
+	// unconditionally: there a PR is created whether or not the visible trailer
+	// is enabled, so there is always a real event. Here a disabled toggle, an
+	// already-trailered body, or a failed API call all mean the hive did nothing,
+	// and auditing "reconciled=true" for those records events that never
+	// happened.
+	meta := InvocationMeta{Agent: "quality", Backend: "claude", Model: "claude-sonnet-5"}
 
-	var audits []auditRec
-	c.SetAttributionHooks(AttributionHooks{
-		TrailerEnabled: func() bool { return false },
-		Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+	t.Run("trailer disabled", func(t *testing.T) {
+		var edited string
+		var editCount int
+		srv := reconcilePRMock(t, "Fixes #10", &edited, &editCount)
+		defer srv.Close()
+		c := testClient(t, srv.URL)
+
+		var audits []auditRec
+		c.SetAttributionHooks(AttributionHooks{
+			TrailerEnabled: func() bool { return false },
+			Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+		})
+
+		if err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta); err != nil {
+			t.Fatalf("ReconcilePRAttribution failed: %v", err)
+		}
+		if editCount != 0 {
+			t.Errorf("expected 0 edit calls with trailer disabled, got %d", editCount)
+		}
+		if len(audits) != 0 {
+			t.Errorf("nothing was reconciled, so nothing should be audited; got %d entries: %+v", len(audits), audits)
+		}
 	})
 
-	meta := InvocationMeta{
-		Agent:   "quality",
-		Backend: "claude",
-		Model:   "claude-sonnet-5",
-	}
+	t.Run("body already carries a trailer", func(t *testing.T) {
+		var edited string
+		var editCount int
+		initial := "Fixes #10\n\n" + AttributionTrailerPrefix + " agent=quality backend=claude model=claude-sonnet-5"
+		srv := reconcilePRMock(t, initial, &edited, &editCount)
+		defer srv.Close()
+		c := testClient(t, srv.URL)
 
-	err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta)
-	if err != nil {
-		t.Fatalf("ReconcilePRAttribution failed: %v", err)
-	}
+		var audits []auditRec
+		c.SetAttributionHooks(AttributionHooks{
+			TrailerEnabled: func() bool { return true },
+			Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+		})
 
-	if editCount != 0 {
-		t.Errorf("expected 0 edit calls with trailer disabled, got %d", editCount)
-	}
-	if len(audits) != 1 {
-		t.Fatalf("expected 1 audit entry with trailer disabled, got %d", len(audits))
-	}
+		if err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta); err != nil {
+			t.Fatalf("ReconcilePRAttribution failed: %v", err)
+		}
+		if editCount != 0 {
+			t.Errorf("expected 0 edit calls when the trailer is already present, got %d", editCount)
+		}
+		if len(audits) != 0 {
+			t.Errorf("an idempotent no-op must not be audited; got %d entries: %+v", len(audits), audits)
+		}
+	})
+
+	t.Run("the PR cannot be fetched", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := testClient(t, srv.URL)
+
+		var audits []auditRec
+		c.SetAttributionHooks(AttributionHooks{
+			TrailerEnabled: func() bool { return true },
+			Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+		})
+
+		if err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta); err == nil {
+			t.Fatal("expected an error when the PR cannot be fetched")
+		}
+		if len(audits) != 0 {
+			t.Errorf("a failed reconcile must not be audited as a success; got %d entries: %+v", len(audits), audits)
+		}
+	})
 }

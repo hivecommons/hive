@@ -1399,6 +1399,10 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 	return false
 }
 
+// prAttributionReconcileTimeout bounds the detached reconcile. Two GitHub round
+// trips (get + edit), each already capped by the App client's own 30s timeout.
+const prAttributionReconcileTimeout = 90 * time.Second
+
 // reconcilePRAttribution reconciles the attribution trailer on a verified PR
 // reported by a contributor relay (kubestellar/hive#4083). It uses the hub's own
 // record of the connection (cliBackend, model, reasoningEffort) rather than
@@ -1411,6 +1415,12 @@ func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *Cont
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Bound the work explicitly rather than inheriting the hub's process-lifetime
+	// context: this runs detached (see the call site), so without a deadline a
+	// stalled GitHub call would leak a goroutine holding a connection reference
+	// for as long as the hub runs.
+	ctx, cancel := context.WithTimeout(ctx, prAttributionReconcileTimeout)
+	defer cancel()
 	contributor.mu.Lock()
 	meta := ghpkg.InvocationMeta{
 		Agent:   contributor.role,
@@ -3019,7 +3029,17 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					verifiedPR := ""
 					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
 						verifiedPR = msg.PRURL
-						h.reconcilePRAttribution(msg.PRURL, contributor)
+						// Off the read loop, deliberately. This is cosmetic
+						// best-effort work that gates NOTHING — unlike
+						// verifyReportedPR above, whose result decides the cooldown
+						// and trust credit and so must be awaited. Inline it would
+						// add up to two GitHub round trips (bounded by the App
+						// client's 30s timeout, so ~60s worst case) to this
+						// contributor's message loop, during which its pongs are not
+						// read; wsHeartbeatTimeout is 90s, so a slow GitHub could
+						// push a perfectly healthy contributor to `Stale` in the
+						// fleet view for the sake of a PR-body edit.
+						go h.reconcilePRAttribution(msg.PRURL, contributor)
 					}
 					// #3987: normalize the completion's verdict. A verified PR always
 					// wins (shipped); with none, only an explicit no_work_needed is

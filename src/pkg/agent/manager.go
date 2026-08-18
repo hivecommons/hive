@@ -6297,10 +6297,29 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
+	return backend, model, ResolveReasoningEffort(backend, model), true
+}
+
+// ResolveReasoningEffort reports the reasoning effort the hive actually launches
+// a given backend/model pair with. Exported because the attribution trail is
+// resolved in TWO places — Manager.InvocationMetadata above for a running agent,
+// and cmd/hive's fallback that reads straight from config when the Manager does
+// not know the agent — and both must give the same answer.
+//
+// Before this existed the fallback carried its own hardcoded "low", so changing
+// agyDefaultEffort here would have left cmd/hive silently stamping PRs with an
+// effort agy was no longer being launched with. An attribution trail that
+// misreports is worse than one that says nothing.
+//
+// agy is the only backend with a rule: it REQUIRES --effort whenever --model is
+// given (without it agy ignores the model outright), and it is given no --effort
+// at all when no model is set. Every other backend takes its effort from its own
+// config, which the hive does not resolve here, so the honest answer is "".
+func ResolveReasoningEffort(backend, model string) string {
 	if backend == "agy" && model != "" {
-		effort = agyDefaultEffort
+		return agyDefaultEffort
 	}
-	return backend, model, effort, true
+	return ""
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.

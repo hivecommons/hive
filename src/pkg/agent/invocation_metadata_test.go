@@ -88,3 +88,35 @@ func TestInvocationMetadataUnknownAgent(t *testing.T) {
 		t.Errorf("unknown agent must be (\"\", \"\", \"\", false); got (%q, %q, %q, %v)", backend, model, effort, ok)
 	}
 }
+
+// TestResolveReasoningEffort pins the single rule both attribution resolvers use.
+// It exists because cmd/hive's config fallback previously carried its own
+// hardcoded "low": the two paths could disagree, and the one that stamps PR
+// bodies would have kept reporting an effort agy was no longer launched with.
+func TestResolveReasoningEffort(t *testing.T) {
+	cases := []struct {
+		backend, model, want string
+	}{
+		// agy REQUIRES --effort whenever --model is given.
+		{"agy", "gemini-3.7-flash", agyDefaultEffort},
+		// No model means agy is given no --effort at all, so claiming one
+		// would advertise an effort agy never applied.
+		{"agy", "", ""},
+		// Every other backend takes effort from its own config, which the hive
+		// does not resolve — "" is the honest answer, and an omitted field.
+		{"codex", "gpt-5.6-terra", ""},
+		{"claude", "claude-sonnet-5", ""},
+		{"bob", "", ""},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := ResolveReasoningEffort(c.backend, c.model); got != c.want {
+			t.Errorf("ResolveReasoningEffort(%q, %q) = %q, want %q", c.backend, c.model, got, c.want)
+		}
+	}
+
+	// The exported constant must not silently diverge from what agy is told.
+	if agyDefaultEffort == "" {
+		t.Error("agyDefaultEffort must name a real effort agy accepts (low/medium/high)")
+	}
+}

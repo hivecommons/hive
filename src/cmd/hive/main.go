@@ -1410,9 +1410,10 @@ func main() {
 			if !known {
 				if ac, inCfg := cfg.Agents[agentName]; inCfg {
 					backend, model = ac.Backend, ac.Model
-					if backend == "agy" && model != "" {
-						effort = "low"
-					}
+					// Same resolver the Manager uses, not a second copy of the
+					// rule: a hardcoded default here would drift silently the
+					// moment agy's default effort changed.
+					effort = agent.ResolveReasoningEffort(backend, model)
 				}
 			}
 			tool, toolVersion := github.ResolveToolVersion(backend)
