@@ -175,8 +175,14 @@ func (d *Dispatcher) execute(ctx context.Context, h Hook, p Payload) error {
 			return fmt.Errorf("notify: no notifier wired")
 		}
 		title, message := renderNotification(h, p)
-		d.notifier.Send(title, message, notifyPriority(h.Params["priority"]))
-		return nil
+		// Send takes no context (the interface stays narrow so pkg/hooks need
+		// not import pkg/notify), so the action timeout has to be enforced
+		// around it rather than inside it. Without this the budget would be
+		// decorative for the one action shipped end-to-end: a hung notifier
+		// would pin its goroutine forever and Wait() would never return.
+		return runBounded(ctx, "notify", func() {
+			d.notifier.Send(title, message, notifyPriority(h.Params["priority"]))
+		})
 
 	case ActionPause:
 		if d.pauser == nil {
@@ -243,6 +249,41 @@ func annotationAttrs(h Hook, p Payload) map[string]string {
 		attrs["pin"] = p.Pin
 	}
 	return attrs
+}
+
+// runBounded runs a context-less sink call under the action's deadline,
+// returning as soon as ctx expires even if the call itself is still stuck.
+//
+// The abandoned goroutine is NOT leaked in the usual sense: it finishes
+// whenever the sink finally returns and then exits. What this buys is that a
+// wedged sink cannot pin the dispatch goroutine or block Wait() forever, so a
+// single hung notifier degrades to one timed-out hook rather than a dispatcher
+// that never settles. The channel is buffered so that send never blocks even
+// after the receiver has walked away.
+func runBounded(ctx context.Context, action string, call func()) error {
+	// Buffered so the detached goroutine can always report and exit, even
+	// after a timeout has left no receiver.
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			// A panicking sink must not crash the process from this detached
+			// goroutine, where runOne's recover cannot reach it. Report it as
+			// an error so it is still audited as a hook FAILURE rather than
+			// being swallowed into a false success.
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("%s: panic: %v", action, r)
+			}
+		}()
+		call()
+		done <- nil
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("%s: timed out after %s", action, hookActionTimeout)
+	}
 }
 
 // firstNonEmpty returns the first argument that is not empty after trimming.

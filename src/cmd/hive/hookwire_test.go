@@ -111,6 +111,50 @@ func TestBuildHookDispatcherReloadPreservesRateLimitWindow(t *testing.T) {
 	}
 }
 
+// TestDisarmThenRearmPreservesRateLimitWindow is the bypass regression.
+//
+// Reload preserves the limiter by swapping the registry in place — but if
+// removing every hook DROPPED the dispatcher, re-adding them would build a
+// fresh one with a fresh limiter. Two ordinary config edits (remove all hooks,
+// re-add them) would then clear the storm ceiling, defeating the exact
+// protection the in-place swap exists to provide.
+func TestDisarmThenRearmPreservesRateLimitWindow(t *testing.T) {
+	resetHookDispatcher(t)
+	t.Cleanup(func() { resetHookDispatcher(t) })
+
+	armed := &config.Config{Hooks: []config.HookRule{{
+		Name: "h", On: "review_rejected", Action: "notify",
+	}}}
+	buildHookDispatcher(armed, hookSinks{}, hookTestLogger())
+	first := hookDispatcher()
+	if first == nil {
+		t.Fatal("setup: expected an armed dispatcher")
+	}
+
+	// Operator removes every hook…
+	buildHookDispatcher(&config.Config{}, hookSinks{}, hookTestLogger())
+	disarmed := hookDispatcher()
+	if disarmed == nil {
+		t.Fatal("disarming must keep the dispatcher (with an empty registry), " +
+			"or the rate-limit windows are discarded with it")
+	}
+	if disarmed.Len() != 0 {
+		t.Errorf("a disarmed dispatcher should hold no hooks, got %d", disarmed.Len())
+	}
+
+	// …then puts them back.
+	buildHookDispatcher(armed, hookSinks{}, hookTestLogger())
+	rearmed := hookDispatcher()
+
+	if rearmed != first {
+		t.Error("disarm→re-arm must reuse the SAME dispatcher; rebuilding it resets " +
+			"the rate-limit windows and gives operators a two-edit ceiling bypass")
+	}
+	if rearmed.Len() != 1 {
+		t.Errorf("expected the hook re-armed, got %d", rearmed.Len())
+	}
+}
+
 func TestBuildHookDispatcherSkipsRecompileWhenUnchanged(t *testing.T) {
 	resetHookDispatcher(t)
 	t.Cleanup(func() { resetHookDispatcher(t) })

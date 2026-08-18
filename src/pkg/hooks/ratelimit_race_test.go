@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,6 +145,51 @@ func TestFireCopiesAttrsSoCallerMayReuseTheMap(t *testing.T) {
 
 	if notifier.count() != 2 {
 		t.Errorf("both hooks should have fired against the snapshot, got %d", notifier.count())
+	}
+}
+
+// hangingNotifier blocks until released, modelling a wedged ntfy endpoint.
+type hangingNotifier struct{ release chan struct{} }
+
+func (h hangingNotifier) Send(title, message, priority string) { <-h.release }
+
+// TestHungNotifierTimesOutAndDoesNotWedgeWait: Notifier.Send takes no context,
+// so without an explicit bound the action timeout would be decorative for the
+// one action shipped end-to-end — a wedged notifier would pin its goroutine
+// and Wait() would never return. The hook must instead fail with a timeout.
+func TestHungNotifierTimesOutAndDoesNotWedgeWait(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release) // let the detached goroutine finish and exit
+
+	audit := &fakeAudit{}
+	d := NewDispatcher(
+		mustRegistry(t, Hook{Name: "hangs", On: TransitionReviewRejected, Action: ActionNotify}),
+		quietLogger(),
+		WithNotifier(hangingNotifier{release: release}),
+		WithAuditSink(audit),
+	)
+
+	// A context already past its deadline stands in for the 30s budget so the
+	// test does not have to wait it out.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	d.Fire(ctx, Payload{Transition: TransitionReviewRejected, Agent: "reviewer"})
+
+	settled := make(chan struct{})
+	go func() { d.Wait(); close(settled) }()
+	select {
+	case <-settled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait() never returned: a hung notifier wedged the dispatcher")
+	}
+
+	failures := audit.withAction(AuditHookFailed)
+	if len(failures) != 1 {
+		t.Fatalf("expected the timeout to be audited as a failure, got %d entries", len(failures))
+	}
+	if msg, _ := failures[0].fields["error"].(string); !strings.Contains(msg, "timed out") {
+		t.Errorf("expected a timeout error, got %q", msg)
 	}
 }
 

@@ -91,7 +91,16 @@ func buildHookDispatcher(cfg *config.Config, sinks hookSinks, logger *slog.Logge
 	globalHookDispatcher.built = true
 
 	if len(cfg.Hooks) == 0 {
-		globalHookDispatcher.dispatcher = nil
+		// Disarm by swapping in an EMPTY registry rather than dropping the
+		// dispatcher. Nil'ing it here would discard the rate-limit windows
+		// with it, so "remove all hooks, re-add them" — two ordinary config
+		// edits — would rebuild a fresh limiter and clear the storm ceiling,
+		// defeating the very bypass the in-place swap below exists to prevent.
+		// An empty registry is already a total no-op (one map lookup per
+		// transition), so keeping the dispatcher costs nothing.
+		if globalHookDispatcher.dispatcher != nil {
+			globalHookDispatcher.dispatcher.SetRegistry(nil)
+		}
 		return
 	}
 
