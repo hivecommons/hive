@@ -726,6 +726,50 @@ test('auth_response omits reasoning_effort when empty and not agy-with-model', (
   } finally { teardown(relay); }
 });
 
+test('auth_response reports NO effort for agy without a model — agy is given no --effort flag there', () => {
+  // agy only receives --effort when it also receives --model (buildLaunchCommand
+  // pairs them deliberately). Reporting a raw AGENT_REASONING_EFFORT in that case
+  // would advertise to the dashboard an effort agy never actually applied.
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_REASONING_EFFORT: 'high' } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.reasoning_effort, undefined,
+      'no --effort reaches agy without a model, so nothing should be reported');
+  } finally { teardown(relay); }
+});
+
+test('the reported effort and the launched --effort come from ONE resolver', () => {
+  // The effort now travels twice (command line + auth_response). These must not
+  // be derived independently, or they drift -- the same failure the launch
+  // command itself had in #2203 bug 1.
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: 'gemini-3.7-flash', AGENT_REASONING_EFFORT: 'medium' } });
+  try {
+    const resolved = relay.effectiveReasoningEffort();
+    assert.strictEqual(resolved, 'medium');
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.reasoning_effort, resolved, 'auth_response must report the resolved effort');
+    assert.match(relay.buildLaunchCommand(), new RegExp('--effort ' + resolved),
+      'the launch command must carry the SAME resolved effort');
+  } finally { teardown(relay); }
+});
+
+test('an effort agy rejects falls back to the default, and that fallback is what gets reported', () => {
+  // codex accepts "minimal"; agy does not, and agy silently drops --model when
+  // paired with an effort it rejects. AGY_DEFAULT_EFFORT is what actually runs,
+  // so that is what the dashboard must be told.
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: 'gemini-3.7-flash', AGENT_REASONING_EFFORT: 'minimal' } });
+  try {
+    assert.strictEqual(relay.effectiveReasoningEffort(), 'low');
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.reasoning_effort, 'low',
+      'reporting the raw env var here would claim an effort agy rejected');
+  } finally { teardown(relay); }
+});
+
 test('relaunchCLI() leaves cliReady false until readiness is confirmed', () => {
   const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
   try {

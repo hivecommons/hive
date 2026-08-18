@@ -469,16 +469,48 @@ function resolveBackend() {
   return cachedBackendResolution;
 }
 
+// modelFlagFor reports the --model flag this backend actually receives, or ''
+// when the backend takes no --model at all. Shared by the launch command and by
+// effectiveReasoningEffort() below, which must agree on whether a model is in
+// play — agy's effort is conditional on exactly that.
+function modelFlagFor() {
+  return MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
+}
+
+// effectiveReasoningEffort is the SINGLE source of truth for the effort actually
+// in effect for this launch — the value the CLI is really running with, not the
+// value the contributor happened to export.
+//
+// It exists because the effort now travels twice: onto the command line here,
+// and up to the hub in auth_response so the dashboard can show it (#4084).
+// Deriving it independently in those two places is the same drift this file
+// already warns about for the launch command itself (#2203 bug 1, the comment
+// above cachedLaunchCommand), and it would misreport in two concrete ways:
+//
+//   - agy WITHOUT a model gets no --effort flag at all, so reporting a raw
+//     AGENT_REASONING_EFFORT there advertises an effort agy never applied.
+//   - agy WITH a model gets agyEffort, which falls back to AGY_DEFAULT_EFFORT
+//     when AGENT_REASONING_EFFORT is unset or is a value agy rejects (codex's
+//     vocabulary is wider), so the raw env var is the wrong answer there too.
+//
+// Returns '' when nothing is in effect; auth_response omits the field entirely
+// in that case rather than sending an empty string.
+function effectiveReasoningEffort() {
+  // agy is the only backend whose effort is conditional on a model being passed.
+  if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
+  return REASONING_EFFORT || '';
+}
+
 function buildLaunchCommand() {
   if (cachedLaunchCommand) return cachedLaunchCommand;
   const { cmd, perm } = resolveBackend();
-  const modelFlag = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? `--model ${MODEL}` : '';
+  const modelFlag = modelFlagFor();
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
     ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
     : '';
   // Paired with modelFlag, never on its own: agy without --model needs no
   // --effort, and passing one alone would be a flag agy has no model to apply.
-  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${agyEffort}` : '';
+  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${effectiveReasoningEffort()}` : '';
   cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
@@ -1832,7 +1864,7 @@ function handleMessage(data, hub) {
         registration_token: hub.regToken,
         cli_backend: BACKEND,
         model: MODEL,
-        reasoning_effort: (BACKEND === 'agy' && MODEL) ? agyEffort : (REASONING_EFFORT || undefined),
+        reasoning_effort: effectiveReasoningEffort() || undefined,
         role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.
@@ -2148,6 +2180,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     cleanup,
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
+    effectiveReasoningEffort,
     MAX_TASK_CLI_RESTARTS,
     setCliReady: (v) => { cliReady = v; },
     getCliReady: () => cliReady,

@@ -5472,18 +5472,28 @@ function ccTaskRefLink(task){
   if(!m)return '<span class="ref">'+esc(task)+'</span>';
   return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
 }
+// ccFormatLoadout renders one contributor's loadout suffix -- the SHARED
+// formatter for both Live Activity views (the Operations rail via ccNarrate and
+// the Onboarding feed below), so the two cannot drift apart again.
+//
+//   via codex CLI with gpt-5.6-terra (high)   -- everything known
+//   via codex CLI with gpt-5.6-terra          -- no effort
+//   via codex CLI (high)                      -- effort but no model
+//   via codex CLI                             -- backend only
+//   (empty)                                   -- no backend: nothing to say
+//
+// Effort is rendered INDEPENDENTLY of model: a contributor can set
+// AGENT_REASONING_EFFORT without AGENT_MODEL (codex then runs its default model
+// at that effort), and nesting the effort inside the model branch would drop
+// exactly the value this view exists to surface. Every branch is guarded, so a
+// bare '()' or a dangling 'with' can never be emitted.
 function ccFormatLoadout(e,cls){
   if(!e||!e.cli)return '';
-  var c=esc(e.cli);
   var m=e.model?esc(e.model):'';
   var ef=e.effort?esc(e.effort):'';
-  var text='via '+c+' CLI';
-  if(m){
-    text+=' with '+m;
-    if(ef){
-      text+=' ('+ef+')';
-    }
-  }
+  var text='via '+esc(e.cli)+' CLI';
+  if(m)text+=' with '+m;
+  if(ef)text+=' ('+ef+')';
   return ' <span class="'+(cls||'feed-cli')+'">'+text+'</span>';
 }
 window.ccFormatLoadout=ccFormatLoadout;
@@ -5935,6 +5945,23 @@ window.addEventListener('scroll',function(){ccCloseQueueMenus();},true);
 </script>
 <script>
 let prevCount=0;
+// ── Cross-block helper resolution ────────────────────────────────────────────
+// esc() and ccFormatLoadout() are declared inside the OPERATIONS script block's
+// IIFE, so they are not in scope here; they reach this block only through the
+// window.* republish at the end of that IIFE. A BARE cross-IIFE reference is
+// exactly the shape that "threw ReferenceError on every dossier render" (see the
+// ccProjectName note at the top of that IIFE), and it fails closed: if that IIFE
+// ever throws before the republish -- it has regressed that way three times
+// (#2603/#2604/#2606) -- the reference throws, poll()'s catch swallows it, and
+// this feed silently freezes on a 3s loop with nothing in the console.
+// Resolve through window with REAL local fallbacks instead, so the worst case is
+// a feed that loses the loadout suffix rather than one that stops updating. The
+// esc fallback is a genuine escaper, never a pass-through: falling back to no
+// escaping would turn a rendering failure into an injection bug.
+const feedEsc=(typeof window!=='undefined'&&window.esc)||function(s){return (s==null?'':String(s))
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');};
+const feedLoadout=(typeof window!=='undefined'&&window.ccFormatLoadout)||function(){return '';};
 async function poll(){try{
 const[statusRes,actRes]=await Promise.all([fetch('/api/contribute/status'),fetch('/api/contribute/activity')]);
 const status=await statusRes.json();
@@ -5951,11 +5978,11 @@ const icons={joined:'🟢',left:'🔴','picked up':'🔧',completed:'✅',failed
 const verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up','completed':'completed','failed':'failed'};
 const icon=icons[e.action]||'⚡';
 const verb=verbs[e.action]||e.action;
-const taskInfo=e.task?' <span class="feed-cli">'+esc(e.task)+'</span>':'';
-const role=e.role?' as <span class="feed-role">'+esc(e.role)+'</span>':'';
-const cliModel=(window.ccFormatLoadout||ccFormatLoadout)(e,'feed-cli');
+const taskInfo=e.task?' <span class="feed-cli">'+feedEsc(e.task)+'</span>':'';
+const role=e.role?' as <span class="feed-role">'+feedEsc(e.role)+'</span>':'';
+const cliModel=feedLoadout(e,'feed-cli');
 return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
-'<div class="feed-text">'+icon+' <b>'+esc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
+'<div class="feed-text">'+icon+' <b>'+feedEsc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'
 }).join('');
 if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
