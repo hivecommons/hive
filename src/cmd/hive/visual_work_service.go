@@ -38,6 +38,7 @@ type normalVisualArtifactSource struct {
 	stateDir          string
 	timeout           time.Duration
 	github            *hivegithub.Client
+	visualGitHub      *hivegithub.Client
 	gitTransportToken func(context.Context) (string, error)
 }
 
@@ -45,7 +46,7 @@ func (source *normalVisualArtifactSource) Fetch(ctx context.Context) (integrated
 	if source.gitTransportToken != nil {
 		ctx = gittransport.WithControllerTokenSource(ctx, source.gitTransportToken)
 	}
-	return integrated.FetchNormalVisualWork(ctx, source.stateDir, source.timeout, source.github)
+	return integrated.FetchNormalVisualWork(ctx, source.stateDir, source.timeout, source.github, source.visualGitHub)
 }
 
 func (source *normalVisualArtifactSource) Consume(workflow integrated.WorkflowRunEvidence, allowAlreadyConsumed bool) error {
@@ -427,6 +428,7 @@ func configureNormalVisualWorkRunner(
 	sched *scheduler.Scheduler,
 	manager *agent.Manager,
 	github *hivegithub.Client,
+	visualGitHub *hivegithub.Client,
 	gitTransportToken func(context.Context) (string, error),
 	dashboardReady func() bool,
 	logger *slog.Logger,
@@ -459,6 +461,7 @@ func configureNormalVisualWorkRunner(
 	}
 	source := &normalVisualArtifactSource{
 		stateDir: installed.StateDir, timeout: normalVisualArtifactFetchTimeout, github: github,
+		visualGitHub:      visualGitHub,
 		gitTransportToken: gitTransportToken,
 	}
 	repairer := &normalVisualRepairer{

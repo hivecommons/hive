@@ -307,6 +307,86 @@ func TestDispatchUsesReturnedRunIDWithoutRecencySearch(t *testing.T) {
 	}
 }
 
+func TestWorkflowDispatchUsesOptionalAppWhileReadsStayOnCoreApp(t *testing.T) {
+	correlation := ""
+	visualPosts := 0
+	coreReads := 0
+	visualServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method != http.MethodPost || request.URL.Path != "/repos/owner/repo/actions/workflows/hive-visual-hive.yml/dispatches" {
+			http.Error(writer, "optional App received non-dispatch request", http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Inputs map[string]any `json:"inputs"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		correlation, _ = body.Inputs[workflowDispatchInput].(string)
+		visualPosts++
+		_, _ = io.WriteString(writer, `{"workflow_run_id":73,"html_url":"https://example.test/runs/73"}`)
+	}))
+	t.Cleanup(visualServer.Close)
+	coreServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodPost {
+			t.Errorf("core Hive App received Visual Hive dispatch mutation: %s", request.URL.Path)
+			http.Error(writer, "wrong writer", http.StatusForbidden)
+			return
+		}
+		if request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/actions/runs/73" {
+			coreReads++
+			_, _ = fmt.Fprintf(writer, `{"id":73,"display_title":%q,"event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success","html_url":"https://example.test/runs/73","head_sha":"exact"}`, workflowDispatchDisplayTitle(correlation))
+			return
+		}
+		http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+	}))
+	t.Cleanup(coreServer.Close)
+
+	stateDir := t.TempDir()
+	store, err := NewStore(filepath.Join(stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := hivegithub.NewClientForTest(coreServer.URL, "owner", []string{"repo"}, slog.Default())
+	visual := hivegithub.NewClientForTest(visualServer.URL, "owner", []string{"repo"}, slog.Default())
+	ctx := WithVisualHiveGitHubClients(context.Background(), visual, visual)
+	config := dispatchTestConfig(stateDir)
+	config.SetupAuthorizationAppID = 1
+	config.VisualHiveGitHubAppID = 2
+	selected, intent, err := dispatchAndWaitAttempt(ctx, core, store, config, "owner", "repo", "hive-visual-hive.yml", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visualPosts != 1 || coreReads != 1 || selected.GetID() != 73 || intent.RunID != 73 {
+		t.Fatalf("split GitHub capability routing failed: visual_posts=%d core_reads=%d selected=%+v intent=%+v", visualPosts, coreReads, selected, intent)
+	}
+}
+
+func TestWorkflowDispatchFailsBeforeMutationWithoutDedicatedApp(t *testing.T) {
+	stateDir := t.TempDir()
+	store, err := NewStore(filepath.Join(stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := dispatchTestConfig(stateDir)
+	config.SetupAuthorizationAppID = 1
+	config.VisualHiveGitHubAppID = 2
+	client := hivegithub.NewClientForTest("https://example.invalid", "owner", []string{"repo"}, slog.Default())
+	_, intent, err := dispatchAndWaitAttempt(context.Background(), client, store, config, "owner", "repo", "hive-visual-hive.yml", "main")
+	if err == nil || !strings.Contains(err.Error(), "dedicated Visual Hive workflow App runtime is unavailable") {
+		t.Fatalf("missing optional App did not fail closed: %v", err)
+	}
+	if !intent.DispatchAttemptedAt.IsZero() || intent.RequestDigest != "" {
+		t.Fatalf("missing optional App was recorded as an ambiguous mutation: %+v", intent)
+	}
+	persisted, exists, loadErr := store.LoadWorkflowDispatchIntent()
+	if loadErr != nil || !exists || !persisted.DispatchAttemptedAt.IsZero() || persisted.RequestDigest != "" {
+		t.Fatalf("precondition failure contaminated dispatch recovery state: exists=%t intent=%+v err=%v", exists, persisted, loadErr)
+	}
+}
+
 func TestExactWorkflowRunBindingStabilizesTransientDisplayTitle(t *testing.T) {
 	intent := WorkflowDispatchIntent{
 		RunID:                51,

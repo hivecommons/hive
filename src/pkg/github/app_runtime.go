@@ -67,15 +67,26 @@ func (c *Client) ResolveAppRuntimeIdentity(ctx context.Context, repository strin
 	if bot.GetID() <= 0 || !strings.EqualFold(strings.TrimSpace(bot.GetLogin()), botLogin) || !strings.EqualFold(strings.TrimSpace(bot.GetType()), "Bot") {
 		return AppRuntimeIdentity{}, fmt.Errorf("GitHub App bot identity is invalid: login=%q id=%d type=%q", bot.GetLogin(), bot.GetID(), bot.GetType())
 	}
-	permissions := map[string]string{
-		"actions":       normalizeAppPermission(installation.ActionsPerm),
-		"workflows":     normalizeAppPermission(installation.WorkflowsPerm),
-		"checks":        normalizeAppPermission(installation.ChecksPerm),
-		"statuses":      normalizeAppPermission(installation.StatusesPerm),
-		"contents":      normalizeAppPermission(installation.ContentsPerm),
-		"issues":        normalizeAppPermission(installation.IssuesPerm),
-		"pull_requests": normalizeAppPermission(installation.PullsPerm),
-		"metadata":      normalizeAppPermission(installation.MetadataPerm),
+	permissions := make(map[string]string, len(installation.Permissions))
+	for name, granted := range installation.Permissions {
+		if normalized := normalizeAppPermission(granted); normalized != "" {
+			permissions[name] = normalized
+		}
+	}
+	// Compatibility with custom forge clients and older test fixtures that do
+	// not yet expose the complete permission map. Production GitHub App
+	// verification always supplies InstallationInfo.Permissions.
+	if len(permissions) == 0 {
+		permissions = map[string]string{
+			"actions":       normalizeAppPermission(installation.ActionsPerm),
+			"workflows":     normalizeAppPermission(installation.WorkflowsPerm),
+			"checks":        normalizeAppPermission(installation.ChecksPerm),
+			"statuses":      normalizeAppPermission(installation.StatusesPerm),
+			"contents":      normalizeAppPermission(installation.ContentsPerm),
+			"issues":        normalizeAppPermission(installation.IssuesPerm),
+			"pull_requests": normalizeAppPermission(installation.PullsPerm),
+			"metadata":      normalizeAppPermission(installation.MetadataPerm),
+		}
 	}
 	permissionDigest, err := digestAppRuntimeValue(permissions)
 	if err != nil {
@@ -102,8 +113,53 @@ func (c *Client) ResolveAppRuntimeIdentity(ctx context.Context, repository strin
 	return identity, nil
 }
 
-// RequireVisualHivePermissions rejects an installation before any setup or
-// controller mutation if it cannot perform the complete managed lifecycle.
+// RequireCoreHiveLifecyclePermissions rejects an installation before Hive
+// performs repository lifecycle writes. The ordinary Hive App deliberately
+// does not need Actions or Commit statuses write access: those two optional
+// Visual Hive capabilities belong to the dedicated execution App.
+func (identity AppRuntimeIdentity) RequireCoreHiveLifecyclePermissions() error {
+	for _, permission := range []string{"workflows", "contents", "issues", "pull_requests"} {
+		if identity.Permissions[permission] != "write" {
+			return fmt.Errorf("core GitHub App permission %s must be write; granted=%q", permission, identity.Permissions[permission])
+		}
+	}
+	for _, permission := range []string{"actions", "checks", "statuses", "metadata"} {
+		if granted := identity.Permissions[permission]; granted != "read" && granted != "write" {
+			return fmt.Errorf("core GitHub App permission %s must be read or write; granted=%q", permission, granted)
+		}
+	}
+	return nil
+}
+
+// RequireVisualHiveExecutionPermissions validates the deliberately narrow
+// optional App used by Hive to dispatch Visual Hive workflows and publish the
+// provenance-bound setup status. It rejects every Hive lifecycle write grant
+// represented in the audited runtime identity so a misconfigured optional App
+// cannot silently become a second lifecycle writer.
+func (identity AppRuntimeIdentity) RequireVisualHiveExecutionPermissions() error {
+	for _, permission := range []string{"actions", "statuses"} {
+		if identity.Permissions[permission] != "write" {
+			return fmt.Errorf("Visual Hive GitHub App permission %s must be write; granted=%q", permission, identity.Permissions[permission])
+		}
+	}
+	if granted := identity.Permissions["metadata"]; granted != "read" {
+		return fmt.Errorf("Visual Hive GitHub App permission metadata must be read; granted=%q", granted)
+	}
+	for permission, granted := range identity.Permissions {
+		switch permission {
+		case "actions", "statuses", "metadata":
+		default:
+			if granted != "" && granted != "none" {
+				return fmt.Errorf("Visual Hive GitHub App permission %s must not be granted; granted=%q", permission, granted)
+			}
+		}
+	}
+	return nil
+}
+
+// RequireVisualHivePermissions retains the legacy single-App contract for
+// existing installations. New hosted installs validate the core and optional
+// execution Apps independently with the two methods above.
 func (identity AppRuntimeIdentity) RequireVisualHivePermissions() error {
 	for _, permission := range []string{"actions", "workflows", "statuses", "contents", "issues", "pull_requests"} {
 		if identity.Permissions[permission] != "write" {

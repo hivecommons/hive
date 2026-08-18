@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	dashboardOperatorHandoffSchema = "hive.dashboard-operator-handoff.v1"
+	dashboardOperatorHandoffSchema = "hive.dashboard-operator-handoff.v2"
 	dashboardOperatorHandoffDir    = "/var/run/hive/operator-handoffs"
 	dashboardOperatorHandoffTTL    = 2 * time.Minute
 	writeOperatorHandoffCommand    = "_write-dashboard-operator-handoff"
@@ -54,13 +54,23 @@ type dashboardOperatorHandoff struct {
 	Actor              hivegithub.AuthenticatedUserIdentity `json:"actor"`
 	Writer             hivegithub.AuthenticatedUserIdentity `json:"writer"`
 	App                hivegithub.AppRuntimeIdentity        `json:"app,omitempty"`
+	VisualWriter       hivegithub.AuthenticatedUserIdentity `json:"visual_writer"`
+	VisualApp          hivegithub.AppRuntimeIdentity        `json:"visual_app,omitempty"`
 	IssuedAt           time.Time                            `json:"issued_at"`
 	ExpiresAt          time.Time                            `json:"expires_at"`
 	Nonce              string                               `json:"nonce"`
 	BindingSHA256      string                               `json:"binding_sha256"`
 }
 
-func createDashboardOperatorHandoff(ctx context.Context, repository, requestID, expectedPlan string, actor hivegithub.AuthenticatedUserIdentity, runtime liveGitHubRuntimeSnapshot) (string, error) {
+func createDashboardOperatorHandoff(ctx context.Context, repository, requestID, expectedPlan string, actor hivegithub.AuthenticatedUserIdentity, runtimes ...liveGitHubRuntimeSnapshot) (string, error) {
+	if len(runtimes) == 0 || len(runtimes) > 2 {
+		return "", errors.New("dashboard operator handoff requires core and optional Visual Hive runtime bindings")
+	}
+	runtime := runtimes[0]
+	visualRuntime := runtime
+	if len(runtimes) == 2 {
+		visualRuntime = runtimes[1]
+	}
 	nonce := make([]byte, 24)
 	if _, err := cryptorand.Read(nonce); err != nil {
 		return "", fmt.Errorf("create dashboard operator nonce: %w", err)
@@ -69,6 +79,7 @@ func createDashboardOperatorHandoff(ctx context.Context, repository, requestID, 
 	handoff := dashboardOperatorHandoff{
 		SchemaVersion: dashboardOperatorHandoffSchema, Repository: repository, RequestID: requestID,
 		ExpectedPlanSHA256: expectedPlan, Actor: actor, Writer: runtime.Writer, App: runtime.App,
+		VisualWriter: visualRuntime.Writer, VisualApp: visualRuntime.App,
 		IssuedAt: now, ExpiresAt: now.Add(dashboardOperatorHandoffTTL), Nonce: hex.EncodeToString(nonce),
 	}
 	var err error
@@ -103,7 +114,7 @@ func consumeDashboardOperatorHandoff(ctx context.Context, path, repository, requ
 	now := dashboardOperatorHandoffNow()
 	if handoff.SchemaVersion != dashboardOperatorHandoffSchema || handoff.BindingSHA256 != expectedDigest ||
 		!strings.EqualFold(handoff.Repository, repository) || handoff.RequestID != requestID || handoff.ExpectedPlanSHA256 != expectedPlan ||
-		handoff.Actor.ID <= 0 || !strings.EqualFold(handoff.Actor.Type, "User") || handoff.Writer.ID <= 0 ||
+		handoff.Actor.ID <= 0 || !strings.EqualFold(handoff.Actor.Type, "User") || handoff.Writer.ID <= 0 || handoff.VisualWriter.ID <= 0 ||
 		handoff.IssuedAt.IsZero() || handoff.ExpiresAt.IsZero() || now.Before(handoff.IssuedAt.Add(-30*time.Second)) || !handoff.ExpiresAt.After(now) ||
 		!regexp.MustCompile(`^[a-f0-9]{48}$`).MatchString(handoff.Nonce) {
 		return dashboardOperatorHandoff{}, errors.New("dashboard operator handoff is expired, malformed, or bound to different setup inputs")

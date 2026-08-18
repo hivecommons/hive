@@ -849,9 +849,9 @@ type HubServer struct {
 	upgradePause       UpgradePauseState
 	upgradePauseLoaded bool
 	upgradePauseMu     sync.Mutex // guards upgradePause + upgradePauseLoaded
-	httpServer      *http.Server
-	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters        map[string]ClusterConfig
+	httpServer         *http.Server
+	httpMu             sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters           map[string]ClusterConfig
 
 	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
 	// vanity host servable (see makeVanityHostServable). nil in production, where
@@ -874,6 +874,10 @@ type HubServer struct {
 	claimWorkInFlight sync.Map                         // hive ID → struct{}
 	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu sync.RWMutex
+	// visualHiveTokenBroker is optional. When configured, its private App key
+	// remains in the Hub and only sealed one-hour repository-scoped tokens cross
+	// the authenticated heartbeat to a spoke.
+	visualHiveTokenBroker *VisualHiveTokenBroker
 
 	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
 	// having a live dashboard session. It powers the "logged into their hive right
@@ -1243,6 +1247,14 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// Fleet error-rate history (#3995, phase 2c): loads its persisted
 		// ring from disk here, before the first heartbeat can append.
 		reachHistory: newReachHistoryStore(reachHistoryPath, logger),
+	}
+	visualHiveBroker, visualHiveBrokerErr := newVisualHiveTokenBrokerFromEnvironment(logger)
+	if visualHiveBrokerErr != nil {
+		// The feature is optional, but a partially configured broker must fail
+		// visibly and stay disabled rather than falling back to the core Hive App.
+		logger.Error("Visual Hive GitHub App broker is disabled", "error", visualHiveBrokerErr)
+	} else {
+		s.visualHiveTokenBroker = visualHiveBroker
 	}
 
 	// Restore any persisted rotation BEFORE anything mints or verifies. A hub
@@ -2095,6 +2107,29 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		OK:         true,
 		HubGitHash: s.hubGitHash,
 		LatestSHA:  latestSHA,
+	}
+
+	// The optional Visual Hive App is a Hub-side token broker, not a second
+	// lifecycle writer. The repository comes from the Hub-owned SaaS record,
+	// never from the heartbeat request, and the resulting token is sealed to the
+	// pinned public key of this exact heartbeat-authenticated spoke.
+	if payload.VisualHiveTokenRequest != nil {
+		hosted := loadSaaSHive(payload.HiveID)
+		trustedRepository := visualHiveRepositoryForHostedHive(hosted)
+		switch {
+		case s.visualHiveTokenBroker == nil:
+			resp.VisualHiveTokenError = "the optional Visual Hive GitHub App broker is not configured"
+		case trustedRepository == "":
+			resp.VisualHiveTokenError = "the hosted hive has no exact public-GitHub repository binding for Visual Hive"
+		default:
+			lease, leaseErr := s.visualHiveTokenBroker.Issue(r.Context(), payload.HiveID, trustedRepository, payload.VisualHiveTokenRequest)
+			if leaseErr != nil {
+				resp.VisualHiveTokenError = sanitizeProseField(leaseErr.Error())
+				s.logger.Warn("Visual Hive App token lease unavailable", "hive_id", payload.HiveID, "repository", trustedRepository, "error", leaseErr)
+			} else {
+				resp.VisualHiveTokenLease = lease
+			}
+		}
 	}
 
 	if entry.IsPublic != payload.IsPublic {

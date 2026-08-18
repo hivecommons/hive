@@ -12,6 +12,10 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_SINGLETON_LOCK` | No | `/var/run/hive-metrics/hive.singleton.lock` when available, otherwise OS temp dir | Overrides the process singleton lock path. Set exactly `off` only for local development where duplicate processes are intentional. |
 | `HIVE_GITHUB_TOKEN` | Required unless GitHub App auth is configured | none | Main PAT fallback for `github.token`; also used by fleet/stat fallback paths and some deployment manifests. |
 | `GH_APP_KEY_FILE` | No | configured `github.key_file`, then `/data/gh-app-key.pem` or `/secrets/gh-app-key.pem` in provisioned paths | GitHub App private-key file fallback. |
+| `HIVE_VISUAL_HIVE_GITHUB_APP_ID` | No | none | Hub-only App ID for the optional Visual Hive execution/status App. Both this value and its key file must be present to enable the broker. |
+| `HIVE_VISUAL_HIVE_GITHUB_APP_KEY_FILE` | No | none | Hub-only private-key file for the optional Visual Hive App. The key never leaves the Hub. |
+| `HIVE_VISUAL_HIVE_GITHUB_APP_ENABLED` | No | `false` | Per-hosted-Hive opt-in. Must equal `true` before that spoke creates token-recipient state or requests an optional App lease. |
+| `HIVE_VISUAL_HIVE_GITHUB_TOKEN` | Internal | none | Short-lived, memory-derived token passed only to the bounded setup child; ambient values are stripped and never used by ordinary agents. |
 | `DASHBOARD_AUTH_TOKEN` | No | none | Kubernetes/provisioned secret name for the dashboard shared token; used before `HIVE_DASHBOARD_TOKEN` when `dashboard.auth_token` is empty. |
 | `HIVE_DASHBOARD_TOKEN` | No | none | Dashboard/API shared-token fallback and default `hivectl --token-env` variable. |
 | `HIVE_AUTHORIZED_USERS` | No | none | Comma-separated direct-route dashboard allowlist, with optional `user:role` entries. Used when `dashboard.authorized_users` is empty. |

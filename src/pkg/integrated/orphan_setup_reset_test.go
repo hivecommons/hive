@@ -38,6 +38,27 @@ func TestPlanOrphanedSetupResetBindsExactMergedSetup(t *testing.T) {
 	}
 }
 
+func TestPlanOrphanedSetupResetAcceptsPreviousManagedContractSchema(t *testing.T) {
+	fixture := newOrphanSetupFixture(t)
+	defer fixture.server.Close()
+	var installed installedRepositoryConfig
+	if err := json.Unmarshal(fixture.files[".hive/integrated.json"], &installed); err != nil {
+		t.Fatal(err)
+	}
+	installed.SchemaVersion = previousManagedRepositoryConfigSchema
+	contract, err := json.Marshal(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.files[".hive/integrated.json"] = contract
+	plan, err := PlanOrphanedSetupReset(context.Background(), OrphanSetupResetOptions{
+		Repository: "owner/repo", StateDir: t.TempDir(), GitHub: fixture.client,
+	})
+	if err != nil || !plan.RecoveryAvailable {
+		t.Fatalf("previous managed contract schema was not recoverable: plan=%+v err=%v", plan, err)
+	}
+}
+
 func TestPlanOrphanedSetupResetRejectsManagedDriftAndPostSetupLifecycle(t *testing.T) {
 	for _, test := range []struct {
 		name   string

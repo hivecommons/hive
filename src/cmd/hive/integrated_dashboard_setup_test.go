@@ -12,11 +12,12 @@ import (
 	"github.com/kubestellar/hive/pkg/dashboard"
 )
 
-func TestDashboardSetupEnvironmentReplacesOnlyGitHubToken(t *testing.T) {
+func TestDashboardSetupEnvironmentSeparatesCoreAndVisualHiveTokens(t *testing.T) {
 	t.Setenv("HIVE_GITHUB_TOKEN", "stale-token")
+	t.Setenv("HIVE_VISUAL_HIVE_GITHUB_TOKEN", "stale-visual-token")
 	t.Setenv("HIVE_SETUP_TEST_KEEP", "kept")
-	environment := dashboardSetupEnvironment("fresh-token")
-	var tokens, kept int
+	environment := dashboardSetupEnvironment("fresh-token", "fresh-visual-token")
+	var tokens, visualTokens, kept int
 	for _, value := range environment {
 		switch {
 		case strings.HasPrefix(strings.ToUpper(value), "HIVE_GITHUB_TOKEN="):
@@ -24,15 +25,55 @@ func TestDashboardSetupEnvironmentReplacesOnlyGitHubToken(t *testing.T) {
 			if value != "HIVE_GITHUB_TOKEN=fresh-token" {
 				t.Fatalf("unexpected token environment entry")
 			}
+		case strings.HasPrefix(strings.ToUpper(value), "HIVE_VISUAL_HIVE_GITHUB_TOKEN="):
+			visualTokens++
+			if value != "HIVE_VISUAL_HIVE_GITHUB_TOKEN=fresh-visual-token" {
+				t.Fatalf("unexpected Visual Hive token environment entry")
+			}
 		case value == "HIVE_SETUP_TEST_KEEP=kept":
 			kept++
 		}
 	}
-	if tokens != 1 || kept != 1 {
-		t.Fatalf("environment tokens=%d kept=%d", tokens, kept)
+	if tokens != 1 || visualTokens != 1 || kept != 1 {
+		t.Fatalf("environment core_tokens=%d visual_tokens=%d kept=%d", tokens, visualTokens, kept)
 	}
-	if os.Getenv("HIVE_GITHUB_TOKEN") != "stale-token" {
-		t.Fatal("building the child environment changed the parent token")
+	if os.Getenv("HIVE_GITHUB_TOKEN") != "stale-token" || os.Getenv("HIVE_VISUAL_HIVE_GITHUB_TOKEN") != "stale-visual-token" {
+		t.Fatal("building the child environment changed a parent token")
+	}
+	withoutVisual := dashboardSetupEnvironment("fresh-token")
+	for _, value := range withoutVisual {
+		if strings.HasPrefix(strings.ToUpper(value), "HIVE_VISUAL_HIVE_GITHUB_TOKEN=") {
+			t.Fatal("a stale Visual Hive token reached the child environment")
+		}
+	}
+}
+
+func TestResolveDashboardVisualHiveRuntimeRequiresDistinctBrokeredApp(t *testing.T) {
+	prior := dashboardLiveVisualHiveGitHubRuntime.Load()
+	store := &liveGitHubRuntimeStore{}
+	dashboardLiveVisualHiveGitHubRuntime.Store(store)
+	t.Cleanup(func() { dashboardLiveVisualHiveGitHubRuntime.Store(prior) })
+
+	core := testLiveAppRuntimeSnapshot()
+	visual := testDedicatedVisualAppRuntimeSnapshot(core)
+	if _, err := store.Publish(visual); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveDashboardVisualHiveRuntime(context.Background(), core)
+	if err != nil || resolved.App.AppID != visual.App.AppID || resolved.App.AppID == core.App.AppID {
+		t.Fatalf("distinct brokered Visual Hive App was not resolved: runtime=%+v err=%v", resolved, err)
+	}
+
+	store.Clear()
+	if _, err := resolveDashboardVisualHiveRuntime(context.Background(), core); err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("missing Visual Hive App runtime was accepted: %v", err)
+	}
+	visual.App.AppID = core.App.AppID
+	if _, err := store.Publish(visual); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveDashboardVisualHiveRuntime(context.Background(), core); err == nil || !strings.Contains(err.Error(), "distinct") {
+		t.Fatalf("shared core/Visual Hive App was accepted: %v", err)
 	}
 }
 

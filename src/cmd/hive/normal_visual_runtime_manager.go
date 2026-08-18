@@ -54,42 +54,45 @@ type normalVisualRuntimeInstance interface {
 	BeadDirs() []string
 }
 
-type normalVisualRuntimeFactory func(integrated.Config, liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error)
+type normalVisualRuntimeFactory func(integrated.Config, liveGitHubRuntimeSnapshot, liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error)
 
 // normalVisualRuntimeManager is the single in-process owner of the additive
 // Visual Hive controller. It observes only Hive's authoritative installed
 // contract and never creates a second ordinary Manager or scheduler.
 type normalVisualRuntimeManager struct {
-	mu                   sync.Mutex
-	process              context.Context
-	normal               *config.Config
-	load                 func(*config.Config) (integrated.Config, bool, error)
-	factory              normalVisualRuntimeFactory
-	githubRuntime        func() (liveGitHubRuntimeSnapshot, bool)
-	logger               *slog.Logger
-	active               normalVisualRuntimeInstance
-	activeGitHubBinding  string
-	activeGitHubRevision uint64
-	beadDirs             []string
-	suppressed           bool
-	rebindRequired       bool
-	lastActivationError  string
-	lastReconciledAt     time.Time
+	mu                         sync.Mutex
+	process                    context.Context
+	normal                     *config.Config
+	load                       func(*config.Config) (integrated.Config, bool, error)
+	factory                    normalVisualRuntimeFactory
+	githubRuntime              func() (liveGitHubRuntimeSnapshot, bool)
+	visualGitHubRuntime        func() (liveGitHubRuntimeSnapshot, bool)
+	logger                     *slog.Logger
+	active                     normalVisualRuntimeInstance
+	activeGitHubBinding        string
+	activeGitHubRevision       uint64
+	activeVisualGitHubRevision uint64
+	beadDirs                   []string
+	suppressed                 bool
+	rebindRequired             bool
+	lastActivationError        string
+	lastReconciledAt           time.Time
 }
 
 type normalVisualRuntimeDependencies struct {
-	ProcessContext    context.Context
-	NormalConfig      *config.Config
-	Governor          *governor.Governor
-	BeadStores        map[string]*beads.Store
-	LifecycleBeadDirs map[string]string
-	BeadsRoot         string
-	HiveID            string
-	AgentManager      *agent.Manager
-	Scheduler         *scheduler.Scheduler
-	GitHubRuntime     func() (liveGitHubRuntimeSnapshot, bool)
-	Dashboard         *dashboard.Server
-	Logger            *slog.Logger
+	ProcessContext      context.Context
+	NormalConfig        *config.Config
+	Governor            *governor.Governor
+	BeadStores          map[string]*beads.Store
+	LifecycleBeadDirs   map[string]string
+	BeadsRoot           string
+	HiveID              string
+	AgentManager        *agent.Manager
+	Scheduler           *scheduler.Scheduler
+	GitHubRuntime       func() (liveGitHubRuntimeSnapshot, bool)
+	VisualGitHubRuntime func() (liveGitHubRuntimeSnapshot, bool)
+	Dashboard           *dashboard.Server
+	Logger              *slog.Logger
 }
 
 func newNormalVisualRuntimeManager(deps normalVisualRuntimeDependencies) (*normalVisualRuntimeManager, error) {
@@ -102,15 +105,16 @@ func newNormalVisualRuntimeManager(deps normalVisualRuntimeDependencies) (*norma
 	}
 	baseDirs := sortedNormalVisualBeadDirs(deps.LifecycleBeadDirs)
 	manager := &normalVisualRuntimeManager{
-		process:       deps.ProcessContext,
-		normal:        deps.NormalConfig,
-		load:          loadCurrentVisualWorkContract,
-		githubRuntime: deps.GitHubRuntime,
-		logger:        deps.Logger,
-		beadDirs:      baseDirs,
+		process:             deps.ProcessContext,
+		normal:              deps.NormalConfig,
+		load:                loadCurrentVisualWorkContract,
+		githubRuntime:       deps.GitHubRuntime,
+		visualGitHubRuntime: deps.VisualGitHubRuntime,
+		logger:              deps.Logger,
+		beadDirs:            baseDirs,
 	}
-	manager.factory = func(installed integrated.Config, githubRuntime liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
-		return buildNormalVisualRuntime(deps, installed, githubRuntime)
+	manager.factory = func(installed integrated.Config, githubRuntime, visualGitHubRuntime liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
+		return buildNormalVisualRuntime(deps, installed, githubRuntime, visualGitHubRuntime)
 	}
 	return manager, nil
 }
@@ -159,18 +163,57 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 			manager.active = nil
 			manager.activeGitHubBinding = ""
 			manager.activeGitHubRevision = 0
+			manager.activeVisualGitHubRevision = 0
 		}
 		return false, errors.New("Visual Hive contract is installed, but the live GitHub runtime is unavailable")
 	}
 	if githubRuntime.Mode == "app" {
-		if err := githubRuntime.App.RequireVisualHivePermissions(); err != nil {
+		if err := githubRuntime.App.RequireCoreHiveLifecyclePermissions(); err != nil {
 			if manager.active != nil {
 				if stopErr := manager.active.Stop(manager.process); stopErr != nil {
-					return false, fmt.Errorf("stop Visual Hive after GitHub App permission loss: %w", stopErr)
+					return false, fmt.Errorf("stop Visual Hive after core GitHub App permission loss: %w", stopErr)
 				}
 				manager.active = nil
 				manager.activeGitHubBinding = ""
 				manager.activeGitHubRevision = 0
+				manager.activeVisualGitHubRevision = 0
+			}
+			return false, fmt.Errorf("core Hive GitHub App runtime is not authorized: %w", err)
+		}
+	}
+	visualGitHubRuntime := githubRuntime
+	if githubRuntime.Mode == "app" {
+		if manager.visualGitHubRuntime == nil {
+			if manager.active != nil {
+				if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
+					return false, fmt.Errorf("stop Visual Hive after execution App runtime loss: %w", stopErr)
+				}
+			}
+			return false, errors.New("Visual Hive contract is installed, but the dedicated GitHub App runtime is unavailable")
+		}
+		var visualAvailable bool
+		visualGitHubRuntime, visualAvailable = manager.visualGitHubRuntime()
+		if !visualAvailable {
+			if manager.active != nil {
+				if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
+					return false, fmt.Errorf("stop Visual Hive after execution App token expiry: %w", stopErr)
+				}
+			}
+			return false, errors.New("Visual Hive contract is installed, but the dedicated GitHub App runtime is unavailable")
+		}
+		if visualGitHubRuntime.Mode != "app" {
+			if manager.active != nil {
+				if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
+					return false, fmt.Errorf("stop Visual Hive after execution credential mode drift: %w", stopErr)
+				}
+			}
+			return false, errors.New("hosted Visual Hive requires the dedicated GitHub App runtime")
+		}
+		if err := visualGitHubRuntime.App.RequireVisualHiveExecutionPermissions(); err != nil {
+			if manager.active != nil {
+				if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
+					return false, fmt.Errorf("stop Visual Hive after execution App permission loss: %w", stopErr)
+				}
 			}
 			return false, fmt.Errorf("Visual Hive GitHub App runtime is not authorized: %w", err)
 		}
@@ -179,6 +222,15 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 		if manager.active != nil {
 			if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
 				return false, fmt.Errorf("stop Visual Hive after installed GitHub writer drift: %w", stopErr)
+			}
+			manager.rebindRequired = true
+		}
+		return false, err
+	}
+	if err := validateInstalledVisualGitHubRuntimeBinding(installed, visualGitHubRuntime); err != nil {
+		if manager.active != nil {
+			if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
+				return false, fmt.Errorf("stop Visual Hive after installed execution App drift: %w", stopErr)
 			}
 			manager.rebindRequired = true
 		}
@@ -193,6 +245,10 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 		}
 		return false, errors.New("live GitHub runtime is bound to a different repository; use managed rebind")
 	}
+	if !strings.EqualFold(visualGitHubRuntime.Repository, installed.Repository) || visualGitHubRuntime.RepositoryID != githubRuntime.RepositoryID {
+		return false, errors.New("Visual Hive GitHub App runtime is bound to a different repository; use managed rebind")
+	}
+	combinedGitHubBinding := combinedLiveGitHubBindingDigest(githubRuntime, visualGitHubRuntime)
 	if manager.active != nil {
 		current := manager.active.Binding()
 		if current.Digest != binding.Digest {
@@ -205,14 +261,14 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 				current.Repository, binding.Repository,
 			)
 		}
-		if manager.activeGitHubBinding != githubRuntime.BindingDigest {
+		if manager.activeGitHubBinding != combinedGitHubBinding {
 			if stopErr := manager.stopActiveLocked(manager.process); stopErr != nil {
 				return false, fmt.Errorf("stop Visual Hive after live GitHub binding drift: %w", stopErr)
 			}
 			manager.rebindRequired = true
 			return false, errors.New("live GitHub App, installation, repository, or writer identity changed while Visual Hive is active; use managed rebind")
 		}
-		if manager.activeGitHubRevision == githubRuntime.Revision {
+		if manager.activeGitHubRevision == githubRuntime.Revision && manager.activeVisualGitHubRevision == visualGitHubRuntime.Revision {
 			return true, nil
 		}
 		if err := manager.active.Stop(manager.process); err != nil {
@@ -221,7 +277,7 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 		manager.active = nil
 	}
 
-	instance, err := manager.factory(installed, githubRuntime)
+	instance, err := manager.factory(installed, githubRuntime, visualGitHubRuntime)
 	if err != nil {
 		return false, err
 	}
@@ -237,8 +293,9 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (active boo
 		return false, err
 	}
 	manager.active = instance
-	manager.activeGitHubBinding = githubRuntime.BindingDigest
+	manager.activeGitHubBinding = combinedGitHubBinding
 	manager.activeGitHubRevision = githubRuntime.Revision
+	manager.activeVisualGitHubRevision = visualGitHubRuntime.Revision
 	manager.beadDirs = instance.BeadDirs()
 	manager.logger.Info("normal Visual Hive runtime reconciled in-process",
 		"repository", binding.Repository,
@@ -266,6 +323,7 @@ func validateInstalledGitHubRuntimeBinding(installed integrated.Config, githubRu
 			installed.SetupAuthorizationWriterID != githubRuntime.Writer.ID ||
 			!strings.EqualFold(installed.SetupAuthorizationWriterLogin, githubRuntime.Writer.Login) ||
 			!strings.EqualFold(installed.SetupAuthorizationWriterType, githubRuntime.Writer.Type) ||
+			!strings.EqualFold(installed.SetupAuthorizationPermissionDigest, githubRuntime.App.PermissionDigest) ||
 			!strings.EqualFold(installed.SetupAuthorizationAppBindingDigest, githubRuntime.App.BindingDigest) {
 			return errors.New("live GitHub App, installation, or writer does not match the installed contract; use managed rebind")
 		}
@@ -287,6 +345,54 @@ func validateInstalledGitHubRuntimeBinding(installed integrated.Config, githubRu
 		return fmt.Errorf("live GitHub runtime mode %q is invalid", githubRuntime.Mode)
 	}
 	return nil
+}
+
+func validateInstalledVisualGitHubRuntimeBinding(installed integrated.Config, githubRuntime liveGitHubRuntimeSnapshot) error {
+	switch strings.ToLower(strings.TrimSpace(githubRuntime.Mode)) {
+	case "app":
+		if installed.VisualHiveGitHubAppID <= 0 || installed.VisualHiveGitHubInstallationID <= 0 ||
+			installed.VisualHiveGitHubWriterID <= 0 || strings.TrimSpace(installed.VisualHiveGitHubWriterLogin) == "" ||
+			!strings.EqualFold(installed.VisualHiveGitHubWriterType, "Bot") ||
+			!validDaemonHexIdentity(installed.VisualHiveGitHubPermissionDigest, 64) ||
+			!validDaemonHexIdentity(installed.VisualHiveGitHubAppBindingDigest, 64) {
+			return errors.New("installed contract has no exact dedicated Visual Hive GitHub App binding; use managed upgrade/rebind")
+		}
+		if installed.VisualHiveGitHubAppID == installed.SetupAuthorizationAppID {
+			return errors.New("installed Visual Hive App is not separate from the ordinary Hive App; use managed upgrade/rebind")
+		}
+		if installed.VisualHiveGitHubAppID != githubRuntime.App.AppID ||
+			installed.VisualHiveGitHubInstallationID != githubRuntime.App.InstallationID ||
+			installed.VisualHiveGitHubWriterID != githubRuntime.Writer.ID ||
+			!strings.EqualFold(installed.VisualHiveGitHubWriterLogin, githubRuntime.Writer.Login) ||
+			!strings.EqualFold(installed.VisualHiveGitHubWriterType, githubRuntime.Writer.Type) ||
+			!strings.EqualFold(installed.VisualHiveGitHubPermissionDigest, githubRuntime.App.PermissionDigest) ||
+			!strings.EqualFold(installed.VisualHiveGitHubAppBindingDigest, githubRuntime.App.BindingDigest) {
+			return errors.New("live Visual Hive App, installation, permission set, or writer does not match the installed contract; use managed rebind")
+		}
+	case "pat":
+		if installed.VisualHiveGitHubAppID != 0 || installed.VisualHiveGitHubInstallationID != 0 {
+			return errors.New("installed Visual Hive App-backed contract cannot run with a PAT; use managed rebind")
+		}
+		expectedID, expectedLogin := installed.VisualHiveGitHubWriterID, strings.TrimSpace(installed.VisualHiveGitHubWriterLogin)
+		if expectedID <= 0 {
+			expectedID, expectedLogin = installed.SetupAuthorizationWriterID, strings.TrimSpace(installed.SetupAuthorizationWriterLogin)
+		}
+		if expectedID <= 0 {
+			expectedID, expectedLogin = installed.SetupAuthorizationActorID, strings.TrimSpace(installed.SetupAuthorizationActorLogin)
+		}
+		if expectedID <= 0 || githubRuntime.Writer.ID != expectedID || !strings.EqualFold(githubRuntime.Writer.Type, "User") ||
+			(expectedLogin != "" && !strings.EqualFold(expectedLogin, githubRuntime.Writer.Login)) {
+			return errors.New("live Visual Hive PAT writer does not match the installed human writer")
+		}
+	default:
+		return fmt.Errorf("live Visual Hive GitHub runtime mode %q is invalid", githubRuntime.Mode)
+	}
+	return nil
+}
+
+func combinedLiveGitHubBindingDigest(core, visual liveGitHubRuntimeSnapshot) string {
+	digest := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(core.BindingDigest)) + "\n" + strings.ToLower(strings.TrimSpace(visual.BindingDigest)) + "\n"))
+	return hex.EncodeToString(digest[:])
 }
 
 func (manager *normalVisualRuntimeManager) recordActivationResult(active bool, err error) {
@@ -446,6 +552,7 @@ func (manager *normalVisualRuntimeManager) stopActiveLocked(ctx context.Context)
 	manager.active = nil
 	manager.activeGitHubBinding = ""
 	manager.activeGitHubRevision = 0
+	manager.activeVisualGitHubRevision = 0
 	return nil
 }
 
@@ -548,7 +655,7 @@ type concreteNormalVisualRuntime struct {
 	started    bool
 }
 
-func buildNormalVisualRuntime(deps normalVisualRuntimeDependencies, installed integrated.Config, githubRuntime liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
+func buildNormalVisualRuntime(deps normalVisualRuntimeDependencies, installed integrated.Config, githubRuntime, visualGitHubRuntime liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
 	binding, err := normalVisualBinding(installed)
 	if err != nil {
 		return nil, err
@@ -606,7 +713,7 @@ func buildNormalVisualRuntime(deps normalVisualRuntimeDependencies, installed in
 	ownership, err := claimNormalVisualWorkOwnership(installed.StateDir, deps.AgentManager, func(ordinaryManager *agent.Manager) (bool, error) {
 		runner, health, configureErr := configureNormalVisualWorkRunner(
 			installed, controller, lifecycle, deps.Scheduler, ordinaryManager,
-			githubRuntime.Client, githubRuntime.Token, readiness.Ready, deps.Logger,
+			githubRuntime.Client, visualGitHubRuntime.Client, githubRuntime.Token, readiness.Ready, deps.Logger,
 		)
 		if configureErr != nil || runner == nil {
 			return false, configureErr
@@ -835,6 +942,13 @@ func normalVisualBinding(installed integrated.Config) (normalVisualRuntimeBindin
 		SetupAppID         int64                    `json:"setup_app_id"`
 		SetupInstallation  int64                    `json:"setup_installation_id"`
 		SetupAppBinding    string                   `json:"setup_app_binding"`
+		VisualWriterID     int64                    `json:"visual_writer_id"`
+		VisualWriterLogin  string                   `json:"visual_writer_login"`
+		VisualWriterType   string                   `json:"visual_writer_type"`
+		VisualAppID        int64                    `json:"visual_app_id"`
+		VisualInstallation int64                    `json:"visual_installation_id"`
+		VisualPermission   string                   `json:"visual_permission_digest"`
+		VisualAppBinding   string                   `json:"visual_app_binding"`
 	}{
 		Repository: repository, RepositoryID: strings.TrimSpace(installed.RepositoryID),
 		DefaultBranch: strings.TrimSpace(installed.DefaultBranch), StateDir: stateDir, CheckoutDir: checkoutDir,
@@ -854,6 +968,13 @@ func normalVisualBinding(installed integrated.Config) (normalVisualRuntimeBindin
 		SetupAppID:         installed.SetupAuthorizationAppID,
 		SetupInstallation:  installed.SetupAuthorizationInstallationID,
 		SetupAppBinding:    strings.ToLower(strings.TrimSpace(installed.SetupAuthorizationAppBindingDigest)),
+		VisualWriterID:     installed.VisualHiveGitHubWriterID,
+		VisualWriterLogin:  strings.ToLower(strings.TrimSpace(installed.VisualHiveGitHubWriterLogin)),
+		VisualWriterType:   strings.ToLower(strings.TrimSpace(installed.VisualHiveGitHubWriterType)),
+		VisualAppID:        installed.VisualHiveGitHubAppID,
+		VisualInstallation: installed.VisualHiveGitHubInstallationID,
+		VisualPermission:   strings.ToLower(strings.TrimSpace(installed.VisualHiveGitHubPermissionDigest)),
+		VisualAppBinding:   strings.ToLower(strings.TrimSpace(installed.VisualHiveGitHubAppBindingDigest)),
 	}
 	data, err := json.Marshal(binding)
 	if err != nil {

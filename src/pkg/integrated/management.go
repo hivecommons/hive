@@ -35,6 +35,11 @@ type ManagementOptions struct {
 	DeleteState        bool
 	Cancel             bool
 	GitHub             *hivegithub.Client
+	// VisualHiveGitHub is the optional least-privilege workflow/status App.
+	// It is consulted only when the installed contract explicitly binds that
+	// separate App; legacy single-App and standalone PAT cleanup keep using the
+	// already-recorded lifecycle writer.
+	VisualHiveGitHub   *hivegithub.Client
 	GitTransportToken  string
 	AuthorizationActor hivegithub.AuthenticatedUserIdentity
 }
@@ -102,6 +107,12 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 	config, err := store.Load()
 	if err != nil {
 		return result, err
+	}
+	if config.VisualHiveGitHubAppID > 0 {
+		if options.VisualHiveGitHub == nil {
+			return result, fmt.Errorf("managed %s requires the installed dedicated Visual Hive GitHub App runtime", options.Operation)
+		}
+		ctx = WithVisualHiveGitHubClients(ctx, options.VisualHiveGitHub, options.VisualHiveGitHub)
 	}
 	if transition, exists, transitionErr := store.LoadHostedReleaseTransitionIntent(); transitionErr != nil {
 		return result, fmt.Errorf("read hosted release transition before %s: %w", options.Operation, transitionErr)

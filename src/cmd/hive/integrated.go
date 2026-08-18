@@ -784,6 +784,7 @@ func runSetupCommand(args []string) int {
 	runInterval := flags.Duration("run-interval", 15*time.Minute, "persistent production scan interval")
 	jsonOutput := flags.Bool("json", false, "emit machine-readable JSON")
 	githubTokenEnv := flags.String("github-token-env", "HIVE_GITHUB_TOKEN", "environment variable containing GitHub token")
+	visualHiveGitHubTokenEnv := flags.String("visual-hive-github-token-env", "HIVE_VISUAL_HIVE_GITHUB_TOKEN", "environment variable containing the optional Visual Hive GitHub App token")
 	githubAPIURL := flags.String("github-api-url", "", "optional GitHub Enterprise API URL")
 	dashboardOperatorHandoffPath := flags.String("dashboard-operator-handoff", "", "internal root-sealed dashboard operator handoff")
 	dashboardRequestID := flags.String("dashboard-request-id", "", "internal dashboard request binding")
@@ -894,9 +895,13 @@ func runSetupCommand(args []string) int {
 	}
 	token := resolveGitHubToken(*githubTokenEnv)
 	var client *hivegithub.Client
+	var visualHiveClient *hivegithub.Client
 	if token != "" {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		client = hivegithub.NewClient(token, "", nil, logger, *githubAPIURL)
+		if visualToken := strings.TrimSpace(os.Getenv(*visualHiveGitHubTokenEnv)); visualToken != "" {
+			visualHiveClient = hivegithub.NewClient(visualToken, "", nil, logger, *githubAPIURL)
+		}
 	}
 	var dashboardHandoff dashboardOperatorHandoff
 	hasDashboardHandoff := strings.TrimSpace(*dashboardOperatorHandoffPath) != "" || strings.TrimSpace(*dashboardRequestID) != "" || strings.TrimSpace(*dashboardPlanSHA256) != ""
@@ -916,6 +921,16 @@ func runSetupCommand(args []string) int {
 		if strings.EqualFold(dashboardHandoff.Writer.Type, "Bot") {
 			if err := client.SetVerifiedAppWriter(dashboardHandoff.Writer, dashboardHandoff.App.BindingDigest); err != nil {
 				fmt.Fprintln(os.Stderr, "setup failed: bind dashboard App writer:", err)
+				return 2
+			}
+		}
+		if strings.EqualFold(dashboardHandoff.VisualWriter.Type, "Bot") {
+			if visualHiveClient == nil {
+				fmt.Fprintln(os.Stderr, "setup failed: Visual Hive GitHub App credential is unavailable")
+				return 2
+			}
+			if err := visualHiveClient.SetVerifiedAppWriter(dashboardHandoff.VisualWriter, dashboardHandoff.VisualApp.BindingDigest); err != nil {
+				fmt.Fprintln(os.Stderr, "setup failed: bind Visual Hive App writer:", err)
 				return 2
 			}
 		}
@@ -998,8 +1013,9 @@ func runSetupCommand(args []string) int {
 		DirectBootstrap: *directBootstrap, AdoptReviewedBaselines: *adoptReviewedBaselines,
 		ExpectedSeedSHA: *expectedSeedSHA, ReviewedBaselineDigest: *reviewedBaselineDigest,
 		VisualHiveCommand: *visualCommand, VisualHiveArgs: append([]string(nil), visualArgs...),
-		VisualHiveRepo: *visualRepo, VisualHiveRef: *visualRef, GitHub: client, GitTransportToken: token,
+		VisualHiveRepo: *visualRepo, VisualHiveRef: *visualRef, GitHub: client, VisualHiveGitHub: visualHiveClient, GitTransportToken: token,
 		AuthorizationActor: dashboardHandoff.Actor, AuthorizationWriter: dashboardHandoff.Writer, AuthorizationApp: dashboardHandoff.App,
+		VisualHiveWriter: dashboardHandoff.VisualWriter, VisualHiveApp: dashboardHandoff.VisualApp,
 		MaxActiveIssues:        *maxActiveIssues,
 		MaxRepairAttempts:      *maxRepairAttempts,
 		AllowedAutoMergePaths:  append([]string(nil), autoMergePaths...),

@@ -731,6 +731,11 @@ type HeartbeatPayload struct {
 	// spans yet, or one too old to report reach, sends nothing — which the
 	// hub reads as "no data", never as an error and never as zero reach.
 	ComponentReach *tracing.ReachReport `json:"component_reach,omitempty"`
+	// VisualHiveTokenRequest asks the Hub's optional, dedicated Visual Hive App
+	// broker for a short-lived repository-scoped token. It contains only a
+	// public wrapping key and non-secret current-lease metadata. Ordinary Hive
+	// operation is unchanged when the field or Hub broker is absent.
+	VisualHiveTokenRequest *VisualHiveTokenRequest `json:"visual_hive_token_request,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
@@ -822,6 +827,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
 	var onRestartSpoke RestartSpokeCallback
+	var onVisualHiveTokenLease VisualHiveTokenLeaseCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -842,6 +848,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onGatewayConfig = fn
 		case RestartSpokeCallback:
 			onRestartSpoke = fn
+		case VisualHiveTokenLeaseCallback:
+			onVisualHiveTokenLease = fn
 		}
 	}
 
@@ -884,6 +892,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// creates/replaces the gateway.
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
+		}
+		if (resp.VisualHiveTokenLease != nil || resp.VisualHiveTokenError != "") && onVisualHiveTokenLease != nil {
+			onVisualHiveTokenLease(resp.VisualHiveTokenLease, resp.VisualHiveTokenError)
 		}
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
@@ -1962,6 +1973,11 @@ type HeartbeatGatewayConfig struct {
 // cannot reach over the network (mirrors ProjectConfigCallback).
 type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 
+// VisualHiveTokenLeaseCallback receives an opaque token lease and a scrubbed
+// broker state. The callback opens the lease with the spoke-only private key;
+// the heartbeat package never logs or persists the resulting token.
+type VisualHiveTokenLeaseCallback func(lease *VisualHiveTokenLease, brokerError string)
+
 // HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
@@ -2011,6 +2027,10 @@ type HeartbeatResponse struct {
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
+	// VisualHiveTokenLease is present only when a new or renewed lease is due.
+	// VisualHiveTokenError is operator-safe and never contains a credential.
+	VisualHiveTokenLease *VisualHiveTokenLease `json:"visual_hive_token_lease,omitempty"`
+	VisualHiveTokenError string                `json:"visual_hive_token_error,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

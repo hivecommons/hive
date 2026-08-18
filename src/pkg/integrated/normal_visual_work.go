@@ -43,9 +43,15 @@ func UsesNormalHiveRuntime(config Config) bool {
 // service. The caller must own the shared production-run lease for its complete
 // lifetime. Baseline approval remains an exact external operator action; no
 // normal production dispatch is permitted before production verification.
-func FetchNormalVisualWork(ctx context.Context, stateDir string, timeout time.Duration, client *hivegithub.Client) (NormalVisualWork, error) {
+func FetchNormalVisualWork(ctx context.Context, stateDir string, timeout time.Duration, client *hivegithub.Client, visualClients ...*hivegithub.Client) (NormalVisualWork, error) {
 	if client == nil || stateDir == "" {
 		return NormalVisualWork{}, errors.New("normal Visual Hive fetch requires GitHub and persistent state")
+	}
+	if len(visualClients) > 1 {
+		return NormalVisualWork{}, errors.New("normal Visual Hive fetch accepts at most one optional execution client")
+	}
+	if len(visualClients) == 1 {
+		ctx = WithVisualHiveGitHubClients(ctx, visualClients[0], visualClients[0])
 	}
 	if timeout <= 0 {
 		timeout = 45 * time.Minute

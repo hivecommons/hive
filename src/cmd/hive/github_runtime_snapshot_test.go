@@ -5,13 +5,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	hivegithub "github.com/kubestellar/hive/pkg/github"
 )
 
 func testLiveAppRuntimeSnapshot() liveGitHubRuntimeSnapshot {
 	permissions := map[string]string{
-		"actions": "write", "workflows": "write", "statuses": "write", "contents": "write",
+		"actions": "read", "workflows": "write", "statuses": "read", "contents": "write",
 		"issues": "write", "pull_requests": "write", "checks": "read", "metadata": "read",
 	}
 	return liveGitHubRuntimeSnapshot{
@@ -26,6 +27,37 @@ func testLiveAppRuntimeSnapshot() liveGitHubRuntimeSnapshot {
 	}
 }
 
+func TestBrokeredRuntimeRenewalExtendsLeaseWithoutControllerRevision(t *testing.T) {
+	store := &liveGitHubRuntimeStore{}
+	runtime := testDedicatedVisualAppRuntimeSnapshot(testLiveAppRuntimeSnapshot())
+	runtime.ExpiresAt = time.Now().Add(20 * time.Minute)
+	first, err := store.Publish(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.ExpiresAt = time.Now().Add(time.Hour)
+	renewed, err := store.Publish(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Revision != first.Revision || renewed.Client != first.Client {
+		t.Fatalf("token renewal rotated structural runtime: first=%+v renewed=%+v", first, renewed)
+	}
+	if !renewed.ExpiresAt.After(first.ExpiresAt) {
+		t.Fatalf("token renewal did not extend the in-memory lease: first=%s renewed=%s", first.ExpiresAt, renewed.ExpiresAt)
+	}
+}
+
+func TestBrokeredRuntimeExpiryFailsClosed(t *testing.T) {
+	store := &liveGitHubRuntimeStore{
+		present: true,
+		current: liveGitHubRuntimeSnapshot{Brokered: true, ExpiresAt: time.Now().Add(-time.Second)},
+	}
+	if _, ok := store.Current(); ok {
+		t.Fatal("expired brokered runtime remained available")
+	}
+}
+
 func TestLiveGitHubRuntimeStorePublishesClonesRotatesAndClears(t *testing.T) {
 	store := &liveGitHubRuntimeStore{}
 	input := testLiveAppRuntimeSnapshot()
@@ -33,14 +65,14 @@ func TestLiveGitHubRuntimeStorePublishesClonesRotatesAndClears(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input.App.Permissions["actions"] = "read"
+	input.App.Permissions["actions"] = "write"
 	current, ok := store.Current()
-	if !ok || current.Revision != 1 || current.App.Permissions["actions"] != "write" || current.BindingDigest == "" {
+	if !ok || current.Revision != 1 || current.App.Permissions["actions"] != "read" || current.BindingDigest == "" {
 		t.Fatalf("published runtime was not immutable: %+v", current)
 	}
-	current.App.Permissions["actions"] = "read"
+	current.App.Permissions["actions"] = "write"
 	again, _ := store.Current()
-	if again.App.Permissions["actions"] != "write" {
+	if again.App.Permissions["actions"] != "read" {
 		t.Fatal("Current returned a mutable permission map")
 	}
 	unchanged, err := store.Publish(again)
@@ -112,7 +144,7 @@ func TestRefreshLiveGitHubAppRuntimeUpdatesPermissionsAndRejectsStructuralDrift(
 	if err != nil || refreshed.Revision != 2 || refreshed.App.Permissions["workflows"] != "read" {
 		t.Fatalf("live permission refresh failed: refreshed=%+v err=%v", refreshed, err)
 	}
-	if err := refreshed.App.RequireVisualHivePermissions(); err == nil || !strings.Contains(err.Error(), "workflows") {
+	if err := refreshed.App.RequireCoreHiveLifecyclePermissions(); err == nil || !strings.Contains(err.Error(), "workflows") {
 		t.Fatalf("refreshed permission loss was not enforced: %v", err)
 	}
 

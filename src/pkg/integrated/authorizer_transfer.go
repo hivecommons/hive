@@ -70,6 +70,7 @@ type AuthorizerTransferOptions struct {
 	Reason             string
 	Cancel             bool
 	GitHub             *hivegithub.Client
+	VisualHiveGitHub   *hivegithub.Client
 	GitTransportToken  string
 	AuthorizationActor hivegithub.AuthenticatedUserIdentity
 }
@@ -200,6 +201,9 @@ func validSetupAuthorizationContext(value string) bool {
 }
 
 func RunAuthorizerTransfer(ctx context.Context, options AuthorizerTransferOptions) (AuthorizerTransferResult, error) {
+	if options.VisualHiveGitHub != nil {
+		ctx = WithVisualHiveGitHubClients(ctx, options.VisualHiveGitHub, options.VisualHiveGitHub)
+	}
 	ctx = gittransport.WithControllerToken(ctx, options.GitTransportToken)
 	result := AuthorizerTransferResult{SchemaVersion: "hive.setup-authorizer-transfer.v1"}
 	options.StateDir = strings.TrimSpace(options.StateDir)
@@ -664,7 +668,7 @@ func authorizerTransferWriter(config Config, intent AuthorizerTransferIntent, cu
 		}
 		return writer, nil
 	}
-	writer, ok := setupAuthorizationWriter(config)
+	writer, ok := visualHiveGitHubWriter(config)
 	if !ok {
 		return hivegithub.AuthenticatedUserIdentity{}, fmt.Errorf("setup authorizer transfer requires an exact GitHub writer binding")
 	}

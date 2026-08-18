@@ -29,6 +29,7 @@ type OrphanSetupResetOptions struct {
 	Repository           string
 	StateDir             string
 	GitHub               *hivegithub.Client
+	VisualHiveGitHub     *hivegithub.Client
 	GitTransportToken    string
 	AuthorizationActor   hivegithub.AuthenticatedUserIdentity
 	RuntimeBindingDigest string
@@ -101,7 +102,7 @@ func PlanOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOptions
 	if err != nil || !exists {
 		return plan, fmt.Errorf("read installed repository contract before orphaned setup recovery: %w", err)
 	}
-	if err := json.Unmarshal(installedBytes, &plan.Installed); err != nil || plan.Installed.SchemaVersion != managedRepositoryConfigSchema {
+	if err := json.Unmarshal(installedBytes, &plan.Installed); err != nil || !supportedManagedRepositoryConfigSchema(plan.Installed.SchemaVersion) {
 		return plan, fmt.Errorf("installed repository contract is invalid or unsupported")
 	}
 	if !strings.EqualFold(plan.Installed.Repository, plan.Repository) || plan.Installed.RepositoryID != plan.RepositoryID ||
@@ -192,6 +193,13 @@ func orphanInstalledAuthorizationConfig(installed installedRepositoryConfig) Con
 		SetupAuthorizationInstallationID:   installed.SetupAuthorizationInstallationID,
 		SetupAuthorizationPermissionDigest: installed.SetupAuthorizationPermissionDigest,
 		SetupAuthorizationAppBindingDigest: installed.SetupAuthorizationAppBindingDigest,
+		VisualHiveGitHubWriterID:           installed.VisualHiveGitHubWriterID,
+		VisualHiveGitHubWriterLogin:        installed.VisualHiveGitHubWriterLogin,
+		VisualHiveGitHubWriterType:         installed.VisualHiveGitHubWriterType,
+		VisualHiveGitHubAppID:              installed.VisualHiveGitHubAppID,
+		VisualHiveGitHubInstallationID:     installed.VisualHiveGitHubInstallationID,
+		VisualHiveGitHubPermissionDigest:   installed.VisualHiveGitHubPermissionDigest,
+		VisualHiveGitHubAppBindingDigest:   installed.VisualHiveGitHubAppBindingDigest,
 	}
 }
 
@@ -217,7 +225,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 			return result, fmt.Errorf("dedicated orphaned setup recovery state is nonempty and not the exact resumable plan")
 		}
 		return RunManagement(ctx, ManagementOptions{
-			Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, GitTransportToken: options.GitTransportToken,
+			Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, VisualHiveGitHub: options.VisualHiveGitHub, GitTransportToken: options.GitTransportToken,
 			AuthorizationActor: options.AuthorizationActor,
 		})
 	} else if readErr != nil && !os.IsNotExist(readErr) {
@@ -266,7 +274,7 @@ func PrepareOrphanedSetupReset(ctx context.Context, options OrphanSetupResetOpti
 		return result, fmt.Errorf("persist bounded orphaned setup recovery state: %w", err)
 	}
 	return RunManagement(ctx, ManagementOptions{
-		Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, GitTransportToken: options.GitTransportToken,
+		Operation: OperationUninstall, StateDir: options.StateDir, GitHub: options.GitHub, VisualHiveGitHub: options.VisualHiveGitHub, GitTransportToken: options.GitTransportToken,
 		AuthorizationActor: options.AuthorizationActor,
 	})
 }
@@ -314,6 +322,13 @@ func configFromInstalledRepository(installed installedRepositoryConfig) Config {
 		SetupAuthorizationInstallationID:   installed.SetupAuthorizationInstallationID,
 		SetupAuthorizationPermissionDigest: installed.SetupAuthorizationPermissionDigest,
 		SetupAuthorizationAppBindingDigest: installed.SetupAuthorizationAppBindingDigest,
+		VisualHiveGitHubWriterID:           installed.VisualHiveGitHubWriterID,
+		VisualHiveGitHubWriterLogin:        installed.VisualHiveGitHubWriterLogin,
+		VisualHiveGitHubWriterType:         installed.VisualHiveGitHubWriterType,
+		VisualHiveGitHubAppID:              installed.VisualHiveGitHubAppID,
+		VisualHiveGitHubInstallationID:     installed.VisualHiveGitHubInstallationID,
+		VisualHiveGitHubPermissionDigest:   installed.VisualHiveGitHubPermissionDigest,
+		VisualHiveGitHubAppBindingDigest:   installed.VisualHiveGitHubAppBindingDigest,
 		SetupAuthorizationPreviousActorID:  installed.SetupAuthorizationPreviousActorID,
 	}
 }

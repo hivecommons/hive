@@ -50,11 +50,61 @@ func TestResolveAppRuntimeIdentityBindsInstallationRepositoryWriterAndPermission
 	if err := identity.RequireVisualHivePermissions(); err != nil {
 		t.Fatal(err)
 	}
+	if err := identity.RequireCoreHiveLifecyclePermissions(); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.SetVerifiedAppWriter(AuthenticatedUserIdentity{ID: identity.BotID, Login: identity.BotLogin, Type: identity.BotType}, identity.BindingDigest); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.VerifyAppWriterBinding(AuthenticatedUserIdentity{ID: identity.BotID, Login: strings.ToUpper(identity.BotLogin), Type: "bot"}, identity.BindingDigest); err != nil {
 		t.Fatalf("case-insensitive exact writer did not verify: %v", err)
+	}
+}
+
+func TestSeparateVisualHiveAppPermissionBoundary(t *testing.T) {
+	visual := AppRuntimeIdentity{Permissions: map[string]string{
+		"actions": "write", "statuses": "write", "metadata": "read",
+	}}
+	if err := visual.RequireVisualHiveExecutionPermissions(); err != nil {
+		t.Fatalf("least-privilege Visual Hive App was rejected: %v", err)
+	}
+	for _, permission := range []string{"workflows", "checks", "contents", "issues", "pull_requests"} {
+		candidate := visual
+		candidate.Permissions = make(map[string]string, len(visual.Permissions))
+		for name, granted := range visual.Permissions {
+			candidate.Permissions[name] = granted
+		}
+		candidate.Permissions[permission] = "read"
+		if err := candidate.RequireVisualHiveExecutionPermissions(); err == nil || !strings.Contains(err.Error(), permission) {
+			t.Fatalf("unexpected %s grant was accepted: %v", permission, err)
+		}
+	}
+	visual.Permissions["administration"] = "write"
+	if err := visual.RequireVisualHiveExecutionPermissions(); err == nil || !strings.Contains(err.Error(), "administration") {
+		t.Fatalf("unexpected unmodeled write grant was accepted: %v", err)
+	}
+	delete(visual.Permissions, "administration")
+	visual.Permissions["actions"] = "read"
+	if err := visual.RequireVisualHiveExecutionPermissions(); err == nil || !strings.Contains(err.Error(), "actions") {
+		t.Fatalf("missing Actions write permission was accepted: %v", err)
+	}
+	visual.Permissions["actions"] = "write"
+	visual.Permissions["metadata"] = "write"
+	if err := visual.RequireVisualHiveExecutionPermissions(); err == nil || !strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("unexpected Metadata write grant was accepted: %v", err)
+	}
+}
+
+func TestCoreHiveAppDoesNotRequireOptionalVisualWrites(t *testing.T) {
+	core := AppRuntimeIdentity{Permissions: map[string]string{
+		"actions": "read", "statuses": "read", "workflows": "write", "contents": "write",
+		"issues": "write", "pull_requests": "write", "checks": "read", "metadata": "read",
+	}}
+	if err := core.RequireCoreHiveLifecyclePermissions(); err != nil {
+		t.Fatalf("ordinary Hive App permissions were rejected: %v", err)
+	}
+	if err := core.RequireVisualHiveExecutionPermissions(); err == nil {
+		t.Fatal("ordinary Hive App unexpectedly satisfied the optional execution boundary")
 	}
 }
 

@@ -16,7 +16,10 @@ import (
 	hivegithub "github.com/kubestellar/hive/pkg/github"
 )
 
-var dashboardLiveGitHubRuntime atomic.Pointer[liveGitHubRuntimeStore]
+var (
+	dashboardLiveGitHubRuntime           atomic.Pointer[liveGitHubRuntimeStore]
+	dashboardLiveVisualHiveGitHubRuntime atomic.Pointer[liveGitHubRuntimeStore]
+)
 
 var resolveLiveGitHubAppIdentity = func(ctx context.Context, client *hivegithub.Client, repository string) (hivegithub.AppRuntimeIdentity, error) {
 	return client.ResolveAppRuntimeIdentity(ctx, repository)
@@ -32,6 +35,8 @@ type liveGitHubRuntimeSnapshot struct {
 	App           hivegithub.AppRuntimeIdentity
 	BindingDigest string
 	Revision      uint64
+	Brokered      bool
+	ExpiresAt     time.Time
 }
 
 type liveGitHubRuntimeStore struct {
@@ -61,6 +66,9 @@ func (store *liveGitHubRuntimeStore) Publish(snapshot liveGitHubRuntimeSnapshot)
 			return liveGitHubRuntimeSnapshot{}, errors.New("live GitHub App writer binding is incomplete")
 		}
 	}
+	if snapshot.Brokered && (snapshot.Mode != "app" || snapshot.ExpiresAt.IsZero() || !snapshot.ExpiresAt.After(time.Now())) {
+		return liveGitHubRuntimeSnapshot{}, errors.New("brokered live GitHub runtime lease is expired or invalid")
+	}
 	digest, err := liveGitHubRuntimeBindingDigest(snapshot)
 	if err != nil {
 		return liveGitHubRuntimeSnapshot{}, err
@@ -76,6 +84,14 @@ func (store *liveGitHubRuntimeStore) Publish(snapshot liveGitHubRuntimeSnapshot)
 	if store.present && store.current.Client == snapshot.Client &&
 		store.current.BindingDigest == digest &&
 		store.current.App.PermissionDigest == snapshot.App.PermissionDigest {
+		// A brokered installation token rotates behind the same dynamic client.
+		// Extend only the in-memory lease metadata without advancing the
+		// structural revision: the controller keeps the same client and owner,
+		// while Current still fails closed at the renewed expiry.
+		if store.current.Brokered && snapshot.Brokered && snapshot.ExpiresAt.After(store.current.ExpiresAt) {
+			store.current.ExpiresAt = snapshot.ExpiresAt
+			store.current.Token = snapshot.Token
+		}
 		return cloneLiveGitHubRuntime(store.current), nil
 	}
 	store.revision++
@@ -95,6 +111,9 @@ func (store *liveGitHubRuntimeStore) Current() (liveGitHubRuntimeSnapshot, bool)
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	if !store.present {
+		return liveGitHubRuntimeSnapshot{}, false
+	}
+	if store.current.Brokered && !store.current.ExpiresAt.After(time.Now()) {
 		return liveGitHubRuntimeSnapshot{}, false
 	}
 	return cloneLiveGitHubRuntime(store.current), true
@@ -135,11 +154,13 @@ func liveGitHubRuntimeBindingDigest(snapshot liveGitHubRuntimeSnapshot) (string,
 		WriterLogin      string `json:"writer_login"`
 		WriterType       string `json:"writer_type"`
 		AppBindingDigest string `json:"app_binding_digest,omitempty"`
+		Brokered         bool   `json:"brokered,omitempty"`
 	}{
 		Mode: strings.ToLower(strings.TrimSpace(snapshot.Mode)), Repository: strings.ToLower(strings.TrimSpace(snapshot.Repository)),
 		RepositoryID: snapshot.RepositoryID, WriterID: snapshot.Writer.ID,
 		WriterLogin: strings.ToLower(strings.TrimSpace(snapshot.Writer.Login)), WriterType: strings.ToLower(strings.TrimSpace(snapshot.Writer.Type)),
 		AppBindingDigest: strings.ToLower(strings.TrimSpace(snapshot.App.BindingDigest)),
+		Brokered:         snapshot.Brokered,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -249,11 +270,40 @@ func currentDashboardGitHubRuntime() (liveGitHubRuntimeSnapshot, error) {
 	return snapshot, nil
 }
 
+func currentDashboardVisualHiveGitHubRuntime() (liveGitHubRuntimeSnapshot, error) {
+	store := dashboardLiveVisualHiveGitHubRuntime.Load()
+	if store == nil {
+		return liveGitHubRuntimeSnapshot{}, errors.New("Visual Hive GitHub runtime has not been initialized")
+	}
+	snapshot, ok := store.Current()
+	if !ok {
+		return liveGitHubRuntimeSnapshot{}, errors.New("Visual Hive GitHub runtime is not ready")
+	}
+	return snapshot, nil
+}
+
 // refreshLiveGitHubAppRuntime re-reads the installation's granted permissions
 // immediately before a preflight or mutation. GitHub permission updates and
 // revocations do not require a config change, so a cached boot-time permission
 // set is not sufficient authority for a hosted write.
 func refreshLiveGitHubAppRuntime(ctx context.Context, snapshot liveGitHubRuntimeSnapshot) (liveGitHubRuntimeSnapshot, error) {
+	return refreshLiveGitHubAppRuntimeInStore(ctx, snapshot, dashboardLiveGitHubRuntime.Load(), "live GitHub")
+}
+
+func refreshLiveVisualHiveGitHubAppRuntime(ctx context.Context, snapshot liveGitHubRuntimeSnapshot) (liveGitHubRuntimeSnapshot, error) {
+	if snapshot.Brokered {
+		if !snapshot.ExpiresAt.After(time.Now().Add(time.Minute)) {
+			return liveGitHubRuntimeSnapshot{}, errors.New("Visual Hive GitHub App token lease is expired or too close to expiry")
+		}
+		if err := snapshot.App.RequireVisualHiveExecutionPermissions(); err != nil {
+			return liveGitHubRuntimeSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+	return refreshLiveGitHubAppRuntimeInStore(ctx, snapshot, dashboardLiveVisualHiveGitHubRuntime.Load(), "Visual Hive GitHub")
+}
+
+func refreshLiveGitHubAppRuntimeInStore(ctx context.Context, snapshot liveGitHubRuntimeSnapshot, store *liveGitHubRuntimeStore, label string) (liveGitHubRuntimeSnapshot, error) {
 	if snapshot.Mode != "app" {
 		return snapshot, nil
 	}
@@ -275,9 +325,8 @@ func refreshLiveGitHubAppRuntime(ctx context.Context, snapshot liveGitHubRuntime
 	snapshot.Writer = writer
 	snapshot.BindingDigest = ""
 	snapshot.Revision = 0
-	store := dashboardLiveGitHubRuntime.Load()
 	if store == nil {
-		return liveGitHubRuntimeSnapshot{}, errors.New("live GitHub runtime has not been initialized")
+		return liveGitHubRuntimeSnapshot{}, fmt.Errorf("%s runtime has not been initialized", label)
 	}
 	return store.Publish(snapshot)
 }

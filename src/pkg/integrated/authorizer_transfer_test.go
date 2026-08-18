@@ -285,6 +285,24 @@ func TestAuthorizerTransferIntentSeparatesHumanActorFromAppStatusWriter(t *testi
 	}
 }
 
+func TestAuthorizerTransferUsesDedicatedVisualHiveStatusWriter(t *testing.T) {
+	config := Config{
+		SetupAuthorizationWriterID:    101,
+		SetupAuthorizationWriterLogin: "hive-core[bot]",
+		SetupAuthorizationWriterType:  "Bot",
+		VisualHiveGitHubWriterID:      202,
+		VisualHiveGitHubWriterLogin:   "visual-hive[bot]",
+		VisualHiveGitHubWriterType:    "Bot",
+	}
+	writer, err := authorizerTransferWriter(config, AuthorizerTransferIntent{}, hivegithub.AuthenticatedUserIdentity{ID: 303, Login: "owner", Type: "User"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writer.ID != config.VisualHiveGitHubWriterID || writer.Login != config.VisualHiveGitHubWriterLogin || writer.Type != config.VisualHiveGitHubWriterType {
+		t.Fatalf("authorizer transfer status writer = %+v, want dedicated Visual Hive writer", writer)
+	}
+}
+
 type authorizerTransferFixture struct {
 	t              *testing.T
 	stateDir       string

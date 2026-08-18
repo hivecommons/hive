@@ -8,16 +8,22 @@ import (
 )
 
 const (
-	PlanSchema                    = "hive.setup-plan.v2"
-	ConfigSchema                  = "hive.integrated-config.v4"
-	previousConfigSchema          = "hive.integrated-config.v3"
-	olderConfigSchema             = "hive.integrated-config.v2"
-	legacyConfigSchema            = "hive.integrated-config.v1"
-	managedRepositoryConfigSchema = "hive.integrated-repository-config.v3"
+	PlanSchema                            = "hive.setup-plan.v2"
+	ConfigSchema                          = "hive.integrated-config.v5"
+	previousConfigSchema                  = "hive.integrated-config.v4"
+	olderConfigSchema                     = "hive.integrated-config.v3"
+	legacyConfigSchema                    = "hive.integrated-config.v2"
+	originalConfigSchema                  = "hive.integrated-config.v1"
+	managedRepositoryConfigSchema         = "hive.integrated-repository-config.v4"
+	previousManagedRepositoryConfigSchema = "hive.integrated-repository-config.v3"
 )
 
 func supportedDurableConfigSchema(schema string) bool {
-	return schema == ConfigSchema || schema == previousConfigSchema || schema == olderConfigSchema || schema == legacyConfigSchema
+	return schema == ConfigSchema || schema == previousConfigSchema || schema == olderConfigSchema || schema == legacyConfigSchema || schema == originalConfigSchema
+}
+
+func supportedManagedRepositoryConfigSchema(schema string) bool {
+	return schema == managedRepositoryConfigSchema || schema == previousManagedRepositoryConfigSchema
 }
 
 type ExecutionMode string
@@ -168,6 +174,13 @@ type Config struct {
 	SetupAuthorizationInstallationID   int64                          `json:"setup_authorization_installation_id,omitempty"`
 	SetupAuthorizationPermissionDigest string                         `json:"setup_authorization_permission_digest,omitempty"`
 	SetupAuthorizationAppBindingDigest string                         `json:"setup_authorization_app_binding_digest,omitempty"`
+	VisualHiveGitHubWriterID           int64                          `json:"visual_hive_github_writer_id,omitempty"`
+	VisualHiveGitHubWriterLogin        string                         `json:"visual_hive_github_writer_login,omitempty"`
+	VisualHiveGitHubWriterType         string                         `json:"visual_hive_github_writer_type,omitempty"`
+	VisualHiveGitHubAppID              int64                          `json:"visual_hive_github_app_id,omitempty"`
+	VisualHiveGitHubInstallationID     int64                          `json:"visual_hive_github_installation_id,omitempty"`
+	VisualHiveGitHubPermissionDigest   string                         `json:"visual_hive_github_permission_digest,omitempty"`
+	VisualHiveGitHubAppBindingDigest   string                         `json:"visual_hive_github_app_binding_digest,omitempty"`
 	SetupAuthorizationPreviousActorID  int64                          `json:"setup_authorization_previous_actor_id,omitempty"`
 	InstalledAt                        time.Time                      `json:"installed_at"`
 	UpdatedAt                          time.Time                      `json:"updated_at"`

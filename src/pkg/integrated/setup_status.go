@@ -64,9 +64,16 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 		requiredPresent = append(requiredPresent, ".github/workflows/visual-hive-pr.yml", "docs/visual-hive.md", "visual-hive.config.yaml")
 		requiredAbsent = append(requiredAbsent, standaloneVisualHiveWriterWorkflowPaths()...)
 	}
-	writer, writerBound := setupAuthorizationWriter(config)
+	lifecycleWriter, lifecycleWriterBound := setupAuthorizationWriter(config)
+	if !lifecycleWriterBound {
+		return result, fmt.Errorf("setup authorization has no exact Hive lifecycle writer binding")
+	}
+	writer, writerBound := visualHiveGitHubWriter(config)
 	if !writerBound {
-		return result, fmt.Errorf("setup authorization has no exact GitHub writer binding")
+		return result, fmt.Errorf("setup authorization has no exact Visual Hive status writer binding")
+	}
+	if config.VisualHiveGitHubAppID > 0 && !hasVisualHiveStatusClient(ctx) {
+		return result, fmt.Errorf("dedicated Visual Hive status App runtime is unavailable; use managed upgrade/rebind")
 	}
 	binding, diff, err := BuildSetupAuthorizationBindingWithDiff(ctx, SetupAuthorizationRequest{
 		CheckoutDir: checkout, Repository: config.Repository, RepositoryID: config.RepositoryID, PullRequest: pullNumber,
@@ -97,7 +104,8 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 	if err := authorizeSetup(store, policy, config.Repository, automation.ActionSetupStatus); err != nil {
 		return result, err
 	}
-	status, err := client.EnsureSetupAuthorizationStatus(ctx, hivegithub.SetupAuthorizationStatusRequest{
+	statusClient := visualHiveStatusClient(ctx, client)
+	status, err := statusClient.EnsureSetupAuthorizationStatus(ctx, hivegithub.SetupAuthorizationStatusRequest{
 		Repository: config.Repository, HeadSHA: expectedHead, Context: statusContext, TargetURL: live.GetHTMLURL(),
 		Description: fmt.Sprintf("Hive exact %s PR #%d diff %.12s", operation, pullNumber, diff.SHA256), ExpectedCreatorID: writer.ID,
 		ExpectedCreatorLogin: writer.Login, ExpectedCreatorType: writer.Type,
@@ -105,7 +113,7 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 	if err != nil {
 		return result, fmt.Errorf("authorize exact setup pull request status: %w", err)
 	}
-	detail := fmt.Sprintf("operation=%s pr=%d head=%s base=%s branch=%s diff=%s context=%s actor_id=%d writer_id=%d writer_login=%s writer_type=%s status_id=%d reused=%t recovered=%t", operation, pullNumber, expectedHead, baseSHA, branch, diff.SHA256, statusContext, config.SetupAuthorizationActorID, writer.ID, writer.Login, writer.Type, status.StatusID, status.Reused, status.Recovered)
+	detail := fmt.Sprintf("operation=%s pr=%d head=%s base=%s branch=%s diff=%s context=%s actor_id=%d lifecycle_writer_id=%d lifecycle_writer_login=%s status_writer_id=%d status_writer_login=%s status_writer_type=%s status_id=%d reused=%t recovered=%t", operation, pullNumber, expectedHead, baseSHA, branch, diff.SHA256, statusContext, config.SetupAuthorizationActorID, lifecycleWriter.ID, lifecycleWriter.Login, writer.ID, writer.Login, writer.Type, status.StatusID, status.Reused, status.Recovered)
 	if err := store.AuditStrict(AuditEntry{Action: "bind_setup_status", Allowed: true, Repository: config.Repository, Detail: detail}); err != nil {
 		return result, fmt.Errorf("persist exact setup status audit: %w", err)
 	}

@@ -108,13 +108,19 @@ type SetupOptions struct {
 	AutoMergePathsExplicit bool
 	AutoMergeRiskExplicit  bool
 	GitHub                 *hivegithub.Client
-	GitTransportToken      string
+	// VisualHiveGitHub is the optional least-privilege credential used only for
+	// Visual Hive workflow dispatch and provenance-bound commit statuses. All
+	// repository lifecycle reads and writes continue to use GitHub.
+	VisualHiveGitHub  *hivegithub.Client
+	GitTransportToken string
 	// AuthorizationActor is the accountable human. AuthorizationWriter is the
 	// exact principal whose credential performs GitHub mutations. They are equal
 	// for standalone PAT usage and deliberately distinct for dashboard App mode.
 	AuthorizationActor  hivegithub.AuthenticatedUserIdentity
 	AuthorizationWriter hivegithub.AuthenticatedUserIdentity
 	AuthorizationApp    hivegithub.AppRuntimeIdentity
+	VisualHiveWriter    hivegithub.AuthenticatedUserIdentity
+	VisualHiveApp       hivegithub.AppRuntimeIdentity
 	Policy              automation.Policy
 }
 
@@ -276,8 +282,23 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	if err != nil {
 		return result, err
 	}
+	visualWriter, visualAppIdentity, err := resolveVisualHiveGitHubIdentity(ctx, options, writer, appIdentity)
+	if err != nil {
+		return result, err
+	}
+	if options.VisualHiveGitHub != nil {
+		ctx = WithVisualHiveGitHubClients(ctx, options.VisualHiveGitHub, options.VisualHiveGitHub)
+	}
 	if appIdentity.RepositoryID > 0 && fmt.Sprintf("%d", appIdentity.RepositoryID) != strings.TrimSpace(inspection.RepositoryID) {
 		return result, fmt.Errorf("GitHub App writer repository ID %d does not match inspected repository ID %s", appIdentity.RepositoryID, inspection.RepositoryID)
+	}
+	if visualAppIdentity.RepositoryID > 0 && fmt.Sprintf("%d", visualAppIdentity.RepositoryID) != strings.TrimSpace(inspection.RepositoryID) {
+		return result, fmt.Errorf("Visual Hive GitHub App repository ID %d does not match inspected repository ID %s", visualAppIdentity.RepositoryID, inspection.RepositoryID)
+	}
+	if hasPrior && options.VisualHive {
+		if err := validateVisualHiveGitHubTransition(prior, visualWriter, visualAppIdentity); err != nil {
+			return result, err
+		}
 	}
 	if options.VisualHive {
 		if err := VerifyVisualHiveWorkflowCommits(ctx, options.GitHub, options.VisualHiveRepo, options.VisualHiveRef); err != nil {
@@ -399,6 +420,13 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		SetupAuthorizationInstallationID:   appIdentity.InstallationID,
 		SetupAuthorizationPermissionDigest: appIdentity.PermissionDigest,
 		SetupAuthorizationAppBindingDigest: appIdentity.BindingDigest,
+		VisualHiveGitHubWriterID:           visualWriter.ID,
+		VisualHiveGitHubWriterLogin:        visualWriter.Login,
+		VisualHiveGitHubWriterType:         visualWriter.Type,
+		VisualHiveGitHubAppID:              visualAppIdentity.AppID,
+		VisualHiveGitHubInstallationID:     visualAppIdentity.InstallationID,
+		VisualHiveGitHubPermissionDigest:   visualAppIdentity.PermissionDigest,
+		VisualHiveGitHubAppBindingDigest:   visualAppIdentity.BindingDigest,
 		InstalledAt:                        time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	if options.VisualHive {
@@ -436,6 +464,17 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 			config.SetupAuthorizationInstallationID = prior.SetupAuthorizationInstallationID
 			config.SetupAuthorizationPermissionDigest = prior.SetupAuthorizationPermissionDigest
 			config.SetupAuthorizationAppBindingDigest = prior.SetupAuthorizationAppBindingDigest
+		}
+		if priorVisualWriter, ok := visualHiveGitHubWriter(prior); ok {
+			config.VisualHiveGitHubWriterID = priorVisualWriter.ID
+			config.VisualHiveGitHubWriterLogin = priorVisualWriter.Login
+			config.VisualHiveGitHubWriterType = priorVisualWriter.Type
+			config.VisualHiveGitHubAppID = prior.VisualHiveGitHubAppID
+			config.VisualHiveGitHubInstallationID = prior.VisualHiveGitHubInstallationID
+			config.VisualHiveGitHubAppBindingDigest = prior.VisualHiveGitHubAppBindingDigest
+			// A permission change on the same dedicated App is a reviewable
+			// managed update, not a structural rebind. PAT mode has no digest.
+			config.VisualHiveGitHubPermissionDigest = visualAppIdentity.PermissionDigest
 		}
 	}
 	if config.ExecutionMode == ExecutionHosted {
@@ -819,6 +858,13 @@ type installedRepositoryConfig struct {
 	SetupAuthorizationInstallationID   int64                  `json:"setup_authorization_installation_id,omitempty"`
 	SetupAuthorizationPermissionDigest string                 `json:"setup_authorization_permission_digest,omitempty"`
 	SetupAuthorizationAppBindingDigest string                 `json:"setup_authorization_app_binding_digest,omitempty"`
+	VisualHiveGitHubWriterID           int64                  `json:"visual_hive_github_writer_id,omitempty"`
+	VisualHiveGitHubWriterLogin        string                 `json:"visual_hive_github_writer_login,omitempty"`
+	VisualHiveGitHubWriterType         string                 `json:"visual_hive_github_writer_type,omitempty"`
+	VisualHiveGitHubAppID              int64                  `json:"visual_hive_github_app_id,omitempty"`
+	VisualHiveGitHubInstallationID     int64                  `json:"visual_hive_github_installation_id,omitempty"`
+	VisualHiveGitHubPermissionDigest   string                 `json:"visual_hive_github_permission_digest,omitempty"`
+	VisualHiveGitHubAppBindingDigest   string                 `json:"visual_hive_github_app_binding_digest,omitempty"`
 	SetupAuthorizationPreviousActorID  int64                  `json:"setup_authorization_previous_actor_id,omitempty"`
 }
 
@@ -884,6 +930,13 @@ func verifyInstalledSetupAtRef(ctx context.Context, client *hivegithub.Client, c
 		SetupAuthorizationInstallationID:   config.SetupAuthorizationInstallationID,
 		SetupAuthorizationPermissionDigest: config.SetupAuthorizationPermissionDigest,
 		SetupAuthorizationAppBindingDigest: config.SetupAuthorizationAppBindingDigest,
+		VisualHiveGitHubWriterID:           config.VisualHiveGitHubWriterID,
+		VisualHiveGitHubWriterLogin:        config.VisualHiveGitHubWriterLogin,
+		VisualHiveGitHubWriterType:         config.VisualHiveGitHubWriterType,
+		VisualHiveGitHubAppID:              config.VisualHiveGitHubAppID,
+		VisualHiveGitHubInstallationID:     config.VisualHiveGitHubInstallationID,
+		VisualHiveGitHubPermissionDigest:   config.VisualHiveGitHubPermissionDigest,
+		VisualHiveGitHubAppBindingDigest:   config.VisualHiveGitHubAppBindingDigest,
 		SetupAuthorizationPreviousActorID:  config.SetupAuthorizationPreviousActorID,
 	}
 	if !reflect.DeepEqual(installed, expected) {
@@ -2474,6 +2527,13 @@ func writeManagedFiles(root string, config Config, inspection RepositoryInspecti
 		"setup_authorization_installation_id":    config.SetupAuthorizationInstallationID,
 		"setup_authorization_permission_digest":  config.SetupAuthorizationPermissionDigest,
 		"setup_authorization_app_binding_digest": config.SetupAuthorizationAppBindingDigest,
+		"visual_hive_github_writer_id":           config.VisualHiveGitHubWriterID,
+		"visual_hive_github_writer_login":        config.VisualHiveGitHubWriterLogin,
+		"visual_hive_github_writer_type":         config.VisualHiveGitHubWriterType,
+		"visual_hive_github_app_id":              config.VisualHiveGitHubAppID,
+		"visual_hive_github_installation_id":     config.VisualHiveGitHubInstallationID,
+		"visual_hive_github_permission_digest":   config.VisualHiveGitHubPermissionDigest,
+		"visual_hive_github_app_binding_digest":  config.VisualHiveGitHubAppBindingDigest,
 	}
 	if config.SetupAuthorizationPreviousActorID > 0 {
 		repositoryConfig["setup_authorization_previous_actor_id"] = config.SetupAuthorizationPreviousActorID
