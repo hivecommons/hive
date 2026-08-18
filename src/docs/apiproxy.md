@@ -2,8 +2,10 @@
 
 `cmd/apiproxy` is a small Anthropic-compatible HTTP proxy used to observe agent
 model traffic. It forwards requests to an upstream API and emits JSON event logs
-for requests/responses and SSE chunks. It can inject an upstream API key when the
-client request does not already carry a valid `Authorization` or `X-Api-Key` header.
+for requests/responses and SSE chunks. When a host key is configured, callers
+must provide a valid `Authorization` or `X-Api-Key` header or the proxy returns
+`401 Unauthorized`; the host key is never used to authenticate an unauthenticated
+caller.
 
 ## Run
 
@@ -27,8 +29,8 @@ Environment:
 
 | Name | Purpose |
 |---|---|
-| `PROXY_AUTH_TOKEN` | Preferred upstream API key used to set an outbound bearer Authorization header when the client did not send a valid key. |
-| `ANTHROPIC_API_KEY` | Fallback upstream API key if `PROXY_AUTH_TOKEN` is unset. The proxy logs a warning when this fallback is used because any client that can reach the proxy can use the host Anthropic key. |
+| `PROXY_AUTH_TOKEN` | Preferred upstream API key. Requests must still carry a valid caller `Authorization` or `X-Api-Key` header; this key is only used for the upstream request. |
+| `ANTHROPIC_API_KEY` | Fallback upstream API key if `PROXY_AUTH_TOKEN` is unset. The proxy logs a warning when this fallback is used; it is also used as the host key and requests without caller authentication are rejected. |
 
 ## Deployment notes
 
@@ -36,4 +38,6 @@ The binary listens on `127.0.0.1:<port>` by default. Treat `--host 0.0.0.0` as
 an explicit compatibility opt-in for deployments that need cross-container or
 cross-pod access, and pair it with network policy/firewall controls.
 Avoid relying on the `ANTHROPIC_API_KEY` fallback upstream key in production —
-configure `PROXY_AUTH_TOKEN` explicitly instead.
+configure `PROXY_AUTH_TOKEN` explicitly instead. This controls which host key is
+used upstream, while caller authentication remains mandatory whenever either
+variable supplies a host key.

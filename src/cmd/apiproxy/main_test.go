@@ -33,6 +33,9 @@ func TestProxyAuthTokenFromEnvWarnsOnAnthropicFallback(t *testing.T) {
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "PROXY_AUTH_TOKEN is unset") {
 		t.Fatalf("expected actionable fallback warning, got %#v", warnings)
 	}
+	if strings.Contains(warnings[0], "Unauthenticated callers will be granted") {
+		t.Fatalf("warning must not claim unauthenticated callers receive the host key: %q", warnings[0])
+	}
 }
 
 func TestProxyAuthTokenFromEnvPrefersProxyAuthToken(t *testing.T) {

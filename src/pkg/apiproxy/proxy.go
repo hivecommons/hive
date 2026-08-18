@@ -270,6 +270,14 @@ func (p *Proxy) errorHandler(w http.ResponseWriter, r *http.Request, err error) 
 
 // ServeHTTP implements http.Handler.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// A configured host key must never be used as an implicit credential for
+	// callers that can reach this listener. Require callers to identify
+	// themselves before the director can add the upstream key.
+	if p.apiKey != "" && !isValidAuth(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	if p.handler != nil {
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyLog))
 		if err == nil {
