@@ -1387,8 +1387,14 @@ func main() {
 	if appAuth != nil {
 		agentMgr.SetAppAuth(appAuth)
 		agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: appAuth})
-		go agentMgr.StartAgentTokenRefresh(ctx)
 	}
+	// Start the per-agent token refresh loop UNCONDITIONALLY. It no-ops until
+	// App auth is wired, and on hosted spokes that wiring happens AFTER boot
+	// (heartbeat delivery / config API reinit / config reload). Gating this on
+	// appAuth != nil at boot meant those hives never refreshed per-agent token
+	// caches: agent sessions outlived their scoped token, gh 401'd and printed
+	// "gh auth login", and the login-detector auto-paused the agent (#4072).
+	go agentMgr.StartAgentTokenRefresh(ctx)
 	if ghClient != nil {
 		agentMgr.SetSandboxPRClient(ghClient)
 	}
@@ -2284,6 +2290,10 @@ func main() {
 			ghClient = newClient
 			appAuth = newAppAuth
 			agentMgr.SetAppAuth(newAppAuth)
+			// Deliver fresh per-agent scoped tokens to already-running agents
+			// immediately — the periodic refresh loop only ticks every 40m,
+			// far too long for agents whose caches are empty or stale (#4072).
+			go agentMgr.RefreshAgentTokens(ctx)
 			dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 			logger.Info("github client reinitialized via config API", "app_id", newAppID, "installation_id", newInstallationID)
 
@@ -2691,6 +2701,8 @@ func main() {
 					ghClient = newClient
 					appAuth = newAppAuth
 					agentMgr.SetAppAuth(newAppAuth)
+					// Immediate per-agent token delivery — see #4072.
+					go agentMgr.RefreshAgentTokens(ctx)
 					agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
 					agentMgr.SetSandboxPRClient(newClient)
 					dashSrv.UpdateGitHubClient(newClient, newAppAuth)
@@ -3839,6 +3851,11 @@ func main() {
 				ghClient = newClient
 				appAuth = newAppAuth
 				agentMgr.SetAppAuth(newAppAuth)
+				// Immediate per-agent token delivery: hosted spokes get their
+				// App creds via this heartbeat path AFTER agents have already
+				// launched (with empty 0-byte caches), so waiting for the next
+				// 40-minute tick guarantees a window of gh 401s (#4072).
+				go agentMgr.RefreshAgentTokens(ctx)
 				dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 				dashSrv.SetGitHubAppRequired(false)
 				dashSrv.ClearPendingGitHubAppInstall()
@@ -4982,7 +4999,7 @@ func runEvalCycle(
 	}
 
 	// Scan agent panes for login-required patterns and pause + notify if detected
-	scanForLoginRequired(cfg, agentMgr, notifier, dashSrv, logger)
+	scanForLoginRequired(ctx, cfg, agentMgr, notifier, dashSrv, logger)
 
 	agentStatuses := agentMgr.AllStatuses()
 
@@ -5289,6 +5306,7 @@ func loginCommandForBackend(backend string) string {
 // scanForLoginRequired checks each running agent's tmux pane output for login-required
 // patterns. When a match is found, the agent is paused and a notification is sent.
 func scanForLoginRequired(
+	ctx context.Context,
 	cfg *config.Config,
 	agentMgr *agent.Manager,
 	notifier *notify.Notifier,
@@ -5336,6 +5354,17 @@ func scanForLoginRequired(
 					"agent", name,
 					"pattern", re.String(),
 				)
+
+				// Attempt a per-agent token re-cache BEFORE pausing. On an
+				// App-authenticated hive the likeliest cause of a "gh auth
+				// login" prompt is an expired scoped-token cache (#4072);
+				// re-minting it now means the operator's Resume immediately
+				// works instead of 401ing straight back into this pause.
+				// Best-effort: hives without App auth (or agents without a
+				// dedicated UID) simply skip it.
+				if refreshErr := agentMgr.RefreshAgentTokenFor(ctx, name); refreshErr == nil {
+					logger.Info("re-cached per-agent scoped token before login-detector pause", "agent", name)
+				}
 
 				// Pause the agent instead of restarting
 				if pauseErr := agentMgr.Pause(name, "login-detector", "login required detected"); pauseErr != nil {

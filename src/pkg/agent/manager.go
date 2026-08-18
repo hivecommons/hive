@@ -707,13 +707,43 @@ func writeAgentCredFile(path, token string, agentUID int) error {
 	return nil
 }
 
-const agentTokenRefreshInterval = 40 * time.Minute
+const (
+	// defaultAgentTokenRefreshInterval is how often per-agent scoped token
+	// cache files are rewritten. Installation tokens expire after 1 hour;
+	// refreshing at 40-minute intervals keeps a valid token on disk with a
+	// 20-minute safety margin.
+	defaultAgentTokenRefreshInterval = 40 * time.Minute
+	// AgentTokenRefreshIntervalEnv overrides the refresh interval with a Go
+	// duration string (e.g. "30m"). Invalid or non-positive values fall back
+	// to the default.
+	AgentTokenRefreshIntervalEnv = "HIVE_AGENT_TOKEN_REFRESH_INTERVAL"
+)
+
+// agentTokenRefreshInterval resolves the per-agent token refresh interval
+// from AgentTokenRefreshIntervalEnv, falling back to the default.
+func agentTokenRefreshInterval() time.Duration {
+	if v := os.Getenv(AgentTokenRefreshIntervalEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultAgentTokenRefreshInterval
+}
 
 // StartAgentTokenRefresh refreshes per-agent scoped tokens for all running
 // agents on a timer. Tokens expire after 1 hour; this refreshes at 40-minute
-// intervals so there's always a valid token on disk.
+// intervals (configurable via HIVE_AGENT_TOKEN_REFRESH_INTERVAL) so there's
+// always a valid token on disk.
+//
+// Safe to start even before an App auth is wired: refreshAgentTokens no-ops
+// while m.appAuth is nil, so hives whose GitHub App credentials arrive AFTER
+// boot (heartbeat delivery, config API reinit, config reload) start refreshing
+// as soon as SetAppAuth is called. Previously this loop was only started when
+// the App was configured at boot, so hosted spokes never refreshed per-agent
+// caches: agent sessions outlived their token, `gh` 401'd and printed
+// "gh auth login", and the login-detector auto-paused the agent.
 func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
-	ticker := time.NewTicker(agentTokenRefreshInterval)
+	ticker := time.NewTicker(agentTokenRefreshInterval())
 	defer ticker.Stop()
 	for {
 		select {
@@ -723,6 +753,43 @@ func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
 			m.refreshAgentTokens(ctx)
 		}
 	}
+}
+
+// RefreshAgentTokens immediately rewrites every running agent's per-agent
+// scoped token cache. Called when GitHub App auth is wired late (heartbeat
+// delivery, config API reinit, config reload) so agents that were already
+// running get a valid cache right away instead of waiting for the next tick.
+func (m *Manager) RefreshAgentTokens(ctx context.Context) {
+	m.refreshAgentTokens(ctx)
+}
+
+// RefreshAgentTokenFor re-mints and re-caches the scoped token for a single
+// agent, using the same tier logic as launch. Used by the login-detector to
+// attempt a token re-cache before pausing: the likeliest cause of a `gh`
+// "gh auth login" prompt on an App-authenticated hive is an expired cached
+// token, so refreshing it means a subsequent Resume works immediately.
+// Returns an error when the agent is unknown, has no UID, or no App auth is
+// wired.
+func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
+	m.mu.RLock()
+	auth := m.appAuth
+	agent, ok := m.agents[name]
+	m.mu.RUnlock()
+
+	if auth == nil {
+		return fmt.Errorf("no github app auth wired")
+	}
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	if agent.UID <= 0 {
+		return fmt.Errorf("agent %s has no dedicated UID", name)
+	}
+	tier := m.agentMode(agent).TokenTier()
+	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
+	}
+	return nil
 }
 
 func (m *Manager) refreshAgentTokens(ctx context.Context) {
