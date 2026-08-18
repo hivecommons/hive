@@ -1350,7 +1350,12 @@ function classifyTmuxPane(text) {
     // busy agent as idle. The stall backstop in progressTick() covers whatever
     // this still misses.
     const agyTail = text.split('\n').slice(-15).join('\n');
-    hasIdlePrompt = /\? for shortcuts/.test(text);
+    // agy formerly ended idle turns with "? for shortcuts". Current Gemini
+    // builds render a bare input line followed by the model footer instead.
+    // Keep the bare ">" constrained to that footer so a Markdown quote in
+    // an in-flight response cannot be mistaken for an idle prompt.
+    hasIdlePrompt = /\? for shortcuts/.test(text) ||
+      /(?:^|\n)>\s*\n\s*\n\s*Gemini\b[^\n]*\s*$/m.test(agyTail);
     hasCompletionMarker = true;
     isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
   } else {

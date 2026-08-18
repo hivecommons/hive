@@ -243,6 +243,20 @@ const AGY_WEDGED_PANE = [
   '? for shortcuts',
 ].join('\n');
 
+// Live agy/Gemini pane after opening kubestellar/hive#4079. Newer builds no
+// longer print "? for shortcuts" at rest: their idle chrome is a bare input
+// prompt followed by the selected-model footer.
+const AGY_GEMINI_IDLE_PANE = [
+  '● Bash(gh pr create --repo kubestellar/hive ...)',
+  ...Array.from({ length: 20 }, (_, i) => `  completed test step ${i}`),
+  '',
+  '  • Opened https://github.com/foo/bar/pull/9 targeting v4.',
+  '────────────────────────────────────────────',
+  '>',
+  '',
+  'Gemini 3.7 Flash · high',
+].join('\n');
+
 // --- CLI liveness: ask the PANE, not the process table --------------------
 //
 // The old probe substring-matched the whole process table for the backend's
@@ -330,6 +344,26 @@ test('agy at its idle prompt is COMPLETE even with stale narration on screen', (
     assert.strictEqual(
       relay.classifyTmuxPane(AGY_WEDGED_PANE), relay.PANE_STATE_IDLE_COMPLETE,
       'a finished agy turn must not read as working just because an older line says "running"');
+  } finally { teardown(relay); }
+});
+
+test('agy Gemini footer with a bare prompt is COMPLETE', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_GEMINI_IDLE_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'a finished current agy/Gemini pane must not remain working because its old footer changed');
+  } finally { teardown(relay); }
+});
+
+test('agy Gemini idle pane reports its visible PR as task_complete', () => {
+  const relay = loadRelay({ backend: 'agy', paneText: AGY_GEMINI_IDLE_PANE });
+  try {
+    assignTask(relay, 'ct-agy-gemini-idle');
+    relay.__crashTick();
+    const complete = relay.__sent.find(m => m.type === 'task_complete');
+    assert.ok(complete, 'the live agy/Gemini pane shape must complete the task');
+    assert.strictEqual(complete.pr_url, 'https://github.com/foo/bar/pull/9');
   } finally { teardown(relay); }
 });
 
