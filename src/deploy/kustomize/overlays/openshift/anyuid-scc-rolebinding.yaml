@@ -1,0 +1,31 @@
+# Bind the cluster-scoped `anyuid` SCC to the base ServiceAccount `hive`.
+#
+# The Hive pod starts as root (UID 0) to install the ACMM MITM-proxy iptables
+# rules and to chown the PVC before dropping to the `dev` user. OpenShift's
+# default `restricted-v2` SCC forces a random high UID and forbids that, so the
+# pod crash-loops. Landing it on `anyuid` (which permits the container's own
+# declared UID/root) is the fix.
+#
+# The base's deployment.yaml sets `serviceAccountName: hive` and
+# dashboard-route-rbac.yaml defines that ServiceAccount, so the subject below
+# matches the SA the base actually uses (NOT `hive-sa`).
+#
+# Verify after apply:
+#   oc -n hive get pod -l app.kubernetes.io/name=hive \
+#     -o jsonpath='{.items[0].metadata.annotations.openshift\.io/scc}'
+#   # MUST print "anyuid" — "restricted-v2" means this binding did not take.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-anyuid
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive

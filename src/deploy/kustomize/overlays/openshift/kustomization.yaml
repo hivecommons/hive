@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# OpenShift platform overlay — a THIN delta on top of the plain-Kubernetes
+# base (../../../k8s). It adds only what OpenShift needs that the base omits:
+#
+#   1. A Route (route.openshift.io/v1) to expose the dashboard — OpenShift's
+#      native ingress, which the base has no equivalent for.
+#   2. The `anyuid` SCC RoleBinding — the pod starts as root to set up the
+#      ACMM MITM-proxy iptables and to chown the PVC, so it MUST land on the
+#      `anyuid` SCC. On the default `restricted-v2` SCC it crash-loops.
+#
+# It changes NOTHING about the workload itself; the base deployment already
+# carries the correct securityContext (fsGroup 1002, NET_ADMIN + su-exec caps).
+
+resources:
+  - ../../../k8s
+  - route.yaml
+  - anyuid-scc-rolebinding.yaml

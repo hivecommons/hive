@@ -2,10 +2,10 @@
 
 > **Legacy v1/launchd documentation.** This page maps the original
 > systemd-style supervised agent workflow to macOS launchd. It does not describe
-> the current containerized Go deployment (branch `v4`; code under `v2/`). For that, start with
-> [`v2/docs/README.md`](../v2/docs/README.md), plus
-> [`v2/docs/operator-reference.md`](../v2/docs/operator-reference.md) and
-> [`v2/docs/deployment-scripts.md`](../v2/docs/deployment-scripts.md).
+> the current containerized Go deployment (branch `v4`; code under `src/`). For that, start with
+> [`src/docs/README.md`](../src/docs/README.md), plus
+> [`src/docs/operator-reference.md`](../src/docs/operator-reference.md) and
+> [`src/docs/deployment-scripts.md`](../src/docs/deployment-scripts.md).
 
 The hive runtime was built on Linux/systemd, but the same concepts map cleanly to macOS using **launchd** — Apple's equivalent of systemd.
 

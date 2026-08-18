@@ -25,7 +25,7 @@ const RELAY_PATH = path.join(__dirname, 'contributor-relay.sh');
 // bash and no WebSocket are ever touched.
 // ---------------------------------------------------------------------------
 
-function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null } = {}) {
+function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reasoningEffort = '', cliStates = ['ready'], procAlive = true, mode = 'interactive', execFileResult = null, statusFile = null, paneText = null, env = null, cliVersion = null } = {}) {
   const commands = [];
   const sent = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
@@ -36,7 +36,10 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
 
   const fakeExecSync = (cmd) => {
     if (commands.length < MAX_RECORDED_COMMANDS) commands.push(cmd);
-    if (/backend_binary/.test(cmd)) return `${backend}\n`;
+    // backendBinary lets a test model backends.conf mapping a backend NAME to a
+    // different BINARY (litellm → claude); it defaults to the identity mapping
+    // every other backend has.
+    if (/backend_binary/.test(cmd)) return `${backendBinary || backend}\n`;
     if (/backend_perm_flag/.test(cmd)) return '--allow-all\n';
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
@@ -76,10 +79,23 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
     return child;
   };
 
+  // The capability probe (`<cli> --version`, kubestellar/hive#2547) is the only
+  // execFileSync caller. `cliVersion` is what the CLI "prints"; an Error instance
+  // makes the probe throw, standing in for an absent binary, an unsupported flag
+  // or a timeout kill — every one of which must leave the field simply absent.
+  const execFileSyncCalls = [];
+  const fakeExecFileSync = (bin, args, opts) => {
+    execFileSyncCalls.push({ bin, args, opts });
+    if (cliVersion instanceof Error) throw cliVersion;
+    if (cliVersion === null) throw new Error('spawnSync ENOENT');
+    return cliVersion;
+  };
+
   const stubs = {
     child_process: {
       execSync: fakeExecSync,
       execFile: fakeExecFile,
+      execFileSync: fakeExecFileSync,
     },
     ws: class FakeWebSocket {
       static get OPEN() { return 1; }
@@ -151,6 +167,7 @@ function loadRelay({ backend = 'copilot', model = '', reasoningEffort = '', cliS
     try { return JSON.parse(fs.readFileSync(headlessStatusFile, 'utf8')); } catch (_) { return null; }
   };
   relay.__tmuxSends = () => commands.filter(c => /send-keys/.test(c));
+  relay.__execFileSyncCalls = execFileSyncCalls;
   return relay;
 }
 
@@ -194,6 +211,144 @@ test('bob never receives --model even when AGENT_MODEL is set', () => {
     const cmd = relay.buildLaunchCommand();
     assert.ok(!/--model/.test(cmd),
       `--model is fatal for bob ("Cannot read properties of undefined (reading 'maxTokens')"), got: ${cmd}`);
+  } finally { teardown(relay); }
+});
+
+// --- agy pane classification: stale narration must not pin WORKING ---------
+//
+// Verbatim shape of a real wedged pane (kubestellar/hive): agy had finished the
+// turn and printed its no_work_needed verdict, and was sitting at its idle
+// prompt. One line of narration left over from the PREVIOUS task — "I am
+// running the pkg/agent tests…" — kept the whole-pane isWorking scan true, so
+// the relay never reported completion, kept renewing the hub's task lease, and
+// the contributor had to Ctrl-C to get any further work.
+const AGY_WEDGED_PANE = [
+  'Edit(~/hive/src/pkg/agent/manager_test.go)',
+  'Bash(cd src && go test ./pkg/agent)',
+  '',
+  'I am running the pkg/agent tests with the shortened temp directory path to verify they now pass locally as well.',
+  // The turn continues for a while after that line — in the pane this fixture
+  // came from it sat 36 rows above the bottom, far outside any sane tail.
+  ...Array.from({ length: 20 }, (_, i) => `  ok  github.com/kubestellar/hive/pkg/thing${i}  0.0${i}s`),
+  '',
+  '  HIVE_VERDICT: no_work_needed — standing living document tracker, not an actionable task',
+  '────────────────────────────────────────────',
+  '>',
+  '────────────────────────────────────────────',
+  '? for shortcuts',
+].join('\n');
+
+test('agy at its idle prompt is COMPLETE even with stale narration on screen', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_WEDGED_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'a finished agy turn must not read as working just because an older line says "running"');
+  } finally { teardown(relay); }
+});
+
+test('agy still reads as WORKING while activity is in the tail', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const busy = [
+      'HIVE_VERDICT: no_work_needed — an older, finished turn',
+      '',
+      'Bash(go build ./...)',
+      'Reading src/pkg/agent/manager.go',
+    ].join('\n');
+    assert.strictEqual(
+      relay.classifyTmuxPane(busy), relay.PANE_STATE_WORKING,
+      'agy with fresh activity at the bottom of the pane must stay WORKING');
+  } finally { teardown(relay); }
+});
+
+// --- Pane stall backstop ---------------------------------------------------
+//
+// The hub's wedged-worker reclaim only catches a relay that goes SILENT; one
+// that keeps reporting "working" renews the lease forever. These pin the
+// relay-side half: an unchanging pane eventually stops claiming progress.
+test('an unchanging pane trips the stall backstop; any change resets it', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const past = () => relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    assert.strictEqual(relay.paneStalled(['same']), false, 'first sighting only records the fingerprint');
+    past();
+    assert.strictEqual(relay.paneStalled(['same']), true, 'unchanged pane past the timeout is stalled');
+    assert.strictEqual(relay.paneStalled(['different']), false, 'a changed pane restarts the clock');
+    past();
+    assert.strictEqual(relay.paneStalled(['different']), true);
+    // An empty capture is a missing pane, not a stalled agent.
+    assert.strictEqual(relay.paneStalled([]), false);
+    past();
+    assert.strictEqual(relay.paneStalled([]), false, 'an empty capture must never trip the backstop');
+  } finally { teardown(relay); }
+});
+
+test('a stalled pane hands the task back as an environment failure', () => {
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-stall');
+    relay.__stallTick();   // records the fingerprint, reports working
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // same pane past the timeout -> give the task back
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, got ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].failure_kind, 'environment',
+      'a frozen pane says nothing about the WORK, so the failure is the environment kind');
+    assert.match(failed[0].reason, /no pane activity/);
+    assert.strictEqual(relay.getCurrentTask(), null, 'the relay must let go of the task, not keep renewing its lease');
+  } finally { teardown(relay); }
+});
+
+test('agy pairs --effort with --model, and omits it when no model is set', () => {
+  // agy warns "--model <m> requires --effort (available: low, medium, high)"
+  // and then IGNORES the model, so the two flags must travel together. Mirrors
+  // agyDefaultEffort ("low") in the hub-side launcher.
+  const withModel = loadRelay({ backend: 'agy', model: 'gemini-3.6-flash-high' });
+  try {
+    const cmd = withModel.buildLaunchCommand();
+    assert.match(cmd, /--model gemini-3\.6-flash-high/, `expected model flag, got: ${cmd}`);
+    assert.match(cmd, /--effort low/, `agy dropped the required --effort: ${cmd}`);
+  } finally { teardown(withModel); }
+
+  const noModel = loadRelay({ backend: 'agy' });
+  try {
+    const cmd = noModel.buildLaunchCommand();
+    assert.ok(!/--effort/.test(cmd), `--effort belongs only with --model, got: ${cmd}`);
+  } finally { teardown(noModel); }
+});
+
+test('agy effort honors AGENT_REASONING_EFFORT but rejects values agy cannot take', () => {
+  // codex's vocabulary is wider than agy's ("minimal" is valid for codex only).
+  // Forwarding an unknown token would make agy reject the pairing and drop the
+  // model again, so anything outside low|medium|high falls back to the default.
+  const good = loadRelay({ backend: 'agy', model: 'm', reasoningEffort: 'high' });
+  try {
+    assert.match(good.buildLaunchCommand(), /--effort high/);
+  } finally { teardown(good); }
+
+  const bogus = loadRelay({ backend: 'agy', model: 'm', reasoningEffort: 'minimal' });
+  try {
+    const cmd = bogus.buildLaunchCommand();
+    assert.match(cmd, /--effort low/, `unknown effort must fall back to low, got: ${cmd}`);
+    assert.ok(!/minimal/.test(cmd), `agy must not receive codex-only effort values: ${cmd}`);
+  } finally { teardown(bogus); }
+});
+
+test('agy headless argv carries the same --model/--effort pairing', () => {
+  const relay = loadRelay({ backend: 'agy', mode: 'headless', model: 'gemini-3.6-flash-high' });
+  try {
+    const a = relay.buildHeadlessArgv('review this');
+    const i = a.args.indexOf('--effort');
+    assert.ok(i >= 0, `headless agy dropped --effort: ${JSON.stringify(a.args)}`);
+    assert.strictEqual(a.args[i + 1], 'low');
+    assert.ok(a.args.includes('--model'), `headless agy dropped --model: ${JSON.stringify(a.args)}`);
+    // The prompt still has to be the final, distinct element after -p.
+    assert.deepStrictEqual(a.args.slice(-2), ['-p', 'review this']);
   } finally { teardown(relay); }
 });
 
@@ -1021,9 +1176,12 @@ test('buildHeadlessArgv maps each supported backend to its one-shot invocation',
     // goose needs its `run` sub-command AND -t (whose VALUE is the prompt) —
     // two leading tokens, unlike every other entry (#2828).
     { backend: 'goose', tail: ['run', '--no-session', '-t', PROMPT] },
+    // agy -p "<prompt>" — Antigravity's print mode. Headless CAPABILITY only:
+    // agy still cannot sign in inside a pod (interactive Google OAuth, no
+    // API-key mode), which is why the k8s manifest generator keeps warning.
+    { backend: 'agy', tail: ['-p', PROMPT] },
     // Interactive-TUI backends with no known one-shot entry point.
     { backend: 'bob', tail: null },
-    { backend: 'agy', tail: null },
     { backend: 'pi', tail: null },
   ]) {
     const relay = loadRelay({ backend: tc.backend, mode: 'headless' });
@@ -1583,6 +1741,264 @@ test('the /tmp cleanup find scopes its -o group (N20: no cross-owner *.html dele
     !line.includes("-user dev -name '*.out' -o -name"),
     'the unparenthesized (vulnerable) form is back:\n' + line
   );
+});
+
+// ---------------------------------------------------------------------------
+// Capability declaration — agent CLI version (kubestellar/hive#2547, DECLARE).
+//
+// The hub schema, src/docs/contributor-relay.md and the Operations row ("cli
+// 1.2.3") all carried agent_cli_version, but the relay never sent it, so the
+// column was blank for every connected client. These pin the probe AND — more
+// importantly — that failing to probe stays a first-class outcome: an omitted
+// field is what every relay written before this change reports, and nothing may
+// treat that silence as a defect.
+// ---------------------------------------------------------------------------
+
+test('the relay declares the agent CLI version it probed', () => {
+  const relay = loadRelay({ backend: 'copilot', cliVersion: '0.0.352\n' });
+  try {
+    const caps = relay.detectCapabilities();
+    assert.strictEqual(caps.agent_cli_version, '0.0.352');
+
+    const [call] = relay.__execFileSyncCalls;
+    assert.ok(call, 'no version probe was made');
+    assert.deepStrictEqual(call.args, ['--version']);
+    // stdin closed so a CLI that mistakes --version for a launch gets EOF
+    // instead of waiting on a terminal nobody is at; a timeout so a wedged
+    // binary costs seconds rather than the handshake.
+    assert.deepStrictEqual(call.opts.stdio, ['ignore', 'pipe', 'ignore']);
+    assert.ok(call.opts.timeout > 0 && call.opts.timeout <= 10000,
+      `probe timeout should be short and present, got ${call.opts.timeout}`);
+  } finally { teardown(relay); }
+});
+
+test('the probed version is the binary backends.conf maps the backend to', () => {
+  // litellm runs the claude binary. Probing "litellm --version" would report the
+  // version of a CLI that never runs the work — usually nothing at all, since no
+  // such binary exists — so the probe has to go through the same resolution the
+  // launch path uses.
+  const relay = loadRelay({ backend: 'litellm', backendBinary: 'claude', cliVersion: '2.0.14 (Claude Code)' });
+  try {
+    const caps = relay.detectCapabilities();
+    const [call] = relay.__execFileSyncCalls;
+    assert.strictEqual(call.bin, 'claude',
+      'the probe must run the resolved backend binary, not the backend name');
+    assert.strictEqual(caps.agent_cli_version, '2.0.14 (Claude Code)');
+  } finally { teardown(relay); }
+});
+
+test('a CLI that cannot be probed simply declares nothing', () => {
+  for (const failure of [null, new Error('ETIMEDOUT'), new Error('Unknown flag: --version')]) {
+    const relay = loadRelay({ backend: 'copilot', cliVersion: failure });
+    try {
+      const caps = relay.detectCapabilities();
+      assert.ok(!('agent_cli_version' in caps),
+        `a failed probe must omit the field entirely, got ${JSON.stringify(caps)}`);
+      // The rest of the declaration still stands — one unprobeable field must
+      // not cost the others.
+      assert.strictEqual(caps.os, process.platform);
+      assert.ok(caps.container_runtime, 'container runtime should still be declared');
+    } finally { teardown(relay); }
+  }
+});
+
+test('a CLI banner is reduced to one short printable line before it is declared', () => {
+  const cases = [
+    // Real shape: version first, update nudge after. Keep the version.
+    ['1.4.2\nA new release is available!\n', '1.4.2'],
+    // Leading blank lines and padding.
+    ['\n\n   3.1.0   \n', '3.1.0'],
+    // Escape sequences from a colourising CLI.
+    ['\x1b[32m2.0.1\x1b[0m', '[32m2.0.1 [0m'],
+    // Nothing usable reads as no declaration at all.
+    ['\n \n', ''],
+  ];
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    for (const [raw, want] of cases) {
+      assert.strictEqual(relay.sanitizeDeclaredValue(raw), want,
+        `sanitizeDeclaredValue(${JSON.stringify(raw)})`);
+    }
+    // Bounded: the hub bounds it again on receipt, but a relay should not be
+    // shipping a novel in a display field either.
+    const long = relay.sanitizeDeclaredValue('v'.repeat(500));
+    assert.ok(long.length <= 64, `declared version not bounded: ${long.length} chars`);
+  } finally { teardown(relay); }
+});
+
+test('auth_response carries the declared capabilities, and omits nothing else', () => {
+  const relay = loadRelay({ backend: 'copilot', model: 'gpt-5.6-luna', cliVersion: '0.0.352' });
+  try {
+    const hubs = relay.getHubs();
+    const sent = [];
+    hubs[0].ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }), hubs[0]);
+
+    const auth = sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'no auth_response was sent');
+    assert.strictEqual(auth.cli_backend, 'copilot');
+    assert.ok(auth.capabilities, 'auth_response carried no capabilities object');
+    assert.strictEqual(auth.capabilities.agent_cli_version, '0.0.352');
+    assert.strictEqual(auth.capabilities.os, process.platform);
+    assert.strictEqual(auth.capabilities.arch, process.arch);
+  } finally { teardown(relay); }
+});
+
+test('capabilities are probed once and cached, not re-probed per hub handshake', () => {
+  const relay = loadRelay({ backend: 'copilot', cliVersion: '0.0.352' });
+  try {
+    relay.detectCapabilities();
+    relay.detectCapabilities();
+    relay.detectCapabilities();
+    assert.strictEqual(relay.__execFileSyncCalls.length, 1,
+      'the CLI version probe must run once per process, not once per handshake');
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// Peer-protocol compatibility (kubestellar/hive#2547).
+//
+// #2567 gave both sides a version to STATE; neither side COMPARED them, so the
+// issue's original complaint stood: "the only way to learn that an old relay is
+// talking to a new hub is to watch it misbehave." These cover the relay half of
+// the detection, and — more importantly — that detecting a mismatch NEVER
+// changes what the relay does.
+// ---------------------------------------------------------------------------
+
+test('protocol verdicts: peer version is classified against our own', () => {
+  const relay = loadRelay();
+  try {
+    const self = relay.RELAY_PROTOCOL_VERSION;
+    const [maj, min] = self.split('.').map(Number);
+    const c = (peer) => relay.classifyPeerProtocol(peer, self);
+
+    // An unversioned hub is 'unknown', NEVER a fault: that is what every
+    // deployment predating the versioned handshake answers with.
+    assert.strictEqual(c(undefined), 'unknown');
+    assert.strictEqual(c(''), 'unknown');
+    assert.strictEqual(c('   '), 'unknown');
+
+    assert.strictEqual(c(self), 'current');
+    assert.strictEqual(c(`${maj}.${min + 1}`), 'newer');
+    assert.strictEqual(c(`${maj + 1}.${min}`), 'incompatible');
+    if (min > 0) assert.strictEqual(c(`${maj}.${min - 1}`), 'older');
+
+    // Strict MAJOR.MINOR — an unrecognised shape is reported as unparseable
+    // rather than coerced into a confident, wrong comparison.
+    for (const bad of ['1', '1.2.3', 'v1.2', '1.x', 'nonsense']) {
+      assert.strictEqual(c(bad), 'malformed', `${bad} should be malformed`);
+    }
+  } finally { teardown(relay); }
+});
+
+test('protocol drift is reported once per hub and never changes relay behaviour', () => {
+  const relay = loadRelay();
+  const origWarn = console.warn;
+  const warnings = [];
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    const hub = relay.getHubs()[0];
+    const self = relay.RELAY_PROTOCOL_VERSION;
+    const [maj, min] = self.split('.').map(Number);
+    const wsBefore = hub.ws;
+    const authBefore = hub.authenticated;
+
+    // Matching and unversioned hubs are SILENT: a healthy connection and an old
+    // hub both stay quiet, so the warning means something when it does appear.
+    relay.warnOnProtocolDrift(hub, self);
+    relay.warnOnProtocolDrift(hub, undefined);
+    assert.strictEqual(warnings.length, 0, `expected silence, got: ${warnings.join(' | ')}`);
+
+    // A real mismatch is reported once, names BOTH versions (the verdict alone
+    // is ambiguous about which side is behind), and says it is advisory.
+    relay.warnOnProtocolDrift(hub, `${maj + 1}.${min}`);
+    assert.strictEqual(warnings.length, 1, 'expected exactly one warning');
+    assert.ok(/incompatible/.test(warnings[0]), warnings[0]);
+    assert.ok(warnings[0].includes(`${maj + 1}.${min}`) && warnings[0].includes(self),
+      `warning must name both versions: ${warnings[0]}`);
+    assert.ok(/advisory/.test(warnings[0]), `warning must say it is advisory: ${warnings[0]}`);
+
+    // Reconnect loops must not repeat it.
+    relay.warnOnProtocolDrift(hub, `${maj + 1}.${min}`);
+    assert.strictEqual(warnings.length, 1, 'drift warning repeated on a second call');
+
+    // And nothing about the connection changed: a mismatched peer keeps working
+    // exactly as before. #2547 is explicit that compatibility is carried by the
+    // defaults, because there is no negotiation to carry it.
+    assert.strictEqual(hub.authFailed, false, 'a protocol mismatch must not fail auth');
+    assert.strictEqual(hub.authenticated, authBefore, 'a protocol mismatch must not change auth state');
+    assert.strictEqual(hub.ws, wsBefore, 'a protocol mismatch must not drop the socket');
+  } finally {
+    console.warn = origWarn;
+    teardown(relay);
+  }
+});
+
+test('the relay declares the same protocol version the hub speaks', () => {
+  // The hub and this relay ship from the same tree. That was previously only a
+  // comment, and it drifted (#2600 shipped both at 1.1; #2671 bumped the hub to
+  // 1.2 and left the relay at 1.1). Pinned from both sides — the Go half is
+  // TestRelayProtocolVersionMatchesHub.
+  const goSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'pkg', 'dashboard', 'contribute_protocol.go'), 'utf8');
+  const m = /const contributorProtocolVersion = "([^"]*)"/.exec(goSrc);
+  assert.ok(m, 'could not find contributorProtocolVersion in contribute_protocol.go');
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.RELAY_PROTOCOL_VERSION, m[1],
+      'bin/contributor-relay.sh and the hub must declare the same contributor-protocol version; ' +
+      'bump both in the same PR');
+  } finally { teardown(relay); }
+});
+
+
+// ---------------------------------------------------------------------------
+// kubestellar/hive#1861 / #3842 (audit N14) — the relay must never target the
+// hub's full-privilege installation-token cache, and a failed token write must
+// degrade, not crash the relay mid-assignment.
+// ---------------------------------------------------------------------------
+
+test('default token cache path is never the hub shared gh-app-token.cache', () => {
+  // Empty override forces the relay's built-in default (|| is falsy on '').
+  const relay = loadRelay({ env: { HIVE_GH_TOKEN_CACHE: '' } });
+  try {
+    assert.ok(relay.GH_TOKEN_CACHE, 'expected GH_TOKEN_CACHE exported in test mode');
+    assert.notStrictEqual(path.basename(relay.GH_TOKEN_CACHE), 'gh-app-token.cache',
+      'the relay defaulted its token write path to the hub\'s full-privilege ' +
+      `installation-token cache: ${relay.GH_TOKEN_CACHE} — a relay on a hive ` +
+      'host would clobber it (as root) or crash on EACCES (as anyone else)');
+  } finally { teardown(relay); }
+});
+
+test('task_assign with an unwritable token cache path does not crash the relay', () => {
+  // Parent "directory" is a regular file, so mkdirSync and writeFileSync both
+  // fail no matter what uid the test runs as.
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(scratchRoot, 'relay-badcache-'));
+  const fileAsDir = path.join(tmp, 'blocker');
+  fs.writeFileSync(fileAsDir, 'not a directory');
+  const relay = loadRelay({ env: { HIVE_GH_TOKEN_CACHE: path.join(fileAsDir, 'token.cache') } });
+  try {
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({
+      type: 'task_assign',
+      task_id: 'tok-1',
+      kind: 'issue',
+      repo: 'foo/bar',
+      number: 7,
+      title: 'token write failure must degrade',
+      prompt: 'do the thing',
+      github_token: 'scoped-task-token',
+    }));
+    const accepted = relay.__sent.find(m => m.type === 'task_accepted');
+    assert.ok(accepted,
+      'task_assign must survive an unwritable token cache and still accept the task');
+  } finally {
+    teardown(relay);
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+  }
 });
 
 // ---------------------------------------------------------------------------

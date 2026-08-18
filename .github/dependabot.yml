@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: "gomod"
-    directory: "/v2"
+    directory: "/src"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -19,7 +19,7 @@ updates:
     open-pull-requests-limit: 10
 
   - package-ecosystem: "docker"
-    directory: "/v2"
+    directory: "/src"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -28,7 +28,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "npm"
-    directory: "/v2/proxy"
+    directory: "/src/proxy"
     target-branch: "v4"
     schedule:
       interval: "weekly"

@@ -1,0 +1,24 @@
+# EXAMPLE OpenShift Route for Joe's dashboard.
+# ⚠️  Replace `spec.host` with your own cluster's apps domain (or drop `host`
+#     entirely to let OpenShift auto-generate one). Targets the base Service
+#     `hive` port `dashboard` (3002), edge TLS with HTTP->HTTPS redirect.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hive-dashboard
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+spec:
+  host: hive.apps.joes-cluster.example.com
+  path: /
+  port:
+    targetPort: dashboard
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  to:
+    kind: Service
+    name: hive
+    weight: 100
+  wildcardPolicy: None

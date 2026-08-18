@@ -1,0 +1,98 @@
+# Strategic-merge patch replacing the base `hive-config` ConfigMap's hive.yaml
+# for the hub-less / self-hosted scenario.
+#
+# A ConfigMap's `data` values are opaque strings, so this whole `hive.yaml`
+# block REPLACES the base one (there is no deep-merge inside the string). Keep
+# it complete. Every key below is verified against src/pkg/config/config.go —
+# note the exact struct locations, which are easy to get wrong:
+#   - hub.enabled ......... top-level `hub:` block  (HubConfig)
+#   - acmm_level .......... TOP-LEVEL key           (Config.ACMMLevel, *int)
+#   - agents.*.backend .... valid enum: litellm | vllm | llm-d | watsonx  (CLI
+#                           backends are copilot/claude/etc.). NOT "openrouter"
+#                           — openrouter is a gateway KIND, not a backend value.
+#   - dashboard.hub_proxied / dashboard.authorized_users  (DashboardConfig — the
+#                           runtime reads these off Dashboard, see server.go
+#                           handleLivez/isHubProxied and config.go:3175)
+#   - github.oauth_client_id  (GitHubConfig.OAuthClientID — read from GitHub,
+#                           NOT Dashboard: see dashboard device-flow auth)
+#   - governor.litellm .... LiteLLMConfig lives UNDER governor: (Config.Governor)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-config
+  namespace: hive
+data:
+  hive.yaml: |
+    # ── Project: your repos. SWAP these placeholders. ──────────────────────
+    project:
+      org: YOUR_ORG              # e.g. joesorg
+      repos:
+        - YOUR_REPO              # e.g. joesrepo
+      ai_author: YOUR_BOT_LOGIN  # GitHub login the agents author PRs as
+      primary_repo: YOUR_REPO    # must be one of `repos` above
+
+    # ── ACMM autonomy level. 2 = plan+approve gating (a sensible self-hosted
+    #    default). Top-level key, resolved into Config.ACMMLevel. ────────────
+    acmm_level: 2
+
+    # ── Hub DISABLED. The zero value of HubConfig.Enabled is already false, so
+    #    the base (which has no hub: block) is hub-less by default. This makes
+    #    it explicit — belt-and-suspenders so no upstream default flips it on.
+    hub:
+      enabled: false
+
+    # ── Agents. backend `litellm` routes to the in-cluster OpenAI-compatible
+    #    endpoint shipped by ../../../inference (or any litellm proxy you point
+    #    governor.litellm at). Swap to `vllm` to hit HIVE_VLLM_ENDPOINT directly.
+    agents:
+      supervisor:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/supervisor
+        clear_on_kick: true
+      scanner:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/scanner
+        clear_on_kick: true
+      architect:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/architect
+        clear_on_kick: false
+
+    governor:
+      eval_interval_s: 300
+      # LiteLLM inference backend (UNDER governor:, per LiteLLMConfig). Point
+      # `endpoint` at your OpenAI-compatible proxy. The in-cluster llama.cpp
+      # from ../../../inference is reachable at the HIVE_VLLM_ENDPOINT the base
+      # deployment sets; a dedicated litellm proxy would be its own Service.
+      litellm:
+        endpoint: http://vllm-svc.hive-inference.svc.cluster.local:8000
+        # api_key_env names the ENV VAR holding the key (default
+        # HIVE_LITELLM_API_KEY); api_key_file a mounted path
+        # (default /secrets/litellm_api_key). Provide whichever your proxy needs.
+        api_key_env: HIVE_LITELLM_API_KEY
+        default_model: qwen2.5-0.5b-instruct
+
+    dashboard:
+      port: 3002
+      # Standalone spoke: NOT behind the hub's nginx auth-proxy, so the hive
+      # must enforce device-flow authz itself. false is the default but set
+      # explicitly so an operator sees this is a direct-route spoke.
+      hub_proxied: false
+      # First entry is the OWNER (read-write). Add more as
+      # "login:read" / "login:owner". SWAP the placeholder login.
+      authorized_users:
+        - YOUR_GITHUB_LOGIN:owner
+
+    # ── GitHub OAuth client id for the device-flow login. Required for a
+    #    direct-route (non-hub-proxied) spoke's dashboard login. Create an OAuth
+    #    App (github.com/settings/developers, or your GHE instance) and paste its
+    #    Client ID here. For a GitHub Enterprise host, also set project.forge /
+    #    github.forge to your host (e.g. github.example.com). The client SECRET
+    #    is NOT needed for device flow.
+    github:
+      oauth_client_id: YOUR_OAUTH_CLIENT_ID
+
+    notifications: {}

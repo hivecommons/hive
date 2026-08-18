@@ -831,7 +831,16 @@ if policy_changed "scanner"; then
 else
   _SCANNER_POLICY_INSTR="Policy unchanged since last kick — skip CLAUDE.md re-read, continue with standing instructions."
 fi
-_GH_AUTH_INSTR="⚙ GH AUTH: ALWAYS prefix gh commands with: GH_TOKEN=\$(cat /var/run/hive-metrics/gh-app-token.cache) gh ... — this uses the GitHub App token (15k/hr). NEVER use a PAT or hardcode tokens. NEVER set GH_TOKEN from env vars or hosts.yml. The App token file is refreshed automatically."
+# N14 (#3842): this used to tell the agent to `cat` the shared App-token
+# cache and prefix every gh call with it — putting the raw, fleet-wide,
+# full-privilege token into the agent's OWN reasoning/output, one prompt
+# injection (a crafted issue/PR body asking it to "print" or "debug" its
+# token) away from exfiltration. agent-launch.sh now authenticates gh's own
+# persistent credential store (gh auth login --with-token) once at agent
+# startup, using a value it reads directly — never typed by the agent — so
+# every `gh` call the agent runs is already authenticated with NO env var and
+# NO token handling required. Do not reintroduce the cat/prefix pattern.
+_GH_AUTH_INSTR="⚙ GH AUTH: gh is already authenticated — just run gh commands directly (e.g. gh issue list, gh pr create). Do NOT read, cat, echo, or set GH_TOKEN yourself; do NOT hardcode a token or use a PAT. If a gh command fails with an auth error, report it — do not try to work around it by fetching a token."
 
 _CLUSTER_SECTION=""
 if [ -n "$_CLUSTERS_INLINE" ]; then

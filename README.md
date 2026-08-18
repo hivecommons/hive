@@ -62,7 +62,7 @@ docker compose up -d
 
 Dashboard at `http://localhost:3001`.
 
-The pre-built image tag is documented in [v2/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](v2/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
+The pre-built image tag is documented in [src/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](src/docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
 
 To build from source instead of pulling the pre-built image:
 
@@ -86,14 +86,14 @@ docker compose up -d
 The [Hive Hub](https://hive.kubestellar.io) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
 
 If you need to run your own private hub instead, see the v2
-[self-hosted hub deployment guide](v2/docs/hub-deployment.md).
+[self-hosted hub deployment guide](src/docs/hub-deployment.md).
 
 ### Self-Hosted Deployment
 
 #### 1. Create the namespace
 
 ```bash
-kubectl apply -f v2/deploy/k8s/namespace.yaml
+kubectl apply -f src/deploy/k8s/namespace.yaml
 ```
 
 Or manually:
@@ -121,7 +121,7 @@ kubectl -n hive create secret generic hive-secrets \
 #### 3. Create ConfigMap from hive.yaml
 
 ```bash
-cp v2/hive.yaml.example hive.yaml
+cp src/hive.yaml.example hive.yaml
 # Edit hive.yaml: set your org, repos, agents, and governor config
 
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
@@ -132,7 +132,7 @@ kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
 Apply the provided PVC manifest:
 
 ```bash
-kubectl apply -f v2/deploy/k8s/pvc.yaml
+kubectl apply -f src/deploy/k8s/pvc.yaml
 ```
 
 The default PVC requests 10Gi with `ReadWriteOnce`. For zero-downtime rollouts with rolling updates, use an NFS-backed StorageClass with `ReadWriteMany`:
@@ -155,8 +155,8 @@ spec:
 #### 5. Deploy
 
 ```bash
-kubectl apply -f v2/deploy/k8s/deployment.yaml
-kubectl apply -f v2/deploy/k8s/service.yaml
+kubectl apply -f src/deploy/k8s/deployment.yaml
+kubectl apply -f src/deploy/k8s/service.yaml
 ```
 
 The deployment runs a single replica with liveness and readiness probes on `/api/health`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
@@ -198,13 +198,13 @@ Long timeouts are needed for SSE streaming connections to the dashboard.
 #### Quick apply (all manifests)
 
 ```bash
-kubectl apply -f v2/deploy/k8s/namespace.yaml
+kubectl apply -f src/deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...
 kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
-kubectl apply -f v2/deploy/k8s/pvc.yaml
-kubectl apply -f v2/deploy/k8s/deployment.yaml
-kubectl apply -f v2/deploy/k8s/service.yaml
+kubectl apply -f src/deploy/k8s/pvc.yaml
+kubectl apply -f src/deploy/k8s/deployment.yaml
+kubectl apply -f src/deploy/k8s/service.yaml
 ```
 
 ### Ports
@@ -225,7 +225,7 @@ kubectl apply -f v2/deploy/k8s/service.yaml
 
 ## Legacy service configuration
 
-All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [v2/hive.yaml.example](v2/hive.yaml.example) for the full reference, [v2/docs/env-vars.md](v2/docs/env-vars.md) for the centralized environment variable reference, [v2/docs/agent-configuration.md](v2/docs/agent-configuration.md) for agent configuration, [v2/AGENT-DEFINITION.md](v2/AGENT-DEFINITION.md) for the portable agent YAML format, [v2/docs/supervisor.md](v2/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
+All v2 runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, and [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration.
 
 The top-level deterministic shell pipeline uses a separate project file,
 `config/hive-project.yaml.example`; see [config/README.md](config/README.md)
@@ -304,7 +304,7 @@ Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that
 | L5 | Semi-Autonomous (Semi-Automated) | 9 | All agents open hold-gated PRs. Humans batch-review and approve. |
 | L6 | Fully Autonomous | 10 | Agents open PRs and auto-merge on green CI. No hold label required. |
 
-Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `v2/docs/acmm-policy-matrix.md` for the full matrix. Browse the [v2 docs index](v2/docs/README.md) for operations, contributor relay, snapshots, health checks, and design guides.
+Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `src/docs/acmm-policy-matrix.md` for the full matrix. Browse the [v2 docs index](src/docs/README.md) for operations, contributor relay, snapshots, health checks, and design guides.
 
 Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
 
@@ -330,9 +330,9 @@ flowchart LR
     dash["Dashboard :3001"] -.->|"SSE"| gov
 ```
 
-**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](v2/docs/trajectory-review.md), [dashboard health checks](v2/docs/health-checks.md), [sandbox guardrails](v2/docs/sandbox-isolation.md), [manual provisioning](v2/docs/manual-provisioning.md), [cross-cluster migration](v2/docs/cross-cluster-migration.md), and [config layering](v2/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
+**See [src/docs/architecture.md](src/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](src/docs/trajectory-review.md), [dashboard health checks](src/docs/health-checks.md), [sandbox guardrails](src/docs/sandbox-isolation.md), [manual provisioning](src/docs/manual-provisioning.md), [cross-cluster migration](src/docs/cross-cluster-migration.md), and [config layering](src/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
 
-See also the [v2 docs index](v2/docs/README.md), [public roadmap](v2/docs/roadmap.md), and [landscape comparison](v2/docs/landscape.md) for community-facing documentation and positioning.
+See also the [v2 docs index](src/docs/README.md), [public roadmap](src/docs/roadmap.md), and [landscape comparison](src/docs/landscape.md) for community-facing documentation and positioning.
 
 ## Legacy compute contribution
 
@@ -349,7 +349,7 @@ just contribute-hive
 
 Supported CLIs: Claude Code, GitHub Copilot, Pi, Goose, Bob. Contributors start as newcomer (rate-limited) and auto-promote based on completed tasks. Your credentials never leave your machine.
 
-A relay can subscribe to multiple hives with comma-separated `HIVE_HUB` and matching `HIVE_REGISTRATION_TOKEN` values, and operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [v2/docs/contributor-relay.md](v2/docs/contributor-relay.md) and [v2/docs/contributor-trust-and-roles.md](v2/docs/contributor-trust-and-roles.md).
+A relay can subscribe to multiple hives with comma-separated `HIVE_HUB` and matching `HIVE_REGISTRATION_TOKEN` values, and operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/contributor-relay.md](src/docs/contributor-relay.md) and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
 
 See the [Hive Hub contribute page](https://hive.kubestellar.io) for details.
 

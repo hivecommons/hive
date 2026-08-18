@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Standalone / self-hosted overlay — the hub-less "Joe" scenario.
+#
+# This is for an operator running their OWN Hive against their OWN repos, with
+# NO connection to the kubestellar hub. It layers on TWO bases:
+#
+#   ../../../k8s        the core Hive workload (namespace/configmap/secret/pvc/
+#                       rbac/deployment/service)
+#   ../../../inference  an in-cluster OpenAI-compatible inference backend
+#                       (llama.cpp serving Qwen2.5-0.5B) + EPP RBAC, so a
+#                       self-hosted user gets a working model endpoint without
+#                       wiring an external provider.
+#
+# Everything operator-specific (org/repo, owner login, storage class, OAuth
+# client id, litellm endpoint) is a PLACEHOLDER you swap. See README.md for the
+# full swap list and install/upgrade commands. A concrete, filled-in copy of
+# this overlay lives in ./example-joe-spyre for reference.
+
+resources:
+  - ../../../k8s
+  - ../../../inference
+
+# The base image tracks the `stable` channel. For a self-hosted deployment you
+# can pin a reviewed digest instead by uncommenting and setting `images:` here,
+# or (preferred, so it stays in git history) run:
+#   kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive@sha256:<digest>
+# images:
+#   - name: ghcr.io/kubestellar/hive
+#     newName: ghcr.io/kubestellar/hive
+#     newTag: stable
+
+patches:
+  # 1. Rewrite hive.yaml for the hub-less scenario (org/repo, owner, backend,
+  #    hub disabled, ACMM level). Replaces the whole ConfigMap data.
+  - path: patch-configmap.yaml
+
+  # 2. RWX storage class placeholder for the hive-data PVC.
+  - path: patch-pvc-storageclass.yaml
+
+  # 3. NET_ADMIN escape hatch (COMMENTED OUT by default). Uncomment ONLY on a
+  #    locked-down cluster that DENIES NET_ADMIN — see README "The NET_ADMIN
+  #    decision". Leaving it commented keeps the fail-CLOSED security gate.
+  # - path: patch-advisory-mode.yaml

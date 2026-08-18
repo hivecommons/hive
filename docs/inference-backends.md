@@ -100,4 +100,4 @@ The watsonx path uses the same gateway machinery: configure the gateway endpoint
 | Connection refused / timeout | Service name or port is wrong, or NetworkPolicy blocks it | From the Hive pod, curl the gateway health and `/v1/models` endpoints. |
 | Model rejected despite discovery | The agent model differs from the gateway entitlement name | Use the exact model ID returned by `/v1/models`; Hive passes it through verbatim. |
 
-See also [`v2/deploy/inference/README.md`](../v2/deploy/inference/README.md) for the sample in-cluster vLLM-compatible deployment.
+See also [`src/deploy/inference/README.md`](../src/deploy/inference/README.md) for the sample in-cluster vLLM-compatible deployment.

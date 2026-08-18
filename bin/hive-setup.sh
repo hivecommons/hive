@@ -141,7 +141,7 @@ fi
 # ── Phase 4: Build Docker image ──────────────────────────────────
 if ! $SKIP_BUILD; then
   log "Phase 4/8: Building Docker image (this takes 2-5 minutes)..."
-  run "cd ${HIVE_DIR} && docker compose -f v2/docker-compose.yaml build"
+  run "cd ${HIVE_DIR} && docker compose -f src/docker-compose.yaml build"
 else
   log "Phase 4/8: Skipping build (--skip-build)"
 fi
@@ -152,7 +152,7 @@ log "Phase 5/8: Generating project config..."
 PR_ENABLED=false
 [[ "$ACMM_LEVEL" -ge 3 ]] && PR_ENABLED=true
 
-HIVE_YAML="${HIVE_DIR}/v2/deploy/hive-${TARGET_REPO_NAME}.yaml"
+HIVE_YAML="${HIVE_DIR}/src/deploy/hive-${TARGET_REPO_NAME}.yaml"
 
 # Build agents YAML block
 AGENTS_YAML=""
@@ -253,14 +253,14 @@ log "  Config: ${HIVE_YAML}"
 # ── Phase 6: Generate docker-compose override ────────────────────
 log "Phase 6/8: Generating docker-compose file..."
 
-COMPOSE_OUT="${HIVE_DIR}/v2/deploy/docker-compose.${TARGET_REPO_NAME}.yaml"
+COMPOSE_OUT="${HIVE_DIR}/src/deploy/docker-compose.${TARGET_REPO_NAME}.yaml"
 
 cat > "$COMPOSE_OUT" << COMPEOF
 services:
   hive:
     build:
       context: ../..
-      dockerfile: v2/Dockerfile
+      dockerfile: src/Dockerfile
     container_name: hive-${TARGET_REPO_NAME}
     restart: unless-stopped
     ports:
@@ -306,7 +306,7 @@ log "  .env: ${ENV_FILE}"
 # ── Phase 8: Start container ────────────────────────────────────
 log "Phase 8/8: Starting hive container..."
 
-run "cd ${HIVE_DIR}/v2/deploy && docker compose -f docker-compose.${TARGET_REPO_NAME}.yaml --env-file ${ENV_FILE} up -d"
+run "cd ${HIVE_DIR}/src/deploy && docker compose -f docker-compose.${TARGET_REPO_NAME}.yaml --env-file ${ENV_FILE} up -d"
 
 # Wait for health
 log "  Waiting for dashboard..."

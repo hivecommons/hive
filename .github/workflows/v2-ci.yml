@@ -7,7 +7,7 @@ on:
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
     paths:
-      - 'v2/**'
+      - 'src/**'
       - 'bin/**'
       - 'config/backends.conf'
       - 'dashboard/**'
@@ -21,7 +21,7 @@ on:
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
     paths:
-      - 'v2/**'
+      - 'src/**'
       - 'bin/**'
       - 'config/backends.conf'
       - 'dashboard/**'
@@ -39,14 +39,14 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        working-directory: v2
+        working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.12'
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
 
       - name: Validate production workflows
         shell: bash
@@ -98,6 +98,17 @@ jobs:
       - name: Supply-chain pin guard
         run: bash deploy/test_supply_chain_pins.sh
 
+      # #3865: watchtower bind-mounted /var/run/docker.sock — the full daemon
+      # API, including /exec, which reads the GitHub App private key out of the
+      # hive container with no escalation at all. The socket now sits behind a
+      # deny-by-default docker-socket-proxy on an internal-only network. Every
+      # property of that containment is one plausible edit from reverting (a
+      # bind mount added "to debug", a published 2375, EXEC=1 to unblock some
+      # other tool, the proxy attached to the network the hive runs on) and none
+      # of those break anything at runtime — so they need a gate, not a review.
+      - name: Docker-socket containment guard (#3865)
+        run: bash deploy/test_watchtower_socket_contract.sh
+
       # bin/gh-wrapper.sh is the merge gate standing behind the proxy hard-deny:
       # if its argument parsing is wrong, a prompt-injected agent merges
       # unvetted code. It had NO tests and matched no CI path filter. This
@@ -107,6 +118,18 @@ jobs:
       - name: gh-wrapper gate tests
         working-directory: .
         run: bash bin/test_gh_wrapper_gates.sh
+
+      # N14 (#3842): kick-agents.sh (the native/systemd-install path — no Go
+      # AgentManager, no per-agent scoped token) used to instruct every kicked
+      # agent to `cat` the shared, fleet-wide, full-privilege App token cache
+      # and prefix gh calls with it — putting a live credential into
+      # agent-controlled text, one prompt injection from exfiltration. Source-
+      # asserts the instruction is gone and agent-launch.sh authenticates gh's
+      # own credential store instead, so a future edit can't reintroduce it
+      # quietly.
+      - name: gh-auth native-install guard (#3842)
+        working-directory: .
+        run: bash bin/test_gh_auth_native_no_cat.sh
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -130,11 +153,27 @@ jobs:
       # real recipe and asserts the workload it produces, so a regression (a
       # dropped headless mode, a broken probe, a token leak into stdout) fails
       # the PR. Requires `just`; the test SKIPs cleanly if it is ever absent.
+      # Direct pinned download instead of extractions/setup-just: the action
+      # lists releases via the GitHub API at RUN TIME, and that lookup broke
+      # fleet-wide on 2026-08-17 ("no release for just matching version
+      # specifier", even with an explicit version) during a GitHub API
+      # incident — failing build-and-test on every branch/PR after all tests
+      # had passed. The releases CDN stayed up throughout; a pinned URL with a
+      # checksum has no API dependency at all. Bump the version and hash
+      # together, deliberately.
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        run: |
+          set -euo pipefail
+          JUST_VERSION=1.58.0
+          JUST_SHA256=4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+          curl -fsSL -o /tmp/just.tgz "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${JUST_SHA256}  /tmp/just.tgz" | sha256sum -c -
+          tar -xzf /tmp/just.tgz -C /tmp just
+          sudo install -m 0755 /tmp/just /usr/local/bin/just
+          just --version
       - name: Contributor K8s Workload Generation
         working-directory: .
-        run: bash v2/deploy/test_contribute_k8s_workload.sh
+        run: bash src/deploy/test_contribute_k8s_workload.sh
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ubuntu-latest
@@ -188,7 +227,7 @@ jobs:
         run: bash v2/deploy/test_dockerfile_visual_runtime.sh
 
       - name: Build Docker image
-        run: docker build -f v2/Dockerfile -t hive:test .
+        run: docker build -f src/Dockerfile -t hive:test .
 
       - name: Smoke test
         shell: bash
@@ -238,7 +277,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: v2/Dockerfile
+          file: src/Dockerfile
           platforms: linux/amd64
           provenance: false
           sbom: false
@@ -357,7 +396,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: v2/Dockerfile
+          file: src/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           # #3760: no default provenance/SBOM attestations → plain image

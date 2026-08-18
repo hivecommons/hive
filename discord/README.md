@@ -5,7 +5,7 @@ channel — check status, kick, pause, and resume agents — and receive alerts.
 talks to the hive's dashboard API; it does **not** need cluster access.
 
 This is separate from the one-way **`notifications.discord.webhook`** channel
-(see [`v2/docs/notifications.md`](../v2/docs/notifications.md)). The webhook only
+(see [`src/docs/notifications.md`](../src/docs/notifications.md)). The webhook only
 pushes alerts; this bot is two-way.
 
 ## Setup

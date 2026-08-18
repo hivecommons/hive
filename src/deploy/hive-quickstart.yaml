@@ -1,0 +1,237 @@
+# Hive v2 — Quick Start Configuration
+# Points at kubestellar/hive-tester for safe ACMM level testing.
+# Copy this file to hive.yaml and update the github section.
+
+project:
+  org: kubestellar
+  name: hive-tester
+  repos:
+    - hive-tester
+  ai_author: clubanderson
+  primary_repo: hive-tester
+  open_prs: true
+
+policies:
+  repo: https://github.com/kubestellar/hive
+  branch: v2
+  path: src/policies/
+  local_dir: /data/policies
+  poll_interval: 5m
+
+agents:
+  brainstorm:
+    id: brainstorm
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/brainstorm
+    enabled: true
+    display_name: brainstorm
+    role: brainstorm
+    sort_order: 5
+    emoji: "\U0001F4A1"
+    color: "#f39c12"
+    kick_template: brainstorm-advisory.md
+    clear_on_kick: true
+    include_repos: false
+    bead_role: worker
+    on_demand: true
+  guide:
+    id: guide
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/guide
+    enabled: true
+    display_name: guide
+    role: guide
+    sort_order: 10
+    emoji: "\U0001F4D6"
+    color: "#9b59b6"
+    kick_template: guide-advisory.md
+    include_repos: true
+    bead_role: worker
+    stale_timeout: 28800  # 8h — must exceed longest cadence (4h)
+  supervisor:
+    id: supervisor
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/supervisor
+    enabled: true
+    display_name: supervisor
+    role: supervisor
+    sort_order: 0
+    emoji: "\U0001F451"
+    color: "#e74c3c"
+    kick_template: supervisor-CLAUDE.md
+    include_repos: true
+    clear_on_kick: false
+    bead_role: supervisor
+  scanner:
+    id: scanner
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/scanner
+    enabled: true
+    display_name: scanner
+    role: scanner
+    sort_order: 20
+    emoji: "\U0001F50D"
+    color: "#3498db"
+    kick_template: scanner-advisory.md
+    include_repos: true
+    bead_role: worker
+    stale_timeout: 28800  # 8h — must exceed longest cadence (4h)
+  quality:
+    id: quality
+    backend: copilot
+    model: claude-opus-4-6
+    beads_dir: /data/beads/quality
+    enabled: true
+    display_name: quality
+    role: quality
+    sort_order: 40
+    emoji: "\U0001F3AF"
+    color: "#2ecc71"
+    kick_template: quality-full.md
+    include_repos: true
+    bead_role: worker
+    stale_timeout: 14400  # 4h — must exceed longest cadence (2h)
+  ci-maintainer:
+    id: ci-maintainer
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/ci-maintainer
+    enabled: true
+    display_name: ci-maintainer
+    role: ci-maintainer
+    sort_order: 30
+    emoji: "\U0001F527"
+    color: "#2ecc71"
+    kick_template: ci-maintainer-advisory-CLAUDE.md
+    include_repos: true
+    bead_role: worker
+  sec-check:
+    id: sec-check
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/sec-check
+    enabled: true
+    display_name: sec-check
+    role: sec-check
+    sort_order: 50
+    emoji: "\U0001F6E1"
+    color: "#e67e22"
+    kick_template: sec-check.md
+    include_repos: true
+    bead_role: worker
+  architect:
+    id: architect
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/architect
+    enabled: true
+    display_name: architect
+    role: architect
+    sort_order: 60
+    emoji: "\U0001F3D7"
+    color: "#1abc9c"
+    kick_template: architect.md
+    include_repos: true
+    bead_role: worker
+  strategist:
+    id: strategist
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/strategist
+    enabled: true
+    display_name: strategist
+    role: strategist
+    sort_order: 70
+    emoji: "\U0001F9E0"
+    color: "#8e44ad"
+    kick_template: strategist.md
+    include_repos: true
+    bead_role: worker
+  outreach:
+    id: outreach
+    backend: copilot
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/outreach
+    enabled: true
+    display_name: outreach
+    role: outreach
+    sort_order: 80
+    emoji: "\U0001F4E2"
+    color: "#f39c12"
+    kick_template: outreach.md
+    include_repos: true
+    bead_role: worker
+
+# Start at ACMM Level 1 (guide only). Change via dashboard or API.
+acmm_level: 1
+
+github:
+  # Option 1: Use the public Hive GitHub App (dashboard login only)
+  oauth_client_id: Ov23ligE2p0gjXg6xAUf
+  token: ""
+  # Option 2: Create your own GitHub App for full ACMM agent capabilities.
+  # See the setup dialog in the dashboard for step-by-step instructions.
+  # app_id: <your-app-id>
+  # installation_id: <your-installation-id>
+  # key_file: /secrets/gh-app-key.pem
+
+governor:
+  eval_interval_s: 300
+  modes:
+    idle:
+      threshold: 0
+      guide: 4h
+      supervisor: 5m
+      scanner: 4h
+      quality: 2h
+      ci-maintainer: 4h
+      sec-check: 4h
+      architect: 4h
+      strategist: 4h
+      outreach: pause
+    quiet:
+      threshold: 3
+      guide: 4h
+      supervisor: 5m
+      scanner: 4h
+      quality: 2h
+      ci-maintainer: 4h
+      sec-check: 4h
+      architect: 4h
+      strategist: 4h
+      outreach: pause
+    busy:
+      threshold: 10
+      guide: 4h
+      supervisor: 5m
+      scanner: 4h
+      quality: 2h
+      ci-maintainer: 4h
+      sec-check: 4h
+      architect: 4h
+      strategist: 4h
+      outreach: pause
+    surge:
+      threshold: 180
+      guide: pause
+      supervisor: pause
+      scanner: pause
+      quality: pause
+      ci-maintainer: pause
+      sec-check: pause
+      architect: pause
+      strategist: pause
+      outreach: pause
+
+dashboard:
+  port: 3002
+
+knowledge:
+  enabled: false
+# Cache bust trigger: 2026-06-03T10:31:35Z
+# rebuild 2026-06-03T11:06:24Z
+# parallel resume 11:19

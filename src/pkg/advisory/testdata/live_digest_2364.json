@@ -1,0 +1,554 @@
+[
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "critical",
+  "title": "v2 Tests: persistent test failure all day, queue backlog growing"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "saas_provision.go: 101 uncovered stmts (24.9% gap) in hive provisioning mutation paths"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "reclaimExpiredLeases missing pendingToken/credentialDelivered cleanup"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "noRedirectToPrivate in ssrf_guard.go has zero dedicated unit tests"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "hub_keys.go (252 lines, 13 funcs) had zero dedicated unit tests \u2014 crypto key derivation for auth"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "saas.go impersonation guard functions have zero test coverage"
+ },
+ {
+  "agent": "quality",
+  "type": "regression-risk",
+  "severity": "critical",
+  "title": "PR #3344 removes SSRF guards and deletes 869 test lines \u2014 security+coverage regression [kubestellar/hive#3344](https://github.com/kubestellar/hive/issues/3344)"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "Hub heartbeat.go (1658 lines, 28 functions) has zero dedicated unit tests"
+ },
+ {
+  "agent": "quality",
+  "type": "advisory",
+  "severity": "critical",
+  "title": "api_leaderboard_style.go (914 lines) untested - custom CSS sanitization"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "critical",
+  "title": "oauth.go: 14 of 23 functions have zero test coverage including security-critical auth handlers"
+ },
+ {
+  "agent": "quality",
+  "type": "regression-risk",
+  "severity": "critical",
+  "title": "heartbeatBearerOK per-hive binding removed without covering test"
+ },
+ {
+  "agent": "quality",
+  "type": "advisory",
+  "severity": "critical",
+  "title": "Hub OAuth handlers (handleProviderLogin, writeProviderPicker) have 0% test coverage"
+ },
+ {
+  "agent": "scanner",
+  "type": "security",
+  "severity": "critical",
+  "title": "[hive#2172](https://github.com/kubestellar/hive/issues/2172): Default deployment lacks hardening\u2014RBAC, network policy, secrets management [#2172](https://github.com/kubestellar/hive/issues/2172)"
+ },
+ {
+  "agent": "scanner",
+  "type": "advisory",
+  "severity": "critical",
+  "title": "K8s deployment.yaml missing securityContext \u2014 pods run as root with full privileges [#2920](https://github.com/kubestellar/hive/issues/2920)"
+ },
+ {
+  "agent": "scanner",
+  "type": "advisory",
+  "severity": "critical",
+  "title": "Missing role defaults to owner on /api/contributors write endpoints [#2975](https://github.com/kubestellar/hive/issues/2975)"
+ },
+ {
+  "agent": "scanner",
+  "type": "advisory",
+  "severity": "critical",
+  "title": "Unauthenticated /api/auth/token leaks dashboard auth token [#2997](https://github.com/kubestellar/hive/issues/2997)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on every PR \u2014 reusable workflow deleted from infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml broken: reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing 100% \u2014 reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing on all PRs \u2014 reusable-pr-verifier.yml deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml 100% failing \u2014 reusable-pr-verifier.yml deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing 100% \u2014 reusable-pr-verifier.yml missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR \u2014 missing reusable workflow in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing: references deleted reusable workflow in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml: 100% failure rate \u2014 reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on 100% of PRs \u2014 reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR: reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "flaky-test",
+  "severity": "high",
+  "title": "v2-tests 'Test' step failing at high rate on v2 branch"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "coverage-drop",
+  "severity": "high",
+  "title": "Coverage Hourly 'Check per-package coverage' failing on PR branch"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on all PRs: reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR \u2014 reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on all PRs: reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on every PR \u2014 reusable workflow missing"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on every PR: reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier broken: calls deleted reusable workflow in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing on all PRs: reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR: reusable-pr-verifier.yml deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR: reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "flaky-test",
+  "severity": "high",
+  "title": "Coverage Hourly: 57% failure rate on v2 branch (612/1075 runs)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on every PR: missing reusable workflow in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests scheduled run failed: pkg/dashboard tests cannot write /data/hive.yaml.runtime"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier workflow failing on every PR: missing reusable workflow in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing persistently on every PR (37+ failures today)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests scheduled run failing \u2014 Test step failed"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "coverage-drop",
+  "severity": "high",
+  "title": "Coverage Hourly: per-package coverage check failed"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 CI docker build step failed on push to v2"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on every PR (100% failure rate)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing on all PRs: reusable workflow missing in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml consistently failing: reusable workflow missing from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing on every PR \u2014 deleted reusable workflow"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR: deleted reusable workflow"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR \u2014 reusable workflow deleted upstream"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "flaky-test",
+  "severity": "high",
+  "title": "Data race in pkg/dashboard SSE tests (TestSSEStreamsAppendedActivity, TestSSEHelloReplaysRecentActivity)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pkg/agent TestBuildProjectPreamble_FormatContainsOrgAndRepos fails \u2014 should contain level name"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing 100% on all PRs \u2014 reusable workflow missing"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on every PR \u2014 missing reusable workflow"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "TestAlertAcksPersistRoundTrip regression in pkg/hub \u2014 2 consecutive failures"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "TestIntegration_SelectTask_PromotionRequiresPR failing in pkg/dashboard"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing on all PRs \u2014 reusable workflow missing in kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml failing 100% \u2014 reusable workflow deleted from kubestellar/infra (run #3279)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails 100% \u2014 reusable workflow deleted from kubestellar/infra"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "flaky-test",
+  "severity": "high",
+  "title": "v2 Tests recurring failures \u2014 35% failure rate (7/20 scheduled runs)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "flaky-test",
+  "severity": "high",
+  "title": "v2 Tests: second consecutive failure on c07557d (assign/approve fix) \u2014 pattern escalating"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests: 100% failure rate \u2014 8 consecutive scheduled-run failures on v2 (1d89011)"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests: 9 consecutive failures all day 2026-08-06, regression on commit 1d89011"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests: 15 consecutive scheduled failures Aug 6 \u2014 100% failure all day"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "ARM64 docker runners failing to provision \u2014 ubuntu-24.04-arm 'Set up job' failure"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier: all PRs fail \u2014 calls deleted reusable workflow"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests: 22+ consecutive failures on v2 branch since 2026-08-06T01:11Z"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "pr-verifier.yml fails on all PRs: kubestellar/infra reusable-pr-verifier.yml@main deleted"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "v2 Tests failing: TestHeartbeatDeliversClaimWhileVanityRepairBlocked in pkg/hub"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "coverage-drop",
+  "severity": "high",
+  "title": "Coverage gate failing: agent package at 88.0%, floor is 89%"
+ },
+ {
+  "agent": "ci-maintainer",
+  "type": "ci-failure",
+  "severity": "high",
+  "title": "PR Verifier failing on all PRs: upstream reusable workflow deleted"
+ },
+ {
+  "agent": "guide",
+  "type": "advisory",
+  "severity": "high",
+  "title": "Nous/Strategy Lab has no dedicated operator guide \u2014 README pointer to hive.yaml.example is broken"
+ },
+ {
+  "agent": "guide",
+  "type": "advisory",
+  "severity": "high",
+  "title": "Inception/Brainstorm workflow has no operator guide \u2014 14 API endpoints with no usage documentation"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "webhook.go: pushGitHubConfigToSpoke retry/error paths (17 stmts) untested \u2014 silent fleet key delivery failures"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "cluster_app_key.go: clusterAPIURLForIdentity/clusterBaseURLForIdentity (0%) \u2014 forge fallback path of identity guard untested"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "saas_provision.go: addVanityHostToIngress (25.4%) \u2014 K8s Route/Ingress patch paths almost entirely untested"
+ },
+ {
+  "agent": "quality",
+  "type": "regression-risk",
+  "severity": "high",
+  "title": "[PR#2431](https://github.com/kubestellar/PR/issues/2431): deleteSavedView uses await without async declaration \u2014 runtime error"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "TestAwaitHiveModalInAsyncFunction guard catches await in non-async functions"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "self_upgrade.go at 60.6% coverage \u2014 critical fleet upgrade logic undertested"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "maybeRefreshToken integration path untested \u2014 token refresh during long-running tasks"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "Provenance struct had zero dedicated test coverage (472-line file)"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "Invite token verification unit tests missing"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "TestNoNativeBrowserModals and await/async consistency guard"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "Cross-PR integration gap: reclaimExpiredLeases missing pendingToken cleanup"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "drift.go pure functions (driftEligibleForNorm, imageRefIsPinned, healthStatusOf, parseRFC3339) have zero unit tests"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "saas_provision.go (2542 lines) has 16 untested exported functions including reconcileGitHubHostFromSpoke"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "Hub server utility functions (firstCSV, normalizeRepoRef, sanitize*) lacked dedicated unit tests"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "hub/server.go heartbeat sanitization functions lacked dedicated tests"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "heartbeatBearerOK and handler endpoints had zero test coverage"
+ },
+ {
+  "agent": "quality",
+  "type": "coverage-gap",
+  "severity": "high",
+  "title": "sanitizePublicURLSelfCheck and sanitizeRouteExistenceCheck had zero test coverage"
+ }
+]
