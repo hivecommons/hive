@@ -44,7 +44,10 @@ function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reas
     if (/capture-pane/.test(cmd)) {
       // paneText, when given, is returned verbatim — for tests that need a
       // REAL pane rendering (e.g. a codex modal menu) rather than one of the
-      // three synthetic states below.
+      // three synthetic states below. A function is called fresh each capture
+      // (tests that need the pane to CHANGE partway through, e.g. a late
+      // completion arriving after a stall confirmation tick).
+      if (typeof paneText === 'function') return paneText();
       if (paneText !== null) return paneText;
       const state = cliStates[Math.min(stateIdx++, cliStates.length - 1)];
       // Panes that getCLIState()/checkTmuxIdle() classify per backend.
@@ -370,7 +373,12 @@ test('an unchanging pane trips the stall backstop; any change resets it', () => 
   } finally { teardown(relay); }
 });
 
-test('a stalled pane hands the task back as an environment failure', () => {
+test('a stalled pane is NOT failed on the first confirmation tick', () => {
+  // Observed live: a task can cross PANE_STALL_TIMEOUT_MS while the CLI is
+  // blocked on a slow network call (a `gh pr create` round trip), then print
+  // its real completion — with a real PR link — moments later. The relay must
+  // not act on the very first tick that crosses the timeout; it needs to give
+  // the CLI PANE_STALL_CONFIRM_TICKS chances to prove it was about to finish.
   const relay = loadRelay({
     backend: 'agy',
     paneText: 'a frozen pane with no idle prompt and nothing happening',
@@ -380,13 +388,90 @@ test('a stalled pane hands the task back as an environment failure', () => {
     assignTask(relay, 't-stall');
     relay.__stallTick();   // records the fingerprint, reports working
     relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
-    relay.__stallTick();   // same pane past the timeout -> give the task back
+    relay.__stallTick();   // first tick past the timeout -> confirmation 1, not a failure yet
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0,
+      'the first tick past the stall timeout must not fail the task on its own');
+    assert.strictEqual(relay.getStallConfirmCount(), 1);
+    assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, 't-stall',
+      'the task must still be held while confirmation is pending');
+  } finally { teardown(relay); }
+});
+
+test('a pane that recovers between stall ticks is NOT failed, and the confirm count resets', () => {
+  let capture = 'a frozen pane with no idle prompt and nothing happening';
+  const relay = loadRelay({ backend: 'agy', paneText: () => capture });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-recover');
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // confirmation 1
+    assert.strictEqual(relay.getStallConfirmCount(), 1);
+    // New output appears -- the CLI was never actually stuck.
+    capture = 'a frozen pane with no idle prompt and nothing happening, plus fresh output this time';
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS);
+    relay.__stallTick();
+    assert.strictEqual(relay.getStallConfirmCount(), 0,
+      'any new pane content must reset the confirm count, not just delay the verdict');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
+  } finally { teardown(relay); }
+});
+
+test('a stalled pane hands the task back as an environment failure once confirmed, and relaunches the CLI', () => {
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-stall');
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // confirmation 1 — not yet failed (see the test above)
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick();   // confirmation 2 (== PANE_STALL_CONFIRM_TICKS) -> give the task back
     const failed = relay.__sent.filter(m => m.type === 'task_failed');
     assert.strictEqual(failed.length, 1, `expected one task_failed, got ${JSON.stringify(relay.__sent.map(m => m.type))}`);
     assert.strictEqual(failed[0].failure_kind, 'environment',
       'a frozen pane says nothing about the WORK, so the failure is the environment kind');
     assert.match(failed[0].reason, /no pane activity/);
+    assert.match(failed[0].reason, new RegExp(String(relay.PANE_STALL_CONFIRM_TICKS)),
+      'the failure reason should name how many checks confirmed it, for anyone reading the log');
     assert.strictEqual(relay.getCurrentTask(), null, 'the relay must let go of the task, not keep renewing its lease');
+    // The CLI is relaunched so the NEXT task cannot land its prompt on top of
+    // whatever the abandoned turn is still doing in the background.
+    const sends = relay.__tmuxSends().slice(before);
+    assert.ok(sends.some(c => /agy/.test(c)),
+      `a confirmed stall must relaunch the CLI: ${JSON.stringify(sends)}`);
+  } finally { teardown(relay); }
+});
+
+test('a pane that reaches real IDLE_COMPLETE between stall ticks is reported as a normal completion, PR and all', () => {
+  // The exact live scenario: paneText starts frozen (mid stall), then -- before
+  // the SECOND confirmation tick -- the CLI's real completion appears, agy back
+  // at its idle prompt with a PR link in the output. checkTmuxPaneState() must
+  // win over the stall path on that tick, so the task is reported completed
+  // with the PR, not failed.
+  let capture = 'a frozen pane with no idle prompt and nothing happening';
+  const relay = loadRelay({ backend: 'agy', paneText: () => capture });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-late-finish');
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // confirmation 1
+    assert.strictEqual(relay.getStallConfirmCount(), 1);
+    // The slow network call the pane was blocked on finally returns.
+    capture = 'Pull request opened: foo/bar#4061 https://github.com/foo/bar/pull/4061\n? for shortcuts';
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1,
+      `late completion must be reported as completed, not failed: ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/4061',
+      'the PR that actually landed must be credited, not lost to the stall path');
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0);
   } finally { teardown(relay); }
 });
 
