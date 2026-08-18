@@ -14,16 +14,20 @@ import (
 
 const defaultProxyHost = "127.0.0.1"
 
-func proxyAuthTokenFromEnv(getenv func(string) string, warnf func(string, ...any)) string {
-	authToken := getenv("PROXY_AUTH_TOKEN")
-	if authToken != "" {
-		return authToken
+// clientAuthTokenFromEnv returns the token callers must present to the proxy.
+// An empty result leaves the proxy an open relay, so a warning is emitted.
+func clientAuthTokenFromEnv(getenv func(string) string, warnf func(string, ...any)) string {
+	token := getenv("PROXY_AUTH_TOKEN")
+	if token == "" {
+		warnf("[sec-check WARNING] PROXY_AUTH_TOKEN is unset; the proxy will accept unauthenticated callers and may grant them the host upstream key. Set PROXY_AUTH_TOKEN to require caller authentication.")
 	}
-	authToken = getenv("ANTHROPIC_API_KEY")
-	if authToken != "" {
-		warnf("[sec-check WARNING] PROXY_AUTH_TOKEN is unset; falling back to ANTHROPIC_API_KEY to enable the proxy auth gate. Unauthenticated callers will be rejected. Set PROXY_AUTH_TOKEN explicitly to avoid using the host Anthropic key as the gate token.")
-	}
-	return authToken
+	return token
+}
+
+// upstreamAPIKeyFromEnv returns the credential the proxy swaps in on the
+// outbound request when the caller has no upstream credential of its own.
+func upstreamAPIKeyFromEnv(getenv func(string) string) string {
+	return getenv("ANTHROPIC_API_KEY")
 }
 
 func main() {
@@ -74,8 +78,9 @@ func main() {
 		logWriter.Encode(entry)
 	}
 
-	authToken := proxyAuthTokenFromEnv(os.Getenv, log.Printf)
-	proxy, err := apiproxy.New(*upstream, handler, authToken)
+	clientAuthToken := clientAuthTokenFromEnv(os.Getenv, log.Printf)
+	upstreamAPIKey := upstreamAPIKeyFromEnv(os.Getenv)
+	proxy, err := apiproxy.New(*upstream, handler, upstreamAPIKey, clientAuthToken)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}

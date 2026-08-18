@@ -43,7 +43,7 @@ func (e *eventRecorder) byDirection(dir string) []Event {
 // ---- New ----
 
 func TestNewDefaultsToAnthropicUpstream(t *testing.T) {
-	p, err := New("", nil, "")
+	p, err := New("", nil, "", "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -53,13 +53,13 @@ func TestNewDefaultsToAnthropicUpstream(t *testing.T) {
 }
 
 func TestNewRejectsInvalidUpstream(t *testing.T) {
-	if _, err := New("://not a url", nil, ""); err == nil {
+	if _, err := New("://not a url", nil, "", ""); err == nil {
 		t.Fatal("an unparseable upstream URL must be rejected")
 	}
 }
 
 func TestNewAcceptsCustomUpstream(t *testing.T) {
-	p, err := New("http://localhost:9999", nil, "")
+	p, err := New("http://localhost:9999", nil, "", "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestIsValidAuth(t *testing.T) {
 // With no real caller auth, the configured key is injected and the dummy
 // X-Api-Key removed so upstream sees exactly one credential.
 func TestDirectorInjectsConfiguredKey(t *testing.T) {
-	p, err := New("https://upstream.example", nil, "secret-key")
+	p, err := New("https://upstream.example", nil, "secret-key", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestDirectorInjectsConfiguredKey(t *testing.T) {
 
 // A caller's real credentials must be left alone.
 func TestDirectorPreservesCallerAuth(t *testing.T) {
-	p, err := New("https://upstream.example", nil, "secret-key")
+	p, err := New("https://upstream.example", nil, "secret-key", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestDirectorPreservesCallerAuth(t *testing.T) {
 
 // With no configured key the proxy must not invent one.
 func TestDirectorWithoutConfiguredKeyLeavesAuthAlone(t *testing.T) {
-	p, err := New("https://upstream.example", nil, "")
+	p, err := New("https://upstream.example", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestDirectorWithoutConfiguredKeyLeavesAuthAlone(t *testing.T) {
 // Accept-Encoding must be stripped so upstream returns plaintext SSE the proxy
 // can parse line by line.
 func TestDirectorStripsAcceptEncoding(t *testing.T) {
-	p, err := New("https://upstream.example", nil, "")
+	p, err := New("https://upstream.example", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestDirectorStripsAcceptEncoding(t *testing.T) {
 
 // The request must be retargeted at the upstream host.
 func TestDirectorRetargetsUpstream(t *testing.T) {
-	p, err := New("https://upstream.example", nil, "")
+	p, err := New("https://upstream.example", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestServeHTTPLogsRequestAndForwardsBody(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestServeHTTPHandlesNonJSONBody(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestServeHTTPWithoutHandler(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	p, err := New(upstream.URL, nil, "")
+	p, err := New(upstream.URL, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestResponseLoggedAndPassedThrough(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestErrorResponseIsLogged(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestSSEStreamIsLoggedAndPassedThrough(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestSSEIgnoresMalformedDataLines(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ func TestSSEWithNoRecognisedEvents(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "")
+	p, err := New(upstream.URL, rec.handler, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,11 +504,11 @@ func TestSSEWithNoRecognisedEvents(t *testing.T) {
 	}
 }
 
-// ---- auth gate ----
+// ---- client auth gate ----
 
-// A configured host key is never used for an unauthenticated caller. The
-// request must be rejected before it reaches the upstream or request logger.
-func TestServeHTTPRejectsUnauthenticatedCaller(t *testing.T) {
+// With a client auth token configured, an unauthenticated caller is rejected
+// before the request reaches the upstream or the request logger.
+func TestServeHTTPWithClientAuthTokenRequired(t *testing.T) {
 	var upstreamCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls++
@@ -517,7 +517,7 @@ func TestServeHTTPRejectsUnauthenticatedCaller(t *testing.T) {
 	defer upstream.Close()
 
 	rec := &eventRecorder{}
-	p, err := New(upstream.URL, rec.handler, "host-api-key")
+	p, err := New(upstream.URL, rec.handler, "host-api-key", "gate-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,9 +537,83 @@ func TestServeHTTPRejectsUnauthenticatedCaller(t *testing.T) {
 	}
 }
 
-// A caller with valid auth remains eligible for proxying and receives the
-// normal upstream response.
-func TestServeHTTPAllowsAuthenticatedCaller(t *testing.T) {
+// A caller presenting the wrong token is rejected even though the header looks
+// like a plausible credential.
+func TestServeHTTPWithInvalidClientToken(t *testing.T) {
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer upstream.Close()
+
+	cases := []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"wrong bearer", map[string]string{"Authorization": "Bearer " + strings.Repeat("w", 40)}},
+		{"wrong x-api-key", map[string]string{"X-Api-Key": strings.Repeat("w", 40)}},
+		{"token prefix only", map[string]string{"Authorization": "Bearer gate"}},
+		{"upstream key replayed as gate token", map[string]string{"X-Api-Key": "host-api-key"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := New(upstream.URL, nil, "host-api-key", "gate-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			p.ServeHTTP(w, req)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("rejected requests reached upstream %d time(s)", upstreamCalls)
+	}
+}
+
+// The documented dummy-key swap still works: a caller authenticated with the
+// gate token has the upstream key injected on its behalf.
+func TestServeHTTPInjectsUpstreamKeyForDummyClientToken(t *testing.T) {
+	var gotAuth, gotAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	p, err := New(upstream.URL, nil, "host-api-key", "gate-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("X-Api-Key", "gate-token")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if gotAuth != "Bearer host-api-key" {
+		t.Fatalf("upstream Authorization = %q, want the injected upstream key", gotAuth)
+	}
+	if gotAPIKey != "" {
+		t.Fatalf("the gate token must not be forwarded upstream, got %q", gotAPIKey)
+	}
+}
+
+// A caller that authenticates with the gate token via a bearer header also gets
+// the upstream key swapped in, and the gate token never leaves the proxy.
+func TestServeHTTPSwapsGateBearerForUpstreamKey(t *testing.T) {
 	var gotAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -547,33 +621,71 @@ func TestServeHTTPAllowsAuthenticatedCaller(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	p, err := New(upstream.URL, nil, "host-api-key")
+	gateToken := strings.Repeat("g", 40)
+	p, err := New(upstream.URL, nil, "host-api-key", gateToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	callerAuth := "Bearer " + strings.Repeat("c", 40)
-	req.Header.Set("Authorization", callerAuth)
+	req.Header.Set("Authorization", "Bearer "+gateToken)
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
 	}
-	if gotAuth != callerAuth {
-		t.Fatalf("upstream Authorization = %q, want caller credential", gotAuth)
+	if gotAuth != "Bearer host-api-key" {
+		t.Fatalf("upstream Authorization = %q, want the injected upstream key", gotAuth)
+	}
+	if strings.Contains(gotAuth, gateToken) {
+		t.Fatal("the gate token must never be forwarded upstream")
 	}
 }
 
-// With no configured host key, the proxy remains an unauthenticated relay.
-func TestServeHTTPWithoutConfiguredKeyAllowsUnauthenticatedCaller(t *testing.T) {
+// A caller carrying its own real upstream credential has it forwarded as-is,
+// once it has passed the gate.
+func TestServeHTTPForwardsClientKeyWhenPresent(t *testing.T) {
+	var gotAuth, gotAPIKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	callerKey := strings.Repeat("c", 40)
+	p, err := New(upstream.URL, nil, "host-api-key", "gate-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("X-Api-Key", "gate-token") // passes the gate
+	req.Header.Set("Authorization", "Bearer "+callerKey)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+	if gotAuth != "Bearer "+callerKey {
+		t.Fatalf("upstream Authorization = %q, want the caller's own key forwarded as-is", gotAuth)
+	}
+	if gotAPIKey != "" {
+		t.Fatalf("the gate token must not be forwarded upstream, got %q", gotAPIKey)
+	}
+}
+
+// Without a gate token the proxy stays an open relay, preserving the previous
+// local-development behaviour.
+func TestServeHTTPWithoutClientAuthTokenAllowsUnauthenticatedCaller(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
 
-	p, err := New(upstream.URL, nil, "")
+	p, err := New(upstream.URL, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,12 +699,43 @@ func TestServeHTTPWithoutConfiguredKeyAllowsUnauthenticatedCaller(t *testing.T) 
 	}
 }
 
+// validateClientAuth must accept only an exact token match.
+func TestValidateClientAuth(t *testing.T) {
+	token := strings.Repeat("t", 40)
+
+	cases := []struct {
+		name     string
+		expected string
+		headers  map[string]string
+		want     bool
+	}{
+		{"no headers", token, nil, false},
+		{"matching bearer", token, map[string]string{"Authorization": "Bearer " + token}, true},
+		{"matching x-api-key", token, map[string]string{"X-Api-Key": token}, true},
+		{"mismatched bearer", token, map[string]string{"Authorization": "Bearer " + strings.Repeat("x", 40)}, false},
+		{"non-bearer scheme", token, map[string]string{"Authorization": "Basic " + token}, false},
+		{"empty expected token", "", map[string]string{"X-Api-Key": token}, false},
+		{"empty x-api-key with empty token", "", map[string]string{"X-Api-Key": ""}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			if got := validateClientAuth(req, tc.expected); got != tc.want {
+				t.Fatalf("validateClientAuth = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // ---- errorHandler ----
 
 // An unreachable upstream must yield 502 rather than a hang or a panic.
 func TestUnreachableUpstreamYields502(t *testing.T) {
 	// Port 1 on loopback is not listening.
-	p, err := New("http://127.0.0.1:1", nil, "")
+	p, err := New("http://127.0.0.1:1", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

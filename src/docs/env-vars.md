@@ -65,8 +65,8 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_BOB_API_URL` | No | `https://api.us-east.bob.ibm.com` | Bob key-test endpoint base URL override. |
 | `BOBSHELL_API_KEY` | Required by Bob CLI when Hive injects or contributor mode uses Bob | none | API key name read by bobshell itself. |
 | `COPILOT_GITHUB_TOKEN` | No | dashboard device-flow token file, if present | Copilot completion/model-discovery token and explicit agent injection. |
-| `ANTHROPIC_API_KEY` | Required by `cmd/apiproxy` unless `PROXY_AUTH_TOKEN` is set; agent inference backends receive a synthetic value | none | Anthropic-compatible API key for apiproxy auth or CLI compatibility. |
-| `PROXY_AUTH_TOKEN` | No | `ANTHROPIC_API_KEY` | Preferred auth token for `cmd/apiproxy`. |
+| `ANTHROPIC_API_KEY` | Required by `cmd/apiproxy` to inject an upstream key; agent inference backends receive a synthetic value | none | Anthropic-compatible **upstream** API key. Never used to authenticate callers of `cmd/apiproxy`. |
+| `PROXY_AUTH_TOKEN` | Recommended for `cmd/apiproxy`; when unset the proxy accepts unauthenticated callers | none | **Client auth token** callers must present to `cmd/apiproxy` via `Authorization: Bearer` or `X-Api-Key`. Validated in constant time and stripped before the upstream request. |
 | `CONTEXT7_API_KEY` | No | none | Optional key for Context7 knowledge API integration. |
 | `GOOSE_PROVIDER` | No | Goose CLI default | Provider passed through Goose backend/model resolution. |
 | `GOOSE_MODEL` | No | Goose CLI default | Model passed through Goose backend/model resolution and contributor relay fallback. |
