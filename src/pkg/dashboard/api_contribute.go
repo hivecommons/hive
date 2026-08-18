@@ -7827,14 +7827,14 @@ func validateGitHubToken(token, apiURL string) string {
 // handleAPIv1 wraps contribute API endpoints with GitHub token auth.
 // Accepts Authorization: Bearer <gh-personal-access-token>.
 func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if strings.HasPrefix(token, "Bearer ") {
-		token = token[7:]
-	} else if strings.HasPrefix(token, "token ") {
-		token = token[6:]
-	} else {
-		token = r.URL.Query().Get("token")
+	auth := strings.Fields(r.Header.Get("Authorization"))
+	if len(auth) != 2 || !strings.EqualFold(auth[0], "Bearer") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
+		return
 	}
+	token := auth[1]
 
 	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if username == "" {
@@ -7882,12 +7882,6 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
-			return
-		}
-		// Mutations require an Authorization header even though the read API also
-		// accepts ?token=. Query credentials leak into proxy and access logs.
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-			jsonError(w, "Authorization: Bearer <gh-token> required", http.StatusUnauthorized)
 			return
 		}
 		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")

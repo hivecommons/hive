@@ -232,7 +232,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 ### `/api/v1` contributor subpaths
 
 `handleAPIv1` dispatches authenticated contributor API calls below `/api/v1`.
-Use the Authorization header (or the `token` query parameter).
+Every request requires `Authorization: Bearer <gh-token>`. Query-string
+credentials and other authorization schemes are rejected so GitHub tokens do
+not enter ingress or access logs.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|

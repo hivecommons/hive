@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -107,13 +108,31 @@ func TestCovV1_UnknownEndpoint(t *testing.T) {
 	}
 }
 
-// TokenFromQuery: the handler also accepts ?token= when no Authorization header.
-func TestCovV1_TokenFromQuery(t *testing.T) {
+func TestCovV1_RejectsQueryTokenWithoutReflectingIt(t *testing.T) {
+	const secret = "ghp_query_secret_must_not_leak"
 	s := v1Server(t, "octocat")
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/status?token=qtoken", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status?token="+secret, nil)
 	s.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("query token: want 200, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("query token: want 401, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatal("query token was reflected in the error response")
+	}
+}
+
+func TestCovV1_RejectsNonBearerAuthorizationWithoutReflectingIt(t *testing.T) {
+	const secret = "ghp_scheme_secret_must_not_leak"
+	s := v1Server(t, "octocat")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("Authorization", "token "+secret)
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("non-bearer authorization: want 401, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatal("authorization credential was reflected in the error response")
 	}
 }
