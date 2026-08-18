@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
@@ -170,6 +171,25 @@ type GitHubProxy struct {
 	// header as an agent's identity.
 	proxyAdvisoryOK bool
 
+	// injectGHAuth snapshots config.ProxyInjectGHAuth() at construction (#1861,
+	// opt-in, default off — a boot-time deployment choice like proxyAdvisoryOK).
+	// When true, the proxy is the ONLY holder of usable GitHub credentials on
+	// the request path: every MITM'd request has any agent-supplied
+	// Authorization header STRIPPED and the identified agent's hub-held scoped
+	// token injected in its place (see rewriteGitHubAuth). Agents hold only an
+	// inert placeholder, so a prompt-injected agent has nothing worth
+	// exfiltrating.
+	injectGHAuth bool
+
+	// agentTokenSource resolves an identified agent name to that agent's
+	// hub-held tier-scoped token (github.AgentProxyToken, wired in main). It is
+	// a func, not an import, to keep pkg/proxy decoupled from pkg/github's
+	// minting machinery — the proxy consumes tokens the existing #3967 lane
+	// already maintains; it never mints. May be nil (injection then never adds
+	// a header, and stripped requests proceed unauthenticated — fail loud at
+	// GitHub, never fall back to a shared token).
+	agentTokenSource func(agentName string) (string, bool)
+
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
 
@@ -232,6 +252,35 @@ func (p *GitHubProxy) SetTokenSink(sink *tokens.InferenceSink) {
 	p.tokenSink = sink
 }
 
+// SetAgentTokenSource wires the resolver from identified agent name to that
+// agent's hub-held scoped token (#1861). Wired once at boot, before Start(),
+// so no lock is needed on the read path.
+func (p *GitHubProxy) SetAgentTokenSource(source func(agentName string) (string, bool)) {
+	p.agentTokenSource = source
+}
+
+// hostNeedsMITM decides whether a GitHub-family host must be TLS-intercepted
+// rather than opaquely tunneled.
+//
+// Without injection this is exactly the historical NeedsMITM: only
+// api.github.com, where request-level ACMM inspection happens; github.com and
+// registered GHE hosts are tunneled without decryption (their traffic — git
+// smart HTTP, OAuth device flow — is gated elsewhere).
+//
+// With injection (#1861) an opaque tunnel is a hole, not an optimization: the
+// agent's git credential helper now serves the inert placeholder, so a
+// git-over-HTTPS push through an un-MITM'd tunnel would reach GitHub carrying
+// the placeholder and 401. Every GitHub-family host must therefore be
+// intercepted so rewriteGitHubAuth can replace the placeholder with the real
+// scoped token — which also means an agent-supplied credential can never
+// sneak to ANY GitHub host through a tunnel the proxy declined to open.
+func (p *GitHubProxy) hostNeedsMITM(host string) bool {
+	if NeedsMITM(host) {
+		return true
+	}
+	return p.injectGHAuth && IsGitHubHost(host)
+}
+
 func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
 	p.canariesEnabled = enabled
 	p.canaryFailClosed = failClosed
@@ -277,6 +326,13 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		allowed[key] = true
 	}
 
+	// #1861: snapshot the injection flag once, mirroring advisoryOK above.
+	injectGHAuth := config.ProxyInjectGHAuth()
+	if injectGHAuth {
+		logger.Info("proxy GitHub credential injection enabled — agent-supplied Authorization headers are stripped and hub-held scoped tokens injected per identified agent (#1861)",
+			"env", config.ProxyInjectGHAuthEnv)
+	}
+
 	p := &GitHubProxy{
 		listenAddr:      fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
 		caCert:          caCert,
@@ -284,6 +340,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		logger:          logger,
 		uidMap:          uidMap,
 		proxyAdvisoryOK: advisoryOK,
+		injectGHAuth:    injectGHAuth,
 		allowedRepos:    allowed,
 		violations:      make(map[string]int),
 		certCache:       make(map[string]cachedCert),
@@ -467,8 +524,9 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		return
 	}
 
-	if !NeedsInspection(host) {
-		// Non-inspected host: tunnel directly. SO_MARK the socket
+	if !NeedsInspection(host) && !p.hostNeedsMITM(host) {
+		// Host we neither inspect nor (under #1861 injection) intercept:
+		// tunnel directly. SO_MARK the socket
 		// so the forced-egress redirect exempts this proxy-originated dial.
 		upstream, err := markDialer(transparentProxyTimeout).Dial("tcp", host+":443")
 		if err != nil {
@@ -808,8 +866,11 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	// Hosts we do not inspect: tunnel without interception. github.com is in
 	// this set — its OAuth device flow and git smart HTTP are handled by CLI
 	// --deny-tool flags. api.github.com and api.linear.app are not: both need
-	// request-level inspection for ACMM enforcement.
-	if !NeedsInspection(host) {
+	// request-level inspection for ACMM enforcement. Under #1861 injection,
+	// however, every GitHub-family host is intercepted (see hostNeedsMITM),
+	// because the agent's credential helper now serves an inert placeholder
+	// that only the proxy can replace with the real scoped token.
+	if !NeedsInspection(host) && !p.hostNeedsMITM(host) {
 		p.tunnelDirect(conn, r)
 		return
 	}
@@ -1024,6 +1085,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			continue
 		}
 
+		// #1861: with injection enabled, the upstream credential is decided
+		// HERE — after the ACMM/repo/canary gates, immediately before either
+		// forwarding branch — so every byte that reaches GitHub has passed
+		// through it. Blocked requests above never reach upstream and need no
+		// rewrite.
+		p.rewriteGitHubAuth(req, agentName)
+
 		// Git smart HTTP uses chunked streaming that http.ReadResponse
 		// can't handle reliably. After the ACMM check passes, forward
 		// the request and switch to raw bidirectional streaming.
@@ -1095,6 +1163,108 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		_ = client.SetWriteDeadline(time.Time{})
 		_ = resp.Body.Close()
 	}
+}
+
+// gitInjectBasicUser is the username git expects alongside a GitHub App
+// installation token in HTTP Basic auth — the same identity
+// git-credential-hive.sh answers with, so upstream sees exactly the shape the
+// pre-injection flow produced.
+const gitInjectBasicUser = "x-access-token"
+
+// loginPathPrefix marks the GitHub OAuth/device-flow endpoints
+// (/login/device/code, /login/oauth/access_token). These authenticate the
+// FLOW via their form body, not a bearer credential; injecting an App token
+// there would be meaningless at best and flow-corrupting at worst, so they
+// get strip-only treatment.
+const loginPathPrefix = "/login/"
+
+// rewriteGitHubAuth enforces #1861 on one MITM'd request: the proxy — not the
+// agent — decides what credential GitHub sees.
+//
+// Threat model, per header-touching block:
+//
+//   - STRIP: an agent-supplied Authorization header is deleted UNCONDITIONALLY
+//     (under the flag), never forwarded. Even though injection-mode agents are
+//     only ever handed the inert placeholder, an agent that somehow obtained a
+//     real credential (leaked from a log, smuggled via prompt, minted through
+//     a side channel) must not be able to spend it through this proxy.
+//
+//   - INJECT: only for an agent identified by the UID-authoritative path
+//     (#3888) that has a hub-held scoped token. The two lookups this chains
+//     are exactly the pre-existing lanes: identity from the UID map, token
+//     from the #3967 per-agent scoped mint.
+//
+//   - UNKNOWN AGENT = NO CREDENTIAL: when identity resolution failed
+//     (agentName == ""), the request proceeds with NO Authorization and fails
+//     loud at GitHub (401/403). Deliberate: any fallback — shared cache,
+//     hive token, "last known agent" — would let an unattributable process
+//     ride a real credential, recreating the pre-#3888 identity hole this
+//     design depends on having closed.
+//
+//   - INTERNAL CALLER PASSTHROUGH: the hive's own control plane
+//     (internalCallerName) legitimately holds and sends its own App
+//     credentials (token mint, heartbeat, hive-open-pr fulfillment); its
+//     requests pass untouched. This cannot be spoofed by an agent: the name
+//     is assigned only via UIDMap.IsInternalUID, never from anything the
+//     caller sends.
+//
+// Logging: agent name and injected yes/no only — NEVER token bytes, not even
+// a prefix (#1861 requirement; a token prefix is enough to fingerprint and
+// correlate credentials across logs).
+func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
+	if !p.injectGHAuth {
+		// Flag off (the default): behavior byte-identical to before #1861 —
+		// no header is touched on any path.
+		return
+	}
+	if agentName == internalCallerName {
+		return
+	}
+
+	req.Header.Del("Authorization")
+
+	if agentName == "" {
+		p.logger.Debug("proxy auth injection: caller unidentified — forwarding without credentials (fail-loud, no fallback)", "injected", false)
+		return
+	}
+	if strings.HasPrefix(req.URL.Path, loginPathPrefix) {
+		p.logger.Debug("proxy auth injection: OAuth flow endpoint — strip only", "agent", agentName, "injected", false)
+		return
+	}
+	if p.agentTokenSource == nil {
+		p.logger.Warn("proxy auth injection enabled but no token source wired — forwarding without credentials", "agent", agentName, "injected", false)
+		return
+	}
+	token, ok := p.agentTokenSource(agentName)
+	if !ok {
+		// An identified agent with no hub-held token means the #3967 mint lane
+		// has not (yet) delivered for this agent — e.g. the hive restarted and
+		// the in-memory registry is empty until the next launch/refresh mint.
+		// Fail loud (upstream 401) rather than borrow any other credential.
+		p.logger.Warn("proxy auth injection: no hub-held token for identified agent — forwarding without credentials (check the per-agent mint lane)", "agent", agentName, "injected", false)
+		return
+	}
+
+	if isGitPath(req.URL.Path) {
+		// Git smart HTTP authenticates with Basic x-access-token:<token> —
+		// the same shape git-credential-hive.sh produced pre-injection.
+		basic := base64.StdEncoding.EncodeToString([]byte(gitInjectBasicUser + ":" + token))
+		req.Header.Set("Authorization", "Basic "+basic)
+		// Force this exchange onto its own upstream connection. The git branch
+		// in proxyHTTP switches to a raw relay after forwarding this request's
+		// headers, so a keep-alive reuse (git's follow-up POST after GET
+		// /info/refs on the same conn) would stream its headers — placeholder
+		// credential included — straight through WITHOUT passing this rewrite,
+		// and fail with a confusing mid-operation 401. Connection: close makes
+		// git reconnect per request; each new connection re-enters proxyHTTP
+		// and gets its own rewrite.
+		req.Close = true
+	} else {
+		// REST/GraphQL (api.github.com, GHE /api/v3): the standard GitHub
+		// token scheme, identical to what gh sends.
+		req.Header.Set("Authorization", "token "+token)
+	}
+	p.logger.Debug("proxy auth injection: scoped token attached", "agent", agentName, "injected", true)
 }
 
 func (p *GitHubProxy) inspectCanaryEgress(agentName string, req *http.Request) (reason string, deny bool, detected bool) {

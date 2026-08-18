@@ -3381,6 +3381,13 @@ func main() {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
 		githubProxy.SetCanaryScanner(cfg.Ioscan.IsEnabled() && cfg.Ioscan.Canaries, cfg.Ioscan.FailClosed(), ioscan.DefaultCanaries, canaryLeakHandler)
+		// #1861: the proxy resolves an identified agent to its hub-held scoped
+		// token via the package-level registry WriteAgentToken feeds (NOT via
+		// the appAuth instance, which is replaced on key rotation — a closure
+		// over it would strand the proxy on the stale instance). Wired
+		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
+		// the proxy never consults the source and the registry stays empty.
+		githubProxy.SetAgentTokenSource(github.AgentProxyToken)
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
 		// configured key is entitled to, learned by the proxy from a key-info

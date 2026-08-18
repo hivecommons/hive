@@ -14,6 +14,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const (
@@ -467,6 +469,23 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
 	}
 
+	// #1861 (proxy-side credential injection, opt-in): with the flag on, the
+	// real scoped token never reaches anything the agent can read. It goes into
+	// the in-memory registry the MITM proxy injects from, and the cache file —
+	// the single choke point every agent-side consumer reads (gh-wrapper.sh's
+	// GH_TOKEN, git-credential-hive.sh's password, the manager's GITHUB_TOKEN
+	// env push for the MCP server) — receives a visibly-fake placeholder
+	// instead. The attack this closes: a prompt-injected agent exfiltrating its
+	// own credential; after this divert, everything in the agent's reach is the
+	// inert `hive-proxy-injected-<agent>` string. Flag off (the default): the
+	// registry is never populated and the file receives the real token,
+	// byte-identical to the pre-#1861 behavior.
+	fileToken := token
+	if config.ProxyInjectGHAuth() {
+		storeAgentProxyToken(agentName, token)
+		fileToken = AgentDummyToken(agentName)
+	}
+
 	if err := os.MkdirAll(agentTokenCacheDir, agentTokenCacheDirPerms); err != nil {
 		return fmt.Errorf("creating agent token dir: %w", err)
 	}
@@ -489,7 +508,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	if err != nil {
 		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
 	}
-	if _, err := f.WriteString(token); err != nil {
+	if _, err := f.WriteString(fileToken); err != nil {
 		_ = f.Close() // best-effort cleanup; the write error is what's returned
 		return fmt.Errorf("writing agent token cache %s: %w", cachePath, err)
 	}
@@ -507,7 +526,11 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 			"agent", agentName, "uid", agentUID, "path", cachePath)
 	}
 
-	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID, "pre_created", preCreated)
+	// proxy_injected says which delivery mode produced this cache write (#1861):
+	// true = the file holds the inert placeholder and the real token went to the
+	// proxy's in-memory registry. Never log token material itself — not even a
+	// prefix — on either path.
+	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID, "pre_created", preCreated, "proxy_injected", fileToken != token)
 	return nil
 }
 
