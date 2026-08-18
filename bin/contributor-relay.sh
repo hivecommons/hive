@@ -667,6 +667,30 @@ function recoverWedgedShell() {
   } catch (_) {}
 }
 
+// quitLiveCLI stops an agent CLI that is STILL RUNNING in the pane, so the
+// pane falls back to a shell and a subsequent relaunch types its command at a
+// shell prompt rather than into the CLI as a chat message.
+//
+// Why two Ctrl-Cs and not one: recoverWedgedShell() above sends a single C-c,
+// which is right for its case (a DEAD CLI leaving a wedged bash PS2 prompt).
+// For a LIVE agent CLI, one C-c only cancels the current turn — claude, codex
+// and agy all stay running — so the relaunch command that follows is delivered
+// to the CLI as a prompt. That is exactly the #2203 wedge shape. The second
+// C-c, with the same delays the memory-cleanup restart path has used since
+// #2596, is what actually exits the CLI.
+//
+// Best-effort by design: if tmux is unreachable the caller is already on a
+// failure path, and a relaunch that lands badly is recovered by the
+// armCLIReadyWait() contract rather than by anything here.
+function quitLiveCLI() {
+  try {
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
+    sleepMs(1000);
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
+    sleepMs(2000);
+  } catch (_) {}
+}
+
 // capturePaneText returns the current pane contents, or "" if tmux can't be
 // reached. Extracted so the readiness classifier and the blocking-prompt
 // dismissal can look at the SAME text without capturing twice, and so the
@@ -1064,10 +1088,7 @@ function tmuxSendKeys(text) {
       // instead of restarting again (issue #2596).
       lastResetAtCount = tasksCompletedCount;
       console.log(`Restarting ${BACKEND} CLI for memory cleanup (task ${tasksCompletedCount})`);
-      execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-      sleepMs(1000);
-      execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
-      sleepMs(2000);
+      quitLiveCLI();
       // Queue this prompt and hand delivery to the readiness callback.
       // Previously the restart set cliReady=false and then FELL THROUGH to the
       // send loop below, typing the prompt into a pane where the CLI had just
@@ -1763,8 +1784,18 @@ function progressTick() {
       // (observed live: a slow `gh pr create` returned, with a real PR link,
       // seconds after the stall verdict). Relaunch it so the NEXT task starts
       // on a demonstrably fresh CLI, rather than risking its prompt landing on
-      // top of whatever the abandoned turn still produces — the same reason
-      // the CLI-died branch above relaunches before failing the task.
+      // top of whatever the abandoned turn still produces.
+      //
+      // quitLiveCLI() FIRST, and that ordering is load-bearing. Reaching this
+      // line proves the CLI is alive: the `presence.isShell` guard earlier in
+      // this function returns before the completion check whenever the pane has
+      // fallen back to a shell, so a confirmed stall is by construction a pane
+      // whose foreground program is still the agent CLI. relaunchCLI() on its
+      // own only clears a wedged SHELL (recoverWedgedShell's single C-c); against
+      // a live CLI that cancels the turn without exiting, and the launch command
+      // is then typed into the CLI as a chat prompt — #2203 again, and worse here
+      // because the "prompt" is a shell command an agent may simply run.
+      quitLiveCLI();
       try {
         console.log(`Relaunching ${BACKEND} after a confirmed pane stall: ${relaunchCLI()}`);
       } catch (e) {
@@ -2105,6 +2136,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     launchCommandWithCwd,
     cliProcessLooksGone,
     paneForegroundCommand,
+    quitLiveCLI,
     CLI_GONE_CONFIRMATIONS,
     PANE_STALL_TIMEOUT_MS,
     // Backdate the stall clock so a test can cross the timeout without

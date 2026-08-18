@@ -481,6 +481,61 @@ test('a stalled pane hands the task back as an environment failure once confirme
   } finally { teardown(relay); }
 });
 
+test('a confirmed stall QUITS the live CLI before relaunching, so the launch command is never typed into it as a prompt', () => {
+  // Reaching the stall path PROVES the CLI is alive: the `presence.isShell`
+  // guard earlier in progressTick() returns before the completion check
+  // whenever the pane has fallen back to a shell, so a confirmed stall is by
+  // construction a pane still running the agent CLI.
+  //
+  // relaunchCLI() alone is calibrated for the opposite case. The single C-c in
+  // recoverWedgedShell() clears a wedged bash PS2 prompt, but against a LIVE
+  // claude/codex/agy it only cancels the current turn — the CLI stays up, and
+  // the launch command that follows is delivered to it as a chat message. That
+  // is the #2203 wedge with a shell command as the payload, so the quit has to
+  // happen first and has to be the two-C-c sequence the memory-cleanup restart
+  // path has used since #2596.
+  const relay = loadRelay({
+    backend: 'agy',
+    paneText: 'a frozen pane with no idle prompt and nothing happening',
+  });
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-stall-quit');
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();   // confirmation 1
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick();   // confirmation 2 -> quit + relaunch + fail
+    const sends = relay.__tmuxSends().slice(before);
+
+    const launchIdx = sends.findIndex(c => /agy/.test(c));
+    assert.ok(launchIdx >= 0, `expected the CLI to be relaunched: ${JSON.stringify(sends)}`);
+
+    // At least the two quitLiveCLI() Ctrl-Cs must precede the launch command.
+    // One is NOT enough and is the whole point of this test.
+    const ctrlCsBeforeLaunch = sends.slice(0, launchIdx).filter(c => /C-c\s*$/.test(c)).length;
+    assert.ok(ctrlCsBeforeLaunch >= 2,
+      `a live CLI needs two Ctrl-Cs to exit before the relaunch is typed; saw ${ctrlCsBeforeLaunch} in ${JSON.stringify(sends)}`);
+
+    // And the fix must not have cost the behaviour #4064 added.
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, 'the task is still handed back after the quit+relaunch');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+  } finally { teardown(relay); }
+});
+
+test('quitLiveCLI sends two Ctrl-Cs and nothing else — a single one only cancels a turn', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const before = relay.__tmuxSends().length;
+    relay.quitLiveCLI();
+    const sends = relay.__tmuxSends().slice(before);
+    assert.strictEqual(sends.length, 2, `expected exactly two sends, got ${JSON.stringify(sends)}`);
+    assert.ok(sends.every(c => /C-c\s*$/.test(c)), `both must be Ctrl-C: ${JSON.stringify(sends)}`);
+  } finally { teardown(relay); }
+});
+
 test('a pane that reaches real IDLE_COMPLETE between stall ticks is reported as a normal completion, PR and all', () => {
   // The exact live scenario: paneText starts frozen (mid stall), then -- before
   // the SECOND confirmation tick -- the CLI's real completion appears, agy back
