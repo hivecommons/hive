@@ -534,6 +534,24 @@ func (c *Client) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, nil
 	}
 
+	// Approval desk (RFC #4000). Consulted AFTER the sweep's own eligibility
+	// checks so the desk only ever sees requests the legacy gate already
+	// permits — it can withhold a merge, never widen authority beyond what
+	// SelfAuthoredAutoMergeAllowed already granted upstream. No-op when no hook
+	// is installed, which is the default; see automerge_desk.go.
+	if allow, deskReason := c.consultApprovalDesk(ctx, ApprovalDeskRequest{
+		Kind:        ApprovalDeskKindSelfMerge,
+		Repo:        displayRepo,
+		Number:      number,
+		Author:      author,
+		Title:       pr.GetTitle(),
+		Labels:      labelNames(pr.Labels),
+		ChecksGreen: true, // commitGreen returned green immediately above
+		HeadSHA:     evaluatedHeadSHA,
+	}); !allow {
+		return AutoMergeSweepEvent{}, deskReason, nil
+	}
+
 	// Re-verify the head SHA immediately before merging: a push landing
 	// between the green-check above and the merge call below must never be
 	// squashed without having gone through commitGreen itself.

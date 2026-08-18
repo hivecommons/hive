@@ -126,6 +126,22 @@ type Verdict struct {
 	ACMMLevel  int         `json:"acmm_level"`
 	Agent      string      `json:"agent"`
 	ScanResult *ScanResult `json:"scan_result,omitempty"`
+
+	// Kind is the request lane this verdict resolved (see the desk's Kind*
+	// constants). Empty for verdicts produced by the pre-desk Decide/Resolve
+	// entry points, which only ever handled agent tool calls.
+	Kind string `json:"kind,omitempty"`
+	// Rule names the operator rule that resolved this request, when one fired.
+	// The dashboard shows this per row so an operator can see WHICH rule would
+	// resolve an item, and audit records carry it as the policy provenance.
+	Rule string `json:"rule,omitempty"`
+	// RuleAction is what that rule asked for. It may differ from Decision when
+	// the ACMM ceiling clamped the request — keeping both is what makes a
+	// clamp visible in the audit trail rather than silent.
+	RuleAction RuleAction `json:"rule_action,omitempty"`
+	// CeilingApplied reports that the hive's ACMM ceiling reduced this verdict
+	// below what base policy or a rule asked for.
+	CeilingApplied bool `json:"ceiling_applied,omitempty"`
 }
 
 // AutoApproved reports whether the tool call is permitted without further gates.
@@ -161,6 +177,19 @@ func (v Verdict) AuditFields() map[string]any {
 		if len(v.ScanResult.Violations) > 0 {
 			fields["violations"] = strings.Join(v.ScanResult.Violations, "; ")
 		}
+	}
+	// Policy provenance. RFC #4000 asks the verdict record to carry enough
+	// metadata for the UI to render the relevant knob inline, and a clamp must
+	// be visible in the audit trail rather than silent.
+	if v.Kind != "" {
+		fields["kind"] = v.Kind
+	}
+	if v.Rule != "" {
+		fields["rule"] = v.Rule
+		fields["rule_action"] = string(v.RuleAction)
+	}
+	if v.CeilingApplied {
+		fields["ceiling_applied"] = true
 	}
 	return fields
 }

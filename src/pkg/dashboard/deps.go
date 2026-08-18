@@ -17,6 +17,7 @@ import (
 	"github.com/kubestellar/hive/pkg/knowledge"
 	"github.com/kubestellar/hive/pkg/scheduler"
 	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/kubestellar/hive/pkg/toolapprove"
 )
 
 type Dependencies struct {
@@ -78,6 +79,16 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
+
+	// ApprovalDesk is the single tool-approval decision point (RFC #4000). Nil
+	// when `tool_approval.enabled` is false — the default — in which case every
+	// legacy gate stays authoritative and the Approvals panel renders as "not
+	// enabled". Never construct a desk here as a fallback: a nil desk IS the
+	// signal that the feature is off.
+	ApprovalDesk *toolapprove.Desk
+	// ApprovalInbox is the durable operator-lane queue backing the desk. Nil
+	// exactly when ApprovalDesk is nil (both come from DeskFromConfig).
+	ApprovalInbox *toolapprove.Inbox
 }
 
 type NousState struct {

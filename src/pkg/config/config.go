@@ -53,16 +53,21 @@ type Config struct {
 	Tracing OTelConfig `yaml:"tracing,omitempty"`
 	// Triggers is an additive list of CEL-based declarative agent triggers.
 	// Default empty → existing label/governor triggering is unchanged.
-	Triggers   []TriggerRule    `yaml:"triggers,omitempty" json:"triggers,omitempty"`
-	Mint       MintConfig       `yaml:"mint,omitempty"`
-	Ioscan     IoscanConfig     `yaml:"ioscan,omitempty" json:"ioscan,omitempty"`
-	Classifier ClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
-	Planning   PlanningConfig   `yaml:"planning,omitempty" json:"planning,omitempty"`
-	Intent     IntentConfig     `yaml:"intent,omitempty" json:"intent,omitempty"`
-	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
-	Retro      RetroConfig      `yaml:"retro,omitempty" json:"retro,omitempty"`
-	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	Triggers []TriggerRule `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	// ToolApproval configures the approval desk (RFC #4000): the single
+	// decision point every approval-shaped request resolves through, plus the
+	// operator rules that steer it. Additive and DEFAULT-OFF — an absent block
+	// leaves every existing gate in charge and behavior byte-identical.
+	ToolApproval ToolApprovalConfig `yaml:"tool_approval,omitempty" json:"tool_approval,omitempty"`
+	Mint         MintConfig         `yaml:"mint,omitempty"`
+	Ioscan       IoscanConfig       `yaml:"ioscan,omitempty" json:"ioscan,omitempty"`
+	Classifier   ClassifierConfig   `yaml:"classifier,omitempty" json:"classifier,omitempty"`
+	Planning     PlanningConfig     `yaml:"planning,omitempty" json:"planning,omitempty"`
+	Intent       IntentConfig       `yaml:"intent,omitempty" json:"intent,omitempty"`
+	Escalation   EscalationConfig   `yaml:"escalation,omitempty" json:"escalation,omitempty"`
+	Retro        RetroConfig        `yaml:"retro,omitempty" json:"retro,omitempty"`
+	Review       ReviewConfig       `yaml:"review,omitempty" json:"review,omitempty"`
+	AutoMerge    AutoMergeConfig    `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
@@ -159,6 +164,48 @@ type TriggerRule struct {
 	Expr     string `yaml:"expr" json:"expr"`
 	Agent    string `yaml:"agent" json:"agent"`
 	Priority int    `yaml:"priority,omitempty" json:"priority,omitempty"`
+}
+
+// ToolApprovalConfig configures the approval desk (RFC #4000).
+//
+// The desk consolidates four independently-grown gates onto one decision point.
+// Because a silent behavior change on upgrade day is exactly what the RFC's
+// throughput contract forbids, the whole block is opt-in: with Enabled=false
+// (the default) no producer consults the desk and every legacy gate stays
+// authoritative. Turning it on does NOT change what a level permits — the desk
+// reproduces current behavior 1:1 (see pkg/toolapprove/parity.go) — it makes
+// the decision inspectable and gives operators a place to hang rules.
+type ToolApprovalConfig struct {
+	// Enabled turns the desk on for wired producers. Default false.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Rules are operator-authored CEL approval rules, evaluated in priority
+	// order. A rule can steer a request into a lane but can NEVER approve above
+	// the hive's ACMM level: the ceiling is applied after rule evaluation,
+	// unconditionally. Malformed rules are rejected at config load.
+	Rules []ToolApprovalRule `yaml:"rules,omitempty" json:"rules,omitempty"`
+	// InboxPath overrides where pending operator approvals persist. Empty uses
+	// the package default (/data/approvals/inbox.json) on the durable PVC.
+	InboxPath string `yaml:"inbox_path,omitempty" json:"inbox_path,omitempty"`
+}
+
+// ToolApprovalRule is one declarative approval rule. Mirrors TriggerRule's
+// shape so operators writing `triggers:` already know how to write these.
+type ToolApprovalRule struct {
+	// Name identifies the rule in verdicts, audit records, and the dashboard's
+	// filter chips. Required and unique.
+	Name string `yaml:"name" json:"name"`
+	// Expr is a CEL expression over the `request` activation. Must return bool.
+	// Example: request.kind == "self-merge" && request.checks_green &&
+	//          request.author == "dependabot[bot]"
+	Expr string `yaml:"expr" json:"expr"`
+	// Action is one of auto-approve, security-scan, operator-approve.
+	Action string `yaml:"action" json:"action"`
+	// Priority orders competing rules; higher wins. Ties keep file order.
+	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+	// MinACMMLevel optionally scopes the rule to hives at or above a level.
+	// This is scoping convenience, not the safety mechanism — the ACMM ceiling
+	// is what actually bounds a rule's reach.
+	MinACMMLevel int `yaml:"min_acmm_level,omitempty" json:"min_acmm_level,omitempty"`
 }
 
 // MintConfig configures the OIDC token mint service (pkg/mint). It is additive

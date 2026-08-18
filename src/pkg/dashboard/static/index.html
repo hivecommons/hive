@@ -3136,6 +3136,27 @@
     </div>
   </div>
 
+  <!-- Approvals desk (RFC #4000). Hidden until /api/approvals reports the desk
+       enabled, so a hive that has not opted in sees no new chrome. -->
+  <div id="approvals-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('approvals-section')"><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px;background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
+    <div class="section-body">
+      <div id="approvals-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
+        <!-- Policy-bug banner: an inbox accumulating on a full-autonomy hive is
+             a misconfiguration signal, not a normal wait (#4000 requirement 4). -->
+        <div id="approvals-policy-bug" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--red) 12%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);font-size:0.75rem"></div>
+        <div id="approvals-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:0.72rem"></div>
+        <div id="approvals-actions" style="display:none;gap:8px;align-items:center;margin-bottom:10px;font-size:0.75rem">
+          <button class="btn" onclick="approvalsResolveSelected(true)">Approve selected</button>
+          <button class="btn" onclick="approvalsResolveSelected(false)">Reject selected</button>
+          <span class="muted" id="approvals-selected-count"></span>
+        </div>
+        <div id="approvals-list"></div>
+        <div id="approvals-empty" class="muted" style="font-size:0.78rem">No pending approvals.</div>
+      </div>
+    </div>
+  </div>
+
   <div id="platform-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('platform-section')"><span class="section-chevron">▼</span> 🧩 Platform</h2>
     <div class="section-body">
@@ -8618,9 +8639,161 @@ function burnAreaChart() {
       } catch (e) { /* transient — leave last render in place */ }
     }
 
+    // ---- Approvals desk (RFC #4000) -------------------------------------
+    // Pending operator-lane approvals. The panel stays hidden entirely unless
+    // the desk is enabled, so a hive that has not opted in sees no new chrome.
+    //
+    // Filter chips are rule names: an operator narrows the list to "everything
+    // the large-diff rule would hold" and bulk-resolves just those. Each row
+    // shows WHICH rule would resolve it, re-evaluated server-side against the
+    // current rule set, so editing policy is visible immediately in the queue.
+    let _approvalsSelected = new Set();
+    let _approvalsRuleFilter = null;
+    let _approvalsLast = null;
+
+    async function fetchApprovals() {
+      try {
+        const r = await fetch('/api/approvals');
+        if (!r.ok) return;               // 403 for non-owners: leave hidden
+        renderApprovals(await r.json());
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+
+    function renderApprovals(dto) {
+      _approvalsLast = dto;
+      const section = document.getElementById('approvals-section');
+      if (!section) return;
+      if (!dto || !dto.enabled) { section.style.display = 'none'; return; }
+      section.style.display = '';
+
+      const items = dto.items || [];
+
+      // Badge: pending count, hidden at zero so a quiet desk is not noise.
+      const badge = document.getElementById('approvals-badge');
+      if (badge) {
+        badge.textContent = String(dto.count || 0);
+        badge.style.display = (dto.count > 0) ? '' : 'none';
+      }
+
+      // Requirement 4: items queued at full autonomy are probable policy bugs.
+      const bug = document.getElementById('approvals-policy-bug');
+      if (bug) {
+        if (dto.policy_bug_count > 0) {
+          bug.style.display = '';
+          bug.innerHTML = '⚠️ <strong>' + dto.policy_bug_count + '</strong> item(s) are waiting on a hive at ACMM L6 (full autonomy). ' +
+            'An inbox that accumulates at L6 usually means a policy rule is over-restrictive, not that a human is needed.';
+        } else {
+          bug.style.display = 'none';
+        }
+      }
+
+      // Rule chips as filters.
+      const chips = document.getElementById('approvals-chips');
+      if (chips) {
+        const names = dto.rule_chips || [];
+        let html = renderApprovalChip(null, 'All', _approvalsRuleFilter === null);
+        for (const n of names) html += renderApprovalChip(n, n, _approvalsRuleFilter === n);
+        chips.innerHTML = html;
+      }
+
+      const shown = _approvalsRuleFilter
+        ? items.filter(i => i.rule === _approvalsRuleFilter)
+        : items;
+
+      // Drop selections for rows that no longer exist (resolved elsewhere).
+      const live = new Set(items.map(i => i.id));
+      for (const id of Array.from(_approvalsSelected)) if (!live.has(id)) _approvalsSelected.delete(id);
+
+      const list = document.getElementById('approvals-list');
+      const empty = document.getElementById('approvals-empty');
+      if (empty) empty.style.display = shown.length ? 'none' : '';
+      if (list) list.innerHTML = shown.map(renderApprovalRow).join('');
+
+      updateApprovalsActions();
+    }
+
+    function renderApprovalChip(value, label, active) {
+      const bg = active ? 'color-mix(in srgb, var(--accent) 25%, transparent)' : 'transparent';
+      return '<button class="repo-chip-btn" style="background:' + bg + '" ' +
+        'onclick="approvalsSetFilter(' + (value === null ? 'null' : JSON.stringify(value)) + ')">' +
+        escapeHtml(label) + '</button>';
+    }
+
+    function renderApprovalRow(it) {
+      const checked = _approvalsSelected.has(it.id) ? ' checked' : '';
+      const target = it.repo ? (it.repo + (it.number ? '#' + it.number : '')) : (it.tool || '');
+      const ruleChip = it.rule
+        ? '<span style="padding:1px 6px;border-radius:8px;font-size:0.66rem;background:color-mix(in srgb, var(--accent) 18%, transparent)">' +
+            escapeHtml(it.rule) + ' → ' + escapeHtml(it.rule_action || '') + '</span>'
+        : '<span class="muted" style="font-size:0.66rem">base policy</span>';
+      const bugMark = it.policy_bug ? ' <span title="Queued at ACMM L6 — probable policy bug">⚠️</span>' : '';
+
+      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--border);font-size:0.75rem">' +
+        '<input type="checkbox"' + checked + ' onchange="approvalsToggle(' + JSON.stringify(it.id) + ')">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div><strong>' + escapeHtml(target) + '</strong>' + bugMark +
+            ' <span class="muted">' + escapeHtml(it.kind || '') + '</span></div>' +
+          '<div class="muted" style="font-size:0.7rem;margin-top:2px">' + escapeHtml(it.rationale || '') + '</div>' +
+          '<div style="margin-top:3px">' + ruleChip + '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:5px">' +
+          '<button class="btn" onclick="approvalsResolveOne(' + JSON.stringify(it.id) + ',true)">Approve</button>' +
+          '<button class="btn" onclick="approvalsResolveOne(' + JSON.stringify(it.id) + ',false)">Reject</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function updateApprovalsActions() {
+      const actions = document.getElementById('approvals-actions');
+      const count = document.getElementById('approvals-selected-count');
+      if (!actions) return;
+      actions.style.display = _approvalsSelected.size ? 'flex' : 'none';
+      if (count) count.textContent = _approvalsSelected.size + ' selected';
+    }
+
+    function approvalsSetFilter(rule) {
+      _approvalsRuleFilter = rule;
+      if (_approvalsLast) renderApprovals(_approvalsLast);
+    }
+
+    function approvalsToggle(id) {
+      if (_approvalsSelected.has(id)) _approvalsSelected.delete(id);
+      else _approvalsSelected.add(id);
+      updateApprovalsActions();
+    }
+
+    async function approvalsResolveOne(id, approved) {
+      try {
+        await fetch('/api/approvals/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id, approved: approved })
+        });
+      } catch (e) { /* surfaced by the refetch below */ }
+      _approvalsSelected.delete(id);
+      fetchApprovals();
+    }
+
+    // Bulk resolve. The server decomposes this into N individual resolutions
+    // through the same path the single-item button uses — this is a UI
+    // convenience, never a separate decision path.
+    async function approvalsResolveSelected(approved) {
+      const ids = Array.from(_approvalsSelected);
+      if (!ids.length) return;
+      try {
+        await fetch('/api/approvals/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: ids, approved: approved })
+        });
+      } catch (e) { /* surfaced by the refetch below */ }
+      _approvalsSelected.clear();
+      fetchApprovals();
+    }
+
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
-    function v4RefreshPanels() { fetchACMMReco(); fetchLifecycle(); }
+    function v4RefreshPanels() { fetchACMMReco(); fetchLifecycle(); fetchApprovals(); }
     v4RefreshPanels();
     setInterval(v4RefreshPanels, V4_PANELS_POLL_MS);
 

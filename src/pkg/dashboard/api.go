@@ -35,6 +35,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.deps = deps
 	s.loadSidebarFromDisk()
 	s.registerContributeRoutes()
+	// Approval desk (RFC #4000). Routes register unconditionally; the handlers
+	// report "not enabled" when deps.ApprovalInbox is nil, so a disabled desk is
+	// an honest 200 the panel can render rather than a 404 that looks broken.
+	s.registerApprovalRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/style", s.handleStyle)
