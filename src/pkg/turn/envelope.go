@@ -3,16 +3,55 @@ package turn
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/logscrub"
 )
 
 // ToJSON serializes the SessionEnvelope into JSON bytes.
+//
+// The conversation blob is a secret-bearing artifact: transcripts can contain
+// tokens, repo contents, and credentials surfaced by tool output. Because the
+// serialized envelope is the durable, handoff-able form of the session (it may
+// be written to disk, a queue, or cross spokes), all content-bearing strings
+// are scrubbed with the fleet's single reusable scrubber (logscrub) before
+// serialization — scrub-on-persist, per the #4002 maintainer review. In-memory
+// state (Clone / Step) is never scrubbed.
 func (e SessionEnvelope) ToJSON() ([]byte, error) {
-	return json.Marshal(e)
+	return json.Marshal(e.scrubbedForPersist())
 }
 
-// ToPrettyJSON serializes the SessionEnvelope into indented JSON bytes.
+// ToPrettyJSON serializes the SessionEnvelope into indented JSON bytes,
+// applying the same scrub-on-persist policy as ToJSON.
 func (e SessionEnvelope) ToPrettyJSON() ([]byte, error) {
-	return json.MarshalIndent(e, "", "  ")
+	return json.MarshalIndent(e.scrubbedForPersist(), "", "  ")
+}
+
+// scrubbedForPersist returns a deep copy of the envelope with credential-shaped
+// substrings redacted from every content-bearing field.
+func (e SessionEnvelope) scrubbedForPersist() SessionEnvelope {
+	out := e.Clone()
+	for i := range out.Messages {
+		out.Messages[i] = scrubMessage(out.Messages[i])
+	}
+	for k, v := range out.Variables {
+		out.Variables[k] = logscrub.ScrubString(v)
+	}
+	for i := range out.PendingApprovals {
+		out.PendingApprovals[i].ToolCall.Arguments = logscrub.ScrubString(out.PendingApprovals[i].ToolCall.Arguments)
+		out.PendingApprovals[i].Verdict.Rationale = logscrub.ScrubString(out.PendingApprovals[i].Verdict.Rationale)
+	}
+	return out
+}
+
+func scrubMessage(m Message) Message {
+	m.Content = logscrub.ScrubString(m.Content)
+	for i := range m.ToolCalls {
+		m.ToolCalls[i].Arguments = logscrub.ScrubString(m.ToolCalls[i].Arguments)
+	}
+	for k, v := range m.Metadata {
+		m.Metadata[k] = logscrub.ScrubString(v)
+	}
+	return m
 }
 
 // ParseEnvelope parses a SessionEnvelope from JSON bytes.
