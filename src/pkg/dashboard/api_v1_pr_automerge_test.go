@@ -74,9 +74,17 @@ func newAPIV1QueueServer(t *testing.T, role, tokenUser, prAuthor, headSHA string
 
 func queueAPIV1(t *testing.T, s *Server, token string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/prs/acme/widget/7/queue-automerge", nil)
+	return queueAPIV1Request(t, s, "/api/v1/prs/acme/widget/7/queue-automerge", token, nil)
+}
+
+func queueAPIV1Request(t *testing.T, s *Server, path, token string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
@@ -102,6 +110,43 @@ func TestAPIV1QueuePRAutoMergeRequiresMergerRole(t *testing.T) {
 	}
 	if *reviewCreated || *labelAdded {
 		t.Fatal("insufficient role must not mutate the pull request")
+	}
+}
+
+func TestAPIV1QueuePRAutoMergeIgnoresForgedIdentityHeaders(t *testing.T) {
+	s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleReadWrite, "alice", "bob", "head7")
+	w := queueAPIV1Request(t, s, "/api/v1/prs/acme/widget/7/queue-automerge", "valid-token", map[string]string{
+		"X-Hive-User":           "mallory",
+		"X-Hive-Role":           config.RoleOwner,
+		ownerRoleVerifiedHeader: "true",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
+	}
+	if *reviewCreated || *labelAdded {
+		t.Fatal("forged identity headers must not mutate the pull request")
+	}
+}
+
+func TestAPIV1QueuePRAutoMergeRejectsQueryToken(t *testing.T) {
+	s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleMerger, "alice", "bob", "head7")
+	w := queueAPIV1Request(t, s, "/api/v1/prs/acme/widget/7/queue-automerge?token=valid-token", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s, want 401", w.Code, w.Body.String())
+	}
+	if *reviewCreated || *labelAdded {
+		t.Fatal("query token must not authorize a mutation")
+	}
+}
+
+func TestAPIV1QueuePRAutoMergeRejectsRepoOutsideHive(t *testing.T) {
+	s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleMerger, "alice", "bob", "head7")
+	w := queueAPIV1Request(t, s, "/api/v1/prs/other/secret/7/queue-automerge", "valid-token", nil)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "not managed") {
+		t.Fatalf("status = %d body=%s, want managed-repository 403", w.Code, w.Body.String())
+	}
+	if *reviewCreated || *labelAdded {
+		t.Fatal("repository scope rejection must not mutate the pull request")
 	}
 }
 
