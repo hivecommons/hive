@@ -198,12 +198,20 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"entries": entries})
 }
 
-func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string) {
+// requestUser resolves the acting user behind an authenticated dashboard
+// request — the X-Hive-User header set by the auth proxy, or "local" for an
+// unproxied deployment. Shared by the audit log and the pause-provenance
+// path (#4041) so "who did this" is answered identically everywhere.
+func requestUser(r *http.Request) string {
 	user := r.Header.Get("X-Hive-User")
 	if user == "" {
 		user = "local"
 	}
-	s.audit.Log(user, action, detail, agent)
+	return user
+}
+
+func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string) {
+	s.audit.Log(requestUser(r), action, detail, agent)
 }
 
 // AuditLog records an audit event from non-HTTP contexts (governor eval,

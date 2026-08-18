@@ -489,10 +489,36 @@ contribute-hive backend="" mode="docker": check-version
         fi
       fi
 
-      # Create tmux session with the CLI
+      # Create tmux session with the CLI.
+      #
+      # The launch command CDs into the repo first. That is not belt-and-braces:
+      # a long-lived tmux server keeps its own working directory, and when that
+      # directory is deleted (here: a nested clone's v2/pkg/agent, orphaned when
+      # the repo renamed v2/ -> src/) every pane the server forks inherits the
+      # dead cwd. The pane's shell says so — "shell-init: error retrieving
+      # current directory" — and a backend that requires a resolvable cwd then
+      # dies seconds after its first task. agy exits 2 that way; claude, codex
+      # and goose happen to tolerate it, which is why this hid for so long.
+      #
+      # -c is NOT sufficient on its own: on a server whose own cwd is gone,
+      # `tmux new-session -c <valid path>` still forks the pane into the deleted
+      # directory (verified against tmux on Fedora 44). It is passed anyway
+      # because it IS correct on a healthy server; the cd is what carries the
+      # fix.
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50
-      tmux send-keys -t "$TMUX_SESSION" "${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
+      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$PWD"
+      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$PWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
+
+      # Surface a poisoned tmux server rather than letting the backend die a
+      # silent, unexplained death 30 seconds into its first task.
+      PANE_PATH="$(tmux display-message -p -t "$TMUX_SESSION" '#{pane_current_path}' 2>/dev/null || echo '')"
+      case "$PANE_PATH" in
+        *"(deleted)"|"")
+          echo "WARNING: this tmux server's working directory no longer exists (pane reports: ${PANE_PATH:-unknown})." >&2
+          echo "         The cd above works around it, but panes you open by hand will start in a dead directory." >&2
+          echo "         Fix it for good with: tmux kill-server   (ends all tmux sessions, then rerun this recipe)" >&2
+          ;;
+      esac
 
       # Start the relay
       export HIVE_AGENT_SESSION="$TMUX_SESSION"

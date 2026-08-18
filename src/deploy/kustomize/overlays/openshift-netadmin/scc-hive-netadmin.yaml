@@ -1,0 +1,82 @@
+# `hive-netadmin` — a dedicated SCC that is `restricted-v2` loosened by EXACTLY
+# what the base deployment (src/deploy/k8s/deployment.yaml) declares, and
+# nothing else. Every field below that is not called out as a delta carries the
+# stock restricted-v2 value: no privileged containers, no host
+# network/ports/PID/IPC, no hostPath volumes, drop-ALL still required,
+# runtime/default seccomp still required.
+#
+# Deltas from restricted-v2 (each one exists because the base pod needs it):
+#
+#   allowedCapabilities        The six capabilities the deployment's
+#                              `capabilities.add` lists (it still drops ALL
+#                              first). An SCC admits a pod only if every added
+#                              cap is in this list — allowing only NET_ADMIN
+#                              would still reject the pod, so the su-exec set
+#                              is listed too, mirroring deployment.yaml 1:1.
+#   runAsUser: RunAsAny        The entrypoint starts as root (iptables REDIRECT,
+#                              PVC chown) and then drops to `dev`;
+#                              MustRunAsRange would force a namespace-range UID
+#                              and break that. This also makes the `anyuid`
+#                              binding unnecessary when this SCC is granted.
+#   fsGroup: RunAsAny          The pod pins fsGroup 1002 (hive-launch — the
+#                              audit-N5 secrets-readability split), which is
+#                              outside any namespace's allocated range.
+#   allowPrivilegeEscalation   true: the agent-UID switch runs through the SUID
+#                              su-exec helper; `false` would set no_new_privs
+#                              and disable all SUID binaries (see the C6
+#                              rationale in deployment.yaml).
+#
+# Applying this file requires cluster-admin. It grants nothing by itself —
+# access is via the `use` RBAC in rolebinding.yaml, scoped to the single
+# `hive` ServiceAccount in the `hive` namespace (users/groups deliberately
+# empty).
+#
+# Verify after apply (pod annotation names the SCC that admitted it):
+#   oc -n hive get pod -l app.kubernetes.io/name=hive \
+#     -o jsonpath='{.items[0].metadata.annotations.openshift\.io/scc}'
+#   # MUST print "hive-netadmin"
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: hive-netadmin
+  labels:
+    app.kubernetes.io/name: hive
+allowPrivilegedContainer: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowedCapabilities:
+  - NET_ADMIN # ACMM proxy iptables redirect of outbound :443
+  - SETUID # su-exec dev->per-agent UID switch
+  - SETGID
+  - SETPCAP
+  - CHOWN # chown per-agent dirs/beads to the agent UID
+  - DAC_OVERRIDE
+defaultAddCapabilities: null
+requiredDropCapabilities:
+  - ALL
+readOnlyRootFilesystem: false
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+volumes:
+  - configMap
+  - csi
+  - downwardAPI
+  - emptyDir
+  - ephemeral
+  - persistentVolumeClaim
+  - projected
+  - secret
+users: []
+groups: []

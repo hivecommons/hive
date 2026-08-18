@@ -357,6 +357,12 @@ COPY src/deploy/data/ /opt/hive/seed-data/
 COPY src/deploy/ttyd-tmux.sh /usr/local/bin/ttyd-tmux.sh
 COPY src/deploy/hive-panes.sh /usr/local/bin/hive-panes
 COPY bin/gh-app-token.sh bin/hive-config.sh bin/agent-launch.sh bin/git-credential-hive.sh /usr/local/bin/
+# SECURITY (#4045): sourced (not executed) by every shell in an agent's process
+# tree — via BASH_ENV/ENV from agent-launch.sh for non-interactive tool shells,
+# and via the /etc/bash.bashrc guard below for interactive ones — to unset the
+# GitHub credentials backend CLIs re-export into the shells they spawn. No exec
+# bit on purpose: it must only ever be sourced.
+COPY bin/agent-env-scrub.sh /usr/local/bin/agent-env-scrub.sh
 COPY bin/hive-open-pr.sh /usr/local/bin/hive-open-pr
 COPY bin/hive-merge.sh /usr/local/bin/hive-merge
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
@@ -367,6 +373,13 @@ COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-merge
+
+# SECURITY (#4045): interactive-shell arm of the agent credential scrub.
+# BASH_ENV (exported by agent-launch.sh) only reaches NON-interactive shells;
+# an interactive bash a backend CLI spawns for the agent reads
+# /etc/bash.bashrc instead. Gated on the agent-identity env agent-launch.sh
+# exports, so an operator's own `kubectl exec` shell is untouched.
+RUN printf '\n# hive #4045: scrub backend-exported GitHub credentials from agent shells\n[ -n "${HIVE_AGENT:-}${HIVE_AGENT_ID:-}" ] && . /usr/local/bin/agent-env-scrub.sh || true\n' >> /etc/bash.bashrc
 
 # SECURITY (audit F5-egress / refs #2674, #2678, #3760): the hive process needs
 # CAP_NET_ADMIN in its EFFECTIVE set so the MITM proxy can stamp SO_MARK on its

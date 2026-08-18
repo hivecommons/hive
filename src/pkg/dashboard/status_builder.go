@@ -476,6 +476,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			PausedAt:      formatOptionalTime(proc.PausedAt),
 			PausedReason:  proc.PausedReason,
 			PausedTrigger: proc.PausedTrigger,
+			PausedBy:      proc.PausedBy,
 			OffByCadence:  offByCadence,
 			CLI:           cli,
 			Model:         model,
@@ -901,28 +902,17 @@ func cadenceDisplay(c config.Cadence) string {
 }
 
 func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
-	const (
-		defaultQuiet = 2
-		defaultBusy  = 10
-		defaultSurge = 20
-	)
-
+	// The gauge must show the thresholds the governor ACTUALLY laddered on, or
+	// it explains the current mode with numbers that did not produce it. This
+	// used to be a private copy of the defaults plus its own explicit-wins
+	// check; both now come from config.EffectiveThreshold, which is the same
+	// call pkg/governor makes. Scaling by repo count (#3498) is what made the
+	// duplication actively wrong rather than merely redundant.
+	repos := cfg.Project.RepoCount()
 	thresholds := FrontendThresholds{
-		Quiet: defaultQuiet,
-		Busy:  defaultBusy,
-		Surge: defaultSurge,
-	}
-
-	// Threshold zero means unset (mode entry present only for cadences);
-	// keep the defaults so the gauge matches the governor's evaluation.
-	if m, ok := cfg.Governor.Modes["quiet"]; ok && m.Threshold > 0 {
-		thresholds.Quiet = m.Threshold
-	}
-	if m, ok := cfg.Governor.Modes["busy"]; ok && m.Threshold > 0 {
-		thresholds.Busy = m.Threshold
-	}
-	if m, ok := cfg.Governor.Modes["surge"]; ok && m.Threshold > 0 {
-		thresholds.Surge = m.Threshold
+		Quiet: cfg.Governor.EffectiveThreshold("quiet", repos),
+		Busy:  cfg.Governor.EffectiveThreshold("busy", repos),
+		Surge: cfg.Governor.EffectiveThreshold("surge", repos),
 	}
 
 	nextKick := ""

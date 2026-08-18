@@ -11,9 +11,14 @@
 #   security gate comes up automatically.
 #
 #   On a cluster that DENIES NET_ADMIN, the entrypoint cannot establish the
-#   redirect and FATALs (exit 1, "refusing to start ... capability model would
-#   be advisory-only") — a fail-CLOSED crash loop. Setting
+#   redirect and FATALs ("refusing to start ... capability model would be
+#   advisory-only") — a fail-CLOSED crash loop, with exit code 77 (EX_NOPERM)
+#   when the bounding set lacks CAP_NET_ADMIN (any other cause of the same
+#   FATAL exits 1 — see src/docs/net-admin-requirement.md). Setting
 #   HIVE_PROXY_ADVISORY_OK=true tells it to start anyway in ADVISORY-ONLY mode.
+#   On OpenShift, prefer the real fix over this patch: a cluster-admin applies
+#   ../openshift-netadmin (dedicated `hive-netadmin` SCC) and the full gate
+#   comes up.
 #
 # SECURITY TRADE-OFF: advisory mode means the MITM egress gate is best-effort,
 # not enforced — an agent with a raw token could bypass the proxy. Only enable

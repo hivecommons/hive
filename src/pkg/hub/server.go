@@ -849,9 +849,9 @@ type HubServer struct {
 	upgradePause       UpgradePauseState
 	upgradePauseLoaded bool
 	upgradePauseMu     sync.Mutex // guards upgradePause + upgradePauseLoaded
-	httpServer      *http.Server
-	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters        map[string]ClusterConfig
+	httpServer         *http.Server
+	httpMu             sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters           map[string]ClusterConfig
 
 	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
 	// vanity host servable (see makeVanityHostServable). nil in production, where
@@ -1624,6 +1624,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// inactive-agent rule, never as evidence of idleness.
 				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
 				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
+				// Pause provenance (#4041). Trigger and actor are identifiers
+				// ("dashboard-api", a GitHub login); the reason is prose the
+				// hover renders to a human; the timestamp keeps its colons via
+				// the HTML-escaping sanitizer, same as the entry's StartedAt.
+				payload.Agents[i].PausedTrigger = sanitizeHeartbeatField(payload.Agents[i].PausedTrigger)
+				payload.Agents[i].PausedBy = sanitizeHeartbeatField(payload.Agents[i].PausedBy)
+				payload.Agents[i].PausedReason = sanitizeProseField(payload.Agents[i].PausedReason)
+				payload.Agents[i].PausedAt = sanitizeField(payload.Agents[i].PausedAt)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {

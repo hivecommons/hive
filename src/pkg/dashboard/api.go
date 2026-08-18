@@ -130,6 +130,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
+	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
 	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
@@ -414,6 +415,10 @@ func (s *Server) saveConfig() error {
 	}
 	if s.deps.Governor != nil {
 		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
+		// The dashboard can add or remove repos, which moves every scaled
+		// default threshold (#3498). Without this, a repo change would not
+		// reach the governor until the next process restart.
+		s.deps.Governor.SetRepoCount(s.deps.Config.Project.RepoCount())
 	}
 	return nil
 }
@@ -666,7 +671,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// github.ibm.com hive for github.com. ResolvedBaseURL falls back to the api_url
 	// host in exactly that case (mirrors HostLabel).
 	githubBaseURL := cfg.GitHub.ResolvedBaseURL()
-	jsonResponse(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"org":       cfg.Project.Org,
 		"repos":     cfg.Project.Repos,
 		"ai_author": cfg.Project.AIAuthor,
@@ -680,7 +685,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"hub_url":             cfg.Hub.URL,
 		"hive_id":             cfg.HiveID,
 		"github_base_url":     githubBaseURL,
-	})
+	}
+	// The active project.issue_filter, read-only: which issues agents may
+	// initiate work on, by label. Omitted entirely when no filter is
+	// configured so the payload (and the UI note keyed off it) stays quiet
+	// for the ordinary unfiltered hive.
+	if !cfg.Project.IssueFilter.IsZero() {
+		resp["issue_filter"] = cfg.Project.IssueFilter
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {
@@ -1418,7 +1431,10 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.AgentMgr.Pause(name, "dashboard-api", "manual pause"); err != nil {
+	// Record the acting user on the pause itself (#4041): the audit log has
+	// always known who clicked, but the agent state did not, so a deliberate
+	// owner mass-pause was indistinguishable from a malfunction days later.
+	if err := s.deps.AgentMgr.PauseBy(name, "dashboard-api", "manual pause", requestUser(r)); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -4006,6 +4022,18 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The raw map above is what the operator SET (0 = unset). The governor
+	// ladders on the resolved values, which for an unset mode are the defaults
+	// scaled by repo count (#3498). Send both, so the settings panel can show
+	// the numbers actually in force next to the ones being edited instead of
+	// falling back to its own copy of the unscaled defaults.
+	repoCount := cfg.Project.RepoCount()
+	effectiveThresholds := map[string]int{
+		"quiet": cfg.Governor.EffectiveThreshold("quiet", repoCount),
+		"busy":  cfg.Governor.EffectiveThreshold("busy", repoCount),
+		"surge": cfg.Governor.EffectiveThreshold("surge", repoCount),
+	}
+
 	// Build full org/repo paths
 	org := cfg.Project.Org
 	repos := make([]string, 0, len(cfg.Project.Repos))
@@ -4041,12 +4069,20 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"agents":      agents,
-		"thresholds":  thresholds,
-		"labels":      cfg.Governor.Labels.Exempt,
-		"holdLabels":  github.HoldLabels,
-		"repos":       repos,
-		"primaryRepo": primaryRepo,
+		"agents":              agents,
+		"thresholds":          thresholds,
+		"effectiveThresholds": effectiveThresholds,
+		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
+		"repoCount":           repoCount,
+		"labels":              cfg.Governor.Labels.Exempt,
+		"holdLabels":          github.HoldLabels,
+		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
+		// project.issue_filter.require_labels — when non-empty, agents may
+		// ONLY initiate work on issues carrying at least one of them. Edited
+		// on the same Labels tab so operators have one place for label policy.
+		"requireLabels": cfg.Project.IssueFilter.RequireLabels,
+		"repos":         repos,
+		"primaryRepo":   primaryRepo,
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -4283,45 +4319,113 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
-func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
+// handleGovernorThresholdScaling sets how the DEFAULT mode thresholds scale
+// with the hive's repo count (#3498).
+//
+// It is a separate route from handleGovernorThresholds because that one's body
+// is a flat map[string]int of mode name to threshold; a string curve does not
+// fit it, and widening it to map[string]any would put a parse branch on the
+// path every threshold drag already takes.
+func (s *Server) handleGovernorThresholdScaling(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
 
 	var body struct {
-		Labels []string `json:"labels"`
+		ThresholdScaling string `json:"thresholdScaling"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if err := validateGovernorLabels(body.Labels); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+
+	scaling := sanitizeString(body.ThresholdScaling)
+	// Same gate as config.validate, so the write path cannot persist a value
+	// that fails the next config load.
+	if !config.ValidateThresholdScaling(scaling) {
+		jsonError(w, "thresholdScaling must be one of: linear, sqrt, none (or empty for the default)", http.StatusBadRequest)
+		return
+	}
+	s.deps.Config.Governor.ThresholdScaling = scaling
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after threshold scaling update", "error", err)
+	}
+
+	// Changing the curve moves every scaled threshold, so re-evaluate now
+	// rather than leaving the hive on the old ladder until the next eval tick —
+	// matching what a threshold drag already does.
+	if s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_threshold_scaling", auditDetail("section", "thresholdScaling"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
 		return
 	}
 
-	filtered := make([]string, 0, len(body.Labels))
-	for _, l := range body.Labels {
-		isPermanent := false
-		for _, h := range github.HoldLabels {
-			if l == h {
-				isPermanent = true
-				break
-			}
-		}
-		for _, p := range github.PermanentExemptLabels {
-			if l == p {
-				isPermanent = true
-				break
-			}
-		}
-		if !isPermanent {
-			filtered = append(filtered, l)
+	// Both label polarities save through this one endpoint (the Labels tab
+	// edits both). POINTER-typed so an absent key means "unchanged" — a save
+	// that only touched the require list must not wipe the exempt list to
+	// empty, and vice versa.
+	var body struct {
+		Labels        *[]string `json:"labels"`
+		RequireLabels *[]string `json:"require_labels"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Labels != nil {
+		if err := validateGovernorLabels(*body.Labels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
-	s.deps.Config.Governor.Labels.Exempt = filtered
-	if s.deps.GHClient != nil {
-		s.deps.GHClient.SetExemptLabels(filtered)
+	if body.RequireLabels != nil {
+		if err := validateGovernorLabels(*body.RequireLabels); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if body.Labels != nil {
+		filtered := make([]string, 0, len(*body.Labels))
+		for _, l := range *body.Labels {
+			isPermanent := false
+			for _, h := range github.HoldLabels {
+				if l == h {
+					isPermanent = true
+					break
+				}
+			}
+			for _, p := range github.PermanentExemptLabels {
+				if l == p {
+					isPermanent = true
+					break
+				}
+			}
+			if !isPermanent {
+				filtered = append(filtered, l)
+			}
+		}
+		s.deps.Config.Governor.Labels.Exempt = filtered
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetExemptLabels(filtered)
+		}
+	}
+	if body.RequireLabels != nil {
+		// The require gate (project.issue_filter): empty list = filter off.
+		// Takes effect on the next enumeration via the scan client.
+		s.deps.Config.Project.IssueFilter.RequireLabels = *body.RequireLabels
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetIssueFilter(s.deps.Config.Project.IssueFilter)
+		}
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)

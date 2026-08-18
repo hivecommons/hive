@@ -34,6 +34,19 @@ type Client struct {
 	reposMu      sync.RWMutex
 	repos        []string
 	exemptLabels []string
+	// issueFilter is the operator's project.issue_filter (require_labels
+	// allow-list) gating which issues become actionable at all. The exclude
+	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
+	// the dashboard Labels tab), the pre-existing single exclusion mechanism,
+	// which fetchIssues applies first so it wins on conflict. Enforced in
+	// fetchIssues — the choice point where issues enter the actionable set —
+	// so everything downstream (governor counts, scheduler kicks, plan-from-
+	// label, the contribute queue) inherits it and no agent-side re-listing
+	// can bypass it. Guarded because config reload / hub heartbeat delivery
+	// re-applies it while the enumeration goroutine reads it. Zero value =
+	// admit everything (pre-existing behavior).
+	issueFilterMu sync.RWMutex
+	issueFilter   config.IssueFilterConfig
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -494,6 +507,7 @@ func (c *Client) splitRepo(repo string) (owner, repoName string) {
 }
 
 func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (actionable []Issue, held []HoldItem, totalIssues int, err error) {
+	issueFilter := c.getIssueFilter()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -532,6 +546,21 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		}
 
 		if c.isExempt(labels) {
+			continue
+		}
+
+		// project.issue_filter (require_labels) — THE choice point for
+		// label-gated agent work. An issue the filter refuses never becomes
+		// actionable: it is invisible to the governor's queue counts, every
+		// kick prompt, plan-from-label, and the contribute queue, so no
+		// downstream consumer (or prompt-injected agent re-listing the repo)
+		// can select it. Zero-value filter admits everything — pre-existing
+		// behavior, verified by regression tests. Deliberately AFTER the
+		// hold/exempt checks: held issues keep appearing in the Hold list
+		// exactly as before, and the EXCLUDE polarity stays the sole property
+		// of governor.labels.exempt (the dashboard Labels tab) — which
+		// therefore wins over the require gate by construction.
+		if !issueFilter.Admits(labels) {
 			continue
 		}
 
@@ -991,6 +1020,25 @@ func (c *Client) SetExemptLabels(labels []string) {
 		return
 	}
 	c.exemptLabels = labels
+}
+
+// SetIssueFilter installs the operator's project.issue_filter. Nil-receiver
+// safe for the same reason as SetRepos: the config-reload / heartbeat-delivery
+// paths re-apply it unconditionally, and a hive that booted without GitHub
+// credentials runs with a nil *Client.
+func (c *Client) SetIssueFilter(f config.IssueFilterConfig) {
+	if c == nil {
+		return
+	}
+	c.issueFilterMu.Lock()
+	defer c.issueFilterMu.Unlock()
+	c.issueFilter = f
+}
+
+func (c *Client) getIssueFilter() config.IssueFilterConfig {
+	c.issueFilterMu.RLock()
+	defer c.issueFilterMu.RUnlock()
+	return c.issueFilter
 }
 
 // SetAutoMergeLabel is nil-receiver safe for the same reason as SetRepos. An

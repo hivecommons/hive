@@ -41,15 +41,26 @@ token).
 
 - **Cluster GRANTS NET_ADMIN (most do):** do nothing. The full gate comes up
   automatically. This is the recommended, fail-closed default.
-- **Cluster DENIES NET_ADMIN:** the entrypoint FATALs and the pod crash-loops
-  (`FATAL: refusing to start ... capability model would be advisory-only`). To
-  start anyway in **advisory-only** mode, uncomment the
-  `- path: patch-advisory-mode.yaml` line in `kustomization.yaml`. That sets
-  `HIVE_PROXY_ADVISORY_OK=true`. **Trade-off:** the egress gate becomes
-  best-effort, not enforced — an agent could bypass the proxy. Only do this if
-  you accept that.
+- **Cluster DENIES NET_ADMIN:** two possible signatures, two remedies.
+  - *OpenShift admission rejection* — the pod never starts; `oc -n hive get
+    events` shows `unable to validate against any security context constraint`
+    (no stock SCC, `anyuid` included, permits the capabilities the base
+    deployment adds). **Remedy:** a cluster-admin applies the
+    `../openshift-netadmin` overlay (dedicated `hive-netadmin` SCC + RoleBinding)
+    — this is the real fix; the full gate then comes up.
+  - *Runtime FATAL* — the pod starts but crash-loops with
+    `FATAL: refusing to start ... capability model would be advisory-only` and
+    **exit code 77** (EX_NOPERM) when the container's bounding set lacks
+    `CAP_NET_ADMIN` (any other cause of that FATAL exits 1). **Remedy** if you
+    cannot grant the capability: start anyway in **advisory-only** mode by
+    uncommenting the `- path: patch-advisory-mode.yaml` line in
+    `kustomization.yaml` (sets `HIVE_PROXY_ADVISORY_OK=true`). **Trade-off:**
+    forced proxy egress becomes advisory — best-effort, not enforced — so an
+    agent could bypass the proxy. Only do this if you accept that.
 
-See `src/docs/net-admin-requirement.md` for the full explanation.
+Not sure which case you're in? Run the checks in
+`src/docs/manual-provisioning.md` ("Does your cluster grant NET_ADMIN?"), and
+see `src/docs/net-admin-requirement.md` for the full explanation.
 
 ## Install
 

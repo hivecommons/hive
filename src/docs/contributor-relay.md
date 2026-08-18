@@ -242,6 +242,28 @@ The shipped relay declares `environment` only where the cause is unambiguous (CL
 
 Whether the hub should ever *act* on client declarations — the ROUTE half of [#2547](https://github.com/kubestellar/hive/issues/2547) — remains an open maintainer decision, and needs task-side requirements metadata that does not exist yet.
 
+## Troubleshooting: the backend dies seconds after every task
+
+Symptom: the CLI starts fine and sits at its prompt, the relay reports `CLI ready` and `Task prompt sent to CLI`, and then the backend exits a few seconds later with a non-zero status — no crash, no log, no message. The pane falls back to a shell, and (on a relay without the liveness fix) subsequent task prompts get typed into that shell.
+
+Check the pane's working directory:
+
+```bash
+tmux display-message -p -t <session> '#{pane_current_path}'
+```
+
+If it ends in `(deleted)` — or the pane's shell printed `shell-init: error retrieving current directory` when it started, or your prompt shows the directory as `.` — the tmux **server** is holding a working directory that no longer exists, and every pane it forks inherits it. This happens when the server was started from a directory that was later removed (for example a nested clone's `v2/pkg/agent`, orphaned when the repo renamed `v2/` to `src/`).
+
+Backends differ here: `agy` refuses to run without a resolvable working directory and exits `2`; `claude`, `codex` and `goose` tolerate it, so the same server looks fine for them.
+
+`just contribute-hive` now `cd`s into the repo as part of the launch command, which works around a poisoned server, and warns when it detects one. To clear it properly:
+
+```bash
+tmux kill-server    # ends ALL tmux sessions, then start the relay again
+```
+
+Note that `tmux new-session -c <path>` does **not** fix this on an already-poisoned server: the pane is still forked into the deleted directory.
+
 ## Protocol compatibility
 
 Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/kubestellar/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:

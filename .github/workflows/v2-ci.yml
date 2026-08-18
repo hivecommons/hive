@@ -96,6 +96,18 @@ jobs:
         working-directory: .
         run: bash bin/test_gh_auth_native_no_cat.sh
 
+      # #4045: agent CLI backends (observed live: Copilot CLI) re-export their
+      # own live GitHub credential as GITHUB_TOKEN into every tool shell they
+      # spawn — after all launch-path scrubbing — letting a wrapper-denied
+      # agent write to repos via raw curl, outside every gh-wrapper control.
+      # This EXECUTES shells the way a backend spawns them (token in the spawn
+      # env) and asserts the BASH_ENV scrub leaves them token-less, with
+      # positive controls that the probe can see a leak and that the wrapper
+      # still authenticates from the per-agent cache.
+      - name: agent shell token scrub (#4045)
+        working-directory: .
+        run: bash bin/test_agent_env_scrub.sh
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'

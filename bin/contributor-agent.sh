@@ -456,6 +456,21 @@ if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   tmux new-session -d -s "$TMUX_SESSION" -c "$HIVE_WORKSPACE_DIR" -x 200 -y 50
 fi
 
+# kubestellar/hive#4046: a long-lived tmux SERVER (this container can run one
+# for its whole lifetime) keeps its own working directory, and every pane it
+# forks afterward inherits it — even a pane started with an explicit, valid
+# `-c`, if the server's own cwd is already gone. That is exactly the shape of
+# directory HIVE_WORKSPACE_DIR is: agents clone into subdirectories of it
+# (contribute_ws.go's assignment prompt), so pinning the launch's `cd` at
+# HIVE_WORKSPACE_DIR itself would re-create the trap the moment that directory
+# is ever removed and recreated out from under a still-running server. `cd`
+# into $HOME instead — a directory nothing in the task lifecycle deletes or
+# recreates — so the CLI always starts somewhere resolvable regardless of what
+# happens to the workspace subtree underneath it; the CLI's own per-task `cd`
+# into $HIVE_WORKSPACE_DIR/<repo> (per the assignment prompt) is unchanged.
+HIVE_AGENT_CWD="${HOME}"
+mkdir -p "$HIVE_AGENT_CWD"
+
 # Start the relay in the background
 echo "Starting ClankeR relay connection to hub..."
 node "${SCRIPT_DIR}/contributor-relay.sh" &
@@ -528,7 +543,12 @@ fi
 # relay launches a one-shot CLI per task, and one-shot invocations do not draw
 # the trust/theme/onboarding dialogs this loop dismisses.
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
-  tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG $REASONING_FLAG" Enter
+  # kubestellar/hive#4046: `-c` on new-session above is NOT sufficient once the
+  # server's own cwd is already gone — verified: new-session with a valid `-c`
+  # still forks the pane into the dead directory. The `cd` in the literal
+  # launch line is what actually carries the fix; -c is defense-in-depth for a
+  # healthy server.
+  tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $CMD $PERM_FLAG $MODEL_FLAG $REASONING_FLAG" Enter
 
   # Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
   AUTO_DISMISS_ATTEMPTS=10

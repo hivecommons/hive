@@ -59,21 +59,27 @@ const (
 // Because all execution state lives in the envelope, an agent session can be persisted
 // to disk, checkpointed, or handed off across processes / spokes between turns.
 type SessionEnvelope struct {
-	SessionID        string                     `json:"session_id"`
-	Agent            toolapprove.AgentIdentity  `json:"agent"`
-	ACMMLevel        int                        `json:"acmm_level"`
-	TurnCount        int                        `json:"turn_count"`
-	MaxTurns         int                        `json:"max_turns"`
-	Status           SessionStatus              `json:"status"`
-	Messages         []Message                  `json:"messages"`
-	WorkingRepo      string                     `json:"working_repo,omitempty"`
-	WorkingBranch    string                     `json:"working_branch,omitempty"`
-	BeadID           string                     `json:"bead_id,omitempty"`
-	Variables        map[string]string          `json:"variables,omitempty"`
-	Subagents        map[string]string          `json:"subagents,omitempty"` // subagent sessionID -> status
-	PendingApprovals []PendingApproval          `json:"pending_approvals,omitempty"`
-	CreatedAt        time.Time                  `json:"created_at"`
-	UpdatedAt        time.Time                  `json:"updated_at"`
+	SessionID        string                    `json:"session_id"`
+	Agent            toolapprove.AgentIdentity `json:"agent"`
+	ACMMLevel        int                       `json:"acmm_level"`
+	TurnCount        int                       `json:"turn_count"`
+	MaxTurns         int                       `json:"max_turns"`
+	Status           SessionStatus             `json:"status"`
+	Messages         []Message                 `json:"messages"`
+	WorkingRepo      string                    `json:"working_repo,omitempty"`
+	WorkingBranch    string                    `json:"working_branch,omitempty"`
+	BeadID           string                    `json:"bead_id,omitempty"`
+	Variables        map[string]string         `json:"variables,omitempty"`
+	Subagents        map[string]string         `json:"subagents,omitempty"` // subagent sessionID -> status
+	PendingApprovals []PendingApproval         `json:"pending_approvals,omitempty"`
+	// Journal records every side-effectful operation attempted in this session
+	// with its idempotency key and outcome (RFC #4002 stage 2). It travels
+	// inside the envelope precisely so that re-entry — in a fresh process,
+	// after a crash, or on another spoke — can determine "already done"
+	// without re-performing the effect. See journal.go.
+	Journal   Journal   `json:"journal,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // PendingApproval holds state for a tool call paused awaiting operator approval.

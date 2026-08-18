@@ -119,18 +119,26 @@ var defaultTmuxSocket string
 const BreakerTrigger = "fleet-breaker"
 
 type AgentProcess struct {
-	Name              string
-	ID                string
-	Config            config.AgentConfig
-	State             ProcessState
-	PID               int
-	UID               int
-	StartedAt         *time.Time
-	LastKick          *time.Time
-	Paused            bool
-	PausedAt          time.Time
-	PausedReason      string
-	PausedTrigger     string
+	Name          string
+	ID            string
+	Config        config.AgentConfig
+	State         ProcessState
+	PID           int
+	UID           int
+	StartedAt     *time.Time
+	LastKick      *time.Time
+	Paused        bool
+	PausedAt      time.Time
+	PausedReason  string
+	PausedTrigger string
+	// PausedBy is the acting user behind the pause when one is known — the
+	// authenticated dashboard user for a dashboard-api pause, empty for
+	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).
+	// It exists because trigger+reason alone made a deliberate owner
+	// quiesce indistinguishable from a malfunction days later (#4041): the
+	// audit log had the actor, but nothing the UI or the fleet view reads
+	// carried it.
+	PausedBy          string
 	PinnedCLI         string
 	PinnedModel       string
 	ModelOverride     string
@@ -4626,6 +4634,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		PausedAt:        a.PausedAt,
 		PausedReason:    a.PausedReason,
 		PausedTrigger:   a.PausedTrigger,
+		PausedBy:        a.PausedBy,
 		PinnedCLI:       a.PinnedCLI,
 		PinnedModel:     a.PinnedModel,
 		ModelOverride:   a.ModelOverride,
@@ -4895,7 +4904,7 @@ var (
 )
 
 const (
-	sharedConfigDesiredMode    = 0o660
+	sharedConfigDesiredMode = 0o660
 	// agyDefaultEffort is the reasoning effort passed alongside agy's --model.
 	// agy requires --effort whenever --model is given and otherwise ignores the
 	// model entirely; "low" is the effort agy defaults to on its own, so this
@@ -6553,7 +6562,18 @@ func (m *Manager) KillSession(name string) error {
 	return nil
 }
 
+// Pause pauses an agent with no attributed acting user — the right call for
+// system-initiated pauses (login-detector, fleet-breaker, acmm-pack, state
+// restore of a pause whose actor is unknown). A pause performed on behalf of
+// a person goes through PauseBy so provenance survives (#4041).
 func (m *Manager) Pause(name, trigger, reason string) error {
+	return m.PauseBy(name, trigger, reason, "")
+}
+
+// PauseBy pauses an agent and records WHO asked for it. `by` is the acting
+// user (the authenticated dashboard user for a dashboard-api pause); empty
+// means "no human actor" — never fabricate one.
+func (m *Manager) PauseBy(name, trigger, reason, by string) error {
 	m.mu.Lock()
 
 	agent, ok := m.agents[name]
@@ -6566,6 +6586,7 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	agent.PausedAt = time.Now()
 	agent.PausedReason = reason
 	agent.PausedTrigger = trigger
+	agent.PausedBy = by
 	if agent.State == StateRunning {
 		if agent.cancel != nil {
 			agent.cancel()
@@ -6586,6 +6607,7 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 		"name", name,
 		"trigger", trigger,
 		"reason", reason,
+		"by", by,
 		"backend", agent.Config.Backend,
 		"restart_count", agent.RestartCount,
 	)
@@ -6604,13 +6626,14 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	return nil
 }
 
-func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reason string) {
+func (m *Manager) SeedPauseState(name string, pausedAt time.Time, trigger, reason, by string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if agent, ok := m.agents[name]; ok {
 		agent.PausedAt = pausedAt
 		agent.PausedTrigger = trigger
 		agent.PausedReason = reason
+		agent.PausedBy = by
 	}
 }
 
@@ -6641,6 +6664,7 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
+	agent.PausedBy = ""
 	needsRelaunch := agent.State == StatePaused
 	if m.agentSandboxEnabledLocked(agent) {
 		if needsRelaunch {

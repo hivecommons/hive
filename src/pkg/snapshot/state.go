@@ -70,10 +70,14 @@ type ConfigOverrides struct {
 }
 
 type AgentState struct {
-	Paused          bool             `json:"paused"`
-	PausedAt        *time.Time       `json:"paused_at,omitempty"`
-	PausedReason    string           `json:"paused_reason,omitempty"`
-	PausedTrigger   string           `json:"paused_trigger,omitempty"`
+	Paused        bool       `json:"paused"`
+	PausedAt      *time.Time `json:"paused_at,omitempty"`
+	PausedReason  string     `json:"paused_reason,omitempty"`
+	PausedTrigger string     `json:"paused_trigger,omitempty"`
+	// PausedBy is the acting user behind the pause when one is known (the
+	// authenticated dashboard user); empty for system-initiated pauses.
+	// Persisted so pause provenance survives restarts (#4041).
+	PausedBy        string           `json:"paused_by,omitempty"`
 	PinnedCLI       string           `json:"pinned_cli,omitempty"`
 	PinnedModel     string           `json:"pinned_model,omitempty"`
 	ModelOverride   string           `json:"model_override,omitempty"`

@@ -1,9 +1,16 @@
 package hub
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 )
+
+// realFetchCommitCompareStatus preserves the production compare fetcher so its
+// HTTP behaviour stays directly testable (TestFetchCommitCompareStatusHTTP)
+// after TestMain swaps the package var for the offline default below.
+var realFetchCommitCompareStatus func(base, head string, logger *slog.Logger) (string, error)
 
 // TestMain isolates the hub test suite from any real Kubernetes cluster.
 //
@@ -38,5 +45,27 @@ func TestMain(m *testing.M) {
 	// KUBECONFIG could equally point a real kubectl at a real cluster for the
 	// non-InCluster branch, so neutralize it to a path that cannot exist.
 	os.Setenv("KUBECONFIG", os.DevNull)
+
+	// Commit-order ancestry resolves are kicked as BACKGROUND goroutines from
+	// the heartbeat completion chain, the orphan sweep and triggerAutoUpgrades
+	// (commitAtOrAheadOfTarget). Any test that crosses those paths with an
+	// unresolved SHA pair — most don't even know they do — would otherwise
+	// launch a REAL GitHub compare call with a 10s budget
+	// (commitCompareTimeout). One slow call is exactly the 2026-08-17 coverage
+	// red at bb2d554d: a leaked resolver outlived three consecutive 2s
+	// waitForCommitOrderResolvers deadlines in sha_poll_coverage_test.go, so
+	// TestListRepoBranches{,Error} and TestFetchBranchSHAImageReady failed on
+	// an otherwise green branch. Default the fetcher to an instant offline
+	// error: errors are never cached, so semantics match "resolution pending"
+	// (fail-closed — an unknown pair never reads as complete), and tests that
+	// need definitive answers already stub via stubCommitCompare or
+	// seedCommitOrder. Held under commitOrderMu per the var's contract.
+	commitOrderMu.Lock()
+	realFetchCommitCompareStatus = fetchCommitCompareStatus
+	fetchCommitCompareStatus = func(base, head string, _ *slog.Logger) (string, error) {
+		return "", fmt.Errorf("commit-order compare %s...%s: network disabled in unit tests (stub via stubCommitCompare)", base, head)
+	}
+	commitOrderMu.Unlock()
+
 	os.Exit(m.Run())
 }

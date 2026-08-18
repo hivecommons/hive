@@ -113,7 +113,31 @@ securityContext:
       - NET_ADMIN
 ```
 
-(The bundled `src/deploy/k8s/deployment.yaml` already declares this.)
+(The bundled `src/deploy/k8s/deployment.yaml` already declares this.) If the
+namespace enforces Pod Security admission, note that the `baseline` and
+`restricted` profiles deny `NET_ADMIN` — the namespace needs `privileged`
+enforcement (or none) for the request to be honored.
+
+### OpenShift
+
+Declaring the capability is not enough on OpenShift: an SCC must *permit*
+adding it, and no stock SCC (`anyuid` included) does — the pod is rejected at
+admission (`unable to validate against any security context constraint`). A
+cluster-admin applies the bundled
+[`overlays/openshift-netadmin`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift-netadmin)
+overlay once:
+
+```bash
+oc apply -k src/deploy/kustomize/overlays/openshift-netadmin
+```
+
+It creates a dedicated `hive-netadmin` SCC — `restricted-v2` loosened by
+exactly the capabilities the deployment declares, not `privileged` — plus the
+`use` RBAC scoped to the `hive` ServiceAccount. To check ahead of time whether
+your cluster already grants the capability (and to read the exit-77 signature
+after the fact), see the
+[Does your cluster grant NET_ADMIN?](manual-provisioning.md#does-your-cluster-grant-net_admin)
+checks in the provisioning guide.
 
 ### Rootless Podman
 

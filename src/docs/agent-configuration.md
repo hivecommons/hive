@@ -229,7 +229,7 @@ Pin a model when reproducibility matters more than the governor's budget optimiz
 
 ## Cadences and the governor
 
-Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
+Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20 **per watched repo**; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
 
 ```yaml
 governor:
@@ -250,6 +250,7 @@ governor:
       architect: pause     # "pause" stops kicks for this agent in this mode
 ```
 
+- **Thresholds scale with repo count.** The *default* thresholds above are per-repo bases, multiplied by `len(project.repos)` — so `surge` is 20 on a 1-repo hive and 780 on a 39-repo one, and the mode ladder means the same thing at any hive size. A `threshold:` you set yourself is used verbatim and never scaled. Tune the curve with `governor.threshold_scaling` (`linear` default, `sqrt`, `none`). See [Governor mode thresholds](governor-thresholds.md), which also covers the ACMM-pack interaction.
 - **Mutually exclusive modes.** Each per-agent, per-mode cadence is either an interval (`5m`, `2h`, `pause`) or a time-of-day schedule — never both. Config load and API writes reject mixed forms with a 400/error.
 - **Time-of-day schedules.** Use `times: ["HH:MM"]` with optional `days` (`mon` … `sun`) and a required IANA `tz`. The timezone is stored explicitly and displayed with the schedule; it does not float with the viewer.
 - **Advanced cron.** Power users can provide a constrained five-field cron expression plus `tz`. Hive evaluates these with robfig/cron and schedule-local timezone handling.
@@ -300,6 +301,36 @@ At L5, every agent PR gets a `hold` label automatically. The system proposes; it
 Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM pack's template for that agent at the current level; otherwise convention — `/data/agents/<name>/CLAUDE.md`, then `<name>.md` in the policies checkout, then the embedded default. Pack templates carry the level's policy in their names — `scanner-holdgated.md` is scanner-at-L5; the same scanner at L6 gets `scanner-automerge.md`.
 
 Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
+
+## Label policy: which issues agents may work
+
+There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:
+
+| Polarity | Config | Meaning |
+|---|---|---|
+| **Exempt (deny-list)** | `governor.labels.exempt` (+ permanent `hold`/`on-hold`/`hold/review`, `do-not-merge`) | "**Never** touch issues labeled with these." Everything else is eligible. This has always existed. |
+| **Required (allow-list)** | `project.issue_filter.require_labels` | "**Only** touch issues labeled with these." Empty = every issue is eligible. **This is what "only work approved issues" means.** |
+
+By default a hive treats **every open issue** in its repos as candidate work. Projects that gate automation on a maintainer's explicit approval label want the require polarity: a maintainer reviews an issue, applies the approval/queue label, and only then may agents touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work; an exempt list cannot express that policy, because it can only name what to avoid, not demand a label be present.)
+
+```yaml
+project:
+  org: my-org
+  repos: [my-org/common]
+  issue_filter:
+    require_labels: [approved-for-agents]   # agents may ONLY work these issues
+```
+
+Semantics:
+
+- **Absent/empty `require_labels` = no gate** — existing hives are unchanged; there is no default-on filtering.
+- An issue must carry **at least one** required label to be eligible. Matching is case-insensitive and **exact** (a prefix like `approved-for-agents-maybe` does not satisfy `approved-for-agents` — prefix matching would over-admit through an approval gate).
+- **Exempt wins on conflict**: an issue carrying both an exempt label and a required label stays excluded. There is deliberately no separate `exclude_labels` field — the exempt list *is* the exclusion mechanism, applied first.
+- PRs and the Hold list are unaffected: open PRs are in-flight work, and held issues still appear under On Hold.
+
+Both polarities are enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and cannot be re-selected by a confused (or prompt-injected) agent re-listing the repo. Kick prompts additionally state the active require policy so agents know the list is intentionally short. Both lists are edited on the Labels tab; an active require gate is also noted read-only under **Repositories**, and hub-managed hives can receive `issue_filter` with their project config over the heartbeat.
+
+**Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
 ## When to add what
 

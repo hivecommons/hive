@@ -3101,6 +3101,11 @@
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
+      <!-- Read-only view of project.issue_filter: which issues agents may
+           initiate work on, by label. Hidden unless a filter is configured;
+           populated from /api/config at boot. Enforcement lives server-side
+           at enumeration — this note only surfaces the active policy. -->
+      <div id="repos-issue-filter" style="display:none;font-size:0.75rem;color:var(--muted);margin:0 0 8px"></div>
       <div class="repo-grid" id="repos"></div>
     </div>
   </div>
@@ -4130,6 +4135,25 @@
     let _ocSummaryTailing = true;
     let _ocSummaryScrollTop = null;
 
+    // One human-readable sentence answering WHO paused this agent, WHY and
+    // WHEN — e.g. "paused by bketelsen via dashboard, 3d ago" or
+    // "login-detector: login required detected, 2h ago". #4041: without
+    // this, a deliberately owner-quiesced fleet was indistinguishable from
+    // a malfunctioning one days later.
+    function pauseProvenanceLine(a) {
+      const trigger = a.pausedTrigger || '';
+      const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
+      let line;
+      if (trigger === 'dashboard-api') {
+        line = 'paused by ' + (a.pausedBy || 'an operator') + ' via dashboard';
+      } else if (trigger) {
+        line = trigger + ': ' + (a.pausedReason || 'paused');
+      } else {
+        line = a.pausedReason || 'paused';
+      }
+      return ago ? line + ', ' + ago : line;
+    }
+
     function pauseInfoIcon(a) {
       // A manual/persisted pause carries its reason/trigger even when the
       // current governor mode's cadence is also pause/off — the operator
@@ -4138,8 +4162,10 @@
       if (!a.paused) return '';
       const reason = a.pausedReason || 'unknown';
       const trigger = a.pausedTrigger || 'unknown';
+      const by = a.pausedBy || '';
       const at = a.pausedAt ? new Date(a.pausedAt).toLocaleString() : 'unknown';
-      return `<span class="pause-info" title="${esc(reason)} (${esc(trigger)})">ℹ️<span class="pause-tooltip">Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}<br>Since: ${esc(at)}</span></span>`;
+      const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
+      return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
     }
 
     // Volatile stat fields of the focused agent-detail panel, factored out so
@@ -14837,6 +14863,19 @@ function burnAreaChart() {
       const ocEl = document.getElementById("oc-project-name");
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;
       if (repoDisplay) window._primaryRepo = repoDisplay;
+      // Read-only issue-filter note under Repositories. Present in /api/config
+      // only when project.issue_filter is configured (edit it on Governor
+      // Configuration → Labels, "Required labels"); textContent (never
+      // innerHTML) because label names are repo-controlled text.
+      const iflt = cfg.issue_filter || null;
+      const ifltReq = (iflt && iflt.require_labels) || [];
+      if (ifltReq.length) {
+        const note = document.getElementById('repos-issue-filter');
+        if (note) {
+          note.textContent = '🏷️ Issue filter active — agents only work issues labeled: ' + ifltReq.join(', ');
+          note.style.display = '';
+        }
+      }
     }).catch(() => {});
 
     // Initial fetch then SSE — these two are critical for first paint
@@ -15473,8 +15512,8 @@ function burnAreaChart() {
       switch (tab) {
         case 'General': return renderGovGeneral();
         case 'Agents': return renderGovAgents(d.agents || []);
-        case 'Thresholds': return renderGovThresholds(d.thresholds || {});
-        case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || []);
+        case 'Thresholds': return renderGovThresholds(d);
+        case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
         case 'Budget': return renderGovBudget(d.budget || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
@@ -18556,14 +18595,33 @@ function burnAreaChart() {
     const THRESH_BAR_MAX = 200;
     const THRESH_COLORS = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
 
-    function renderGovThresholds(t) {
+    function renderGovThresholds(d) {
+      const t = (d && d.thresholds) || {};
       const merged = Object.assign({}, t, _configState.dirty.thresholds || {});
       const q = merged.quiet || 2, b = merged.busy || 10, s = merged.surge || 20;
+      // The handles edit BASE thresholds; the governor ladders on the effective
+      // ones, which for an unset mode are the base scaled by repo count (#3498).
+      // Show both — a 39-repo hive surges at 780, far past this bar's range, and
+      // a slider reading 20 with no further explanation would be a lie.
+      const eff = (d && d.effectiveThresholds) || {};
+      const repoCount = (d && d.repoCount) || 1;
+      const scaling = ((d && d.thresholdScaling) || 'linear');
+      const scalingDirty = (_configState.dirty['threshold-scaling'] || {}).thresholdScaling;
+      const activeScaling = scalingDirty !== undefined ? scalingDirty : scaling;
+      const scaled = activeScaling !== 'none' && repoCount > 1;
+      const effNote = scaled && eff.surge
+        ? `<p style="font-size:0.75rem;color:var(--muted);margin:-12px 0 20px">
+             In force for <strong>${repoCount}</strong> watched repos:
+             quiet <strong>${eff.quiet}</strong> · busy <strong>${eff.busy}</strong> · surge <strong>${eff.surge}</strong>.
+             Dragging a handle pins that threshold to an absolute value and opts it out of scaling.
+           </p>`
+        : '';
       const qPct = (q / THRESH_BAR_MAX) * 100;
       const bPct = (b / THRESH_BAR_MAX) * 100;
       const sPct = (s / THRESH_BAR_MAX) * 100;
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:20px">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
+        ${effNote}
         <div class="thresh-bar-wrap">
           <div class="thresh-bar-track" id="thresh-track"
                style="background:linear-gradient(to right,
@@ -18593,6 +18651,13 @@ function burnAreaChart() {
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-quiet" value="${q}" oninput="setThreshFromInput('quiet',this.value)"></div>
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-busy" value="${b}" oninput="setThreshFromInput('busy',this.value)"></div>
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-surge" value="${s}" oninput="setThreshFromInput('surge',this.value)"></div>
+        </div>
+        <div class="config-field" style="margin-top:20px">
+          <label title="How the thresholds above scale with the number of repos this hive watches. Queue depth grows with repo count, so a fixed threshold means a large hive sits in surge permanently while a small one idles. Linear (default) compares per-repo pressure. Sqrt is gentler for hives with many quiet repos. None uses the numbers above as absolute queue depths. A threshold you set explicitly is never scaled.">Threshold scaling <span class="config-info">i<span class="config-tooltip">Scales the thresholds above by how many repos the hive watches, so the mode ladder means the same thing on a 3-repo hive as on a 39-repo one. Linear multiplies by the repo count (equivalent to comparing per-repo queue pressure). Sqrt multiplies by ceil(sqrt(repos)) — gentler, reaches surge sooner. None uses absolute numbers, the behavior from before this option existed. Thresholds you set by hand are never scaled.</span></span></label>
+          <select id="cfg-threshold-scaling" onchange="markDirty('threshold-scaling','thresholdScaling',this.value)">
+            ${[['linear', 'linear — × repo count (default)'], ['sqrt', 'sqrt — × ceil(√repos), gentler'], ['none', 'none — absolute queue depths']]
+              .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
         </div>`;
     }
 
@@ -18662,7 +18727,7 @@ function burnAreaChart() {
       }
     }
 
-    function renderGovLabels(labels, holdLabels) {
+    function renderGovLabels(labels, holdLabels, requireLabels) {
       const permanentLabels = (holdLabels || []).concat(['do-not-merge']);
       const staticList = permanentLabels.map(l =>
         `<div class="config-list-item" style="opacity:0.7"><span>${esc(l)}</span><span style="font-size:0.65rem;color:var(--muted);margin-left:auto;margin-right:8px">permanent</span></div>`
@@ -18670,8 +18735,16 @@ function burnAreaChart() {
       const list = labels.map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" onclick="removeListItem('labels','list',${i})">✕</button></div>`
       ).join('');
+      // Required labels (allow-list) — the OPPOSITE polarity from the exempt
+      // list above: exempt = "never touch these", required = "ONLY touch
+      // these". Stored as project.issue_filter.require_labels and enforced at
+      // the actionable scan, not just in prompts.
+      const reqList = (requireLabels || []).map((l, i) =>
+        `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" onclick="removeListItem('labels','require',${i})">✕</button></div>`
+      ).join('');
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Labels that filter issues from the actionable issues list and PRs from the mergeable PRs list. Agents receive these filtered lists as variable substitutions in their kick prompts.</p>
+        <h4 style="margin:0 0 6px">Exempt labels (deny-list)</h4>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Labels that filter issues <b>out</b> of the actionable issues list and PRs out of the mergeable PRs list — issues carrying one of these are never agent work. Agents receive the filtered lists as variable substitutions in their kick prompts.</p>
         <p style="font-size:0.7rem;color:var(--muted);margin-bottom:8px;font-style:italic">Permanent labels cannot be removed. Hold labels also appear in the On Hold section of the dashboard.</p>
         <div class="config-list">
           ${staticList}
@@ -18680,6 +18753,15 @@ function burnAreaChart() {
           <div class="config-list-add">
             <input type="text" id="cfg-label-input" placeholder="label name" title="GitHub label name to exempt from actionable issues and mergeable PRs.">
             <button onclick="addListItem('labels','list','cfg-label-input')" title="Add this label to the exempt list">+ Add</button>
+          </div>
+        </div>
+        <h4 style="margin:18px 0 6px">Required labels (allow-list)</h4>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">The opposite polarity: when this list is non-empty, agents may <b>only</b> initiate work on issues carrying at least one of these labels — "only work approved issues". Empty = every issue is eligible (the default). Exempt labels above still win on conflict; PRs and the Hold list are unaffected. Matching is exact (case-insensitive).</p>
+        <div class="config-list">
+          ${reqList || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No required labels — agents may work every actionable issue</div>'}
+          <div class="config-list-add">
+            <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
+            <button onclick="addListItem('labels','require','cfg-require-label-input')" title="Add this label to the required (allow) list">+ Add</button>
           </div>
         </div>`;
     }
@@ -19534,9 +19616,15 @@ function burnAreaChart() {
         _configState.data.hooks[key].push(val);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        if (!_configState.data.labels) _configState.data.labels = [];
-        _configState.data.labels.push(val);
-        markDirty('labels', 'labels', _configState.data.labels);
+        if (key === 'require') {
+          if (!_configState.data.requireLabels) _configState.data.requireLabels = [];
+          _configState.data.requireLabels.push(val);
+          markDirty('labels', 'require_labels', _configState.data.requireLabels);
+        } else {
+          if (!_configState.data.labels) _configState.data.labels = [];
+          _configState.data.labels.push(val);
+          markDirty('labels', 'labels', _configState.data.labels);
+        }
       } else if (section === 'repos') {
         // Repos go through the async host-check + App-access workflow, which
         // owns input clearing and re-render on success. Return here so the
@@ -19553,8 +19641,13 @@ function burnAreaChart() {
         _configState.data.hooks[key].splice(index, 1);
         markDirty('hooks', key, _configState.data.hooks[key]);
       } else if (section === 'labels') {
-        _configState.data.labels.splice(index, 1);
-        markDirty('labels', 'labels', _configState.data.labels);
+        if (key === 'require') {
+          _configState.data.requireLabels.splice(index, 1);
+          markDirty('labels', 'require_labels', _configState.data.requireLabels);
+        } else {
+          _configState.data.labels.splice(index, 1);
+          markDirty('labels', 'labels', _configState.data.labels);
+        }
       } else if (section === 'repos') {
         _configState.data.repos.splice(index, 1);
         markDirty('repos', 'repos', _configState.data.repos);

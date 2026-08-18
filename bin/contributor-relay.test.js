@@ -53,6 +53,11 @@ function loadRelay({ backend = 'copilot', backendBinary = null, model = '', reas
       if (typeof state === 'string' && state.includes('\n')) return state;
       return 'dev@host:~$ \n';
     }
+    if (/display-message/.test(cmd)) {
+      // The relay asks the PANE what it is running (pane_current_command).
+      // procAlive:false models a CLI that exited and left the pane at a shell.
+      return procAlive ? `${backend}\n` : 'bash\n';
+    }
     if (/cmdline|ps -eo/.test(cmd)) {
       // The relay's liveness probe greps this for the backend name. When the
       // CLI is "dead" the pane is a bare shell — and crucially the string must
@@ -237,6 +242,87 @@ const AGY_WEDGED_PANE = [
   '────────────────────────────────────────────',
   '? for shortcuts',
 ].join('\n');
+
+// --- CLI liveness: ask the PANE, not the process table --------------------
+//
+// The old probe substring-matched the whole process table for the backend's
+// name, OR'd with every other CLI's name unconditionally. Observed live: the
+// relay's own launcher (`just contribute-hive agy local`) and its tmux session
+// (`hive-agy-5b4f`) both contain "agy", and any box running Claude Code matched
+// 'claude' whatever the backend was — so a dead CLI was never detected, was
+// never relaunched, cliReady stayed latched, and the hub's task prompt was typed
+// into a bare shell.
+// --- Relaunch must pin the working directory --------------------------------
+//
+// A long-lived tmux server can hand every pane it forks a cwd that no longer
+// exists (observed: a nested clone's v2/pkg/agent, orphaned when the repo
+// renamed v2/ -> src/). The shell reports "shell-init: error retrieving current
+// directory" and a backend needing a resolvable cwd dies shortly after its
+// first task — agy exits 2 that way. The Justfile pins the cwd for the first
+// launch; a relaunch that dropped the cd would silently undo it.
+test('a relaunch cds into the relay cwd before starting the CLI', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const launched = relay.launchCommandWithCwd('agy --dangerously-skip-permissions');
+    assert.match(launched, /^cd .+ && agy --dangerously-skip-permissions$/,
+      `relaunch must pin the cwd, got: ${launched}`);
+    assert.ok(launched.includes(process.cwd()),
+      `the cd target must be the relay's own cwd: ${launched}`);
+  } finally { teardown(relay); }
+});
+
+test('relaunchCLI sends the cd-prefixed command to tmux', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const before = relay.__tmuxSends().length;
+    relay.relaunchCLI();
+    const sends = relay.__tmuxSends().slice(before);
+    assert.ok(sends.some(c => /cd .+ && /.test(c)),
+      `the relaunch typed into the pane must carry the cd: ${JSON.stringify(sends)}`);
+  } finally { teardown(relay); }
+});
+
+test('a shell in the pane is only a death after consecutive confirmations', () => {
+  const relay = loadRelay({ backend: 'agy', procAlive: false });
+  try {
+    assert.strictEqual(relay.cliProcessLooksGone(), false,
+      'one shell reading may just be a foreground tool call — never restart on it');
+    assert.strictEqual(relay.cliProcessLooksGone(), true,
+      `${relay.CLI_GONE_CONFIRMATIONS} consecutive shell readings mean the CLI really left`);
+  } finally { teardown(relay); }
+});
+
+test('a pane running the CLI is never reported gone, and clears the count', () => {
+  const relay = loadRelay({ backend: 'agy', procAlive: true });
+  try {
+    assert.strictEqual(relay.cliProcessLooksGone(), false);
+    assert.strictEqual(relay.cliProcessLooksGone(), false,
+      'a live CLI must never accumulate toward a death, however long it runs');
+  } finally { teardown(relay); }
+});
+
+test('a task prompt is never typed into a pane that is running a shell', () => {
+  // The latch says ready — as it did in production, because nothing had
+  // detected the CLI leaving — but the pane is a shell. The prompt must be
+  // queued and the CLI relaunched, NOT typed at the shell.
+  const relay = loadRelay({ backend: 'agy', procAlive: false });
+  try {
+    relay.setCliReady(true);
+    const PROMPT = "You are a contributor to the kubestellar/hive hive. Work on issue #4030.";
+    const before = relay.__tmuxSends().length;
+    relay.tmuxSendKeys(PROMPT);
+
+    assert.strictEqual(relay.getPendingTask(), PROMPT,
+      'the prompt must be queued for the readiness callback, not typed into the shell');
+    assert.strictEqual(relay.getCliReady(), false,
+      'a stale readiness latch must be dropped once the pane is seen to be a shell');
+    const sends = relay.__tmuxSends().slice(before);
+    assert.ok(!sends.some(c => c.includes('contributor to the kubestellar/hive hive')),
+      `the prompt text must never reach the pane: ${JSON.stringify(sends)}`);
+    assert.ok(sends.some(c => /agy/.test(c)),
+      `the CLI must be relaunched so the queued prompt has somewhere to go: ${JSON.stringify(sends)}`);
+  } finally { teardown(relay); }
+});
 
 test('agy at its idle prompt is COMPLETE even with stale narration on screen', () => {
   const relay = loadRelay({ backend: 'agy' });
@@ -616,8 +702,12 @@ test('crash restarts are capped and end in a permanent failure', () => {
     assert.ok(cap <= CAP_SANITY_LIMIT, 'cap must be small enough to drive here');
 
     // Simulate the hub reassigning the same work item after each failure.
+    // TWO ticks per assignment: a CLI death is only declared once the pane has
+    // read as a shell on consecutive checks, so a single transient reading
+    // cannot restart a CLI that is merely running a foreground tool call.
     for (let i = 0; i <= cap; i++) {
       assignTask(relay, `ct-421-${i}`);
+      relay.__crashTick();
       relay.__crashTick();
     }
 
@@ -643,6 +733,8 @@ test('a reassignment of a given-up task is rejected, not retried', () => {
     assert.ok(relay.MAX_TASK_CLI_RESTARTS <= CAP_SANITY_LIMIT, 'cap must be small enough to drive here');
     for (let i = 0; i <= relay.MAX_TASK_CLI_RESTARTS; i++) {
       assignTask(relay, `ct-421-${i}`);
+      // Two ticks: a death needs consecutive shell readings to be confirmed.
+      relay.__crashTick();
       relay.__crashTick();
     }
     const before = relay.__sent.length;
@@ -665,6 +757,8 @@ test('after give-up a DIFFERENT task is still accepted', () => {
     assert.ok(relay.MAX_TASK_CLI_RESTARTS <= CAP_SANITY_LIMIT, 'cap must be small enough to drive here');
     for (let i = 0; i <= relay.MAX_TASK_CLI_RESTARTS; i++) {
       assignTask(relay, `ct-421-${i}`);
+      // Two ticks: a death needs consecutive shell readings to be confirmed.
+      relay.__crashTick();
       relay.__crashTick();
     }
     assert.strictEqual(relay.getCurrentTask(), null, 'precondition: no active task after give-up');

@@ -672,6 +672,83 @@ function recoverWedgedShell() {
 // dismissal can look at the SAME text without capturing twice, and so the
 // dismissal can see WHICH prompt is on screen rather than re-deriving it from
 // a state enum that has already thrown that detail away.
+// Shell names that mean the pane fell back to a prompt — i.e. whatever the
+// relay launched is no longer the pane's foreground program.
+const PANE_SHELL_COMMANDS = new Set(['bash', 'sh', 'zsh', 'fish', 'dash', 'ksh', 'ash', 'tcsh', 'csh']);
+
+// How many consecutive shell readings (one per progress tick) are required
+// before the CLI is declared gone. One is not enough: a tool call can briefly
+// put a shell in the pane's foreground while the CLI is very much alive.
+const CLI_GONE_CONFIRMATIONS = 2;
+let consecutiveShellReadings = 0;
+
+// paneForegroundCommand asks tmux what the pane is actually RUNNING. Empty when
+// tmux cannot answer (session gone, tmux missing) — an unknown, never a death.
+function paneForegroundCommand() {
+  try {
+    return execSync(
+      `tmux display-message -p -t ${TMUX_SESSION} '#{pane_current_command}' 2>/dev/null`,
+      { encoding: 'utf8', timeout: 15000 }
+    ).toString().trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+// cliProcessLooksGone reports whether the agent CLI has left the pane.
+//
+// It replaces a substring scan of the WHOLE process table:
+//
+//   procs.includes(BACKEND) || procs.includes('claude') || procs.includes('copilot') || …
+//
+// which could not do this job. Two independent defects, both observed live:
+//
+//  1. The relay's own machinery carries the backend's name. For agy the
+//     launcher (`just contribute-hive agy local`) and the tmux session itself
+//     (`tmux attach -t hive-agy-5b4f`) both contain "agy", so the probe was
+//     pinned alive no matter what happened to the CLI.
+//  2. The other CLI names were OR'd in unconditionally, whatever BACKEND was.
+//     Any contributor with Claude Code running — i.e. most of them — reported
+//     a live CLI for every backend, forever.
+//
+// With the probe stuck true the relay never relaunched a dead CLI, cliReady
+// stayed latched, and task prompts were typed into a bare shell: exactly the
+// #2203 bug-2 wedge the send gate exists to prevent.
+//
+// The pane's own foreground command answers the real question, and it cannot be
+// confused by anything outside the pane. Two consecutive readings are required
+// so that a tool call which briefly fronts a shell does not read as a death —
+// the expensive mistake, since it restarts a CLI that is working. A CLI that
+// really exited leaves the pane at a prompt permanently, so it still trips on
+// the following tick; the stall backstop in progressTick is the second net.
+//
+// Note the pane TEXT is deliberately not consulted: a CLI that dies leaves its
+// last frame on screen, ready-chrome and all, so requiring that chrome to be
+// gone would re-introduce exactly the blindness this replaces.
+function probeCLIPresence() {
+  const fg = paneForegroundCommand();
+  const isShell = !!fg && PANE_SHELL_COMMANDS.has(fg);
+  if (!isShell) {
+    consecutiveShellReadings = 0;
+  } else {
+    consecutiveShellReadings++;
+  }
+  return { isShell, gone: isShell && consecutiveShellReadings >= CLI_GONE_CONFIRMATIONS };
+}
+
+function cliProcessLooksGone() {
+  return probeCLIPresence().gone;
+}
+
+// paneIsRunningShell answers "is the pane at a prompt RIGHT NOW", without
+// touching the confirmation counter. Used by the send gate, where one reading
+// is enough: typing a prompt into a shell is never right, and the cost of
+// waiting a tick when we are wrong is nil.
+function paneIsRunningShell() {
+  const fg = paneForegroundCommand();
+  return !!fg && PANE_SHELL_COMMANDS.has(fg);
+}
+
 function capturePaneText() {
   try {
     return execSync(
@@ -919,9 +996,32 @@ function tmuxSendKeys(text) {
   // keystrokes land on bash, whose readline chokes on the apostrophes in the
   // prompt and drops the pane into PS2 continuation, wedging it permanently.
   // Queue instead; flushPendingTask() delivers it once readiness is confirmed.
+  //
+  // cliReady is a LATCH: set once the CLI is confirmed up, cleared only by a
+  // relaunch. When the liveness probe could not tell the CLI apart from the
+  // relay's own processes (see cliProcessLooksGone), a CLI that died was never
+  // relaunched, the latch stayed true, and this gate waved the prompt straight
+  // through into a bare shell — observed live, with the hub's task prompt
+  // executing as shell commands. So re-confirm against the LIVE pane before
+  // typing; the per-backend readiness patterns already exist in getCLIState().
   if (!cliReady) {
     console.log('CLI not ready — queuing task prompt instead of typing into the pane');
     pendingTask = text;
+    return;
+  }
+  if (paneIsRunningShell()) {
+    console.log(`Pane is at a shell prompt, not ${BACKEND} — queuing task prompt instead of typing it into the shell`);
+    pendingTask = text;
+    {
+      // The latch was STALE: the CLI exited without the relay noticing. Drop it
+      // and bring the CLI back, or the queued prompt has nothing to flush into.
+      cliReady = false;
+      try {
+        console.log(`Relaunching ${BACKEND} after a stale readiness latch: ${relaunchCLI()}`);
+      } catch (e) {
+        console.error('Failed to relaunch after a stale readiness latch:', e.message);
+      }
+    }
     return;
   }
   try {
@@ -1281,12 +1381,28 @@ function checkTmuxPaneState() {
 
 // Relaunch the backend CLI in the tmux session using the flags from
 // backends.conf, the same way contributor-agent.sh first launched it.
+// launchCommandWithCwd prefixes the launch with a cd into the relay's own
+// working directory (the repo root, where `just contribute-hive` starts node).
+//
+// A relaunch lands in whatever directory the pane's shell is sitting in, and a
+// long-lived tmux server can hand out a cwd that no longer exists — every pane
+// it forks inherits the dead directory, the shell prints "shell-init: error
+// retrieving current directory", and a backend that needs a resolvable cwd dies
+// shortly after its first task (agy exits 2; claude/codex/goose tolerate it).
+// The Justfile pins the cwd for the FIRST launch; without this, the first
+// relaunch would silently undo that.
+function launchCommandWithCwd(launchCmd) {
+  const cwd = process.cwd();
+  if (!cwd) return launchCmd;
+  return `cd ${shellQuote(cwd)} && ${launchCmd}`;
+}
+
 function relaunchCLI() {
   const launchCmd = buildLaunchCommand();
   // The pane may be wedged in bash PS2 continuation; clear it or the relaunch
   // command is swallowed as more continuation text and never runs.
   recoverWedgedShell();
-  execSync(`tmux send-keys -t ${TMUX_SESSION} ${shellQuote(launchCmd)} Enter`, { timeout: 15000 });
+  execSync(`tmux send-keys -t ${TMUX_SESSION} ${shellQuote(launchCommandWithCwd(launchCmd))} Enter`, { timeout: 15000 });
   // The CLI is NOT up yet. cliReady must stay false until the readiness
   // classifier positively confirms it, or a task prompt sent in the meantime
   // is typed as literal keystrokes into a bare shell (issue #2203, bug 2).
@@ -1324,6 +1440,9 @@ let lastPaneChangeAt = 0;
 function resetPaneStallClock() {
   lastPaneFingerprint = null;
   lastPaneChangeAt = Date.now();
+  // A new task also starts with a clean CLI-liveness count: shell readings from
+  // the previous task say nothing about this one.
+  consecutiveShellReadings = 0;
 }
 
 // paneStalled records the current pane content and reports whether it has been
@@ -1457,15 +1576,11 @@ function progressTick() {
   if (Date.now() - taskAssignedAt < TASK_GRACE_PERIOD_MS) return;
 
   try {
-    let procs = '';
-    try {
-      if (fs.existsSync('/proc')) {
-        procs = execSync(`for p in /proc/[0-9]*/cmdline; do tr "\\0" " " < "$p" 2>/dev/null; done`, { encoding: 'utf8', timeout: 15000 });
-      } else {
-        procs = execSync(`ps -eo command 2>/dev/null`, { encoding: 'utf8', timeout: 15000 });
-      }
-    } catch (_) { procs = BACKEND; }
-    const cliAlive = procs.includes(BACKEND) || procs.includes('claude') || procs.includes('copilot') || procs.includes('bob') || procs.includes('codex') || procs.includes('goose') || procs.includes('pi');
+    // See probeCLIPresence(): this asks the PANE what it is running, rather than
+    // grepping the whole process table for the backend's name — a scan the
+    // relay's own launcher and tmux session always satisfied.
+    const presence = probeCLIPresence();
+    const cliAlive = !presence.gone;
     // bob is not a persistent REPL: it exits at the end of every turn ("Bob
     // goes to sleep 💤"). For bob an exited process is the normal completion
     // signal, not a crash, so it must fall through to the checkTmuxIdle()
@@ -1505,6 +1620,20 @@ function progressTick() {
       }
       // environment: the agent CLI process died; nothing was judged about the work.
       failCurrentTask('CLI process exited — restarted', { kind: 'environment' });
+      return;
+    }
+    // A pane sitting at a shell is never evidence that the AGENT finished: the
+    // CLI is simply not there. Without this, the first (still unconfirmed)
+    // shell reading falls through to the completion check below, where the
+    // dead CLI's LAST FRAME — ready chrome and all, still on screen — reads as
+    // "agent idle" and reports a task nobody did as completed. Hold here and
+    // let the next tick either confirm the death or clear it.
+    //
+    // bob is exempt: it exits at the end of every turn, so for bob a shell pane
+    // IS the completion signal (see cliExitIsNormal above).
+    if (presence.isShell && !cliExitIsNormal) {
+      console.warn(`Pane is at a shell prompt, not ${BACKEND} — awaiting confirmation before judging the task`);
+      send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: captureTmuxLines(TMUX_TAIL_LINES) });
       return;
     }
   } catch (_) {}
@@ -1901,6 +2030,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     paneStalled,
     resetPaneStallClock,
+    launchCommandWithCwd,
+    cliProcessLooksGone,
+    paneForegroundCommand,
+    CLI_GONE_CONFIRMATIONS,
     PANE_STALL_TIMEOUT_MS,
     // Backdate the stall clock so a test can cross the timeout without
     // sleeping — the two ticks it needs otherwise land in the same millisecond.

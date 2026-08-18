@@ -3062,15 +3062,15 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// own "channel -> image" block above the per-branch rows, and offers
 		// them as branch-switch targets. The association is resolved from
 		// registry digests (cached), never hardcoded to a branch name.
-		"release_channels":         ReleaseChannels(),
-		"channel_targets":          getChannelTargets(getDisplaySHAs(), s.logger),
-		"hub_auto_upgrade":         isHubAutoUpgrade(),
-		"hub_upgrade_state":        s.hubUpgradeState(),
+		"release_channels":  ReleaseChannels(),
+		"channel_targets":   getChannelTargets(getDisplaySHAs(), s.logger),
+		"hub_auto_upgrade":  isHubAutoUpgrade(),
+		"hub_upgrade_state": s.hubUpgradeState(),
 		// Kill-switch state rides the top-level payload (NOT the hive-row
 		// shape, so no HIVES_CACHE_VERSION bump): the dashboard shows a
 		// prominent banner while anything is paused, and admins get toggles.
 		"upgrade_pause": s.upgradePauseSnapshot(),
-		"show_my_hives":            true,
+		"show_my_hives": true,
 		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
 		// renders in the same paint as the rows it summarises — a second
 		// round-trip would make the panel pop in after the list and shift it.
@@ -7627,6 +7627,11 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		PrimaryRepo:  pushPrimary,
 		ACMMLevel:    pushACMM,
 		DashboardURL: h.VanityURL,
+		// IssueFilter rides the claim push only when the record carries one.
+		// nil (the ordinary case) tells the spoke "keep your own filter" — the
+		// echo of this struct on later beats must never blank an operator's
+		// locally configured project.issue_filter.
+		IssueFilter: h.IssueFilter,
 		// Point a GHE hive at its enterprise API. jjs-world
 		// (hosted-open-source-osscar) is the working reference: a bare
 		// primary_repo plus github.api_url = https://<host>/api/v3. Empty host
@@ -10470,8 +10475,11 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Bump on ANY change to the hive row shape consumed by renderHives().
        v2: rows carry trackedChannel (the hub-persisted release-channel
        selection the version pill renders); a v1 cache would repaint a
-       channel-pinned hive as its bare branch for the pre-network paint. */
-    var HIVES_CACHE_VERSION = 2;
+       channel-pinned hive as its bare branch for the pre-network paint.
+       v3 (#4041): agent rows carry pause provenance (pausedTrigger/
+       pausedReason/pausedBy/pausedAt) rendered into the Agents tooltip; a
+       v2 cache would paint paused agents provenance-less until the poll. */
+    var HIVES_CACHE_VERSION = 3;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -13756,6 +13764,37 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       return false;
     }
+    /* One phrase answering WHO paused an agent, WHY and WHEN, from the pause
+       provenance the spoke reports over the heartbeat (#4041) — e.g.
+       "paused by bketelsen via dashboard, 3d ago" or "paused (login-detector:
+       login required detected), 2h ago". A deliberate owner quiesce must read
+       differently from a malfunction in the fleet view. Old cached rows and
+       old spokes lack the fields; falls back to a bare "paused". */
+    function agentPauseProvenance(a) {
+      var line;
+      if (a.pausedTrigger === 'dashboard-api') {
+        line = 'paused by ' + (a.pausedBy || 'an operator') + ' via dashboard';
+      } else if (a.pausedTrigger) {
+        line = 'paused (' + a.pausedTrigger + (a.pausedReason ? ': ' + a.pausedReason : '') + ')';
+      } else {
+        line = 'paused';
+      }
+      if (a.pausedAt) {
+        /* Self-contained relative age (coarse on purpose): timelineAgo lives
+           in a later <script> block, and renderHives can run during this
+           block's init (paintCachedHives) before that block is parsed. */
+        var t = Date.parse(a.pausedAt);
+        if (!isNaN(t)) {
+          var PAUSE_MS_PER_MIN = 60000, PAUSE_MIN_PER_HOUR = 60, PAUSE_HOURS_PER_DAY = 24;
+          var mins = Math.floor((Date.now() - t) / PAUSE_MS_PER_MIN);
+          if (mins < 1) line += ', just now';
+          else if (mins < PAUSE_MIN_PER_HOUR) line += ', ' + mins + 'm ago';
+          else if (mins < PAUSE_MIN_PER_HOUR * PAUSE_HOURS_PER_DAY) line += ', ' + Math.floor(mins / PAUSE_MIN_PER_HOUR) + 'h ago';
+          else line += ', ' + Math.floor(mins / (PAUSE_MIN_PER_HOUR * PAUSE_HOURS_PER_DAY)) + 'd ago';
+        }
+      }
+      return line;
+    }
     function renderHives(allHives, force) {
       allHives = allHives || [];
       /* Defer the whole render while a branch/channel menu is open. Skipping
@@ -14327,7 +14366,7 @@ const dashboardHTML = `<!DOCTYPE html>
               '<div style="' + STACKED_LINE_STYLE + '">' + journeyBadge(h.journey) + '</div>' +
             '</div>' +
           '</td>' +
-          '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
+          '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; if (a.paused) label += ' — ' + agentPauseProvenance(a); return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
           '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
           '<td>' + modeCell + '</td>' +
           /* ACTIVITY: Issues, PRs and Contributors — three mini-stats that were
