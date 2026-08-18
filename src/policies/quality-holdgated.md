@@ -62,7 +62,7 @@ gh pr create --repo "$HIVE_REPO" \
 <what this PR adds/changes>
 
 ## Related Issue
-Fixes #<issue-number> (if applicable)
+Fixes #<issue-number> (if applicable, and only if this fully resolves it — use Refs #<issue-number> instead for an epic/multi-phase tracker)
 
 ---
 *Filed by quality agent (hold-gated mode). Human review required.*" \

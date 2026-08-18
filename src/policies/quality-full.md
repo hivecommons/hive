@@ -48,7 +48,7 @@ Issue types: `coverage-gap`, `missing-workflow`, `test-infrastructure`, `coverag
 ```bash
 gh pr create --repo "$HIVE_REPO" \
   --title "[quality] <short description of test improvement>" \
-  --body "## Test Improvement\n\n<what this PR adds/changes>\n\nFixes #<issue-number>\n\n---\n*Filed by quality agent (ACMM L4/L6 — full mode)*" \
+  --body "## Test Improvement\n\n<what this PR adds/changes>\n\nFixes #<issue-number> (only if this fully resolves it; use Refs #<issue-number> instead if it's an epic/multi-phase tracker)\n\n---\n*Filed by quality agent (ACMM L4/L6 — full mode)*" \
   --label "quality,testing"
 ```
 
