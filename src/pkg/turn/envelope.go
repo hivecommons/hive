@@ -40,6 +40,18 @@ func (e SessionEnvelope) scrubbedForPersist() SessionEnvelope {
 		out.PendingApprovals[i].ToolCall.Arguments = logscrub.ScrubString(out.PendingApprovals[i].ToolCall.Arguments)
 		out.PendingApprovals[i].Verdict.Rationale = logscrub.ScrubString(out.PendingApprovals[i].Verdict.Rationale)
 	}
+	// The journal is persisted with the envelope and is equally secret-bearing:
+	// Target can carry a branch name minted from a token-bearing remote URL,
+	// ExternalRef can carry an authenticated URL, and Error is raw remote error
+	// text — the most common accidental credential channel of the three. The
+	// idempotency key itself is a hash and needs no scrubbing, and must not be
+	// altered: scrubbing it would break re-entry matching.
+	for i := range out.Journal.Entries {
+		out.Journal.Entries[i].Repo = logscrub.ScrubString(out.Journal.Entries[i].Repo)
+		out.Journal.Entries[i].Target = logscrub.ScrubString(out.Journal.Entries[i].Target)
+		out.Journal.Entries[i].ExternalRef = logscrub.ScrubString(out.Journal.Entries[i].ExternalRef)
+		out.Journal.Entries[i].Error = logscrub.ScrubString(out.Journal.Entries[i].Error)
+	}
 	return out
 }
 
