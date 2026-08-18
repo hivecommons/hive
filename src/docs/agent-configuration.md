@@ -302,6 +302,31 @@ Resolution order: the agent's explicit `kick_template` wins; otherwise the ACMM 
 
 Portable agents bundle everything — config plus a `promptTemplate` — in a single `AgentDefinition` YAML you can import from a URL in the dashboard. The reference schema is [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md), and a worked example lives at [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
+## Issue label filtering: gating agent work on approval labels
+
+By default a hive treats **every open issue** in its repos as candidate work. Some projects want the opposite: a maintainer reviews each issue and applies an approval label, and only then may automation touch it. (A fleet running against a busy upstream repo hit exactly this — the hive opened a PR for an issue the owner had not yet labeled for agent work.) `project.issue_filter` is that gate:
+
+```yaml
+project:
+  org: my-org
+  repos: [my-org/common]
+  issue_filter:
+    require_labels: [approved-for-agents]   # only these issues are agent work
+    exclude_labels: [no-ai, needs-design]   # these never are, even if approved
+```
+
+Semantics:
+
+- **Absent/empty filter = no filtering** — existing hives are unchanged; there is no default-on gate.
+- `require_labels`: an issue must carry **at least one** of these to be eligible. Matching is case-insensitive and exact.
+- `exclude_labels`: an issue carrying **any** of these is never eligible. Exclusion wins over require on conflict.
+
+The filter is enforced at **enumeration** — the point where GitHub issues become the hive's actionable set — not in the prompt. A filtered issue never enters the queue, never appears in a kick, never triggers plan-from-label, and is never offered to contributors, so a confused (or prompt-injected) agent re-listing the repo cannot select it. Kick prompts additionally state the active policy so agents know the list is intentionally short. The dashboard shows the active filter read-only under **Repositories**, and hub-managed hives can receive the filter with their project config over the heartbeat.
+
+This composes with, and does not change, the pre-existing label behaviors: `hold`/`on-hold` still parks items in the Hold list, `do-not-merge` and `governor.labels.exempt` still exclude items outright.
+
+**Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter` is the agent-side gate; configure both if you want the same label to govern both lanes.
+
 ## When to add what
 
 | Add… | …when |

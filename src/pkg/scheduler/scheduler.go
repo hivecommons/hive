@@ -290,11 +290,40 @@ func (s *Scheduler) formatIssueList(issues []github.Issue) string {
 	return out
 }
 
-func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
-	if len(issues) == 0 {
-		return "(none)", false
+// issueFilterNotice renders the operator's project.issue_filter as prompt text,
+// or "" when no filter is configured. The filter is ENFORCED upstream at
+// enumeration (github.Client.fetchIssues) — filtered issues never reach any
+// kick — so this notice is informational: it tells agents WHY the list may
+// look smaller than the repo's open issues and not to go hunting for the rest.
+// It is prepended to every issue list (${ISSUE_LIST} in kick templates and the
+// hardcoded builders alike) so no agent is ever told to look at excluded
+// issues.
+func (s *Scheduler) issueFilterNotice() string {
+	f := s.cfg.Project.IssueFilter
+	if f.IsZero() {
+		return ""
 	}
 	var b strings.Builder
+	b.WriteString("ISSUE FILTER (operator policy — already enforced; the issue list below reflects it):\n")
+	if len(f.RequireLabels) > 0 {
+		b.WriteString(fmt.Sprintf("  Agents may ONLY work issues carrying at least one of these labels: %s\n",
+			strings.Join(f.RequireLabels, ", ")))
+	}
+	if len(f.ExcludeLabels) > 0 {
+		b.WriteString(fmt.Sprintf("  Issues carrying any of these labels are NEVER agent work: %s\n",
+			strings.Join(f.ExcludeLabels, ", ")))
+	}
+	b.WriteString("  ⛔ Do NOT pick up, plan, or open PRs for issues outside this list, even if you find them by listing the repo yourself.\n")
+	return b.String()
+}
+
+func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bool) {
+	notice := s.issueFilterNotice()
+	if len(issues) == 0 {
+		return notice + "(none)", false
+	}
+	var b strings.Builder
+	b.WriteString(notice)
 	shown := 0
 	failClosed := false
 	for _, issue := range issues {
@@ -572,6 +601,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("[agent:scanner]\n")
 	b.WriteString(fmt.Sprintf("YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):\n"))
+	b.WriteString(s.issueFilterNotice())
 
 	scannerIssues := issues
 
@@ -832,6 +862,7 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 	baseName := s.cfg.BaseAgentName(agentName)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[agent:%s]\n", agentName))
+	b.WriteString(s.issueFilterNotice())
 
 	agentIssues := filterByLane(issues, baseName)
 	if len(agentIssues) > 0 {

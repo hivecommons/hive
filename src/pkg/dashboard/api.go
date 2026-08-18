@@ -667,7 +667,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// github.ibm.com hive for github.com. ResolvedBaseURL falls back to the api_url
 	// host in exactly that case (mirrors HostLabel).
 	githubBaseURL := cfg.GitHub.ResolvedBaseURL()
-	jsonResponse(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"org":       cfg.Project.Org,
 		"repos":     cfg.Project.Repos,
 		"ai_author": cfg.Project.AIAuthor,
@@ -681,7 +681,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"hub_url":             cfg.Hub.URL,
 		"hive_id":             cfg.HiveID,
 		"github_base_url":     githubBaseURL,
-	})
+	}
+	// The active project.issue_filter, read-only: which issues agents may
+	// initiate work on, by label. Omitted entirely when no filter is
+	// configured so the payload (and the UI note keyed off it) stays quiet
+	// for the ordinary unfiltered hive.
+	if !cfg.Project.IssueFilter.IsZero() {
+		resp["issue_filter"] = cfg.Project.IssueFilter
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleConfigDownload(w http.ResponseWriter, r *http.Request) {

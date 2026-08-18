@@ -1087,6 +1087,10 @@ func main() {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 		ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 	}
+	// Unconditional (nil-safe, zero value = no filtering): the issue filter
+	// gates which issues become actionable at all, so it must be installed
+	// even when no exempt labels are configured.
+	ghClient.SetIssueFilter(cfg.Project.IssueFilter)
 	// The user write-token client (userGHClient) was removed: every GitHub write
 	// — issues, PRs, comments, merges, and the advisory digest — now goes through
 	// the hive's App installation token (ghClient / kubestellar-hive[bot]). The
@@ -1583,6 +1587,7 @@ func main() {
 				ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
+			ghClient.SetIssueFilter(cfg.Project.IssueFilter)
 			logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", cfg.Project.Repos)
 
@@ -2261,6 +2266,7 @@ func main() {
 				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 				newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 			}
+			newClient.SetIssueFilter(cfg.Project.IssueFilter)
 			if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 				newClient.SetRequiredChecks(set)
 			}
@@ -2668,6 +2674,7 @@ func main() {
 						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 						newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 					}
+					newClient.SetIssueFilter(cfg.Project.IssueFilter)
 					if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 						newClient.SetRequiredChecks(set)
 					}
@@ -3816,6 +3823,7 @@ func main() {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 					newClient.SetAutoMergeLabel(normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge))
 				}
+				newClient.SetIssueFilter(cfg.Project.IssueFilter)
 				if set, ok := cfg.AutoMerge.RequiredCheckSet(); ok {
 					newClient.SetRequiredChecks(set)
 				}
@@ -3914,12 +3922,17 @@ func main() {
 			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
 			authorMatched := pc.AIAuthor == "" || cfg.Project.AIAuthor == pc.AIAuthor
 			apiURLMatched := pc.GitHubAPIURL == "" || cfg.GitHub.APIURL == pc.GitHubAPIURL
+			// Issue filter: nil means "the hub is not speaking to this field"
+			// (mirrors AIAuthor's empty-means-keep), so the hub's every-beat
+			// echo can never blank a locally configured filter.
+			issueFilterMatched := pc.IssueFilter == nil || cfg.Project.IssueFilter.Equal(*pc.IssueFilter)
 			if cfg.Project.Org == pc.Org &&
 				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
 				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
 				curACMM == pc.ACMMLevel &&
 				authorMatched &&
 				apiURLMatched &&
+				issueFilterMatched &&
 				vanityMatched {
 				return // already reconciled
 			}
@@ -3941,6 +3954,17 @@ func main() {
 			// kept the fleet-stats collector disabled on every hive.
 			if pc.AIAuthor != "" {
 				cfg.Project.AIAuthor = pc.AIAuthor
+			}
+			// Adopt a hub-delivered issue filter only when the hub actually
+			// sent one (non-nil). A push without the field leaves the spoke's
+			// locally configured filter untouched — the org/repos assignments
+			// above never wipe it either, so a local filter SURVIVES claim
+			// delivery. A non-nil but EMPTY filter is an explicit clear.
+			if pc.IssueFilter != nil && !cfg.Project.IssueFilter.Equal(*pc.IssueFilter) {
+				logger.Info("adopting issue filter from hub heartbeat",
+					"require_labels", pc.IssueFilter.RequireLabels,
+					"exclude_labels", pc.IssueFilter.ExcludeLabels)
+				cfg.Project.IssueFilter = *pc.IssueFilter
 			}
 			// Adopt a GitHub Enterprise API URL when the hub sends one. Empty
 			// means "leave mine alone" — the spoke's own default is already
@@ -3971,8 +3995,11 @@ func main() {
 			cfg.ACMMLevel = &level
 
 			// Re-sync the GitHub client that caches the repo list (mirrors the
-			// config-watcher reload path).
+			// config-watcher reload path). The issue filter is cached the same
+			// way, so re-install it too — a hub-delivered filter must take
+			// effect on the next enumeration, not the next restart.
 			ghClient.SetRepos(cfg.Project.Repos)
+			ghClient.SetIssueFilter(cfg.Project.IssueFilter)
 
 			// Persist to the PVC overlay so the claim survives a pod restart
 			// (config save writes the overlay hive.yaml, same as level switches).

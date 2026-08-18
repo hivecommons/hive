@@ -472,10 +472,16 @@ type SaaSHive struct {
 	GitHubHost  string   `json:"github_host,omitempty"`
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo"`
-	ACMMLevel   int      `json:"acmm_level"`
-	Status      string   `json:"status"`
-	CreatedAt   string   `json:"created_at"`
-	Subdomain   string   `json:"subdomain"`
+	// IssueFilter, when set on this record (admin-managed meta), is delivered
+	// to the spoke with the claim push so a fleet whose owner gates agent work
+	// on an approval label gets the gate from first boot. nil = never pushed;
+	// the spoke's own project.issue_filter (dashboard/config-managed) is then
+	// authoritative and is never blanked by the reconcile.
+	IssueFilter *config.IssueFilterConfig `json:"issue_filter,omitempty"`
+	ACMMLevel   int                       `json:"acmm_level"`
+	Status      string                    `json:"status"`
+	CreatedAt   string                    `json:"created_at"`
+	Subdomain   string                    `json:"subdomain"`
 	// VanityURL is the friendly dashboard URL derived from the claimed project
 	// (e.g. hosted-<org>-<repo>-*.hive.kubestellar.io), set at ASSIGN time. Its
 	// presence is the explicit marker that a placeholder has been claimed —

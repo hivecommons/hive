@@ -558,6 +558,10 @@ type ProjectConfig struct {
 	// GitHub-only configs are unaffected. Use ForgeKind() to read it with the
 	// default applied.
 	Forge string `yaml:"forge,omitempty"`
+	// IssueFilter gates which open issues agents may initiate work on, by
+	// label (require and/or exclude sets). Absent/empty = no filtering, the
+	// pre-existing behavior. See IssueFilterConfig for the full contract.
+	IssueFilter IssueFilterConfig `yaml:"issue_filter,omitempty"`
 }
 
 const (

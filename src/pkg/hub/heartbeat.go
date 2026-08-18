@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kubestellar/hive/pkg/config"
 	"github.com/kubestellar/hive/pkg/tracing"
 )
 
@@ -1936,6 +1937,14 @@ type HeartbeatProjectConfig struct {
 	// Empty = leave the spoke's github.api_url unchanged (public github.com is
 	// the spoke's own default), so this never blanks a working config.
 	GitHubAPIURL string `json:"github_api_url,omitempty"`
+	// IssueFilter delivers the per-hive project.issue_filter (require/exclude
+	// label sets gating which issues agents may initiate work on). It rides
+	// this struct because it is part of the same project identity as
+	// org/repos. nil = the hub is not speaking to this field — the spoke keeps
+	// its locally configured filter, so the hub's every-beat echo can never
+	// blank it (the AIAuthor lesson). A non-nil but empty filter is an
+	// explicit clear.
+	IssueFilter *config.IssueFilterConfig `json:"issue_filter,omitempty"`
 }
 
 // HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the
