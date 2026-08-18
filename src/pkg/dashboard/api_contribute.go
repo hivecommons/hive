@@ -180,6 +180,7 @@ type ContributorProfile struct {
 	PreferredRole     string `json:"preferred_role,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is

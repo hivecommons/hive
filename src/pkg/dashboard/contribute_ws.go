@@ -24,6 +24,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kubestellar/hive/pkg/config"
+	ghpkg "github.com/kubestellar/hive/pkg/github"
 )
 
 const (
@@ -71,15 +72,16 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws           *websocket.Conn
-	profile      *ContributorProfile
-	cliBackend   string
-	model        string
-	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	clientRole   string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
-	assignedRole string // owner-selected role; "none" forces general work
-	connectedAt  time.Time
-	currentTask  *WSTaskAssign
+	ws              *websocket.Conn
+	profile         *ContributorProfile
+	cliBackend      string
+	model           string
+	reasoningEffort string
+	role            string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	clientRole      string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
+	assignedRole    string // owner-selected role; "none" forces general work
+	connectedAt     time.Time
+	currentTask     *WSTaskAssign
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -203,6 +205,7 @@ type WSMessage struct {
 	RegistrationToken string `json:"registration_token,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	TaskID            string `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
@@ -1394,6 +1397,44 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 	return false
 }
 
+// reconcilePRAttribution reconciles the attribution trailer on a verified PR
+// reported by a contributor relay (kubestellar/hive#4083). It uses the hub's own
+// record of the connection (cliBackend, model, reasoningEffort) rather than
+// self-reported metadata.
+func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *ContributorConnection) {
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil || contributor == nil {
+		return
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	contributor.mu.Lock()
+	meta := ghpkg.InvocationMeta{
+		Agent:   contributor.role,
+		Backend: contributor.cliBackend,
+		Model:   ghpkg.RequestedModel(contributor.cliBackend, contributor.model),
+		Effort:  contributor.reasoningEffort,
+	}
+	if contributor.capabilities != nil && contributor.capabilities.AgentCLIVersion != "" {
+		meta.Tool = contributor.cliBackend
+		meta.ToolVersion = contributor.capabilities.AgentCLIVersion
+	}
+	username := ""
+	if contributor.profile != nil {
+		username = contributor.profile.GitHubUsername
+	}
+	contributor.mu.Unlock()
+
+	if err := h.server.deps.GHClient.ReconcilePRAttribution(ctx, prURL, meta); err != nil {
+		h.logger.Warn("[contribute-ws] PR attribution reconciliation failed",
+			"pr_url", prURL,
+			"username", username,
+			"error", err.Error(),
+		)
+	}
+}
+
 // cooldownEnabled reports whether post-completion cooldown gating is turned on
 // for this hive. It reads the operator toggle (Config.Hub.ContributeCooldownEnabled)
 // through the config resolver, which defaults to ENABLED when unset. A hub built
@@ -2014,19 +2055,20 @@ func (h *ContributeWSHub) SetContributorAgentRoleGrants(contributorID string, gr
 // carries only what the contributor handshake already put on the wire plus the
 // live connection timing the hub already tracks — no secrets, no new state.
 type FleetClanker struct {
-	ContributorID  string        `json:"contributor_id"`
-	GitHubUsername string        `json:"github_username,omitempty"`
-	CLIBackend     string        `json:"cli_backend,omitempty"`
-	Model          string        `json:"model,omitempty"`
-	Role           string        `json:"role,omitempty"`
-	ClientRole     string        `json:"client_role,omitempty"`
-	AssignedRole   string        `json:"assigned_agent_role,omitempty"`
-	RoleMismatch   string        `json:"role_mismatch,omitempty"`
-	TrustTier      string        `json:"trust_tier,omitempty"`
-	ConnectedAt    string        `json:"connected_at,omitempty"`
-	LastActivity   string        `json:"last_activity,omitempty"`
-	Stale          bool          `json:"stale,omitempty"`
-	CurrentTask    *WSTaskAssign `json:"current_task,omitempty"`
+	ContributorID   string        `json:"contributor_id"`
+	GitHubUsername  string        `json:"github_username,omitempty"`
+	CLIBackend      string        `json:"cli_backend,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	Role            string        `json:"role,omitempty"`
+	ClientRole      string        `json:"client_role,omitempty"`
+	AssignedRole    string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch    string        `json:"role_mismatch,omitempty"`
+	TrustTier       string        `json:"trust_tier,omitempty"`
+	ConnectedAt     string        `json:"connected_at,omitempty"`
+	LastActivity    string        `json:"last_activity,omitempty"`
+	Stale           bool          `json:"stale,omitempty"`
+	CurrentTask     *WSTaskAssign `json:"current_task,omitempty"`
 	// IdleReason is the machine-readable reason this clanker currently has no work
 	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
 	// clanker is actively working (CurrentTask set) or has never been refused. It
@@ -2117,14 +2159,15 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		fc := FleetClanker{
-			CLIBackend:   c.cliBackend,
-			Model:        c.model,
-			Role:         c.role,
-			ClientRole:   c.clientRole,
-			AssignedRole: c.assignedRole,
-			ConnectedAt:  c.connectedAt.UTC().Format(time.RFC3339),
-			LastActivity: c.lastPong.UTC().Format(time.RFC3339),
-			Stale:        time.Since(c.lastPong) > wsHeartbeatTimeout,
+			CLIBackend:      c.cliBackend,
+			Model:           c.model,
+			ReasoningEffort: c.reasoningEffort,
+			Role:            c.role,
+			ClientRole:      c.clientRole,
+			AssignedRole:    c.assignedRole,
+			ConnectedAt:     c.connectedAt.UTC().Format(time.RFC3339),
+			LastActivity:    c.lastPong.UTC().Format(time.RFC3339),
+			Stale:           time.Since(c.lastPong) > wsHeartbeatTimeout,
 		}
 		if c.assignedRole != "" && normalizeAgentRole(c.clientRole) != "" && normalizeAgentRole(c.clientRole) != effectiveAssignedAgentRole(c.assignedRole) {
 			if c.assignedRole == "none" {
@@ -2325,15 +2368,16 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		out = append(out, ContributorConnection{
-			profile:      c.profile,
-			cliBackend:   c.cliBackend,
-			model:        c.model,
-			role:         c.role,
-			clientRole:   c.clientRole,
-			assignedRole: c.assignedRole,
-			connectedAt:  c.connectedAt,
-			currentTask:  c.currentTask,
-			tmuxOutput:   append([]string{}, c.tmuxOutput...),
+			profile:         c.profile,
+			cliBackend:      c.cliBackend,
+			model:           c.model,
+			reasoningEffort: c.reasoningEffort,
+			role:            c.role,
+			clientRole:      c.clientRole,
+			assignedRole:    c.assignedRole,
+			connectedAt:     c.connectedAt,
+			currentTask:     c.currentTask,
+			tmuxOutput:      append([]string{}, c.tmuxOutput...),
 		})
 		c.mu.Unlock()
 	}
@@ -2533,6 +2577,9 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if msg.Model != "" {
 				profile.Model = msg.Model
 			}
+			if msg.ReasoningEffort != "" {
+				profile.ReasoningEffort = msg.ReasoningEffort
+			}
 			if profile.AvatarURL == "" {
 				profile.AvatarURL = fmt.Sprintf("https://github.com/%s.png", profile.GitHubUsername)
 			}
@@ -2588,16 +2635,17 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			contributor = &ContributorConnection{
-				ws:           conn,
-				profile:      profile,
-				cliBackend:   msg.CLIBackend,
-				model:        msg.Model,
-				role:         requestedRole,
-				clientRole:   clientRole,
-				assignedRole: assignedRole,
-				connectedAt:  time.Now(),
-				lastPong:     time.Now(),
-				capabilities: caps,
+				ws:              conn,
+				profile:         profile,
+				cliBackend:      msg.CLIBackend,
+				model:           msg.Model,
+				reasoningEffort: msg.ReasoningEffort,
+				role:            requestedRole,
+				clientRole:      clientRole,
+				assignedRole:    assignedRole,
+				connectedAt:     time.Now(),
+				lastPong:        time.Now(),
+				capabilities:    caps,
 			}
 
 			// Hand the slot over from the pending counter to h.connections
@@ -2969,6 +3017,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					verifiedPR := ""
 					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
 						verifiedPR = msg.PRURL
+						h.reconcilePRAttribution(msg.PRURL, contributor)
 					}
 					// #3987: normalize the completion's verdict. A verified PR always
 					// wins (shipped); with none, only an explicit no_work_needed is

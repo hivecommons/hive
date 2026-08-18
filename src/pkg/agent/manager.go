@@ -6279,25 +6279,28 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 	return nil
 }
 
-// InvocationMetadata reports the effective backend and model the hive invokes
-// for the named agent, accounting for runtime overrides — the launch-time
-// truth the invocation-attribution trail records (see pkg/github/attribution
+// InvocationMetadata reports the effective backend, model, and reasoning effort
+// the hive invokes for the named agent, accounting for runtime overrides — the
+// launch-time truth the invocation-attribution trail records (see pkg/github/attribution
 // .go). ok=false when the agent is unknown to the manager (the caller then
 // falls back to static config). Read-only under RLock; called from the
 // PR-request watcher goroutine, never from the launch path.
-func (m *Manager) InvocationMetadata(agentName string) (backend, model string, ok bool) {
+func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort string, ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, exists := m.agents[agentName]
 	if !exists {
-		return "", "", false
+		return "", "", "", false
 	}
 	backend = effectiveBackend(agent)
 	model = agent.Config.Model
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
-	return backend, model, true
+	if backend == "agy" && model != "" {
+		effort = agyDefaultEffort
+	}
+	return backend, model, effort, true
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.

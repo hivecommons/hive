@@ -1801,7 +1801,7 @@ function handleMessage(data, hub) {
         registration_token: hub.regToken,
         cli_backend: BACKEND,
         model: MODEL,
-        reasoning_effort: REASONING_EFFORT || undefined,
+        reasoning_effort: (BACKEND === 'agy' && MODEL) ? agyEffort : (REASONING_EFFORT || undefined),
         role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
         // posture and protocol version. An older hub ignores these unknown fields.

@@ -7,7 +7,7 @@ import (
 )
 
 // TestInvocationMetadata pins the contract the invocation-attribution trail
-// depends on: the EFFECTIVE backend/model (runtime overrides win over config),
+// depends on: the EFFECTIVE backend/model/effort (runtime overrides win over config),
 // and ok=false for an agent the manager does not know.
 func TestInvocationMetadata(t *testing.T) {
 	tests := []struct {
@@ -15,12 +15,14 @@ func TestInvocationMetadata(t *testing.T) {
 		agent       *AgentProcess
 		wantBackend string
 		wantModel   string
+		wantEffort  string
 	}{
 		{
 			name:        "config values with no overrides",
 			agent:       &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "claude", Model: "claude-opus-4-6"}},
 			wantBackend: "claude",
 			wantModel:   "claude-opus-4-6",
+			wantEffort:  "",
 		},
 		{
 			name: "backend override wins over config",
@@ -28,6 +30,7 @@ func TestInvocationMetadata(t *testing.T) {
 				BackendOverride: "copilot"},
 			wantBackend: "copilot",
 			wantModel:   "claude-opus-4-6",
+			wantEffort:  "",
 		},
 		{
 			name: "model override wins over config",
@@ -35,12 +38,28 @@ func TestInvocationMetadata(t *testing.T) {
 				ModelOverride: "claude-haiku-4-5"},
 			wantBackend: "claude",
 			wantModel:   "claude-haiku-4-5",
+			wantEffort:  "",
+		},
+		{
+			name:        "agy with model resolves default effort",
+			agent:       &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "agy", Model: "gemini-3.7-flash"}},
+			wantBackend: "agy",
+			wantModel:   "gemini-3.7-flash",
+			wantEffort:  "low",
+		},
+		{
+			name:        "agy without model has no effort",
+			agent:       &AgentProcess{Name: "a", Config: config.AgentConfig{Backend: "agy"}},
+			wantBackend: "agy",
+			wantModel:   "",
+			wantEffort:  "",
 		},
 		{
 			name:        "empty config stays empty (omitted, never guessed)",
 			agent:       &AgentProcess{Name: "a"},
 			wantBackend: "",
 			wantModel:   "",
+			wantEffort:  "",
 		},
 	}
 
@@ -49,13 +68,13 @@ func TestInvocationMetadata(t *testing.T) {
 			m := testManager(acmmLevelPushCapable)
 			m.agents["a"] = tc.agent
 
-			backend, model, ok := m.InvocationMetadata("a")
+			backend, model, effort, ok := m.InvocationMetadata("a")
 			if !ok {
 				t.Fatal("InvocationMetadata: ok=false for a known agent")
 			}
-			if backend != tc.wantBackend || model != tc.wantModel {
-				t.Errorf("InvocationMetadata = (%q, %q), want (%q, %q)",
-					backend, model, tc.wantBackend, tc.wantModel)
+			if backend != tc.wantBackend || model != tc.wantModel || effort != tc.wantEffort {
+				t.Errorf("InvocationMetadata = (%q, %q, %q), want (%q, %q, %q)",
+					backend, model, effort, tc.wantBackend, tc.wantModel, tc.wantEffort)
 			}
 		})
 	}
@@ -65,7 +84,7 @@ func TestInvocationMetadata(t *testing.T) {
 // on ok=false, so an unknown name must report exactly that — not guesses.
 func TestInvocationMetadataUnknownAgent(t *testing.T) {
 	m := testManager(acmmLevelPushCapable)
-	if backend, model, ok := m.InvocationMetadata("nobody"); ok || backend != "" || model != "" {
-		t.Errorf("unknown agent must be (\"\", \"\", false); got (%q, %q, %v)", backend, model, ok)
+	if backend, model, effort, ok := m.InvocationMetadata("nobody"); ok || backend != "" || model != "" || effort != "" {
+		t.Errorf("unknown agent must be (\"\", \"\", \"\", false); got (%q, %q, %q, %v)", backend, model, effort, ok)
 	}
 }

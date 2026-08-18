@@ -16,12 +16,35 @@ import (
 
 func TestAttributionTrailer_AllFields(t *testing.T) {
 	m := InvocationMeta{
-		Agent: "quality", Backend: "bob", Model: "auto",
-		Tool: "bobshell", ToolVersion: "1.0.6", Session: "abc123",
+		Agent: "quality", Backend: "codex", Model: "gpt-5.6-terra", Effort: "high",
+		Tool: "codex", ToolVersion: "0.5.2", Session: "abc123",
 	}
-	want := "— hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123"
+	want := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2 session=abc123"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() = %q, want %q", got, want)
+	}
+}
+
+func TestAttributionTrailer_EffortVariations(t *testing.T) {
+	// Effort present: emitted between model and tool
+	mWithEffort := InvocationMeta{
+		Agent: "quality", Backend: "agy", Model: "gemini-3.7-flash", Effort: "low", Tool: "agy", ToolVersion: "1.0.0",
+	}
+	wantWithEffort := "— hive: agent=quality backend=agy model=gemini-3.7-flash effort=low agy=1.0.0"
+	if got := mWithEffort.Trailer(); got != wantWithEffort {
+		t.Errorf("Trailer() with effort = %q, want %q", got, wantWithEffort)
+	}
+
+	// Effort absent: completely omitted, no bare "effort=" token
+	mNoEffort := InvocationMeta{
+		Agent: "quality", Backend: "claude", Model: "claude-sonnet-5", Tool: "claude", ToolVersion: "2.0.0",
+	}
+	wantNoEffort := "— hive: agent=quality backend=claude model=claude-sonnet-5 claude=2.0.0"
+	if got := mNoEffort.Trailer(); got != wantNoEffort {
+		t.Errorf("Trailer() without effort = %q, want %q", got, wantNoEffort)
+	}
+	if strings.Contains(mNoEffort.Trailer(), "effort") {
+		t.Errorf("Trailer() should omit effort completely when empty, got %q", mNoEffort.Trailer())
 	}
 }
 
@@ -213,5 +236,159 @@ func TestPRRequestWatcher_TrailerOffStillAudits(t *testing.T) {
 	}
 	if !strings.Contains(audits[0].detail, "backend=claude") {
 		t.Errorf("audit detail = %q", audits[0].detail)
+	}
+}
+
+// reconcilePRMock returns a test server that serves GET and PATCH on /repos/o/r/pulls/12.
+func reconcilePRMock(t *testing.T, initialBody string, editedBody *string, editCount *int) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	currentBody := initialBody
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/repos/o/r/pulls/12"):
+			mu.Lock()
+			b := currentBody
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":   12,
+				"html_url": "https://github.com/o/r/pull/12",
+				"body":     b,
+				"user":     map[string]any{"login": "contributor-user"},
+				"base": map[string]any{
+					"repo": map[string]any{"full_name": "o/r"},
+				},
+			})
+		case (r.Method == "PATCH" || r.Method == "POST") && strings.HasSuffix(r.URL.Path, "/repos/o/r/pulls/12"):
+			raw, _ := io.ReadAll(r.Body)
+			var patch map[string]any
+			_ = json.Unmarshal(raw, &patch)
+			mu.Lock()
+			if b, ok := patch["body"].(string); ok {
+				currentBody = b
+				if editedBody != nil {
+					*editedBody = b
+				}
+			}
+			if editCount != nil {
+				*editCount++
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":   12,
+				"html_url": "https://github.com/o/r/pull/12",
+				"body":     currentBody,
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestReconcilePRAttribution_AppendsTrailer(t *testing.T) {
+	var edited string
+	var editCount int
+	srv := reconcilePRMock(t, "Initial PR description\nFixes #10", &edited, &editCount)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	var audits []auditRec
+	c.SetAttributionHooks(AttributionHooks{
+		TrailerEnabled: func() bool { return true },
+		Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+	})
+
+	meta := InvocationMeta{
+		Agent:       "quality",
+		Backend:     "codex",
+		Model:       "gpt-5.6-terra",
+		Effort:      "high",
+		Tool:        "codex",
+		ToolVersion: "0.5.2",
+	}
+
+	err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta)
+	if err != nil {
+		t.Fatalf("ReconcilePRAttribution failed: %v", err)
+	}
+
+	if editCount != 1 {
+		t.Fatalf("expected 1 edit call, got %d", editCount)
+	}
+	wantTrailer := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
+	if !strings.Contains(edited, wantTrailer) {
+		t.Errorf("edited body missing trailer: %q", edited)
+	}
+	if !strings.Contains(edited, "Initial PR description\nFixes #10") {
+		t.Errorf("edited body missing original description: %q", edited)
+	}
+
+	if len(audits) != 1 {
+		t.Fatalf("expected 1 audit entry, got %d", len(audits))
+	}
+	if audits[0].action != AuditActionAgentPRCreated {
+		t.Errorf("audit action = %q, want %q", audits[0].action, AuditActionAgentPRCreated)
+	}
+	if !strings.Contains(audits[0].detail, "effort=high") || !strings.Contains(audits[0].detail, "reconciled=true") {
+		t.Errorf("audit detail = %q", audits[0].detail)
+	}
+}
+
+func TestReconcilePRAttribution_IdempotentAlreadyHasTrailer(t *testing.T) {
+	var edited string
+	var editCount int
+	initial := "Fixes #10\n\n— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
+	srv := reconcilePRMock(t, initial, &edited, &editCount)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	meta := InvocationMeta{
+		Agent:   "quality",
+		Backend: "codex",
+		Model:   "gpt-5.6-terra",
+		Effort:  "high",
+	}
+
+	err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta)
+	if err != nil {
+		t.Fatalf("ReconcilePRAttribution failed: %v", err)
+	}
+
+	// Body already had trailer, so editCount must remain 0 (no edit API call).
+	if editCount != 0 {
+		t.Errorf("expected 0 edit calls when trailer already present, got %d", editCount)
+	}
+}
+
+func TestReconcilePRAttribution_TrailerOffStillAudits(t *testing.T) {
+	var edited string
+	var editCount int
+	srv := reconcilePRMock(t, "Fixes #10", &edited, &editCount)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	var audits []auditRec
+	c.SetAttributionHooks(AttributionHooks{
+		TrailerEnabled: func() bool { return false },
+		Audit:          func(action, detail, agent string) { audits = append(audits, auditRec{action, detail, agent}) },
+	})
+
+	meta := InvocationMeta{
+		Agent:   "quality",
+		Backend: "claude",
+		Model:   "claude-sonnet-5",
+	}
+
+	err := c.ReconcilePRAttribution(context.Background(), "https://github.com/o/r/pull/12", meta)
+	if err != nil {
+		t.Fatalf("ReconcilePRAttribution failed: %v", err)
+	}
+
+	if editCount != 0 {
+		t.Errorf("expected 0 edit calls with trailer disabled, got %d", editCount)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("expected 1 audit entry with trailer disabled, got %d", len(audits))
 	}
 }

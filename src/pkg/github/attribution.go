@@ -2,12 +2,16 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // This file is the invocation-attribution trail for artifacts the hive itself
@@ -96,6 +100,9 @@ type InvocationMeta struct {
 	// Model is the model REQUESTED at launch. For backends that self-select
 	// (bob), this is honestly "auto" — see RequestedModel.
 	Model string
+	// Effort is the reasoning effort (e.g. "low", "medium", "high", "minimal")
+	// requested at launch for backends that support it. Omitted when empty.
+	Effort string
 	// Tool is the display name for the version field (e.g. "bobshell"); the
 	// trailer renders it as "<tool>=<version>".
 	Tool string
@@ -120,6 +127,7 @@ func (m InvocationMeta) pairs() []string {
 	add("agent", m.Agent)
 	add("backend", m.Backend)
 	add("model", m.Model)
+	add("effort", m.Effort)
 	if ver := strings.TrimSpace(m.ToolVersion); ver != "" {
 		tool := strings.TrimSpace(m.Tool)
 		if tool == "" {
@@ -346,4 +354,59 @@ func (c *Client) recordCreationAudit(action string, m InvocationMeta, extra ...s
 	}
 	c.logger.Info("attribution audit (no audit sink wired yet)",
 		slog.String("action", action), slog.String("detail", detail), slog.String("agent", m.Agent))
+}
+
+// ReconcilePRAttribution ensures the PR at prURL carries an attribution trailer
+// matching meta, appending one via the GitHub API if missing. It is idempotent:
+// if the body already contains the trailer prefix, it no-ops without editing.
+// The audit entry is written unconditionally regardless of the trailer toggle.
+func (c *Client) ReconcilePRAttribution(ctx context.Context, prURL string, meta InvocationMeta) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	ref, err := ParsePRURL(prURL)
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: invalid PR URL %q: %w", prURL, err)
+	}
+
+	defer func() {
+		c.recordCreationAudit(AuditActionAgentPRCreated, meta,
+			"repo", ref.FullName(),
+			"number", strconv.Itoa(ref.Number),
+			"url", prURL,
+			"reconciled", "true",
+		)
+	}()
+
+	if !c.attributionTrailerOn() {
+		return nil
+	}
+
+	pr, _, err := c.client.PullRequests.Get(ctx, ref.Owner, ref.Repo, ref.Number)
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: get PR %s#%d: %w", ref.FullName(), ref.Number, err)
+	}
+	if pr == nil {
+		return fmt.Errorf("reconcile attribution: PR %s#%d not found", ref.FullName(), ref.Number)
+	}
+
+	body := pr.GetBody()
+	newBody := AppendTrailer(body, meta)
+	if newBody == body {
+		// Already has trailer, or meta is empty: nothing to do.
+		return nil
+	}
+
+	_, _, err = c.client.PullRequests.Edit(ctx, ref.Owner, ref.Repo, ref.Number, &gh.PullRequest{
+		Body: gh.Ptr(newBody),
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile attribution: edit PR %s#%d: %w", ref.FullName(), ref.Number, err)
+	}
+	c.logger.Info("ReconcilePRAttribution: appended attribution trailer to PR",
+		slog.String("repo", ref.FullName()),
+		slog.Int("number", ref.Number),
+		slog.String("trailer", meta.Trailer()),
+	)
+	return nil
 }
