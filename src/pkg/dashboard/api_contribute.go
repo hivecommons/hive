@@ -7878,9 +7878,41 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"error":"Not registered as a contributor. Run: just contribute-setup"}`))
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me"]}`))
+		if !strings.HasPrefix(subpath, "/prs/") || !strings.HasSuffix(subpath, "/queue-automerge") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"Unknown endpoint","available":["/api/v1/status","/api/v1/activity","/api/v1/contributors","/api/v1/knowledge","/api/v1/me","/api/v1/prs/{owner}/{repo}/{number}/queue-automerge"]}`))
+			return
+		}
+		// Mutations require an Authorization header even though the read API also
+		// accepts ?token=. Query credentials leak into proxy and access logs.
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			jsonError(w, "Authorization: Bearer <gh-token> required", http.StatusUnauthorized)
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")
+		if len(parts) != 4 || parts[3] != "queue-automerge" {
+			jsonError(w, "Unknown endpoint", http.StatusNotFound)
+			return
+		}
+		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
+			jsonError(w, "merger or owner access required", http.StatusForbidden)
+			return
+		}
+		// Identity and role are resolved server-side from the validated token and
+		// hive allowlist. Overwrite any client-supplied headers before reusing the
+		// dashboard queue handler and its repo, self-review, and exact-head guards.
+		r.Header.Set("X-Hive-User", username)
+		r.Header.Set("X-Hive-Role", role)
+		r.Header.Del(ownerRoleVerifiedHeader)
+		if isOwnerRole(role) {
+			r.Header.Set(ownerRoleVerifiedHeader, "true")
+		}
+		r.SetPathValue("owner", parts[0])
+		r.SetPathValue("repo", parts[1])
+		r.SetPathValue("number", parts[2])
+		s.handleQueuePRAutoMerge(w, r)
 	}
 }
 

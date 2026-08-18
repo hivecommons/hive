@@ -1202,6 +1202,11 @@ func isPublicPath(path string) bool {
 		// The trailing-slash boundary excludes /api/contributors while keeping the
 		// real public routes (register, the WS upgrade, status, etc.) public.
 		return true
+	case path == "/api/v1" || strings.HasPrefix(path, "/api/v1/"):
+		// GitHub bearer authentication is enforced by handleAPIv1. Keeping this
+		// versioned prefix outside dashboard session auth lets non-browser clients
+		// reach that handler without trusting cookies or X-Hive-* headers.
+		return true
 	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
 		return true
 	case strings.HasPrefix(path, "/api/leaderboard"):

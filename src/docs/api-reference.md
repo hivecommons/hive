@@ -241,6 +241,7 @@ Use the Authorization header (or the `token` query parameter).
 | `GET`/`POST` | `/api/v1/contributors` | GitHub token | Contributor list | `pkg/dashboard/api_contribute.go:6781` |
 | `GET`/`POST` | `/api/v1/knowledge` | GitHub token | Knowledge export | `pkg/dashboard/api_contribute.go:6783` |
 | `GET`/`POST` | `/api/v1/me` | GitHub token | Current contributor profile | `pkg/dashboard/api_contribute.go:6785` |
+| `POST` | `/api/v1/prs/{owner}/{repo}/{number}/queue-automerge` | GitHub bearer token + merger/owner role | Queue PR auto-merge using the validated actor and current PR head | `pkg/dashboard/api_contribute.go` |
 
 ## Nous / strategy lab
 
