@@ -29,6 +29,8 @@ We propose migrating to a **re-entrant, conversation-as-state agent turn model**
 
 ## 2. Current Architecture vs. Re-entrant Architecture
 
+> **Authoritative current-state audit**: this section sketches the current model only far enough to contrast it with the proposal. The exhaustive inventory of today's in-process and durable agent state (spike stage 1 for #4002) is maintained separately in [`agent-state-inventory.md`](agent-state-inventory.md); where the two disagree, the inventory is authoritative.
+
 ### Current In-Process Suspended State Model
 
 ```
@@ -188,11 +190,12 @@ We evaluated two architectural patterns for multi-node execution:
 
 ## 5. Prototype Implementation & Validation
 
-A complete prototype has been implemented in [`pkg/turn`](file:///home/dbaggett/bluefin/hive/kubestellar/hive/src/pkg/turn) and validated through tests in [`turn_test.go`](file:///home/dbaggett/bluefin/hive/kubestellar/hive/src/pkg/turn/turn_test.go):
+A complete prototype has been implemented in [`pkg/turn`](../../pkg/turn) and validated through tests in [`turn_test.go`](../../pkg/turn/turn_test.go):
 
-- **Process Restart Handoff**: Tested serializing `SessionEnvelope` to JSON after Turn 1, instantiating a fresh runtime, deserializing the JSON, and successfully executing Turn 2 with zero context loss ([`TestDurableStateHandoffAcrossProcessRestarts`](file:///home/dbaggett/bluefin/hive/kubestellar/hive/src/pkg/turn/turn_test.go#L114)).
-- **ACMM Gated Operator Pauses**: Verified that side-effectful write tools at ACMM L4 enter `StatusWaitingApproval`, pause execution, and seamlessly resume upon receiving operator approval ([`TestOperatorApprovalPauseAndResume`](file:///home/dbaggett/bluefin/hive/kubestellar/hive/src/pkg/turn/turn_test.go#L173)).
-- **Subagent Synchronization**: Verified that background subagent task completions delivered in `TurnInput` update state and conversation transcript cleanly ([`TestSubagentSynchronization`](file:///home/dbaggett/bluefin/hive/kubestellar/hive/src/pkg/turn/turn_test.go#L295)).
+- **Process Restart Handoff**: Tested serializing `SessionEnvelope` to JSON after Turn 1, instantiating a fresh runtime, deserializing the JSON, and successfully executing Turn 2 with zero context loss (`TestDurableStateHandoffAcrossProcessRestarts`).
+- **ACMM Gated Operator Pauses**: Verified that side-effectful write tools at ACMM L4 enter `StatusWaitingApproval`, pause execution, and seamlessly resume upon receiving operator approval (`TestOperatorApprovalPauseAndResume`).
+- **Subagent Synchronization**: Verified that background subagent task completions delivered in `TurnInput` update state and conversation transcript cleanly (`TestSubagentSynchronization`).
+- **Scrub-on-Persist**: The serialized envelope is the durable, handoff-able form of the conversation, and transcripts are secret-bearing (tokens, repo contents, tool output). `ToJSON`/`ToPrettyJSON` therefore redact credential-shaped substrings from every content-bearing field via `pkg/logscrub` — the fleet's single reusable scrubber — before serialization; in-memory state used by `Step` is never scrubbed (`TestToJSONScrubsSecretsOnPersist`).
 
 ---
 
@@ -211,6 +214,16 @@ A complete prototype has been implemented in [`pkg/turn`](file:///home/dbaggett/
    - Enable spoke rebalancing and rolling updates without interrupting multi-step autonomous tasks.
 4. **Phase 4: Full Unification & Deprecation of Suspended State**:
    - Provide standard bridge adapters for external CLI backends so all agent executions flow through the re-entrant turn pipeline.
+
+### Open Hard Problems (from maintainer review of #4002)
+
+The maintainer review on #4002 names three hard problems this prototype does **not** yet solve; they are the acceptance bar for Phase 2, recorded here so the prototype is not mistaken for a complete design:
+
+1. **Tool-execution idempotency on re-entry.** A turn that dies *after* a side-effectful operation (PR opened, comment posted) and is re-entered will replay it. Every tool operation must be journaled inside the envelope with an idempotency key, and the design must pass a kill-mid-turn replay test: kill the process at each operation boundary, re-enter from the persisted envelope, and assert exactly-once effects. The current prototype checkpoints at turn boundaries only; `TestDurableStateHandoffAcrossProcessRestarts` is the turn-boundary case, not the mid-turn one. The same gap applies to `PendingApprovals`: an operator decision redelivered after a crash between execution and persistence would re-execute the tool.
+2. **Handoff must reuse the claim machinery, not parallel it.** Cross-node handoff (Section 4, Pattern A) is a task re-entering a pool. Whatever queue carries the envelope must go through the existing atomic offer→claim path and completion-verdict recording in the contribute plane, not introduce a parallel claim system.
+3. **The conversation blob is a secret-bearing artifact.** Addressed in part by scrub-on-persist above; the remaining design questions — who may read a persisted envelope, and its authorization boundary when it crosses spokes on handoff — are Phase 3 prerequisites.
+
+Additional Phase 2 constraints from the maintainer positions on #4000: the ACMM ladder hard-coded in `toolapprove.Decide` is illustrative — the production decision function must read the ACMM packs (`pkg/config/acmm_packs.go`) rather than re-hardcode thresholds, must map each level's *current* permitted behavior 1:1 on day one, and at L6 must resolve synchronously in-loop with no queue residence (the scan lane must never become a hidden serialization point). From #4001: production hooks must fire on the durable commit of a transition (outbox over the journaled record), not on the in-memory flip as the prototype's `HookHandler` callbacks do.
 
 ---
 
