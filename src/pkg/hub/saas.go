@@ -2825,6 +2825,15 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
+			// A stale/demoted stored role must not hide owner-gated UI (the
+			// Upgrade link, auto-upgrade controls) from the hive's TRUE owner.
+			// Normalize to owner for the admin (as before) AND for the
+			// canonical owner of this hive — owners are only elevated on their
+			// OWN hives (#4081).
+			if role != "owner" && canonicalEqual(h.Owner, username) {
+				role = "owner"
+				user.Hives[h.ID] = "owner" // heal the demoted stored role
+			}
 			if isAdmin && role != "owner" {
 				role = "owner"
 			}
@@ -2858,6 +2867,13 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(hiveID, "hosted-") || strings.HasPrefix(hiveID, "saas-") {
 			sh := loadSaaSHive(hiveID)
 			if sh != nil {
+				// Same owner normalization as the registry loop above: the
+				// meta record's canonical owner outranks a demoted stored
+				// role (#4081).
+				if role != "owner" && canonicalEqual(sh.Owner, username) {
+					role = "owner"
+					user.Hives[hiveID] = "owner"
+				}
 				entry := MyHiveEntry{
 					RegistryEntry: RegistryEntry{
 						ID:          sh.ID,
@@ -3140,6 +3156,11 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
+			// Owner normalization mirroring handleMyHives: a stale/demoted
+			// stored role must not mask the hive's TRUE owner (#4081).
+			if role != "owner" && canonicalEqual(h.Owner, username) {
+				role = "owner"
+			}
 			hiveAccess[h.ID] = hiveAccessInfo{Role: role, Status: "accepted"}
 			continue
 		}
@@ -6006,6 +6027,33 @@ func userIsHiveOwner(username string, h *SaaSHive) bool {
 	return u != nil && u.Hives != nil && u.Hives[h.ID] == "owner"
 }
 
+// userOwnsHive reports whether username is the TRUE (canonical) owner of the
+// hive identified by hiveID, resolving through the live registry first and
+// the SaaS meta record second. Unlike userIsHiveOwner it never consults
+// stored per-user roles or hub-admin status, so it is safe to use for
+// owner-only role elevation without widening admin behavior (#4081).
+func (s *HubServer) userOwnsHive(username, hiveID string) bool {
+	if username == "" || hiveID == "" {
+		return false
+	}
+	var regOwner string
+	s.mu.Lock()
+	for _, h := range s.registry.Hives {
+		if h.ID == hiveID {
+			regOwner = h.Owner
+			break
+		}
+	}
+	s.mu.Unlock()
+	if regOwner != "" && canonicalEqual(regOwner, username) {
+		return true
+	}
+	if sh := loadSaaSHive(hiveID); sh != nil && canonicalEqual(sh.Owner, username) {
+		return true
+	}
+	return false
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
@@ -6408,7 +6456,12 @@ func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) 
 
 	const defaultApproveRole = "read"
 	target := ensureSaaSUser(targetUsername)
-	target.Hives[hiveID] = defaultApproveRole
+	// Never demote the hive's TRUE owner (or an already-granted owner) to the
+	// default role — this unconditional overwrite is how owners lost their
+	// stored role and, with it, every owner-gated affordance (#4081).
+	if target.Hives[hiveID] != "owner" && !canonicalEqual(h.Owner, targetUsername) {
+		target.Hives[hiveID] = defaultApproveRole
+	}
 	saveSaaSUser(target)
 
 	s.logger.Info("audit: access approved via PUT", "hive", hiveID, "target", targetUsername, "by", approver)
@@ -8198,6 +8251,15 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 	}
 
 	role, ok := user.Hives[hiveID]
+	// The spoke enforces owner-gated actions (requireOwnerRole, e.g.
+	// POST /api/self-upgrade) from X-Hive-Role alone, so a stale/demoted
+	// stored role would lock the hive's TRUE owner out of their own spoke.
+	// Elevate the canonical owner — scoped to their OWN hive — before
+	// forwarding the role (#4081).
+	if role != "owner" && s.userOwnsHive(username, hiveID) {
+		role = "owner"
+		ok = true
+	}
 	if !ok {
 		http.Error(w, "no access to this hive", http.StatusForbidden)
 		return
