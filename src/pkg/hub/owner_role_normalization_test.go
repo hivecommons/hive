@@ -263,6 +263,40 @@ func TestSaaSAuthCheckForwardsNonOwnerRoleVerbatim(t *testing.T) {
 	}
 }
 
+// TestSaaSAuthCheckStillRejectsStranger pins the 403 path THROUGH the owner
+// elevation: a known user with no stored role for a hive they do not own must
+// still be rejected — userOwnsHive setting ok=true must never open a hive to
+// a stranger (#4081).
+func TestSaaSAuthCheckStillRejectsStranger(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := newHandlerHub()
+	s.mu.Lock()
+	s.registry.Hives = []RegistryEntry{
+		{ID: "owned-hive", Owner: "real-owner", Online: true},
+	}
+	s.mu.Unlock()
+	if err := saveSaaSUser(&SaaSUser{
+		GitHubUsername: "total-stranger",
+		Hives:          map[string]string{},
+	}); err != nil {
+		t.Fatalf("save user: %v", err)
+	}
+
+	req := reqWithUser(http.MethodGet, "/api/saas/auth-check?hive=owned-hive", "", "total-stranger")
+	req.Header.Set("X-Original-URI", "/api/self-upgrade")
+	rec := httptest.NewRecorder()
+	s.handleSaaSAuthCheck(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (stranger must not gain access via owner elevation)", rec.Code)
+	}
+	if got := rec.Header().Get("X-Hive-Role"); got != "" {
+		t.Errorf("X-Hive-Role = %q, want empty for a rejected stranger", got)
+	}
+}
+
 func TestApproveAccessDoesNotDemoteOwner(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
