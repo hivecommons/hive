@@ -92,6 +92,43 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      # src/Dockerfile's Go steps use BuildKit cache mounts (id=hive-go-build /
+      # hive-go-mod) so the always-re-executed compile (no-cache-filters, the
+      # #3760 defense) is incremental instead of from-scratch. Cache MOUNT
+      # contents are NOT transported by cache-from/cache-to type=gha — the gha
+      # backend only carries layer cache (moby/buildkit#1512) — so on an
+      # ephemeral runner the mounts would start empty every build. Persist them
+      # with actions/cache plus the inject/extract helper builds below.
+      # Key on the commit with a slug-scoped restore-key so every build saves
+      # its warmed cache and the next one starts from the newest prior state.
+      - name: Restore Go compile caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/gocache
+          key: docker-gocache-${{ steps.slug.outputs.slug }}-${{ github.sha }}
+          restore-keys: |
+            docker-gocache-${{ steps.slug.outputs.slug }}-
+
+      # Copy the restored host directories INTO the builder's cache mounts.
+      # Uses the same digest-pinned golang image as src/Dockerfile's builder
+      # stage (no new supply-chain surface). --no-cache: these two throwaway
+      # builds must always execute; the cache mounts themselves are unaffected
+      # by layer-cache settings. continue-on-error: this is a pure
+      # optimization — if injection breaks, the mounts start empty and the
+      # build is merely slower, so it must never block publishing an image.
+      - name: Inject Go caches into BuildKit cache mounts
+        continue-on-error: true
+        run: |
+          mkdir -p "${{ runner.temp }}/gocache/go-build" "${{ runner.temp }}/gocache/go-mod"
+          docker buildx build --no-cache --file - "${{ runner.temp }}/gocache" <<'EOF'
+          FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83
+          COPY . /cache-in
+          RUN --mount=type=cache,id=hive-go-build,target=/cache/go-build \
+              --mount=type=cache,id=hive-go-mod,target=/cache/go-mod \
+              cp -a /cache-in/go-build/. /cache/go-build/ && \
+              cp -a /cache-in/go-mod/. /cache/go-mod/
+          EOF
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -135,6 +172,68 @@ jobs:
           outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
           cache-from: type=gha,scope=${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=${{ steps.slug.outputs.slug }},mode=max
+
+      # Copy the (now warmed) cache mounts back OUT to the host so the
+      # actions/cache post step persists them for the next build. Runs before
+      # the freshness probe so a probe failure still saves the compile cache.
+      # continue-on-error: cache plumbing must never block publishing.
+      - name: Extract Go caches from BuildKit cache mounts
+        continue-on-error: true
+        run: |
+          rm -rf "${{ runner.temp }}/gocache" && mkdir -p "${{ runner.temp }}/gocache"
+          docker buildx build --no-cache --file - --output "type=local,dest=${{ runner.temp }}/gocache" "${{ runner.temp }}/gocache" <<'EOF'
+          FROM golang:1.26-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS collect
+          RUN --mount=type=cache,id=hive-go-build,target=/cache/go-build \
+              --mount=type=cache,id=hive-go-mod,target=/cache/go-mod \
+              mkdir -p /out/go-build /out/go-mod && \
+              cp -a /cache/go-build/. /out/go-build/ && \
+              cp -a /cache/go-mod/. /out/go-mod/
+          FROM scratch
+          COPY --from=collect /out/ /
+          EOF
+
+      # FRESHNESS ASSERTION (#3760 regression guard): run the image this job
+      # just produced and assert the ldflags-embedded commit equals the commit
+      # being built. `hive --version` prints "hive 3.0.0 (commit <short7>,
+      # branch <b>)" where <short7> is baked from /repo/.git at compile time.
+      #
+      # - push builds: probe the EXACT pushed artifact by digest — the most
+      #   direct possible evidence that what landed on GHCR is fresh.
+      # - PR builds (push=false): nothing is pushed and push-by-digest output
+      #   doesn't load into the local daemon, so re-run the build with --load.
+      #   On this same builder every layer of the forced-fresh build above is
+      #   in local cache, so the rebuild is seconds and yields those exact
+      #   layers. If BuildKit ever resolved a STALE binary layer instead, the
+      #   embedded hash would differ from github.sha and this step fails loudly
+      #   — a stale layer can make this check fail, never silently pass.
+      - name: Assert embedded commit matches build (freshness guard)
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
+            IMG="ghcr.io/kubestellar/hive@${{ steps.build.outputs.digest }}"
+            docker pull "$IMG"
+          else
+            IMG=hive-freshness-probe:local
+            docker buildx build --load \
+              -f src/Dockerfile \
+              --build-arg GIT_HASH="$EXPECTED_SHA" \
+              --build-arg GIT_BRANCH="${{ github.ref_name }}" \
+              -t "$IMG" .
+          fi
+          ACTUAL=$(docker run --rm --entrypoint /usr/local/bin/hive "$IMG" --version)
+          echo "image reports: $ACTUAL"
+          echo "expected commit: ${EXPECTED_SHA::7} (from $EXPECTED_SHA)"
+          case "$ACTUAL" in
+            *"commit ${EXPECTED_SHA::7},"*)
+              echo "Freshness OK: embedded commit matches the built SHA"
+              ;;
+            *)
+              echo "::error::STALE BINARY: image reports '$ACTUAL' but this build is $EXPECTED_SHA. The published/validated image does not contain the code of this commit."
+              exit 1
+              ;;
+          esac
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
