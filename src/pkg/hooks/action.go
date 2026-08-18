@@ -115,11 +115,16 @@ type Annotator interface {
 //
 // WIRING POINT (#4000): this interface is deliberately narrow so it can be
 // satisfied by that RFC's queue without this package depending on its internal
-// shape. When #4000's queue lands, implement this over its enqueue API in
-// cmd/hive and pass it to Dispatcher via WithApprovalQueue — no change is
-// needed in this package. Until then the sink is nil and an enqueue-approval
-// hook reports an unwired-sink error per firing (visible in the audit log)
-// rather than silently doing nothing.
+// shape. Until it lands the sink is nil and an enqueue-approval hook reports
+// an unwired-sink error per firing (visible in the audit log) rather than
+// silently doing nothing.
+//
+// As of #4057 the target is toolapprove.Inbox, whose enqueue side is
+// `Enqueue(req Request, v Verdict) (string, error)`. Wiring it is an adapter
+// in cmd/hive/hookwire.go — mapping ApprovalRequest onto their Request plus a
+// pending Verdict — passed to the dispatcher via WithApprovalQueue. Nothing in
+// this package changes; that indirection is the whole point of the interface,
+// and it is why this slice could ship before theirs merged.
 type ApprovalQueue interface {
 	EnqueueApproval(ctx context.Context, req ApprovalRequest) error
 }
