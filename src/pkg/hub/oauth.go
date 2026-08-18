@@ -583,11 +583,15 @@ func (s *HubServer) resolveProvider(name string) *auth.Provider {
 // "nonce:provider:redirect". A two-part legacy state (nonce:redirect, from a
 // login begun before this deploy) yields provider "github" and treats the second
 // half as the redirect.
+//
+// Uses the SAME cookie-matched decoding as verifyOAuthStateNonce, so the
+// provider/redirect are always read from the exact state string whose nonce was
+// verified — never from a differently-decoded sibling.
 func (s *HubServer) parseCallbackState(r *http.Request) (provider, redirect string) {
 	provider = "github"
 	redirect = "/dashboard"
-	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
-	if err != nil || decoded == "" {
+	decoded, _, ok, _ := s.matchedCallbackState(r)
+	if !ok || decoded == "" {
 		return provider, redirect
 	}
 	// Strip the already-verified nonce.
@@ -973,20 +977,92 @@ func oauthStateNonce() (string, error) {
 // Fails CLOSED: a missing cookie, a missing or malformed state, or any mismatch
 // is a rejection. Compared in constant time — the nonce is a secret, and a
 // length-or-content leak would let an attacker narrow it by timing.
+//
+// Logs (server-side only) WHY a rejection happened — no_cookie / no_state /
+// nonce_mismatch — and whether a non-standard decode depth matched, so a
+// provider that changes its state round-trip encoding is diagnosable from one
+// log line instead of a generic warn.
 func (s *HubServer) verifyOAuthStateNonce(r *http.Request) bool {
+	_, depth, ok, reason := s.matchedCallbackState(r)
+	if !ok {
+		s.logger.Warn("OAuth: state nonce rejected", "reason", reason)
+		return false
+	}
+	if depth != stateDecodeDepthStandard {
+		// Not a failure — the nonce DID match — but the provider round-tripped
+		// state at an unexpected encoding depth. Worth a log line: this is the
+		// canary for an IdP that starts re-encoding or pre-decoding state.
+		s.logger.Warn("OAuth: state matched at non-standard decode depth", "decode_depth", depth)
+	}
+	return true
+}
+
+// State decode depths, named for the matchedCallbackState log line. The hub
+// QueryEscapes state once and url.Values.Encode() escapes it again on the OIDC
+// authorize hop, so after Go's automatic query decode the STANDARD shape needs
+// exactly one more unescape (depth 1). Depth 0 is a provider that returned the
+// state pre-decoded (or the GitHub path, whose manual URL interpolation escapes
+// only once — a no-op second unescape). Depth 2 tolerates a provider that
+// re-encoded the state an extra time on the return trip.
+const (
+	stateDecodeDepthRaw      = 0
+	stateDecodeDepthStandard = 1
+	stateDecodeDepthExtra    = 2
+)
+
+// callbackStateCandidates returns plausible decodings of the callback's state
+// parameter, indexed by decode depth (see the depth constants). r.URL.Query()
+// already applied one decode; index 0 is that raw value, index 1 the standard
+// one-more-unescape shape, index 2 an extra tolerance pass. Candidates that
+// fail to unescape are simply absent — selection is gated on the cookie nonce
+// match, so a bogus candidate can never be chosen over a legitimate one.
+func callbackStateCandidates(r *http.Request) []string {
+	raw := r.URL.Query().Get("state")
+	if raw == "" {
+		return nil
+	}
+	out := []string{raw}
+	d1, err := url.QueryUnescape(raw)
+	if err != nil {
+		return out
+	}
+	out = append(out, d1)
+	if d2, err := url.QueryUnescape(d1); err == nil {
+		out = append(out, d2)
+	}
+	return out
+}
+
+// matchedCallbackState returns the decoded state whose leading nonce segment
+// matches this browser's state cookie, plus the decode depth it matched at.
+// The nonce comparison is constant-time per candidate; candidate strings derive
+// only from public URL structure, so trying up to three shapes leaks nothing.
+// On failure, reason is one of "no_cookie", "no_state", "nonce_mismatch".
+func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth int, ok bool, reason string) {
 	cookie, err := r.Cookie(oauthStateCookieName)
 	if err != nil || cookie.Value == "" {
-		return false
+		return "", 0, false, "no_cookie"
 	}
-	decoded, err := url.QueryUnescape(r.URL.Query().Get("state"))
-	if err != nil || decoded == "" {
-		return false
+	cands := callbackStateCandidates(r)
+	if len(cands) == 0 {
+		return "", 0, false, "no_state"
 	}
-	got, _, ok := strings.Cut(decoded, oauthStateSeparator)
-	if !ok || got == "" {
-		return false
+	// Standard depth first so, when several depths decode identically (a nonce
+	// is hex and unescapes to itself), the reported depth is the expected one.
+	order := []int{stateDecodeDepthStandard, stateDecodeDepthRaw, stateDecodeDepthExtra}
+	for _, i := range order {
+		if i >= len(cands) {
+			continue
+		}
+		nonce, _, found := strings.Cut(cands[i], oauthStateSeparator)
+		if !found || nonce == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookie.Value)) == 1 {
+			return cands[i], i, true, ""
+		}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(cookie.Value)) == 1
+	return "", 0, false, "nonce_mismatch"
 }
 
 // clearOAuthStateCookie expires the login nonce, making it single-use.
