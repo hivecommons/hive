@@ -43,79 +43,119 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 ---
 
-## L1 — Getting started
+> **Moving between levels:** open the **Governor config** and set the level number. Changes take a heartbeat cycle (a few minutes) to propagate.
 
-- **TL;DR:** Two agents help you think. Nothing touches your repo yet — it's all just advice.
+## L1 — Getting Started
 
-**What's happening:** **Guide** helps you structure your ideas. **Brainstorm** helps turn raw thoughts into real plans. They observe and post thoughts to your dashboard.
+**The level:** You're trusting the system with your *ideas*, nothing else. No agent can touch your repo.
 
-**What YOU do:** Nothing! Just read what shows up on the dashboard.
+**What you get:** Guide helps you structure your ideas. Brainstorm helps turn raw thoughts into real plans. Pure advice, posted to your dashboard.
 
-**What you get:** A feel for how agents "see" your project.
+**Un-pause:** guide
+**Leave paused:** (nothing else to worry about) — don't touch brainstorm
+
+⚠️ **Set cadences first:** Click the gear on guide → set all modes to **12h or 1d**. Do this before you walk away.
+
+**Using the findings:** Read guide's suggestions like a newsletter. This is your reading list, not your to-do list.
+
+**Be patient:** After un-pausing, wait 5–10 minutes — agents run on a heartbeat cycle. Dashboard warnings usually clear on their own after the first heartbeat.
 
 **When to move up:** When the dashboard makes sense to you and you want agents that look at your actual code. Most people start at L2 anyway.
 
-## L2 — Agents wake up and watch
+## L2 — Watch and Learn
 
-- **TL;DR:** Agents start watching your repo and reporting what they find. No changes, no issues, nothing automatic — you decide everything.
+**The level:** You're trusting agents to *look at your code* — but they can only report, never change anything.
 
-**What's happening:** **Scanner** looks for bugs in your code. **Quality** looks to add testing. **Guide** writes documentation for you. **Supervisor** and **brainstorm** are also available. They're just *watching and reporting* — no changes to your repo, no issues filed, nothing automatic. Findings appear as **beads** on your dashboard. You read what they find and decide what to do.
+**What you get:** Scanner looks for bugs in your code. Quality looks to add testing. Guide writes documentation for you. No changes, no issues filed — just a reading list on your dashboard (called **beads**).
 
-**What YOU do:**
-1. Un-pause **scanner**, **quality**, and **guide**: click each one in the left menu, then click **Resume**.
-2. Leave **supervisor** paused. Don't touch **brainstorm**.
-3. For each of the 3 agents you un-paused: click the **gear icon** and set the cadence to **12h or 1d**.
-4. Watch what they find.
+**Un-pause:** scanner, quality, guide
+**Leave paused:** supervisor — and don't touch brainstorm
 
-**What you get:** A steady stream of findings — bugs, test gaps, doc gaps. Act on the ones you like, manually.
+⚠️ **Set cadences first:** Click the gear on each agent you un-pause → set all modes to **12h or 1d**. Do this before anything else or agents will run every few minutes and burn your token budget. This is the #1 mistake new users make.
 
-**When to move up:** When the agents' findings match what you'd find yourself, you trust them enough for L3.
+**Using the findings:** Read your dashboard beads. Pick **one finding per week** that you were already planning to fix, and fix it by hand. Ignore the rest for now — there will always be more findings than time.
 
-## L3 — Building your safety net
+**Building tests:** Notice what quality flags as missing tests. You're not acting on it yet — just learning what quality thinks your safety net needs.
 
-- **TL;DR:** Quality is now allowed to open PRs (with a safety hold) to build your test suite.
+**Be patient:** After changing a cadence or un-pausing an agent, wait 5–10 minutes before assuming something is wrong.
 
-**What's happening:** **Quality** can open PRs — each one gets a `hold` label, so a human has to approve it before it merges. **CI-maintainer** joins to keep your builds healthy. This level is about building the safety net that makes higher levels safe.
+**When to move up:** When the agents are finding things you agree with more than half the time, you're ready for L3.
 
-**What YOU do:** Open the **Governor config** and set the level to **3**. Then review quality's PRs: merge the good ones, close the rest.
+## L3 — Build Your Safety Net
 
-**What you get:** This is where your test suite starts getting built. That matters a lot: in the future, when you add more automation, those tests will *correct the agents* — pushing agent output closer to what you need and containing better quality code.
+**The level:** You're trusting one agent (quality) to *write code* — but every PR gets a `hold` label, so nothing merges without you.
+
+**What you get:** Quality builds your tests, one held PR at a time. CI-maintainer joins to keep your builds healthy. This level exists to build the safety net that makes higher levels safe.
+
+**Un-pause:** ci-maintainer (quality, scanner, guide stay on from L2)
+**Leave paused:** supervisor — and still don't touch brainstorm
+
+⚠️ **Set cadences first:** Gear icon on ci-maintainer → all modes to **12h or 1d**. Re-check the others while you're there.
+
+**Using the findings:** Beads are still your reading list. Same rule: one finding per week, matched to what you already planned.
+
+**Building tests:** This is quality's big moment. Review every quality PR — even the ones you don't merge. Reading them teaches you what quality thinks is missing. Merge the good ones; these tests will later *correct the agents* and keep their output honest.
+
+**Be patient:** After setting the level to 3 in the Governor config, give it a heartbeat cycle (5–10 minutes) before expecting PRs.
 
 **When to move up:** Your CI runs real tests and you're comfortably merging held PRs.
 
-## L4 — Agents start filing issues
+## L4 — Issues and Security
 
-- **TL;DR:** Agents file issues on their own, and the security agent joins. You still approve everything before it merges.
+**The level:** You're trusting agents to *file issues on their own* and trusting sec-check to propose security fixes — still all hold-labeled.
 
-**What's happening:** Agents start filing issues on their own. The security agent (**sec-check**) joins and can open PRs, alongside **quality** and **ci-maintainer** (all still hold-labeled). You're now getting automated bug reports, doc suggestions, and security findings.
+**What you get:** Scanner and guide file issues automatically. Sec-check finds security holes and can open PRs (alongside quality and ci-maintainer). Automated bug reports, doc suggestions, and security findings, delivered to you.
 
-**What YOU do:** Set the level to **4**. Triage incoming issues, review PRs, keep cadences long.
+**Un-pause:** sec-check
+**Leave paused:** supervisor — brainstorm still off-limits
 
-**What you get:** Security findings turn into fixes without you writing them.
+⚠️ **Set cadences first:** Gear icon on sec-check → all modes to **12h or 1d** before it runs. Security scans are token-hungry.
+
+**Using the findings:** Read the issues agents file. Add a 👍 to the ones that match your priorities — the agents will pick up the signal. You don't have to respond to everything.
+
+**Shoring up security:** Sec-check's first run will probably find things. Don't panic. Read each finding, fix the critical ones yourself, and let sec-check open PRs for the medium ones — they'll have hold labels, so you approve before anything merges.
+
+**Be patient:** The first sec-check run can take a full cadence cycle to appear. Wait it out before assuming it's broken.
 
 **When to move up:** You're approving most agent PRs without changes.
 
-## L5 — The system proposes, you decide
+## L5 — Propose and Review
 
-- **TL;DR:** Agents open PRs freely (all with hold labels). You batch-review them.
+**The level:** You're trusting *every* agent to open issues and PRs — the system proposes, you decide. Every PR still has a hold label.
 
-**What's happening:** Agents open PRs freely, but every PR has a hold label. **Architect** produces RFCs for bigger design changes. The system is proposing; you're still deciding.
+**What you get:** The full hive works for you. Architect produces RFCs for bigger design changes. You shift from doing the work to batch-reviewing it.
 
-**What YOU do:** Set the level to **5**. Batch-review the PRs — approve the ones you like, decline the ones you don't.
+**Un-pause:** supervisor, architect — and yes, now you can un-pause brainstorm too
+**Leave paused:** nothing
 
-**What you get:** The hive does most of the work; you're the editor-in-chief.
+⚠️ **Set cadences first:** Every newly un-paused agent gets the gear treatment: all modes **12h or 1d**. More agents running = faster token burn, so this matters more than ever.
+
+**Using the findings:** Batch-review on a schedule (say, twice a week). Approve the PRs you like, decline the ones you don't, 👍 the issues that match your roadmap.
+
+**Building tests:** By now, quality should have already added tests for your main flows. If it hasn't, go back to L3 habits before moving on — L6 depends on it.
+
+**Be patient:** With everything un-paused, the dashboard gets busy. Give new agents a heartbeat cycle before judging their output.
 
 **When to move up:** Your test suite is strong enough that green CI genuinely means "safe to ship."
 
-## L6 — Full automation
+## L6 — Full Automation
 
-- **TL;DR:** Agents open PRs and merge them automatically when CI goes green.
+**The level:** Full trust. Agents open PRs and merge them automatically when CI goes green. No hold label.
 
-**What's happening:** Full automation. You trust the system. You've built up to this — the tests from L3 are now the guardrails that keep agents honest.
+**What you get:** A repo that improves itself while you sleep. The tests quality built at L3 are now the guardrails that keep agents honest.
 
-**What YOU do:** Set the level to **6**. Monitor, spot-check merges, and keep improving your tests.
+**Un-pause:** everything stays on from L5
+**Leave paused:** nothing
 
-**What you get:** A repo that improves itself while you sleep.
+⚠️ **Cadence check:** You can shorten cadences now if your token budget allows — but 12h/1d still works fine. Faster isn't better if you're not reading the output.
+
+**Using the findings:** Spot-check merged PRs weekly. 👍 issues to steer agent priorities.
+
+**Building tests:** Keep improving your tests — they're your only gatekeeper now. Every test you add makes the automation safer.
+
+**Be patient:** Trust the loop. If a bad PR merges, that's a signal to add a test, not to panic and drop levels.
+
+**When to move up:** There is no up. You made it. 🐝
 
 ---
 
