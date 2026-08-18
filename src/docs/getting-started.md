@@ -41,11 +41,27 @@ None of the level guidance below works until your hive is connected to your git 
 
 ---
 
-## ⚠️ Token burn warning (read this before anything else)
+## ⚠️ Cadences: the #1 thing to get right
 
-Agents run on a schedule (a **cadence**). Short cadences = agents run constantly = they chew through your token allocation fast.
+Every agent has a gear icon (⚙️). Click it. You'll see cadence settings for each mode (advisory, measured, holdgated, full). **Set them ALL to 12h or 1d when you first start.**
 
-**Set cadences long when starting out — 12h or 1d for every active agent** so it doesn't chew through your token allocation. Click the agent in the left menu → click the **gear icon** → change the cadence for each mode. You lose nothing — the findings will still be there when you check in.
+Here's why: agents run on a timer. A 15-minute cadence means an agent can run **96 times a day**. At scale, that burns your token budget in hours. A 12-hour cadence means 2 runs a day — steady, useful, not ruinous.
+
+You can always shorten cadences later once you know how fast an agent is burning through your budget. **Start long. Shorten deliberately.**
+
+This is a journey, not a sprint. Slow cadences = sustainable automation. Fast cadences = burned budget and noise.
+
+---
+
+## The advisory issue: start here every time
+
+Every hive creates a tracking/advisory issue in your repo. This is the central log of everything the agents have found and done.
+
+**Start here every time you check in on your hive:** open the advisory issue in your repo (it's pinned — look for it in your issues). This is your hive's journal. Every finding, every action, every note the agents leave is summarized here.
+
+Read it like a weekly digest, not a to-do list. You don't have to act on everything — just stay oriented.
+
+> 💡 **Power tip: feed it to your own AI tools.** The advisory issue isn't just for reading — it's the perfect input for your own agents. If you use Copilot, Claude, Cursor, or any other AI tool, paste the advisory issue into your conversation: *"Here's what my hive found this week — help me prioritize"* or *"Pick the three findings most likely to cause a production bug."* Your hive's findings + your own AI tools = faster triage. Think of the advisory issue as your hive's report card — readable by humans and by other AI agents alike.
 
 ---
 
@@ -79,7 +95,7 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 ⚠️ **Set cadences first:** Click the gear on each agent you un-pause → set all modes to **12h or 1d**. Do this before anything else or agents will run every few minutes and burn your token budget. This is the #1 mistake new users make.
 
-**Using the findings:** Read your dashboard beads. Pick **one finding per week** that you were already planning to fix, and fix it by hand. Ignore the rest for now — there will always be more findings than time.
+**Using the findings:** Read your dashboard beads and the pinned **advisory issue** in your repo. Pick **one finding per week** that you were already planning to fix, and fix it by hand. Ignore the rest for now — there will always be more findings than time.
 
 **Building tests:** Notice what quality flags as missing tests. You're not acting on it yet — just learning what quality thinks your safety net needs.
 
@@ -171,7 +187,7 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Day 2** — In L2: un-pause **scanner**, **quality**, and **guide**. Leave **supervisor** paused. Don't touch **brainstorm**. Click the gear icon on each of the 3 agents and set the cadence to **12h or 1d**. Give it a heartbeat cycle (2–3 minutes) to take effect, then watch what they find.
 
-**Days 3–4** — Read the advisory beads on your dashboard. These are the agents' findings: bugs, missing tests, doc gaps. Pick **one** finding you care about and act on it manually. This builds intuition.
+**Days 3–4** — Read the advisory beads on your dashboard, and open the pinned **advisory issue** in your repo — your hive's journal. Pick **one** finding you care about and act on it manually. This builds intuition.
 
 **Days 5–7** — Keep reading, keep acting on one finding at a time. Resist the urge to move up — you're staying at L2 for **2–3 weeks**. That's not slow; that's the Hive Way.
 
@@ -180,5 +196,7 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 **Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with hold labels). Review and merge the ones you like.
 
 **Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned.
+
+This is a marathon, not a sprint. The teams who get the most out of Hive are the ones who resist the urge to rush. Set long cadences. Read the advisory issue weekly. **Move up a level when it feels boring — not when it feels exciting.**
 
 That's it. You now understand the full end-to-end of how Hive works — one trust level at a time. 🐝
