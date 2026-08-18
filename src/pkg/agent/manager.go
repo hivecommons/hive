@@ -6468,7 +6468,12 @@ func writeAgentControlFile(path string, data []byte, mode os.FileMode, groupID i
 	// left a window in shared /tmp where the pathname could be swapped for a
 	// symlink and the mode change applied to the link target (TOCTOU, #3175).
 	// f.Chmod acts on the inode we opened, closing that window.
-	if err := f.Chmod(agentStateFileMode); err != nil {
+	//
+	// Apply the REQUESTED final mode (not agentStateFileMode): mode files are
+	// group-readable 0640 so isolated agent UIDs can read policy while only Hive
+	// writes it, whereas bootstrap state stays owner-only. The initial tighten
+	// above used the restrictive default; this applies the caller's intent.
+	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}
