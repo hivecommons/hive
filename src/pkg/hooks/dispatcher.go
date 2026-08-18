@@ -227,6 +227,17 @@ func (d *Dispatcher) Fire(ctx context.Context, p Payload) {
 
 	// Snapshot the matching hooks and their rate-limit decisions under the
 	// lock, then release it before running any action.
+	//
+	// NOTE the ordering: the rate limit is consumed HERE, before the `when:`
+	// predicate is evaluated in runOne, so a firing that the predicate later
+	// declines still costs a slot. That is deliberate — the limit bounds the
+	// work a flapping transition can induce, and predicate evaluation is
+	// itself part of that work, so checking the cheap counter first is what
+	// keeps a storm from turning into a CEL-evaluation storm. The tradeoff is
+	// that a hook with a highly selective predicate on a noisy transition can
+	// exhaust its quota without ever firing; such a hook wants a higher
+	// rate_limit_per_minute, and the suppression is visible in the audit log
+	// as hook_rate_limited rather than being silent.
 	type dispatch struct {
 		hook Hook
 		pred *predicate

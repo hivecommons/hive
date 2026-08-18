@@ -148,6 +148,54 @@ func TestFireCopiesAttrsSoCallerMayReuseTheMap(t *testing.T) {
 	}
 }
 
+// TestRateLimitIsConsumedBeforeThePredicate pins a deliberate but surprising
+// ordering: the limiter is checked before `when:` is evaluated, so a firing the
+// predicate later declines still costs a slot. That keeps a flapping transition
+// from becoming a CEL-evaluation storm, at the cost that a highly selective
+// predicate on a noisy transition can exhaust quota without ever firing.
+//
+// Pinned because the opposite order looks like an obvious "optimization" and
+// would quietly remove the bound this design relies on.
+func TestRateLimitIsConsumedBeforeThePredicate(t *testing.T) {
+	notifier := &fakeNotifier{}
+	audit := &fakeAudit{}
+	now := time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC)
+
+	d := NewDispatcher(
+		mustRegistry(t, Hook{
+			Name: "selective", On: TransitionGovernorModeChange, Action: ActionNotify,
+			When:               `t.to == "surge"`,
+			RateLimitPerMinute: 2,
+		}),
+		quietLogger(), WithNotifier(notifier), WithAuditSink(audit),
+		WithClock(func() time.Time { return now }),
+	)
+
+	// Two non-matching transitions consume the whole quota.
+	for i := 0; i < 2; i++ {
+		d.Fire(context.Background(), Payload{
+			Transition: TransitionGovernorModeChange, To: "idle",
+		})
+	}
+	d.Wait()
+	if notifier.count() != 0 {
+		t.Fatalf("non-matching predicate must not notify, got %d", notifier.count())
+	}
+
+	// A matching transition now finds the quota already spent.
+	d.Fire(context.Background(), Payload{
+		Transition: TransitionGovernorModeChange, To: "surge",
+	})
+	d.Wait()
+
+	if notifier.count() != 0 {
+		t.Error("quota is consumed before the predicate; the matching firing should be suppressed")
+	}
+	if got := len(audit.withAction(AuditHookRateLimited)); got != 1 {
+		t.Errorf("the suppression must be audited, not silent; got %d entries", got)
+	}
+}
+
 // hangingNotifier blocks until released, modelling a wedged ntfy endpoint.
 type hangingNotifier struct{ release chan struct{} }
 
