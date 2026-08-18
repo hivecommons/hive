@@ -190,6 +190,24 @@ func (d *Dispatcher) Fire(ctx context.Context, p Payload) {
 		p.At = d.now().UnixMilli()
 	}
 
+	// Defensively copy Attrs. Fire takes Payload by value, but a map field is
+	// only a header: the caller and every hook goroutine would otherwise share
+	// one map. Because dispatch is ASYNCHRONOUS, an emitting site that reuses
+	// or mutates its attrs map after Fire returns — entirely reasonable-looking
+	// code, since Fire appears to have finished — would race the hooks reading
+	// it, and a racy read on the post-commit path is exactly the kind of bug
+	// that shows up only under production concurrency.
+	//
+	// Copying here rather than documenting a "do not touch this map afterwards"
+	// rule keeps the hazard out of every current and future emitter.
+	if p.Attrs != nil {
+		attrs := make(map[string]string, len(p.Attrs))
+		for k, v := range p.Attrs {
+			attrs[k] = v
+		}
+		p.Attrs = attrs
+	}
+
 	// GUARANTEE 2 — the depth-1 causation guard. Checked before anything else
 	// and in the one place every firing must pass through, so a hook-caused
 	// transition can never cascade regardless of which emitter produced it.

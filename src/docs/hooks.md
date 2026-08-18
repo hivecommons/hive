@@ -92,6 +92,8 @@ Depth 1 rather than a configurable cap is deliberate: a configurable depth invit
 
 **3. Per-hook rate limiting.** Every hook has a firings-per-minute ceiling (default 12, maximum 120). There is **no unlimited setting** — a flapping governor mode must not become a notification storm. The window survives config reloads, so a reload loop cannot be used to clear it. Suppressed firings are audited, not dropped silently.
 
+The window is *sliding and half-open*: the guarantee is "at most `limit` firings in any trailing 60 seconds", not "at most `limit` per calendar minute". A firing exactly 60 seconds after an earlier one does not count against it, so a burst at the boundary can produce `limit + 1` firings within a single 60-second span. Lowering a hook's limit takes effect immediately, and capacity returns as the existing firings age out.
+
 **4. Failure isolation.** Each hook runs independently behind its own recovered panic boundary and a 30-second timeout. One bad hook affects neither the transition nor any other hook. A hook whose sink is unwired reports a loud error per firing rather than silently doing nothing.
 
 **5. Every firing is audited.** Success, failure, rate-limit suppression, and depth suppression all land in `/data/audit.jsonl` alongside every other privileged action, as `hook_fired`, `hook_failed`, `hook_rate_limited`, and `hook_suppressed_depth`. Each entry names the responsible config rule. Where the transition carries model metadata, so does the audit entry — the audit log alone can answer "which model produced the rejected output".
