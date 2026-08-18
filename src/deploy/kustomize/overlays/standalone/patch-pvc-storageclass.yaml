@@ -1,0 +1,17 @@
+# Set the storageClassName on the base `hive-data` PVC.
+#
+# SWAP `YOUR_RWX_STORAGE_CLASS` for a storage class available on YOUR cluster.
+# On OpenShift Data Foundation this is typically `ocs-storagecluster-cephfs`
+# (RWX/CephFS); on other clusters use whatever RWX (or RWO if a single replica
+# suffices) class you have — e.g. `standard`, `gp3-csi`, `longhorn`.
+#
+# The base PVC requests accessModes: ReadWriteOnce. RWX is only required if you
+# ever scale beyond a single pod or need the volume mounted elsewhere; the
+# Deployment is replicas:1 + strategy:Recreate, so RWO works for the default.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hive-data
+  namespace: hive
+spec:
+  storageClassName: YOUR_RWX_STORAGE_CLASS

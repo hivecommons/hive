@@ -43,10 +43,14 @@ chmod +x "$MOCK_GH"
 # Point the wrapper at the mock gh via the HIVE_GH_WRAPPER_REAL_GH override
 # (exported below) rather than rewriting REAL_GH with sed — the override is the
 # supported seam for pointing the wrapper at a stub binary.
-cp "$WRAPPER" "$TEST_WRAPPER"
 # Production deliberately has no environment-variable override for this trust
-# boundary. Redirect the marker only in the temporary test copy.
-sed -i "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"|" "$TEST_WRAPPER"
+# boundary (#3249). Redirect the marker only in the temporary test copy, via a
+# rewrite of the constant (portable across GNU/BSD sed).
+sed "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"|" "$WRAPPER" >"$TEST_WRAPPER"
+if ! grep -q "CONTRIBUTOR_MODE_MARKER=\"${WORK_DIR}/contributor-marker\"" "$TEST_WRAPPER"; then
+  echo "FATAL: failed to redirect CONTRIBUTOR_MODE_MARKER in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
 chmod +x "$TEST_WRAPPER"
 
 export GH_TOKEN="test-token-mock"

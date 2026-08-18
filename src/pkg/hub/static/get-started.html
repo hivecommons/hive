@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
+  <meta charset="UTF-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta property="og:title" content="Get started — put your repo on autopilot">
+  <meta property="og:description" content="Request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.kubestellar.io/get-started">
+  <meta name="description" content="Get started with Hive — request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive.">
+  <title>Get started — put your repo on autopilot</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b0f;
+      --bg-soft: #0d1218;
+      --panel: #121922;
+      --panel-strong: #17212d;
+      --text: #f6f8fb;
+      --muted: #a8b3c2;
+      --line: #263545;
+      --amber: #f4c75f;
+      --green: #74df9a;
+      --blue: #80bfff;
+      --red: #ff7e7e;
+      --shadow: 0 24px 80px #0006;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(circle at 18% 8%, #80bfff2e, transparent 24rem),
+        radial-gradient(circle at 86% 4%, #f4c75f29, transparent 20rem),
+        linear-gradient(180deg, #090d12 0%, var(--bg) 48%, #0a0e13 100%);
+      min-width: 320px;
+      color: var(--text);
+      margin: 0;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Header ── */
+    .site-header {
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      background: #080b0fc7;
+      border-bottom: 1px solid #ffffff14;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      position: sticky;
+      top: 0;
+    }
+    .brand, .header-link, nav { align-items: center; display: flex; }
+    .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; }
+    .brand-mark {
+      width: 2.5rem; height: 2.5rem;
+      color: var(--amber);
+      background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
+      border: 1px solid #f4c75f6b;
+      border-radius: .65rem;
+      place-items: center;
+      font-size: 1.2rem;
+      display: grid;
+    }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+    nav a:hover, .header-link:hover { color: var(--text); }
+    .header-link {
+      border: 1px solid var(--line);
+      width: fit-content;
+      color: var(--text);
+      border-radius: .55rem;
+      justify-self: end;
+      padding: .72rem 1rem;
+      font-weight: 700;
+    }
+
+    /* ── Utility ── */
+    .section-pad { padding: clamp(3rem, 6vw, 5.5rem) clamp(1rem, 4vw, 4.5rem); max-width: 1200px; margin: 0 auto; }
+    .section-label {
+      color: var(--amber);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin: 0 0 1rem;
+      font-size: .82rem;
+      font-weight: 900;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      letter-spacing: 0;
+      max-width: 20ch;
+      margin-bottom: 1.3rem;
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      line-height: .95;
+    }
+    h2 {
+      letter-spacing: 0;
+      margin-bottom: 1rem;
+      font-size: clamp(1.8rem, 3.5vw, 3rem);
+      line-height: 1;
+    }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
+    .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
+    .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
+    code { background: #17212d; border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: var(--amber); }
+    pre {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: 1.2rem 1.4rem;
+      margin: 1rem 0 1.4rem;
+      overflow-x: auto;
+      font-size: .88rem;
+      color: #d7deea;
+      line-height: 1.7;
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
+    ul, ol { color: var(--muted); line-height: 1.8; margin: 0 0 16px 24px; padding: 0; }
+    li { margin-bottom: 8px; }
+    strong { color: var(--text); }
+
+    /* ── Buttons ── */
+    .button, .btn-primary, .btn-secondary, .btn-github {
+      border-radius: .55rem;
+      justify-content: center;
+      align-items: center;
+      min-height: 3rem;
+      padding: .85rem 1.2rem;
+      font-weight: 800;
+      font-size: .92rem;
+      font-family: inherit;
+      display: inline-flex;
+      border: none;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .button.primary, .btn-primary { background: var(--amber); color: #17110a; }
+    .button.primary:hover, .btn-primary:hover:not(:disabled) { background: #f8d87a; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .button.secondary { color: var(--text); background: #80bfff1a; border: 1px solid #80bfff70; }
+    .button.secondary:hover { background: #80bfff2e; }
+    .button.tertiary, .btn-secondary { border: 1px solid var(--line); color: #d7deea; background: transparent; }
+    .button.tertiary:hover, .btn-secondary:hover { border-color: var(--amber); color: var(--text); }
+    .btn-github { gap: 8px; background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); }
+    .btn-github:hover { border-color: var(--amber); }
+    .btn-github svg { flex-shrink: 0; }
+
+    /* ── Wizard flow ── */
+    .wizard { margin-top: 2.5rem; }
+    .wizard-steps { display: flex; gap: .6rem; margin-bottom: 1.75rem; align-items: center; flex-wrap: wrap; }
+    .wizard-step { display: flex; align-items: center; gap: .55rem; font-size: .84rem; font-weight: 700; color: var(--muted); }
+    .wizard-step.active { color: var(--amber); }
+    .wizard-step.done { color: var(--green); }
+    .step-dot {
+      width: 2rem; height: 2rem;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: .8rem;
+      background: var(--bg-soft);
+      border: 2px solid var(--line);
+      flex-shrink: 0;
+      transition: all .2s;
+    }
+    .wizard-step.active .step-dot { border-color: var(--amber); background: #f4c75f26; color: var(--amber); }
+    .wizard-step.done .step-dot { border-color: var(--green); background: #74df9a26; color: var(--green); }
+    .step-arrow { color: var(--line); font-size: .7rem; }
+    .wizard-panel {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: clamp(1.4rem, 3vw, 2.2rem);
+      display: none;
+    }
+    .wizard-panel.active { display: block; }
+    .wizard-panel h2 { font-size: 1.35rem; line-height: 1.15; margin-bottom: .6rem; }
+    .wizard-panel p { font-size: .92rem; margin-bottom: 1rem; }
+
+    /* ── Repo selector ── */
+    .repo-list { display: flex; flex-direction: column; gap: .55rem; margin: 1rem 0; max-height: 300px; overflow-y: auto; }
+    .repo-item {
+      display: flex; align-items: center; gap: .75rem;
+      padding: .8rem 1rem;
+      background: #080b0f85;
+      border: 1px solid var(--line);
+      border-radius: .7rem;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .repo-item:hover { border-color: #f4c75f9e; }
+    .repo-item.selected { border-color: var(--amber); background: #f4c75f17; }
+    .repo-item input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
+    .repo-name { font-weight: 700; font-size: .9rem; color: var(--text); }
+    .repo-desc { font-size: .78rem; color: var(--muted); }
+
+    /* ── ACMM selector ── */
+    .acmm-options { display: flex; flex-direction: column; gap: .65rem; margin: 1rem 0; }
+    .acmm-option {
+      display: flex; align-items: flex-start; gap: .75rem;
+      padding: .9rem 1rem;
+      background: #080b0f85;
+      border: 1px solid var(--line);
+      border-radius: .7rem;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .acmm-option:hover { border-color: #f4c75f9e; }
+    .acmm-option.selected { border-color: var(--amber); background: #f4c75f17; }
+    .acmm-option input[type=radio] { accent-color: var(--amber); margin-top: 2px; flex-shrink: 0; }
+    .acmm-option .acmm-label { font-weight: 700; font-size: .9rem; color: var(--text); margin-bottom: 2px; }
+    .acmm-option .acmm-desc { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    /* Levels above the onboarding ceiling: a quiet informational note, not a
+       disabled choice. Deliberately not styled like .acmm-option so it never
+       reads as a radio the requester failed to earn. */
+    .acmm-later { margin-top: .35rem; padding: .7rem .85rem; border-left: 2px solid var(--border); }
+    .acmm-later-title { font-size: .74rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+    .acmm-later-body { font-size: .78rem; color: var(--muted); line-height: 1.55; }
+    .acmm-rec {
+      display: inline-block; padding: 2px 10px; border-radius: 9999px;
+      font-size: .65rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
+      background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d;
+      margin-left: 8px;
+    }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block; padding: 3px 12px; border-radius: 9999px;
+      font-size: .72rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
+      margin-left: 10px; vertical-align: middle;
+    }
+    .badge-ready { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
+
+    /* ── Alt sections (self-host / contribute) ── */
+    .alt-section { scroll-margin-top: 5.5rem; }
+    .alt-card {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: clamp(1.4rem, 3vw, 2.2rem);
+    }
+    .alt-card p { font-size: .95rem; }
+    .alt-card pre { box-shadow: none; }
+
+    /* ── Toast ── */
+    .toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; max-width: 400px; color: #fff; }
+
+    /* ── Footer ── */
+    .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .82rem; color: var(--muted); }
+    .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: .8rem; }
+    .footer-links a { color: var(--muted); }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 720px) {
+      .site-header { grid-template-columns: 1fr; position: static; }
+      nav { flex-wrap: wrap; gap: .85rem; }
+      .header-link { justify-self: start; }
+      .wizard-steps { gap: .4rem; }
+      .step-arrow { display: none; }
+      .wizard-panel { padding: 1.25rem; }
+      pre { font-size: .78rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <a href="/" class="brand">
+      <span class="brand-mark">🐝</span>
+      <span>Hive</span>
+    </a>
+    <nav>
+      <a href="/">Hives</a>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/learn">Learn</a>
+      <a href="/get-started">Get Started</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
+      <span id="nav-user" style="display:none"></span>
+    </nav>
+    <a href="/login" class="header-link" id="nav-login">Sign in</a>
+    <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+  </header>
+
+  <main>
+
+  <!-- ── Hosted wizard ── -->
+  <section class="section-pad">
+    <p class="section-label">Get started</p>
+    <h1>Get a hosted hive</h1>
+    <p class="lede">Request a hive for your project in three steps. We provision it on our infrastructure &mdash; no Kubernetes, no setup, no compute needed.</p>
+
+    <div class="wizard">
+      <div class="wizard-steps" id="wizard-steps">
+        <div class="wizard-step active" data-step="1"><span class="step-dot">1</span> Login</div>
+        <span class="step-arrow">→</span>
+        <div class="wizard-step" data-step="2"><span class="step-dot">2</span> Your Repo</div>
+        <span class="step-arrow">→</span>
+        <div class="wizard-step" data-step="3"><span class="step-dot">3</span> Request</div>
+      </div>
+
+      <!-- Step 1: Login -->
+      <div class="wizard-panel active" id="panel-1">
+        <h2>Login with GitHub</h2>
+        <!-- Identity only. The login requests an EMPTY OAuth scope (see
+             handleLogin in oauth.go) because nothing in this flow reads your
+             account: you tell us the repository URL yourself. -->
+        <p>We use your GitHub identity to know who is asking &mdash; nothing more. We request <strong>no permissions</strong> on your account, and no passwords are stored.</p>
+        <div id="login-area">
+          <a href="/login?redirect=/get-started" class="btn-github">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            Login with GitHub
+          </a>
+        </div>
+        <div id="logged-in-area" style="display:none">
+          <div style="display:flex;align-items:center;gap:12px;padding:16px;background:#74df9a17;border:1px solid #74df9a4d;border-radius:.7rem;margin-bottom:16px">
+            <img id="user-avatar" style="width:32px;height:32px;border-radius:50%" src="">
+            <div>
+              <span id="user-login" style="font-weight:700"></span>
+              <span style="color:var(--green);font-size:0.8rem;margin-left:8px">✓ Authenticated</span>
+            </div>
+          </div>
+          <button class="btn-primary" onclick="goToStep(2)">Continue →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Add repositories by URL.
+           The typed URL is the ONLY input here, by design. The old picker
+           listed repos from the requester's github.com OAuth token, which
+           could never see a GitHub Enterprise repo and could never generalize
+           to another forge. A URL needs no permission on the requester's
+           account and describes any forge. -->
+      <div class="wizard-panel" id="panel-2">
+        <h2>Your repository</h2>
+        <p>Paste the URL of the repository the hive should manage. You can add more later from your dashboard.</p>
+        <div>
+          <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Repository URL
+          </label>
+          <!-- No "Add" button: onboarding expects ONE repo, so Continue commits
+               the typed URL and advances (commitManualRepo). The input is not
+               inside a <form>, so Enter has no default submit to suppress — the
+               preventDefault is kept anyway so a future wrapping form cannot
+               turn Enter into a page reload. -->
+          <input type="text" id="repo-manual" placeholder="github.com/my-org/my-repo"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();continueFromRepos()}"
+            onblur="validateRepoInput()" oninput="clearRepoError()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <div id="repo-manual-err" style="display:none;margin-top:6px;font-size:0.8rem;color:var(--red)"></div>
+          <p style="font-size:0.8rem;margin-top:8px;margin-bottom:0">
+            With or without <code>https://</code>. Works for public GitHub and for GitHub Enterprise
+            (<code>github.ibm.com</code> and similar) &mdash; we record which instance the repo lives on
+            and provision against it. Examples: <code>github.com/my-org/my-repo</code>,
+            <code>https://github.ibm.com/my-org/my-repo</code>.
+          </p>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:16px">
+          <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
+          <!-- Enabled unconditionally: validation now happens ON click, so a
+               disabled button would give the user no way to learn WHY it is
+               disabled. continueFromRepos() refuses to advance on bad input. -->
+          <button class="btn-primary" id="repos-continue" onclick="continueFromRepos()">Continue →</button>
+        </div>
+      </div>
+
+      <!-- Step 3: ACMM level + submit.
+           Options are rendered by renderAcmmOptions() from ACMM_LEVELS so the
+           capability names (Inception → Fully Autonomous) match the hub
+           dashboard and the spoke. An older revision read "L1 Advisory /
+           L2 Measured / L4 Auto PR", which named the levels wrongly AND
+           described L4 as auto-merging — it does not. -->
+      <div class="wizard-panel" id="panel-3">
+        <h2>Choose autonomy level</h2>
+        <p>How much should the agents do on their own? Start low and increase as you build confidence. This only controls the mundane work &mdash; security patches, dependency updates, issue triage, test fixes &mdash; so your team can focus on what matters: innovation, outreach, and strategy.</p>
+        <div class="acmm-options" id="acmm-options"></div>
+
+        <!-- Who is asking. These live on step 3 rather than step 2 because
+             step 2 is "Your repository" — it asks about the project, and its
+             one input is parsed as a repo URL. These describe the PERSON, and
+             they sit directly above the summary and the submit button, which
+             is where a requester expects to identify themselves before sending.
+             Both map onto the SaaSUser contact fields of the same name; they
+             are not new keys. -->
+        <div style="margin-top:1.4rem">
+          <label for="req-full-name" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Your name <span style="color:var(--red)">*</span>
+          </label>
+          <input type="text" id="req-full-name" placeholder="Ada Lovelace" maxlength="128"
+            oninput="clearContactError();updateSummary()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:6px;margin-bottom:0">
+            First and last name, so we know who the request is from &mdash; a GitHub username on its own
+            often does not say who a person is.
+          </p>
+        </div>
+
+        <div style="margin-top:1rem">
+          <label for="req-slack-id" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Slack ID <span style="color:var(--muted);font-weight:400">(optional)</span>
+          </label>
+          <input type="text" id="req-slack-id" placeholder="U01ABCDEF23 or @ada" maxlength="64"
+            oninput="clearContactError();updateSummary()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:6px;margin-bottom:0">
+            Your Slack member ID or handle, if you have one. We use it to reach you about your hive
+            &mdash; leave it blank and we will use GitHub instead.
+          </p>
+        </div>
+        <div id="contact-err" style="display:none;margin-top:8px;font-size:0.8rem;color:var(--red)"></div>
+
+        <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
+          <div style="margin-bottom:8px"><strong>Summary</strong></div>
+          <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
+          <div style="color:var(--muted)">GitHub: <span id="summary-forge" style="color:var(--text)">github.com</span></div>
+          <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
+          <div style="color:var(--muted)">Name: <span id="summary-name" style="color:var(--text)">&mdash;</span></div>
+          <div style="color:var(--muted)">Slack ID: <span id="summary-slack" style="color:var(--text)">&mdash;</span></div>
+        </div>
+        <!-- The wizard no longer asks anyone to install the GitHub App. This
+             note is the handoff to where that now happens: after provisioning,
+             the hive's own dashboard knows its forge and renders a correct
+             per-instance install link (githubAppInstallURL, from
+             config.GitHubConfig.AppInstallURL). -->
+        <p style="font-size:0.8rem;margin-top:4px">
+          <strong>What happens next:</strong> an admin reviews your request. Once your hive is provisioned,
+          its dashboard will prompt you to install the Hive GitHub App &mdash; with a link pointing at the
+          right GitHub instance for your repos. Nothing to install before then.
+        </p>
+        <div style="display:flex;gap:12px;margin-top:16px">
+          <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
+          <button class="btn-primary" id="submit-request" onclick="submitRequest()">Request a Hive</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Self-host ── -->
+  <section class="section-pad alt-section" id="self-host">
+    <div class="section-heading">
+      <p class="section-label">Self-host</p>
+      <h2>Your agents, your infrastructure <span class="badge badge-ready">Ready</span></h2>
+      <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
+    </div>
+    <div class="alt-card">
+      <pre><code>git clone -b v4 https://github.com/kubestellar/hive.git
+cd hive/v2
+
+cp hive.yaml.example hive.yaml
+# Edit hive.yaml: set your org, repos, and GitHub token
+
+export HIVE_GITHUB_TOKEN=ghp_your_token_here
+docker compose up -d
+
+# Open the dashboard
+open http://localhost:3001</code></pre>
+      <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.kubestellar.io.</p>
+      <p style="margin-bottom:0">Listing a hive you host yourself in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a href="https://github.com/kubestellar/hive/issues/new" style="color:var(--blue)">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
+    </div>
+  </section>
+
+  <!-- ── Contribute ── -->
+  <section class="section-pad alt-section" id="contribute">
+    <div class="section-heading">
+      <p class="section-label">Contribute</p>
+      <h2>Contribute compute <span class="badge badge-ready">Ready</span></h2>
+      <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
+    </div>
+    <div class="alt-card">
+      <pre><code>npx @kubestellar/hive-contribute
+
+hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
+      <p style="margin-bottom:0">Your CLI runs agents locally. Tasks are assigned by the hive governor. You start as a <strong>newcomer</strong> and progress through contributor → trusted → advisor as you complete work.</p>
+    </div>
+  </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
+      <a href="https://kubestellar.io">KubeStellar</a>
+    </div>
+    <p style="color:#3a4555">Hive is an open source project by KubeStellar</p>
+  </footer>
+
+  <script>
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function toast(msg, type) {
+      var t = document.createElement('div');
+      t.className = 'toast';
+      t.style.background = type === 'error' ? 'rgba(255,126,126,0.9)' : type === 'success' ? 'rgba(116,223,154,0.9)' : 'rgba(128,191,255,0.9)';
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(function() { t.remove(); }, 4000);
+    }
+
+    var _step = 1;
+    var _user = null;
+    var _selectedRepos = [];
+
+    /* WIZARD_STEP_* name the panels so a renumber is a one-line change instead
+       of a hunt for bare integers. The wizard lost its old "Install the GitHub
+       App" step: the App is installed AFTER provisioning, from the hive's own
+       dashboard, where the hive knows its forge and can build a correct
+       per-instance install link. */
+    var WIZARD_STEP_LOGIN = 1;
+    var WIZARD_STEP_REPOS = 2;
+    var WIZARD_STEP_LEVEL = 3;
+
+    /* ACMM levels, mirroring ACMM_LABELS/ACMM_TIPS on the hub dashboard
+       (pkg/hub/saas.go) and acmmLevelLabel() on the spoke. Keep all three in
+       step — a requester must not be shown one name here and another one on
+       the dashboard of the hive they receive. */
+    var ACMM_LEVELS = [
+      {level: 1, label: 'L1 — Inception (Assisted)',            desc: 'Start a new feature with spec-driven tooling. Agents look, plan and report; they never write to your repo.'},
+      {level: 2, label: 'L2 — Advisory (Instructed)',           desc: 'Advisory beads, no GitHub writes. Agents follow the house rules you set for the project.'},
+      {level: 3, label: 'L3 — Quality-Gated (Measured)',        desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
+      {level: 4, label: 'L4 — Security-Aware (Adaptive)',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
+      {level: 5, label: 'L5 — Semi-Autonomous (Semi-Automated)', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
+      {level: 6, label: 'L6 — Fully Autonomous',                desc: 'Auto-merge on green CI. Only for repos with CI you already trust.'}
+    ];
+    /* L3 Quality-Gated is the recommended entry point: it is the first level that
+       produces useful work (test-coverage PRs) while still gating every merge
+       on a human. */
+    var DEFAULT_ACMM_LEVEL = 3;
+    /* Highest level a hive can be REQUESTED at. Levels above this are real and
+       reachable, but only after provisioning, from the hive's own dashboard —
+       nobody starts a hive at L4+. The wizard therefore offers 1..3 as radios
+       and lists the rest as "available later". The hub enforces the same
+       ceiling on POST /api/saas/request-provision; this constant is the copy
+       of that rule the UI renders from, not the rule itself. */
+    var ONBOARDING_MAX_ACMM_LEVEL = 3;
+    var _selectedAcmm = DEFAULT_ACMM_LEVEL;
+
+    function acmmEntry(level) {
+      return (ACMM_LEVELS || []).filter(function(a) { return a.level === level; })[0] || null;
+    }
+
+    /* renderAcmmOptions builds the level radios from ACMM_LEVELS.
+
+       Only levels up to ONBOARDING_MAX_ACMM_LEVEL are selectable. The higher
+       levels are rendered as a short "what comes next" note rather than as
+       disabled radios: a greyed-out radio reads as a choice being refused,
+       which is the wrong message. They are not forbidden, they are simply
+       earned later — a hive advances to them from its own dashboard once it
+       has the coverage and CI history to justify them. */
+    function renderAcmmOptions() {
+      var host = document.getElementById('acmm-options');
+      if (!host) return;
+      var startable = (ACMM_LEVELS || []).filter(function(a) { return a.level <= ONBOARDING_MAX_ACMM_LEVEL; });
+      var later = (ACMM_LEVELS || []).filter(function(a) { return a.level > ONBOARDING_MAX_ACMM_LEVEL; });
+      var html = (startable || []).map(function(a) {
+        var sel = a.level === _selectedAcmm;
+        return '<label class="acmm-option' + (sel ? ' selected' : '') + '" onclick="selectAcmm(this, ' + a.level + ')">' +
+          '<input type="radio" name="acmm" value="' + a.level + '"' + (sel ? ' checked' : '') + '>' +
+          '<div><div class="acmm-label">' + esc(a.label) +
+          (a.level === DEFAULT_ACMM_LEVEL ? ' <span class="acmm-rec">Recommended to start</span>' : '') +
+          '</div>' +
+          '<div class="acmm-desc">' + esc(a.desc) + '</div></div></label>';
+      }).join('');
+      if ((later || []).length) {
+        html += '<div class="acmm-later">' +
+          '<div class="acmm-later-title">Available after provisioning</div>' +
+          '<div class="acmm-later-body">Once your hive is running you can advance it from its own dashboard, as its test coverage and CI history earn more automation: ' +
+          (later || []).map(function(a) { return esc(a.label); }).join(', ') + '.</div>' +
+          '</div>';
+      }
+      host.innerHTML = html;
+    }
+
+    function goToStep(n) {
+      if (n === WIZARD_STEP_LEVEL) { renderAcmmOptions(); updateSummary(); }
+      _step = n;
+      var steps = document.querySelectorAll('.wizard-step');
+      steps.forEach(function(s) {
+        var sn = parseInt(s.dataset.step);
+        s.className = 'wizard-step' + (sn < n ? ' done' : sn === n ? ' active' : '');
+      });
+      var panels = document.querySelectorAll('.wizard-panel');
+      panels.forEach(function(p, i) {
+        p.className = 'wizard-panel' + (i + 1 === n ? ' active' : '');
+      });
+    }
+
+    function selectAcmm(el, level) {
+      /* Clamp rather than trust the caller: renderAcmmOptions only emits
+         startable levels, but this is the one place _selectedAcmm is written
+         and it is what the submit body carries. */
+      if (level > ONBOARDING_MAX_ACMM_LEVEL) { level = ONBOARDING_MAX_ACMM_LEVEL; }
+      _selectedAcmm = level;
+      document.querySelectorAll('.acmm-option').forEach(function(o) { o.classList.remove('selected'); });
+      el.classList.add('selected');
+    }
+
+    function updateSummary() {
+      var names = (_selectedRepos || []).map(function(r) { return r.full_name || r.name || r; });
+      document.getElementById('summary-repos').textContent = names.length ? names.join(', ') : 'none added';
+      var entry = acmmEntry(_selectedAcmm);
+      document.getElementById('summary-acmm').textContent = entry ? entry.label : ('L' + _selectedAcmm);
+      /* textContent, not innerHTML: these are the only free-text values in the
+         wizard, so a name containing an apostrophe or a <script> tag renders as
+         the literal characters the user typed and nothing is parsed as markup. */
+      var em = '—';
+      var nm = contactValue('req-full-name', CONTACT_MAX_NAME);
+      var sl = contactValue('req-slack-id', CONTACT_MAX_SLACK);
+      document.getElementById('summary-name').textContent = nm || em;
+      document.getElementById('summary-slack').textContent = sl || em;
+      // Surface the forge so the choice is explicit before the user submits — a
+      // GHE host (from a pasted enterprise repo URL) reads "github.ibm.com", a
+      // plain github.com request reads "github.com". Never blank/ambiguous.
+      var forgeEl = document.getElementById('summary-forge');
+      if (forgeEl) {
+        var fl = forgeLabel();
+        forgeEl.textContent = fl;
+        forgeEl.title = fl === 'github.com'
+          ? 'This hive will run against public github.com'
+          : 'This hive will run against your GitHub Enterprise instance (' + fl + ')';
+      }
+    }
+
+    /* parseRepoRef turns whatever a user pastes into {host, org, name}.
+       It mirrors the server's normalizeForgeHost (pkg/hub/server.go): strip the
+       scheme, drop a trailing slash, lowercase the HOST only. It is a separate
+       JS function rather than a call into that Go helper for the obvious reason
+       — this runs in the browser — but the accepted forms are kept identical so
+       what the page accepts is what the server will store.
+
+       Accepts:  github.com/org/repo   https://github.ibm.com/org/repo
+                 host/org/repo/        org/repo         (bare -> public GitHub)
+
+       Parsing is deliberately separate from forge policy: this function will
+       happily split gitlab.com/org/repo, and isSupportedForgeHost then rejects
+       it. Keeping the two apart means supporting a new forge later is a change
+       to the predicate alone, not to URL handling. */
+    function parseRepoRef(raw) {
+      var v = (raw || '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+      v = v.replace(/[?#].*$/, '').replace(/\/+$/, '');
+      var parts = v.split('/').filter(function(p) { return p.length; });
+      // Strip a leading hostname (anything with a dot) but KEEP it: an
+      // Enterprise repo is only reachable if the request records its instance.
+      var host = '';
+      if (parts.length > 2 && parts[0].indexOf('.') !== -1) {
+        host = parts[0].toLowerCase();
+        parts = parts.slice(1);
+      }
+      if (parts.length < 2) return null;
+      // ".git" is part of a clone URL, not the repo name. Strip it AFTER the
+      // trailing slash is gone so "…/repo.git/" is handled too.
+      var name = parts[1].replace(/\.git$/i, '');
+      if (!parts[0] || !name) return null;
+      return {host: host, org: parts[0], name: name};
+    }
+
+    /* Only GitHub can be provisioned today: App auth, AppInstallURL, and the
+       write gate are all GitHub-specific, so a GitLab or Gitea URL would be
+       accepted here and then fail after the request was already filed. This is
+       an ALLOW-list, not a deny-list — a deny-list of known forges would let
+       "gitlab.mycorp.com" through simply by not having heard of it.
+
+       Accepts:  github.com                (public GitHub)
+                 github.<org>.<tld>        (GitHub Enterprise: github.ibm.com,
+                                            github.cisco.com)
+                 github.<org>.<sub>.<tld>  (github.corp.example.com)
+       Rejects:  gitlab.com, gitea.example.com, codeberg.org, bitbucket.org.
+
+       The pattern is anchored at BOTH ends and bounded in length, so the
+       lookalikes "mygithub.com" and "notgithub.com" fail at the front.
+
+       "github.com.evil.net" needs a SEPARATE rule, and it is worth being honest
+       about why: it is structurally identical to the legitimate
+       "github.corp.example.com" (github + label + label + tld). No pattern can
+       tell them apart, so the second label is checked against public GitHub's
+       own name instead — "github.com.<anything>" is the classic prefix-spoof
+       and never a real Enterprise host. */
+    var PUBLIC_GITHUB_HOST = 'github.com';
+    /* Labels permitted AFTER the leading "github." and before the TLD. Real GHE
+       hosts are github.<org>.<tld>, occasionally with one extra internal label
+       (github.corp.example.com). Two is the ceiling; more is a spoofing shape,
+       not a deployment anyone runs. */
+    var GITHUB_ENTERPRISE_HOST_RE = /^github\.[a-z0-9-]+(\.[a-z0-9-]+)?\.[a-z]{2,}$/;
+    /* Rejects github.com.evil.net and github.com.co — a host whose first two
+       labels spell public GitHub, with anything appended after it. */
+    var GITHUB_SPOOF_PREFIX_RE = /^github\.com\./;
+    function isSupportedForgeHost(host) {
+      // No host means a bare "org/repo", which we read as public GitHub.
+      if (!host) return true;
+      var h = host.toLowerCase();
+      if (h === PUBLIC_GITHUB_HOST) return true;
+      if (GITHUB_SPOOF_PREFIX_RE.test(h)) return false;
+      return GITHUB_ENTERPRISE_HOST_RE.test(h);
+    }
+    /* One message, used wherever a forge is rejected. It states the limit, names
+       the accepted forms, and says other forges are coming — a GitLab user
+       should read this as a roadmap gap, not a refusal. */
+    var UNSUPPORTED_FORGE_MSG = ' is not supported yet. Hives can currently be provisioned on GitHub only' +
+      ' — github.com or a GitHub Enterprise host such as github.ibm.com.' +
+      ' Support for GitLab, Gitea, and other forges is planned.';
+
+    /* Shown when Continue is pressed with an empty field. This is NOT cosmetic:
+       handleRequestProvision (pkg/hub/saas.go) rejects a request whose org or
+       repos is empty, so advancing with no repo would walk the user to the final
+       step and fail there. Refusing here reports it where it can be fixed. */
+    var REPO_REQUIRED_MSG = 'Enter the repository your hive should manage — for example github.com/my-org/my-repo';
+    /* Shown when the field holds something that is not a repository reference. */
+    var REPO_UNPARSEABLE_MSG = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
+
+    /* Contact-field caps, mirroring maxContactNameLen / maxContactSlackIDLen in
+       pkg/hub/saas.go. They are also the maxlength on the two inputs; the
+       server truncates to the same bounds, so these only stop a user typing
+       past a limit that would be silently applied anyway. */
+    var CONTACT_MAX_NAME = 128;
+    var CONTACT_MAX_SLACK = 64;
+    /* Shown when Request is pressed with no name. The server rejects the same
+       case, so refusing here reports it where it can be fixed rather than
+       after a round trip. */
+    var NAME_REQUIRED_MSG = 'Enter your name so we know who the request is from.';
+
+    function clearContactError() {
+      var err = document.getElementById('contact-err');
+      if (err) err.style.display = 'none';
+    }
+
+    function showContactError(msg) {
+      var err = document.getElementById('contact-err');
+      if (!err) return;
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+
+    /* Read a contact input, trimmed and clipped to its cap. Clipping with
+       .slice() counts UTF-16 code units where the server counts runes, so an
+       astral-plane name could still be trimmed further server-side — the cap is
+       generous enough that this is not a case a real name reaches, and the
+       server truncates rather than rejecting. */
+    function contactValue(id, cap) {
+      var el = document.getElementById(id);
+      return ((el && el.value) || '').trim().slice(0, cap);
+    }
+
+    function clearRepoError() {
+      var err = document.getElementById('repo-manual-err');
+      if (err) err.style.display = 'none';
+    }
+
+    function showRepoError(msg) {
+      var err = document.getElementById('repo-manual-err');
+      if (!err) return;
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+
+    /* Validate the typed repository and return {full_name, name, github_host},
+       or null if it cannot be used. Every check the old Add button ran is kept
+       here and in the same order: parseable, then forge policy.
+
+       `requireValue` separates the two callers. On blur we must NOT nag about an
+       empty field the user simply tabbed through, but on Continue an empty field
+       IS the error. Neither caller validates per keystroke — oninput only CLEARS
+       a stale error, so a half-typed URL never flashes red. */
+    function validateManualRepo(requireValue) {
+      var input = document.getElementById('repo-manual');
+      var raw = ((input && input.value) || '').trim();
+      clearRepoError();
+      if (!raw) {
+        if (requireValue) showRepoError(REPO_REQUIRED_MSG);
+        return null;
+      }
+      var ref = parseRepoRef(raw);
+      if (!ref) {
+        showRepoError(REPO_UNPARSEABLE_MSG);
+        return null;
+      }
+      if (!isSupportedForgeHost(ref.host)) {
+        showRepoError(ref.host + UNSUPPORTED_FORGE_MSG);
+        return null;
+      }
+      return {full_name: ref.org + '/' + ref.name, name: ref.name, github_host: ref.host};
+    }
+
+    /* Surface a bad URL as soon as the user leaves the field, rather than making
+       them press Continue to find out. Empty is not an error here. */
+    function validateRepoInput() { validateManualRepo(false); }
+
+    /* Continue does what the old "Add" button did, then advances. Onboarding
+       expects a single repo, so the typed value REPLACES _selectedRepos rather
+       than appending — that also makes the old "already added" dedupe branch
+       unreachable, so it is gone rather than left as dead list-building code.
+
+       _selectedRepos stays an ARRAY of one: submitRequest() reads
+       _selectedRepos[0], .map(), and .find() on it, and the server wants a
+       comma-separated repos string, so keeping the shape means the submit path
+       is untouched and can still carry more repos if a later screen adds them. */
+    function continueFromRepos() {
+      var repo = validateManualRepo(true);
+      if (!repo) return;
+      _selectedRepos = [repo];
+      goToStep(WIZARD_STEP_LEVEL);
+    }
+
+    // selectedForgeHost returns the GitHub forge the request targets, derived
+    // authoritatively from the selected repos: the enterprise host if any repo
+    // carries one (single-host-per-spoke is validated server-side, so at most one
+    // distinct host is possible), otherwise the explicit literal "github.com".
+    // It is never blank — a blank github_host fails the server's required-forge
+    // check (normalizeForgeHost) AND, if it slipped through, would let the hub's
+    // cluster placement rather than the user decide the forge. An explicit
+    // "github.com" passes the forge gate, resolves to public everywhere
+    // (gheAPIURLForHost/sameGitHubHost treat it as github.com), and is recorded
+    // non-blank so the cluster backfill cannot silently re-GHE it.
+    function selectedForgeHost() {
+      var withHost = _selectedRepos.find(function(r) { return r.github_host; });
+      return (withHost && withHost.github_host) || 'github.com';
+    }
+
+    // forgeLabel renders the chosen forge for the review step so the user SEES
+    // which GitHub instance the hive will run against before submitting — the
+    // choice is explicit, not silent.
+    function forgeLabel() {
+      return selectedForgeHost();
+    }
+
+    async function submitRequest() {
+      var btn = document.getElementById('submit-request');
+      /* Check the required name BEFORE disabling the button: bailing out after
+         btn.disabled = true would leave the user staring at a dead control. */
+      clearContactError();
+      var fullName = contactValue('req-full-name', CONTACT_MAX_NAME);
+      var slackID = contactValue('req-slack-id', CONTACT_MAX_SLACK);
+      if (!fullName) {
+        showContactError(NAME_REQUIRED_MSG);
+        var nameEl = document.getElementById('req-full-name');
+        if (nameEl) nameEl.focus();
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Submitting...';
+      try {
+        // POST /api/saas/request-provision — the route is request-provision, not
+        // request-hive (which 405s), and the handler wants an org plus a
+        // comma-separated repos STRING, not an array. The old body sent neither,
+        // so every submit failed at the last step of the wizard.
+        //
+        // _selectedRepos entries are "org/repo" (picked) or "org/repo" parsed
+        // from a pasted URL, so derive the org from the first entry and send
+        // bare repo names alongside it.
+        var firstFull = (_selectedRepos[0] && _selectedRepos[0].full_name) || '';
+        var reqOrg = firstFull.indexOf('/') !== -1 ? firstFull.split('/')[0] : '';
+        var reqRepos = _selectedRepos.map(function(r) {
+          var fn = r.full_name || r.name || '';
+          var parts = fn.split('/');
+          // Keep a cross-org entry qualified; strip the org when it matches.
+          return (parts.length > 1 && parts[0] === reqOrg) ? parts.slice(1).join('/') : fn;
+        }).join(',');
+        var resp = await fetch('/api/saas/request-provision', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            org: reqOrg,
+            // Explicit forge, never blank: the GHE host if a repo carries one,
+            // else literal "github.com". See selectedForgeHost().
+            github_host: selectedForgeHost(),
+            repos: reqRepos,
+            primary_repo: reqRepos.split(',')[0],
+            acmm_level: _selectedAcmm,
+            // Reuses the SaaSUser contact fields of the same names. On approval
+            // the hub copies these onto the user record, which is what the
+            // admin users panel and the Slack sender read.
+            full_name: fullName,
+            slack_id: slackID
+          })
+        });
+        var data = await resp.json();
+        if (!resp.ok) {
+          toast(data.error || 'Request failed', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Request a Hive';
+          return;
+        }
+        toast('Hive request submitted! An admin will review it shortly.', 'success');
+        btn.textContent = 'Request sent ✓';
+        btn.style.background = '#74df9a';
+      } catch(e) {
+        toast('Error: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Request a Hive';
+      }
+    }
+
+    fetch('/api/auth/user').then(function(r) { return r.json(); }).then(function(d) {
+      if (d.authenticated) {
+        _user = d;
+        document.getElementById('nav-login').style.display = 'none';
+        document.getElementById('nav-logout').style.display = '';
+        document.getElementById('nav-dashboard').style.display = '';
+        var u = document.getElementById('nav-user');
+        u.style.display = '';
+        u.innerHTML = '<img src="' + esc(d.avatar_url) + '" style="width:24px;height:24px;border-radius:50%;vertical-align:middle"> <span style="font-size:0.85rem">' + esc(d.login) + '</span>';
+
+        document.getElementById('login-area').style.display = 'none';
+        document.getElementById('logged-in-area').style.display = 'block';
+        document.getElementById('user-avatar').src = d.avatar_url;
+        document.getElementById('user-login').textContent = d.login;
+
+        var params = new URLSearchParams(window.location.search);
+        if (params.get('redirect') === '/get-started' || window.location.pathname === '/get-started') {
+          goToStep(2);
+        }
+      }
+    }).catch(function() {});
+  </script>
+</body>
+</html>

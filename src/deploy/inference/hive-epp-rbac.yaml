@@ -1,0 +1,82 @@
+---
+# Durable RBAC + InferencePool for the LIVE endpoint-picker (EPP) pod.
+#
+# Background (kubestellar/hive#2341): the running cluster (the heartbeat-only cluster) has an
+# ad-hoc EPP Deployment whose ServiceAccount is `hive-llm-d-epp` in namespace
+# `hive-inference`, started with:
+#     --pool-name=hive-vllm-pool --pool-namespace=hive-inference
+# It had ZERO Roles/RoleBindings, so every InferencePool/pod watch 403'd, the
+# picker logged "Pool is not initialized", and the pod crashlooped
+# (15,784 restarts over 43 days). The fix was applied by hand on the cluster
+# but existed in no manifest, so it was not durable. This file re-creates that
+# hand-applied fix as source so a re-apply of deploy/inference restores it.
+#
+# The pool name below (hive-vllm-pool) matches the live Deployment's
+# --pool-name=hive-vllm-pool exactly. The superseded demo EPP stack
+# (llm-d-deployment.yaml: SA/ClusterRole/CRB/Deployment/Service all named
+# `llm-d-epp` plus its own InferencePool/hive-vllm-pool) has been RETIRED in
+# favor of this live `hive-llm-d-epp` picker, freeing the canonical
+# `hive-vllm-pool` name for the running pod.
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-llm-d-epp
+  namespace: hive-inference
+rules:
+  # Endpoint picker watches backend pods to build the ready-endpoint set.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # GA InferencePool API (inference.networking.k8s.io/v1): the pool the picker
+  # is bound to, plus its status subresource.
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools", "inferencepools/status"]
+    verbs: ["get", "list", "watch"]
+  # Alpha InferencePool API (inference.networking.x-k8s.io/v1alpha2): older
+  # CRDs the scheduler still reconciles for backward compatibility.
+  - apiGroups: ["inference.networking.x-k8s.io"]
+    resources:
+      - "inferenceobjectives"
+      - "inferencemodelrewrites"
+      - "inferencemodels"
+      - "inferencepools"
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-llm-d-epp
+  namespace: hive-inference
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-llm-d-epp
+subjects:
+  - kind: ServiceAccount
+    name: hive-llm-d-epp
+    namespace: hive-inference
+
+---
+# InferencePool the live picker initializes on startup. Selector targets the
+# live vLLM backend pods (app=hive-vllm) on port 8000; the endpoint picker is
+# the `hive-llm-d-epp` Service on gRPC port 9002. The endpointPickerRef shape
+# mirrors the (now-retired) demo pool that was validated in this repo — name +
+# port only — so this stays within the GA inference.networking.k8s.io/v1 schema.
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: hive-vllm-pool
+  namespace: hive-inference
+spec:
+  targetPorts:
+    - number: 8000
+  selector:
+    matchLabels:
+      app: hive-vllm
+  endpointPickerRef:
+    name: hive-llm-d-epp
+    port:
+      number: 9002

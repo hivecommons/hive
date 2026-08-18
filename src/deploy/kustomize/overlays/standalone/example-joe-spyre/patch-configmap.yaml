@@ -1,0 +1,59 @@
+# EXAMPLE configmap patch — filled-in values for the fictional "Joe" deploy.
+# ⚠️  Replace every value with your own. See ../patch-configmap.yaml for the
+#     annotated version explaining each key and its verified config location.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-config
+  namespace: hive
+data:
+  hive.yaml: |
+    project:
+      org: joesorg
+      repos:
+        - joesrepo
+      ai_author: joes-hive-bot
+      primary_repo: joesrepo
+
+    acmm_level: 2
+
+    hub:
+      enabled: false
+
+    agents:
+      supervisor:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/supervisor
+        clear_on_kick: true
+      scanner:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/scanner
+        clear_on_kick: true
+      architect:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/architect
+        clear_on_kick: false
+
+    governor:
+      eval_interval_s: 300
+      litellm:
+        # EXAMPLE: an in-cluster litellm proxy Service. Joe runs one at
+        # litellm-svc in namespace llm-gateway. Swap for your own endpoint.
+        endpoint: http://litellm-svc.llm-gateway.svc.cluster.local:4000
+        api_key_env: HIVE_LITELLM_API_KEY
+        default_model: qwen2.5-0.5b-instruct
+
+    dashboard:
+      port: 3002
+      hub_proxied: false
+      authorized_users:
+        - joe:owner
+
+    github:
+      # EXAMPLE OAuth App client id — replace with your own.
+      oauth_client_id: Ov23liEXAMPLEjoe
+
+    notifications: {}

@@ -13,10 +13,10 @@ This guide is practical rather than automatic: v2 changes the runtime layout, co
 
 | Area | v1 | v2 |
 | --- | --- | --- |
-| Layout | Top-level scripts and dashboard pieces were the main operator surface. | Runtime code and examples live under `v2/`; root docs still link to shared concepts. |
+| Layout | Top-level scripts and dashboard pieces were the main operator surface. | Runtime code and examples live under `src/`; root docs still link to shared concepts. |
 | Config | Mostly one static `hive.yaml`. | Layered config: seed `/etc/hive/hive.yaml`, dashboard overlay `/data/hive.yaml.dashboard`, per-agent files in `/data/agent-configs/`, runtime snapshot, and secret dirs. |
 | Agents | Hand-built rosters and policies. | ACMM packs generate/merge curated rosters, modes, templates, and cadences. |
-| Prompts | Local policy files. | Policy checkout, embedded defaults in `v2/policies`, dashboard/`hivectl` prompt edits, and optional allowlisted GitHub prompt sources. |
+| Prompts | Local policy files. | Policy checkout, embedded defaults in `src/policies`, dashboard/`hivectl` prompt edits, and optional allowlisted GitHub prompt sources. |
 | Backends | Mainly subscription CLIs. | CLI backends plus OpenAI-compatible inference gateways (`vllm`, `llm-d`, `litellm`, `watsonx`). |
 | Contributor flow | Local worker scripts. | ClankeR contributor relay, `Dockerfile.contributor`, `compose-contributor.yaml`, and `just contribute-*` commands. |
 
@@ -34,7 +34,7 @@ This guide is practical rather than automatic: v2 changes the runtime layout, co
 
    ```bash
    git clone -b v2 https://github.com/kubestellar/hive.git hive-v2
-   cd hive-v2/v2
+   cd hive-v2/src
    cp hive.yaml.example hive.yaml
    ```
 

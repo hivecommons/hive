@@ -14,7 +14,7 @@ on:
   # so a red PR fails the check without also filing an issue.
   pull_request:
     branches: [v2, v4]
-    paths: ['v2/**', '.github/workflows/v2-tests.yml']
+    paths: ['src/**', '.github/workflows/v2-tests.yml']
 
 permissions:
   contents: read
@@ -25,20 +25,26 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: v2
+        working-directory: src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.12'
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
 
+      # ./cmd/... is included deliberately. It used to be ./pkg/... only, so no
+      # workflow anywhere ran the cmd tests — v2-ci.yml builds and vets but does
+      # not test. Four cmd/bd tests were consequently merged already-failing and
+      # stayed red on the default branch, undetected, because nothing ever ran
+      # them. Fixing those tests without also running them just resets the same
+      # trap. All of ./cmd/... passes under -short -race.
       - name: Test
-        run: go test ./pkg/... -short -race -count=1
+        run: go test ./pkg/... ./cmd/... -short -race -count=1
 
   create-issue-on-failure:
-    if: failure() && github.event_name == 'schedule'
+    if: (failure() || cancelled()) && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     needs: test
     permissions:
@@ -51,7 +57,9 @@ jobs:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const sha = context.sha.substring(0, 7);
-            const title = `[Tests] v2 test failure on ${sha}`;
+            const wasCancelled = '${{ needs.test.result }}' === 'cancelled';
+            const kind = wasCancelled ? 'cancelled (likely timed out)' : 'failure';
+            const title = `[Tests] v2 test ${wasCancelled ? 'cancelled' : 'failure'} on ${sha}`;
 
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -60,13 +68,13 @@ jobs:
               labels: 'ci-failure',
               per_page: 10,
             });
-            const dup = existing.data.find(i => i.title.startsWith('[Tests] v2 test failure'));
+            const dup = existing.data.find(i => i.title.startsWith('[Tests] v2 test'));
             if (dup) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: dup.number,
-                body: `Another failure on \`${sha}\`: ${runUrl}`,
+                body: `Another ${kind} on \`${sha}\`: ${runUrl}`,
               });
               return;
             }
@@ -75,6 +83,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title,
-              body: `## Test Failure\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** v2\n\nScheduled test run failed. See the [workflow run](${runUrl}) for details.`,
+              body: `## Test ${wasCancelled ? 'Cancelled' : 'Failure'}\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** v2\n\nScheduled test run was ${kind}. See the [workflow run](${runUrl}) for details.`,
               labels: ['ci-failure', 'kind/bug'],
             });

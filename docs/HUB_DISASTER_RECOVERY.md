@@ -69,7 +69,7 @@ Note it only *reports* the runtime config. It never restores from it.
 >
 > On Docker/LXC this file is not a snapshot at all but the boot-time source of
 > truth, since there is no ConfigMap and no overlay there. See
-> `v2/docs/config-layering.md`.
+> `src/docs/config-layering.md`.
 
 **How to tell which variant a hive runs** — this is the only way to know:
 
@@ -87,14 +87,14 @@ whole top-level blocks (`policies`, `data`, `knowledge`, `notifications`,
 `hive_id`).
 
 **So the file to restore is `/data/hive.yaml.dashboard`.** It is the only
-writable layer and the one that wins. See `v2/docs/config-layering.md` for the
+writable layer and the one that wins. See `src/docs/config-layering.md` for the
 full precedence order, and `GET /api/config/provenance` on a running spoke to
 ask which layer set any given field.
 
 #### `hive.yaml.runtime` is a snapshot, not a restore source
 
 The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
-(`v2/deploy/entrypoint.sh:150`) — it is a snapshot of the *result*, not an
+(`src/deploy/entrypoint.sh:150`) — it is a snapshot of the *result*, not an
 input. On variant-C hives nothing reads it during a normal boot.
 
 It has exactly one non-redundant role: the **disaster fallback** at
@@ -170,7 +170,7 @@ ability to run.
 
 ## Backup
 
-Runs as a CronJob in `hive-hub` — **opt-in, not deployed by default**: `v2/deploy/k8s/backup-cronjob.yaml` is deliberately excluded from the kustomization and must be applied explicitly, after creating Secret `hive-hub-backup-key` (key `backup-key`) with the escrowed `HIVE_BACKUP_KEY` and reviewing ConfigMap `hive-hub-backup-config`. The CronJob image tracks the `stable` release channel. Each run builds the archive, encrypts it,
+Runs as a CronJob in `hive-hub` — **opt-in, not deployed by default**: `src/deploy/k8s/backup-cronjob.yaml` is deliberately excluded from the kustomization and must be applied explicitly, after creating Secret `hive-hub-backup-key` (key `backup-key`) with the escrowed `HIVE_BACKUP_KEY` and reviewing ConfigMap `hive-hub-backup-config`. The CronJob image tracks the `stable` release channel. Each run builds the archive, encrypts it,
 uploads it to OCI Object Storage, **downloads it again and verifies checksums**,
 then prunes beyond the retention count. A run that cannot self-verify fails
 rather than reporting a good backup.

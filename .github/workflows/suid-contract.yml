@@ -1,7 +1,7 @@
 name: SUID + NET_ADMIN Contract
 
 # Static contract check for two image invariants (see
-# v2/scripts/check-suid-contract.sh):
+# src/scripts/check-suid-contract.sh):
 #  1. C6/CWE-250/269: su-exec stays pinned-by-SHA + SHA256-verified and chmod
 #     4750 root:hive-launch (launcher-group-only), never world-exec 4755.
 #  2. #3760: the hive binary carries NO file capability (a file cap EPERMs on
@@ -14,18 +14,18 @@ on:
       - v2
       - v4
     paths:
-      - 'v2/Dockerfile'
-      - 'v2/deploy/entrypoint.sh'
-      - 'v2/scripts/check-suid-contract.sh'
+      - 'src/Dockerfile'
+      - 'src/deploy/entrypoint.sh'
+      - 'src/scripts/check-suid-contract.sh'
       - '.github/workflows/suid-contract.yml'
   pull_request:
     branches:
       - v2
       - v4
     paths:
-      - 'v2/Dockerfile'
-      - 'v2/deploy/entrypoint.sh'
-      - 'v2/scripts/check-suid-contract.sh'
+      - 'src/Dockerfile'
+      - 'src/deploy/entrypoint.sh'
+      - 'src/scripts/check-suid-contract.sh'
       - '.github/workflows/suid-contract.yml'
   workflow_dispatch:
 
@@ -36,10 +36,10 @@ jobs:
   contract-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Run SUID + NET_ADMIN static contract check
-        run: bash v2/scripts/check-suid-contract.sh v2/Dockerfile v2/deploy/entrypoint.sh
+        run: bash src/scripts/check-suid-contract.sh src/Dockerfile src/deploy/entrypoint.sh
 
   # RUNTIME assertion (#3874). The static check above cannot catch the bug that
   # caused the fleet-wide outage: `setpriv --ambient-caps +net_admin` EXITS 0 but
@@ -50,7 +50,7 @@ jobs:
   ambient-cap-runtime:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Assert ambient CAP_NET_ADMIN survives the privilege drop
-        run: bash v2/deploy/test_ambient_cap_runtime.sh
+        run: bash src/deploy/test_ambient_cap_runtime.sh
