@@ -360,6 +360,12 @@ if [ "$(id -u)" = "0" ]; then
 
   mkdir -p /var/run/hive-metrics && chown dev:node /var/run/hive-metrics 2>/dev/null || true
   mkdir -p /var/run/hive-metrics/agent-tokens && chown dev:node /var/run/hive-metrics/agent-tokens 2>/dev/null || true
+  # 0755 explicitly, not umask-dependent: gh-wrapper.sh's author gate trusts
+  # the bot-identity file in this directory BECAUSE no agent UID can write here
+  # (#4044). Group is "node" — which every agent is a member of — so a
+  # group-writable mode would let any agent swap that file and spoof the
+  # identity the gate validates against. Re-asserted on every boot.
+  chmod 755 /var/run/hive-metrics/agent-tokens 2>/dev/null || true
 
   # Fix permissions on bind-mounted secret files (host may own them as
   # a different UID with mode 600, making them unreadable by dev/UID 1001)

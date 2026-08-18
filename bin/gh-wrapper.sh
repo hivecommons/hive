@@ -31,6 +31,26 @@ REAL_GH="${HIVE_GH_WRAPPER_REAL_GH:-/opt/hive/bin/gh-real}"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 CONTRIBUTOR_MODE_MARKER="/etc/hive/contributor-mode"
 
+# Trusted bot-identity file (#4044). Staff agents authenticate with GitHub App
+# INSTALLATION tokens (ghs_…), for which `gh api user` structurally 403s —
+# there is no user identity behind a server-to-server token — so the #3982
+# oracle can never resolve for them. The hive process, which MINTS every tier
+# token and therefore knows the App bot login ("<app-slug>[bot]"), writes that
+# login here alongside the per-agent token caches. The directory is owned by
+# dev and not writable by any agent UID, so — like CONTRIBUTOR_MODE_MARKER —
+# this is an image/runtime property the caller cannot forge. The path is a
+# CONSTANT for the same reason as #3249: an env-selected path would let an
+# agent point the identity check at a file it controls.
+#
+# HIVE_GH_WRAPPER_BOT_LOGIN_FILE is honored ONLY while the test harness's
+# HIVE_GH_WRAPPER_REAL_GH override is active, where it grants nothing: a caller
+# who can substitute the gh binary itself has already bypassed every gate this
+# identity feeds (see the REAL_GH comment above). Unset in production.
+BOT_LOGIN_FILE="/var/run/hive-metrics/agent-tokens/gh-bot-login"
+if [[ -n "${HIVE_GH_WRAPPER_REAL_GH:-}" && -n "${HIVE_GH_WRAPPER_BOT_LOGIN_FILE:-}" ]]; then
+  BOT_LOGIN_FILE="$HIVE_GH_WRAPPER_BOT_LOGIN_FILE"
+fi
+
 # Contributor mode is an image property, not a caller-controlled environment
 # toggle. Keep this path constant: an agent can set its own environment and must
 # not be able to redirect the trust check to an agent-writable marker (#3249).
@@ -322,7 +342,18 @@ _extract_author() {
 }
 
 # Resolve the authenticated GitHub login. Initialize the cache internally so a
-# caller-controlled environment cannot seed a trusted identity.
+# caller-controlled environment cannot seed a trusted identity (#3982).
+#
+# Two oracles, both unspoofable by the agent (#4044):
+#   1. The trusted bot-identity file — written by the hive process (which mints
+#      the tier tokens) into a directory no agent UID can write. This is the
+#      ONLY oracle that can work for staff agents: their App installation
+#      tokens have no /user identity, so `gh api user` 403s unconditionally.
+#   2. `gh api user` — the server-side identity of the token itself. Works for
+#      user tokens (contributor mode) and remains the fallback whenever the
+#      file is absent, so the contributor path is unchanged.
+# A caller-writable path or environment variable must never be consulted:
+# fail-closed is preserved when NEITHER oracle resolves.
 HIVE_AUTH_LOGIN_CACHED=""
 _resolve_self_login() {
   if [[ -n "$HIVE_AUTH_LOGIN_CACHED" ]]; then
@@ -330,9 +361,16 @@ _resolve_self_login() {
     return 0
   fi
 
-  local login
-  if ! login="$("$REAL_GH" api user --jq '.login' 2>/dev/null)"; then
-    return 1
+  local login=""
+  if ! _contributor_mode && [[ -f "$BOT_LOGIN_FILE" && -r "$BOT_LOGIN_FILE" ]]; then
+    # Single-line file; strip whitespace/newline. An empty or unreadable file
+    # falls through to the API oracle (and from there to fail-closed).
+    login="$(tr -d '[:space:]' < "$BOT_LOGIN_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "$login" ]]; then
+    if ! login="$("$REAL_GH" api user --jq '.login' 2>/dev/null)"; then
+      return 1
+    fi
   fi
   if [[ -z "$login" ]]; then
     return 1
@@ -372,10 +410,43 @@ _author_matches_login() {
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
   if author_value="$(_extract_author)" && [[ -n "$author_value" ]]; then
     if [[ "$author_value" = "@me" ]]; then
-      : # GitHub resolves @me server-side to the authenticated token identity.
+      # GitHub resolves @me server-side ONLY for user tokens. An App
+      # installation token has no user identity, so for staff agents @me is
+      # rejected by the API itself and there would be NO working self-listing
+      # form at all (#4044). Map @me to the trusted resolved identity for
+      # staff agents; contributor mode keeps the server-side resolution.
+      if ! _contributor_mode; then
+        if ! _resolve_self_login >/dev/null; then
+          echo "⛔ BLOCKED: gh $subcmd list --author @me cannot work with an App installation token (it has no /user identity, #4044)," >&2
+          echo "and no trusted identity is available to substitute: ${BOT_LOGIN_FILE} is missing/empty and 'gh api user' did not resolve." >&2
+          echo "The hive writes that file when it mints agent tokens — report this to the operator so identity delivery is repaired." >&2
+          exit 1
+        fi
+        _atme_rewritten=()
+        _atme_expect=false
+        for _atme_arg in "${args[@]}"; do
+          if [[ "$_atme_expect" = true ]]; then
+            _atme_expect=false
+            [[ "$_atme_arg" = "@me" ]] && _atme_arg="$HIVE_AUTH_LOGIN_CACHED"
+          else
+            case "$_atme_arg" in
+              --author|-A) _atme_expect=true ;;
+              --author=@me) _atme_arg="--author=${HIVE_AUTH_LOGIN_CACHED}" ;;
+              -A=@me) _atme_arg="-A=${HIVE_AUTH_LOGIN_CACHED}" ;;
+              -A@me) _atme_arg="-A${HIVE_AUTH_LOGIN_CACHED}" ;;
+            esac
+          fi
+          _atme_rewritten+=("$_atme_arg")
+        done
+        args=("${_atme_rewritten[@]}")
+        # The wrapper's tail executes `exec "$REAL_GH" "$@"` — rewrite the
+        # positional parameters too, or the substitution would never ship.
+        set -- "${args[@]}"
+      fi
     elif ! _resolve_self_login >/dev/null; then
       echo "⛔ BLOCKED: gh $subcmd list --author requires authenticated GitHub identity." >&2
-      echo "Could not resolve the current token identity with 'gh api user --jq .login'." >&2
+      echo "Could not resolve the current token identity: no trusted identity file at ${BOT_LOGIN_FILE} (written by the hive when it mints agent tokens)" >&2
+      echo "and 'gh api user --jq .login' did not resolve (expected for App installation tokens, which have no /user identity)." >&2
       exit 1
     elif _author_matches_login "$author_value" "$HIVE_AUTH_LOGIN_CACHED"; then
       : # Match: authenticated login, case-insensitive, with optional [bot] suffix.

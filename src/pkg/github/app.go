@@ -57,6 +57,22 @@ const (
 	// Directory must be traversable by every agent UID so each can open its
 	// own 0640 file; the files themselves carry the per-agent restriction.
 	agentTokenCacheDirPerms = 0o755
+
+	// botLoginFileName is the trusted bot-identity file gh-wrapper.sh's author
+	// gate reads (#4044). App installation tokens have no /user identity —
+	// `gh api user` 403s for every staff agent — so the wrapper cannot resolve
+	// "who am I" from the token itself. This process DOES know: it mints every
+	// tier token as "<app-slug>[bot]". Publishing that login into the
+	// agent-token cache dir (dev-owned, mode 0755 — no agent UID can write it)
+	// gives the wrapper an identity oracle the agent cannot spoof, preserving
+	// the #3982 fail-closed/anti-spoof posture while making author-gated
+	// self-listing work again.
+	botLoginFileName = "gh-bot-login"
+	// botLoginFilePerms: world-readable on purpose — the bot login is public
+	// metadata (it appears on every PR the App authors), and every agent UID
+	// must be able to read it. The security property is UNWRITABILITY (dir
+	// owned by dev), not secrecy.
+	botLoginFilePerms = 0o644
 )
 
 // agentTokenCacheDir is the directory holding per-agent token caches. It is a
@@ -75,6 +91,10 @@ type AppAuth struct {
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
+	// botLogin is the App bot identity ("<app-slug>[bot]") this installation's
+	// tokens act as. Set via SetBotLogin at client wiring time; when non-empty,
+	// WriteAgentToken publishes it to the trusted bot-identity file (#4044).
+	botLogin string
 }
 
 func NewAppAuth(appID, installationID int64, keyFile string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
@@ -322,6 +342,65 @@ func AgentTokenCachePath(agentName string) string {
 	return agentTokenCacheDir + "/gh-token-" + agentName + ".cache"
 }
 
+// BotLoginFilePath returns the trusted bot-identity file path read by
+// gh-wrapper.sh's author gate (#4044).
+func BotLoginFilePath() string {
+	return agentTokenCacheDir + "/" + botLoginFileName
+}
+
+// SetBotLogin records the App bot login ("<app-slug>[bot]") so token delivery
+// can publish it to the trusted bot-identity file. Empty (no usable App)
+// leaves the file unwritten and the wrapper's author gate fail-closed.
+func (a *AppAuth) SetBotLogin(login string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.botLogin = login
+}
+
+// publishBotLogin writes the trusted bot-identity file the gh wrapper's author
+// gate reads (#4044). Failure is deliberately SOFT (warn, never error): the
+// file only widens what an agent can list; without it the gate stays exactly
+// as fail-closed as before this file existed, whereas failing token delivery
+// over it would take down every GitHub operation to protect a listing.
+func (a *AppAuth) publishBotLogin() {
+	a.mu.RLock()
+	login := a.botLogin
+	a.mu.RUnlock()
+	if login == "" {
+		return
+	}
+
+	path := BotLoginFilePath()
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == login {
+		return // already current — skip the write (called on every token refresh)
+	}
+
+	// Write-temp-then-rename, the OPPOSITE of the token caches' in-place rule:
+	// this file is dev-owned world-readable (no pre-created ownership to
+	// preserve), it is shared by every agent, and concurrent launch paths call
+	// this without coordination — rename keeps every reader seeing a complete
+	// login, never a torn write.
+	tmp, err := os.CreateTemp(agentTokenCacheDir, botLoginFileName+".tmp-")
+	if err != nil {
+		a.logger.Warn("cannot publish bot identity file — author-gated gh listing will stay fail-closed for staff agents (#4044)", "path", path, "error", err)
+		return
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	_, werr := tmp.WriteString(login)
+	if werr == nil {
+		werr = tmp.Chmod(botLoginFilePerms)
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		a.logger.Warn("cannot publish bot identity file — author-gated gh listing will stay fail-closed for staff agents (#4044)", "path", path, "error", werr)
+	}
+}
+
 // WriteAgentToken mints a tier-scoped token for the given agent and writes it
 // into that agent's pre-created cache file.
 //
@@ -355,6 +434,11 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	if err := os.MkdirAll(agentTokenCacheDir, agentTokenCacheDirPerms); err != nil {
 		return fmt.Errorf("creating agent token dir: %w", err)
 	}
+
+	// Publish the trusted bot-identity file alongside the token (#4044). Every
+	// mint/refresh path re-asserts it, so a pod that lost /var/run self-heals
+	// within one token-refresh interval. Soft-fails internally — see doc.
+	a.publishBotLogin()
 
 	cachePath := AgentTokenCachePath(agentName)
 	preCreated := true
@@ -447,6 +531,13 @@ func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Lo
 }
 
 func NewClientFromAppWithBotLogin(auth *AppAuth, org string, repos []string, logger *slog.Logger, appBotLogin string) *Client {
+	// This factory is the one place where the AppAuth that mints agent tokens
+	// meets the resolved bot login (cfg.GitHub.BotLogin()), including every
+	// config-refresh/reinit path in main.go. Recording it here is what lets
+	// WriteAgentToken publish the trusted bot-identity file for the gh
+	// wrapper's author gate (#4044) without threading the login through each
+	// call site separately.
+	auth.SetBotLogin(appBotLogin)
 	transport := &appTransport{
 		auth: auth,
 		base: http.DefaultTransport,
