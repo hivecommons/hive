@@ -467,6 +467,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		canonicalID string
 		avatarURL   string
 		email       string
+		displayName string // provider-asserted human name (OIDC name claim/userinfo)
 		ghToken     string // GitHub user access token, if any (stored encrypted)
 	)
 	if p.IsOIDC {
@@ -493,6 +494,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		canonicalID = id
 		avatarURL = claims.AvatarURL
 		email = claims.Email
+		displayName = claims.Name
 		s.logger.Info("audit: hub OIDC login", "provider", p.Name, "user", canonicalID)
 	} else {
 		login, avatar, token, ok := s.exchangeGitHubLogin(w, code)
@@ -527,6 +529,14 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	if email != "" {
 		saasUser.Email = email
+	}
+	// Backfill-by-login: every completed login UPSERTS the display claims onto
+	// the existing record, so provider:sub users created before enrichment
+	// shipped get their name on their next sign-in — no migration. Only
+	// non-empty values overwrite, so a provider that stops sending a claim
+	// never blanks a previously-stored one.
+	if displayName != "" {
+		saasUser.DisplayName = displayName
 	}
 	// A completed callback IS a login — count it here and nowhere else.
 	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
@@ -817,9 +827,9 @@ func (s *HubServer) clearOIDCNonceCookie(w http.ResponseWriter) {
 // displayIdentity returns the human-facing login label and avatar URL for a
 // canonical (or legacy bare) identity. For a GitHub user this is the bare login
 // and the derived github.com/<login>.png avatar — byte-identical to the
-// pre-multi-provider behavior. For an OIDC user it prefers the STORED avatar
-// (Google/IBMid provide a picture) and a friendly display label (email, else
-// the canonical id), never nothing.
+// pre-multi-provider behavior. For an OIDC user it prefers the STORED
+// provider-asserted display name, then email, then the canonical id — and the
+// stored avatar (Google/Microsoft provide a picture) — never nothing.
 func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 	provider, subject, ok := parseCanonical(canonicalizeLegacy(identity))
 	if !ok {
@@ -832,7 +842,10 @@ func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 	// Non-GitHub: use the stored record for a good label + avatar.
 	login = identity
 	if u := loadSaaSUser(canonicalizeLegacy(identity)); u != nil {
-		if u.Email != "" {
+		switch {
+		case u.DisplayName != "":
+			login = u.DisplayName
+		case u.Email != "":
 			login = u.Email
 		}
 		avatarURL = u.AvatarURL

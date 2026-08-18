@@ -106,6 +106,11 @@ type Provider struct {
 	AuthorizeURL string
 	TokenURL     string
 	JWKSURL      string
+	// UserInfoURL is the OIDC userinfo endpoint, filled from discovery. Used only
+	// as a best-effort enrichment source when the id_token itself lacks display
+	// claims (name/email/picture) — some providers (IBMid) issue minimal
+	// id_tokens and put profile claims behind userinfo.
+	UserInfoURL string
 
 	// ClientID / ClientSecret from the provider's app registration. A provider is
 	// enabled iff ClientID is set (mirrors the hub's registerOAuth gate).
@@ -152,6 +157,17 @@ type Claims struct {
 	Name      string // display name (optional)
 	AvatarURL string // picture (optional)
 	Email     string // email (display only; NEVER the identity key)
+
+	// rawSub is the id_token's literal `sub` claim, kept for the OIDC Core
+	// §5.3.2 userinfo cross-check (userinfo's sub MUST match the id_token's).
+	// Unexported: identity decisions use Subject, never this.
+	rawSub string
+}
+
+// incomplete reports whether any display claim is missing — the trigger for the
+// best-effort userinfo enrichment fetch.
+func (c *Claims) incomplete() bool {
+	return c.Name == "" || c.Email == "" || c.AvatarURL == ""
 }
 
 // scopeString renders the space-delimited scope parameter.
@@ -194,7 +210,7 @@ func (p *Provider) Exchange(ctx context.Context, code, redirectURI, expectNonce 
 	if err := p.ensureDiscovered(ctx); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStepDiscovery, err)
 	}
-	rawIDToken, err := p.fetchIDToken(ctx, code, redirectURI)
+	rawIDToken, accessToken, err := p.fetchIDToken(ctx, code, redirectURI)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStepTokenExchange, err)
 	}
@@ -202,11 +218,71 @@ func (p *Provider) Exchange(ctx context.Context, code, redirectURI, expectNonce 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStepVerifyToken, err)
 	}
+	// Best-effort display enrichment: some providers (IBMid) issue minimal
+	// id_tokens and serve name/email/picture only from userinfo. Fills ONLY the
+	// missing display claims; identity (Subject) is never touched, and a
+	// userinfo failure never fails an already-verified login.
+	if claims.incomplete() && accessToken != "" && p.UserInfoURL != "" {
+		p.enrichFromUserInfo(ctx, claims, accessToken)
+	}
 	return claims, nil
 }
 
-// fetchIDToken posts the code to the token endpoint and returns the raw id_token.
-func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (string, error) {
+// enrichFromUserInfo fetches the provider's userinfo endpoint and fills the
+// MISSING display claims (name/email/picture) on c. Per OIDC Core §5.3.2 the
+// userinfo response's `sub` MUST match the id_token's — a mismatched (or, when
+// the id_token carried one, absent) sub discards the response entirely, so a
+// confused-deputy userinfo can never relabel a verified identity. Best-effort:
+// any error is silently a no-op; the login is already verified.
+func (p *Provider) enrichFromUserInfo(ctx context.Context, c *Claims, accessToken string) {
+	req, err := http.NewRequestWithContext(ctx, "GET", p.UserInfoURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	info := jwt.MapClaims{}
+	if err := json.Unmarshal(body, &info); err != nil {
+		return
+	}
+	if c.rawSub != "" && stringClaim(info, claimSub) != c.rawSub {
+		return // §5.3.2 cross-check failed — do not trust any of it
+	}
+	if c.Name == "" {
+		c.Name = displayNameFromClaims(info, p.claimName(p.NameClaim, claimName))
+	}
+	if c.Email == "" {
+		c.Email = stringClaim(info, p.claimName(p.EmailClaim, claimEmail))
+	}
+	if c.AvatarURL == "" {
+		c.AvatarURL = stringClaim(info, p.claimName(p.AvatarClaim, claimPicture))
+	}
+}
+
+// displayNameFromClaims extracts a human display name: the configured name
+// claim first, then the standard given_name + family_name composition (IBMid
+// and Entra often carry the parts without a composite `name`).
+func displayNameFromClaims(m jwt.MapClaims, nameClaim string) string {
+	if n := stringClaim(m, nameClaim); n != "" {
+		return n
+	}
+	given := stringClaim(m, claimGivenName)
+	family := stringClaim(m, claimFamilyName)
+	return strings.TrimSpace(strings.TrimSpace(given) + " " + strings.TrimSpace(family))
+}
+
+// fetchIDToken posts the code to the token endpoint and returns the raw
+// id_token plus the access_token (used only for the userinfo enrichment fetch).
+func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (idToken, accessToken string, err error) {
 	form := neturlValues()
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
@@ -216,19 +292,19 @@ func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("token exchange: %w", err)
+		return "", "", fmt.Errorf("token exchange: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+		return "", "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
 	}
 	var tok struct {
 		IDToken     string `json:"id_token"`
@@ -237,15 +313,15 @@ func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (
 		ErrorDesc   string `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &tok); err != nil {
-		return "", fmt.Errorf("parse token response: %w", err)
+		return "", "", fmt.Errorf("parse token response: %w", err)
 	}
 	if tok.Error != "" {
-		return "", fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
+		return "", "", fmt.Errorf("token endpoint error %q: %s", tok.Error, tok.ErrorDesc)
 	}
 	if tok.IDToken == "" {
-		return "", errors.New("token response carried no id_token")
+		return "", "", errors.New("token response carried no id_token")
 	}
-	return tok.IDToken, nil
+	return tok.IDToken, tok.AccessToken, nil
 }
 
 // verifyIDToken validates the id_token's signature and claims, then extracts
@@ -351,9 +427,10 @@ func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (
 	}
 	return &Claims{
 		Subject:   sub,
-		Name:      stringClaim(claims, p.claimName(p.NameClaim, claimName)),
+		Name:      displayNameFromClaims(claims, p.claimName(p.NameClaim, claimName)),
 		AvatarURL: stringClaim(claims, p.claimName(p.AvatarClaim, claimPicture)),
 		Email:     stringClaim(claims, p.claimName(p.EmailClaim, claimEmail)),
+		rawSub:    stringClaim(claims, claimSub),
 	}, nil
 }
 
@@ -469,6 +546,9 @@ func (p *Provider) ensureDiscovered(ctx context.Context) error {
 	if p.JWKSURL == "" {
 		p.JWKSURL = doc.JWKSURI
 	}
+	if p.UserInfoURL == "" {
+		p.UserInfoURL = doc.UserInfoEndpoint
+	}
 	p.discovered = true
 	p.mu.Unlock()
 	return p.refreshJWKS(ctx)
@@ -504,6 +584,9 @@ type discoveryDoc struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
+	// UserInfoEndpoint is OPTIONAL per OIDC Discovery — absence just disables
+	// the display-claim enrichment fetch, never the login.
+	UserInfoEndpoint string `json:"userinfo_endpoint"`
 }
 
 func fetchDiscovery(ctx context.Context, issuer string) (*discoveryDoc, error) {
@@ -600,11 +683,13 @@ func rsaPublicKeyFromJWK(k jwkKey) (*rsa.PublicKey, error) {
 // --- standard claim names ---
 
 const (
-	claimSub     = "sub"
-	claimName    = "name"
-	claimPicture = "picture"
-	claimEmail   = "email"
-	claimNonce   = "nonce"
+	claimSub        = "sub"
+	claimName       = "name"
+	claimGivenName  = "given_name"
+	claimFamilyName = "family_name"
+	claimPicture    = "picture"
+	claimEmail      = "email"
+	claimNonce      = "nonce"
 )
 
 func stringClaim(m jwt.MapClaims, key string) string {

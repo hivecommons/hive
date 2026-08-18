@@ -289,6 +289,14 @@ type SaaSUser struct {
 	Email             string `json:"email,omitempty"`
 	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
 
+	// DisplayName is the PROVIDER-ASSERTED human name from the OIDC name claim
+	// (or userinfo), refreshed on every completed login. Distinct from FullName,
+	// which is ADMIN-entered CRM text and must never be clobbered by a login.
+	// Display only — the identity key stays provider:sub. omitempty so existing
+	// records round-trip byte-identical until the user's next login enriches
+	// them (backfill-by-login, no migration).
+	DisplayName string `json:"display_name,omitempty"`
+
 	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
 	// outside GitHub (and to remember what was said last time). All three are
 	// omitempty so the thousands of existing user records already on the PVC
@@ -9121,6 +9129,32 @@ const dashboardHTML = `<!DOCTYPE html>
       return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
     }
 
+    /* userDisplayLabel: the human-facing name for a stored user record. OIDC
+       users are KEYED as provider:sub (stable, but cryptic — "google:1178…");
+       what a human should see is the provider-asserted display_name, else the
+       admin-entered full_name, else the email, else (GitHub users, legacy
+       records) the username key itself. */
+    function userDisplayLabel(u) {
+      if (!u) return '';
+      return u.display_name || u.full_name || u.email || u.github_username || '';
+    }
+
+    /* userAvatar: avatar for a stored user record. Prefers the provider-stored
+       avatar_url (Google/Microsoft picture claim); GitHub users keep the derived
+       github.com/<login>.png via avatarImg. An OIDC user with no stored avatar
+       (IBMid sends no picture claim) gets initials derived from their REAL
+       display label — never from the provider:sub key (which produced tiles
+       like "M0"). Failed loads fall back to the same initials. */
+    function userAvatar(u, px, extraStyle) {
+      var label = userDisplayLabel(u);
+      var style = 'width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + (extraStyle || '');
+      if (u && u.avatar_url) {
+        return '<img src="' + escAttr(u.avatar_url) + '" alt="" style="' + style + '" ' +
+          'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(label, px)) + '">';
+      }
+      return '<img src="' + escAttr(avatarInitialsSVG(label, px)) + '" alt="" style="' + style + '">';
+    }
+
     /* Rendered avatar sizes, in CSS pixels, one per surface. They differ because
        the surfaces differ in density, not arbitrarily: the status-dot hover
        panel and the compact request/access lists are tight vertical lists; the
@@ -16650,7 +16684,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var filtered = (_allUsers || []).filter(function(u) {
         if (!q) return true;
         if (!u) return false;
-        var hay = [u.github_username, u.full_name, u.slack_id, u.notes]
+        var hay = [u.github_username, u.display_name, u.email, u.full_name, u.slack_id, u.notes]
           .filter(function(v) { return !!v; }).join(' ').toLowerCase();
         return hay.includes(q);
       });
@@ -16852,7 +16886,12 @@ const dashboardHTML = `<!DOCTYPE html>
         case 'google':
           return '<svg viewBox="0 0 18 18" ' + s + '><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.42 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>';
         case 'ibmid':
-          return '<svg viewBox="0 0 24 24" fill="#1F70C1" ' + s + '><path d="M2 4h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2zm0 3.5h20v2H2z"/></svg>';
+          // Text-based IBM mark (license-safe; the striped-wordmark SVG rendered
+          // as a broken glyph at badge size). IBM blue, bold, sized to match the
+          // other 12px brand marks.
+          return '<svg viewBox="0 0 26 14" width="20" height="12" style="flex:none" aria-hidden="true">' +
+            '<text x="13" y="11" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" ' +
+            'font-size="11" font-weight="700" fill="#0f62fe">IBM</text></svg>';
         case 'redhat':
           return '<svg viewBox="0 0 24 24" fill="#EE0000" ' + s + '><path d="M16.35 14.4c1.6 0 3.9-.33 3.9-2.24a1.8 1.8 0 0 0-.04-.44l-.95-4.12c-.22-.9-.41-1.31-2-2.12-1.24-.63-3.94-1.67-4.74-1.67-.74 0-.96.96-1.85.94-.86-.02-1.5-.74-2.3-.74-.77 0-1.27.52-1.66 1.6 0 0-1.08 3.05-1.22 3.49a.83.83 0 0 0-.03.25c0 1.2 4.71 5.32 10.88 5.32M20.47 12.94c.22 1.05.22 1.16.22 1.3 0 1.8-2.02 2.79-4.67 2.79-6 0-11.25-3.51-11.25-5.83 0-.32.07-.63.18-.93C2.94 10.36 1 10.63 1 12.34c0 2.8 6.63 6.26 11.87 6.26 4.02 0 5.03-1.82 5.03-3.25 0-1.13-.97-2.4-2.43-2.41"/></svg>';
         case 'microsoft':
@@ -17461,7 +17500,11 @@ const dashboardHTML = `<!DOCTYPE html>
       return '<span class="hive-access-pop" style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:60;' +
         'min-width:240px;max-width:320px;padding:9px 11px;border-radius:8px;border:1px solid var(--border);' +
         'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
-        '<div style="font-weight:700;margin-bottom:4px">' + esc(u.github_username) + '</div>' +
+        '<div style="font-weight:700;margin-bottom:4px">' + esc(userDisplayLabel(u)) +
+          (userDisplayLabel(u) !== u.github_username
+            ? '<span style="display:block;font-weight:400;font-size:0.62rem;color:var(--muted)">' + esc(u.github_username) + '</span>'
+            : '') +
+        '</div>' +
         verdictBlock +
         stats +
         '<span style="display:block;border-top:1px solid var(--border);margin:6px 0 4px"></span>' +
@@ -17486,8 +17529,14 @@ const dashboardHTML = `<!DOCTYPE html>
            open tab, a never-logged-in user, and a daily driver all looked the
            same. */
         var statusCell = statusTierBadge(u);
-        var avatar = linkedAvatar(u.github_username, TABLE_AVATAR_PX,
-          u.github_username + ' — GitHub profile', 'margin-right:6px');
+        /* GitHub users keep the linked github.com avatar; OIDC users get the
+           stored provider avatar (or initials from their real name) and no
+           GitHub profile link — provider:sub is not a github.com login. */
+        var isGitHubUser = String(u.provider || 'github').toLowerCase() === 'github';
+        var avatar = isGitHubUser
+          ? linkedAvatar(u.github_username, TABLE_AVATAR_PX,
+              u.github_username + ' — GitHub profile', 'margin-right:6px')
+          : userAvatar(u, TABLE_AVATAR_PX, 'margin-right:6px');
         var isAdmin = u.github_username === 'clubanderson';
         var hivesObj = u.hives || {};
         var registryIds = new Set((_hiveRegistry || []).map(function(h) { return h.id; }));
@@ -17529,7 +17578,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var hasPendingReq = !!_provisionRequestsByUser[u.github_username];
         var nameCell = avatar +
           '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
-            '<span style="color:var(--text);font-weight:600">' + esc(u.github_username) + '</span>' +
+            '<span style="color:var(--text);font-weight:600">' + esc(userDisplayLabel(u)) + '</span>' +
             providerBadge(u) +
             (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
