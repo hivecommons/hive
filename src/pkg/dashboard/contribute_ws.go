@@ -3843,6 +3843,45 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 	)
 }
 
+// attributionPromptInstruction renders the footer instruction appended to an
+// assignment prompt (kubestellar/hive#4105). It tells the agent — up front, using
+// the hub's handshake-recorded invocation values — the exact attribution trailer
+// its PR body must end with, so agent-produced PRs carry the footer without
+// waiting for the hub-side EnsurePRAttribution reconciliation (#4088), which
+// stays in place unchanged as an idempotent safety net. Like the rest of the
+// prompt this is a pure function of non-credential metadata, so it remains safe
+// to preview in the ops tab (#2539). Returns "" when the metadata renders no
+// trailer at all (all fields unknown) — a bare prefix instruction would ask the
+// agent to produce an empty footer.
+func attributionPromptInstruction(meta ghpkg.InvocationMeta) string {
+	trailer := meta.Trailer()
+	if trailer == "" {
+		return ""
+	}
+	return " At the bottom of your PR body, include exactly this line: '" + trailer + "'."
+}
+
+// promptInvocationMeta snapshots the hub's own handshake-recorded invocation
+// metadata for a connection (never relay-self-reported values), mirroring the
+// meta built by reconcilePRAttribution so the prompt instruction (#4105) and the
+// post-merge reconciliation trailer (#4088) always agree. Caller must NOT hold
+// c.mu. Nil-safe: a nil connection yields zero metadata (and hence no footer
+// instruction).
+func promptInvocationMeta(c *ContributorConnection) ghpkg.InvocationMeta {
+	if c == nil {
+		return ghpkg.InvocationMeta{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	meta := ghpkg.InvocationMeta{
+		Agent:   c.role,
+		Backend: c.cliBackend,
+		Model:   ghpkg.RequestedModel(c.cliBackend, c.model),
+		Effort:  c.reasoningEffort,
+	}
+	return meta
+}
+
 // canonicalRepoKey maps an arbitrary, possibly client-supplied repo string to the
 // SAME canonical form the server keys everything on: FrontendRepo.Full, i.e. the
 // exact string selectTask's activeIssues guard, the failure/quarantine cooldowns,
@@ -4441,6 +4480,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	if requestedRole != "" {
 		prompt = buildRoleTaskPrompt(chosen.repoFull, chosen.number, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
 	}
+	// #4105: tell the agent up front — from the hub's own handshake-recorded
+	// invocation values — the exact attribution trailer its PR body must end
+	// with, so the footer is intentionally produced rather than appended only
+	// by the post-merge reconciliation safety net (#4088, unchanged).
+	prompt += attributionPromptInstruction(promptInvocationMeta(c))
 
 	// #2568: mint a fresh assignment generation for this task. It is stamped on the
 	// connection, shipped in task_assign below, and echoed back by the relay so a
