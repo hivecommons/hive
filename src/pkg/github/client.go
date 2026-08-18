@@ -422,6 +422,50 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger, ap
 	}
 }
 
+// TokenSource resolves a short-lived bearer token for one outbound GitHub
+// request. The returned value is deliberately never cached by Client: callers
+// such as the hosted Visual Hive broker can rotate an installation token in
+// memory without rebuilding the controller or writing the token to disk.
+type TokenSource func(context.Context) (string, error)
+
+type tokenSourceTransport struct {
+	base   http.RoundTripper
+	tokens TokenSource
+}
+
+func (transport tokenSourceTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || transport.tokens == nil {
+		return nil, ErrNoGitHubClient
+	}
+	token, err := transport.tokens(request.Context())
+	if err != nil {
+		return nil, fmt.Errorf("resolve short-lived GitHub token: %w", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("resolve short-lived GitHub token: empty token")
+	}
+	clone := request.Clone(request.Context())
+	clone.Header.Set("Authorization", "Bearer "+token)
+	return transport.base.RoundTrip(clone)
+}
+
+// NewClientWithTokenSource creates a GitHub client whose bearer is resolved
+// immediately before every request. It is the narrow client used for the
+// optional Visual Hive App token leased by the Hub: no private App key and no
+// token cache exist in the spoke, while renewal is transparent to the running
+// controller.
+func NewClientWithTokenSource(tokens TokenSource, org string, repos []string, logger *slog.Logger, apiURL string) *Client {
+	baseClient := proxyTrustingHTTPClient(mintClientTimeout)
+	base := checkpoint.Transport{Base: baseClient.Transport}
+	httpClient := &http.Client{
+		Transport: tokenSourceTransport{base: base, tokens: tokens},
+		Timeout:   mintClientTimeout,
+	}
+	client := gh.NewClient(httpClient)
+	setBaseURL(client, apiURL)
+	return &Client{client: client, org: org, repos: repos, logger: logger}
+}
+
 // setBaseURL configures a go-github client for a custom API URL (GHE).
 // If apiURL is empty or the default, no change is made.
 func setBaseURL(client *gh.Client, apiURL string) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,15 @@ type dashboardPreflightReceipt struct {
 	PermissionDigest       string                          `json:"permission_digest,omitempty"`
 	Permissions            map[string]string               `json:"permissions,omitempty"`
 	RuntimeBindingDigest   string                          `json:"runtime_binding_digest"`
+	VisualWriterID         int64                           `json:"visual_writer_id"`
+	VisualWriterLogin      string                          `json:"visual_writer_login"`
+	VisualWriterType       string                          `json:"visual_writer_type"`
+	VisualAppID            int64                           `json:"visual_app_id,omitempty"`
+	VisualInstallationID   int64                           `json:"visual_installation_id,omitempty"`
+	VisualPermissionDigest string                          `json:"visual_permission_digest,omitempty"`
+	VisualPermissions      map[string]string               `json:"visual_permissions,omitempty"`
+	VisualBindingDigest    string                          `json:"visual_runtime_binding_digest"`
+	VisualTokenExpiresAt   time.Time                       `json:"visual_token_expires_at,omitempty"`
 	QualityProbe           agent.QualityRuntimeProbeResult `json:"quality_probe"`
 	TestedAt               time.Time                       `json:"tested_at"`
 	ExpiresAt              time.Time                       `json:"expires_at"`
@@ -108,6 +118,13 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 			return nil, err
 		}
 	}
+	visualRuntime := runtimeSnapshot
+	if !legacyTestCredential && runtimeSnapshot.Mode == "app" {
+		visualRuntime, err = resolveDashboardVisualHiveRuntime(ctx, runtimeSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("hosted preflight dedicated Visual Hive App: %w", err)
+		}
+	}
 	if operator.ID <= 0 || strings.TrimSpace(operator.Login) == "" || !strings.EqualFold(operator.Type, "User") {
 		return nil, fmt.Errorf("hosted preflight requires an exact authenticated human operator")
 	}
@@ -119,8 +136,18 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 		}
 	}
 	if runtimeSnapshot.Mode == "app" {
-		if err := runtimeSnapshot.App.RequireVisualHivePermissions(); err != nil {
-			return nil, fmt.Errorf("hosted preflight GitHub App permissions: %w", err)
+		if err := runtimeSnapshot.App.RequireCoreHiveLifecyclePermissions(); err != nil {
+			return nil, fmt.Errorf("hosted preflight core Hive GitHub App permissions: %w", err)
+		}
+		if err := visualRuntime.App.RequireVisualHiveExecutionPermissions(); err != nil {
+			return nil, fmt.Errorf("hosted preflight Visual Hive GitHub App permissions: %w", err)
+		}
+		if runtimeSnapshot.App.AppID == visualRuntime.App.AppID || runtimeSnapshot.App.InstallationID == visualRuntime.App.InstallationID ||
+			!strings.EqualFold(runtimeSnapshot.Repository, visualRuntime.Repository) || runtimeSnapshot.RepositoryID != visualRuntime.RepositoryID {
+			return nil, fmt.Errorf("hosted preflight requires a distinct Visual Hive App bound to the same exact repository")
+		}
+		if visualRuntime.Brokered && !visualRuntime.ExpiresAt.After(dashboardPreflightNow().Add(dashboardPreflightValidity)) {
+			return nil, fmt.Errorf("hosted preflight Visual Hive App token lease is too close to expiry; wait for broker renewal and retry")
 		}
 	}
 	client := runtimeSnapshot.Client
@@ -199,7 +226,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 	}
 	now := dashboardPreflightNow()
 	receipt := dashboardPreflightReceipt{
-		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v2", Repository: request.Repository,
+		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v3", Repository: request.Repository,
 		RepositoryID: fmt.Sprintf("%d", metadata.GetID()), StateRoot: filepath.Clean(stateRoot), VisualHiveRef: visualRef,
 		HiveCommit: runtimeIdentity.HiveCommit, HiveExecutableSHA256: runtimeIdentity.HiveExecutableSHA256, ImageDigest: runtimeIdentity.ImageDigest,
 		VisualCommand: filepath.Clean(visualCommand), VisualArgs: append([]string(nil), visualArgs...),
@@ -211,6 +238,10 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 		AppID: runtimeSnapshot.App.AppID, InstallationID: runtimeSnapshot.App.InstallationID,
 		PermissionDigest: runtimeSnapshot.App.PermissionDigest, Permissions: runtimeSnapshot.App.Permissions,
 		RuntimeBindingDigest: runtimeSnapshot.BindingDigest, QualityProbe: qualityProbe,
+		VisualWriterID: visualRuntime.Writer.ID, VisualWriterLogin: visualRuntime.Writer.Login, VisualWriterType: visualRuntime.Writer.Type,
+		VisualAppID: visualRuntime.App.AppID, VisualInstallationID: visualRuntime.App.InstallationID,
+		VisualPermissionDigest: visualRuntime.App.PermissionDigest, VisualPermissions: visualRuntime.App.Permissions,
+		VisualBindingDigest: visualRuntime.BindingDigest, VisualTokenExpiresAt: visualRuntime.ExpiresAt,
 		TestedAt: now, ExpiresAt: now.Add(dashboardPreflightValidity),
 	}
 	receipt.BindingSHA256, err = dashboardPreflightBinding(request, receipt)
@@ -221,7 +252,7 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 		return nil, err
 	}
 	return map[string]any{
-		"schema_version": "hive.dashboard-integrated-preflight.v2", "ready": true,
+		"schema_version": "hive.dashboard-integrated-preflight.v3", "ready": true,
 		"repository": request.Repository, "repository_id": receipt.RepositoryID, "request_id": request.RequestID,
 		"hosted":     config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "",
 		"state_root": receipt.StateRoot, "storage": map[string]any{"persistent": hostedStatePathIsPersistent(receipt.StateRoot), "writable": true},
@@ -233,6 +264,9 @@ func runDashboardIntegratedPreflight(ctx context.Context, request dashboard.Inte
 		"app_writer": map[string]any{"id": receipt.WriterID, "login": receipt.WriterLogin, "type": receipt.WriterType,
 			"app_id": receipt.AppID, "installation_id": receipt.InstallationID, "permission_digest": receipt.PermissionDigest,
 			"permissions": receipt.Permissions, "runtime_binding_digest": receipt.RuntimeBindingDigest},
+		"visual_hive_app_writer": map[string]any{"id": receipt.VisualWriterID, "login": receipt.VisualWriterLogin, "type": receipt.VisualWriterType,
+			"app_id": receipt.VisualAppID, "installation_id": receipt.VisualInstallationID, "permission_digest": receipt.VisualPermissionDigest,
+			"permissions": receipt.VisualPermissions, "runtime_binding_digest": receipt.VisualBindingDigest, "token_expires_at": receipt.VisualTokenExpiresAt},
 		"quality_runtime": receipt.QualityProbe,
 		"visual_hive": map[string]any{"ref": visualRef, "command": filepath.Base(visualCommand), "args": append([]string(nil), visualArgs...),
 			"command_sha256": receipt.VisualCommandSHA256, "entrypoint_sha256": receipt.VisualEntrypointSHA256},
@@ -524,6 +558,14 @@ func dashboardPreflightBinding(request dashboard.IntegratedPreflightRequest, rec
 		InstallationID       int64    `json:"installation_id,omitempty"`
 		PermissionDigest     string   `json:"permission_digest,omitempty"`
 		RuntimeBindingDigest string   `json:"runtime_binding_digest"`
+		VisualWriterID       int64    `json:"visual_writer_id"`
+		VisualWriterLogin    string   `json:"visual_writer_login"`
+		VisualWriterType     string   `json:"visual_writer_type"`
+		VisualAppID          int64    `json:"visual_app_id,omitempty"`
+		VisualInstallationID int64    `json:"visual_installation_id,omitempty"`
+		VisualPermission     string   `json:"visual_permission_digest,omitempty"`
+		VisualBinding        string   `json:"visual_runtime_binding_digest"`
+		VisualTokenExpiry    string   `json:"visual_token_expires_at,omitempty"`
 		QualityUID           int      `json:"quality_uid"`
 		QualityHome          string   `json:"quality_home"`
 		QualityCodexHome     string   `json:"quality_codex_home"`
@@ -544,6 +586,9 @@ func dashboardPreflightBinding(request dashboard.IntegratedPreflightRequest, rec
 		OperatorID: receipt.OperatorID, OperatorLogin: strings.ToLower(strings.TrimSpace(receipt.OperatorLogin)),
 		WriterID: receipt.WriterID, WriterLogin: strings.ToLower(strings.TrimSpace(receipt.WriterLogin)), WriterType: strings.ToLower(strings.TrimSpace(receipt.WriterType)),
 		AppID: receipt.AppID, InstallationID: receipt.InstallationID, PermissionDigest: receipt.PermissionDigest, RuntimeBindingDigest: receipt.RuntimeBindingDigest,
+		VisualWriterID: receipt.VisualWriterID, VisualWriterLogin: strings.ToLower(strings.TrimSpace(receipt.VisualWriterLogin)), VisualWriterType: strings.ToLower(strings.TrimSpace(receipt.VisualWriterType)),
+		VisualAppID: receipt.VisualAppID, VisualInstallationID: receipt.VisualInstallationID, VisualPermission: receipt.VisualPermissionDigest,
+		VisualBinding: receipt.VisualBindingDigest, VisualTokenExpiry: receipt.VisualTokenExpiresAt.UTC().Format(time.RFC3339Nano),
 		QualityUID: receipt.QualityProbe.UID, QualityHome: receipt.QualityProbe.Home, QualityCodexHome: receipt.QualityProbe.CodexHome,
 		QualityBackend: receipt.QualityProbe.Backend, QualityModel: receipt.QualityProbe.Model,
 		QualityCommandSHA256: receipt.QualityProbe.CommandSHA256, QualityOutputSHA256: receipt.QualityProbe.OutputSHA256,
@@ -659,12 +704,15 @@ func loadDashboardPreflightReceipt(repository string) (dashboardPreflightReceipt
 	if stateErr != nil {
 		return dashboardPreflightReceipt{}, false, stateErr
 	}
-	if err := json.Unmarshal(data, &receipt); err != nil || receipt.SchemaVersion != "hive.dashboard-integrated-preflight-receipt.v2" ||
+	if err := json.Unmarshal(data, &receipt); err != nil || receipt.SchemaVersion != "hive.dashboard-integrated-preflight-receipt.v3" ||
 		receipt.Repository != repository || receipt.StateRoot != filepath.Clean(stateDir) || receipt.TestedAt.IsZero() || receipt.ExpiresAt.IsZero() ||
 		!validDaemonHexIdentity(receipt.HiveCommit, 40) || !validDaemonHexIdentity(receipt.HiveExecutableSHA256, 64) ||
 		!validDaemonHexIdentity(receipt.ProviderBinarySHA256, 64) || !validDaemonHexIdentity(receipt.VisualCommandSHA256, 64) ||
 		receipt.OperatorID <= 0 || strings.TrimSpace(receipt.OperatorLogin) == "" || receipt.WriterID <= 0 || strings.TrimSpace(receipt.WriterLogin) == "" ||
-		strings.TrimSpace(receipt.WriterType) == "" || !validDaemonHexIdentity(receipt.RuntimeBindingDigest, 64) || receipt.QualityProbe.UID <= 0 ||
+		strings.TrimSpace(receipt.WriterType) == "" || !validDaemonHexIdentity(receipt.RuntimeBindingDigest, 64) ||
+		receipt.VisualWriterID <= 0 || strings.TrimSpace(receipt.VisualWriterLogin) == "" || strings.TrimSpace(receipt.VisualWriterType) == "" ||
+		!validDaemonHexIdentity(receipt.VisualBindingDigest, 64) ||
+		(receipt.VisualAppID > 0 && (!validDaemonHexIdentity(receipt.VisualPermissionDigest, 64) || receipt.VisualTokenExpiresAt.IsZero())) || receipt.QualityProbe.UID <= 0 ||
 		receipt.QualityProbe.ApprovalPolicy != "never" || receipt.QualityProbe.ToolCall != "read-only-local-file" ||
 		!validDaemonHexIdentity(receipt.QualityProbe.CommandSHA256, 64) || !validDaemonHexIdentity(receipt.QualityProbe.OutputSHA256, 64) {
 		return dashboardPreflightReceipt{}, false, fmt.Errorf("hosted readiness preflight receipt is invalid")
@@ -691,7 +739,7 @@ func requireDashboardPreflightReceipt(ctx context.Context, request dashboard.Int
 	if err := json.Unmarshal(data, &receipt); err != nil {
 		return fmt.Errorf("decode hosted readiness preflight receipt: %w", err)
 	}
-	operator, runtimeSnapshot, err := dashboardPreflightSetupBindings(receipt, bindings)
+	operator, runtimeSnapshot, visualRuntime, err := dashboardPreflightSetupBindings(receipt, bindings)
 	if err != nil {
 		return err
 	}
@@ -730,20 +778,31 @@ func requireDashboardPreflightReceipt(ctx context.Context, request dashboard.Int
 		currentIdentity.VisualCommandSHA256 != receipt.VisualCommandSHA256 || currentIdentity.VisualEntrypointSHA256 != receipt.VisualEntrypointSHA256 {
 		return fmt.Errorf("hosted readiness preflight runtime identity changed after the readiness check")
 	}
-	if receipt.SchemaVersion != "hive.dashboard-integrated-preflight-receipt.v2" || receipt.Repository != request.Repository ||
+	if receipt.SchemaVersion != "hive.dashboard-integrated-preflight-receipt.v3" || receipt.Repository != request.Repository ||
 		receipt.StateRoot != filepath.Clean(stateDir) || receipt.VisualHiveRef != request.VisualHiveRef ||
 		receipt.Provider != request.Provider || receipt.BindingSHA256 != expected || receipt.TestedAt.IsZero() || !receipt.ExpiresAt.After(now) ||
 		receipt.OperatorID != operator.ID || !strings.EqualFold(receipt.OperatorLogin, operator.Login) ||
 		receipt.WriterID != runtimeSnapshot.Writer.ID || !strings.EqualFold(receipt.WriterLogin, runtimeSnapshot.Writer.Login) ||
 		!strings.EqualFold(receipt.WriterType, runtimeSnapshot.Writer.Type) || receipt.AppID != runtimeSnapshot.App.AppID ||
 		receipt.InstallationID != runtimeSnapshot.App.InstallationID || receipt.PermissionDigest != runtimeSnapshot.App.PermissionDigest ||
-		receipt.RuntimeBindingDigest != runtimeSnapshot.BindingDigest || receipt.QualityProbe.ApprovalPolicy != "never" ||
+		receipt.RuntimeBindingDigest != runtimeSnapshot.BindingDigest ||
+		receipt.VisualWriterID != visualRuntime.Writer.ID || !strings.EqualFold(receipt.VisualWriterLogin, visualRuntime.Writer.Login) ||
+		!strings.EqualFold(receipt.VisualWriterType, visualRuntime.Writer.Type) || receipt.VisualAppID != visualRuntime.App.AppID ||
+		receipt.VisualInstallationID != visualRuntime.App.InstallationID || receipt.VisualPermissionDigest != visualRuntime.App.PermissionDigest ||
+		receipt.VisualBindingDigest != visualRuntime.BindingDigest || (visualRuntime.Brokered && visualRuntime.ExpiresAt.Before(receipt.VisualTokenExpiresAt)) ||
+		receipt.QualityProbe.ApprovalPolicy != "never" ||
 		receipt.QualityProbe.ToolCall != "read-only-local-file" {
 		return fmt.Errorf("hosted readiness preflight is missing, expired, or bound to different setup inputs")
 	}
 	if runtimeSnapshot.Mode == "app" {
-		if err := runtimeSnapshot.App.RequireVisualHivePermissions(); err != nil {
-			return fmt.Errorf("hosted readiness preflight App permissions changed: %w", err)
+		if err := runtimeSnapshot.App.RequireCoreHiveLifecyclePermissions(); err != nil {
+			return fmt.Errorf("hosted readiness preflight core App permissions changed: %w", err)
+		}
+		if err := visualRuntime.App.RequireVisualHiveExecutionPermissions(); err != nil {
+			return fmt.Errorf("hosted readiness preflight Visual Hive App permissions changed: %w", err)
+		}
+		if !visualRuntime.ExpiresAt.After(now.Add(time.Minute)) {
+			return fmt.Errorf("hosted readiness preflight Visual Hive App token lease expired")
 		}
 	}
 	return nil
@@ -831,11 +890,15 @@ func readDashboardPreflightReceiptFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-func dashboardPreflightSetupBindings(receipt dashboardPreflightReceipt, bindings []any) (hivegithub.AuthenticatedUserIdentity, liveGitHubRuntimeSnapshot, error) {
+func dashboardPreflightSetupBindings(receipt dashboardPreflightReceipt, bindings []any) (hivegithub.AuthenticatedUserIdentity, liveGitHubRuntimeSnapshot, liveGitHubRuntimeSnapshot, error) {
 	if len(bindings) == 0 {
+		repositoryID, err := strconv.ParseInt(receipt.RepositoryID, 10, 64)
+		if err != nil || repositoryID <= 0 {
+			return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight repository identity is invalid")
+		}
 		operator := hivegithub.AuthenticatedUserIdentity{ID: receipt.OperatorID, Login: receipt.OperatorLogin, Type: "User"}
 		runtime := liveGitHubRuntimeSnapshot{
-			Mode: "pat", Repository: receipt.Repository, Writer: hivegithub.AuthenticatedUserIdentity{
+			Mode: "pat", Repository: receipt.Repository, RepositoryID: repositoryID, Writer: hivegithub.AuthenticatedUserIdentity{
 				ID: receipt.WriterID, Login: receipt.WriterLogin, Type: receipt.WriterType,
 			}, BindingDigest: receipt.RuntimeBindingDigest,
 		}
@@ -844,20 +907,44 @@ func dashboardPreflightSetupBindings(receipt dashboardPreflightReceipt, bindings
 			runtime.App = hivegithub.AppRuntimeIdentity{
 				AppID: receipt.AppID, InstallationID: receipt.InstallationID, BotID: receipt.WriterID,
 				BotLogin: receipt.WriterLogin, BotType: receipt.WriterType, PermissionDigest: receipt.PermissionDigest,
-				Permissions: receipt.Permissions,
+				Permissions: receipt.Permissions, Repository: receipt.Repository, RepositoryID: repositoryID,
+				BindingDigest: receipt.RuntimeBindingDigest,
 			}
 		}
-		return operator, runtime, nil
+		visual := liveGitHubRuntimeSnapshot{
+			Mode: runtime.Mode, Repository: receipt.Repository, RepositoryID: runtime.RepositoryID,
+			Writer:        hivegithub.AuthenticatedUserIdentity{ID: receipt.VisualWriterID, Login: receipt.VisualWriterLogin, Type: receipt.VisualWriterType},
+			BindingDigest: receipt.VisualBindingDigest, ExpiresAt: receipt.VisualTokenExpiresAt,
+		}
+		if receipt.VisualAppID > 0 || receipt.VisualInstallationID > 0 {
+			visual.Mode = "app"
+			visual.Brokered = true
+			visual.App = hivegithub.AppRuntimeIdentity{
+				AppID: receipt.VisualAppID, InstallationID: receipt.VisualInstallationID, BotID: receipt.VisualWriterID,
+				BotLogin: receipt.VisualWriterLogin, BotType: receipt.VisualWriterType, PermissionDigest: receipt.VisualPermissionDigest,
+				Permissions: receipt.VisualPermissions, Repository: receipt.Repository, RepositoryID: repositoryID,
+				BindingDigest: receipt.VisualBindingDigest,
+			}
+		}
+		return operator, runtime, visual, nil
 	}
-	if len(bindings) != 2 {
-		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight setup binding is incomplete")
+	if len(bindings) != 2 && len(bindings) != 3 {
+		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight setup binding is incomplete")
 	}
 	operator, operatorOK := bindings[0].(hivegithub.AuthenticatedUserIdentity)
 	runtime, runtimeOK := bindings[1].(liveGitHubRuntimeSnapshot)
 	if !operatorOK || !runtimeOK {
-		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight setup binding is invalid")
+		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight setup binding is invalid")
 	}
-	return operator, runtime, nil
+	visual := runtime
+	if len(bindings) == 3 {
+		var visualOK bool
+		visual, visualOK = bindings[2].(liveGitHubRuntimeSnapshot)
+		if !visualOK {
+			return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, errors.New("hosted readiness preflight Visual Hive App binding is invalid")
+		}
+	}
+	return operator, runtime, visual, nil
 }
 
 func hostedStatePathIsPersistent(stateDir string) bool {

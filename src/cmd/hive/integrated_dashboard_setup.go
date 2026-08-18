@@ -22,6 +22,17 @@ import (
 
 var dashboardSetupCLIRunner = runDashboardSetupCLI
 
+type dashboardVisualHiveTokenContextKey struct{}
+
+func withDashboardVisualHiveToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, dashboardVisualHiveTokenContextKey{}, strings.TrimSpace(token))
+}
+
+func dashboardVisualHiveToken(ctx context.Context) string {
+	token, _ := ctx.Value(dashboardVisualHiveTokenContextKey{}).(string)
+	return strings.TrimSpace(token)
+}
+
 func runDashboardIntegratedSetup(ctx context.Context, request dashboard.IntegratedSetupRequest, credential any) (map[string]any, error) {
 	operator, runtime, err := resolveDashboardSetupCredential(ctx, request.Repository, credential)
 	if err != nil {
@@ -31,9 +42,13 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 		return nil, errors.New("live GitHub runtime is bound to a different repository")
 	}
 	if runtime.Mode == "app" {
-		if err := runtime.App.RequireVisualHivePermissions(); err != nil {
-			return nil, fmt.Errorf("live GitHub App permissions do not permit integrated setup: %w", err)
+		if err := runtime.App.RequireCoreHiveLifecyclePermissions(); err != nil {
+			return nil, fmt.Errorf("core Hive GitHub App permissions do not permit integrated setup: %w", err)
 		}
+	}
+	visualRuntime, err := resolveDashboardVisualHiveRuntime(ctx, runtime)
+	if err != nil {
+		return nil, err
 	}
 	token, err := runtime.Token(ctx)
 	if err != nil {
@@ -42,8 +57,16 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("mint live GitHub writer token: empty token")
 	}
+	visualToken, err := visualRuntime.Token(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mint Visual Hive GitHub App token: %w", err)
+	}
+	if strings.TrimSpace(visualToken) == "" {
+		return nil, errors.New("mint Visual Hive GitHub App token: empty token")
+	}
+	ctx = withDashboardVisualHiveToken(ctx, visualToken)
 	if request.ExpectedPlanSHA256 != "" {
-		if err := requireDashboardPreflightReceipt(ctx, request, operator, runtime); err != nil {
+		if err := requireDashboardPreflightReceipt(ctx, request, operator, runtime, visualRuntime); err != nil {
 			return nil, err
 		}
 		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
@@ -76,16 +99,16 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 			return replay, replayErr
 		}
 		if recoverStale {
-			return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token, operator, runtime)
+			return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token, operator, runtime, visualRuntime)
 		}
 	}
 	planArgs := append(append([]string(nil), baseArgs...), "--plan")
 	if runtime.Mode == "app" {
-		intentDigest, digestErr := dashboardSetupIntentDigest(request, operator, runtime)
+		intentDigest, digestErr := dashboardSetupIntentDigest(request, operator, runtime, visualRuntime)
 		if digestErr != nil {
 			return nil, fmt.Errorf("bind dashboard setup plan request: %w", digestErr)
 		}
-		handoffPath, handoffErr := createDashboardOperatorHandoff(ctx, request.Repository, request.RequestID, intentDigest, operator, runtime)
+		handoffPath, handoffErr := createDashboardOperatorHandoff(ctx, request.Repository, request.RequestID, intentDigest, operator, runtime, visualRuntime)
 		if handoffErr != nil {
 			return nil, fmt.Errorf("seal dashboard setup plan operator identity: %w", handoffErr)
 		}
@@ -102,7 +125,7 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if err != nil {
 		return nil, fmt.Errorf("integrated setup plan failed: %w", err)
 	}
-	planSHA256, err := dashboardSetupPlanDigest(request, operator, runtime, planBytes)
+	planSHA256, err := dashboardSetupPlanDigest(request, operator, runtime, visualRuntime, planBytes)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize integrated setup plan: %w", err)
 	}
@@ -117,7 +140,31 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if request.ExpectedPlanSHA256 != planSHA256 {
 		return nil, fmt.Errorf("integrated setup plan changed: expected %s, current %s", request.ExpectedPlanSHA256, planSHA256)
 	}
-	return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token, operator, runtime)
+	return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token, operator, runtime, visualRuntime)
+}
+
+func resolveDashboardVisualHiveRuntime(ctx context.Context, lifecycle liveGitHubRuntimeSnapshot) (liveGitHubRuntimeSnapshot, error) {
+	if lifecycle.Mode == "pat" {
+		return lifecycle, nil
+	}
+	runtime, err := currentDashboardVisualHiveGitHubRuntime()
+	if err != nil {
+		return liveGitHubRuntimeSnapshot{}, fmt.Errorf("dedicated Visual Hive GitHub App is not ready: %w", err)
+	}
+	runtime, err = refreshLiveVisualHiveGitHubAppRuntime(ctx, runtime)
+	if err != nil {
+		return liveGitHubRuntimeSnapshot{}, err
+	}
+	if runtime.Mode != "app" || runtime.App.AppID == lifecycle.App.AppID {
+		return liveGitHubRuntimeSnapshot{}, errors.New("Visual Hive requires a distinct GitHub App runtime")
+	}
+	if !strings.EqualFold(runtime.Repository, lifecycle.Repository) || runtime.RepositoryID != lifecycle.RepositoryID {
+		return liveGitHubRuntimeSnapshot{}, errors.New("Visual Hive GitHub App is bound to a different repository")
+	}
+	if err := runtime.App.RequireVisualHiveExecutionPermissions(); err != nil {
+		return liveGitHubRuntimeSnapshot{}, fmt.Errorf("Visual Hive GitHub App permissions are invalid: %w", err)
+	}
+	return runtime, nil
 }
 
 // resolveDashboardSetupCredential keeps the production boundary strongly
@@ -149,25 +196,27 @@ func resolveDashboardSetupCredential(ctx context.Context, repository string, cre
 	}
 }
 
-func dashboardSetupIntentDigest(request dashboard.IntegratedSetupRequest, operator hivegithub.AuthenticatedUserIdentity, runtime liveGitHubRuntimeSnapshot) (string, error) {
+func dashboardSetupIntentDigest(request dashboard.IntegratedSetupRequest, operator hivegithub.AuthenticatedUserIdentity, runtime, visualRuntime liveGitHubRuntimeSnapshot) (string, error) {
 	payload := struct {
-		Schema          string `json:"schema"`
-		RequestID       string `json:"request_id"`
-		Repository      string `json:"repository"`
-		Coverage        string `json:"coverage"`
-		Automation      string `json:"automation"`
-		Provider        string `json:"provider"`
-		VisualHiveRef   string `json:"visual_hive_ref"`
-		MaxActiveIssues int    `json:"max_active_issues"`
-		OperatorID      int64  `json:"operator_id"`
-		OperatorLogin   string `json:"operator_login"`
-		RuntimeBinding  string `json:"runtime_binding"`
+		Schema               string `json:"schema"`
+		RequestID            string `json:"request_id"`
+		Repository           string `json:"repository"`
+		Coverage             string `json:"coverage"`
+		Automation           string `json:"automation"`
+		Provider             string `json:"provider"`
+		VisualHiveRef        string `json:"visual_hive_ref"`
+		MaxActiveIssues      int    `json:"max_active_issues"`
+		OperatorID           int64  `json:"operator_id"`
+		OperatorLogin        string `json:"operator_login"`
+		RuntimeBinding       string `json:"runtime_binding"`
+		VisualRuntimeBinding string `json:"visual_runtime_binding"`
 	}{
 		Schema: "hive.dashboard-integrated-setup-intent.v1", RequestID: request.RequestID,
 		Repository: strings.ToLower(strings.TrimSpace(request.Repository)), Coverage: request.Coverage,
 		Automation: request.Automation, Provider: request.Provider, VisualHiveRef: strings.ToLower(strings.TrimSpace(request.VisualHiveRef)),
 		MaxActiveIssues: dashboardSetupMaxActiveIssues(request), OperatorID: operator.ID,
 		OperatorLogin: strings.ToLower(strings.TrimSpace(operator.Login)), RuntimeBinding: runtime.BindingDigest,
+		VisualRuntimeBinding: visualRuntime.BindingDigest,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -185,6 +234,7 @@ func runDashboardSetupMutationWithRuntimeRebind(
 	token string,
 	operator hivegithub.AuthenticatedUserIdentity,
 	runtime liveGitHubRuntimeSnapshot,
+	visualRuntime liveGitHubRuntimeSnapshot,
 ) (map[string]any, error) {
 	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
 	if normalVisualRuntime != nil {
@@ -194,7 +244,7 @@ func runDashboardSetupMutationWithRuntimeRebind(
 	}
 	applyArgs := append([]string(nil), baseArgs...)
 	if runtime.Mode == "app" {
-		handoffPath, handoffErr := createDashboardOperatorHandoff(ctx, request.Repository, request.RequestID, request.ExpectedPlanSHA256, operator, runtime)
+		handoffPath, handoffErr := createDashboardOperatorHandoff(ctx, request.Repository, request.RequestID, request.ExpectedPlanSHA256, operator, runtime, visualRuntime)
 		if handoffErr != nil {
 			return nil, fmt.Errorf("seal dashboard setup operator identity: %w", handoffErr)
 		}
@@ -249,7 +299,7 @@ func dashboardSetupErrorDigest(err error) string {
 }
 
 func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, arguments ...any) (string, error) {
-	operator, runtime, planBytes, err := dashboardSetupPlanDigestArguments(request.Repository, arguments)
+	operator, runtime, visualRuntime, planBytes, err := dashboardSetupPlanDigestArguments(request.Repository, arguments)
 	if err != nil {
 		return "", err
 	}
@@ -274,7 +324,7 @@ func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, argument
 		return "", fmt.Errorf("encode canonical setup plan: %w", err)
 	}
 	binding := strings.Join([]string{
-		"hive.dashboard-integrated-setup-plan.v5",
+		"hive.dashboard-integrated-setup-plan.v6",
 		request.RequestID,
 		request.Repository,
 		request.Coverage,
@@ -288,32 +338,38 @@ func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, argument
 		strings.ToLower(strings.TrimSpace(runtime.Writer.Login)),
 		strings.ToLower(strings.TrimSpace(runtime.Writer.Type)),
 		runtime.BindingDigest,
+		strconv.FormatInt(visualRuntime.Writer.ID, 10),
+		strings.ToLower(strings.TrimSpace(visualRuntime.Writer.Login)),
+		strings.ToLower(strings.TrimSpace(visualRuntime.Writer.Type)),
+		visualRuntime.BindingDigest,
 	}, "\n") + "\n"
 	sum := sha256.Sum256(append([]byte(binding), canonicalPlan...))
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func dashboardSetupPlanDigestArguments(repository string, arguments []any) (hivegithub.AuthenticatedUserIdentity, liveGitHubRuntimeSnapshot, []byte, error) {
+func dashboardSetupPlanDigestArguments(repository string, arguments []any) (hivegithub.AuthenticatedUserIdentity, liveGitHubRuntimeSnapshot, liveGitHubRuntimeSnapshot, []byte, error) {
 	if len(arguments) == 1 {
 		planBytes, ok := arguments[0].([]byte)
 		if !ok {
-			return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest input is invalid")
+			return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest input is invalid")
 		}
 		operator := hivegithub.AuthenticatedUserIdentity{ID: 1, Login: "test-owner", Type: "User"}
-		return operator, liveGitHubRuntimeSnapshot{
+		runtime := liveGitHubRuntimeSnapshot{
 			Mode: "pat", Repository: repository, RepositoryID: 1, Writer: operator, BindingDigest: strings.Repeat("0", 64),
-		}, planBytes, nil
+		}
+		return operator, runtime, runtime, planBytes, nil
 	}
-	if len(arguments) != 3 {
-		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest binding is incomplete")
+	if len(arguments) != 4 {
+		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest binding is incomplete")
 	}
 	operator, operatorOK := arguments[0].(hivegithub.AuthenticatedUserIdentity)
 	runtime, runtimeOK := arguments[1].(liveGitHubRuntimeSnapshot)
-	planBytes, planOK := arguments[2].([]byte)
-	if !operatorOK || !runtimeOK || !planOK {
-		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest binding is invalid")
+	visualRuntime, visualRuntimeOK := arguments[2].(liveGitHubRuntimeSnapshot)
+	planBytes, planOK := arguments[3].([]byte)
+	if !operatorOK || !runtimeOK || !visualRuntimeOK || !planOK {
+		return hivegithub.AuthenticatedUserIdentity{}, liveGitHubRuntimeSnapshot{}, liveGitHubRuntimeSnapshot{}, nil, errors.New("setup plan digest binding is invalid")
 	}
-	return operator, runtime, planBytes, nil
+	return operator, runtime, visualRuntime, planBytes, nil
 }
 
 func dashboardSetupMaxActiveIssues(request dashboard.IntegratedSetupRequest) int {
@@ -378,7 +434,7 @@ func runDashboardSetupCLI(parent context.Context, args []string, token string) (
 	ctx, cancel := context.WithTimeout(parent, 20*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, args...)
-	command.Env = dashboardSetupEnvironment(token)
+	command.Env = dashboardSetupEnvironment(token, dashboardVisualHiveToken(parent))
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
@@ -397,15 +453,20 @@ func runDashboardSetupCLI(parent context.Context, args []string, token string) (
 	return result, append([]byte(nil), stdout.Bytes()...), nil
 }
 
-func dashboardSetupEnvironment(token string) []string {
+func dashboardSetupEnvironment(token string, visualTokens ...string) []string {
 	const tokenName = "HIVE_GITHUB_TOKEN"
-	result := make([]string, 0, len(os.Environ())+1)
+	const visualTokenName = "HIVE_VISUAL_HIVE_GITHUB_TOKEN"
+	result := make([]string, 0, len(os.Environ())+2)
 	for _, value := range os.Environ() {
 		name, _, found := strings.Cut(value, "=")
-		if found && strings.EqualFold(name, tokenName) {
+		if found && (strings.EqualFold(name, tokenName) || strings.EqualFold(name, visualTokenName)) {
 			continue
 		}
 		result = append(result, value)
 	}
-	return append(result, tokenName+"="+token)
+	result = append(result, tokenName+"="+token)
+	if len(visualTokens) > 0 && strings.TrimSpace(visualTokens[0]) != "" {
+		result = append(result, visualTokenName+"="+strings.TrimSpace(visualTokens[0]))
+	}
+	return result
 }

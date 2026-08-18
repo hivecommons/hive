@@ -252,7 +252,16 @@ Effective proposal capability denies GitHub/Hive/bead/wiki/graph/MCP/API/subagen
 
 ### Credentials
 
-- Hive setup/controller owns GitHub credentials and supplies the minimum scope.
+- The ordinary Hive App remains the sole repository lifecycle writer. It owns
+  branches, commits, workflows, issues, comments, pull requests, and merges.
+- Hosted Visual Hive uses a distinct optional App with only repository metadata
+  read plus Actions and commit-status write. Its private key stays on the Hub;
+  the spoke receives a short-lived repository-scoped token sealed to its
+  persistent recipient key and holds the opened token only in memory.
+- The optional App is used only for the managed evidence-workflow dispatch and
+  exact setup-authorization status. Missing, expired, under-privileged,
+  over-privileged, or cross-repository credentials stop Visual Hive without
+  stopping ordinary Hive and never fall back to the lifecycle App.
 - Visual Hive PR execution receives no write token or protected secret.
 - Specialists receive no GitHub credential and no authenticated MCP connection;
   they return proposals to the controller-owned mailbox/API.

@@ -111,14 +111,16 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := dashboardPreflightReceipt{
-		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v2", Repository: request.Repository, RepositoryID: "123",
+		SchemaVersion: "hive.dashboard-integrated-preflight-receipt.v3", Repository: request.Repository, RepositoryID: "123",
 		StateRoot: stateDir, VisualHiveRef: request.VisualHiveRef, Provider: request.Provider, ProviderBinary: "/release/codex",
 		ProviderArgs: append([]string(nil), normalized.ProviderArgs...), ProviderModel: "gpt-5.6-sol",
 		VisualCommand: "/release/node", VisualArgs: []string{"/release/visual-hive.mjs"},
 		HiveCommit: strings.Repeat("1", 40), HiveExecutableSHA256: strings.Repeat("2", 64), ProviderBinarySHA256: strings.Repeat("3", 64),
 		VisualCommandSHA256: strings.Repeat("4", 64), VisualEntrypointSHA256: strings.Repeat("5", 64), ImageDigest: "sha256:" + strings.Repeat("6", 64),
 		OperatorID: 1, OperatorLogin: "test-owner", WriterID: 1, WriterLogin: "test-owner", WriterType: "User",
-		RuntimeBindingDigest: strings.Repeat("0", 64), QualityProbe: agent.QualityRuntimeProbeResult{
+		RuntimeBindingDigest: strings.Repeat("0", 64),
+		VisualWriterID:       1, VisualWriterLogin: "test-owner", VisualWriterType: "User", VisualBindingDigest: strings.Repeat("0", 64),
+		QualityProbe: agent.QualityRuntimeProbeResult{
 			Agent: "quality", UID: 2006, Home: "/data/home", CodexHome: "/data/.codex-quality", Backend: "codex",
 			Model: "gpt-5.6-sol", CommandSHA256: strings.Repeat("7", 64), ApprovalPolicy: "never",
 			ToolCall: "read-only-local-file", OutputSHA256: strings.Repeat("8", 64),
@@ -155,6 +157,48 @@ func TestHostedPreflightReceiptBindsSetupAndExpires(t *testing.T) {
 	}
 	if err := requireDashboardPreflightReceipt(context.Background(), setup); err != nil {
 		t.Fatalf("matching hosted preflight receipt was rejected: %v", err)
+	}
+
+	coreStore := &liveGitHubRuntimeStore{}
+	core, err := coreStore.Publish(testLiveAppRuntimeSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	visualStore := &liveGitHubRuntimeStore{}
+	visualCandidate := testDedicatedVisualAppRuntimeSnapshot(core)
+	visualCandidate.ExpiresAt = time.Now().UTC().Add(2 * time.Hour)
+	visual, err := visualStore.Publish(visualCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerReceipt := receipt
+	brokerReceipt.WriterID, brokerReceipt.WriterLogin, brokerReceipt.WriterType = core.Writer.ID, core.Writer.Login, core.Writer.Type
+	brokerReceipt.AppID, brokerReceipt.InstallationID = core.App.AppID, core.App.InstallationID
+	brokerReceipt.PermissionDigest, brokerReceipt.Permissions, brokerReceipt.RuntimeBindingDigest = core.App.PermissionDigest, core.App.Permissions, core.BindingDigest
+	brokerReceipt.VisualWriterID, brokerReceipt.VisualWriterLogin, brokerReceipt.VisualWriterType = visual.Writer.ID, visual.Writer.Login, visual.Writer.Type
+	brokerReceipt.VisualAppID, brokerReceipt.VisualInstallationID = visual.App.AppID, visual.App.InstallationID
+	brokerReceipt.VisualPermissionDigest, brokerReceipt.VisualPermissions = visual.App.PermissionDigest, visual.App.Permissions
+	brokerReceipt.VisualBindingDigest, brokerReceipt.VisualTokenExpiresAt = visual.BindingDigest, visual.ExpiresAt
+	brokerReceipt.BindingSHA256, err = dashboardPreflightBinding(request, brokerReceipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveDashboardPreflightReceipt(integratedStateRoot(), brokerReceipt); err != nil {
+		t.Fatal(err)
+	}
+	renewed := visual
+	renewed.ExpiresAt = visual.ExpiresAt.Add(10 * time.Minute)
+	operator := hivegithub.AuthenticatedUserIdentity{ID: 1, Login: "test-owner", Type: "User"}
+	if err := requireDashboardPreflightReceipt(context.Background(), setup, operator, core, renewed); err != nil {
+		t.Fatalf("same brokered App with a renewed lease was rejected: %v", err)
+	}
+	shorter := visual
+	shorter.ExpiresAt = visual.ExpiresAt.Add(-time.Minute)
+	if err := requireDashboardPreflightReceipt(context.Background(), setup, operator, core, shorter); err == nil || !strings.Contains(err.Error(), "different setup inputs") {
+		t.Fatalf("brokered token lifetime rollback was accepted: %v", err)
+	}
+	if err := saveDashboardPreflightReceipt(integratedStateRoot(), receipt); err != nil {
+		t.Fatal(err)
 	}
 	tampered := receipt
 	tampered.QualityProbe.ApprovalPolicy = "on-request"

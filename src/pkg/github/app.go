@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -404,8 +406,13 @@ type InstallationInfo struct {
 	ContentsPerm   string // granted repository-contents permission
 	PullsPerm      string // granted pull-request permission
 	MetadataPerm   string // granted repository-metadata permission
-	AppID          int64
-	AppSlug        string
+	// Permissions is the complete normalized permission set returned by
+	// GitHub. Keeping the full set lets least-privilege consumers reject an
+	// unexpected grant instead of auditing only the handful of permissions
+	// ordinary Hive historically used.
+	Permissions map[string]string
+	AppID       int64
+	AppSlug     string
 }
 
 // VerifyInstallation resolves the configured installation and returns the
@@ -427,6 +434,10 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("resolving installation %d: %w", a.installationID, err)
 	}
+	permissions, err := normalizedInstallationPermissions(inst.GetPermissions())
+	if err != nil {
+		return nil, fmt.Errorf("decode installation %d permissions: %w", a.installationID, err)
+	}
 
 	return &InstallationInfo{
 		InstallationID: a.installationID,
@@ -439,9 +450,33 @@ func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, er
 		ContentsPerm:   inst.GetPermissions().GetContents(),
 		PullsPerm:      inst.GetPermissions().GetPullRequests(),
 		MetadataPerm:   inst.GetPermissions().GetMetadata(),
+		Permissions:    permissions,
 		AppID:          inst.GetAppID(),
 		AppSlug:        inst.GetAppSlug(),
 	}, nil
+}
+
+func normalizedInstallationPermissions(permissions *gh.InstallationPermissions) (map[string]string, error) {
+	if permissions == nil {
+		return map[string]string{}, nil
+	}
+	data, err := json.Marshal(permissions)
+	if err != nil {
+		return nil, err
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	for name, granted := range decoded {
+		granted = strings.ToLower(strings.TrimSpace(granted))
+		if granted == "" {
+			delete(decoded, name)
+			continue
+		}
+		decoded[name] = granted
+	}
+	return decoded, nil
 }
 
 type appTransport struct {

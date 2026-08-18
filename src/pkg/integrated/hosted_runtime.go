@@ -129,6 +129,13 @@ func reconcileHostedManagedPolicy(checkoutDir string, durable Config, current Ho
 	candidate.SetupAuthorizationInstallationID = installed.SetupAuthorizationInstallationID
 	candidate.SetupAuthorizationPermissionDigest = installed.SetupAuthorizationPermissionDigest
 	candidate.SetupAuthorizationAppBindingDigest = installed.SetupAuthorizationAppBindingDigest
+	candidate.VisualHiveGitHubWriterID = installed.VisualHiveGitHubWriterID
+	candidate.VisualHiveGitHubWriterLogin = installed.VisualHiveGitHubWriterLogin
+	candidate.VisualHiveGitHubWriterType = installed.VisualHiveGitHubWriterType
+	candidate.VisualHiveGitHubAppID = installed.VisualHiveGitHubAppID
+	candidate.VisualHiveGitHubInstallationID = installed.VisualHiveGitHubInstallationID
+	candidate.VisualHiveGitHubPermissionDigest = installed.VisualHiveGitHubPermissionDigest
+	candidate.VisualHiveGitHubAppBindingDigest = installed.VisualHiveGitHubAppBindingDigest
 	candidate.SetupAuthorizationPreviousActorID = installed.SetupAuthorizationPreviousActorID
 
 	wantWorkflow, err := GenerateHostedControllerWorkflow(hostedWorkflowConfig(candidate))

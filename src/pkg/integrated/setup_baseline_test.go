@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1309,6 +1310,46 @@ func TestSetupBaselineCaptureCancellationForceCancelsOnlyExactAcknowledgedPlaceh
 		t.Run(strconv.Itoa(cancelStatus), func(t *testing.T) {
 			testSetupBaselineCaptureCancellationForceCancelsOnlyExactAcknowledgedPlaceholder(t, cancelStatus)
 		})
+	}
+}
+
+func TestSetupBaselineCaptureCancellationUsesDedicatedActionsWriter(t *testing.T) {
+	head, correlation := strings.Repeat("a", 40), strings.Repeat("b", 64)
+	var cancelled atomic.Bool
+	var coreWrites, visualWrites atomic.Int32
+	coreServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method != http.MethodGet || request.URL.Path != "/repos/owner/repo/actions/runs/77" {
+			coreWrites.Add(1)
+			http.Error(writer, "core lifecycle credential cannot mutate Actions", http.StatusForbidden)
+			return
+		}
+		status, conclusion := "queued", ""
+		if cancelled.Load() {
+			status, conclusion = "completed", "cancelled"
+		}
+		_, _ = fmt.Fprintf(writer, `{"id":77,"display_title":%q,"path":%q,"event":"workflow_dispatch","head_sha":%q,"status":%q,"conclusion":%q,"repository":{"full_name":"owner/repo"}}`, workflowDispatchDisplayTitle(correlation), visualHiveProductionWorkflowPath, head, status, conclusion)
+	}))
+	defer coreServer.Close()
+	visualServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/repos/owner/repo/actions/runs/77/cancel" {
+			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+			return
+		}
+		visualWrites.Add(1)
+		cancelled.Store(true)
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer visualServer.Close()
+	core := hivegithub.NewClientForTest(coreServer.URL, "owner", []string{"repo"}, slog.Default())
+	visual := hivegithub.NewClientForTest(visualServer.URL, "owner", []string{"repo"}, slog.Default())
+	ctx := WithVisualHiveGitHubClients(context.Background(), visual, visual)
+	source := SetupBaselineIntent{Repository: "owner/repo", CaptureRunID: 77, CaptureHeadSHA: head, CaptureCorrelation: correlation}
+	if err := cancelSetupBaselineCaptureRunExactWithTiming(ctx, core, source, time.Millisecond, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if coreWrites.Load() != 0 || visualWrites.Load() != 1 {
+		t.Fatalf("Actions mutation routing: core=%d visual=%d", coreWrites.Load(), visualWrites.Load())
 	}
 }
 

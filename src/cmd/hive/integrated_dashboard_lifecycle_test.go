@@ -50,6 +50,8 @@ func writeDashboardLifecycleContract(t *testing.T) string {
 
 func TestDashboardLifecycleMutationRequiresCompleteAppPermissions(t *testing.T) {
 	runtimeSnapshot := testLiveAppRuntimeSnapshot()
+	runtimeSnapshot.App.Permissions["actions"] = "read"
+	runtimeSnapshot.App.Permissions["statuses"] = "read"
 	delete(runtimeSnapshot.App.Permissions, "workflows")
 	if err := requireDashboardLifecycleMutationPermissions(dashboard.IntegratedLifecycleRequest{Operation: "control-apply"}, runtimeSnapshot); err == nil || !strings.Contains(err.Error(), "workflows") {
 		t.Fatalf("mutation accepted an App without Workflows write: %v", err)
@@ -59,7 +61,7 @@ func TestDashboardLifecycleMutationRequiresCompleteAppPermissions(t *testing.T) 
 	}
 	runtimeSnapshot.App.Permissions["workflows"] = "write"
 	if err := requireDashboardLifecycleMutationPermissions(dashboard.IntegratedLifecycleRequest{Operation: "baseline-approve"}, runtimeSnapshot); err != nil {
-		t.Fatalf("complete App permission set was rejected: %v", err)
+		t.Fatalf("core App with read-only optional permissions was rejected: %v", err)
 	}
 }
 

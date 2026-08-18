@@ -148,7 +148,7 @@ func requireDashboardLifecycleMutationPermissions(request dashboard.IntegratedLi
 	if runtimeSnapshot.Mode != "app" || (request.Operation != "control-apply" && request.Operation != "baseline-approve") {
 		return nil
 	}
-	if err := runtimeSnapshot.App.RequireVisualHivePermissions(); err != nil {
+	if err := runtimeSnapshot.App.RequireCoreHiveLifecyclePermissions(); err != nil {
 		return fmt.Errorf("live GitHub App permissions do not permit integrated lifecycle mutation: %w", err)
 	}
 	return nil
@@ -262,7 +262,11 @@ func augmentDashboardIntegratedRead(result map[string]any, repository, stateDir 
 			"writer_id": receipt.WriterID, "writer_login": receipt.WriterLogin, "writer_type": receipt.WriterType,
 			"app_id": receipt.AppID, "installation_id": receipt.InstallationID, "permission_digest": receipt.PermissionDigest,
 			"runtime_binding_digest": receipt.RuntimeBindingDigest,
-			"tested_at":              receipt.TestedAt, "expires_at": receipt.ExpiresAt,
+			"visual_hive_writer_id":  receipt.VisualWriterID, "visual_hive_writer_login": receipt.VisualWriterLogin,
+			"visual_hive_writer_type": receipt.VisualWriterType, "visual_hive_app_id": receipt.VisualAppID,
+			"visual_hive_installation_id": receipt.VisualInstallationID, "visual_hive_permission_digest": receipt.VisualPermissionDigest,
+			"visual_hive_runtime_binding_digest": receipt.VisualBindingDigest, "visual_hive_token_expires_at": receipt.VisualTokenExpiresAt,
+			"tested_at": receipt.TestedAt, "expires_at": receipt.ExpiresAt,
 		}
 	} else if err != nil {
 		digest := sha256.Sum256([]byte(err.Error()))
@@ -289,6 +293,24 @@ func augmentDashboardIntegratedRead(result map[string]any, repository, stateDir 
 		}
 	} else {
 		result["github_runtime"] = map[string]any{"ready": false}
+	}
+	if runtimeSnapshot, ok := func() (liveGitHubRuntimeSnapshot, bool) {
+		store := dashboardLiveVisualHiveGitHubRuntime.Load()
+		if store == nil {
+			return liveGitHubRuntimeSnapshot{}, false
+		}
+		return store.Current()
+	}(); ok {
+		result["visual_hive_github_runtime"] = map[string]any{
+			"ready": true, "mode": runtimeSnapshot.Mode, "repository": runtimeSnapshot.Repository, "repository_id": runtimeSnapshot.RepositoryID,
+			"writer_id": runtimeSnapshot.Writer.ID, "writer_login": runtimeSnapshot.Writer.Login, "writer_type": runtimeSnapshot.Writer.Type,
+			"app_id": runtimeSnapshot.App.AppID, "installation_id": runtimeSnapshot.App.InstallationID,
+			"permission_digest": runtimeSnapshot.App.PermissionDigest, "permissions": runtimeSnapshot.App.Permissions,
+			"binding_digest": runtimeSnapshot.BindingDigest, "revision": runtimeSnapshot.Revision,
+			"brokered": runtimeSnapshot.Brokered, "expires_at": runtimeSnapshot.ExpiresAt,
+		}
+	} else {
+		result["visual_hive_github_runtime"] = map[string]any{"ready": false}
 	}
 	result["visual_runtime"] = dashboardNormalVisualRuntime.Load().RuntimeStatus()
 }
@@ -507,6 +529,10 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 				result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
 				return result, runErr
 			}
+			visualClient, visualErr := dashboardVisualHiveManagementClient(ctx, stateDir, request.Repository)
+			if visualErr != nil {
+				return nil, visualErr
+			}
 			selectionCleared := false
 			if deleteState {
 				selectionCleared, err = integrated.ForgetCurrentState(integratedStateRoot(), stateDir)
@@ -517,6 +543,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			managementResult, runErr := integrated.RunManagement(ctx, integrated.ManagementOptions{
 				Operation: integrated.OperationUninstall, StateDir: stateDir, LifecycleBeadsDirs: beadDirs,
 				DeleteState: deleteState, Cancel: request.Action == "uninstall-cancel", GitHub: runtimeSnapshot.Client,
+				VisualHiveGitHub:  visualClient,
 				GitTransportToken: token, AuthorizationActor: operator,
 			})
 			if runErr != nil && selectionCleared {
@@ -538,8 +565,12 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			}
 			return result, runErr
 		case "setup-reset":
+			visualClient, visualErr := dashboardAvailableVisualHiveClient(ctx, request.Repository)
+			if visualErr != nil {
+				return nil, visualErr
+			}
 			result, resetErr := integrated.PrepareOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
-				Repository: request.Repository, StateDir: stateDir, GitHub: runtimeSnapshot.Client, GitTransportToken: token,
+				Repository: request.Repository, StateDir: stateDir, GitHub: runtimeSnapshot.Client, VisualHiveGitHub: visualClient, GitTransportToken: token,
 				AuthorizationActor: operator, RuntimeBindingDigest: runtimeSnapshot.BindingDigest,
 			}, request.ExpectedPlanSHA256)
 			if resetErr != nil {
@@ -557,9 +588,14 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			response["request_id"] = request.RequestID
 			return response, nil
 		case "setup-reset-finalize":
+			visualClient, visualErr := dashboardVisualHiveManagementClient(ctx, stateDir, request.Repository)
+			if visualErr != nil {
+				return nil, visualErr
+			}
 			result, finalizeErr := integrated.RunManagement(ctx, integrated.ManagementOptions{
 				Operation: integrated.OperationUninstall, StateDir: stateDir, DeleteState: true,
-				GitHub: runtimeSnapshot.Client, GitTransportToken: token, AuthorizationActor: operator,
+				GitHub: runtimeSnapshot.Client, VisualHiveGitHub: visualClient,
+				GitTransportToken: token, AuthorizationActor: operator,
 			})
 			if finalizeErr != nil {
 				return nil, finalizeErr
@@ -578,6 +614,64 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			return nil, fmt.Errorf("unsupported integrated control action %q", request.Action)
 		}
 	})
+}
+
+// dashboardVisualHiveManagementClient returns the optional App only when the
+// durable installed contract explicitly binds it. A legacy single-App cleanup
+// deliberately returns nil so its base-branch authorization workflow continues
+// to verify the already-recorded core writer. A new contract fails closed when
+// its short-lived optional runtime is absent, expired, or structurally changed.
+func dashboardVisualHiveManagementClient(ctx context.Context, stateDir, repository string) (*hivegithub.Client, error) {
+	store, err := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+	if err != nil {
+		return nil, err
+	}
+	installed, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if installed.VisualHiveGitHubAppID <= 0 {
+		return nil, nil
+	}
+	runtimeSnapshot, err := currentDashboardVisualHiveGitHubRuntime()
+	if err != nil {
+		return nil, err
+	}
+	runtimeSnapshot, err = refreshLiveVisualHiveGitHubAppRuntime(ctx, runtimeSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(runtimeSnapshot.Repository, repository) || runtimeSnapshot.RepositoryID <= 0 ||
+		fmt.Sprintf("%d", runtimeSnapshot.RepositoryID) != strings.TrimSpace(installed.RepositoryID) {
+		return nil, errors.New("Visual Hive GitHub runtime does not match the installed repository")
+	}
+	return runtimeSnapshot.Client, nil
+}
+
+// dashboardAvailableVisualHiveClient returns a valid optional App runtime when
+// one is currently brokered for the selected repository. Orphaned recovery has
+// no durable local state to inspect before it reconstructs the exact managed
+// preimage, so the integrated layer decides whether this capability is
+// required from the immutable repository contract. A legacy contract can
+// therefore clean up with nil, while a dedicated-App contract fails closed if
+// the matching runtime is absent.
+func dashboardAvailableVisualHiveClient(ctx context.Context, repository string) (*hivegithub.Client, error) {
+	store := dashboardLiveVisualHiveGitHubRuntime.Load()
+	if store == nil {
+		return nil, nil
+	}
+	runtimeSnapshot, ok := store.Current()
+	if !ok {
+		return nil, nil
+	}
+	runtimeSnapshot, err := refreshLiveVisualHiveGitHubAppRuntime(ctx, runtimeSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(runtimeSnapshot.Repository, repository) || runtimeSnapshot.RepositoryID <= 0 {
+		return nil, errors.New("Visual Hive GitHub runtime does not match the orphaned setup repository")
+	}
+	return runtimeSnapshot.Client, nil
 }
 
 func dashboardSetupResetStateDir(repository string) (string, error) {

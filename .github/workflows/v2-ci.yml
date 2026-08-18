@@ -224,7 +224,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate Docker runtime prerequisites
-        run: bash v2/deploy/test_dockerfile_visual_runtime.sh
+        run: bash src/deploy/test_dockerfile_visual_runtime.sh
 
       - name: Build Docker image
         run: docker build -f src/Dockerfile -t hive:test .

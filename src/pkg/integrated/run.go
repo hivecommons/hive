@@ -25,9 +25,13 @@ import (
 )
 
 type RunOptions struct {
-	StateDir          string
-	Timeout           time.Duration
-	GitHub            *hivegithub.Client
+	StateDir string
+	Timeout  time.Duration
+	GitHub   *hivegithub.Client
+	// VisualHiveGitHub is the optional least-privilege App client used only for
+	// workflow dispatch and setup-status publication. Repository reads and all
+	// lifecycle writes remain on GitHub. Nil preserves standalone/legacy mode.
+	VisualHiveGitHub  *hivegithub.Client
 	GitTransportToken string
 	Specialists       repair.SpecialistDispatcher
 	SpecialistWorkDir string
@@ -84,6 +88,7 @@ func (e *staleWorkflowHeadError) Error() string {
 
 func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 	ctx = gittransport.WithControllerToken(ctx, options.GitTransportToken)
+	ctx = WithVisualHiveGitHubClients(ctx, options.VisualHiveGitHub, options.VisualHiveGitHub)
 	result := RunResult{SchemaVersion: "hive.production-run.v1", StartedAt: time.Now().UTC()}
 	if options.GitHub == nil || options.StateDir == "" {
 		return result, fmt.Errorf("GitHub client and persistent state directory are required")
@@ -1475,6 +1480,15 @@ func dispatchAndWaitAttempt(ctx context.Context, client *hivegithub.Client, stor
 		return selected, intent, waitErr
 	}
 	if intent.DispatchAttemptedAt.IsZero() {
+		// Credential authority is checked before the durable mutation checkpoint.
+		// A missing optional App is a clean precondition failure, never an
+		// ambiguous workflow dispatch that would require operator recovery.
+		if config.VisualHiveGitHubAppID > 0 && !hasVisualHiveWorkflowClient(ctx) {
+			return nil, intent, fmt.Errorf("dedicated Visual Hive workflow App runtime is unavailable; use managed upgrade/rebind")
+		}
+		if config.SetupAuthorizationAppID > 0 && config.VisualHiveGitHubAppID == 0 {
+			return nil, intent, fmt.Errorf("legacy App-backed Visual Hive contract requires managed upgrade/rebind before workflow dispatch")
+		}
 		if intent.RecoveryAction == string(WorkflowDispatchRecoveryRetry) {
 			recovered, discoveryErr := findCorrelatedWorkflowRun(ctx, client, owner, repo, workflowFile, ref, intent)
 			if discoveryErr != nil {
@@ -1504,7 +1518,8 @@ func dispatchAndWaitAttempt(ctx context.Context, client *hivegithub.Client, stor
 		if err := store.SaveWorkflowDispatchIntent(intent); err != nil {
 			return nil, intent, fmt.Errorf("persist workflow dispatch mutation checkpoint: %w", err)
 		}
-		dispatch, response, dispatchErr := createExactWorkflowDispatchOperation(ctx, client, owner, repo, workflowFile, ref, intent.CorrelationID, operation)
+		dispatchClient := visualHiveWorkflowClient(ctx, client)
+		dispatch, response, dispatchErr := createExactWorkflowDispatchOperation(ctx, dispatchClient, owner, repo, workflowFile, ref, intent.CorrelationID, operation)
 		if dispatchErr != nil {
 			// A GitHub response proves the mutation was rejected. A transport error
 			// is ambiguous, so retain the pre-mutation checkpoint for exact recovery.

@@ -4,7 +4,7 @@ set -euo pipefail
 DOCKERFILE="$(cd "$(dirname "$0")/.." && pwd)/Dockerfile"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ATTRIBUTES="$REPO_ROOT/.gitattributes"
-PRODUCER_SOURCE="$REPO_ROOT/v2/pkg/github/visualhive_pull_request_bundle.go"
+PRODUCER_SOURCE="$REPO_ROOT/src/pkg/github/visualhive_pull_request_bundle.go"
 
 producer_commit="$(sed -nE 's/^const VisualHivePullRequestProducerCommit = "([a-f0-9]{40})"$/\1/p' "$PRODUCER_SOURCE")"
 docker_commit="$(sed -nE 's/^ARG VISUAL_HIVE_REF=([a-f0-9]{40})$/\1/p' "$DOCKERFILE")"

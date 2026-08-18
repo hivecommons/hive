@@ -408,6 +408,10 @@ func cancelSetupBaselineCaptureRunExactBoundWithTiming(ctx context.Context, clie
 	if !ok || owner == "" || repo == "" || client == nil || client.GoGitHub() == nil || pollInterval <= 0 || timeout <= 0 {
 		return fmt.Errorf("exact setup baseline capture cancellation requires GitHub access")
 	}
+	actionClient := visualHiveWorkflowClient(ctx, client)
+	if actionClient == nil || actionClient.GoGitHub() == nil {
+		return fmt.Errorf("exact setup baseline capture cancellation requires the Visual Hive workflow writer")
+	}
 	run, response, err := client.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
 	if err != nil {
 		if response != nil && response.StatusCode == http.StatusNotFound {
@@ -421,7 +425,7 @@ func cancelSetupBaselineCaptureRunExactBoundWithTiming(ctx context.Context, clie
 	if strings.EqualFold(run.GetStatus(), "completed") {
 		return nil
 	}
-	response, err = client.GoGitHub().Actions.CancelWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
+	response, err = actionClient.GoGitHub().Actions.CancelWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
 	if response != nil && (response.StatusCode == http.StatusConflict || response.StatusCode == http.StatusInternalServerError) {
 		retryRejectedForceCancel := response.StatusCode == http.StatusInternalServerError
 		live, _, liveErr := client.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
@@ -434,9 +438,9 @@ func cancelSetupBaselineCaptureRunExactBoundWithTiming(ctx context.Context, clie
 		if strings.EqualFold(live.GetStatus(), "completed") {
 			return nil
 		}
-		response, err = forceCancelWorkflowRunByID(ctx, client, owner, repo, source.CaptureRunID)
+		response, err = forceCancelWorkflowRunByID(ctx, actionClient, owner, repo, source.CaptureRunID)
 		if retryRejectedForceCancel && err != nil && response != nil && response.StatusCode == http.StatusInternalServerError {
-			response, err = retryForceCancelExactSetupBaselinePlaceholder(ctx, client, owner, repo, source, dispatch, response, err, pollInterval)
+			response, err = retryForceCancelExactSetupBaselinePlaceholder(ctx, client, actionClient, owner, repo, source, dispatch, response, err, pollInterval)
 		}
 	}
 	if err != nil && (response == nil || response.StatusCode != http.StatusAccepted) {
@@ -464,7 +468,7 @@ func cancelSetupBaselineCaptureRunExactBoundWithTiming(ctx context.Context, clie
 	}
 }
 
-func retryForceCancelExactSetupBaselinePlaceholder(ctx context.Context, client *hivegithub.Client, owner, repo string, source SetupBaselineIntent, dispatch *WorkflowDispatchIntent, response *gh.Response, forceErr error, retryDelay time.Duration) (*gh.Response, error) {
+func retryForceCancelExactSetupBaselinePlaceholder(ctx context.Context, readClient, actionClient *hivegithub.Client, owner, repo string, source SetupBaselineIntent, dispatch *WorkflowDispatchIntent, response *gh.Response, forceErr error, retryDelay time.Duration) (*gh.Response, error) {
 	lastResponse, lastErr := response, forceErr
 	delay := retryDelay
 	for attempt := 2; attempt <= setupBaselineForceCancelAttempts; attempt++ {
@@ -475,7 +479,7 @@ func retryForceCancelExactSetupBaselinePlaceholder(ctx context.Context, client *
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
-		live, _, readErr := client.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
+		live, _, readErr := readClient.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repo, source.CaptureRunID)
 		if readErr != nil {
 			return nil, fmt.Errorf("reinspect exact obsolete setup baseline run %d before force-cancel retry: %w", source.CaptureRunID, readErr)
 		}
@@ -488,7 +492,7 @@ func retryForceCancelExactSetupBaselinePlaceholder(ctx context.Context, client *
 		if exactSetupBaselineCaptureRun(live, source) || !strings.EqualFold(live.GetStatus(), "queued") || strings.TrimSpace(live.GetConclusion()) != "" {
 			return lastResponse, fmt.Errorf("refusing to retry force-cancel because exact run %d is no longer the acknowledged queued static placeholder: %w", source.CaptureRunID, lastErr)
 		}
-		lastResponse, lastErr = forceCancelWorkflowRunByID(ctx, client, owner, repo, source.CaptureRunID)
+		lastResponse, lastErr = forceCancelWorkflowRunByID(ctx, actionClient, owner, repo, source.CaptureRunID)
 		if lastResponse == nil || lastResponse.StatusCode != http.StatusInternalServerError {
 			return lastResponse, lastErr
 		}

@@ -1108,8 +1108,13 @@ func main() {
 		}
 	}
 	liveGitHubRuntime := &liveGitHubRuntimeStore{}
+	liveVisualHiveGitHubRuntime := &liveGitHubRuntimeStore{}
 	dashboardLiveGitHubRuntime.Store(liveGitHubRuntime)
-	defer dashboardLiveGitHubRuntime.Store(nil)
+	dashboardLiveVisualHiveGitHubRuntime.Store(liveVisualHiveGitHubRuntime)
+	defer func() {
+		dashboardLiveGitHubRuntime.Store(nil)
+		dashboardLiveVisualHiveGitHubRuntime.Store(nil)
+	}()
 	if ghClient != nil && normalGitTransportToken != nil {
 		if snapshot, runtimeErr := publishConfiguredGitHubRuntime(ctx, liveGitHubRuntime, ghClient, appAuth, normalGitTransportToken, cfg); runtimeErr != nil {
 			logger.Warn("live GitHub runtime is not yet ready for Visual Hive", "error", runtimeErr)
@@ -1815,7 +1820,8 @@ func main() {
 		BeadStores: beadStores, LifecycleBeadDirs: lifecycleBeadsDirs,
 		BeadsRoot: beadsRootDir, HiveID: cfg.HiveID,
 		AgentManager: agentMgr, Scheduler: sched,
-		GitHubRuntime: liveGitHubRuntime.Current, Dashboard: dashSrv, Logger: logger,
+		GitHubRuntime: liveGitHubRuntime.Current, VisualGitHubRuntime: liveVisualHiveGitHubRuntime.Current,
+		Dashboard: dashSrv, Logger: logger,
 	})
 	if runtimeManagerErr != nil {
 		logger.Error("normal Visual Hive runtime manager unavailable", "error", runtimeManagerErr)
@@ -3256,6 +3262,20 @@ func main() {
 		// fixed interval comfortably under that 5-min threshold so every hive,
 		// regardless of ACMM level, stays fresh on the hub.
 		const heartbeatSendInterval = 2 * time.Minute
+		var visualHiveLeaseRuntime *visualHiveTokenLeaseRuntime
+		if visualHiveGitHubAppBrokerEnabled() && config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "" &&
+			strings.EqualFold(cfg.GitHub.HostLabel(), "github.com") {
+			repository := configuredGitHubRuntimeRepository(cfg)
+			if repository == "" {
+				logger.Warn("Visual Hive App token broker is dormant: no exact repository is configured")
+			} else if leaseRuntime, leaseErr := newVisualHiveTokenLeaseRuntime(cfg.HiveID, repository, liveVisualHiveGitHubRuntime, logger); leaseErr != nil {
+				// Ordinary Hive remains available. Hosted Visual Hive preflight will
+				// fail closed until persistent recipient-key storage is healthy.
+				logger.Warn("Visual Hive App token broker is dormant", "error", leaseErr)
+			} else {
+				visualHiveLeaseRuntime = leaseRuntime
+			}
+		}
 		// Publish the collect-independent identity BEFORE the loop starts, so
 		// this spoke can report liveness even if its very first collects time
 		// out. collect() below reaches api.github.com (owner-token validation,
@@ -3525,6 +3545,12 @@ func main() {
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
 				ComponentReach: tracing.ReachSnapshot(),
+				VisualHiveTokenRequest: func() *hub.VisualHiveTokenRequest {
+					if visualHiveLeaseRuntime == nil {
+						return nil
+					}
+					return visualHiveLeaseRuntime.Request()
+				}(),
 			}
 		}, heartbeatSendInterval, logger, hub.RestartSpokeCallback(func() {
 			if up := time.Since(processStartedAt); up < spokeRestartMinUptime {
@@ -4164,6 +4190,19 @@ func main() {
 			}
 			if err := dashSrv.ApplyDeliveredGateway(gw.Name, gw.Kind, gw.Endpoint, gw.DefaultModel, gw.Key); err != nil {
 				logger.Error("failed to apply hub-delivered gateway", "gateway", gw.Name, "error", err)
+			}
+		}), hub.VisualHiveTokenLeaseCallback(func(lease *hub.VisualHiveTokenLease, brokerError string) {
+			if visualHiveLeaseRuntime == nil {
+				return
+			}
+			if err := visualHiveLeaseRuntime.Apply(lease, brokerError); err != nil {
+				logger.Warn("Visual Hive GitHub App token lease was not applied", "error", err)
+				return
+			}
+			if lease != nil {
+				logger.Info("Visual Hive GitHub App token lease renewed",
+					"app_id", lease.AppID, "installation_id", lease.InstallationID,
+					"repository", lease.Repository, "expires_at", lease.ExpiresAt)
 			}
 		}))
 

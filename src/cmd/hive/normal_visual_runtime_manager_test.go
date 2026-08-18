@@ -106,7 +106,26 @@ func testInstalledNormalVisualContract(t *testing.T, stateDir string) integrated
 	}
 }
 
-func testInstalledNormalVisualAppContract(t *testing.T, stateDir string, runtime liveGitHubRuntimeSnapshot) integrated.Config {
+func testDedicatedVisualAppRuntimeSnapshot(core liveGitHubRuntimeSnapshot) liveGitHubRuntimeSnapshot {
+	visual := cloneLiveGitHubRuntime(core)
+	visual.Writer = hivegithub.AuthenticatedUserIdentity{ID: 144, Login: "visual-hive-test[bot]", Type: "Bot"}
+	visual.App = hivegithub.AppRuntimeIdentity{
+		AppID: 111, InstallationID: 122, InstallationOwner: "owner",
+		BotID: 144, BotLogin: "visual-hive-test[bot]", BotType: "Bot",
+		Repository: core.Repository, RepositoryID: core.RepositoryID,
+		Permissions: map[string]string{
+			"actions": "write", "statuses": "write", "metadata": "read",
+		},
+		PermissionDigest: strings.Repeat("d", 64), BindingDigest: strings.Repeat("e", 64),
+	}
+	visual.BindingDigest = strings.Repeat("f", 64)
+	visual.Brokered = true
+	visual.ExpiresAt = time.Now().Add(time.Hour)
+	visual.Revision = 1
+	return visual
+}
+
+func testInstalledNormalVisualAppContract(t *testing.T, stateDir string, runtime, visualRuntime liveGitHubRuntimeSnapshot) integrated.Config {
 	t.Helper()
 	installed := testInstalledNormalVisualContract(t, stateDir)
 	installed.SetupAuthorizationWriterID = runtime.Writer.ID
@@ -116,6 +135,13 @@ func testInstalledNormalVisualAppContract(t *testing.T, stateDir string, runtime
 	installed.SetupAuthorizationInstallationID = runtime.App.InstallationID
 	installed.SetupAuthorizationPermissionDigest = runtime.App.PermissionDigest
 	installed.SetupAuthorizationAppBindingDigest = runtime.App.BindingDigest
+	installed.VisualHiveGitHubWriterID = visualRuntime.Writer.ID
+	installed.VisualHiveGitHubWriterLogin = visualRuntime.Writer.Login
+	installed.VisualHiveGitHubWriterType = visualRuntime.Writer.Type
+	installed.VisualHiveGitHubAppID = visualRuntime.App.AppID
+	installed.VisualHiveGitHubInstallationID = visualRuntime.App.InstallationID
+	installed.VisualHiveGitHubPermissionDigest = visualRuntime.App.PermissionDigest
+	installed.VisualHiveGitHubAppBindingDigest = visualRuntime.App.BindingDigest
 	return installed
 }
 
@@ -139,7 +165,7 @@ func newTestNormalVisualRuntimeManager(
 			}, true
 		},
 	}
-	manager.factory = func(installed integrated.Config, _ liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
+	manager.factory = func(installed integrated.Config, _, _ liveGitHubRuntimeSnapshot) (normalVisualRuntimeInstance, error) {
 		factoryCalls.Add(1)
 		binding, err := normalVisualBinding(installed)
 		if err != nil {
@@ -397,7 +423,8 @@ func TestNormalVisualRuntimeManagerRecoversLiveAppAndRotatesWithoutDuplicateOwne
 	runtime.App.RepositoryID = 123
 	runtime.BindingDigest = strings.Repeat("c", 64)
 	runtime.Revision = 1
-	contract := &testNormalVisualContract{config: testInstalledNormalVisualAppContract(t, stateDir, runtime), exists: true}
+	visualRuntime := testDedicatedVisualAppRuntimeSnapshot(runtime)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualAppContract(t, stateDir, runtime, visualRuntime), exists: true}
 	available := false
 	manager, factoryCalls, instances := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
 		return &fakeNormalVisualRuntime{binding: binding}
@@ -406,6 +433,11 @@ func TestNormalVisualRuntimeManagerRecoversLiveAppAndRotatesWithoutDuplicateOwne
 		runtimeMu.RLock()
 		defer runtimeMu.RUnlock()
 		return cloneLiveGitHubRuntime(runtime), available
+	}
+	manager.visualGitHubRuntime = func() (liveGitHubRuntimeSnapshot, bool) {
+		runtimeMu.RLock()
+		defer runtimeMu.RUnlock()
+		return cloneLiveGitHubRuntime(visualRuntime), available
 	}
 	if active, err := manager.Ensure(context.Background()); err == nil || active || factoryCalls.Load() != 0 {
 		t.Fatalf("installed contract without App was not dormant: active=%t err=%v factory=%d", active, err, factoryCalls.Load())
@@ -442,7 +474,8 @@ func TestNormalVisualRuntimeManagerRecoversLiveAppAndRotatesWithoutDuplicateOwne
 
 	runtimeMu.Lock()
 	runtime.Revision = 3
-	runtime.App.Permissions["actions"] = "read"
+	visualRuntime.Revision = 2
+	visualRuntime.App.Permissions["actions"] = "read"
 	runtimeMu.Unlock()
 	if active, err := manager.Ensure(context.Background()); err == nil || active || !strings.Contains(err.Error(), "permission actions") {
 		t.Fatalf("permission loss was accepted: active=%t err=%v", active, err)
@@ -462,11 +495,13 @@ func TestNormalVisualRuntimeManagerRejectsDifferentLiveAppBinding(t *testing.T) 
 	runtime.App.RepositoryID = 123
 	runtime.BindingDigest = strings.Repeat("c", 64)
 	runtime.Revision = 1
-	contract := &testNormalVisualContract{config: testInstalledNormalVisualAppContract(t, t.TempDir(), runtime), exists: true}
+	visualRuntime := testDedicatedVisualAppRuntimeSnapshot(runtime)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualAppContract(t, t.TempDir(), runtime, visualRuntime), exists: true}
 	manager, factoryCalls, instances := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
 		return &fakeNormalVisualRuntime{binding: binding}
 	})
 	manager.githubRuntime = func() (liveGitHubRuntimeSnapshot, bool) { return cloneLiveGitHubRuntime(runtime), true }
+	manager.visualGitHubRuntime = func() (liveGitHubRuntimeSnapshot, bool) { return cloneLiveGitHubRuntime(visualRuntime), true }
 	if active, err := manager.Ensure(context.Background()); err != nil || !active {
 		t.Fatalf("initial activation active=%t err=%v", active, err)
 	}
@@ -492,17 +527,54 @@ func TestNormalVisualRuntimeManagerRejectsRestartWithDifferentInstalledApp(t *te
 	runtime.App.RepositoryID = 123
 	runtime.BindingDigest = strings.Repeat("c", 64)
 	runtime.Revision = 1
-	installed := testInstalledNormalVisualAppContract(t, t.TempDir(), runtime)
+	visualRuntime := testDedicatedVisualAppRuntimeSnapshot(runtime)
+	installed := testInstalledNormalVisualAppContract(t, t.TempDir(), runtime, visualRuntime)
 	installed.SetupAuthorizationInstallationID++
 	contract := &testNormalVisualContract{config: installed, exists: true}
 	manager, factoryCalls, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
 		return &fakeNormalVisualRuntime{binding: binding}
 	})
 	manager.githubRuntime = func() (liveGitHubRuntimeSnapshot, bool) { return cloneLiveGitHubRuntime(runtime), true }
+	manager.visualGitHubRuntime = func() (liveGitHubRuntimeSnapshot, bool) { return cloneLiveGitHubRuntime(visualRuntime), true }
 	if active, err := manager.Ensure(context.Background()); err == nil || active || !strings.Contains(err.Error(), "installed contract") {
 		t.Fatalf("different post-restart App binding was accepted: active=%t err=%v", active, err)
 	}
 	if factoryCalls.Load() != 0 {
 		t.Fatalf("mismatched App reached runtime factory: %d", factoryCalls.Load())
+	}
+}
+
+func TestNormalVisualRuntimeManagerStopsOnVisualLeaseExpiryAndRecoversOnce(t *testing.T) {
+	core := testLiveAppRuntimeSnapshot()
+	core.RepositoryID = 123
+	core.App.RepositoryID = 123
+	core.BindingDigest = strings.Repeat("c", 64)
+	core.Revision = 1
+	visual := testDedicatedVisualAppRuntimeSnapshot(core)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualAppContract(t, t.TempDir(), core, visual), exists: true}
+	manager, factoryCalls, instances := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	visualAvailable := true
+	manager.githubRuntime = func() (liveGitHubRuntimeSnapshot, bool) { return cloneLiveGitHubRuntime(core), true }
+	manager.visualGitHubRuntime = func() (liveGitHubRuntimeSnapshot, bool) {
+		return cloneLiveGitHubRuntime(visual), visualAvailable
+	}
+	if active, err := manager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("initial activation active=%t err=%v", active, err)
+	}
+	visualAvailable = false
+	if active, err := manager.Ensure(context.Background()); err == nil || active || !strings.Contains(err.Error(), "dedicated GitHub App runtime is unavailable") {
+		t.Fatalf("expired execution lease active=%t err=%v", active, err)
+	}
+	if len(*instances) != 1 || (*instances)[0].stops.Load() != 1 || manager.active != nil {
+		t.Fatalf("expired execution lease did not stop exactly one controller: instances=%d stops=%d active=%v", len(*instances), (*instances)[0].stops.Load(), manager.active)
+	}
+	visualAvailable = true
+	if active, err := manager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("renewed execution lease active=%t err=%v", active, err)
+	}
+	if factoryCalls.Load() != 2 || len(*instances) != 2 || (*instances)[1].starts.Load() != 1 {
+		t.Fatalf("renewed execution lease did not recover one controller: factory=%d instances=%d starts=%d", factoryCalls.Load(), len(*instances), (*instances)[1].starts.Load())
 	}
 }

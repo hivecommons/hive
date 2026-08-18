@@ -55,7 +55,7 @@ func TestResolveSetupAuthorizationIdentitiesFailsClosed(t *testing.T) {
 	}{
 		{name: "wrong repository", edit: func(options *SetupOptions) { options.AuthorizationApp.Repository = "owner/other" }},
 		{name: "wrong writer", edit: func(options *SetupOptions) { options.AuthorizationWriter.ID++ }},
-		{name: "missing actions permission", edit: func(options *SetupOptions) { options.AuthorizationApp.Permissions["actions"] = "read" }},
+		{name: "missing lifecycle permission", edit: func(options *SetupOptions) { options.AuthorizationApp.Permissions["workflows"] = "read" }},
 		{name: "empty actor", edit: func(options *SetupOptions) { options.AuthorizationActor = hivegithub.AuthenticatedUserIdentity{} }},
 		{name: "forged actor id", edit: func(options *SetupOptions) { options.AuthorizationActor.ID++ }},
 	} {
@@ -66,6 +66,99 @@ func TestResolveSetupAuthorizationIdentitiesFailsClosed(t *testing.T) {
 				t.Fatal("invalid setup identity binding was accepted")
 			}
 		})
+	}
+}
+
+func TestResolveVisualHiveGitHubIdentityRequiresSeparateLeastPrivilegeApp(t *testing.T) {
+	client := hivegithub.NewClientForTest("https://example.invalid", "", nil, slog.Default())
+	visual := setupIdentityTestVisualApp()
+	writer := hivegithub.AuthenticatedUserIdentity{ID: visual.BotID, Login: visual.BotLogin, Type: visual.BotType}
+	if err := client.SetVerifiedAppWriter(writer, visual.BindingDigest); err != nil {
+		t.Fatal(err)
+	}
+	options := SetupOptions{
+		Repository: "owner/repository", VisualHive: true, VisualHiveGitHub: client,
+		VisualHiveWriter: writer, VisualHiveApp: visual,
+	}
+	lifecycle := setupIdentityTestApp()
+	resolvedWriter, resolvedApp, err := resolveVisualHiveGitHubIdentity(context.Background(), options,
+		hivegithub.AuthenticatedUserIdentity{ID: lifecycle.BotID, Login: lifecycle.BotLogin, Type: lifecycle.BotType}, lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedWriter.ID != writer.ID || resolvedApp.AppID != visual.AppID {
+		t.Fatalf("Visual Hive App identity changed: writer=%+v app=%+v", resolvedWriter, resolvedApp)
+	}
+
+	options.VisualHiveApp.AppID = lifecycle.AppID
+	if _, _, err := resolveVisualHiveGitHubIdentity(context.Background(), options, resolvedWriter, lifecycle); err == nil || !strings.Contains(err.Error(), "not separate") {
+		t.Fatalf("shared core/Visual App was accepted: %v", err)
+	}
+}
+
+func TestResolveVisualHiveGitHubIdentityPreservesPATMode(t *testing.T) {
+	human := hivegithub.AuthenticatedUserIdentity{ID: 303, Login: "owner", Type: "User"}
+	writer, app, err := resolveVisualHiveGitHubIdentity(context.Background(), SetupOptions{VisualHive: true}, human, hivegithub.AppRuntimeIdentity{})
+	if err != nil || writer != human || app.AppID != 0 {
+		t.Fatalf("PAT Visual Hive compatibility changed: writer=%+v app=%+v err=%v", writer, app, err)
+	}
+}
+
+func TestVisualHiveStatusWriterPreservesExactLegacyCleanupBinding(t *testing.T) {
+	config := Config{
+		SetupAuthorizationWriterID: 202, SetupAuthorizationWriterLogin: "hive-test[bot]", SetupAuthorizationWriterType: "Bot",
+		SetupAuthorizationAppID: 11, SetupAuthorizationInstallationID: 22,
+	}
+	if writer, ok := visualHiveGitHubWriter(config); !ok || writer.ID != 202 || writer.Login != "hive-test[bot]" {
+		t.Fatalf("legacy single-App cleanup writer binding was lost: writer=%+v ok=%t", writer, ok)
+	}
+	config.VisualHiveGitHubWriterID = 404
+	config.VisualHiveGitHubWriterLogin = "visual-hive-test[bot]"
+	config.VisualHiveGitHubWriterType = "Bot"
+	config.VisualHiveGitHubAppID = 55
+	config.VisualHiveGitHubInstallationID = 66
+	if writer, ok := visualHiveGitHubWriter(config); !ok || writer.ID != 404 {
+		t.Fatalf("explicit Visual Hive App writer did not supersede the legacy writer: writer=%+v ok=%t", writer, ok)
+	}
+	config.VisualHiveGitHubWriterID = 0
+	config.VisualHiveGitHubWriterLogin = ""
+	config.VisualHiveGitHubWriterType = ""
+	config.VisualHiveGitHubAppID = 0
+	config.VisualHiveGitHubInstallationID = 0
+	config.SetupAuthorizationAppID = 0
+	config.SetupAuthorizationInstallationID = 0
+	config.SetupAuthorizationWriterID = 303
+	config.SetupAuthorizationWriterLogin = "owner"
+	config.SetupAuthorizationWriterType = "User"
+	if writer, ok := visualHiveGitHubWriter(config); !ok || writer.ID != 303 {
+		t.Fatalf("standalone PAT fallback changed: writer=%+v ok=%t", writer, ok)
+	}
+}
+
+func TestValidateVisualHiveGitHubTransitionAllowsPermissionRefreshButRejectsStructuralDrift(t *testing.T) {
+	visual := setupIdentityTestVisualApp()
+	writer := hivegithub.AuthenticatedUserIdentity{ID: visual.BotID, Login: visual.BotLogin, Type: visual.BotType}
+	prior := Config{
+		VisualHiveGitHubWriterID: writer.ID, VisualHiveGitHubWriterLogin: writer.Login, VisualHiveGitHubWriterType: writer.Type,
+		VisualHiveGitHubAppID: visual.AppID, VisualHiveGitHubInstallationID: visual.InstallationID,
+		VisualHiveGitHubPermissionDigest: visual.PermissionDigest, VisualHiveGitHubAppBindingDigest: visual.BindingDigest,
+	}
+
+	refreshed := visual
+	refreshed.PermissionDigest = strings.Repeat("e", 64)
+	if err := validateVisualHiveGitHubTransition(prior, writer, refreshed); err != nil {
+		t.Fatalf("same App permission refresh was rejected: %v", err)
+	}
+
+	drifted := refreshed
+	drifted.InstallationID++
+	if err := validateVisualHiveGitHubTransition(prior, writer, drifted); err == nil || !strings.Contains(err.Error(), "uninstall/rebind") {
+		t.Fatalf("different Visual Hive installation was accepted: %v", err)
+	}
+
+	legacy := Config{SetupAuthorizationAppID: 11, SetupAuthorizationInstallationID: 22}
+	if err := validateVisualHiveGitHubTransition(legacy, writer, visual); err != nil {
+		t.Fatalf("legacy contract could not acquire a dedicated App through managed setup: %v", err)
 	}
 }
 
@@ -153,7 +246,18 @@ func setupIdentityTestApp() hivegithub.AppRuntimeIdentity {
 	return hivegithub.AppRuntimeIdentity{
 		AppID: 11, InstallationID: 22, BotID: 202, BotLogin: "hive-test[bot]", BotType: "Bot",
 		Repository: "owner/repository", RepositoryID: 33,
-		Permissions:      map[string]string{"actions": "write", "workflows": "write", "checks": "read", "statuses": "write", "contents": "write", "issues": "write", "pull_requests": "write", "metadata": "read"},
+		Permissions:      map[string]string{"actions": "read", "workflows": "write", "checks": "read", "statuses": "read", "contents": "write", "issues": "write", "pull_requests": "write", "metadata": "read"},
 		PermissionDigest: strings.Repeat("a", 64), BindingDigest: strings.Repeat("b", 64),
+	}
+}
+
+func setupIdentityTestVisualApp() hivegithub.AppRuntimeIdentity {
+	return hivegithub.AppRuntimeIdentity{
+		AppID: 55, InstallationID: 66, BotID: 77, BotLogin: "visual-hive-test[bot]", BotType: "Bot",
+		Repository: "owner/repository", RepositoryID: 33,
+		Permissions: map[string]string{
+			"actions": "write", "statuses": "write", "metadata": "read",
+		},
+		PermissionDigest: strings.Repeat("c", 64), BindingDigest: strings.Repeat("d", 64),
 	}
 }

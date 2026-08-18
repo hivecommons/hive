@@ -81,6 +81,40 @@ func TestUninstallAcceptsExplicitPATBackedDashboardAuthorizer(t *testing.T) {
 	}
 }
 
+func TestManagedLifecycleRequiresDedicatedRuntimeWhenInstalledContractBindsIt(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.VisualHiveGitHubWriterID = 404
+	config.VisualHiveGitHubWriterLogin = "visual-hive-test[bot]"
+	config.VisualHiveGitHubWriterType = "Bot"
+	config.VisualHiveGitHubAppID = 55
+	config.VisualHiveGitHubInstallationID = 66
+	config.VisualHiveGitHubPermissionDigest = strings.Repeat("c", 64)
+	config.VisualHiveGitHubAppBindingDigest = strings.Repeat("d", 64)
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	}); err == nil || !strings.Contains(err.Error(), "dedicated Visual Hive GitHub App runtime") {
+		t.Fatalf("managed lifecycle did not fail before mutation without its installed optional App: %v", err)
+	}
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	if fixture.created || fixture.statusContext != "" {
+		t.Fatalf("missing optional App caused a GitHub mutation: created=%t status=%q", fixture.created, fixture.statusContext)
+	}
+}
+
 func TestUninstallWorkflowDispatchDrainRequiresExactBoundRun(t *testing.T) {
 	for _, test := range []struct {
 		name      string
