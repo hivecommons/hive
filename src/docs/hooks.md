@@ -123,6 +123,8 @@ Three steps, all in `src/pkg/hooks/transition.go` plus the emitting site:
 
 Nothing else changes — the registry, predicates, and every action work off the generic `Payload`. `installGovernorModeChangeEmitter` in `cmd/hive/hookwire.go` is the worked example: it uses an observer the governor invokes after committing *and* after releasing its mutex, which is how you emit post-commit without holding a lock across third-party work.
 
+**If the transition can also be produced by a hook action, the emitter must carry the causation.** `pause` is the case that exists today: a hook that pauses an agent would, once an `agent_paused` emitter is added, feed that transition straight back into the hooks that triggered it. The emitter must fire with `cause.Child(hookName, transition)` from the `Causation` the action received, because the depth-1 guard reads *only* `Payload.Causation`. The `paused_trigger` provenance string (`hook:<name>`) is for humans reading the audit log — do not try to reconstruct the depth by parsing it.
+
 ## Action reference
 
 ### `notify`

@@ -212,9 +212,20 @@ func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string
 		return errNoAgentManager
 	}
 	// The causation is folded into the trigger provenance so the durable pause
-	// record names the responsible hook. The agent_paused transition that this
-	// pause emits is fired by the pause path itself with cause.Child(...) —
-	// see the emitter — which is what keeps the depth-1 guard intact.
+	// record names the responsible hook ("hook:<name>").
+	//
+	// LOOP-SAFETY REQUIREMENT for whoever adds the agent_paused emitter:
+	// that emitter MUST carry this `cause` through as
+	// cause.Child(hookName, TransitionAgentPaused) on the payload it fires.
+	// Today no agent_paused emitter exists, so a hook-driven pause simply
+	// emits nothing and the pause→agent_paused→pause cycle cannot form. The
+	// moment one is added, the depth-1 guard becomes the ONLY thing stopping
+	// that cycle, and it works solely off Payload.Causation.
+	//
+	// Do NOT try to recover the depth by parsing the trigger string below.
+	// It is human-readable provenance, not a machine-readable causation
+	// chain; a pause routed through the manager loses the structured cause
+	// unless the emitter is given it directly.
 	return a.mgr.Pause(agentName, hookPauseTriggerFor(cause), reason)
 }
 
