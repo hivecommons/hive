@@ -207,6 +207,22 @@ type Governor struct {
 	budget       BudgetInfo
 	now          func() time.Time
 
+	// repoCount is how many repos this hive watches, used to scale the DEFAULT
+	// mode thresholds (#3498). Set via SetRepoCount; defaults to 1 so a
+	// governor constructed without one behaves exactly as before scaling
+	// existed.
+	repoCount int
+
+	// lastLadderWarn is the inverted ladder most recently warned about, so the
+	// warning fires on the TRANSITION rather than on every re-check. Both
+	// callers of warnIfLadderInvertedLocked run on hot paths — UpdateConfig on
+	// the ~2-minute reload loop and on every dashboard config save — so an
+	// undeduplicated warning would emit a WARN every couple of minutes forever
+	// on a hive whose ladder is inverted. Zero value means "nothing warned
+	// about"; it is cleared when the ladder becomes healthy so a later
+	// re-inversion is reported again.
+	lastLadderWarn ladderSnapshot
+
 	// resumeKicks records the last crash-recovery resume kick granted per
 	// agent (see AllowResumeKick). In-memory only: after a process restart
 	// the startup path re-kicks every eligible agent anyway, so persisting
@@ -243,6 +259,9 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 		agentReports: make(map[string]AgentReportRecord),
 		resumeKicks:  make(map[string]time.Time),
 		now:          time.Now,
+		// 1 repo = scaling is a no-op, so a governor built without a repo count
+		// ladders on the same absolute numbers it always did.
+		repoCount: 1,
 		budget: BudgetInfo{
 			ByAgent: make(map[string]int64),
 			ByModel: make(map[string]int64),
@@ -254,6 +273,9 @@ func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cfg = cfg
+	// New config can change both the explicit thresholds and the scaling curve,
+	// either of which can invert the ladder.
+	g.warnIfLadderInvertedLocked()
 }
 
 func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
@@ -365,23 +387,101 @@ func (g *Governor) computeMode(queueDepth int) Mode {
 	return ModeIdle
 }
 
+// ladderSnapshot is the set of effective thresholds an inversion warning was
+// last emitted for. Comparable by design (all scalars) so deduplication is a
+// plain equality check. warned distinguishes "warned about a ladder that
+// happens to be all zeros" from the zero value meaning "never warned".
+type ladderSnapshot struct {
+	surge     int
+	busy      int
+	quiet     int
+	repoCount int
+	warned    bool
+}
+
+// thresholdFor returns the queue depth at which modeName engages.
+//
+// The resolution — explicit config wins, otherwise a repo-count-scaled default
+// — lives in config.EffectiveThreshold so the dashboard gauge resolves the
+// identical number. A mode entry may exist only to carry cadences, with its
+// threshold unset (zero); that still falls through to the defaults, because a
+// zero threshold would put every non-empty queue in that mode.
 func (g *Governor) thresholdFor(modeName string) int {
-	// A mode entry may exist only for cadences with threshold unset
-	// (zero). Zero thresholds would make every non-empty queue surge,
-	// so fall through to the defaults in that case.
-	if mode, ok := g.cfg.Modes[modeName]; ok && mode.Threshold > 0 {
-		return mode.Threshold
+	return g.cfg.EffectiveThreshold(modeName, g.repoCount)
+}
+
+// SetRepoCount tells the governor how many repos this hive watches, so the
+// DEFAULT mode thresholds can scale with hive size (#3498).
+//
+// It is a separate setter rather than a New/UpdateConfig parameter because the
+// count comes from config.Project, not GovernorConfig, and because it changes
+// on a different schedule than the governor config does — a dashboard repo edit
+// moves it without touching governor settings. It sits beside the existing
+// ghClient.SetRepos call on the reload path for the same reason.
+//
+// A count below 1 is treated as 1: a hive with an empty repos: list still
+// watches its primary repo, and a zero would collapse every scaled threshold to
+// zero and pin the hive in SURGE.
+func (g *Governor) SetRepoCount(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if n < 1 {
+		n = 1
 	}
-	switch modeName {
-	case "surge":
-		return 20
-	case "busy":
-		return 10
-	case "quiet":
-		return 2
-	default:
-		return 0
+	if n == g.repoCount {
+		return
 	}
+	g.repoCount = n
+	g.warnIfLadderInvertedLocked()
+}
+
+// warnIfLadderInvertedLocked logs when the effective thresholds do not descend
+// surge > busy > quiet.
+//
+// computeMode tests surge first and returns on the first threshold the queue
+// exceeds, so a ladder out of order silently makes a mode unreachable. Mixing
+// sources is what newly makes this reachable: before #3498 the three thresholds
+// were either all defaults or all hand-set at comparable magnitudes, whereas an
+// explicit surge=70 now sits alongside a scaled busy=390 on a 39-repo hive, and
+// BUSY can never be entered.
+//
+// It warns rather than reorders. The inversion is produced by the operator's
+// own explicit value, and silently overriding a number they set would be a
+// worse surprise than telling them it is being ignored.
+//
+// The warning is DEDUPLICATED on the ladder it describes, because both callers
+// re-check on paths that run constantly: UpdateConfig fires on the ~2-minute
+// reload loop and on every dashboard config save, whether or not anything
+// changed. Warning each time would put a WARN in the log every couple of
+// minutes on a hive that is merely mis-tuned — and an explicit surge beside a
+// scaled busy is precisely the configuration #3498 was reported from, so that
+// would be the loudest on exactly the hives the change is meant to help. A
+// changed inversion is new information and warns again; a repaired ladder
+// clears the memo so a later re-inversion is not swallowed.
+//
+// Caller must hold g.mu.
+func (g *Governor) warnIfLadderInvertedLocked() {
+	surge := g.cfg.EffectiveThreshold("surge", g.repoCount)
+	busy := g.cfg.EffectiveThreshold("busy", g.repoCount)
+	quiet := g.cfg.EffectiveThreshold("quiet", g.repoCount)
+
+	if surge > busy && busy > quiet {
+		g.lastLadderWarn = ladderSnapshot{}
+		return
+	}
+	cur := ladderSnapshot{surge: surge, busy: busy, quiet: quiet, repoCount: g.repoCount, warned: true}
+	if cur == g.lastLadderWarn {
+		return
+	}
+	g.lastLadderWarn = cur
+	g.logger.Warn("governor mode thresholds are not in descending order — a mode is unreachable",
+		"surge", surge,
+		"busy", busy,
+		"quiet", quiet,
+		"repo_count", g.repoCount,
+		"threshold_scaling", g.cfg.ThresholdScalingMode(),
+		"hint", "an explicit governor.modes.<mode>.threshold is never scaled; set the others explicitly too, or remove it to let all three scale",
+	)
 }
 
 // updateCadences recomputes every agent's effective cadence for the current

@@ -229,7 +229,7 @@ Pin a model when reproducibility matters more than the governor's budget optimiz
 
 ## Cadences and the governor
 
-Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
+Agents don't schedule themselves. The **governor** evaluates the work queue every `eval_interval_s` (default 300s), computes a mode from queue depth — **idle → quiet → busy → surge** (default thresholds: quiet > 2, busy > 10, surge > 20 **per watched repo**; override with `threshold:`) — and kicks each agent on the cadence that mode assigns it:
 
 ```yaml
 governor:
@@ -250,6 +250,7 @@ governor:
       architect: pause     # "pause" stops kicks for this agent in this mode
 ```
 
+- **Thresholds scale with repo count.** The *default* thresholds above are per-repo bases, multiplied by `len(project.repos)` — so `surge` is 20 on a 1-repo hive and 780 on a 39-repo one, and the mode ladder means the same thing at any hive size. A `threshold:` you set yourself is used verbatim and never scaled. Tune the curve with `governor.threshold_scaling` (`linear` default, `sqrt`, `none`). See [Governor mode thresholds](governor-thresholds.md), which also covers the ACMM-pack interaction.
 - **Mutually exclusive modes.** Each per-agent, per-mode cadence is either an interval (`5m`, `2h`, `pause`) or a time-of-day schedule — never both. Config load and API writes reject mixed forms with a 400/error.
 - **Time-of-day schedules.** Use `times: ["HH:MM"]` with optional `days` (`mon` … `sun`) and a required IANA `tz`. The timezone is stored explicitly and displayed with the schedule; it does not float with the viewer.
 - **Advanced cron.** Power users can provide a constrained five-field cron expression plus `tz`. Hive evaluates these with robfig/cron and schedule-local timezone handling.

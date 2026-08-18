@@ -1095,6 +1095,10 @@ func main() {
 	// Dashboard login now requests no scope and no user write-token is persisted.
 
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
+	// Default mode thresholds scale with how many repos the hive watches, so
+	// the mode ladder means the same thing on a 3-repo hive as on a 39-repo
+	// one (#3498). Explicit thresholds are unaffected.
+	gov.SetRepoCount(cfg.Project.RepoCount())
 	sched := scheduler.New(cfg, logger)
 
 	// Wire the GitHub prompt-source resolver so agents may source their kick
@@ -2618,6 +2622,9 @@ func main() {
 		// Re-sync subsystems that cache config values
 		ghClient.SetRepos(cfg.Project.Repos)
 		gov.UpdateConfig(cfg.Governor)
+		// A reload can add or archive repos, which moves every scaled default
+		// threshold — re-sync it alongside the repo list above.
+		gov.SetRepoCount(cfg.Project.RepoCount())
 		agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 
 		// Re-apply live agent definitions (definition_source) on reload so an

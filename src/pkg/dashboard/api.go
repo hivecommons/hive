@@ -126,6 +126,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
+	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
 	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
@@ -410,6 +411,10 @@ func (s *Server) saveConfig() error {
 	}
 	if s.deps.Governor != nil {
 		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
+		// The dashboard can add or remove repos, which moves every scaled
+		// default threshold (#3498). Without this, a repo change would not
+		// reach the governor until the next process restart.
+		s.deps.Governor.SetRepoCount(s.deps.Config.Project.RepoCount())
 	}
 	return nil
 }
@@ -4002,6 +4007,18 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// The raw map above is what the operator SET (0 = unset). The governor
+	// ladders on the resolved values, which for an unset mode are the defaults
+	// scaled by repo count (#3498). Send both, so the settings panel can show
+	// the numbers actually in force next to the ones being edited instead of
+	// falling back to its own copy of the unscaled defaults.
+	repoCount := cfg.Project.RepoCount()
+	effectiveThresholds := map[string]int{
+		"quiet": cfg.Governor.EffectiveThreshold("quiet", repoCount),
+		"busy":  cfg.Governor.EffectiveThreshold("busy", repoCount),
+		"surge": cfg.Governor.EffectiveThreshold("surge", repoCount),
+	}
+
 	// Build full org/repo paths
 	org := cfg.Project.Org
 	repos := make([]string, 0, len(cfg.Project.Repos))
@@ -4037,12 +4054,15 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"agents":      agents,
-		"thresholds":  thresholds,
-		"labels":      cfg.Governor.Labels.Exempt,
-		"holdLabels":  github.HoldLabels,
-		"repos":       repos,
-		"primaryRepo": primaryRepo,
+		"agents":              agents,
+		"thresholds":          thresholds,
+		"effectiveThresholds": effectiveThresholds,
+		"thresholdScaling":    cfg.Governor.ThresholdScalingMode(),
+		"repoCount":           repoCount,
+		"labels":              cfg.Governor.Labels.Exempt,
+		"holdLabels":          github.HoldLabels,
+		"repos":               repos,
+		"primaryRepo":         primaryRepo,
 		"budget": map[string]interface{}{
 			"totalTokens": cfg.Governor.Budget.TotalTokens,
 			"periodDays":  cfg.Governor.Budget.PeriodDays,
@@ -4275,6 +4295,51 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 	}
 
 	s.auditFromRequest(r, "config_governor_thresholds", auditDetail("section", "thresholds"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// handleGovernorThresholdScaling sets how the DEFAULT mode thresholds scale
+// with the hive's repo count (#3498).
+//
+// It is a separate route from handleGovernorThresholds because that one's body
+// is a flat map[string]int of mode name to threshold; a string curve does not
+// fit it, and widening it to map[string]any would put a parse branch on the
+// path every threshold drag already takes.
+func (s *Server) handleGovernorThresholdScaling(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	var body struct {
+		ThresholdScaling string `json:"thresholdScaling"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	scaling := sanitizeString(body.ThresholdScaling)
+	// Same gate as config.validate, so the write path cannot persist a value
+	// that fails the next config load.
+	if !config.ValidateThresholdScaling(scaling) {
+		jsonError(w, "thresholdScaling must be one of: linear, sqrt, none (or empty for the default)", http.StatusBadRequest)
+		return
+	}
+	s.deps.Config.Governor.ThresholdScaling = scaling
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after threshold scaling update", "error", err)
+	}
+
+	// Changing the curve moves every scaled threshold, so re-evaluate now
+	// rather than leaving the hive on the old ladder until the next eval tick —
+	// matching what a threshold drag already does.
+	if s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_threshold_scaling", auditDetail("section", "thresholdScaling"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }

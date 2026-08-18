@@ -42,6 +42,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 ## Configuration and agents
 
 - [Agent configuration](agent-configuration.md) — agent fields, methods, models, pins, cadences, caveman mode, and ACMM packs.
+- [Governor mode thresholds](https://github.com/kubestellar/hive/blob/v4/src/docs/governor-thresholds.md) — how idle/quiet/busy/surge thresholds scale with repo count, the `threshold_scaling` curves, and when explicit thresholds win.
 - [Supervisor agent](https://github.com/kubestellar/hive/blob/v4/src/docs/supervisor.md) — supervisor policy modes, bead roles, and when to enable the orchestration lane.
 - [Custom dashboard stylesheets](https://github.com/kubestellar/hive/blob/v4/src/docs/custom-stylesheets.md) — operator-supplied CSS for the dashboard and public snapshot.
 - [Portable AgentDefinition format](https://github.com/kubestellar/hive/blob/v4/src/AGENT-DEFINITION.md) — standalone YAML schema for importing/exporting agent definitions.
