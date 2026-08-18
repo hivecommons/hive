@@ -78,6 +78,7 @@ import (
 	"github.com/kubestellar/hive/pkg/snapshot"
 	"github.com/kubestellar/hive/pkg/timeline"
 	"github.com/kubestellar/hive/pkg/tokens"
+	"github.com/kubestellar/hive/pkg/toolapprove"
 	"github.com/kubestellar/hive/pkg/tracing"
 	"github.com/kubestellar/hive/pkg/trajectory"
 	"github.com/kubestellar/hive/pkg/watsonx"
@@ -2659,6 +2660,22 @@ func main() {
 		gov.SetRepoCount(cfg.Project.RepoCount())
 		agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 
+		// Hot-reload the state-triggered hooks (RFC #4001). Recompiles only
+		// when the `hooks:` list actually changed, and swaps the registry in
+		// place so per-hook rate-limit windows SURVIVE the reload — otherwise
+		// a reload loop would be a way to clear the anti-storm ceiling.
+		buildHookDispatcher(cfg, hookSinks{
+			Notifier: notifier,
+			AgentMgr: agentMgr,
+			Timeline: dashSrv.LifecycleTimeline(),
+			Audit:    dashSrv.AgentAuditSink(),
+			// #4000 ↔ #4001 seam: an `enqueue-approval` hook lands in the same
+			// durable operator inbox the desk uses. nil when the desk is off,
+			// which keeps the dispatcher's "no approval queue wired" error
+			// honest rather than failing on every firing.
+			Approvals: newHookApprovalAdapter(approvalInbox, toolapprove.ACMMLevelOf(cfg)),
+		}, logger)
+
 		// Re-apply live agent definitions (definition_source) on reload so an
 		// operator's edit to a linked repo propagates. Merges only operator-safe
 		// fields; a fetch failure keeps each agent's baked definition. Runs before
@@ -2756,6 +2773,30 @@ func main() {
 	// did not support failed at every launch for a day, visible only as a WARN
 	// line inside the pod.
 	agentMgr.SetAuditSink(dashSrv.AgentAuditSink())
+
+	// Compile the operator's state-triggered hooks (RFC #4001). Every sink the
+	// vetted actions act through exists by this point: the notifier, the agent
+	// manager's AUDITED pause, the lifecycle timeline, and the same audit store
+	// the dashboard writes. The approvals sink stays nil until #4000's queue
+	// lands — an enqueue-approval hook then reports a wiring failure per firing
+	// rather than silently dropping the request.
+	//
+	// Fail-closed: an invalid hooks list logs and leaves the previous set
+	// armed; it never crashes the process or silently disarms working hooks.
+	buildHookDispatcher(cfg, hookSinks{
+		Notifier: notifier,
+		AgentMgr: agentMgr,
+		Timeline: dashSrv.LifecycleTimeline(),
+		Audit:    dashSrv.AgentAuditSink(),
+		// #4000 ↔ #4001 seam: see the reload site above.
+		Approvals: newHookApprovalAdapter(approvalInbox, toolapprove.ACMMLevelOf(cfg)),
+	}, logger)
+
+	// Emit the governor_mode_change transition post-commit. Installed once:
+	// the observer reads the dispatcher through hookDispatcher() on each
+	// firing, so a later config reload that arms or disarms hooks is picked up
+	// without re-registering.
+	installGovernorModeChangeEmitter(gov)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.

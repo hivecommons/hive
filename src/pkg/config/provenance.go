@@ -192,6 +192,18 @@ func enumerateFields(cfg *Config) []FieldOrigin {
 	for name := range cfg.Agents {
 		add("agents."+name, "configured")
 	}
+
+	// Hooks are a privileged surface: a hook can pause an agent or enqueue an
+	// approval, so WHICH LAYER declared one is security-relevant and must show
+	// up in the provenance report alongside every other operator field. Each
+	// hook is enumerated by name so the report answers "who registered this
+	// hook" per rule rather than only "hooks exist".
+	for _, h := range cfg.Hooks {
+		if h.Name == "" {
+			continue
+		}
+		add("hooks."+h.Name, h.On+" → "+h.Action)
+	}
 	return out
 }
 

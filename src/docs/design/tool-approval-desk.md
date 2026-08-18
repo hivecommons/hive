@@ -290,6 +290,41 @@ With `tool_approval.enabled: false` (the default) no hook is installed and
 `consultApprovalDesk` allows unconditionally: **shipping this changes nothing
 about any running hive** (`TestNoDeskInstalledIsNoOp`).
 
+### The #4001 hook seam
+
+RFC #4001 (state-triggered hooks) landed alongside this work and shipped an
+`enqueue-approval` action over a deliberately narrow `hooks.ApprovalQueue`
+interface with a **nil sink** — so an `enqueue-approval` hook reported a loud
+unwired-sink error rather than silently dropping an approval.
+
+`cmd/hive/approvalhook.go` is the adapter that interface anticipated. A
+hook-produced approval lands in the **same** durable inbox, renders in the
+**same** Approvals panel, and resolves through the **same** idempotent path as
+one produced by the sweep:
+
+```yaml
+hooks:
+  - name: needs-human
+    on: review_rejected
+    action: enqueue-approval
+    params:
+      kind: review-rejected
+      summary: A rejected review needs an operator decision
+```
+
+Two deliberate choices:
+
+- **The adapter does not re-decide.** A hook firing `enqueue-approval` has
+  already expressed the operator's intent that this transition needs a human.
+  Running it back through `Desk.Resolve` would let an auto-approve rule silently
+  discard an approval the operator explicitly asked for — and `Inbox.Enqueue`
+  refuses anything that is not `operator-approve` anyway, so re-deciding could
+  only ever *drop* the request.
+- **The idempotency key is derived from hook name + transition + scope**, not
+  the default content hash, so a flapping transition produces one pending row
+  rather than one per firing. A resolved approval is not re-raised
+  (`TestHookApprovalAdapterDoesNotReAskAfterResolution`).
+
 ### Remaining
 
 - Migrate the other three gates (plan approval, plan-from-label, queued merge)
@@ -301,5 +336,6 @@ about any running hive** (`TestNoDeskInstalledIsNoOp`).
   requirement 2 anticipates.
 - Suspend/resume an operator-approval wait as a #4002 re-entrant turn, and adopt
   stage 2's idempotency key (see §5).
-- An `on_approval_pending` hook (#4001) so an L6 policy bug alerts rather than
-  waiting.
+- An `on_approval_pending` transition so an L6 policy bug *alerts* rather than
+  waiting. The hook plumbing now exists (above); this needs the desk to emit
+  that transition when it parks an item at L6.
