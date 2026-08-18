@@ -187,6 +187,388 @@ app-level overlays, two equivalent ways:
   `src/deploy/k8s` base, so prefer the combined form to avoid re-applying the
   base twice.
 
+### Keeping your overlay private
+
+The example overlay in the public repo (`example-joe-spyre`) is a *template* —
+it carries placeholder values and is meant to be read, not applied. Your real
+overlay will contain private hostnames, OAuth client IDs, cluster domain names,
+and org names you absolutely do not want in a public fork. The right pattern is
+a **private repository that references the public hive base remotely**, so you
+get upstream updates without ever committing private values anywhere public.
+
+#### Why not fork?
+
+Forking `kubestellar/hive` as a private repo is the instinct, but it's the
+wrong tool for this job:
+
+- A fork carries the entire hive source tree — 100k+ lines of Go, frontend, CI,
+  tests. You'd be maintaining a fork of code you don't own and don't change.
+- Pulling upstream updates into a fork requires `git merge upstream/v4` — merge
+  conflicts on code you didn't write, against a codebase that moves fast.
+- Your private values (hostnames, tokens, OAuth IDs) are mixed into the same
+  repo as all that source history. One accidental visibility flip and they're
+  public.
+
+The right model is a **tiny private repo that contains *only* your values**, and
+references the public overlay by URL + pinned tag. No code you don't own, no
+merge conflicts, no accidental exposure.
+
+#### Repository layout
+
+Create a **private** repo (on your GHE instance, a private GitHub.com repo,
+GitLab, Gitea — whatever you control). The structure is minimal:
+
+```
+my-hive-config/                     ← your private repo
+├── overlays/
+│   └── spyre/                      ← one subdirectory per cluster/environment
+│       ├── kustomization.yaml      ← references the public base by URL
+│       ├── patch-configmap.yaml    ← your real org/repo/OAuth values
+│       ├── patch-pvc-storageclass.yaml
+│       └── route.yaml              ← OpenShift only; your cluster's apps domain
+└── README.md                       ← internal runbook: how to install/upgrade
+```
+
+If you have more than one cluster (staging, production, a second team's Spyre),
+add another subdirectory per cluster — each references the same upstream base:
+
+```
+overlays/
+├── spyre-staging/
+│   ├── kustomization.yaml
+│   └── patch-configmap.yaml
+└── spyre-prod/
+    ├── kustomization.yaml
+    └── patch-configmap.yaml
+```
+
+#### `kustomization.yaml` — reference the public base by URL
+
+The key insight: kustomize can fetch remote bases at `apply` time — you never
+clone the hive repo on your machine or your CI runner. Pin to a **release tag**,
+not a branch, so every apply is deterministic:
+
+```yaml
+# overlays/spyre/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # ── Public hive standalone overlay, pinned to a reviewed tag ──────────────
+  # kubectl/kustomize fetches this from GitHub at apply time — no local clone.
+  # Bump the ref= value in a git commit when you want to upgrade; review the
+  # diff of what changed upstream before you do.
+  - https://github.com/kubestellar/hive//src/deploy/kustomize/overlays/standalone?ref=v4.2.0
+  #
+  # OpenShift only: add your Route here alongside the remote base.
+  # On plain Kubernetes, use an Ingress resource instead.
+  - route.yaml
+
+# Pin the image to a specific tag for extra safety. Without this the base
+# tracks `ghcr.io/kubestellar/hive:stable`; pinning means upgrades are
+# deliberate — you bump this in git, review, and apply.
+images:
+  - name: ghcr.io/kubestellar/hive
+    newName: ghcr.io/kubestellar/hive
+    newTag: v4.2.0
+
+patches:
+  - path: patch-configmap.yaml
+  - path: patch-pvc-storageclass.yaml
+  # Uncomment ONLY if your cluster denies NET_ADMIN — see "The NET_ADMIN
+  # decision" section below. Leaving this commented keeps the fail-closed gate.
+  # - path: patch-advisory-mode.yaml
+```
+
+> **`ref=` branch vs tag:** `?ref=v4` follows the branch — every `apply` may
+> get a different manifest from the last one. `?ref=v4.2.0` is immutable —
+> the same apply produces the same result every time. For a production cluster,
+> always pin a tag; bump it deliberately in a git commit so you have a record
+> of every upgrade.
+
+> **Double slash `//` in the URL:** kustomize requires `//` to separate the
+> repo root from the path inside it. `github.com/kubestellar/hive//src/...` is
+> correct; `github.com/kubestellar/hive/src/...` (single slash) won't resolve
+> the sub-path correctly.
+
+#### `patch-configmap.yaml` — your private values
+
+Copy the annotated template from
+[`overlays/standalone/patch-configmap.yaml`](https://github.com/kubestellar/hive/blob/v4/src/deploy/kustomize/overlays/standalone/patch-configmap.yaml)
+into your private repo, then replace every `YOUR_*` placeholder with real
+values. The full patch — with comments stripped to show only what you actually
+need to swap:
+
+```yaml
+# overlays/spyre/patch-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-config
+  namespace: hive
+data:
+  hive.yaml: |
+    project:
+      org: your-github-org             # the GitHub org (or user) that owns your repos
+      repos:
+        - your-repo                    # repo(s) hive manages; list all of them
+      ai_author: your-bot-login        # GitHub login agents use when authoring PRs
+      primary_repo: your-repo          # must appear in repos: above
+
+    acmm_level: 2                      # 2 = plan+approve gating; 3 = fully autonomous
+
+    hub:
+      enabled: false                   # standalone; no hub connection
+
+    agents:
+      supervisor:
+        enabled: true
+        backend: litellm               # routes to governor.litellm.endpoint below
+        beads_dir: /data/beads/supervisor
+        clear_on_kick: true
+      scanner:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/scanner
+        clear_on_kick: true
+      architect:
+        enabled: true
+        backend: litellm
+        beads_dir: /data/beads/architect
+        clear_on_kick: false
+
+    governor:
+      eval_interval_s: 300
+      litellm:
+        endpoint: http://litellm-svc.llm-gateway.svc.cluster.local:4000
+        api_key_env: HIVE_LITELLM_API_KEY
+        default_model: your-model-name
+
+    dashboard:
+      port: 3002
+      hub_proxied: false
+      authorized_users:
+        - your-github-login:owner      # first entry is the owner; add more as :member
+
+    github:
+      oauth_client_id: YOUR_OAUTH_CLIENT_ID   # from your GitHub OAuth App settings
+```
+
+This file is safe to commit to your private repo — it has no secrets.
+OAuth client IDs are not secret (they're visible in the browser redirect URL);
+OAuth client **secrets** live in Kubernetes Secrets, not here.
+
+#### `patch-pvc-storageclass.yaml` — storage class
+
+One value to swap:
+
+```yaml
+# overlays/spyre/patch-pvc-storageclass.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hive-data
+  namespace: hive
+spec:
+  storageClassName: ocs-storagecluster-cephfs   # ← your cluster's RWX class
+```
+
+To find the right class name:
+
+```bash
+kubectl get storageclass
+# Look for one marked (default) or annotated storageclass.kubernetes.io/is-default-class=true
+# On Spyre/ODF clusters, ocs-storagecluster-cephfs is the RWX class.
+# RWO is fine for a single-replica hive (no HA needed for most standalone installs).
+```
+
+#### `route.yaml` — OpenShift only
+
+```yaml
+# overlays/spyre/route.yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hive
+  namespace: hive
+spec:
+  host: hive.apps.your-cluster.example.com    # ← your cluster's apps domain
+  port:
+    targetPort: dashboard
+  to:
+    kind: Service
+    name: hive
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+Drop `spec.host` to let OpenShift auto-generate a hostname from the cluster's
+`apps.*` wildcard. Add it back once you know the generated name and want to
+pin it. On plain Kubernetes, replace this with an `Ingress` object pointing at
+the `hive` service's `dashboard` port (3002).
+
+#### Secrets — keep them out of git entirely
+
+The `hive-secrets` Kubernetes Secret holds your GitHub App private key (PEM),
+OAuth client secret, and — if your LiteLLM endpoint requires auth — the API
+key. These must **never** be committed to git, even a private repo.
+
+**Option 1 — Manual one-time `kubectl create` (simplest)**
+
+Create the Secret directly on your cluster once, before or right after the
+first `apply -k`. Kustomize won't delete a Secret it didn't create, so this
+survives all future `apply -k` runs:
+
+```bash
+# GitHub App PEM + OAuth client secret
+kubectl create secret generic hive-secrets -n hive \
+  --from-file=github_app_private_key=./your-app.pem \
+  --from-literal=HIVE_GITHUB_OAUTH_CLIENT_SECRET=your-oauth-secret
+
+# If your LiteLLM endpoint requires an API key:
+kubectl patch secret hive-secrets -n hive \
+  --type=merge \
+  -p '{"stringData":{"HIVE_LITELLM_API_KEY":"your-litellm-key"}}'
+```
+
+To update a key later: `kubectl patch secret hive-secrets -n hive --type=merge -p '{"stringData":{"HIVE_GITHUB_OAUTH_CLIENT_SECRET":"new-secret"}}'`
+
+**Option 2 — Sealed Secrets (safe to commit, GitOps-native)**
+
+If you want everything in git (including secrets), [Bitnami Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) encrypts Secrets with the cluster's public key — only that cluster can decrypt. The encrypted `SealedSecret` object is safe to commit:
+
+```bash
+# Install controller once (cluster-admin):
+kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/latest/download/controller.yaml
+
+# Seal your secret:
+kubectl create secret generic hive-secrets -n hive \
+  --from-file=github_app_private_key=./your-app.pem \
+  --from-literal=HIVE_GITHUB_OAUTH_CLIENT_SECRET=your-oauth-secret \
+  --dry-run=client -o yaml \
+  | kubeseal --controller-namespace kube-system -o yaml \
+  > overlays/spyre/sealed-hive-secrets.yaml
+
+# Add to kustomization.yaml:
+#   resources:
+#     - sealed-hive-secrets.yaml
+git add overlays/spyre/sealed-hive-secrets.yaml
+git commit -m "Seal hive-secrets for spyre cluster"
+```
+
+**Option 3 — External Secrets Operator (fetch from Vault / AWS Secrets Manager / etc.)**
+
+If your org already uses a secrets store, add an `ExternalSecret` object to
+your overlay. The ESO controller fetches the values at sync time. The
+`ExternalSecret` manifest contains only paths/keys — no actual secrets — and is
+safe to commit.
+
+> **Do not** put a `Secret` object with `stringData:` values in your
+> `kustomization.yaml` `secretGenerator` or as a raw resource — kustomize
+> base64-encodes but does not encrypt, and the values end up in your git history.
+
+#### Day-to-day workflow
+
+**First install (from scratch):**
+
+```bash
+# Clone your private repo (not the hive repo):
+git clone git@github.example.com:your-org/my-hive-config.git
+cd my-hive-config
+
+# Preview — see every manifest kustomize will send to the cluster:
+kubectl kustomize overlays/spyre | less
+
+# Create the secret first (Option 1 above), then apply:
+kubectl apply -k overlays/spyre/
+kubectl -n hive rollout status deploy/hive     # wait for Ready
+kubectl -n hive rollout status deploy/vllm     # inference backend
+```
+
+**Changing a config value** — e.g. adding an authorized user or changing the
+LiteLLM endpoint. Edit your private repo, commit, push, re-apply — the cluster
+converges:
+
+```bash
+# Edit overlays/spyre/patch-configmap.yaml, then:
+git add overlays/spyre/patch-configmap.yaml
+git commit -m "Add jane to authorized_users"
+git push
+kubectl apply -k overlays/spyre/
+# The ConfigMap updates in-place; hive picks up the change on its next
+# config reload cycle (or force one: kubectl rollout restart deploy/hive -n hive)
+```
+
+**Upgrading hive to a new version:**
+
+```bash
+# 1. Read the release notes for the new tag:
+#    https://github.com/kubestellar/hive/releases
+
+# 2. Bump the ref in kustomization.yaml:
+#    resources:
+#      - https://github.com/kubestellar/hive//src/deploy/kustomize/overlays/standalone?ref=v4.3.0
+#    images:
+#      - name: ghcr.io/kubestellar/hive
+#        newTag: v4.3.0
+
+# 3. Preview the diff — see exactly what changes upstream:
+kubectl kustomize overlays/spyre | diff - <(kubectl kustomize overlays/spyre 2>/dev/null) || true
+# Or simpler: use `kustomize build` and diff the YAML files manually.
+
+# 4. Commit and apply:
+git add overlays/spyre/kustomization.yaml
+git commit -m "Upgrade hive to v4.3.0"
+git push
+kubectl apply -k overlays/spyre/
+kubectl -n hive rollout status deploy/hive
+```
+
+**Rolling back** — apply is idempotent; revert your commit and re-apply:
+
+```bash
+git revert HEAD   # or git checkout <old-sha> -- overlays/spyre/kustomization.yaml
+kubectl apply -k overlays/spyre/
+```
+
+#### If you cannot reach github.com at apply time (air-gapped cluster)
+
+Some clusters have no egress to the public internet at all — `kubectl apply -k
+https://github.com/...` will time out. In that case, vendor the base files into
+your private repo:
+
+```bash
+# One-time: clone the public hive repo at the pinned tag and copy just the
+# kustomize overlay you need into a vendor/ directory:
+git clone -b v4.2.0 https://github.com/kubestellar/hive.git hive-upstream
+cp -r hive-upstream/src/deploy/kustomize overlays/spyre/vendor/
+rm -rf hive-upstream
+
+# Update kustomization.yaml to use the local path instead of the URL:
+#   resources:
+#     - vendor/kustomize/overlays/standalone   ← local, no network needed
+
+git add overlays/spyre/vendor/
+git commit -m "Vendor hive kustomize base at v4.2.0"
+```
+
+To upgrade: repeat the copy step for the new tag, commit the vendor diff, and
+apply. The diff in your PR shows exactly what changed upstream — a useful forced
+review gate even when you have egress.
+
+#### Checklist: is my overlay complete?
+
+Before the first `apply -k`, verify:
+
+- [ ] `patch-configmap.yaml` — no `YOUR_*` placeholders remaining
+- [ ] `patch-pvc-storageclass.yaml` — `storageClassName` is a real class on your cluster (`kubectl get storageclass`)
+- [ ] `route.yaml` (OpenShift) — `spec.host` is reachable from your browser
+- [ ] `hive-secrets` Secret exists in the `hive` namespace (`kubectl get secret hive-secrets -n hive`)
+- [ ] GitHub OAuth App is registered at the right forge (`github.com` or your GHE host) and its callback URL is `https://<your-route>/github/callback`
+- [ ] If OpenShift: `openshift-netadmin` overlay applied by a cluster-admin, or `patch-advisory-mode.yaml` uncommented (see [The NET_ADMIN decision](#the-net_admin-decision-stated-precisely))
+- [ ] `kubectl kustomize overlays/spyre/ | grep YOUR_` returns nothing
+
 ### What you must swap
 
 Every value below is a placeholder in the overlay. Cited location is where the
