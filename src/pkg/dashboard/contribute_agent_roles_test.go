@@ -137,7 +137,7 @@ func TestAgentRoleDoubleClaimUsesContributorLease(t *testing.T) {
 
 func TestAgentRoleAuditEntryRecordsContributorAndRole(t *testing.T) {
 	hub, _ := roleTestHub(t)
-	hub.addActivity("alice", "picked up", "scanner", "copilot", "gpt", "contributor ran scanner task: issue myorg/repo#1")
+	hub.addActivity("alice", "picked up", "scanner", "copilot", "gpt", "", "contributor ran scanner task: issue myorg/repo#1")
 	entries := hub.RecentActivity()
 	if len(entries) == 0 {
 		t.Fatal("expected activity entry")

@@ -696,6 +696,36 @@ test('auth_response includes optional HIVE_AGENT_ROLE', () => {
   } finally { teardown(relay); }
 });
 
+test('auth_response includes AGENT_REASONING_EFFORT when set', () => {
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'codex', AGENT_MODEL: 'gpt-5.6-terra', AGENT_REASONING_EFFORT: 'high' } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.reasoning_effort, 'high');
+  } finally { teardown(relay); }
+});
+
+test('auth_response defaults reasoning_effort to low for agy with model', () => {
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: 'gemini-3.7-flash' } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.reasoning_effort, 'low');
+  } finally { teardown(relay); }
+});
+
+test('auth_response omits reasoning_effort when empty and not agy-with-model', () => {
+  const relay = loadRelay({ env: { AGENT_BACKEND: 'claude', AGENT_MODEL: 'claude-sonnet-5' } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge', seq: 1, nonce: 'n' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.ok(auth, 'expected auth_response');
+    assert.strictEqual(auth.reasoning_effort, undefined);
+  } finally { teardown(relay); }
+});
+
 test('relaunchCLI() leaves cliReady false until readiness is confirmed', () => {
   const relay = loadRelay({ backend: 'copilot', cliStates: ['starting'] });
   try {

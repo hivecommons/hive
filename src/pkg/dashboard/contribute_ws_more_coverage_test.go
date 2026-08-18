@@ -40,14 +40,14 @@ func TestCovK2_AddActivityAndRecent(t *testing.T) {
 	hub, _ := covK2Hub(t)
 
 	// A normal activity entry.
-	hub.addActivity("alice", "task_complete", "scanner", "claude", "sonnet", "repo#1")
+	hub.addActivity("alice", "task_complete", "scanner", "claude", "sonnet", "", "repo#1")
 
 	// joined/left dedup: a second identical joined within the debounce window is dropped.
-	hub.addActivity("bob", "joined", "reviewer", "copilot", "gpt", "")
-	hub.addActivity("bob", "joined", "reviewer", "copilot", "gpt", "")
+	hub.addActivity("bob", "joined", "reviewer", "copilot", "gpt", "", "")
+	hub.addActivity("bob", "joined", "reviewer", "copilot", "gpt", "", "")
 
 	// A left action for the same user still records.
-	hub.addActivity("bob", "left", "reviewer", "copilot", "gpt", "")
+	hub.addActivity("bob", "left", "reviewer", "copilot", "gpt", "", "")
 
 	recent := hub.RecentActivity()
 	if len(recent) == 0 {
@@ -65,7 +65,7 @@ func TestCovK2_AddActivityCap(t *testing.T) {
 	hub, _ := covK2Hub(t)
 	// Push beyond the cap; the ring buffer keeps only the tail.
 	for i := 0; i < maxActivityEntries+10; i++ {
-		hub.addActivity("u", "task_complete", "scanner", "claude", "sonnet", "t")
+		hub.addActivity("u", "task_complete", "scanner", "claude", "sonnet", "", "t")
 	}
 	if got := len(hub.RecentActivity()); got != maxActivityEntries {
 		t.Fatalf("expected activity capped at %d, got %d", maxActivityEntries, got)

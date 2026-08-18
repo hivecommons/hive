@@ -180,6 +180,7 @@ type ContributorProfile struct {
 	PreferredRole     string `json:"preferred_role,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
 	// who invited this person via a trusted invite link (issue #2598). It is
@@ -5471,15 +5472,33 @@ function ccTaskRefLink(task){
   if(!m)return '<span class="ref">'+esc(task)+'</span>';
   return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
 }
+function ccFormatLoadout(e,cls){
+  if(!e||!e.cli)return '';
+  var c=esc(e.cli);
+  var m=e.model?esc(e.model):'';
+  var ef=e.effort?esc(e.effort):'';
+  var text='via '+c+' CLI';
+  if(m){
+    text+=' with '+m;
+    if(ef){
+      text+=' ('+ef+')';
+    }
+  }
+  return ' <span class="'+(cls||'feed-cli')+'">'+text+'</span>';
+}
+window.ccFormatLoadout=ccFormatLoadout;
+window.esc=esc;
+
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
   var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
+  var loadout=ccFormatLoadout(e,'ref');
   var body;
   switch(e.action){
-    case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
+    case 'joined': body=who+' entered the hive'; break;
     case 'left': body=who+' left the hive'; break;
     case 'picked up': body=who+' grabbed'+pickedRef; break;
     case 'completed': body=who+' completed'+ref; break;
@@ -5487,7 +5506,7 @@ function ccNarrate(e){
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
     default: body=who+' '+esc(e.action)+ref;
   }
-  return {ic:ic,body:body,ts:e.timestamp};
+  return {ic:ic,body:body+loadout,ts:e.timestamp};
 }
 function ccRenderLog(){
   var el=document.getElementById('cc-log');if(!el)return;
@@ -5932,11 +5951,11 @@ const icons={joined:'🟢',left:'🔴','picked up':'🔧',completed:'✅',failed
 const verbs={joined:'entered the hive',left:'left the hive','picked up':'picked up','completed':'completed','failed':'failed'};
 const icon=icons[e.action]||'⚡';
 const verb=verbs[e.action]||e.action;
-const taskInfo=e.task?' <span class="feed-cli">'+e.task+'</span>':'';
-const role=e.role?' as <span class="feed-role">'+e.role+'</span>':'';
-const cliModel=e.cli?(e.model?' <span class="feed-cli">via '+e.cli+' CLI with '+e.model+'</span>':' <span class="feed-cli">via '+e.cli+' CLI</span>'):'';
+const taskInfo=e.task?' <span class="feed-cli">'+esc(e.task)+'</span>':'';
+const role=e.role?' as <span class="feed-role">'+esc(e.role)+'</span>':'';
+const cliModel=(window.ccFormatLoadout||ccFormatLoadout)(e,'feed-cli');
 return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
-'<div class="feed-text">'+icon+' <b>'+e.username+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
+'<div class="feed-text">'+icon+' <b>'+esc(e.username)+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'
 }).join('');
 if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
