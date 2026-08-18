@@ -1,6 +1,12 @@
-# Zero to Automation: Your First Week with Hive
+# Zero to Automation: Getting Started with Hive
 
-Hive is a team of AI agents that watch your repo and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce. Start low, watch, then let go of the wheel a little at a time.
+Hive is a team of AI agents that watch your repo and help improve it — finding bugs, adding tests, writing docs. It works in **levels (L1–L6)**: at low levels agents only *suggest* things, and at high levels they can open and even merge pull requests. You climb the levels as you build trust in what the agents produce — over **weeks per level, not days**.
+
+## The Hive Way
+
+> Hive is not a fire-and-forget automation tool. It's a trust-building process. You run each level long enough to understand what the agents are doing and agree with their judgment — then you give them a little more autonomy. Most people spend 2–3 weeks at L2, 3–4 weeks at L3, 4–5 weeks at L4. By the time you reach L5 or L6, you won't be surprised by what the agents produce — because you've been watching them work for months. **That's the point.**
+
+The biggest mistake new users make: seeing agent output and either (a) panicking, or (b) immediately jumping to a higher level to get more automation. Neither is right. Read, review, and let trust build at its own pace.
 
 ---
 
@@ -60,13 +66,13 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Be patient:** After un-pausing, wait 5–10 minutes — agents run on a heartbeat cycle. Dashboard warnings usually clear on their own after the first heartbeat.
 
-**When to move up:** When the dashboard makes sense to you and you want agents that look at your actual code. Most people start at L2 anyway.
+**When to move up:** After **about a week** — the Forge App is connected, the dashboard makes sense, and you're comfortable. Most people start at L2 anyway.
 
 ## L2 — Watch and Learn
 
 **The level:** You're trusting agents to *look at your code* — but they can only report, never change anything.
 
-**What you get:** Scanner looks for bugs in your code. Quality looks to add testing. Guide writes documentation for you. No changes, no issues filed — just a reading list on your dashboard (called **beads**).
+**What you get:** Scanner looks for bugs in your code. Quality looks to add testing. Guide writes documentation for you. No changes, no issues filed — just a reading list on your dashboard (called **beads**). You will *not* see a flood of issues and PRs here — that's the point. You're reading, not reacting.
 
 **Un-pause:** scanner, quality, guide
 **Leave paused:** supervisor — and don't touch brainstorm
@@ -79,7 +85,7 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Be patient:** After changing a cadence or un-pausing an agent, wait 5–10 minutes before assuming something is wrong.
 
-**When to move up:** When the agents are finding things you agree with more than half the time, you're ready for L3.
+**When to move up:** **2–3 weeks minimum.** Run L2 for real: read the beads, act on a few findings yourself, and understand what the agents are seeing before you give them any write access. When you agree with their findings more than half the time, you're ready for L3. Don't rush this.
 
 ## L3 — Build Your Safety Net
 
@@ -94,11 +100,11 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Using the findings:** Beads are still your reading list. Same rule: one finding per week, matched to what you already planned.
 
-**Building tests:** This is quality's big moment. Review every quality PR — even the ones you don't merge. Reading them teaches you what quality thinks is missing. Merge the good ones; these tests will later *correct the agents* and keep their output honest.
+**Building tests:** This is quality's big moment. Expect a few PRs per week — that's normal, not slow. Review every one, even the ones you don't merge. Reading them teaches you what quality thinks is missing. Merge the good ones; these tests will later *correct the agents* and keep their output honest.
 
-**Be patient:** After setting the level to 3 in the Governor config, give it a heartbeat cycle (5–10 minutes) before expecting PRs.
+**Be patient:** After setting the level to 3 in the Governor config, give it a heartbeat cycle (5–10 minutes) before expecting PRs. Then settle in — this level is measured in weeks, not days.
 
-**When to move up:** Your CI runs real tests and you're comfortably merging held PRs.
+**When to move up:** **3–4 weeks.** Let quality build your test suite. Get comfortable approving or declining hold-labeled PRs before adding more agents. Move up when your CI runs real tests and reviewing held PRs feels routine.
 
 ## L4 — Issues and Security
 
@@ -115,9 +121,9 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Shoring up security:** Sec-check's first run will probably find things. Don't panic. Read each finding, fix the critical ones yourself, and let sec-check open PRs for the medium ones — they'll have hold labels, so you approve before anything merges.
 
-**Be patient:** The first sec-check run can take a full cadence cycle to appear. Wait it out before assuming it's broken.
+**Be patient:** The first sec-check run can take a full cadence cycle to appear. And yes — you'll get more issues and PRs at this level. Still review them one by one. The hold label exists precisely so nothing merges without you.
 
-**When to move up:** You're approving most agent PRs without changes.
+**When to move up:** **4–5 weeks.** Let sec-check find and fix security issues. Watch the pattern of what agents propose. Trust is earned slowly — move up when you're approving most agent PRs without changes.
 
 ## L5 — Propose and Review
 
@@ -136,7 +142,7 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Be patient:** With everything un-paused, the dashboard gets busy. Give new agents a heartbeat cycle before judging their output.
 
-**When to move up:** Your test suite is strong enough that green CI genuinely means "safe to ship."
+**When to move up:** Only when you **genuinely trust the agents' judgment** — meaning you've reviewed enough of their PRs to know they're consistently doing the right thing, and your test suite is strong enough that green CI genuinely means "safe to ship." There's no calendar for this one.
 
 ## L6 — Full Automation
 
@@ -167,6 +173,12 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 **Days 3–4** — Read the advisory beads on your dashboard. These are the agents' findings: bugs, missing tests, doc gaps. Pick **one** finding you care about and act on it manually. This builds intuition.
 
-**Days 5–7** — When the agents' findings match what you'd find yourself, you're ready for L3. Open the **Governor config** and set the level to **3**. Now quality can open PRs (with hold labels). Review and merge the ones you like.
+**Days 5–7** — Keep reading, keep acting on one finding at a time. Resist the urge to move up — you're staying at L2 for **2–3 weeks**. That's not slow; that's the Hive Way.
 
-That's it. You now understand the full end-to-end of how Hive works — and you climbed one trust level in a week. 🐝
+## And after that?
+
+**Weeks 2–3** — Stay at L2. When the agents' findings match what you'd find yourself, open the **Governor config** and set the level to **3**. Now quality can open PRs (with hold labels). Review and merge the ones you like.
+
+**Weeks 4–7** — Live at L3 while quality builds your test suite. Then L4 for a month or so while sec-check hardens things. L5 and L6 come when trust is genuinely earned.
+
+That's it. You now understand the full end-to-end of how Hive works — one trust level at a time. 🐝
