@@ -13,7 +13,7 @@ on:
   # create-issue-on-failure below stays gated on `github.event_name == 'schedule'`,
   # so a red PR fails the check without also filing an issue.
   pull_request:
-    branches: [v2, v4]
+    branches: [v2, v4, v5]
     paths: ['src/**', '.github/workflows/v2-tests.yml']
 
 permissions:

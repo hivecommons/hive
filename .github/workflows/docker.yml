@@ -47,7 +47,13 @@ jobs:
       - name: Decide push policy
         id: decide
         env:
-          LONG_LIVED: "v2 v4 mk dd"
+          # v5 added (RFC #4000/#4001/#4002 implementation line, branched from v4
+          # HEAD): without it here the '**' trigger above still BUILDS v5 as a CI
+          # gate, but never PUSHES, so v5-latest would never exist on GHCR. This
+          # only publishes the branch-scoped v5-latest/<sha> tags — see the
+          # release_channels note below for why v5 does NOT also get
+          # stable/candidate/edge.
+          LONG_LIVED: "v2 v4 v5 mk dd"
           REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
         run: |
@@ -207,6 +213,12 @@ jobs:
           # never a rebuild, and never a manual promotion step that can be
           # forgotten. Empty on every other branch, so a feature branch can never
           # move a channel out from under production.
+          # v5 intentionally NOT added to this check: stable/candidate/edge
+          # are production deploy channels that live clusters point to, and
+          # the operator wants v4 untouched by v5's existence. v5 still gets
+          # its own v5-latest tag (from LONG_LIVED above) so it can be
+          # deployed explicitly by branch, but it must never silently retag a
+          # channel out from under v4 production traffic.
           if [ "$REF_NAME" = "v4" ]; then
             echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
           else
@@ -341,6 +353,12 @@ jobs:
           # never a rebuild, and never a manual promotion step that can be
           # forgotten. Empty on every other branch, so a feature branch can never
           # move a channel out from under production.
+          # v5 intentionally NOT added to this check: stable/candidate/edge
+          # are production deploy channels that live clusters point to, and
+          # the operator wants v4 untouched by v5's existence. v5 still gets
+          # its own v5-latest tag (from LONG_LIVED above) so it can be
+          # deployed explicitly by branch, but it must never silently retag a
+          # channel out from under v4 production traffic.
           if [ "$REF_NAME" = "v4" ]; then
             echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
           else
@@ -485,6 +503,12 @@ jobs:
           # never a rebuild, and never a manual promotion step that can be
           # forgotten. Empty on every other branch, so a feature branch can never
           # move a channel out from under production.
+          # v5 intentionally NOT added to this check: stable/candidate/edge
+          # are production deploy channels that live clusters point to, and
+          # the operator wants v4 untouched by v5's existence. v5 still gets
+          # its own v5-latest tag (from LONG_LIVED above) so it can be
+          # deployed explicitly by branch, but it must never silently retag a
+          # channel out from under v4 production traffic.
           if [ "$REF_NAME" = "v4" ]; then
             echo "release_channels=stable candidate edge" >> "$GITHUB_OUTPUT"
           else

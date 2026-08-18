@@ -2,13 +2,13 @@ name: v2 CI
 
 on:
   push:
-    branches: [v2, v4]
+    branches: [v2, v4, v5]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.
     paths: ['src/**', 'bin/**', '.github/workflows/v2-ci.yml']
   pull_request:
-    branches: [v2, v4]
+    branches: [v2, v4, v5]
     # bin/** is in scope because the gh wrapper is a SECURITY boundary (it is the
     # merge gate behind the proxy hard-deny) and previously matched no path
     # filter at all — a change to it triggered no CI whatsoever.

@@ -13,7 +13,7 @@ on:
   # that actually lands. `src/**` is the Go module directory on BOTH branches —
   # it is the module path, not the branch name — so the path filter is unchanged.
   pull_request:
-    branches: [v2, v4]
+    branches: [v2, v4, v5]
     paths: ['src/**']
 
 permissions:
