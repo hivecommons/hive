@@ -2644,8 +2644,17 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
-			if isAdmin && role != "owner" {
+			// Normalize the hive's TRUE owner to "owner" exactly like the admin:
+			// a stale demoted role in user.Hives (e.g. an access approval that
+			// overwrote the owner's grant with "read") must not hide owner-only
+			// affordances such as the Upgrade link (#4081). Persisting the repair
+			// also heals the spoke auth proxy, which forwards this stored role
+			// as X-Hive-Role.
+			if role != "owner" && (isAdmin || canonicalEqual(h.Owner, username)) {
 				role = "owner"
+				if !isAdmin {
+					user.Hives[h.ID] = "owner"
+				}
 			}
 			entry := MyHiveEntry{RegistryEntry: h, Role: role, AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
@@ -2949,6 +2958,12 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	isAdmin := isHubAdmin(username)
 	for _, h := range allHives {
 		if role, ok := user.Hives[h.ID]; ok {
+			// Same true-owner normalization as handleMyHives (#4081): the
+			// registry owner's stored role can be stale-demoted, and the owner
+			// check below is unreachable once this branch matches.
+			if role != "owner" && (isAdmin || canonicalEqual(h.Owner, username)) {
+				role = "owner"
+			}
 			hiveAccess[h.ID] = hiveAccessInfo{Role: role, Status: "accepted"}
 			continue
 		}
@@ -7791,6 +7806,17 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 	}
 
 	role, ok := user.Hives[hiveID]
+	// Elevate the hive's TRUE owner (and the hub admin) to the owner role the
+	// spoke expects, mirroring handleMyHives (#4081). Without this, a
+	// stale-demoted stored role (or a missing map entry) reaches the spoke as
+	// X-Hive-Role and its requireOwnerRole gate rejects the owner's own
+	// self-upgrade. userIsHiveOwner is scoped to THIS hive, so a user is never
+	// elevated on a hive they do not own.
+	if !ok || role != "owner" {
+		if userIsHiveOwner(username, loadSaaSHive(hiveID)) {
+			role, ok = "owner", true
+		}
+	}
 	if !ok {
 		http.Error(w, "no access to this hive", http.StatusForbidden)
 		return
