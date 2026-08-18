@@ -65,6 +65,39 @@ Read it like a weekly digest, not a to-do list. You don't have to act on everyth
 
 ---
 
+## How to read hive-filed issues
+
+Every issue a hive agent opens has the agent's name in the title — for example `[scanner] Possible nil pointer dereference in handler.go:142` or `[quality] Missing test coverage for payment flow`.
+
+When you see a new issue in your repo, check the title prefix — it tells you which agent filed it and what kind of finding it is:
+
+- `[scanner]` = bugs
+- `[quality]` = test gaps
+- `[guide]` = doc gaps
+- `[sec-check]` = security findings
+
+You can filter your issues by label or search `[scanner]` to see only scanner's findings.
+
+---
+
+## When do PRs appear? (be precise about this)
+
+New users often expect PRs at L2 (they don't happen) or are surprised when they appear at L3. Here's exactly what to expect:
+
+| Level | GitHub activity |
+|-------|-----------------|
+| **L1, L2** | No issues, no PRs. Dashboard beads only. If you see no repo activity, that's correct. |
+| **L3** | **Quality only** can open PRs. Every PR has a `hold` label — it will NOT merge until you remove the hold. No other agent opens PRs at L3. |
+| **L4** | Quality **and** sec-check can open PRs (both with hold labels). Scanner and guide file issues — not PRs. |
+| **L5** | All agents can open PRs, all with hold labels. Nothing auto-merges. You batch-review. |
+| **L6** | PRs auto-merge when CI goes green. No hold labels. Full automation. |
+
+> **The hold label is your safety net.** At every level below L6, every PR an agent opens is blocked from merging until you remove the `hold` label. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
+
+> **L6 is earned, not chased.** Auto-merge is not the goal you're optimizing for on day one — it's the outcome you earn after months of watching agents work and building confidence in their judgment. Most teams spend months at L4 and L5. That's not failure — that's the system working as designed.
+
+---
+
 > **Moving between levels:** open the **Governor config** and set the level number. Changes take a heartbeat cycle (a few minutes) to propagate.
 
 ## L1 — Getting Started
@@ -200,3 +233,21 @@ Read it like a weekly digest, not a to-do list. You don't have to act on everyth
 This is a marathon, not a sprint. The teams who get the most out of Hive are the ones who resist the urge to rush. Set long cadences. Read the advisory issue weekly. **Move up a level when it feels boring — not when it feels exciting.**
 
 That's it. You now understand the full end-to-end of how Hive works — one trust level at a time. 🐝
+
+---
+
+## Tips, Tricks & Where to Find Things
+
+**Cadences:** Click the ⚙️ gear on any agent in the left sidebar → "Edit Agent" or "Configure" → cadence settings. Set each mode (advisory, measured, holdgated, full) to 12h or 1d. Do this for every agent you un-pause. You can come back and shorten later.
+
+**Agent prompts:** Each agent has a policy template — the instructions it follows. Click the agent in the sidebar → gear icon → "Edit Policy" (or "Edit Prompt"). You can customize what the agent focuses on. Example: tell quality to focus only on your `/api` package, not your `/frontend` package. Be specific — agents follow instructions literally.
+
+**Filtering which issues agents can work on:** In your hive config (Governor settings), you can set issue label filters — agents will only pick up issues that match specific labels. This is how you keep agents from running off and fixing things you didn't want touched. Add a label like `hive-ok` to issues you're comfortable with agents acting on. Set the filter to `hive-ok`. Now agents only work issues you've explicitly blessed.
+
+**Reading the advisory issue:** Search your issues for `[hive]` or look for a pinned issue titled something like "Hive Advisory" or "Hive Tracking". This is your hive's running log. Bookmark it.
+
+**Pointing other AI tools at hive findings:** Copy the advisory issue URL and paste it into Claude, Copilot, or Cursor: *"Summarize the most critical findings from this issue and suggest which three I should act on this week."* Your hive's findings + your preferred AI = faster triage.
+
+**Checking what agents are doing:** Live Activity feed (dashboard → Activity tab) shows what's running right now. If an agent looks stuck, check cadence — it may just not be scheduled to run yet.
+
+**If something looks wrong:** Wait 10 minutes. Most issues are just agents waiting for their next heartbeat cycle. If it's still wrong after 10 minutes, check the advisory issue for error messages before filing a support request.
