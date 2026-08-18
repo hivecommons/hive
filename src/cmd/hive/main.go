@@ -59,6 +59,7 @@ import (
 	"github.com/kubestellar/hive/pkg/escalation"
 	"github.com/kubestellar/hive/pkg/github"
 	"github.com/kubestellar/hive/pkg/governor"
+	"github.com/kubestellar/hive/pkg/hooks"
 	"github.com/kubestellar/hive/pkg/hub"
 	"github.com/kubestellar/hive/pkg/intent"
 	"github.com/kubestellar/hive/pkg/ioscan"
@@ -1065,7 +1066,7 @@ func main() {
 	}
 
 	if os.Getenv("HIVE_MODE") == "hub" {
-		runHub(logger)
+		runHub(logger, *configPath)
 		return
 	}
 
@@ -2518,6 +2519,9 @@ func main() {
 		IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 			return getClaimLedger(logger).Lookup(repo, number)
 		},
+		HookFire: func(ctx context.Context, p hooks.Payload) {
+			hookDispatcher().Fire(ctx, p)
+		},
 		PersistFunc: func() {
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv, wd)
 		},
@@ -2957,6 +2961,17 @@ func main() {
 		gov.SetRepoCount(cfg.Project.RepoCount())
 		agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 
+		// Hot-reload the state-triggered hooks (RFC #4001). Recompiles only
+		// when the `hooks:` list actually changed, and swaps the registry in
+		// place so per-hook rate-limit windows SURVIVE the reload — otherwise
+		// a reload loop would be a way to clear the anti-storm ceiling.
+		buildHookDispatcher(cfg, hookSinks{
+			Notifier: notifier,
+			AgentMgr: agentMgr,
+			Timeline: dashSrv.LifecycleTimeline(),
+			Audit:    dashSrv.AgentAuditSink(),
+		}, logger)
+
 		// Re-apply live agent definitions (definition_source) on reload so an
 		// operator's edit to a linked repo propagates. Merges only operator-safe
 		// fields; a fetch failure keeps each agent's baked definition. Runs before
@@ -3074,6 +3089,29 @@ func main() {
 	// did not support failed at every launch for a day, visible only as a WARN
 	// line inside the pod.
 	agentMgr.SetAuditSink(dashSrv.AgentAuditSink())
+
+	// Compile the operator's state-triggered hooks (RFC #4001). Every sink the
+	// vetted actions act through exists by this point: the notifier, the agent
+	// manager's AUDITED pause, the lifecycle timeline, and the same audit store
+	// the dashboard writes. The approvals sink stays nil until #4000's queue
+	// lands — an enqueue-approval hook then reports a wiring failure per firing
+	// rather than silently dropping the request.
+	//
+	// Fail-closed: an invalid hooks list logs and leaves the previous set
+	// armed; it never crashes the process or silently disarms working hooks.
+	buildHookDispatcher(cfg, hookSinks{
+		Notifier: notifier,
+		AgentMgr: agentMgr,
+		Timeline: dashSrv.LifecycleTimeline(),
+		Audit:    dashSrv.AgentAuditSink(),
+	}, logger)
+
+	// Emit the governor_mode_change transition post-commit. Installed once:
+	// the observer reads the dispatcher through hookDispatcher() on each
+	// firing, so a later config reload that arms or disarms hooks is picked up
+	// without re-registering.
+	installGovernorModeChangeEmitter(gov)
+	installAgentPauseEmitter(agentMgr)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
@@ -7003,7 +7041,23 @@ func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult)
 	if cfg.Escalation.Disabled || actionable == nil {
 		return
 	}
-	getEscalationStore().ObserveRed(hivePRObservations(cfg, actionable))
+	obs := hivePRObservations(cfg, actionable)
+	getEscalationStore().ObserveRed(obs)
+	for _, ob := range obs {
+		if !ob.Red {
+			continue
+		}
+		hookDispatcher().Fire(context.Background(), hooks.Payload{
+			Transition: hooks.TransitionEscalationRed,
+			Repo:       ob.Repo,
+			Reason:     "required CI check red",
+			Attrs: map[string]string{
+				hooks.AttrPR: strconv.Itoa(ob.Number),
+				"head_sha":   ob.HeadSHA,
+				"excerpt":    ob.Excerpt,
+			},
+		})
+	}
 }
 
 // mergeReEngageHook builds the Fix #2 re-engagement callback for the merge
@@ -7291,6 +7345,15 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, dashSr
 	if len(result.Merged) > 0 || result.Seen > 0 {
 		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
 	}
+	hookDispatcher().Fire(context.Background(), hooks.Payload{
+		Transition: hooks.TransitionSweepCompleted,
+		Reason:     "queued automerge sweep complete",
+		Attrs: map[string]string{
+			"seen":    strconv.Itoa(result.Seen),
+			"merged":  strconv.Itoa(len(result.Merged)),
+			"skipped": strconv.Itoa(result.Skipped),
+		},
+	})
 }
 
 // mergeEligiblePath is a var (not a const) only so tests can point
@@ -8387,7 +8450,7 @@ func parseColorInt(color string) int {
 	return result
 }
 
-func runHub(logger *slog.Logger) {
+func runHub(logger *slog.Logger, configPath string) {
 	port := 3001
 	if p := os.Getenv("HIVE_HUB_PORT"); p != "" {
 		if parsed, err := strconv.Atoi(p); err == nil {
@@ -8397,6 +8460,14 @@ func runHub(logger *slog.Logger) {
 	logger.Info("starting in HUB mode", "port", port)
 
 	hubSrv := hub.NewHubServer(port, logger, gitShort, gitBranch)
+	if cfg, err := config.LoadWithDashboardOverlay(configPath); err == nil {
+		notifier := notify.New(cfg.Notifications, logger)
+		notifier.SetHiveID(cfg.HiveID)
+		buildHookDispatcher(cfg, hookSinks{Notifier: notifier}, logger)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		logger.Warn("hub hooks disabled: failed to load config", "path", configPath, "error", err)
+	}
+	installUpgradePauseEmitter(hubSrv)
 
 	// /api/reach (#3994) needs merged-PR metadata (merge SHA, changed
 	// files). The hub mode has no ambient GitHub client, so reuse the

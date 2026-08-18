@@ -395,6 +395,25 @@ func (p ProjectContext) PrimaryRepo() string {
 	return ""
 }
 
+// PauseCausation is hook causation metadata carried in agent pause/resume
+// events without making pkg/agent import pkg/hooks.
+type PauseCausation struct {
+	Depth            int
+	HookName         string
+	OriginTransition string
+}
+
+// PauseTransitionEvent describes a durable agent pause/resume transition.
+type PauseTransitionEvent struct {
+	Agent     string
+	Paused    bool
+	Trigger   string
+	Reason    string
+	By        string
+	Causation PauseCausation
+	At        time.Time
+}
+
 type Manager struct {
 	agents   map[string]*AgentProcess
 	idToName map[string]string
@@ -489,6 +508,7 @@ type Manager struct {
 	// m.mu (heartbeat AllStatuses, SendKick, terminal ResolveAgent) — the
 	// same failure class as the mint-issuer deadlock fixed in ca5f0f00.
 	persistPauseCallback func(name string, paused bool)
+	pauseObserver        atomic.Pointer[func(PauseTransitionEvent)]
 
 	// breakerEngaged and breakerPaused hold the fleet-breaker's state, guarded
 	// by m.mu. When an operator throws the breaker, EngageBreaker pauses every
@@ -549,6 +569,25 @@ func (m *Manager) SetPersistPauseCallback(fn func(name string, paused bool)) {
 	m.mu.Lock()
 	m.persistPauseCallback = fn
 	m.mu.Unlock()
+}
+
+// SetPauseTransitionObserver wires a post-persistence observer for agent
+// pause/resume transitions. The observer runs asynchronously.
+func (m *Manager) SetPauseTransitionObserver(fn func(PauseTransitionEvent)) {
+	if fn == nil {
+		m.pauseObserver.Store(nil)
+		return
+	}
+	m.pauseObserver.Store(&fn)
+}
+
+func (m *Manager) emitPauseTransition(event PauseTransitionEvent) {
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	if fn := m.pauseObserver.Load(); fn != nil && *fn != nil {
+		go (*fn)(event)
+	}
 }
 
 // SetRecordPromptCallback wires a function that persists a delivered kick
@@ -8462,6 +8501,12 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 // user (the authenticated dashboard user for a dashboard-api pause); empty
 // means "no human actor" — never fabricate one.
 func (m *Manager) PauseBy(name, trigger, reason, by string) error {
+	return m.PauseByCause(name, trigger, reason, by, PauseCausation{})
+}
+
+// PauseByCause is PauseBy plus hook causation metadata for the post-commit
+// agent_paused emitter. Non-hook callers should use PauseBy/Pause.
+func (m *Manager) PauseByCause(name, trigger, reason, by string, cause PauseCausation) error {
 	m.mu.Lock()
 
 	agent, ok := m.agents[name]
@@ -8499,6 +8544,7 @@ func (m *Manager) PauseBy(name, trigger, reason, by string) error {
 		"backend", agent.Config.Backend,
 		"restart_count", agent.RestartCount,
 	)
+	pausedAt := agent.PausedAt
 	m.audit(AuditAgentPaused, name, auditFields(
 		"outcome", "success",
 		"backend", agent.effectiveBackend(),
@@ -8511,6 +8557,15 @@ func (m *Manager) PauseBy(name, trigger, reason, by string) error {
 	if persistPause != nil {
 		persistPause(name, true)
 	}
+	m.emitPauseTransition(PauseTransitionEvent{
+		Agent:     name,
+		Paused:    true,
+		Trigger:   trigger,
+		Reason:    reason,
+		By:        by,
+		Causation: cause,
+		At:        pausedAt,
+	})
 	return nil
 }
 
@@ -8547,6 +8602,12 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		// re-enter the manager, and m.mu is a non-reentrant RWMutex —
 		// invoking it here with the lock held deadlocks Resume and wedges
 		// everything queued behind m.mu (see persistPauseCallback docs).
+		defer m.emitPauseTransition(PauseTransitionEvent{
+			Agent:   name,
+			Paused:  false,
+			Trigger: trigger,
+			Reason:  reason,
+		})
 		defer persistPause(name, false)
 	}
 	agent.PausedAt = time.Time{}
