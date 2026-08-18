@@ -232,18 +232,29 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 ### `/api/v1` contributor subpaths
 
 `handleAPIv1` dispatches authenticated contributor API calls below `/api/v1`.
-Every request requires `Authorization: Bearer <gh-token>`. Query-string
-credentials and other authorization schemes are rejected so GitHub tokens do
-not enter ingress or access logs.
+Every request must carry a GitHub personal access token in the `Authorization`
+header, using either the `Bearer <token>` scheme (hosted clients) or the
+legacy `token <token>` scheme (what `gh auth token` and older hive CLIs
+send). Both are accepted; the legacy scheme is retained for backward
+compatibility. Credentials in the query string (`?token=`) are NOT supported
+and are rejected, because query strings land in ingress and access logs.
+
+Authorization: every `/api/v1` path except `/api/v1/me` additionally requires
+the caller to be in the hive's authorized-users allowlist (any role), and
+returns `403` otherwise — contributor, activity and knowledge data are
+hive-private, not world-readable. `/api/v1/me` is exempt because it only
+returns the caller's own profile. Client-supplied `X-Hive-User`, `X-Hive-Role`
+and owner-verified headers are stripped at the top of the handler; identity is
+always resolved server-side from the validated token.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET`/`POST` | `/api/v1/status` | GitHub token | Contributor status summary | `pkg/dashboard/api_contribute.go:6777` |
-| `GET`/`POST` | `/api/v1/activity` | GitHub token | Contributor activity feed | `pkg/dashboard/api_contribute.go:6779` |
-| `GET`/`POST` | `/api/v1/contributors` | GitHub token | Contributor list | `pkg/dashboard/api_contribute.go:6781` |
-| `GET`/`POST` | `/api/v1/knowledge` | GitHub token | Knowledge export | `pkg/dashboard/api_contribute.go:6783` |
-| `GET`/`POST` | `/api/v1/me` | GitHub token | Current contributor profile | `pkg/dashboard/api_contribute.go:6785` |
-| `POST` | `/api/v1/prs/{owner}/{repo}/{number}/queue-automerge` | GitHub bearer token + merger/owner role | Queue PR auto-merge using the validated actor and current PR head | `pkg/dashboard/api_contribute.go` |
+| `GET`/`POST` | `/api/v1/status` | GitHub token + allowlist | Contributor status summary | `pkg/dashboard/api_contribute.go:6777` |
+| `GET`/`POST` | `/api/v1/activity` | GitHub token + allowlist | Contributor activity feed | `pkg/dashboard/api_contribute.go:6779` |
+| `GET`/`POST` | `/api/v1/contributors` | GitHub token + allowlist | Contributor list | `pkg/dashboard/api_contribute.go:6781` |
+| `GET`/`POST` | `/api/v1/knowledge` | GitHub token + allowlist | Knowledge export | `pkg/dashboard/api_contribute.go:6783` |
+| `GET`/`POST` | `/api/v1/me` | GitHub token (self-scoped, no allowlist) | Current contributor profile | `pkg/dashboard/api_contribute.go:6785` |
+| `POST` | `/api/v1/prs/{owner}/{repo}/{number}/queue-automerge` | GitHub token + merger/owner role (POST only; GET returns 405) | Queue PR auto-merge using the validated actor and current PR head | `pkg/dashboard/api_contribute.go` |
 
 ## Nous / strategy lab
 

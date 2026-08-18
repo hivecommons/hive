@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // userMock serves GitHub's /user endpoint so validateGitHubToken resolves a
@@ -31,6 +33,10 @@ func v1Server(t *testing.T, login string) *Server {
 	// validateGitHubToken resolves through OAuthAPIURL (pinned to api.github.com),
 	// not APIURL, so the mock is only reached via the override.
 	s.deps.Config.GitHub.OAuthAPIURLOverride = mock.URL
+	// /api/v1 reads require allowlist authorization, so authorize the mock login.
+	if login != "" {
+		s.deps.Config.Dashboard.AuthorizedUsers = []string{login + ":" + config.RoleRead}
+	}
 	return s
 }
 
@@ -122,17 +128,60 @@ func TestCovV1_RejectsQueryTokenWithoutReflectingIt(t *testing.T) {
 	}
 }
 
-func TestCovV1_RejectsNonBearerAuthorizationWithoutReflectingIt(t *testing.T) {
+func TestCovV1_RejectsUnknownAuthorizationSchemeWithoutReflectingIt(t *testing.T) {
 	const secret = "ghp_scheme_secret_must_not_leak"
 	s := v1Server(t, "octocat")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
-	req.Header.Set("Authorization", "token "+secret)
+	req.Header.Set("Authorization", "Basic "+secret)
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("non-bearer authorization: want 401, got %d", rec.Code)
+		t.Fatalf("unknown scheme: want 401, got %d", rec.Code)
 	}
 	if strings.Contains(rec.Body.String(), secret) {
 		t.Fatal("authorization credential was reflected in the error response")
+	}
+}
+
+// The legacy "token <pat>" scheme (what `gh auth token` users send) must keep
+// working alongside the bearer scheme.
+func TestCovV1_LegacyTokenSchemeStillWorks(t *testing.T) {
+	s := v1Server(t, "octocat")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("Authorization", "token legacy-pat")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("token scheme: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Reads are hive-private: an authenticated but unauthorized GitHub user gets 403.
+func TestCovV1_UnauthorizedUserForbiddenOnReads(t *testing.T) {
+	for _, path := range []string{"/api/v1/status", "/api/v1/contributors", "/api/v1/activity", "/api/v1/knowledge"} {
+		s := v1Server(t, "outsider")
+		s.deps.Config.Dashboard.AuthorizedUsers = []string{"someone-else:" + config.RoleOwner}
+		rec := v1Get(s, path, "forbidden-user-token")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: want 403 for unauthorized user, got %d", path, rec.Code)
+		}
+	}
+}
+
+func TestCovV1_AuthorizedUserAllowedOnReads(t *testing.T) {
+	s := v1Server(t, "octocat")
+	rec := v1Get(s, "/api/v1/contributors", "authorized-read-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authorized contributors read: want 200, got %d", rec.Code)
+	}
+}
+
+// /api/v1/me is self-scoped, so it stays reachable without allowlist membership.
+func TestCovV1_MeAllowedWithoutAllowlist(t *testing.T) {
+	s := v1Server(t, "nobody-registered")
+	s.deps.Config.Dashboard.AuthorizedUsers = nil
+	rec := v1Get(s, "/api/v1/me", "me-no-allowlist-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("me without allowlist: want 404 (not 403), got %d", rec.Code)
 	}
 }

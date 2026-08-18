@@ -205,3 +205,33 @@ func TestAPIV1IsPublicOnlyWithinVersionedPrefix(t *testing.T) {
 		}
 	}
 }
+
+// queue-automerge is a mutation: safe methods must never reach the handler.
+func TestAPIV1QueuePRAutoMergeRejectsGET(t *testing.T) {
+	s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleMerger, "alice", "bob", "head7")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/prs/acme/widget/7/queue-automerge", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d body=%s, want 405", w.Code, w.Body.String())
+	}
+	if *reviewCreated || *labelAdded {
+		t.Fatal("GET must not mutate the pull request")
+	}
+}
+
+// The legacy "token <pat>" scheme must also work for the mutation path.
+func TestAPIV1QueuePRAutoMergeAcceptsLegacyTokenScheme(t *testing.T) {
+	s, reviewCreated, labelAdded := newAPIV1QueueServer(t, config.RoleMerger, "alice", "bob", "head7")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/prs/acme/widget/7/queue-automerge", nil)
+	req.Header.Set("Authorization", "token valid-token")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	if !*reviewCreated || !*labelAdded {
+		t.Fatalf("reviewCreated=%v labelAdded=%v, want both true", *reviewCreated, *labelAdded)
+	}
+}

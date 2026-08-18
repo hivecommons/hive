@@ -7825,16 +7825,38 @@ func validateGitHubToken(token, apiURL string) string {
 }
 
 // handleAPIv1 wraps contribute API endpoints with GitHub token auth.
-// Accepts Authorization: Bearer <gh-personal-access-token>.
+//
+// Authentication accepts BOTH the bearer scheme (hosted clients) and the legacy
+// "token <pat>" scheme that `gh auth token` users and older hive CLIs send, so
+// upgrading a hive never breaks existing scripts. Credentials in the query
+// string (?token=) are NOT supported: query strings land in ingress and access
+// logs.
+//
+// Authorization: every /api/v1 path except /api/v1/me is gated on the hive's
+// authorized-users allowlist. The contributor data behind these reads
+// (knowledge base, contributor roster, activity feed) is hive-private, so a
+// merely-authenticated GitHub user must not be able to read it. /api/v1/me is
+// exempt because it only ever returns the caller's own profile.
 func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
-	auth := strings.Fields(r.Header.Get("Authorization"))
-	if len(auth) != 2 || !strings.EqualFold(auth[0], "Bearer") {
+	// Defense in depth: strip any client-supplied identity headers up front so no
+	// downstream handler can ever observe a client-forged identity on this route.
+	r.Header.Del("X-Hive-User")
+	r.Header.Del("X-Hive-Role")
+	r.Header.Del(ownerRoleVerifiedHeader)
+
+	var token string
+	if auth := strings.Fields(r.Header.Get("Authorization")); len(auth) == 2 {
+		// Both schemes carry a GitHub PAT; "token" is kept for compatibility.
+		if strings.EqualFold(auth[0], "Bearer") || strings.EqualFold(auth[0], "token") {
+			token = auth[1]
+		}
+	}
+	if token == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
 		return
 	}
-	token := auth[1]
 
 	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if username == "" {
@@ -7842,6 +7864,15 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"Invalid or missing GitHub token. Use: Authorization: Bearer <gh-token>"}`))
 		return
+	}
+
+	// Require allowlist authorization for every path except /api/v1/me, which is
+	// self-scoped. Fail closed: an empty allowlist authorizes nobody.
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/me") {
+		if _, ok := s.deps.Config.Dashboard.AuthorizedRole(username); !ok {
+			jsonError(w, "forbidden: not authorized for this endpoint", http.StatusForbidden)
+			return
+		}
 	}
 
 	subpath := strings.TrimPrefix(r.URL.Path, "/api/v1")
@@ -7887,6 +7918,13 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(subpath, "/prs/"), "/")
 		if len(parts) != 4 || parts[3] != "queue-automerge" {
 			jsonError(w, "Unknown endpoint", http.StatusNotFound)
+			return
+		}
+		// queue-automerge mutates merge state, so it must never be reachable via
+		// GET (or any other safe method) — that would let a link or image tag
+		// trigger a merge and bypass the write gate.
+		if r.Method != http.MethodPost {
+			jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		role, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
