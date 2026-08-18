@@ -464,6 +464,21 @@ func resolvedFindingSortKey(f ResolvedFinding) string {
 	return strings.Join([]string{f.Agent, f.Title, f.File}, "\x00")
 }
 
+// findingSortKey orders every rendered field so an unchanged advisory set
+// produces byte-identical markdown even when bead-store iteration order changes
+// across process restarts. Timestamp is intentionally excluded because it is not
+// rendered in the digest.
+func findingSortKey(f Finding) string {
+	return strings.Join([]string{
+		f.Agent,
+		f.Type,
+		f.Title,
+		f.File,
+		strconv.Itoa(f.Line),
+		f.Detail,
+	}, "\x00")
+}
+
 // normalizedFindingKey collapses a finding title to a duplicate-detection key:
 // lowercase, letters kept, every digit run folded to a single '#', all other
 // runes dropped. Agents re-file the same finding with only cosmetic drift —
@@ -772,7 +787,13 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 			if items[i].Type != items[j].Type {
 				return items[i].Type < items[j].Type
 			}
-			return items[i].Timestamp.After(items[j].Timestamp)
+			if !items[i].Timestamp.Equal(items[j].Timestamp) {
+				return items[i].Timestamp.After(items[j].Timestamp)
+			}
+			// Deterministic final tiebreak so the rendered digest is stable
+			// regardless of input finding order (two findings identical up to
+			// timestamp must always render in the same order).
+			return findingSortKey(items[i]) < findingSortKey(items[j])
 		})
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))

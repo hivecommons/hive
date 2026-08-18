@@ -4544,7 +4544,12 @@ func (c *Config) savePersistenceBytes(data []byte) error {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
 	}
 
-	overlayErr := c.saveDashboardOverlay()
+	// The overlay applies an extra scrub pass on top of the frozen payload:
+	// env-derived GitHub/dashboard token VALUES are re-templated or cleared so
+	// raw secret values never land in the PVC overlay, while every operator env
+	// template survives verbatim (the overlay stays byte-identical to the
+	// primary persistence bytes except for those secrets).
+	overlayErr := c.saveDashboardOverlay(scrubOverlayPayload(data))
 
 	if srcErr == nil {
 		return nil
@@ -4663,17 +4668,12 @@ func IsKubernetesPod() bool {
 // would pass the guard and revert a dashboard-installed GitHub App to the
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
-func (c *Config) saveDashboardOverlay() error {
+func (c *Config) saveDashboardOverlay(data []byte) error {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
 		return nil
-	}
-	data, err := c.dashboardOverlayBytes()
-	if err != nil {
-		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
-		return err
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
 	const overlayFileMode = 0o644
