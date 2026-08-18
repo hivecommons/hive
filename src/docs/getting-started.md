@@ -4,6 +4,26 @@ Hive is a team of AI agents that watch your repo and help improve it — finding
 
 ---
 
+## Step 0 — Before you start (do this first!)
+
+None of the level guidance below works until your hive is connected to GitHub. Do this in your **first session**:
+
+1. **Install the GitHub App.** This is how Hive talks to your repo. Click **Install GitHub App** from your dashboard and grant it access to your repo.
+2. **⏰ Don't put this off.** Unconfigured hive instances are reclaimed on a timer. Finish the App install in your first session or your hive may be reaped.
+3. **Wait for the first heartbeat.** After installing, a heartbeat cycle has to run (a few minutes) before everything lights up green.
+
+> **On GitHub Enterprise (IBM, corporate)?** Setup is slightly different: point Hive at your **GHE host URL**, not github.com. The App install flow lives on your enterprise host.
+
+---
+
+## Common gotchas (so you don't panic)
+
+- **Dashboard full of warnings?** Normal. Most warnings clear automatically after the GitHub App is installed and the first heartbeat runs. Don't panic.
+- **"Install GitHub App" gives a 404?** Usually a GHE-vs-github.com mixup, or the App isn't available on your host yet. Double-check which GitHub you're on.
+- **Changed a setting and nothing happened?** Agents pick up config changes on the next **heartbeat cycle**. Wait 2–3 minutes before assuming something is broken.
+
+---
+
 ## The four agent modes (learn these first)
 
 | Mode | What the agent can do |
@@ -101,9 +121,9 @@ Agents run on a schedule (a **cadence**). Short cadences = agents run constantly
 
 ## Your first week (do exactly this)
 
-**Day 1** — Start at whatever level your hive is at (probably L2). Don't touch anything. Just watch the dashboard for 24 hours.
+**Day 1** — Complete **Step 0**: install the GitHub App and wait for the heartbeat to connect. Then start at whatever level your hive is at (probably L2). Don't touch anything else. Just watch the dashboard for 24 hours — any leftover warnings should clear on their own.
 
-**Day 2** — In L2: un-pause **scanner**, **quality**, and **guide**. Leave **supervisor** paused. Don't touch **brainstorm**. Click the gear icon on each of the 3 agents and set the cadence to **12h or 1d**. Watch what they find.
+**Day 2** — In L2: un-pause **scanner**, **quality**, and **guide**. Leave **supervisor** paused. Don't touch **brainstorm**. Click the gear icon on each of the 3 agents and set the cadence to **12h or 1d**. Give it a heartbeat cycle (2–3 minutes) to take effect, then watch what they find.
 
 **Days 3–4** — Read the advisory beads on your dashboard. These are the agents' findings: bugs, missing tests, doc gaps. Pick **one** finding you care about and act on it manually. This builds intuition.
 
