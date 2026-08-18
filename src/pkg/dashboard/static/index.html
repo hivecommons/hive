@@ -14508,10 +14508,14 @@ function burnAreaChart() {
           html += ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
           if (v.autoUpgrade) {
             // Hub-managed: the hub rolls the upgrade automatically, so no manual
-            // button — show a "managed" hint instead.
-            html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">managed</span>`;
+            // button — a passive state badge, worded to match the hub dashboard's
+            // "Queued for auto-upgrade", with the target named in the tooltip.
+            html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap;padding:1px 7px;border-radius:999px;border:1px solid var(--border)" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Queued for auto-upgrade</span>`;
           } else {
-            html += ` <button id="spoke-upgrade-btn" onclick="selfUpgrade('${escapeHtml(v.latestHash || '')}')" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Upgrade</button>`;
+            // Manual path: name the action AND the target — "Upgrade available →
+            // <sha>" — with a hover state, so the button cannot be misread as a
+            // status label (real feedback: owners could not find how to upgrade).
+            html += ` <button id="spoke-upgrade-btn" onclick="selfUpgrade('${escapeHtml(v.latestHash || '')}')" onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">↑ Upgrade available → ${escapeHtml(v.latestShort || 'latest')}</button>`;
           }
         } else if (v.latestHash) {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';

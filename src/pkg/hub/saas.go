@@ -10980,8 +10980,10 @@ const dashboardHTML = `<!DOCTYPE html>
     ];
 
     /* Header labels for the Upgrade-state dimension. Named constants so the
-       of() grouper and the sort comparator can never drift on a string typo. */
-    var HIVE_UPGRADE_GROUP_QUEUED = 'Queued (ready, not yet upgrading)';
+       of() grouper and the sort comparator can never drift on a string typo.
+       "Queued for auto-upgrade" matches the row badge and the facet pill —
+       three surfaces, one wording. */
+    var HIVE_UPGRADE_GROUP_QUEUED = 'Queued for auto-upgrade (not yet upgrading)';
     var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
     var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
 
@@ -12198,7 +12200,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
       var values = [
         {key: UPGRADE_FILTER_UPGRADING, label: 'Upgrading'},
-        {key: UPGRADE_FILTER_QUEUED, label: 'Queued'}
+        {key: UPGRADE_FILTER_QUEUED, label: 'Queued for auto-upgrade'}
       ];
       var body = '<div class="facet-values">' + (values || []).map(function(v) {
         var on = _dashUpgradeFilter === v.key;
@@ -14208,30 +14210,48 @@ const dashboardHTML = `<!DOCTYPE html>
                renderUpgradeElapsed), so a healthy fleet looks unchanged. */
             upgradeIcon = '<span title="' + progressTitle + '" style="font-size:0.7rem;white-space:nowrap;opacity:0.8;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>' + renderUpgradeElapsed(h);
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
-            /* A daily-mode hive is NOT upgrading "shortly" — saying so would be
-               a lie the operator would notice hours later. Name the window and
-               keep the click-to-upgrade-now escape hatch, which is the manual
-               path and is never gated by the schedule. */
+            /* STATE and ACTION are split. The old single "queued" pill WAS the
+               click-to-upgrade affordance, and owners could not find it (real
+               feedback: "that line that says 'queued' is the upgrade button —
+               it's not straightforward"). The badge now only NAMES the state
+               and its target; the manual escape hatch — never gated by the
+               schedule — is its own labelled "Upgrade now" action beside it.
+               A daily-mode hive is NOT upgrading "shortly" — saying so would be
+               a lie the operator would notice hours later, so the window is
+               still named on the badge. */
             var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY;
-            var queuedLabel = queuedDaily ? 'queued · 1pm ET' : 'queued';
+            var queuedLabel = queuedDaily ? 'Queued for auto-upgrade · 1pm ET' : 'Queued for auto-upgrade';
+            /* The tooltip names the TARGET — SHA plus the tracked
+               branch/channel label — so "queued for what?" never needs a
+               second click to answer. */
             var queuedTitle = queuedDaily
-              ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 1pm ET window — click to upgrade now' + esc(buildingHint)
-              : 'Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint);
+              ? 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') at the next 1pm ET window' + buildingHint
+              : 'Auto-upgrade will apply ' + branchLatest + ' (' + versionLabel(versionSel) + ') shortly' + buildingHint;
             /* escAttr, not esc, for the title: esc() leaves quotes intact and a
                branch name or commit subject carrying one would break out of the
                attribute. jsArg supplies its own quotes for the handler args. */
-            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
+            upgradeIcon = '<span title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">' + esc(queuedLabel) + '</span>' +
+              '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
               ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
               ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
-              ' title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--muted);font-size:0.7rem;text-decoration-style:dashed">' + esc(queuedLabel) + '</span>';
+              ' title="' + escAttr('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
-            /* Text-with-an-underline rather than a filled button: on its own
-               line the padding bought no extra affordance and cost 8px of row
-               height. Green still marks it as the go-forward action. */
+            /* Manual path (auto-upgrade OFF): a real primary-ish button, not
+               text-with-an-underline. The bare word "Upgrade" read as a label,
+               not an action; naming the target ("Upgrade available → <sha>")
+               plus the box, the ↑ glyph and a hover state make it unmissably
+               the thing to click. */
+            var latestShort = branchLatest ? String(branchLatest).substring(0, 7) : 'latest';
             upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
               ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
               ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
-              ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade</span>';
+              ' onmouseover="this.style.background=\'' + UPGRADE_BTN_HOVER_BG + '\'" onmouseout="this.style.background=\'' + UPGRADE_BTN_BG + '\'"' +
+              ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
+          } else if (!isCurrent && !latestUnknown && isHosted) {
+            /* Non-owners get the STATE with no action: they cannot trigger the
+               upgrade, so a button would be a lie, but saying nothing made a
+               behind hive read as current. Passive badge, no handler. */
+            upgradeIcon = '<span title="' + escAttr('A newer build is available (' + branchLatest + ') — the hive owner or an admin can trigger the upgrade') + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">Update available</span>';
           } else if (latestUnknown && isHosted && h.role === 'owner') {
             upgradeIcon = '<span title="Waiting for latest version…" style="font-size:0.7rem;color:var(--muted);white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</span>';
           }
@@ -15000,10 +15020,12 @@ const dashboardHTML = `<!DOCTYPE html>
        is pinned to AUTO_SELECT_H_PX rather than left to the UA's default
        control height, which is taller.
 
-       What actually sets the width now is the LONGEST upgrade label,
-       "queued · 1pm ET" at 90.4px — not the select, which measures 77px. The
-       old width was set by that label and the "Auto: daily 1pm ET" select
-       sitting on ONE line together.
+       What actually sets the width now is the LONGEST upgrade label — the
+       "Queued for auto-upgrade · 1pm ET" badge plus its "Upgrade now" action
+       (the state/action split that answers the "the 'queued' line IS the
+       upgrade button?" confusion) — not the select, which measures 77px.
+       The old width was set by the "queued · 1pm ET" label and the
+       "Auto: daily 1pm ET" select sitting on ONE line together.
 
        Non-owner rows are UNCHANGED: they still get at most two lines (28.9px),
        under the two-line name cell's 40.3px, which continues to set their
@@ -15048,6 +15070,21 @@ const dashboardHTML = `<!DOCTYPE html>
        click target. The underline plus the pointer cursor is what says
        "clickable"; colour alone would not, and would fail in one theme. */
     var UPGRADE_LINK_STYLE = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px;white-space:nowrap';
+    /* The manual-path upgrade affordance (auto-upgrade OFF) is a real
+       primary-ish button again: real users could not find the upgrade action
+       when it was quiet text, so this trades a few px of row height for an
+       unmissable target. Background is declared separately so the hover state
+       can restore it without re-stating the whole style. */
+    var UPGRADE_BTN_BG = 'rgba(63,185,80,0.15)';
+    var UPGRADE_BTN_HOVER_BG = 'rgba(63,185,80,0.3)';
+    var UPGRADE_BTN_STYLE = 'cursor:pointer;white-space:nowrap;display:inline-block;padding:2px 8px;border-radius:4px;' +
+      'background:' + UPGRADE_BTN_BG + ';color:var(--green);border:1px solid rgba(63,185,80,0.4);font-weight:600;font-size:0.7rem';
+    /* Passive upgrade-STATE badge: "Queued for auto-upgrade" and the
+       non-owner "Update available". Deliberately affordance-free (no cursor,
+       no underline, no handler) — the state/action split only works if the
+       state never looks clickable. */
+    var UPGRADE_STATE_BADGE_STYLE = 'display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.65rem;' +
+      'background:var(--surface);color:var(--muted);border:1px solid var(--border);white-space:nowrap';
 
     /* Visibility toggle switch geometry, used by the Location cell's owner
        branch. A 36x20 track with a 16px knob inset 2px is the standard iOS-style
