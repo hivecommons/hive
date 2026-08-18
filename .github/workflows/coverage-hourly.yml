@@ -7,9 +7,14 @@ on:
   # The floor is only meaningful if it runs BEFORE code lands. Without this the
   # gate was hourly-only, so a PR could drop a package below its floor and merge
   # green — which is exactly what happened in #2350.
+  #
+  # v4 added here (#3903): development moved to v4 and this filter still said
+  # v2, so the pre-merge half of the gate had silently stopped covering every PR
+  # that actually lands. `src/**` is the Go module directory on BOTH branches —
+  # it is the module path, not the branch name — so the path filter is unchanged.
   pull_request:
-    branches: [v2]
-    paths: ['v2/**']
+    branches: [v2, v4]
+    paths: ['src/**']
 
 permissions:
   contents: read
@@ -22,28 +27,46 @@ jobs:
     # blocking PR merges indefinitely (the go test -timeout only bounds the test
     # step, not checkout/setup/build/post-processing or a wedged runner). #3615.
     timeout-minutes: 20
+    # Surfaced so create-issue-on-coverage-drop can report WHAT failed and on
+    # WHICH commit (#3903). Without these the filed issue could only say
+    # "packages below 90%" and quote github.sha — the SHA of the branch that
+    # TRIGGERED the run, not the one the checkout above measured.
+    outputs:
+      below_threshold: ${{ steps.coverage.outputs.below_threshold }}
+      failed_packages: ${{ steps.coverage.outputs.failed_packages }}
+      total: ${{ steps.coverage.outputs.total }}
+      measured_sha: ${{ steps.coverage.outputs.measured_sha }}
+      measured_ref: ${{ steps.coverage.outputs.measured_ref }}
     defaults:
       run:
-        working-directory: v2
+        working-directory: src
     steps:
-      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin to v2 —
-      # that is the branch whose floor this gate reports on hourly.
+      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin explicitly
+      # to the branch whose floor this gate reports on hourly.
       #
-      # On `pull_request` we must NOT pin to v2: `ref: v2` makes the runner do
-      # `git checkout --force -B v2 refs/remotes/origin/v2` and measure the
-      # BASE branch, so the gate reports v2's numbers no matter what the PR
-      # changes. That made the gate simultaneously useless and misleading — a
-      # PR that fixed coverage still failed, and a PR that broke it would still
-      # have passed. Leaving `ref` empty checks out the PR merge commit, which
-      # is the code that is actually about to land.
+      # That branch is now v4 (#3903). It was v2, and v2 is sunset — the fleet
+      # runs v4 and v2 is no longer a merge target, so the gate was measuring a
+      # branch nobody can fix. The practical effect was worse than "stale
+      # numbers": v4 carries 14 packages that do not exist on v2 at all
+      # (ioscan, sandbox, intent, pushbroker, tracing, review, retro,
+      # escalation, forge, mint, planning, timeline, agentparse, outputschema),
+      # so every one of them had never been subject to any floor.
+      #
+      # On `pull_request` we must NOT pin a branch: a fixed `ref:` makes the
+      # runner do `git checkout --force -B <branch> refs/remotes/origin/<branch>`
+      # and measure the BASE branch, so the gate reports the base's numbers no
+      # matter what the PR changes. That made the gate simultaneously useless
+      # and misleading — a PR that fixed coverage still failed, and a PR that
+      # broke it would still have passed. Leaving `ref` empty checks out the PR
+      # merge commit, which is the code that is actually about to land.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v2' }}
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v4' }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
-          cache-dependency-path: v2/go.sum
+          cache-dependency-path: src/go.sum
 
       # The coverage run must NOT abort this job on a test failure: the
       # per-package check below is what turns a failure into a readable report.
@@ -76,8 +99,41 @@ jobs:
           # as seams are added; do not add new entries without justification here.
           declare -A PKG_THRESHOLD=(
             [dashboard]=78   # ~20% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
-            [hub]=89         # kubectl-shelling + live-GitHub paths; see #2355. Raise to 90 once seams land.
+            [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
             [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+
+            # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
+            #
+            # These are a RATCHET, NOT A TARGET. Every entry below is a package
+            # the gate had never measured: either it does not exist on v2 at all
+            # (the gate's old ref), or it grew on v4 while the gate watched v2.
+            # None of this is a regression that slipped past the gate — the gate
+            # was pointed somewhere else.
+            #
+            # Each floor is the value measured on v4 at d89121f5, rounded DOWN to
+            # the integer the check compares, so the gate starts catching further
+            # slippage immediately instead of blocking every v4 PR on day one.
+            # The alternative — switching to v4 with the bare 90% default — turns
+            # CI red for 14 packages at once and blocks work that has nothing to
+            # do with coverage, which is how a gate gets disabled rather than
+            # satisfied.
+            #
+            # Raise these toward 90 as tests land; never raise one to paper over
+            # a drop. A package that improves should have its floor moved up in
+            # the same PR, so the ratchet only turns one way.
+            [intent]=65
+            [sandbox]=67
+            [ioscan]=71
+            [pushbroker]=72
+            [tracing]=76
+            [review]=80
+            [retro]=82
+            [github]=88
+            [hivectl]=88
+            [knowledge]=89
+            [scheduler]=89
+            [escalation]=89
+            [proxy]=89
           )
 
           # Capture the full `go test -cover` output ONCE, then classify every
@@ -125,6 +181,18 @@ jobs:
           echo "Total coverage: ${TOTAL:-unavailable}"
           echo "total=${TOTAL:-unavailable}" >> "$GITHUB_OUTPUT"
 
+          # Report the commit that was actually MEASURED, read from the working
+          # tree rather than from github.sha (#3903). On a schedule these differ:
+          # github.sha is the default branch's head, while the checkout above
+          # pinned an explicit ref. The filed issue used to quote github.sha, so
+          # it named a commit the run had never tested — anyone bisecting from it
+          # was looking at the wrong tree.
+          MEASURED_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+          MEASURED_REF=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+          echo "Measured ${MEASURED_REF} @ ${MEASURED_SHA}"
+          echo "measured_sha=${MEASURED_SHA}" >> "$GITHUB_OUTPUT"
+          echo "measured_ref=${MEASURED_REF}" >> "$GITHUB_OUTPUT"
+
           {
             echo "## Per-package coverage"
             echo ""
@@ -171,8 +239,41 @@ jobs:
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const sha = context.sha.substring(0, 7);
+
+            // Report what the coverage job MEASURED, not what triggered the run
+            // (#3903). On a schedule, context.sha is the default branch's head
+            // while the job checks out an explicit ref — the old body quoted
+            // context.sha and hardcoded "Branch: v2", so #3903 was filed naming
+            // a v4 commit for a run that had measured v2. Anyone starting from
+            // that SHA was reading the wrong tree.
+            const measuredSha = '${{ needs.coverage.outputs.measured_sha }}' || context.sha;
+            const measuredRef = '${{ needs.coverage.outputs.measured_ref }}' || 'unknown';
+            const failing = `${{ needs.coverage.outputs.failed_packages }}`.trim();
+            const total = '${{ needs.coverage.outputs.total }}' || 'unavailable';
+            const shortSha = measuredSha.substring(0, 7);
+
+            // The gate fails for two DIFFERENT reasons and they need different
+            // fixes: a package under its floor, or a package that could not be
+            // scored at all (tests failing / no test files). Conflating them is
+            // how #2191 collected 41 comments about coverage when the cause was
+            // a broken test, and how #3903 was titled "below 90%" when nothing
+            // was below its floor. State the cause up front.
+            const cannotScore = /TESTS FAILING|NO TEST FILES/.test(failing);
+            const cause = cannotScore
+              ? 'One or more packages **could not be scored** (tests failing, or no test files). That is a broken-test problem, not a coverage shortfall — fix the tests first; the floor cannot be evaluated until they run.'
+              : 'One or more packages are **below their coverage floor**.';
+            const detail = failing
+              ? `\n\n### What the gate reported\n\n\`\`\`\n${failing}\n\`\`\``
+              : '';
+
             const title = `[Coverage] packages below 90% threshold`;
+            const body = `## Coverage gate failed\n\n`
+              + `- **Measured:** \`${measuredRef}\` @ \`${measuredSha}\`\n`
+              + `- **Run:** ${runUrl}\n`
+              + `- **Total coverage:** ${total}\n`
+              + `- **Default threshold:** 90% per package (see PKG_THRESHOLD in the workflow for documented per-package floors)\n\n`
+              + `${cause}${detail}\n\n`
+              + `Close this issue when the gate is green again.`;
 
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -187,7 +288,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: dup.number,
-                body: `Coverage still below threshold on \`${sha}\`: ${runUrl}`,
+                body: `Gate still failing on \`${measuredRef}\` @ \`${shortSha}\`: ${runUrl}${detail}`,
               });
               return;
             }
@@ -196,6 +297,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title,
-              body: `## Coverage Below Threshold\n\n- **Commit:** \`${context.sha}\`\n- **Run:** ${runUrl}\n- **Branch:** v2\n- **Threshold:** 90% per package\n\nOne or more packages dropped below the 90% coverage threshold. See the [workflow run](${runUrl}) for details.\n\nClose this issue when all packages are back above 90%.`,
+              body,
               labels: ['ci-coverage', 'kind/bug'],
             });

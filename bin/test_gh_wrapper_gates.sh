@@ -2,7 +2,7 @@
 # Behavioural tests for bin/gh-wrapper.sh's enforcement gates.
 # Run: bash bin/test_gh_wrapper_gates.sh
 #
-# Unlike v2/deploy/test_entrypoint_*.sh, which grep the script TEXT, this
+# Unlike src/deploy/test_entrypoint_*.sh, which grep the script TEXT, this
 # harness EXECUTES the wrapper against a stub gh and asserts on exit codes and
 # on whether the stub was reached. A parser bug cannot be caught by grepping —
 # the audit's N7 bypass (`gh pr --repo o/r merge 123`) looks perfectly normal in
@@ -240,7 +240,7 @@ assert_blocked "flag-reordered denied verb is still denied" \
 # This is the control that makes the block-assertions above meaningful. If these
 # fail, the fix has broken real agent workflows — which is a worse outcome than
 # the vulnerability, and exactly how a "security fix" gets reverted wholesale.
-# Every command here is one agents actually run per v2/policies/*.md,
+# Every command here is one agents actually run per src/policies/*.md,
 # examples/kubestellar/agents/** and bin/*.sh.
 echo "-- allowlist preserves the operations agents actually perform --"
 assert_reached "issue view reaches gh" \

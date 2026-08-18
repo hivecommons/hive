@@ -8,8 +8,8 @@ Fixes #
 
 ## Testing
 
-- [ ] `cd v2 && go build ./...`
-- [ ] `cd v2 && go test ./...`
+- [ ] `cd src && go build ./...`
+- [ ] `cd src && go test ./...`
 - [ ] Other / not run (explain):
 
 ## Contributor checklist

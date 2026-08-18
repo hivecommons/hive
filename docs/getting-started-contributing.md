@@ -35,7 +35,7 @@ For most changes you do **not** need a cluster.
   Test section of [`docs/development.md`](development.md).
 - **Shell scripts:** `*.test.sh` / `*.test.js` files under
   [`bin/`](../bin/README.md) are runnable directly with `bash`/`node`.
-- **The proxy:** `cd v2/proxy && npm test`.
+- **The proxy:** `cd src/proxy && npm test`.
 - Don't run local build/lint as a merge gate — CI is the gate (see step 6).
 
 ## 4. Key concepts before touching agent policy
@@ -46,12 +46,12 @@ If your change touches how agents behave, understand these first:
   [`bin/`](../bin/README.md) filter, classify, and gate work *before* any LLM
   runs; agents only make judgment calls. Keep deterministic logic in the
   pipeline.
-- **ACMM levels.** The [ACMM policy matrix](../v2/docs/acmm-policy-matrix.md)
+- **ACMM levels.** The [ACMM policy matrix](../src/docs/acmm-policy-matrix.md)
   controls what each agent may do at each maturity level (advisory → auto-merge).
-- **Agent configuration.** [`agent-configuration.md`](../v2/docs/agent-configuration.md)
+- **Agent configuration.** [`agent-configuration.md`](../src/docs/agent-configuration.md)
   is the field-by-field reference; prompt/policy templates live under the
   policies directory.
-- **The architecture.** [`v2/docs/architecture.md`](../v2/docs/architecture.md)
+- **The architecture.** [`src/docs/architecture.md`](../src/docs/architecture.md)
   is the system overview — read it before changing the governor loop or guardrails.
 
 ## 5. How the Hive dev bot interacts with your PR
@@ -81,6 +81,6 @@ contribution:
 
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — branches, DCO sign-off, PR format.
 - [`docs/development.md`](development.md) — build, test, lint, and `just` recipes.
-- [`v2/docs/README.md`](../v2/docs/README.md) — the full documentation index.
-- [ClankeR contributor relay](../v2/docs/contributor-relay.md) — contribute
+- [`src/docs/README.md`](../src/docs/README.md) — the full documentation index.
+- [ClankeR contributor relay](../src/docs/contributor-relay.md) — contribute
   compute to a running hive from your own machine.

@@ -1,0 +1,6 @@
+/hive
+*.exe
+hive.yaml
+secrets/
+src/coverage.out
+/bin/

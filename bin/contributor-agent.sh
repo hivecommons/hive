@@ -493,7 +493,7 @@ fi
 
 # LiteLLM: pre-seed Claude Code config so first-run onboarding and the
 # custom-API-key approval prompt don't block the tmux session. Mirrors the
-# hub's ensureClaudeSettings pattern (v2/pkg/agent/manager.go). The key is
+# hub's ensureClaudeSettings pattern (src/pkg/agent/manager.go). The key is
 # stored both in full and as its last 20 chars — customApiKeyResponses
 # matching differs across Claude Code versions.
 if [[ "$AGENT_BACKEND" == "litellm" ]]; then

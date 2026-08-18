@@ -13,7 +13,9 @@
 //                           the same order as HIVE_HUB
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
 //   AGENT_MODEL            — model override (optional)
-//   AGENT_REASONING_EFFORT — Codex reasoning effort override (optional)
+//   AGENT_REASONING_EFFORT — reasoning effort override (optional). Consumed by
+//                           codex (-c model_reasoning_effort) and by agy
+//                           (--effort low|medium|high); ignored elsewhere.
 //   HIVE_AGENT_ROLE        — optional spoke agent role to claim (scanner,
 //                           quality, outreach, etc.; hub-enforced)
 //   HIVE_AGENT_SESSION     — tmux session name for the agent (default: contributor)
@@ -21,7 +23,7 @@
 'use strict';
 
 const WebSocket = require('ws');
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -43,8 +45,19 @@ const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
+// Where the hub-delivered, task-scoped token is written (injectGhToken). This
+// deliberately does NOT default to /var/run/hive-metrics/gh-app-token.cache:
+// that filename is the hub's FULL-privilege installation-token cache
+// (bin/gh-app-token.sh, root-owned 0600 since audit H3). A relay started on a
+// host that also runs hive-hub components (native install) would either
+// clobber that cache with a short-lived repo-scoped token (relay running as
+// root) or die on EACCES trying (any other uid — the write was uncaught), and
+// detectCapabilities() would misreport the hub's own cache as this relay's
+// credential. Distinct filename, same directory, so the contributor container
+// (which owns /var/run/hive-metrics — src/Dockerfile.contributor) behaves as
+// before. See kubestellar/hive#1861 / #3842 (audit N14).
 const GH_TOKEN_CACHE = process.env.HIVE_GH_TOKEN_CACHE || (fs.existsSync('/var/run/hive-metrics')
-  ? '/var/run/hive-metrics/gh-app-token.cache'
+  ? '/var/run/hive-metrics/contributor-gh-token.cache'
   : '/tmp/hive-gh-token.cache');
 const TASK_FILE = process.env.HIVE_TASK_FILE || '/tmp/contributor-task.json';
 
@@ -123,9 +136,16 @@ const TASK_UNAVAILABLE_RETRY_MS = 30000;
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
 // optional — an older hub simply ignores it) and the hub advertises its own
-// version + capability set back on auth_ok. Keep in step with
-// contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go.
-const RELAY_PROTOCOL_VERSION = '1.1';
+// version + capability set back on auth_ok.
+//
+// MUST equal contributorProtocolVersion in src/pkg/dashboard/contribute_protocol.go:
+// the hub and this relay ship from the same tree, so they speak the same version
+// by construction. That was previously only a comment, and it drifted — #2600
+// shipped both at 1.1, #2671 bumped the hub to 1.2 for credential_after_accept
+// (handled by the token_refresh case below) and left this at 1.1, so the relay
+// under-declared itself for months with nothing to notice. It is now pinned by
+// TestRelayProtocolVersionMatchesHub, which fails the build on the next drift.
+const RELAY_PROTOCOL_VERSION = '1.2';
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -161,6 +181,9 @@ const hubs = rawHubList.map((url, i) => ({
   reconnectTimer: null,
   authenticated: false,
   authFailed: false,
+  // #2547: set once we have reported a contributor-protocol difference with
+  // this hub, so a reconnect loop does not repeat the same advisory line.
+  protocolDriftReported: false,
 }));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
@@ -222,7 +245,17 @@ function advanceActiveHub(fromHub) {
 function injectGhToken(token) {
   const dir = path.dirname(GH_TOKEN_CACHE);
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-  fs.writeFileSync(GH_TOKEN_CACHE, token, { mode: 0o600 });
+  // A failed write must never throw out of handleMessage: task_assign calls
+  // this before task_accepted is sent, so an unwritable cache path (EACCES on
+  // a root-owned directory, HIVE_GH_TOKEN_CACHE pointing somewhere bad) would
+  // crash the relay on every assignment that carries a token — a crash loop,
+  // not a degraded mode. The agent can still work with its own GH_TOKEN, so
+  // log loudly and carry on.
+  try {
+    fs.writeFileSync(GH_TOKEN_CACHE, token, { mode: 0o600 });
+  } catch (e) {
+    console.error(`Failed to write GitHub token cache ${GH_TOKEN_CACHE}: ${e.message} — continuing without it`);
+  }
 }
 
 const CLI_READY_POLL_MS = 2000;
@@ -264,8 +297,127 @@ function detectCapabilities() {
       caps.credential_type = 'pat';
     }
   } catch (_) { /* ignore */ }
+  // Agent CLI version: the hub schema, the operator docs and the Operations row
+  // ("cli 1.2.3") have carried this field since the declare half shipped, but the
+  // relay never populated it — so the one axis #2547's own evidence names first
+  // ("an agent CLI old enough to lack a flag the prompt assumes") was the one an
+  // operator could not see. Best-effort: omitted entirely when the probe fails.
+  const cliVersion = detectAgentCLIVersion();
+  if (cliVersion) caps.agent_cli_version = cliVersion;
   cachedCapabilities = caps;
   return caps;
+}
+
+// CLI_VERSION_PROBE_TIMEOUT_MS bounds the `<cli> --version` probe. Generous
+// enough for a Node/Python CLI's cold start, short enough that a wedged binary
+// costs a couple of seconds rather than the handshake.
+const CLI_VERSION_PROBE_TIMEOUT_MS = 3000;
+// CLI_VERSION_MAX_LEN bounds what we are willing to REPORT. The value is another
+// program's stdout, so it is arbitrary text; the hub bounds it again on receipt
+// (ContributorCapabilities.Sanitized) because no hub should trust a client to
+// have done this.
+const CLI_VERSION_MAX_LEN = 64;
+
+// detectAgentCLIVersion asks the agent CLI this relay drives for its version.
+//
+// Best-effort and deliberately quiet: any failure — binary absent, flag
+// unsupported, CLI wedged, output unusable — yields '' and the field is simply
+// omitted, which reads as "unknown" and is exactly what every relay written
+// before this change reports. Declaring nothing must always remain a working
+// answer (#2547: no default may read silence as incapacity).
+//
+// stdin is closed (`ignore`) so a CLI that mistakes --version for an interactive
+// launch gets EOF and exits rather than waiting on a terminal nobody is at;
+// stderr is discarded so a warning banner cannot end up declared as a version.
+function detectAgentCLIVersion() {
+  try {
+    // resolveBackend() maps the backend NAME to its actual binary (litellm →
+    // claude), and is the same resolution the launch path uses — so the version
+    // reported is the version of the CLI that will really run the work.
+    const bin = (resolveBackend().cmd || BACKEND).trim();
+    if (!bin) return '';
+    const out = execFileSync(bin, ['--version'], {
+      encoding: 'utf8',
+      timeout: CLI_VERSION_PROBE_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      killSignal: 'SIGKILL',
+    });
+    return sanitizeDeclaredValue(out);
+  } catch (_) {
+    // Nothing to log: an absent or unprobeable CLI is an ordinary, supported
+    // state here, not a fault.
+    return '';
+  }
+}
+
+// sanitizeDeclaredValue reduces a CLI's version output to one short, printable
+// line fit to declare. Takes the first non-empty line (CLIs append update
+// nudges and banners), strips control characters, collapses whitespace, and
+// truncates. The hub renders declarations into an operator row, so a multi-line
+// or unbounded value would be its problem rather than ours.
+function sanitizeDeclaredValue(raw) {
+  if (typeof raw !== 'string') return '';
+  const line = raw.split('\n').map(s => s.trim()).find(Boolean) || '';
+  const clean = line.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Truncate by code POINT, not code unit, so a value carrying an astral
+  // character is never cut into a lone surrogate on the way out.
+  const points = Array.from(clean);
+  return points.length > CLI_VERSION_MAX_LEN
+    ? points.slice(0, CLI_VERSION_MAX_LEN).join('').trim()
+    : clean;
+}
+
+// parseProtocolVersion mirrors the hub's parser (contribute_protocol_compat.go):
+// strict "MAJOR.MINOR", both non-negative integers, nothing after the minor.
+// Anything else returns null so an unrecognised shape is reported as unparseable
+// rather than coerced into a confident, wrong comparison.
+function parseProtocolVersion(v) {
+  var m = /^\s*(\d+)\.(\d+)\s*$/.exec(String(v == null ? '' : v));
+  if (!m) return null;
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
+}
+
+// classifyPeerProtocol compares a peer's declared version against ours and
+// returns the same verdict vocabulary the hub uses, so the two sides describe a
+// mismatch identically: 'unknown' | 'current' | 'older' | 'newer' |
+// 'incompatible' | 'malformed'. 'unknown' (peer stated nothing) is the
+// backward-compatible default and is never treated as a fault.
+//
+// The verdict always describes THE PEER, so the same 'older' means "the hub is
+// older" here and "the client is older" on the hub side. That is deliberate —
+// one vocabulary, each side reading it about the other — and every message
+// built from it names both versions explicitly so it cannot be misread.
+function classifyPeerProtocol(peer, self) {
+  if (!peer || !String(peer).trim()) return 'unknown';
+  var p = parseProtocolVersion(peer);
+  if (!p) return 'malformed';
+  var s = parseProtocolVersion(self);
+  if (!s) return 'unknown';
+  if (p.major !== s.major) return 'incompatible';
+  if (p.minor < s.minor) return 'older';
+  if (p.minor > s.minor) return 'newer';
+  return 'current';
+}
+
+// warnOnProtocolDrift reports, once per hub for the life of this process, that
+// the hub speaks a
+// different contributor-protocol version than this relay (kubestellar/hive#2547).
+// Purely informational: nothing below changes what we send, what we ask for, or
+// whether we stay connected — a version is not a gate on either side. Silent when
+// the versions agree or the hub is unversioned, so a healthy connection logs
+// nothing extra and an old hub is not nagged about a field it never had.
+function warnOnProtocolDrift(hub, hubVersion) {
+  if (hub.protocolDriftReported) return;
+  var verdict = classifyPeerProtocol(hubVersion, RELAY_PROTOCOL_VERSION);
+  if (verdict === 'current' || verdict === 'unknown') return;
+  hub.protocolDriftReported = true;
+  var detail = {
+    older: `hub ${hubVersion} is behind this relay ${RELAY_PROTOCOL_VERSION} — features this relay knows about may not be deployed there`,
+    newer: `hub ${hubVersion} is ahead of this relay ${RELAY_PROTOCOL_VERSION} — the hub may support features this relay does not use yet`,
+    incompatible: `hub ${hubVersion} differs from this relay ${RELAY_PROTOCOL_VERSION} in MAJOR version — the wire contract differs and behaviour is undefined; consider updating the relay`,
+    malformed: `hub announced an unparseable protocol version; expected MAJOR.MINOR`,
+  }[verdict];
+  console.warn(`Protocol ${verdict}: ${detail}. Continuing normally — this is advisory and nothing is gated on it.`);
 }
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
@@ -274,6 +426,19 @@ function detectCapabilities() {
 // one leaves its model config undefined, so every prompt dies with
 // "Cannot read properties of undefined (reading 'maxTokens')" (bobshell 1.0.6).
 const NO_MODEL_FLAG_BACKENDS = ['amazonq', 'goose', 'bob'];
+
+// agy (Google's Antigravity CLI) REQUIRES --effort whenever --model is given:
+// without it agy warns "--model <m> requires --effort (available: low, medium,
+// high)" and silently IGNORES the model, so the contributor's configured model
+// never takes effect. AGY_DEFAULT_EFFORT mirrors agyDefaultEffort in the
+// hub-side launcher (src/pkg/agent/manager.go) so a relay agent and a pod agent
+// resolve the same effort. AGENT_REASONING_EFFORT can override it, but only
+// with a value agy actually accepts — codex's vocabulary is wider (it takes
+// "minimal"), and forwarding an unknown token here would make agy reject the
+// pairing and drop the model again.
+const AGY_DEFAULT_EFFORT = 'low';
+const AGY_EFFORTS = ['low', 'medium', 'high'];
+const agyEffort = AGY_EFFORTS.includes(REASONING_EFFORT) ? REASONING_EFFORT : AGY_DEFAULT_EFFORT;
 
 // Single source of truth for the CLI launch command (issue #2203, bug 1).
 // contributor-agent.sh builds "$CMD $PERM_FLAG $MODEL_FLAG" for the FIRST
@@ -311,7 +476,10 @@ function buildLaunchCommand() {
   const reasoningFlag = BACKEND === 'codex' && REASONING_EFFORT
     ? `-c 'model_reasoning_effort="${REASONING_EFFORT}"'`
     : '';
-  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag].filter(Boolean).join(' ');
+  // Paired with modelFlag, never on its own: agy without --model needs no
+  // --effort, and passing one alone would be a flag agy has no model to apply.
+  const agyEffortFlag = BACKEND === 'agy' && modelFlag ? `--effort ${agyEffort}` : '';
+  cachedLaunchCommand = [cmd, perm, modelFlag, reasoningFlag, agyEffortFlag].filter(Boolean).join(' ');
   return cachedLaunchCommand;
 }
 
@@ -330,7 +498,7 @@ function buildLaunchCommand() {
 //          prompt is appended as the final, distinct argv element.
 //
 // Backends NOT listed here have no known non-interactive entry point (bob /
-// agy / pi drive an interactive TUI), so headless mode refuses them LOUDLY at
+// pi drive an interactive TUI), so headless mode refuses them LOUDLY at
 // task time rather than silently stalling. Extending this table is how a
 // future PR adds a backend once its headless invocation is verified.
 const HEADLESS_BACKENDS = {
@@ -349,10 +517,20 @@ const HEADLESS_BACKENDS = {
   // documented non-interactive entry point (#2828): `-t` takes the prompt as
   // its VALUE (not a trailing positional), and --no-session skips creating or
   // resuming a session file, which one-shot dispatch never needs. Verified
-  // against goose 1.37.0 — the version v2/Dockerfile pins via GOOSE_VERSION —
+  // against goose 1.37.0 — the version src/Dockerfile pins via GOOSE_VERSION —
   // that `run`, `-t` and `--no-session` all exist and that a failed run exits
   // non-zero, which is the exit-code contract runHeadlessTask() relies on.
   goose: { flag: ['run', '--no-session', '-t'] },
+  // agy -p "<prompt>" — Antigravity's print mode ("Run a single prompt
+  // non-interactively and print the response", `agy --help`). Verified against
+  // agy 1.1.13: a print-mode run answers on stdout and exits 0, which is the
+  // exit-code contract runHeadlessTask() relies on. NOTE this makes agy
+  // headless-capable on a HOST only — agy's sign-in is an interactive Google
+  // OAuth flow (browser URL + pasted code) with no API-key mode, and a fresh
+  // container has nothing to inherit it from, which is why agy stays OUT of
+  // K8S_HEADLESS_BACKENDS on the /contribute page and out of the contributor
+  // image. The capability and the credential are separate questions.
+  agy: { flag: '-p' },
 };
 
 // headlessSupportsBackend reports whether the configured backend has a known
@@ -374,11 +552,14 @@ function buildHeadlessArgv(prompt) {
   const permArgs = perm ? perm.split(/\s+/).filter(Boolean) : [];
   const modelArgs = MODEL && !NO_MODEL_FLAG_BACKENDS.includes(BACKEND) ? ['--model', MODEL] : [];
   const reasoningArgs = BACKEND === 'codex' && REASONING_EFFORT ? ['-c', `model_reasoning_effort="${REASONING_EFFORT}"`] : [];
+  // Same --model/--effort pairing the interactive launch enforces, so headless
+  // agy honors the configured model instead of silently falling back.
+  const agyEffortArgs = BACKEND === 'agy' && modelArgs.length ? ['--effort', agyEffort] : [];
   // spec.flag is a single token for most backends, or an array of leading
   // tokens for backends needing a sub-command plus a flag (goose). Normalize
   // to an array so both shapes spread the same way ahead of the prompt.
   const oneShotArgs = Array.isArray(spec.flag) ? spec.flag : [spec.flag];
-  const args = [...permArgs, ...modelArgs, ...reasoningArgs, ...oneShotArgs, prompt];
+  const args = [...permArgs, ...modelArgs, ...reasoningArgs, ...agyEffortArgs, ...oneShotArgs, prompt];
   return { bin: cmd, args };
 }
 
@@ -414,7 +595,9 @@ function runHeadlessTask(task) {
     const reason = `backend '${BACKEND}' has no headless (non-interactive) mode; supported: ${Object.keys(HEADLESS_BACKENDS).join(', ')}`;
     console.error(`Headless dispatch refused: ${reason}`);
     writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, reason });
-    failCurrentTask(reason, { permanent: true });
+    // environment: this relay's configured backend has no headless entry point;
+    // the work item itself is unjudged.
+    failCurrentTask(reason, { permanent: true, kind: 'environment' });
     return;
   }
 
@@ -455,8 +638,13 @@ function runHeadlessTask(task) {
       console.log(`Headless task ${task.task_id} completed (exit 0)`);
       const prURL = detectPRURL(outTail, task.repo);
       if (prURL) console.log(`Detected PR for ${task.task_id}: ${prURL}`);
+      // #3987: only report a no_work_needed verdict when no PR was shipped —
+      // a visible PR contradicts "nothing shippable" (the hub would override
+      // the claim with "shipped" anyway).
+      const noWork = prURL ? null : detectNoWorkVerdict(outTail);
+      if (noWork) console.log(`Detected no_work_needed verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, pr_url: prURL });
-      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL });
+      send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
       currentTask = null;
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -680,7 +868,8 @@ function armCLIReadyWait() {
     // contributor silently working on someone else's issue.
     pendingTask = null;
     if (currentTask) {
-      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true });
+      // environment: the agent CLI never reached its prompt on this host.
+      failCurrentTask(`CLI never became ready: ${e.message}`, { skipReady: true, kind: 'environment' });
     }
     // Keep waiting. The CLI may still come up (a slow login, an operator
     // attaching to clear a prompt we don't recognize), and when it does the
@@ -874,6 +1063,40 @@ function detectPRURL(lines, repo) {
   return repoMatch || anyMatch;
 }
 
+// Best-effort scan of the agent's recent output for the no_work_needed
+// sentinel (kubestellar/hive#3987). The hub's task prompt instructs the agent:
+// when it affirmatively determines there is NOTHING shippable (the remainder
+// is gated on an unanswered maintainer decision, or merged PRs already cover
+// it), it prints a line of the exact form
+//   HIVE_VERDICT: no_work_needed — <short reason>
+// instead of opening a PR. Reported on task_complete as verdict/verdict_reason
+// so the hub can park the issue for the long offer-suppression window instead
+// of re-offering it every short-cooldown period forever (the #2547 shape that
+// escalation only bounded). Returns null when no marker is found — the hub
+// then treats the completion exactly as an idle one (today's semantics). The
+// marker spelling must stay in sync with buildTaskPrompt in
+// src/pkg/dashboard/contribute_ws.go.
+function detectNoWorkVerdict(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  // Anchored at line start: the task PROMPT quotes the marker mid-sentence
+  // ("...the exact form 'HIVE_VERDICT: ...'"), and an anchored match keeps
+  // that instruction echo from reading as the agent's own verdict.
+  const VERDICT_RE = /^\s*HIVE_VERDICT:\s*no_work_needed\b[\s:—–-]*(.*)$/i;
+  // Scan newest-first so the agent's final conclusion wins over anything it
+  // merely quoted or considered earlier in the transcript.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = VERDICT_RE.exec(lines[i]);
+    if (!m) continue;
+    const reason = (m[1] || '').trim();
+    // tmux may wrap the prompt's instruction so its quoted marker lands at a
+    // visual line start; its giveaway is the literal "<short reason>"
+    // placeholder. Never treat that echo as a real verdict.
+    if (reason.startsWith('<')) continue;
+    return { verdict: 'no_work_needed', reason };
+  }
+  return null;
+}
+
 // True while a bob CLI process is alive. bob exits at the end of every turn,
 // so "process gone" means the turn finished — see the bob branch of
 // checkTmuxIdle(). Matches the launch command rather than the bare name so a
@@ -1004,9 +1227,25 @@ function classifyTmuxPane(text) {
     hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
     isWorking = /Reading|Writing|Bash|Editing|thinking|running/i.test(text);
   } else if (BACKEND === 'agy') {
+    // Scope the activity check to the TAIL, exactly as the claude branch above
+    // does. agy narrates in plain English inside the transcript ("I am running
+    // the pkg/agent tests…", "Analyzing…"), and those lines stay on screen after
+    // the turn ends. A whole-pane, case-insensitive scan for bare verbs
+    // therefore reads a FINISHED turn as still working — forever, since the
+    // stale line never scrolls off on its own. Observed live: a pane with
+    // hasIdlePrompt=true was pinned to WORKING by a single narration line left
+    // over from the PREVIOUS task, so the relay never reported completion and
+    // kept renewing the hub's task lease; the contributor had to Ctrl-C.
+    //
+    // The marker SET is deliberately unchanged — only the window it looks at.
+    // Narrowing which verbs count would need a live agy turn to verify against,
+    // and getting that wrong would be the opposite (and worse) bug: reporting a
+    // busy agent as idle. The stall backstop in progressTick() covers whatever
+    // this still misses.
+    const agyTail = text.split('\n').slice(-15).join('\n');
     hasIdlePrompt = /\? for shortcuts/.test(text);
     hasCompletionMarker = true;
-    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(text);
+    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
   } else {
     hasIdlePrompt = />\s*$|\$\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
@@ -1056,6 +1295,53 @@ function relaunchCLI() {
   // a prompt must hand its task back rather than sit on it silently.
   armCLIReadyWait();
   return launchCmd;
+}
+
+// --- Pane stall backstop ------------------------------------------------
+//
+// A relay that BELIEVES it is working renews the hub's task lease on every
+// progress report, so the hub's wedged-worker reclaim (wsTaskTimeout +
+// cleanupLoop in src/pkg/dashboard/contribute_ws.go) can never fire against it.
+// That guard only catches a relay that goes SILENT — a crash or a hang. A relay
+// stuck in a false "working" belief keeps the lease alive forever, the task
+// stays in-progress, no further work is offered, and the only way out is a
+// human pressing Ctrl-C. That is not a state a contributor should have to
+// notice, let alone fix by hand.
+//
+// So: if the pane content has not CHANGED at all for this long while we are
+// reporting "working", stop asserting progress we cannot substantiate and hand
+// the task back as an `environment` failure — the honest verdict, since a
+// frozen pane tells us nothing about whether the work itself was done. The hub
+// then requeues it through its normal release path.
+//
+// Deliberately generous: a real agent can sit on one silent command (a long
+// test suite, a slow clone) for many minutes without drawing anything new.
+const PANE_STALL_TIMEOUT_MS = Number(process.env.HIVE_PANE_STALL_TIMEOUT_MS) || 20 * 60 * 1000;
+
+let lastPaneFingerprint = null;
+let lastPaneChangeAt = 0;
+
+function resetPaneStallClock() {
+  lastPaneFingerprint = null;
+  lastPaneChangeAt = Date.now();
+}
+
+// paneStalled records the current pane content and reports whether it has been
+// byte-for-byte identical for longer than PANE_STALL_TIMEOUT_MS.
+function paneStalled(tmuxLines) {
+  const fingerprint = Array.isArray(tmuxLines) ? tmuxLines.join('\n') : String(tmuxLines || '');
+  const now = Date.now();
+  if (fingerprint !== lastPaneFingerprint) {
+    lastPaneFingerprint = fingerprint;
+    lastPaneChangeAt = now;
+    return false;
+  }
+  // An empty capture means tmux told us nothing (session gone, capture failed).
+  // That is not evidence of a stalled AGENT, and other paths already handle a
+  // missing pane, so never let it trip this backstop.
+  if (!fingerprint) return false;
+  if (!lastPaneChangeAt) { lastPaneChangeAt = now; return false; }
+  return now - lastPaneChangeAt >= PANE_STALL_TIMEOUT_MS;
 }
 
 function flushPendingTask() {
@@ -1112,14 +1398,26 @@ function restartBackoffMs(attempt) {
   return Math.min(TASK_RESTART_BASE_BACKOFF_MS * Math.pow(2, attempt - 1), TASK_RESTART_MAX_BACKOFF_MS);
 }
 
+// failCurrentTask reports the active task as failed.
+//
+// opts.kind (kubestellar/hive#2547) optionally states WHY: 'environment' when
+// this client's own runtime could not run the work (the CLI never started, it
+// crashed, the backend has no headless mode) versus 'task' when the work was
+// attempted and failed on its merits. Omit it when the cause is genuinely
+// ambiguous — the hub normalizes absent to 'unspecified', and guessing would be
+// worse than saying nothing, since an operator reads this to attribute failures.
+//
+// It is advisory: the hub records and displays it and does not route, gate, or
+// change the work item's failure cooldown on it. Older hubs ignore the field.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
+  const kind = (opts && opts.kind) || undefined;
   const taskId = currentTask.task_id;
   const taskGen = currentTask.task_gen;
   const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}: ${reason}`);
-  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, tmux_output: tmuxLines });
+  console.error(`Task ${taskId} failed${permanent ? ' permanently' : ''}${kind ? ` [${kind}]` : ''}: ${reason}`);
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, task_gen: taskGen, reason, permanent, failure_kind: kind, tmux_output: tmuxLines });
   currentTask = null;
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1138,6 +1436,9 @@ function startProgressReporting() {
   if (taskTimeoutHandle) clearTimeout(taskTimeoutHandle);
   if (!taskAssignedAt) taskAssignedAt = Date.now();
   lastProgressTick = Date.now();
+  // Every task starts with a clean stall clock — the previous task's pane
+  // fingerprint says nothing about this one.
+  resetPaneStallClock();
 
   taskTimeoutHandle = setTimeout(() => {
     if (currentTask) {
@@ -1202,7 +1503,8 @@ function progressTick() {
       } catch (e) {
         console.error('Failed to restart CLI:', e.message);
       }
-      failCurrentTask('CLI process exited — restarted');
+      // environment: the agent CLI process died; nothing was judged about the work.
+      failCurrentTask('CLI process exited — restarted', { kind: 'environment' });
       return;
     }
   } catch (_) {}
@@ -1219,7 +1521,12 @@ function progressTick() {
     // Empty when no PR link is found — the hub then applies the short cooldown.
     const prURL = detectPRURL(tmuxLines, currentTask.repo);
     if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
+    // #3987: only report a no_work_needed verdict when no PR was shipped — a
+    // visible PR contradicts "nothing shippable" (the hub would override the
+    // claim with "shipped" anyway).
+    const noWork = prURL ? null : detectNoWorkVerdict(tmuxLines);
+    if (noWork) console.log(`Detected no_work_needed verdict for ${currentTask.task_id}: ${noWork.reason || '(no reason)'}`);
+    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, result: 'completed', summary: noWork ? 'Agent returned to idle (reported no_work_needed)' : 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL, verdict: noWork ? noWork.verdict : undefined, verdict_reason: noWork ? noWork.reason : undefined });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.
@@ -1265,6 +1572,15 @@ function progressTick() {
       tmux_output: tmuxLines,
     });
   } else {
+    // Stall backstop: a pane frozen this long is not evidence of work, and
+    // continuing to report "working" would renew the hub's lease forever.
+    if (paneStalled(tmuxLines)) {
+      failCurrentTask(
+        `no pane activity for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)} minutes — the agent CLI is not visibly working`,
+        { kind: 'environment' }
+      );
+      return;
+    }
     send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
   }
 }
@@ -1305,6 +1621,18 @@ function handleMessage(data, hub) {
       if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
         console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
       }
+      // #2547 (peer-compatibility): both sides have STATED a version since #2567,
+      // but neither COMPARED them, so "an old relay against a new hub" was still
+      // only detectable by watching it misbehave. Say it once, plainly, on the
+      // contributor's own terminal — this is the half of the detection the hub
+      // log cannot deliver, because the person running the relay is usually not
+      // the person reading the hub.
+      //
+      // Advisory in BOTH directions: we never refuse to connect, never stop
+      // asking for work, and never change what we send. A relay that downgraded
+      // itself on a version mismatch would strand its own contributor for a
+      // difference that is, by the additive-versioning rule, usually harmless.
+      warnOnProtocolDrift(hub, msg.protocol_version);
       hub.authenticated = true;
       hub.authFailed = false;
       hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
@@ -1551,7 +1879,12 @@ process.on('SIGINT', () => { cleanup(); process.exit(0); });
 if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   module.exports = {
     buildLaunchCommand,
+    detectCapabilities,
+    detectAgentCLIVersion,
+    sanitizeDeclaredValue,
     handleMessage,
+    injectGhToken,
+    GH_TOKEN_CACHE,
     tmuxSendKeys,
     flushPendingTask,
     relaunchCLI,
@@ -1566,6 +1899,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     PANE_STATE_IDLE_COMPLETE,
     // Run one progress tick with the grace period already elapsed.
     __crashTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
+    paneStalled,
+    resetPaneStallClock,
+    PANE_STALL_TIMEOUT_MS,
+    // Backdate the stall clock so a test can cross the timeout without
+    // sleeping — the two ticks it needs otherwise land in the same millisecond.
+    __agePaneStallClock: (ms) => { lastPaneChangeAt -= ms; },
+    // Run a progress tick past the startup grace period, as __crashTick does,
+    // so the stall backstop can be exercised without waiting it out.
+    __stallTick: () => { taskAssignedAt = Date.now() - TASK_GRACE_PERIOD_MS - 1; progressTick(); },
     cleanup,
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
@@ -1586,6 +1928,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },
     getHubs: () => hubs,
+    // Peer-protocol compatibility (kubestellar/hive#2547). Exported so the
+    // relay-side half of "both sides can detect an incompatible peer" is tested
+    // behaviourally here, not just asserted to exist from the Go side.
+    RELAY_PROTOCOL_VERSION,
+    parseProtocolVersion,
+    classifyPeerProtocol,
+    warnOnProtocolDrift,
     // Headless (non-interactive) mode surface (kubestellar/hive#2538).
     CONTRIBUTOR_MODE,
     MODE_INTERACTIVE,
@@ -1601,5 +1950,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getHeadlessChild: () => headlessChild,
   };
 } else {
+  // Warm the capability cache BEFORE the first hub connection. detectCapabilities()
+  // is called from the auth_challenge handler, and the hub bounds a handshake at
+  // 30s (wsAuthTimeout); doing the probes here keeps every one of them — backend
+  // resolution and the `--version` call added for the CLI version — off the auth
+  // path entirely, where a slow host could otherwise eat that budget. Failures are
+  // already absorbed field-by-field, so this cannot stop the relay starting.
+  detectCapabilities();
   connect();
 }

@@ -1,0 +1,204 @@
+# Hive hub disaster-recovery backup.
+#
+# Captures hub state, the four out-of-PVC Kubernetes Secrets, and every spoke's
+# authoritative config (hive.yaml.runtime, gh-app-key*.pem, hive-id), encrypts the
+# result with AES-256-GCM and uploads it to OCI Object Storage.
+#
+# See docs/HUB_DISASTER_RECOVERY.md before deploying. In particular:
+#   HIVE_BACKUP_KEY MUST be escrowed OUTSIDE the cluster (password manager /
+#   offline). A backup encrypted with a key that only exists inside the hub is
+#   worthless after the hub is destroyed.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+---
+# Least-privilege RBAC (see #3708), scoped to exactly the API calls the backup
+# binary makes (pkg/hubbackup/collect.go):
+#
+#   kubectl get secret <name> -n hive-hub -o json     # 4 named Secrets, GET only
+#   kubectl get pods -n hive-hosted-<id> ...          # per-spoke pod lookup
+#   kubectl exec    -n hive-hosted-<id> -c hive ...   # per-spoke config read
+#
+# Secrets access is intentionally NOT cluster-wide: it is granted through a
+# namespaced Role + RoleBinding scoped to hive-hub, pinned by resourceNames to
+# the four Secrets the backup archives, so a compromised backup pod cannot
+# enumerate or read any other Secret — in this namespace or any other.
+#
+# pods and pods/exec remain in a ClusterRole because spoke namespaces
+# (hive-hosted-<id>) are created dynamically per spoke: they cannot be
+# enumerated in a static manifest for per-namespace RoleBindings, and RBAC
+# cannot express "pods in namespaces matching hive-hosted-*". That ClusterRole
+# grants no secrets access and no namespace enumeration.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+rules:
+  # The backup performs only named GETs of the four out-of-PVC Secrets
+  # (DefaultHubSecrets in pkg/hubbackup/collect.go); it never LISTs Secrets.
+  # The grant is therefore pinned to exactly those names with the single verb
+  # the code uses — resourceNames cannot constrain "list", which is one more
+  # reason list is omitted. The backup key itself is injected via env, and the
+  # kubeconfigs Secret volume is mounted by the kubelet, not read via this SA.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      - hive-hub-secrets # GitHub OAuth client secret
+      - oci-api-key # OCI credentials for FSS + Object Storage
+      - hive-hub-kubeconfigs # kubeconfigs for remote spoke clusters
+      - hive-hub-tls # TLS cert (cert-manager can reissue, kept for speed)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-hub-backup
+subjects:
+  - kind: ServiceAccount
+    name: hive-hub-backup
+    namespace: hive-hub
+---
+# Minimal ClusterRole: only what genuinely must reach across namespaces.
+#
+# The collector derives every spoke namespace as hive-hosted-<id> from
+# hub-registry.json — it never enumerates namespaces — so the previous
+# "namespaces: get,list" grant was unused and has been removed. What remains
+# is exactly the per-spoke read path: finding the Running spoke pod and
+# exec'ing into it. Spoke namespaces are created dynamically, so this cannot
+# be narrowed to per-namespace RoleBindings from a static manifest; that is
+# the only reason a ClusterRole remains at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-hub-backup
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-hub-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-hub-backup
+subjects:
+  - kind: ServiceAccount
+    name: hive-hub-backup
+    namespace: hive-hub
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+  labels:
+    app.kubernetes.io/name: hive-hub-backup
+    app.kubernetes.io/component: backup
+spec:
+  # 03:17 UTC daily — off the hour to avoid contending with other cron traffic.
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      # A hung spoke exec must not leave the job running until the next fire.
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: hive-hub-backup
+          restartPolicy: Never
+          containers:
+            - name: backup
+              # `stable` is the operator-blessed release channel (see #3709).
+              # The original v2-latest tag belonged to the retired v2 branch —
+              # a dead tag that would have gone permanently stale once that
+              # branch stopped building — and a frozen one-off digest pin rots
+              # the same way as releases roll unless someone remembers to
+              # recompute it. Tracking the stable channel keeps the backup
+              # binary in lockstep with the release the fleet actually runs.
+              image: ghcr.io/kubestellar/hive:stable
+              # `stable` is a moving tag: without Always, each node keeps
+              # running whatever the tag resolved to on first pull and channel
+              # promotions are silently ignored.
+              imagePullPolicy: Always
+              command: ["/usr/local/bin/hive-backup", "run"]
+              env:
+                # AES-256 key for the archive. MUST be escrowed outside the
+                # cluster. No default: an unset key aborts the backup rather
+                # than writing plaintext.
+                - name: HIVE_BACKUP_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: hive-hub-backup-key
+                      key: backup-key
+                - name: HIVE_BACKUP_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: hive-hub-backup-config
+                      key: bucket
+                - name: HIVE_BACKUP_RETENTION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: hive-hub-backup-config
+                      key: retention
+              # OCI credentials for Object Storage, reusing the Secret the hub
+              # already uses for File Storage provisioning.
+              envFrom:
+                - secretRef:
+                    name: oci-api-key
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: kubeconfigs
+                  mountPath: /etc/hive/kubeconfigs
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+          volumes:
+            # The hub PVC, mounted read-only: the backup never writes to it.
+            - name: data
+              persistentVolumeClaim:
+                claimName: hive-hub-data-rwx
+                readOnly: true
+            # Kubeconfigs for remote spoke clusters (e.g. the heartbeat-only cluster). Without
+            # this, spokes on remote clusters cannot be captured.
+            - name: kubeconfigs
+              secret:
+                secretName: hive-hub-kubeconfigs
+                # SECURITY (audit N5, CWE-732/522): default projection is 0644.
+                # These kubeconfigs carry cluster-admin credentials for remote
+                # spokes. 0400 (not the 0440 used for the hive pod) because this
+                # is a single-purpose backup pod running as the image's default
+                # user with no agent UIDs in it — nothing here needs group read.
+                defaultMode: 0400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-hub-backup-config
+  namespace: hive-hub
+data:
+  bucket: "hive-hub-backups"
+  retention: "30"

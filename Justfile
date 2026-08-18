@@ -160,9 +160,18 @@ contribute-check-backend backend="claude":
         if command -v agy &>/dev/null; then
           echo "agy CLI detected ($(agy --version 2>&1 | head -1))"
           echo "  Models: gemini-3.6-flash, claude-sonnet-4-6, gpt-oss-120b, and more"
-          echo "  Set model: --model gemini-3.6-flash-high"
+          echo "  Set model: export AGENT_MODEL=gemini-3.6-flash-high"
+          echo "  Effort:    export AGENT_REASONING_EFFORT=low|medium|high (agy needs --effort with --model)"
+          # agy signs in through an interactive Google OAuth flow (browser URL
+          # plus a pasted code) and offers no API-key mode, so run it on the
+          # HOST: a container cannot inherit the sign-in. Sign in once with a
+          # bare `agy` before starting the relay.
+          echo "  Sign in once interactively (run: agy) — agy's Google OAuth cannot be"
+          echo "  completed by an unattended container, so run this backend on the host:"
+          echo "    just contribute-hive agy local"
         else
-          echo "ERROR: agy CLI not found. Install: https://antigravity.dev"
+          echo "ERROR: agy CLI not found. Install: https://antigravity.google/product/antigravity-cli"
+          echo "  Homebrew: brew install --cask antigravity-cli"
           exit 1
         fi
         ;;
@@ -197,7 +206,21 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       if [[ -n "$_TOKEN" ]]; then
         MY_HIVES=$(curl -sf -H "Authorization: Bearer ${_TOKEN}" "https://hive.kubestellar.io/api/saas/my-hives" 2>/dev/null || echo "")
         if [[ -n "$MY_HIVES" ]]; then
-          HIVE_LIST=$(echo "$MY_HIVES" | jq -r '.hives[]? // .[] | "\(.id)|\(.name // .project_name)"' 2>/dev/null)
+          # /api/saas/my-hives answers with "hives": null for an account that
+          # owns no SaaS-hosted hive — the normal case for a contributor who
+          # only lends their CLI to someone else's hive. The old filter treated
+          # that as "try something else" via `// .[]`, which iterates every
+          # TOP-LEVEL KEY of the response (alerts, channel_targets, …) and then
+          # interpolates .name over values that are arrays. jq exits 5 on that,
+          # and because the recipe runs under `set -euo pipefail` the whole
+          # setup died with a bare "recipe failed with exit code 5" — never
+          # reaching the public-registry fallback directly below, which would
+          # have listed the hives fine.
+          #
+          # So: iterate .hives ONLY when it really is an array of objects, and
+          # never let jq's exit status abort the lookup. An empty result here
+          # is a valid answer that means "fall through to the registry".
+          HIVE_LIST=$(echo "$MY_HIVES" | jq -r '(.hives // empty) | select(type == "array") | .[] | select(type == "object") | "\(.id)|\(.name // .project_name // .id)"' 2>/dev/null || true)
         fi
       fi
       if [[ -z "$HIVE_LIST" ]]; then
@@ -206,10 +229,13 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
           echo "Set HIVE_HUB manually: export HIVE_HUB=wss://<hive>/contribute"
           exit 1
         }
-        HIVE_LIST=$(echo "$HIVES_JSON" | jq -r '.hives[] | select(.online==true) | "\(.id)|\(.name)"' 2>/dev/null)
+        # Same guards as above: a registry whose shape drifts must degrade to
+        # "no hives listed" with an actionable message, not kill the recipe.
+        HIVE_LIST=$(echo "$HIVES_JSON" | jq -r '(.hives // empty) | select(type == "array") | .[] | select(type == "object" and .online == true) | "\(.id)|\(.name // .id)"' 2>/dev/null || true)
       fi
       if [[ -z "$HIVE_LIST" ]]; then
         echo "No hives available. Check https://hive.kubestellar.io"
+        echo "Or set the hub directly: export HIVE_HUB=wss://<hive>/contribute"
         exit 1
       fi
       echo "Your hives:"
@@ -363,7 +389,7 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
 #        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (native mode, claude)
 # Runtime: auto-detects docker then podman (discovery order, not posture —
-# see v2/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
+# see src/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -508,7 +534,7 @@ contribute-hive backend="" mode="docker": check-version
       # A contributor who wants rootless-by-default should set
       # HIVE_CONTAINER_RUNTIME=podman explicitly; the page selector does
       # the same. Rootless Podman handling is exercised by hand, not yet
-      # by CI — see v2/docs/podman-rootless-ci.md (#2535 Option C) for the
+      # by CI — see src/docs/podman-rootless-ci.md (#2535 Option C) for the
       # test-intent seam. We are deliberately NOT re-ordering this detect
       # to prefer Podman (that's Option A) until that CI coverage exists.
       RUNTIME="{{container_runtime}}"
@@ -608,7 +634,21 @@ contribute-hive backend="" mode="docker": check-version
           fi
           ;;
         agy)
-          if [ -d "${HOME}/.antigravitycli" ]; then
+          # agy 1.1.x keeps its state under ${HOME}/.gemini/antigravity-cli,
+          # NOT the ${HOME}/.antigravitycli this recipe staged before — on a
+          # 1.1.13 install that legacy path does not exist at all, so the mount
+          # was a silent no-op. Stage whichever is present (legacy first-run
+          # installs may still use the old path) so neither layout is dropped.
+          #
+          # Staging state is NOT the same as staging a session: agy authenticates
+          # through an interactive Google OAuth flow and keeps no credential file
+          # under HOME that a container can inherit (verified on 1.1.13 — a clean
+          # container asks for a browser login regardless of what is mounted).
+          # The /contribute page therefore offers agy in HOST mode only.
+          if [ -d "${HOME}/.gemini/antigravity-cli" ]; then
+            stage_copy "${HOME}/.gemini/antigravity-cli" "antigravity-cli"
+            CLI_MOUNTS="-v ${CLI_STAGE}/antigravity-cli:/home/dev/.gemini/antigravity-cli${VOLSUF}"
+          elif [ -d "${HOME}/.antigravitycli" ]; then
             stage_copy "${HOME}/.antigravitycli" ".antigravitycli"
             CLI_MOUNTS="-v ${CLI_STAGE}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
           fi
@@ -840,11 +880,17 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # (waiting/working/done/failed). Kept in step with HEADLESS_STATUS_FILE's
     # default in bin/contributor-relay.sh; the probe below reads this exact path.
     readonly HEADLESS_STATUS_FILE="/tmp/contributor-headless-status.json"
-    # Backends with a verified non-interactive (headless) entry point — must
-    # match HEADLESS_BACKENDS in bin/contributor-relay.sh. A headless pod on any
-    # OTHER backend (bob/agy/pi) refuses work LOUDLY at startup, so we warn
-    # here rather than emit a manifest that will crash-loop with no explanation.
-    # goose joined this set in #2828 via its `goose run` one-shot sub-command.
+    # Backends a CLUSTER can run headless. A headless pod on any OTHER backend
+    # (bob/pi) refuses work LOUDLY at startup, so we warn here rather than emit
+    # a manifest that will crash-loop with no explanation. goose joined this set
+    # in #2828 via its `goose run` one-shot sub-command.
+    #
+    # This is deliberately a SUBSET of HEADLESS_BACKENDS in
+    # bin/contributor-relay.sh, which lists CLI capability only: agy has a
+    # verified print mode (`agy -p`) and runs headless on a HOST, but it
+    # authenticates through an interactive Google OAuth flow with no API-key
+    # mode, so a pod has no way to sign in. Do NOT add agy here to "resync" the
+    # two lists — a pod would start, fail auth, and crash-loop.
     readonly HEADLESS_BACKENDS="claude litellm copilot codex goose"
     # Memory sizing: the contributor image is ~2.7GiB unpacked and each task
     # spawns a real coding-CLI + a repo build/test, so requests are deliberately

@@ -6,7 +6,7 @@ Hive Federation lets independent Hive instances publish themselves in a registry
 
 ## Current v2 implementation
 
-The v2 Go dashboard API implements the federation endpoints in `v2/pkg/dashboard/api_contribute.go`:
+The v2 Go dashboard API implements the federation endpoints in `src/pkg/dashboard/api_contribute.go`:
 
 - `GET /api/hives` — list registered hives.
 - `POST /api/hives/register` — add or update a hive entry.

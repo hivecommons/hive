@@ -8,11 +8,11 @@
 # NOTE: tmux reads history-limit at PANE creation, so the attach-time raise
 # cannot deepen an already-created pane. The authoritative deep-scrollback
 # setting is applied at session creation by the agent manager
-# (newSessionCommands in v2/pkg/agent/manager.go, override
+# (newSessionCommands in src/pkg/agent/manager.go, override
 # HIVE_TMUX_HISTORY_LIMIT).
 #
-# NOTE: The container uses v2/deploy/ttyd-tmux.sh (copied to
-# /usr/local/bin/ttyd-tmux.sh by v2/Dockerfile), which additionally resolves
+# NOTE: The container uses src/deploy/ttyd-tmux.sh (copied to
+# /usr/local/bin/ttyd-tmux.sh by src/Dockerfile), which additionally resolves
 # per-agent tmux sockets across UIDs via su-exec. This copy is a simpler
 # standalone helper kept in sync for local/non-UID-isolated use.
 set -euo pipefail

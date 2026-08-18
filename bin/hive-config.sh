@@ -21,7 +21,7 @@
 # under (e.g. /tmp/hive when this file is at /tmp/hive/bin/hive-config.sh,
 # used by hive-deploy.sh to `cd` in and `git pull`). In production this file
 # is COPIED (not checked out) to /usr/local/bin/hive-config.sh (see
-# v2/Dockerfile), so "one directory up from where this script lives" is
+# src/Dockerfile), so "one directory up from where this script lives" is
 # /usr/local — never a real hive checkout — and the naive derivation below
 # was WRONG for every deployed container even before considering the failure
 # mode below.
