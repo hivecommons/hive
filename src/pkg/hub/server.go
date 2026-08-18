@@ -3543,6 +3543,24 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 // slow or malicious DNS server cannot block the caller indefinitely.
 const privateURLDNSTimeout = 5 * time.Second
 
+// hostResolver is the DNS seam used by isPrivateURL. Production ALWAYS uses
+// defaultHostResolver — this indirection exists only so tests can supply a
+// deterministic resolution result and stay hermetic in a network-isolated CI
+// sandbox (audit finding L3, 2026-08-17 security review). Tests that override
+// it must restore it via t.Cleanup. The fail-closed contract below (a resolver
+// error means "private") is unchanged and must stay that way: swapping the
+// resolver changes only WHERE answers come from, never how failures are
+// treated. Mirrors the identical seam in pkg/dashboard.
+type hostResolver func(ctx context.Context, host string) ([]string, error)
+
+var privateURLResolver hostResolver = defaultHostResolver
+
+func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
+	defer cancel()
+	return (&net.Resolver{}).LookupHost(resolveCtx, host)
+}
+
 func isPrivateURL(ctx context.Context, rawURL string) bool {
 	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
 		if strings.HasPrefix(rawURL, scheme) {
@@ -3565,10 +3583,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 	}
 
 	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
-	defer cancel()
-	resolver := &net.Resolver{}
-	addrs, err := resolver.LookupHost(resolveCtx, host)
+	addrs, err := privateURLResolver(ctx, host)
 	if err != nil {
 		// If DNS fails, treat as private (fail-closed) to prevent bypass.
 		return true

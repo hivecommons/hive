@@ -148,6 +148,14 @@ func TestSecureCompareHub(t *testing.T) {
 }
 
 func TestIsPrivateURL(t *testing.T) {
+	// L3: the public-hostname rows below used to perform a REAL DNS lookup, so
+	// this test failed closed in a network-isolated sandbox. Resolution is now
+	// stubbed for exactly these three hosts; every private row is still decided
+	// by the literal-prefix checks that run before resolution, and an
+	// unregistered host still fails closed (see
+	// TestStubPrivateURLResolverIsFailClosed). The guard itself is unchanged.
+	stubPrivateURLResolver(t, "github.com", "api.github.com", "hive.kubestellar.io")
+
 	tests := []struct {
 		url  string
 		want bool

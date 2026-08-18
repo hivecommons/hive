@@ -200,19 +200,31 @@ for arg in "${args[@]}"; do
   esac
 done
 
-# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840, F6/F7 residual) ────────────────
+# ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840 F6/F7 residual; added in #3854) ─
 #
-# Everything below this point is a DENYLIST: each gate names a specific thing an
-# agent must not do (`pr merge`, `issue create`, mutating `gh api`, ...) and the
-# script ends in a bare `exec "$REAL_GH" "$@"`. So any subcommand nobody thought
-# to enumerate reached real GitHub with the App token attached. That is the same
-# failure shape as the mode `case` with no default arm (fixed in ce9d19aa):
-# unenumerated input takes the permissive branch.
+# WHAT THIS GATE IS (read this before touching `_gh_surface_allowed`):
+# `_gh_surface_allowed` below is a deny-by-default ALLOWLIST, not a denylist.
+# A subcommand/action pair reaches real `gh` only if it is EXPLICITLY named in
+# the `case` arms; anything unenumerated is rejected. Removing an arm therefore
+# BLOCKS a verb, and the way to permit a new verb is to ADD an arm — never to
+# "add it to a deny list". Do not restructure this into a denylist: that is the
+# exact bug #3854 fixed, and audit finding L1 (2026-08-17 security review)
+# flagged the stale wording here for misleading a future maintainer into
+# weakening the gate.
 #
-# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8, EVERY
-# one of these reached gh with rc=0 — including in NO_GITHUB mode, the most
-# restrictive mode there is, because the mode gates only ever inspect
-# `subcmd = issue|pr`:
+# WHY (historical, pre-#3854): every gate FURTHER BELOW this block is still a
+# denylist — each names a specific thing an agent must not do (`pr merge`,
+# `issue create`, mutating `gh api`, ...) and the script ends in a bare
+# `exec "$REAL_GH" "$@"`. Before this allowlist existed, any subcommand nobody
+# thought to enumerate reached real GitHub with the App token attached. That is
+# the same failure shape as the mode `case` with no default arm (fixed in
+# ce9d19aa): unenumerated input takes the permissive branch.
+#
+# This was not theoretical. Against the stub harness, on v4 @ c9ea2cc8 (i.e.
+# BEFORE the allowlist below landed in #3854), EVERY one of these reached gh
+# with rc=0 — including in NO_GITHUB mode, the most restrictive mode there is,
+# because the mode gates only ever inspect `subcmd = issue|pr`. All of them are
+# rejected today because none is on the allowlist:
 #
 #   NO_GITHUB     gh auth token                 → reached gh  (exfiltrates the token)
 #   NO_GITHUB     gh secret set FOO --body bar  → reached gh  (writes Actions secrets)
