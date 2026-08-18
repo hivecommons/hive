@@ -47,6 +47,38 @@ const httpTimeout = 10 * time.Second
 // is a memory-safety bound against a hostile or broken endpoint.
 const maxResponseBytes = 1 << 16
 
+// jwtClockSkewLeeway tolerates small clock drift between the hub and the
+// provider when validating exp/nbf/iat. golang-jwt v5 defaults to ZERO leeway
+// (there is no built-in "small leeway"), so without this a provider whose clock
+// is seconds ahead of ours mints id_tokens the hub rejects as "not valid yet".
+// Two minutes matches common OIDC RP practice and stays far below any token
+// lifetime.
+const jwtClockSkewLeeway = 2 * time.Minute
+
+// Step sentinels: Exchange wraps its error with exactly one of these so the hub
+// can log WHICH step of the OIDC callback failed (discovery / token exchange /
+// id_token verification) without parsing error strings. Server-side diagnostics
+// only — never shown to the user.
+var (
+	ErrStepDiscovery     = errors.New("step=discovery")
+	ErrStepTokenExchange = errors.New("step=token_exchange")
+	ErrStepVerifyToken   = errors.New("step=id_token_verify")
+)
+
+// FailedStep classifies an Exchange error by the step sentinel it wraps.
+// Returns "unknown" for a nil or unclassified error.
+func FailedStep(err error) string {
+	switch {
+	case errors.Is(err, ErrStepDiscovery):
+		return "discovery"
+	case errors.Is(err, ErrStepTokenExchange):
+		return "token_exchange"
+	case errors.Is(err, ErrStepVerifyToken):
+		return "id_token_verify"
+	}
+	return "unknown"
+}
+
 // jwksRefreshMinInterval throttles JWKS re-fetches triggered by an unknown `kid`.
 // Providers rotate signing keys occasionally; a flood of tokens with an unknown
 // kid (garbage or an attack) must not turn into a fetch-per-request DoS on the
@@ -160,13 +192,17 @@ func (p *Provider) Exchange(ctx context.Context, code, redirectURI, expectNonce 
 		return nil, errors.New("Exchange is only for OIDC providers; GitHub uses the hub's own handler")
 	}
 	if err := p.ensureDiscovered(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrStepDiscovery, err)
 	}
 	rawIDToken, err := p.fetchIDToken(ctx, code, redirectURI)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrStepTokenExchange, err)
 	}
-	return p.verifyIDToken(ctx, rawIDToken, expectNonce)
+	claims, err := p.verifyIDToken(ctx, rawIDToken, expectNonce)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStepVerifyToken, err)
+	}
+	return claims, nil
 }
 
 // fetchIDToken posts the code to the token endpoint and returns the raw id_token.
@@ -213,17 +249,21 @@ func (p *Provider) fetchIDToken(ctx context.Context, code, redirectURI string) (
 }
 
 // verifyIDToken validates the id_token's signature and claims, then extracts
-// identity. It enforces, in order: a supported RS256/RS384/RS512 alg (never
-// "none", never HMAC — which would let a client-known secret forge a token); the
-// signing key resolved from JWKS by `kid`; iss == p.Issuer; aud contains
-// p.ClientID; exp not passed (with the library's small leeway); and nonce ==
-// expectNonce. Any failure returns an error and NO claims.
+// identity. It enforces, in order: a supported RSA alg — RS256/384/512 or the
+// RSA-PSS variants PS256/384/512 (IBMid advertises PS*), never "none", never
+// HMAC — which would let a client-known secret forge a token; the signing key
+// resolved from JWKS by `kid`; iss == p.Issuer; aud contains p.ClientID; exp not
+// passed (with jwtClockSkewLeeway tolerance — golang-jwt v5 has NO default
+// leeway); and nonce == expectNonce. Any failure returns an error and NO claims.
 func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (*Claims, error) {
 	keyFunc := func(t *jwt.Token) (interface{}, error) {
-		// Reject anything but RSA signing. "none" and HMAC ("HS*") are the two
-		// classic OIDC token-forgery vectors; the parser options below also pin
-		// valid methods, this is defense in depth on the key side.
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+		// Reject anything but RSA/RSA-PSS signing. "none" and HMAC ("HS*") are
+		// the two classic OIDC token-forgery vectors; the parser options below
+		// also pin valid methods, this is defense in depth on the key side. Both
+		// RS* and PS* verify against the same JWKS RSA public keys.
+		switch t.Method.(type) {
+		case *jwt.SigningMethodRSA, *jwt.SigningMethodRSAPSS:
+		default:
 			return nil, fmt.Errorf("unexpected signing method %q", t.Header["alg"])
 		}
 		kid, _ := t.Header["kid"].(string)
@@ -242,9 +282,10 @@ func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (
 	// validate it against IssuerTemplate ourselves AFTER parsing (below) and do
 	// NOT pin a fixed issuer here.
 	parserOpts := []jwt.ParserOption{
-		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}),
+		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"}),
 		jwt.WithAudience(p.ClientID),
 		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(jwtClockSkewLeeway),
 	}
 	if p.IssuerTemplate == "" {
 		parserOpts = append(parserOpts, jwt.WithIssuer(p.Issuer))
@@ -285,9 +326,20 @@ func (p *Provider) verifyIDToken(ctx context.Context, raw, expectNonce string) (
 		return nil, errors.New("id_token nonce mismatch")
 	}
 
-	sub := stringClaim(claims, p.claimName(p.SubjectClaim, claimSub))
+	// Subject extraction. The configured claim (e.g. IBMid's "uid") is preferred,
+	// but discovery `claims_supported` describes what the OP can supply — mostly
+	// via userinfo — NOT what the id_token carries, and this package never calls
+	// userinfo. OIDC Core REQUIRES `sub` in every id_token, so when the override
+	// claim is absent we fall back to the standard `sub` rather than failing the
+	// whole login with "id_token has no subject". Both are provider-issued stable
+	// identifiers; neither is a reassignable email/username.
+	subjectClaim := p.claimName(p.SubjectClaim, claimSub)
+	sub := stringClaim(claims, subjectClaim)
+	if sub == "" && subjectClaim != claimSub {
+		sub = stringClaim(claims, claimSub)
+	}
 	if sub == "" {
-		return nil, errors.New("id_token has no subject")
+		return nil, fmt.Errorf("id_token has no subject (checked claim %q and %q)", subjectClaim, claimSub)
 	}
 	// Multi-tenant: namespace the subject by tenant so the SAME sub value in two
 	// different tenants yields two distinct identities ("<tenant>:<sub>"). A bare

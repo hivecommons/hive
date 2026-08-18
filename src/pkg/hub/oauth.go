@@ -473,7 +473,14 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		claims, err := p.Exchange(r.Context(), code, oauthRedirectURI, s.oidcNonceFromCookie(r))
 		s.clearOIDCNonceCookie(w)
 		if err != nil {
-			s.logger.Warn("OIDC: callback verification failed", "provider", p.Name, "error", err)
+			// Server-side diagnostics only: log which step failed (discovery /
+			// token_exchange / id_token_verify) and whether this browser still
+			// carried its nonce cookie. The user sees only the generic message.
+			s.logger.Warn("OIDC: callback verification failed",
+				"provider", p.Name,
+				"step", auth.FailedStep(err),
+				"nonce_cookie_present", s.oidcNonceFromCookie(r) != "",
+				"error", err)
 			http.Error(w, "login failed — could not verify your identity", http.StatusBadGateway)
 			return
 		}
