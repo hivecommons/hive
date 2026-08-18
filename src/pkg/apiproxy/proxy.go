@@ -270,6 +270,16 @@ func (p *Proxy) errorHandler(w http.ResponseWriter, r *http.Request, err error) 
 
 // ServeHTTP implements http.Handler.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// SECURITY (#4068): when the proxy holds a host API key, reject any
+	// request that carries no valid caller-supplied auth header.  Without
+	// this gate the director() silently injects the host key into every
+	// unauthenticated request, letting any process on localhost make LLM
+	// API calls billed to the operator without presenting credentials.
+	if p.apiKey != "" && !isValidAuth(r) {
+		http.Error(w, "401 Unauthorized — set Authorization or X-Api-Key", http.StatusUnauthorized)
+		return
+	}
+
 	if p.handler != nil {
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyLog))
 		if err == nil {
