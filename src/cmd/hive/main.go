@@ -1406,7 +1406,7 @@ func main() {
 		// lazily per backend and cached. Only launch descriptors flow here —
 		// never tokens, keys, or prompt content.
 		ghClient.SetAttributionResolver(func(agentName string) github.InvocationMeta {
-			backend, model, known := agentMgr.InvocationMetadata(agentName)
+			backend, model, effort, known := agentMgr.InvocationMetadata(agentName)
 			if !known {
 				if ac, inCfg := cfg.Agents[agentName]; inCfg {
 					backend, model = ac.Backend, ac.Model
@@ -1419,7 +1419,10 @@ func main() {
 				// bob self-selects (no catalog): requested model is honestly
 				// "auto" — see github.RequestedModel for the known follow-up
 				// on discovering bob's internal routing.
-				Model:       github.RequestedModel(backend, model),
+				Model: github.RequestedModel(backend, model),
+				// Reasoning effort as resolved by the launcher; empty (omitted)
+				// for backends without a hub-side effort dial (#4083).
+				Effort:      effort,
 				Tool:        tool,
 				ToolVersion: toolVersion,
 			}

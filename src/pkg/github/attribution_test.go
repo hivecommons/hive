@@ -25,6 +25,29 @@ func TestAttributionTrailer_AllFields(t *testing.T) {
 	}
 }
 
+// #4083: effort renders between model and the tool version when known, and is
+// OMITTED entirely (no bare "effort=") when the backend has no effort dial.
+func TestAttributionTrailer_Effort(t *testing.T) {
+	m := InvocationMeta{
+		Agent: "quality", Backend: "codex", Model: "gpt-5.6-terra",
+		Effort: "high", Tool: "codex", ToolVersion: "0.5.2",
+	}
+	want := "— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2"
+	if got := m.Trailer(); got != want {
+		t.Errorf("Trailer() = %q, want %q", got, want)
+	}
+	// No effort → the field disappears, never renders empty.
+	m.Effort = ""
+	if got := m.Trailer(); strings.Contains(got, "effort") {
+		t.Errorf("empty effort must be omitted, got %q", got)
+	}
+	// Whitespace-only effort is unknown too.
+	m.Effort = "  "
+	if got := m.Trailer(); strings.Contains(got, "effort") {
+		t.Errorf("blank effort must be omitted, got %q", got)
+	}
+}
+
 func TestAttributionTrailer_OmitsUnknownFields(t *testing.T) {
 	m := InvocationMeta{Agent: "scanner", Backend: "claude"}
 	want := "— hive: agent=scanner backend=claude"

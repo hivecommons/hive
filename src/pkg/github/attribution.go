@@ -53,6 +53,11 @@ const (
 	// is refreshed (EditComment) roughly once a minute; those updates are NOT
 	// audited — only the initial creation, a once-per-issue event.
 	AuditActionAdvisoryCommented = "advisory_commented"
+	// AuditActionPRAttributionReconciled is the audit action recorded when the
+	// hub appends a missing attribution trailer to a PR AFTER it was opened on
+	// a path the hive could not mediate (local-mode relay, MCP, post-open body
+	// edits) — see EnsurePRAttribution and kubestellar/hive#4085.
+	AuditActionPRAttributionReconciled = "pr_attribution_reconciled"
 )
 
 // System "agent" names recorded for creations no single coding agent
@@ -96,6 +101,12 @@ type InvocationMeta struct {
 	// Model is the model REQUESTED at launch. For backends that self-select
 	// (bob), this is honestly "auto" — see RequestedModel.
 	Model string
+	// Effort is the reasoning effort REQUESTED at launch (e.g. "low", "medium",
+	// "high") for backends that expose one: codex takes it via
+	// `-c model_reasoning_effort`, agy via `--effort` (which it REQUIRES
+	// alongside --model). Empty when the backend has no effort dial or none was
+	// requested — omitted from the trailer, never guessed (kubestellar/hive#4083).
+	Effort string
 	// Tool is the display name for the version field (e.g. "bobshell"); the
 	// trailer renders it as "<tool>=<version>".
 	Tool string
@@ -120,6 +131,7 @@ func (m InvocationMeta) pairs() []string {
 	add("agent", m.Agent)
 	add("backend", m.Backend)
 	add("model", m.Model)
+	add("effort", m.Effort)
 	if ver := strings.TrimSpace(m.ToolVersion); ver != "" {
 		tool := strings.TrimSpace(m.Tool)
 		if tool == "" {
@@ -133,7 +145,7 @@ func (m InvocationMeta) pairs() []string {
 
 // Trailer renders the one-line visible trailer, e.g.:
 //
-//	— hive: agent=quality backend=bob model=auto bobshell=1.0.6 session=abc123
+//	— hive: agent=quality backend=codex model=gpt-5.6-terra effort=high codex=0.5.2
 //
 // Unknown fields are omitted; all-unknown metadata renders "" (no trailer at
 // all rather than a bare prefix).

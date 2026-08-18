@@ -6279,25 +6279,35 @@ func (m *Manager) AuthorizeMerge(agentName string, fileUID int) error {
 	return nil
 }
 
-// InvocationMetadata reports the effective backend and model the hive invokes
-// for the named agent, accounting for runtime overrides — the launch-time
-// truth the invocation-attribution trail records (see pkg/github/attribution
-// .go). ok=false when the agent is unknown to the manager (the caller then
-// falls back to static config). Read-only under RLock; called from the
-// PR-request watcher goroutine, never from the launch path.
-func (m *Manager) InvocationMetadata(agentName string) (backend, model string, ok bool) {
+// InvocationMetadata reports the effective backend, model, and reasoning
+// effort the hive invokes for the named agent, accounting for runtime
+// overrides — the launch-time truth the invocation-attribution trail records
+// (see pkg/github/attribution.go). effort is empty when the launch command
+// carries no effort dial for this backend (only agy's --effort is hub-resolved
+// today, via agyDefaultEffort; see kubestellar/hive#4083). ok=false when the
+// agent is unknown to the manager (the caller then falls back to static
+// config). Read-only under RLock; called from the PR-request watcher
+// goroutine, never from the launch path.
+func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort string, ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, exists := m.agents[agentName]
 	if !exists {
-		return "", "", false
+		return "", "", "", false
 	}
 	backend = effectiveBackend(agent)
 	model = agent.Config.Model
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
-	return backend, model, true
+	// Mirror the launch command: agy is passed --effort agyDefaultEffort
+	// whenever a model is given (it requires the pair); every other backend is
+	// launched without a hub-side effort, so the field stays empty (omitted
+	// from the trailer) rather than guessed.
+	if backend == "agy" && model != "" {
+		effort = agyDefaultEffort
+	}
+	return backend, model, effort, true
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.

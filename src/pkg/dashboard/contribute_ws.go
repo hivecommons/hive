@@ -24,6 +24,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kubestellar/hive/pkg/config"
+	ghpkg "github.com/kubestellar/hive/pkg/github"
 )
 
 const (
@@ -71,11 +72,17 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws           *websocket.Conn
-	profile      *ContributorProfile
-	cliBackend   string
-	model        string
-	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	ws         *websocket.Conn
+	profile    *ContributorProfile
+	cliBackend string
+	model      string
+	// reasoningEffort is the reasoning effort the relay declared at handshake
+	// (auth_response reasoning_effort, from AGENT_REASONING_EFFORT). Stored
+	// read-only next to cliBackend/model, surfaced on ActivityEntry/FleetClanker
+	// and used for the PR attribution trailer (#4083/#4084/#4085). Empty for a
+	// relay with no effort configured — omitted everywhere, never guessed.
+	reasoningEffort string
+	role            string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
 	clientRole   string // relay-requested HIVE_AGENT_ROLE; owner assignment may override it
 	assignedRole string // owner-selected role; "none" forces general work
 	connectedAt  time.Time
@@ -203,7 +210,13 @@ type WSMessage struct {
 	RegistrationToken string `json:"registration_token,omitempty"`
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
-	TaskID            string `json:"task_id,omitempty"`
+	// ReasoningEffort is the reasoning effort the relay resolved at launch
+	// (AGENT_REASONING_EFFORT / its agy fallback), declared on auth_response
+	// alongside cli_backend/model. The relay has been sending it since before
+	// #4083; declaring it here stops encoding/json from silently dropping it.
+	// Advisory launch metadata only — never routed or gated on.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
 	// TaskGen is the assignment GENERATION / lease token for this task (kubestellar/
 	// hive#2568, the Gate). The hub stamps it on task_assign; the relay echoes it back
 	// on task_progress / task_complete / task_failed. The hub rejects any completion or
@@ -320,7 +333,11 @@ type ActivityEntry struct {
 	Role      string `json:"role,omitempty"`
 	CLI       string `json:"cli,omitempty"`
 	Model     string `json:"model,omitempty"`
-	Task      string `json:"task,omitempty"`
+	// Effort is the reasoning effort behind this event's connection, when the
+	// relay declared one at handshake (#4084). Omitted otherwise — entries
+	// persisted before this field simply render without it.
+	Effort string `json:"effort,omitempty"`
+	Task   string `json:"task,omitempty"`
 }
 
 type ContributeWSHub struct {
@@ -757,7 +774,7 @@ func (h *ContributeWSHub) saveActivity() {
 
 const activityDebounceSecs = 60
 
-func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task string) {
+func (h *ContributeWSHub) addActivity(username, action, role, cli, model, effort, task string) {
 	h.activityMu.Lock()
 	if len(h.activity) > 0 && (action == "joined" || action == "left") {
 		last := h.activity[len(h.activity)-1]
@@ -775,6 +792,7 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task s
 		Role:      role,
 		CLI:       cli,
 		Model:     model,
+		Effort:    effort,
 		Task:      task,
 	}
 	h.activity = append(h.activity, entry)
@@ -1634,7 +1652,7 @@ func (h *ContributeWSHub) bookAndRevokeReleased(targets []releaseTarget, reason,
 		)
 		// #2568: record the operator's reason in the activity log so the release is
 		// auditable (the reason rides in the Task field alongside the task id).
-		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		h.addActivity(username, activityVerb+": "+reason, tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
 		// Push the EXISTING task_revoke message so the relay stops cleanly and
 		// re-readies. Best-effort: if the socket is already gone the disconnect path
 		// has (or will) release it anyway; the cooldown above is already booked. The
@@ -1803,7 +1821,7 @@ func (h *ContributeWSHub) RequeueContributorTask(contributorID, reason string) (
 			username = tgt.conn.profile.GitHubUsername
 		}
 		taskDesc := fmt.Sprintf("%s %s#%d: %s", msg.Kind, msg.Repo, msg.Number, msg.Title)
-		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, taskDesc)
+		h.addActivity(username, "reassigned by yank", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, taskDesc)
 		h.logger.Info("[contribute-ws] clanker reassigned after yank",
 			"username", username, "task", msg.TaskID, "repo", msg.Repo, "number", msg.Number)
 		if !h.requireExplicitAccept() {
@@ -2018,15 +2036,19 @@ type FleetClanker struct {
 	GitHubUsername string        `json:"github_username,omitempty"`
 	CLIBackend     string        `json:"cli_backend,omitempty"`
 	Model          string        `json:"model,omitempty"`
-	Role           string        `json:"role,omitempty"`
-	ClientRole     string        `json:"client_role,omitempty"`
-	AssignedRole   string        `json:"assigned_agent_role,omitempty"`
-	RoleMismatch   string        `json:"role_mismatch,omitempty"`
-	TrustTier      string        `json:"trust_tier,omitempty"`
-	ConnectedAt    string        `json:"connected_at,omitempty"`
-	LastActivity   string        `json:"last_activity,omitempty"`
-	Stale          bool          `json:"stale,omitempty"`
-	CurrentTask    *WSTaskAssign `json:"current_task,omitempty"`
+	// Effort is the reasoning effort the relay declared at handshake (#4084),
+	// surfaced read-only exactly like CLIBackend/Model. Omitted when the relay
+	// declared none. Never routed or gated on.
+	Effort       string        `json:"effort,omitempty"`
+	Role         string        `json:"role,omitempty"`
+	ClientRole   string        `json:"client_role,omitempty"`
+	AssignedRole string        `json:"assigned_agent_role,omitempty"`
+	RoleMismatch string        `json:"role_mismatch,omitempty"`
+	TrustTier    string        `json:"trust_tier,omitempty"`
+	ConnectedAt  string        `json:"connected_at,omitempty"`
+	LastActivity string        `json:"last_activity,omitempty"`
+	Stale        bool          `json:"stale,omitempty"`
+	CurrentTask  *WSTaskAssign `json:"current_task,omitempty"`
 	// IdleReason is the machine-readable reason this clanker currently has no work
 	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
 	// clanker is actively working (CurrentTask set) or has never been refused. It
@@ -2119,6 +2141,7 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		fc := FleetClanker{
 			CLIBackend:   c.cliBackend,
 			Model:        c.model,
+			Effort:       c.reasoningEffort,
 			Role:         c.role,
 			ClientRole:   c.clientRole,
 			AssignedRole: c.assignedRole,
@@ -2325,15 +2348,16 @@ func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	for _, c := range h.connections {
 		c.mu.Lock()
 		out = append(out, ContributorConnection{
-			profile:      c.profile,
-			cliBackend:   c.cliBackend,
-			model:        c.model,
-			role:         c.role,
-			clientRole:   c.clientRole,
-			assignedRole: c.assignedRole,
-			connectedAt:  c.connectedAt,
-			currentTask:  c.currentTask,
-			tmuxOutput:   append([]string{}, c.tmuxOutput...),
+			profile:         c.profile,
+			cliBackend:      c.cliBackend,
+			model:           c.model,
+			reasoningEffort: c.reasoningEffort,
+			role:            c.role,
+			clientRole:      c.clientRole,
+			assignedRole:    c.assignedRole,
+			connectedAt:     c.connectedAt,
+			currentTask:     c.currentTask,
+			tmuxOutput:      append([]string{}, c.tmuxOutput...),
 		})
 		c.mu.Unlock()
 	}
@@ -2448,7 +2472,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			delete(h.connections, connID)
 			h.mu.Unlock()
 			h.logger.Info("[contribute-ws] disconnected", "username", contributor.profile.GitHubUsername)
-			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, "")
+			h.addActivity(contributor.profile.GitHubUsername, "left", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, "")
 		}
 		conn.Close()
 	}()
@@ -2588,10 +2612,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			contributor = &ContributorConnection{
-				ws:           conn,
-				profile:      profile,
-				cliBackend:   msg.CLIBackend,
-				model:        msg.Model,
+				ws:              conn,
+				profile:         profile,
+				cliBackend:      msg.CLIBackend,
+				model:           msg.Model,
+				reasoningEffort: strings.TrimSpace(msg.ReasoningEffort),
 				role:         requestedRole,
 				clientRole:   clientRole,
 				assignedRole: assignedRole,
@@ -2652,7 +2677,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				"cli", msg.CLIBackend,
 				"role", requestedRole,
 			)
-			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, "")
+			h.addActivity(profile.GitHubUsername, "joined", requestedRole, msg.CLIBackend, msg.Model, msg.ReasoningEffort, "")
 
 			select {
 			case authDone <- contributor:
@@ -2746,7 +2771,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				if task.Role != "" {
 					taskDesc = fmt.Sprintf("contributor ran %s task: %s", task.Role, taskDesc)
 				}
-				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, taskDesc)
+				h.addActivity(contributor.profile.GitHubUsername, "picked up", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, taskDesc)
 				h.logger.Info("[contribute-ws] task assigned",
 					"username", contributor.profile.GitHubUsername,
 					"task", task.TaskID,
@@ -2970,6 +2995,15 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
 						verifiedPR = msg.PRURL
 					}
+					// #4085: on a VERIFIED PR, make sure its body carries the
+					// attribution trailer — the local-mode relay and MCP paths
+					// never pass through a creation-time stamp. Async so a slow
+					// GitHub round-trip can never stall this read loop; the
+					// loadout fields are immutable after handshake.
+					if verifiedPR != "" {
+						go h.reconcilePRAttribution(verifiedPR, contributor.profile.GitHubUsername,
+							contributor.cliBackend, contributor.model, contributor.reasoningEffort)
+					}
 					// #3987: normalize the completion's verdict. A verified PR always
 					// wins (shipped); with none, only an explicit no_work_needed is
 					// honoured and everything else — including the absent field every
@@ -2986,7 +3020,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						h.markTaskCompletedVerdict(completedTask.Repo, completedTask.Number, verifiedPR,
 							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 					}
-					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
+					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, msg.TaskID)
 					h.logger.Info("[contribute-ws] task complete",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
@@ -3021,6 +3055,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					promotedUser := contributor.profile.GitHubUsername
 					promotedCLI := contributor.cliBackend
 					promotedModel := contributor.model
+					promotedEffort := contributor.reasoningEffort
 					contributor.mu.Unlock()
 					// #2390-era command center: narrate the promotion as its own
 					// activity event so the Operations dev-log and achievement pops
@@ -3028,7 +3063,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// Read-only signalling — it changes no control behaviour and is
 					// emitted only on the real newcomer -> contributor transition.
 					if promoted {
-						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, "contributor")
+						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, promotedEffort, "contributor")
 					}
 					_ = saveContributorProfile(contributor.profile)
 				} else {
@@ -3115,7 +3150,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					contributor.mu.Unlock()
 
-					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
+					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, msg.TaskID)
 					h.logger.Info("[contribute-ws] task failed",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
@@ -3533,7 +3568,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			"number", tgt.task.Number,
 			"lease_ttl", wsTaskTimeout.String(),
 		)
-		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		h.addActivity(username, "lease expired: auto-released", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.conn.reasoningEffort, tgt.task.TaskID)
 		if tgt.conn.ws != nil {
 			_ = tgt.conn.send(WSMessage{
 				Type:   "task_revoke",
@@ -3725,6 +3760,69 @@ func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
 		Type:   "task_unavailable",
 		Seq:    h.nextSeq(),
 		Reason: reason,
+	}
+}
+
+// contributorAttributionMeta builds the invocation-attribution metadata for a
+// contributor connection from what the HUB recorded at the auth handshake
+// (backend / model / reasoning effort) — never from an agent's self-report
+// (#4085). Agent stays empty: the PR's author IS the contributor, so repeating
+// an identity in the trailer would add nothing; the username still reaches the
+// audit entry via EnsurePRAttribution's extra pairs.
+func contributorAttributionMeta(cli, model, effort string) ghpkg.InvocationMeta {
+	return ghpkg.InvocationMeta{
+		Backend: strings.TrimSpace(cli),
+		Model:   ghpkg.RequestedModel(strings.TrimSpace(cli), strings.TrimSpace(model)),
+		Effort:  strings.TrimSpace(effort),
+	}
+}
+
+// attributionPromptInstruction renders the assignment-prompt rule that tells a
+// contributor's agent to end its PR body with the attribution footer — shipping
+// the LITERAL line to paste (interpolated from the hub's own record of this
+// connection's backend/model/effort), never a description of how to derive it:
+// an agent cannot be trusted to introspect its own model id (#4085). Empty when
+// the hub knows nothing to state (no backend declared), so the prompt gains no
+// dangling instruction. The hub-side reconciliation (reconcilePRAttribution)
+// still backstops an agent that ignores this.
+func attributionPromptInstruction(cli, model, effort string) string {
+	trailer := contributorAttributionMeta(cli, model, effort).Trailer()
+	if trailer == "" {
+		return ""
+	}
+	return fmt.Sprintf("End your PR body with this exact attribution line, verbatim, on its own line at the very bottom: '%s'.", trailer)
+}
+
+// reconcilePRAttribution is the #4085 verify-don't-trust step: on a completion
+// whose PR the hub has VERIFIED, make sure the PR body carries the attribution
+// trailer, appending it with the App token when missing. It acts on
+// task_complete — a message every relay sends in EVERY mode — so coverage is
+// identical for local-mode relays, containerized relays, and MCP-opened PRs
+// (the populations the creation-time trailer of #4083 cannot reach). The
+// stamped values are the hub's own handshake record of this connection, not
+// anything the agent asserted. Best-effort by design: a failure is logged and
+// never affects completion handling, cooldowns, or trust credit.
+func (h *ContributeWSHub) reconcilePRAttribution(prURL, username, cli, model, effort string) {
+	if prURL == "" {
+		return
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	meta := contributorAttributionMeta(cli, model, effort)
+	updated, err := h.server.deps.GHClient.EnsurePRAttribution(ctx, prURL, meta)
+	switch {
+	case err != nil:
+		h.logger.Warn("[contribute-ws] PR attribution reconcile failed (advisory)",
+			"pr_url", prURL, "username", username, "error", err)
+	case updated:
+		h.logger.Info("[contribute-ws] PR attribution trailer reconciled onto PR",
+			"pr_url", prURL, "username", username,
+			"cli", cli, "model", model, "effort", effort)
 	}
 }
 
@@ -4368,6 +4466,15 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
 	if requestedRole != "" {
 		prompt = buildRoleTaskPrompt(chosen.repoFull, chosen.number, chosen.title, requestedRole, h.roleKickPrompt(requestedRole))
+	}
+	// #4085: ship the literal attribution footer the agent must end its PR body
+	// with, interpolated from the hub's handshake record of THIS connection —
+	// the values the agent itself cannot reliably introspect. The hub-side
+	// reconciliation on task_complete backstops an agent that skips it. The
+	// loadout fields are set once at handshake and never mutated, so reading
+	// them without c.mu here is safe (same as the addActivity call sites).
+	if instr := attributionPromptInstruction(c.cliBackend, c.model, c.reasoningEffort); instr != "" {
+		prompt += " " + instr
 	}
 
 	// #2568: mint a fresh assignment generation for this task. It is stamped on the

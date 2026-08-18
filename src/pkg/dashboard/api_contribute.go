@@ -5471,21 +5471,44 @@ function ccTaskRefLink(task){
   if(!m)return '<span class="ref">'+esc(task)+'</span>';
   return ccIssueLinkHTML({repo:m[1],number:m[2]},task,'ref');
 }
+// hiveLoadout is the ONE shared formatter for an activity entry's model loadout
+// (#4084): "via <cli> CLI with <model> (<effort>)" — the same wording the PR
+// footer uses — degrading gracefully: no effort drops the parens, no model drops
+// the "with", no cli renders nothing at all (never a bare "()" or dangling
+// "with"). Everything is esc()'d here so neither feed can interpolate a raw
+// cli/model/effort string again. cls picks the page's existing muted style
+// ('ref' on the ops rail, 'feed-cli' on the onboarding feed). Exported on
+// window so the onboarding feed's separate script reuses this exact function
+// instead of drifting its own copy.
+function hiveLoadout(e,cls){
+  if(!e||!e.cli)return '';
+  var s='via '+esc(e.cli)+' CLI';
+  if(e.model){
+    s+=' with '+esc(e.model);
+    if(e.effort)s+=' ('+esc(e.effort)+')';
+  }
+  return ' <span class="'+(cls||'ref')+'">'+s+'</span>';
+}
+window.hiveLoadout=hiveLoadout;
 function ccNarrate(e){
   var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
   var ic=icons[e.action]||'⚡';
   var who='<span class="who">'+esc(e.username||'someone')+'</span>';
   var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
   var pickedRef=e.task?' '+ccTaskRefLink(e.task):'';
+  // #4084: every event line carries the loadout suffix — an operator watching
+  // the rail can see WHICH model picked up / completed / fumbled a task, not
+  // just that one joined.
+  var loadout=hiveLoadout(e,'ref');
   var body;
   switch(e.action){
-    case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
-    case 'left': body=who+' left the hive'; break;
-    case 'picked up': body=who+' grabbed'+pickedRef; break;
-    case 'completed': body=who+' completed'+ref; break;
-    case 'failed': body=who+' hit a snag on'+ref; break;
-    case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
-    default: body=who+' '+esc(e.action)+ref;
+    case 'joined': body=who+' entered the hive'+loadout; break;
+    case 'left': body=who+' left the hive'+loadout; break;
+    case 'picked up': body=who+' grabbed'+pickedRef+loadout; break;
+    case 'completed': body=who+' completed'+ref+loadout; break;
+    case 'failed': body=who+' hit a snag on'+ref+loadout; break;
+    case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'+loadout; break;
+    default: body=who+' '+esc(e.action)+ref+loadout;
   }
   return {ic:ic,body:body,ts:e.timestamp};
 }
@@ -5934,7 +5957,10 @@ const icon=icons[e.action]||'⚡';
 const verb=verbs[e.action]||e.action;
 const taskInfo=e.task?' <span class="feed-cli">'+e.task+'</span>':'';
 const role=e.role?' as <span class="feed-role">'+e.role+'</span>':'';
-const cliModel=e.cli?(e.model?' <span class="feed-cli">via '+e.cli+' CLI with '+e.model+'</span>':' <span class="feed-cli">via '+e.cli+' CLI</span>'):'';
+// #4084: same shared formatter as the ops rail (exported from the command-center
+// script above), so the two feeds render the identical "via <cli> CLI with
+// <model> (<effort>)" string and e.cli/e.model/e.effort are HTML-escaped.
+const cliModel=window.hiveLoadout?window.hiveLoadout(e,'feed-cli'):'';
 return '<div class="feed-entry"'+(i===0&&isNew?' style="background:rgba(63,185,80,.08)"':'')+'>'+
 '<div class="feed-text">'+icon+' <b>'+e.username+'</b> '+verb+taskInfo+role+cliModel+'</div>'+
 '<span class="feed-time">'+t+' '+tz+'</span></div>'

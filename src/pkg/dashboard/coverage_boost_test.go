@@ -1334,8 +1334,8 @@ func TestContributeWSHub_AddActivity(t *testing.T) {
 		completedTasks: make(map[string]time.Time),
 		logger:         slog.Default(),
 	}
-	hub.addActivity("user1", "joined", "scanner", "claude", "sonnet", "")
-	hub.addActivity("user2", "picked up", "", "claude", "sonnet", "task-1")
+	hub.addActivity("user1", "joined", "scanner", "claude", "sonnet", "", "")
+	hub.addActivity("user2", "picked up", "", "claude", "sonnet", "", "task-1")
 
 	activity := hub.RecentActivity()
 	if len(activity) != 2 {
@@ -1349,8 +1349,8 @@ func TestContributeWSHub_AddActivity_Debounce(t *testing.T) {
 		completedTasks: make(map[string]time.Time),
 		logger:         slog.Default(),
 	}
-	hub.addActivity("user1", "joined", "", "", "", "")
-	hub.addActivity("user1", "joined", "", "", "", "")
+	hub.addActivity("user1", "joined", "", "", "", "", "")
+	hub.addActivity("user1", "joined", "", "", "", "", "")
 
 	activity := hub.RecentActivity()
 	if len(activity) != 1 {
