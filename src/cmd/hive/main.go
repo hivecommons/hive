@@ -150,7 +150,13 @@ const reachStatePath = "/data/reach-state.json"
 // upgrade beat can never report different pictures of the same agent.
 func agentActivityFor(mgr *agent.Manager, name string, proc *agent.AgentProcess) hub.AgentActivity {
 	act := hub.AgentActivity{
-		Paused:         proc.Paused,
+		Paused: proc.Paused,
+		// Pause provenance (#4041): ride WHO/WHY/WHEN to the hub so the
+		// fleet view can tell a deliberate owner quiesce from a malfunction.
+		PausedTrigger:  proc.PausedTrigger,
+		PausedReason:   proc.PausedReason,
+		PausedBy:       proc.PausedBy,
+		PausedAt:       proc.PausedAt,
 		NeedsLogin:     proc.NeedsLogin,
 		LastActivityAt: proc.LastPaneChange,
 		// A missing tmux session is only meaningful for an agent the manager
@@ -3018,16 +3024,15 @@ func main() {
 	}
 	// One visible "hive restarted" marker per boot, so the audit log shows a
 	// restart happened (and at what build) instead of only a burst of
-	// per-agent agent_start rows. Include a count of persisted pauses being
-	// restored so the operator can confirm pause state survived the restart.
-	pausedCount := 0
-	for _, ac := range cfg.EnabledAgents() {
-		if ac.Paused {
-			pausedCount++
-		}
-	}
+	// per-agent agent_start rows. Include the persisted pauses being restored
+	// so the operator can confirm pause state survived the restart — broken
+	// down by trigger, and EXCLUDING agents that are startup-paused by design
+	// (on-demand agents like brainstorm), whose inclusion turned "restoring 9
+	// paused agent(s)" into a false systemic-incident signal on every upgrade
+	// restart of a deliberately owner-quiesced fleet (#4041).
 	dashSrv.AuditLog("system", "hive_restart",
-		fmt.Sprintf("build=%s version=%s; restoring %d paused agent(s)", gitShort, "3.0.0", pausedCount), "")
+		fmt.Sprintf("build=%s version=%s; %s", gitShort, "3.0.0",
+			pausedRestoreDetail(cfg.EnabledAgents(), onDemandFromPack, agentMgr.AllStatuses())), "")
 
 	// Mark the dashboard READY as soon as the HTTP server can serve requests —
 	// which is NOW: config is loaded, GitHub client/App auth are wired, the
@@ -5524,6 +5529,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			LastKick:        proc.LastKick,
 			PausedReason:    proc.PausedReason,
 			PausedTrigger:   proc.PausedTrigger,
+			PausedBy:        proc.PausedBy,
 		}
 		if !proc.PausedAt.IsZero() {
 			t := proc.PausedAt

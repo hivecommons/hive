@@ -1427,7 +1427,10 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.AgentMgr.Pause(name, "dashboard-api", "manual pause"); err != nil {
+	// Record the acting user on the pause itself (#4041): the audit log has
+	// always known who clicked, but the agent state did not, so a deliberate
+	// owner mass-pause was indistinguishable from a malfunction days later.
+	if err := s.deps.AgentMgr.PauseBy(name, "dashboard-api", "manual pause", requestUser(r)); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

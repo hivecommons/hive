@@ -1259,7 +1259,7 @@ func TestGetOutput_PrefersPaneOverBuffer(t *testing.T) {
 func TestSeedPauseState_NotFound(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 	// Should not panic
-	m.SeedPauseState("nonexistent", time.Now(), "test", "test")
+	m.SeedPauseState("nonexistent", time.Now(), "test", "test", "")
 }
 
 // ---------------------------------------------------------------------------

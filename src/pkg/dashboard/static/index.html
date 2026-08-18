@@ -4114,6 +4114,25 @@
     let _ocSummaryTailing = true;
     let _ocSummaryScrollTop = null;
 
+    // One human-readable sentence answering WHO paused this agent, WHY and
+    // WHEN — e.g. "paused by bketelsen via dashboard, 3d ago" or
+    // "login-detector: login required detected, 2h ago". #4041: without
+    // this, a deliberately owner-quiesced fleet was indistinguishable from
+    // a malfunctioning one days later.
+    function pauseProvenanceLine(a) {
+      const trigger = a.pausedTrigger || '';
+      const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
+      let line;
+      if (trigger === 'dashboard-api') {
+        line = 'paused by ' + (a.pausedBy || 'an operator') + ' via dashboard';
+      } else if (trigger) {
+        line = trigger + ': ' + (a.pausedReason || 'paused');
+      } else {
+        line = a.pausedReason || 'paused';
+      }
+      return ago ? line + ', ' + ago : line;
+    }
+
     function pauseInfoIcon(a) {
       // A manual/persisted pause carries its reason/trigger even when the
       // current governor mode's cadence is also pause/off — the operator
@@ -4122,8 +4141,10 @@
       if (!a.paused) return '';
       const reason = a.pausedReason || 'unknown';
       const trigger = a.pausedTrigger || 'unknown';
+      const by = a.pausedBy || '';
       const at = a.pausedAt ? new Date(a.pausedAt).toLocaleString() : 'unknown';
-      return `<span class="pause-info" title="${esc(reason)} (${esc(trigger)})">ℹ️<span class="pause-tooltip">Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}<br>Since: ${esc(at)}</span></span>`;
+      const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
+      return `<span class="pause-info" title="${esc(pauseProvenanceLine(a))}">ℹ️<span class="pause-tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}</span></span>`;
     }
 
     // Volatile stat fields of the focused agent-detail panel, factored out so

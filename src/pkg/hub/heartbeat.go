@@ -267,6 +267,17 @@ type AgentSummary struct {
 	// Paused set, so the two are not interchangeable. The hub's inactive-agent
 	// rule keys off this to guarantee a deliberate pause is never alerted on.
 	Paused bool `json:"paused,omitempty"`
+	// Pause provenance (#4041): WHO/WHY/WHEN, so the fleet view can tell a
+	// deliberate owner quiesce ("paused by <owner> via dashboard, 3d ago")
+	// from a malfunction. All empty on a non-paused agent; PausedBy is empty
+	// when no human actor is known (login-detector, fleet-breaker, ...).
+	// PausedAt is RFC3339. The audit trail on the spoke has always had this —
+	// nothing the hub reads did, which is what turned a legitimate mass pause
+	// into a multi-day incident investigation.
+	PausedTrigger string `json:"pausedTrigger,omitempty"`
+	PausedReason  string `json:"pausedReason,omitempty"`
+	PausedBy      string `json:"pausedBy,omitempty"`
+	PausedAt      string `json:"pausedAt,omitempty"`
 	// NeedsLogin is true when the agent's CLI is sitting on a login /
 	// device-code prompt. This is the "running but not logged in" state: the
 	// session is alive, the CLI process is alive, and the agent still cannot do
@@ -298,6 +309,10 @@ type AgentSummary struct {
 // one of the two paths is a signal that quietly disappears mid-upgrade.
 type AgentActivity struct {
 	Paused         bool
+	PausedTrigger  string
+	PausedReason   string
+	PausedBy       string
+	PausedAt       time.Time
 	NeedsLogin     bool
 	SessionMissing bool
 	StartedAt      time.Time
@@ -313,8 +328,14 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		State:          state,
 		Mode:           mode,
 		Paused:         act.Paused,
+		PausedTrigger:  act.PausedTrigger,
+		PausedReason:   act.PausedReason,
+		PausedBy:       act.PausedBy,
 		NeedsLogin:     act.NeedsLogin,
 		SessionMissing: act.SessionMissing,
+	}
+	if !act.PausedAt.IsZero() {
+		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
 	}
 	if !act.StartedAt.IsZero() {
 		as.StartedAt = act.StartedAt.UTC().Format(time.RFC3339)

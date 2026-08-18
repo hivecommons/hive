@@ -476,6 +476,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			PausedAt:      formatOptionalTime(proc.PausedAt),
 			PausedReason:  proc.PausedReason,
 			PausedTrigger: proc.PausedTrigger,
+			PausedBy:      proc.PausedBy,
 			OffByCadence:  offByCadence,
 			CLI:           cli,
 			Model:         model,
