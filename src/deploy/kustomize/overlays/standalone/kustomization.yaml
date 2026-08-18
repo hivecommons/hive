@@ -42,4 +42,7 @@ patches:
   # 3. NET_ADMIN escape hatch (COMMENTED OUT by default). Uncomment ONLY on a
   #    locked-down cluster that DENIES NET_ADMIN — see README "The NET_ADMIN
   #    decision". Leaving it commented keeps the fail-CLOSED security gate.
+  #    On OpenShift, prefer the real fix: have a cluster-admin apply the
+  #    ../openshift-netadmin overlay (dedicated `hive-netadmin` SCC) so the
+  #    full gate comes up instead of degrading to advisory mode.
   # - path: patch-advisory-mode.yaml

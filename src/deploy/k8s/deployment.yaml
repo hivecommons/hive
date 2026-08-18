@@ -73,6 +73,15 @@ spec:
             capabilities:
               drop:
                 - ALL
+              # OpenShift: NO stock SCC (including `anyuid`) permits adding
+              # these capabilities, so on OpenShift this pod is rejected at
+              # admission unless a cluster-admin has applied the optional
+              # ../kustomize/overlays/openshift-netadmin overlay (dedicated
+              # `hive-netadmin` SCC + RoleBinding). If the cluster cannot grant
+              # NET_ADMIN at all, the deliberate degraded-mode alternative is
+              # HIVE_PROXY_ADVISORY_OK=true (forced proxy egress becomes
+              # advisory) — see ../kustomize/overlays/standalone/
+              # patch-advisory-mode.yaml and src/docs/net-admin-requirement.md.
               add:
                 - NET_ADMIN # ACMM proxy iptables redirect of outbound :443
                 - SETUID # su-exec dev->per-agent UID switch

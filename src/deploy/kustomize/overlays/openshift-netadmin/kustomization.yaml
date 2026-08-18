@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# OpenShift capability-grant overlay — OPTIONAL, OpenShift-ONLY, and it
+# REQUIRES cluster-admin to apply (SecurityContextConstraints is a
+# cluster-scoped, admin-only resource).
+#
+# What it is: the dedicated `hive-netadmin` SCC plus the RBAC that lets the
+# `hive` ServiceAccount use it. This is the same SCC/RoleBinding pattern the
+# managed fleet's hub provisions out-of-band; standalone installs have no hub,
+# so a cluster-admin applies this overlay once instead.
+#
+# Why you need it on OpenShift: the base deployment (../../../k8s) requests
+# `capabilities.add` (NET_ADMIN + the su-exec set) and starts as root. NO stock
+# SCC admits that pod — `restricted-v2` forbids root and the caps, and `anyuid`
+# (what ../openshift binds) permits root but forbids ADDING capabilities. With
+# only the stock SCCs the ReplicaSet is rejected at admission with
+# "unable to validate against any security context constraint". The
+# `hive-netadmin` SCC is restricted-v2 loosened by EXACTLY what the base
+# deployment declares — see scc-hive-netadmin.yaml — and nothing else (not
+# privileged, no host access).
+#
+# What it deliberately does NOT include: the workload base. Granting the SCC is
+# a one-time cluster-admin action, decoupled from deploying/upgrading the app,
+# so applying this overlay never re-applies (or reverts) the deployment:
+#
+#   # cluster-admin, once:
+#   oc apply -k src/deploy/kustomize/overlays/openshift-netadmin
+#   # then the app itself (standalone and/or openshift overlays), as usual:
+#   oc apply -k src/deploy/kustomize/overlays/standalone
+#
+# Plain-Kubernetes clusters: do NOT apply this (the SCC API does not exist
+# there); the base stays cluster-agnostic. If your cluster cannot grant
+# NET_ADMIN at all, the deliberate degraded-mode alternative is
+# `HIVE_PROXY_ADVISORY_OK=true` — see
+# ../standalone/patch-advisory-mode.yaml and src/docs/net-admin-requirement.md.
+
+resources:
+  - scc-hive-netadmin.yaml
+  - rolebinding.yaml

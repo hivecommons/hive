@@ -150,14 +150,30 @@ kustomize edit set image ghcr.io/kubestellar/hive=ghcr.io/kubestellar/hive:<tag>
 kubectl apply -k .
 ```
 
-**On OpenShift.** The standalone overlay does not create a Route or grant the
-`anyuid` SCC. The
-[`overlays/openshift`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift)
-overlay supplies exactly those two OpenShift-only deltas — a `Route` exposing the
-`dashboard` port (3002) and the `anyuid` SCC RoleBinding the pod needs (it starts
-as root to set up the ACMM iptables and chown the PVC). A standalone deployment
-on OpenShift composes **standalone + these platform deltas**. Two equivalent
-ways:
+**On OpenShift.** The standalone overlay does not create a Route or grant any
+SCC. Two more pieces supply the OpenShift-only deltas:
+
+- The
+  [`overlays/openshift`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift)
+  overlay — a `Route` exposing the `dashboard` port (3002) and the `anyuid` SCC
+  RoleBinding (the pod starts as root to set up the ACMM iptables and chown the
+  PVC).
+- The
+  [`overlays/openshift-netadmin`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift-netadmin)
+  overlay — the dedicated `hive-netadmin` SCC + RoleBinding, applied **once by a
+  cluster-admin**. This one is **not optional on OpenShift**: the base
+  deployment *adds* capabilities (`NET_ADMIN` + the su-exec set), and no stock
+  SCC — `anyuid` included — permits adding them, so without this grant the pod
+  is rejected at admission (`unable to validate against any security context
+  constraint`). The SCC is `restricted-v2` loosened by exactly what the base
+  deployment declares (see the manifest comments) — not `privileged`. See
+  [Does your cluster grant NET_ADMIN?](#does-your-cluster-grant-net_admin) to
+  check your cluster first.
+
+A standalone deployment on OpenShift composes **standalone + these platform
+deltas** (the SCC grant is applied separately, by cluster-admin:
+`oc apply -k src/deploy/kustomize/overlays/openshift-netadmin`). For the
+app-level overlays, two equivalent ways:
 
 - **Combined overlay (recommended):** in your own copy of the standalone
   `kustomization.yaml`, add `route.yaml` and `anyuid-scc-rolebinding.yaml` as
@@ -198,19 +214,113 @@ forced-proxy-egress `iptables` REDIRECT that enforces the ACMM MITM egress proxy
 - **Cluster GRANTS `NET_ADMIN` (most do):** nothing to do — the full,
   fail-closed egress gate comes up automatically. This is the recommended
   default.
-- **Cluster DENIES `NET_ADMIN`:** the entrypoint **FATALs** (exit 1, refusing to
-  start with an advisory-only capability model — `src/deploy/entrypoint.sh`
-  around line 770) and the pod crash-loops. The **only** escape hatch is setting
-  `HIVE_PROXY_ADVISORY_OK=true`, provided by the **commented-out**
-  [`patch-advisory-mode.yaml`](https://github.com/kubestellar/hive/blob/v4/src/deploy/kustomize/overlays/standalone/patch-advisory-mode.yaml)
-  — uncomment its `- path: patch-advisory-mode.yaml` line in your
-  `kustomization.yaml`.
+- **Cluster DENIES `NET_ADMIN`:** the entrypoint **FATALs** (refusing to start
+  with an advisory-only capability model — `src/deploy/entrypoint.sh`) and the
+  pod crash-loops, with **exit code 77** when the missing capability is the
+  cause (see the checks section below for what 77 means and how to read it).
+  Two remedies:
+  1. **Grant the capability (preferred — full gate).** On OpenShift, a
+     cluster-admin applies the
+     [`overlays/openshift-netadmin`](https://github.com/kubestellar/hive/tree/v4/src/deploy/kustomize/overlays/openshift-netadmin)
+     overlay (dedicated `hive-netadmin` SCC + RoleBinding); on plain Kubernetes,
+     ensure the namespace's Pod Security admission allows the capability (see
+     below).
+  2. **Deliberately run degraded.** Set `HIVE_PROXY_ADVISORY_OK=true` via the
+     **commented-out**
+     [`patch-advisory-mode.yaml`](https://github.com/kubestellar/hive/blob/v4/src/deploy/kustomize/overlays/standalone/patch-advisory-mode.yaml)
+     — uncomment its `- path: patch-advisory-mode.yaml` line in your
+     `kustomization.yaml`.
 
-**Security trade-off (one honest sentence):** in advisory-only mode the MITM
-egress gate is best-effort rather than enforced, so an agent holding a raw token
-could bypass the proxy policy — acceptable for a single-tenant hive whose owner
-controls every repo and agent, but not a control you should silently disable on a
-shared one.
+**Security trade-off (one honest sentence):** in advisory-only mode forced
+proxy egress becomes advisory — the MITM egress gate is best-effort rather than
+enforced, so an agent holding a raw token could bypass the proxy policy —
+acceptable for a single-tenant hive whose owner controls every repo and agent,
+but not a control you should silently disable on a shared one.
+
+### Does your cluster grant NET_ADMIN?
+
+The question every firewalled-cluster adopter hits first. Three checks, from
+authoritative to empirical — run them **before** deploying and you'll know
+which of the two remedies above (if either) you need.
+
+**1. Ask OpenShift directly (`scc-subject-review` dry-run).** This is the
+authoritative answer: it evaluates the *actual* pod spec against every SCC the
+`hive` ServiceAccount can use, without creating anything:
+
+```bash
+# From your (placeholder-swapped) overlay directory — build the real manifests
+# and let OpenShift judge them as the hive SA:
+kubectl kustomize . > /tmp/hive-rendered.yaml
+oc -n hive policy scc-subject-review -z hive -f /tmp/hive-rendered.yaml
+```
+
+Read the `ALLOWED BY` column for the `hive` Deployment: an SCC name (e.g.
+`hive-netadmin`) means admission will pass under that SCC; `<none>` means **no
+SCC admits the pod** — deploying now would leave the ReplicaSet stuck with
+`unable to validate against any security context constraint` events and no pod
+at all.
+
+**2. Which SCCs allow the capability, and who can use them?**
+
+```bash
+# SCCs that would permit adding NET_ADMIN (allowedCapabilities contains it or "*"),
+# plus privileged SCCs (which imply all capabilities):
+oc get scc -o json | jq -r '.items[]
+  | select(((.allowedCapabilities // []) | index("NET_ADMIN") or index("*"))
+           or .allowPrivilegedContainer == true)
+  | .metadata.name'
+
+# For each candidate, is the hive SA allowed to use it?
+oc adm policy who-can use scc/hive-netadmin
+# Look for system:serviceaccount:hive:hive in the output.
+```
+
+On a stock cluster the first query returns only `privileged` / `node-exporter`
+style SCCs the hive SA cannot (and should not) use — that is the "cluster
+denies" case until `hive-netadmin` is applied. On plain Kubernetes (no SCC API)
+the equivalent gate is [Pod Security admission](https://kubernetes.io/docs/concepts/security/pod-security-standards/):
+check `kubectl get ns hive -o jsonpath='{.metadata.labels}'` — an
+`pod-security.kubernetes.io/enforce: baseline` (or `restricted`) label denies
+`NET_ADMIN`; the capability needs `privileged` enforcement (or no enforcement)
+on the namespace.
+
+**3. The 30-second probe pod (empirical).** Runs as the same ServiceAccount,
+requests only `NET_ADMIN`, prints its own capability bounding set, and exits:
+
+```bash
+oc -n hive run netadmin-probe --restart=Never --image=busybox:1.36 \
+  --overrides='{"spec":{"serviceAccountName":"hive","containers":[{"name":"netadmin-probe","image":"busybox:1.36","command":["sh","-c","grep CapBnd /proc/self/status"],"securityContext":{"capabilities":{"drop":["ALL"],"add":["NET_ADMIN"]}}}]}}'
+oc -n hive logs netadmin-probe && oc -n hive delete pod netadmin-probe
+```
+
+Two outcomes: the `run` is **rejected at admission** (`unable to validate
+against any security context constraint`) — the cluster denies the capability;
+or the pod runs and prints `CapBnd: 0000000000001000` — bit 12 (`0x1000`,
+`CAP_NET_ADMIN`) is set and the cluster grants it. (The probe requests *only*
+`NET_ADMIN`; the real deployment also adds the su-exec capability set, so treat
+check 1 as the authoritative pre-flight and this probe as the quick smoke
+test.)
+
+**Reading the failure after the fact — the exit-77 signature.** If the pod was
+*admitted* but the container's bounding set still lacks `CAP_NET_ADMIN` (e.g.
+an admission webhook stripped the capability, or a hand-edited manifest dropped
+the request), the entrypoint refuses to start and exits with a **distinct code,
+77** (sysexits.h `EX_NOPERM`), after logging:
+
+```
+[entrypoint] FATAL: refusing to start. Grant NET_ADMIN + install iptables, or set HIVE_PROXY_ADVISORY_OK=true to deliberately run in advisory mode.
+[entrypoint] FATAL: CAP_NET_ADMIN is not in the container's capability bounding set — exiting 77 (EX_NOPERM) rather than 1.
+```
+
+```bash
+kubectl -n hive get pod -l app.kubernetes.io/name=hive \
+  -o jsonpath='{.items[0].status.containerStatuses[0].lastState.terminated.exitCode}'
+```
+
+`77` means precisely "grant the capability (or opt into advisory mode)"; any
+*other* cause of the same FATAL (no `iptables` binary, netfilter lock
+contention) exits `1`, since granting `NET_ADMIN` would not fix those. Full
+rationale: [net-admin-requirement.md](net-admin-requirement.md).
 
 ### Firewall / egress (locked-down cluster)
 
