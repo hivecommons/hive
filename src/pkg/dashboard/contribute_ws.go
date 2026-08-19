@@ -2941,6 +2941,25 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				contributor.tmuxOutput = msg.TmuxOutput
+				// #4117: the relay re-detects the running model from the CLI's own
+				// session transcript on every progress tick and piggybacks it here, so
+				// a mid-session model switch (claude `/model`) is reflected instead of
+				// staying stuck at the connect-time value. Same pattern as the
+				// auth-time handler: only non-empty values overwrite — an older relay
+				// omits both fields and nothing changes. Advisory display metadata,
+				// exactly like the auth_response values it refreshes.
+				if msg.Model != "" {
+					contributor.model = msg.Model
+					if contributor.profile != nil {
+						contributor.profile.Model = msg.Model
+					}
+				}
+				if msg.ReasoningEffort != "" {
+					contributor.reasoningEffort = msg.ReasoningEffort
+					if contributor.profile != nil {
+						contributor.profile.ReasoningEffort = msg.ReasoningEffort
+					}
+				}
 				// SECURITY (v4, kept over v2 #3153): v4 deliberately has NO
 				// client-driven resume path here. A task_progress for a task the hub
 				// does not already track is resumed ONLY through the authoritative

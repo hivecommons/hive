@@ -2427,6 +2427,175 @@ test('task_assign with an unwritable token cache path does not crash the relay',
 });
 
 // ---------------------------------------------------------------------------
+// #4117 — auto-detect the running model from the CLI's own session transcript
+// when AGENT_MODEL is unset. Precedence: AGENT_MODEL → detected → ''.
+// ---------------------------------------------------------------------------
+
+// Builds a claude-style transcript fixture: ~/.claude/projects/<hash>/x.jsonl
+// with assistant turns recording message.model. Returns the projects dir and
+// the session file path (so tests can append a later turn = /model switch).
+function makeClaudeFixture(turns) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratchRoot, 'model-detect-'));
+  const projDir = path.join(root, 'projects', '-home-dev-work');
+  fs.mkdirSync(projDir, { recursive: true });
+  const file = path.join(projDir, 'session-abc.jsonl');
+  fs.writeFileSync(file, turns.map(t => JSON.stringify(t)).join('\n') + '\n');
+  return { root, projectsDir: path.join(root, 'projects'), file };
+}
+
+function assistantTurn(model) {
+  return { type: 'assistant', timestamp: new Date().toISOString(), message: { model, usage: { input_tokens: 1, output_tokens: 1 } } };
+}
+
+test('#4117: claude model is detected from the newest transcript when AGENT_MODEL is unset', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-opus-5-20260101')]);
+  const relay = loadRelay({ backend: 'claude', model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'claude-opus-5-20260101');
+    assert.strictEqual(relay.effectiveModel(), 'claude-opus-5-20260101');
+  } finally {
+    teardown(relay);
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: explicit AGENT_MODEL wins over a transcript recording a different model', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-transcript-model')]);
+  const relay = loadRelay({ backend: 'claude', model: 'my-explicit-model', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'my-explicit-model');
+    assert.strictEqual(relay.detectRunningModel(), '',
+      'detection must not even run when AGENT_MODEL is set — explicit intent wins');
+    // auth_response carries the explicit value, unconditionally.
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, 'my-explicit-model');
+  } finally {
+    teardown(relay);
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: auth_response reports the detected model when AGENT_MODEL is unset', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-sonnet-5-20260101')]);
+  const relay = loadRelay({ backend: 'claude', model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model, 'claude-sonnet-5-20260101');
+  } finally {
+    teardown(relay);
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: a mid-session model switch is picked up by the progress tick and sent on task_progress', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-sonnet-5-20260101')]);
+  const relay = loadRelay({ backend: 'claude', model: '', cliStates: ['working'], env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'claude-sonnet-5-20260101');
+    // The session switches models (`/model`): the CLI appends a turn served by
+    // the NEW model to its own transcript.
+    fs.appendFileSync(fx.file, JSON.stringify(assistantTurn('claude-opus-5-20260101')) + '\n');
+    relay.setCurrentTask({ task_id: 'mt-1', task_gen: 3, kind: 'issue', repo: 'foo/bar', number: 1, title: 'x' });
+    relay.__stallTick(); // one progress tick, grace period elapsed
+    const prog = relay.__sent.filter(m => m.type === 'task_progress').pop();
+    assert.ok(prog, 'the tick must send a task_progress');
+    assert.strictEqual(prog.model, 'claude-opus-5-20260101',
+      'task_progress must carry the model detected AFTER the mid-session switch');
+    assert.strictEqual(relay.effectiveModel(), 'claude-opus-5-20260101');
+  } finally {
+    teardown(relay);
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: synthetic placeholder turns are skipped in favor of the last real model', () => {
+  const fx = makeClaudeFixture([assistantTurn('claude-opus-5-20260101'), assistantTurn('<synthetic>')]);
+  const relay = loadRelay({ backend: 'claude', model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'claude-opus-5-20260101');
+  } finally {
+    teardown(relay);
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: copilot model is detected from the newest events.jsonl', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratchRoot, 'model-detect-'));
+  const sessDir = path.join(root, 'session-state', 'sess-1');
+  fs.mkdirSync(sessDir, { recursive: true });
+  fs.writeFileSync(path.join(sessDir, 'events.jsonl'), [
+    JSON.stringify({ type: 'session.start', data: { sessionId: 'sess-1', selectedModel: 'gpt-5.4' } }),
+    JSON.stringify({ type: 'tool.complete', data: { model: 'gpt-5.6-luna' } }),
+  ].join('\n') + '\n');
+  const relay = loadRelay({ backend: 'copilot', model: '', env: { HIVE_COPILOT_SESSIONS_DIR: path.join(root, 'session-state') } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'gpt-5.6-luna',
+      'the LATEST model-bearing event must win, not the session.start value');
+  } finally {
+    teardown(relay);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: bob model is detected from the last message of the newest chat recording', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(scratchRoot, 'model-detect-'));
+  const chats = path.join(root, 'tmp', 'uuid-1', 'chats');
+  fs.mkdirSync(chats, { recursive: true });
+  fs.writeFileSync(path.join(chats, 'sess.json'), JSON.stringify({
+    sessionId: 'sess',
+    messages: [
+      { type: 'user', content: 'hi' },
+      { type: 'bob-shell', content: 'x', model: 'standard' },
+      { type: 'bob-shell', content: 'y', model: 'premium' },
+    ],
+  }));
+  const relay = loadRelay({ backend: 'bob', model: '', env: { HIVE_BOB_DIR: root } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), 'premium');
+  } finally {
+    teardown(relay);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#4117: unsupported backends detect nothing and degrade to today\'s behavior', () => {
+  // A claude transcript exists on disk, but codex has no scanner — detection
+  // must not guess from another CLI's files.
+  const fx = makeClaudeFixture([assistantTurn('claude-opus-5-20260101')]);
+  for (const backend of ['codex', 'agy', 'goose', 'pi', 'aider', 'litellm']) {
+    const relay = loadRelay({ backend, model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: fx.projectsDir } });
+    try {
+      assert.strictEqual(relay.refreshDetectedModel(), '', `${backend} must not detect a model`);
+      assert.deepStrictEqual(Object.keys(relay.progressModelFields()).filter(k => k === 'model'), [],
+        `${backend} must not piggyback a model on task_progress`);
+    } finally {
+      teardown(relay);
+    }
+  }
+  fs.rmSync(fx.root, { recursive: true, force: true });
+});
+
+test('#4117: detection failure (missing log root) is silent and reports no model', () => {
+  const relay = loadRelay({ backend: 'claude', model: '', env: { HIVE_CLAUDE_PROJECTS_DIR: path.join(__dirname, 'does-not-exist-4117') } });
+  try {
+    assert.strictEqual(relay.refreshDetectedModel(), '');
+    relay.handleMessage(JSON.stringify({ type: 'auth_challenge' }));
+    const auth = relay.__sent.find(m => m.type === 'auth_response');
+    assert.strictEqual(auth.model || '', '', 'auth_response must degrade to no model, exactly as before');
+  } finally {
+    teardown(relay);
+  }
+});
+
+// ---------------------------------------------------------------------------
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.

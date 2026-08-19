@@ -12,7 +12,10 @@
 //                           hubs, provide one comma-separated token per hub in
 //                           the same order as HIVE_HUB
 //   AGENT_BACKEND          — CLI backend name (claude, copilot, gemini, etc.)
-//   AGENT_MODEL            — model override (optional)
+//   AGENT_MODEL            — model override (optional). When unset, the relay
+//                           auto-detects the running model from the CLI's own
+//                           session transcript for claude/copilot/bob (#4117);
+//                           other backends report no model, as before.
 //   AGENT_REASONING_EFFORT — reasoning effort override (optional). Consumed by
 //                           codex (-c model_reasoning_effort) and by agy
 //                           (--effort low|medium|high); ignored elsewhere.
@@ -499,6 +502,198 @@ function effectiveReasoningEffort() {
   // agy is the only backend whose effort is conditional on a model being passed.
   if (BACKEND === 'agy') return modelFlagFor() ? agyEffort : '';
   return REASONING_EFFORT || '';
+}
+
+// --- Model auto-detection from the CLI's own session transcript (#4117) ----
+//
+// AGENT_MODEL is optional and launch-time-only: most contributors never set it
+// (Live Activity then shows just "via claude CLI"), and even a set value goes
+// stale the moment the session switches models (`/model` in claude). For the
+// backends whose CLIs keep a local session transcript that records which model
+// served each turn — the same files src/pkg/tokens/*_scanner.go already reads
+// for cost attribution — the relay can report the model ACTUALLY in use.
+//
+// Precedence is explicit and fixed: AGENT_MODEL if set (the contributor's
+// intent overrides detection — e.g. a claude pointed at a LiteLLM proxy whose
+// transcript records a spoofed name) → the model detected from the CLI's own
+// transcript → '' (today's degrade, unchanged). Backends with no known local
+// transcript format (codex, agy, goose, pi, aider, litellm, …) always take the
+// last branch — no regression, no guess.
+//
+// Privacy: transcripts contain the task prompt and file contents. Detection
+// reads only the TAIL bytes needed to find the latest turn's model field,
+// extracts that single field, and never logs or transmits anything else.
+const MODEL_DETECT_HOME = process.env.HOME || require('os').homedir() || '';
+// Tail window per read. A transcript line is one JSON turn; 64 KiB comfortably
+// covers the last few turns of every observed format without pulling a whole
+// multi-megabyte session into memory.
+const MODEL_DETECT_TAIL_BYTES = 65536;
+const CLAUDE_PROJECTS_DIR = process.env.HIVE_CLAUDE_PROJECTS_DIR || path.join(MODEL_DETECT_HOME, '.claude', 'projects');
+const COPILOT_SESSIONS_DIR = process.env.HIVE_COPILOT_SESSIONS_DIR || path.join(MODEL_DETECT_HOME, '.copilot', 'session-state');
+const BOB_HOME_DIR = process.env.HIVE_BOB_DIR || path.join(MODEL_DETECT_HOME, '.bob');
+
+// readFileTail returns at most the last maxBytes of a file as UTF-8, without
+// reading the rest — the "minimal tail" privacy bound above.
+function readFileTail(file, maxBytes) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const len = size - start;
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// newestByMtime picks the most recently modified path from a list, or null.
+function newestByMtime(files) {
+  let best = null;
+  let bestMtime = -1;
+  for (const f of files) {
+    try {
+      const m = fs.statSync(f).mtimeMs;
+      if (m > bestMtime) { bestMtime = m; best = f; }
+    } catch (_) {}
+  }
+  return best;
+}
+
+// tailLinesReversed parses the tail of a JSONL file and yields each line's
+// parsed JSON from NEWEST to oldest, skipping unparseable lines (the first
+// tail line is usually a mid-line cut).
+function tailLinesReversed(file) {
+  const lines = readFileTail(file, MODEL_DETECT_TAIL_BYTES).split('\n');
+  const out = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try { out.push(JSON.parse(line)); } catch (_) {}
+  }
+  return out;
+}
+
+// looksLikeModelName rejects placeholder values some transcripts record for
+// error/synthetic turns (claude logs "<synthetic>") — better no model than a
+// confidently wrong one.
+function looksLikeModelName(m) {
+  return typeof m === 'string' && m !== '' && !m.startsWith('<');
+}
+
+// detectClaudeModel: newest ~/.claude/projects/*/*.jsonl, latest assistant
+// turn's message.model (same source claude_scanner.go aggregates for cost).
+function detectClaudeModel() {
+  const files = [];
+  for (const d of fs.readdirSync(CLAUDE_PROJECTS_DIR, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(CLAUDE_PROJECTS_DIR, d.name);
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
+    }
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  for (const obj of tailLinesReversed(newest)) {
+    const m = obj && obj.message && obj.message.model;
+    if (looksLikeModelName(m)) return m;
+  }
+  return '';
+}
+
+// detectCopilotModel: newest ~/.copilot/session-state/*/events.jsonl, latest
+// event carrying a model field (session.start selectedModel, per-tool model,
+// or shutdown currentModel — same fields copilot_scanner.go reads).
+function detectCopilotModel() {
+  const files = [];
+  for (const d of fs.readdirSync(COPILOT_SESSIONS_DIR, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    files.push(path.join(COPILOT_SESSIONS_DIR, d.name, 'events.jsonl'));
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  for (const obj of tailLinesReversed(newest)) {
+    const data = (obj && obj.data) || {};
+    const m = data.model || data.currentModel || data.selectedModel;
+    if (looksLikeModelName(m)) return m;
+  }
+  return '';
+}
+
+// Bob session recordings are one JSON document, not JSONL, so a byte tail
+// cannot be parsed. Cap what we are willing to read instead; sessions past
+// this size just report no model rather than ballooning relay memory.
+const BOB_MAX_SESSION_BYTES = 5242880; // 5 MiB
+// detectBobModel: newest ~/.bob/tmp/*/chats/*.json, last message with a
+// per-message model field (same shape bob_scanner.go reads).
+function detectBobModel() {
+  const files = [];
+  const tmpDir = path.join(BOB_HOME_DIR, 'tmp');
+  for (const d of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const chats = path.join(tmpDir, d.name, 'chats');
+    let entries;
+    try { entries = fs.readdirSync(chats); } catch (_) { continue; }
+    for (const f of entries) {
+      if (f.endsWith('.json')) files.push(path.join(chats, f));
+    }
+  }
+  const newest = newestByMtime(files);
+  if (!newest) return '';
+  if (fs.statSync(newest).size > BOB_MAX_SESSION_BYTES) return '';
+  const session = JSON.parse(fs.readFileSync(newest, 'utf8'));
+  const messages = Array.isArray(session && session.messages) ? session.messages : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (looksLikeModelName(messages[i] && messages[i].model)) return messages[i].model;
+  }
+  return '';
+}
+
+const MODEL_DETECTORS = { claude: detectClaudeModel, copilot: detectCopilotModel, bob: detectBobModel };
+
+// The last model detected from the transcript. Refreshed at auth and on every
+// progress tick, so a mid-session `/model` switch is reflected within one
+// PROGRESS_REPORT_INTERVAL_MS.
+let detectedModel = '';
+
+// detectRunningModel reads the transcript once and returns the model, or ''.
+// Never throws; never runs at all when AGENT_MODEL is set (explicit intent
+// wins, so there is nothing to detect) or the backend has no known transcript.
+function detectRunningModel() {
+  if (MODEL) return '';
+  const detector = MODEL_DETECTORS[BACKEND];
+  if (!detector) return '';
+  try { return sanitizeDeclaredValue(detector() || ''); } catch (_) { return ''; }
+}
+
+// refreshDetectedModel re-detects and returns the model currently in effect
+// under the fixed precedence (AGENT_MODEL → detected → '').
+function refreshDetectedModel() {
+  const m = detectRunningModel();
+  if (m && m !== detectedModel) {
+    detectedModel = m;
+    console.log(`Detected running model from ${BACKEND} session transcript: ${m}`);
+  }
+  return effectiveModel();
+}
+
+// effectiveModel is the model counterpart of effectiveReasoningEffort(): the
+// single source of truth for the model actually reported to the hub.
+function effectiveModel() {
+  return MODEL || detectedModel || '';
+}
+
+// progressModelFields returns the optional model/effort fields piggybacked on
+// periodic task_progress reports, so the hub can track a mid-session model
+// switch. Empty values are omitted entirely (an older hub ignores the fields).
+function progressModelFields() {
+  const out = {};
+  const model = effectiveModel();
+  const effort = effectiveReasoningEffort();
+  if (model) out.model = model;
+  if (effort) out.reasoning_effort = effort;
+  return out;
 }
 
 function buildLaunchCommand() {
@@ -1680,6 +1875,11 @@ function progressTick() {
   if (!currentTask) return;
   if (Date.now() - taskAssignedAt < TASK_GRACE_PERIOD_MS) return;
 
+  // #4117: re-detect the running model each tick so a mid-session model switch
+  // (claude `/model`) reaches the hub within one progress interval, piggybacked
+  // on the task_progress reports below.
+  refreshDetectedModel();
+
   try {
     // See probeCLIPresence(): this asks the PANE what it is running, rather than
     // grepping the whole process table for the backend's name — a scan the
@@ -1738,7 +1938,7 @@ function progressTick() {
     // IS the completion signal (see cliExitIsNormal above).
     if (presence.isShell && !cliExitIsNormal) {
       console.warn(`Pane is at a shell prompt, not ${BACKEND} — awaiting confirmation before judging the task`);
-      send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: captureTmuxLines(TMUX_TAIL_LINES) });
+      send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: captureTmuxLines(TMUX_TAIL_LINES), ...progressModelFields() });
       return;
     }
   } catch (_) {}
@@ -1804,6 +2004,7 @@ function progressTick() {
       attention: true,
       summary: 'Agent is waiting for human input in the tmux pane',
       tmux_output: tmuxLines,
+      ...progressModelFields(),
     });
   } else {
     // Stall backstop: a pane frozen this long is not evidence of work, and
@@ -1842,7 +2043,7 @@ function progressTick() {
     if (stallConfirmCount > 0) {
       console.warn(`Pane unchanged for ${Math.round(PANE_STALL_TIMEOUT_MS / 60000)}+ minutes — confirming before giving up on ${currentTask.task_id} (${stallConfirmCount}/${PANE_STALL_CONFIRM_TICKS})`);
     }
-    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines });
+    send({ type: 'task_progress', seq: nextSeq(), task_id: currentTask.task_id, task_gen: currentTask.task_gen, status: 'working', tmux_output: tmuxLines, ...progressModelFields() });
   }
 }
 
@@ -1863,7 +2064,10 @@ function handleMessage(data, hub) {
         seq: nextSeq(),
         registration_token: hub.regToken,
         cli_backend: BACKEND,
-        model: MODEL,
+        // #4117: AGENT_MODEL if set, else the model detected from the CLI's
+        // own session transcript, else '' (today's degrade for backends with
+        // no known transcript format).
+        model: refreshDetectedModel(),
         reasoning_effort: effectiveReasoningEffort() || undefined,
         role: AGENT_ROLE,
         // #2547 declare half + #2567: additive, optional self-report of runtime
@@ -2181,6 +2385,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     restartBackoffMs,
     NO_MODEL_FLAG_BACKENDS,
     effectiveReasoningEffort,
+    // Model auto-detection from the CLI session transcript (#4117).
+    detectRunningModel,
+    refreshDetectedModel,
+    effectiveModel,
+    progressModelFields,
+    __setDetectedModel: (v) => { detectedModel = v; },
     MAX_TASK_CLI_RESTARTS,
     setCliReady: (v) => { cliReady = v; },
     getCliReady: () => cliReady,
