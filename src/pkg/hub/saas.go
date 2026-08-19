@@ -18672,7 +18672,7 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 
   <div id="access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:500px;width:90%;max-height:80vh;display:flex;flex-direction:column">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:860px;width:min(96vw,860px);max-height:88vh;display:flex;flex-direction:column">
       <h2 style="font-size:1.3rem;padding:32px 32px 16px;margin:0;color:var(--accent);flex-shrink:0">Manage Access</h2>
       <div style="flex:1;overflow-y:auto;padding:0 32px 32px">
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:16px" id="access-hive-label"></p>
@@ -18702,17 +18702,17 @@ const dashboardHTML = `<!DOCTYPE html>
         <input id="access-user-search" type="text" placeholder="Search users..." autocomplete="off"
           oninput="filterAccessUserDropdown()"
           style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-        <div style="display:flex;gap:8px">
-          <select id="access-username" style="flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"><option value="">Select user...</option></select>
-          <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <select id="access-username" style="flex:1 1 280px;min-width:220px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"><option value="">Select user...</option></select>
+          <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="flex:0 0 auto;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
             <option value="read" title="View-only: dashboard, agents and config. Cannot change anything.">Read</option>
             <option value="read-write" title="Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.">Read-Write</option>
             <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
             <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
           </select>
           <input id="access-expiry" type="date" title="Optional expiry — leave empty for permanent access. Access is revoked automatically after this date (UTC)."
-            style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-          <button onclick="addAccess()" class="btn-primary" style="padding:8px 16px;font-size:0.8rem">Add</button>
+            style="flex:0 0 auto;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          <button onclick="addAccess()" class="btn-primary" style="flex:0 0 auto;padding:8px 16px;font-size:0.8rem">Add</button>
         </div>
         <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
       </div>
@@ -19228,13 +19228,13 @@ const dashboardHTML = `<!DOCTYPE html>
             ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
             ' title="Optional expiry — empty means permanent. Access is revoked automatically after this date (UTC)."' +
             ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:' + (u.expires_at ? 'var(--amber)' : 'var(--muted)') + '">';
-          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<div>' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span>' +
+          return '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="display:flex;align-items:center;gap:4px;flex:1 1 240px;min-width:0">' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem;word-break:break-word">' + esc(u.username) + '</span>' +
             /* Empty placeholder the async GitHub profile lookup fills in
                (#4145): display name lands beside the username when it arrives,
                and stays empty on any failure — the login always renders first. */
             '<span class="gh-display-name" data-gh-login="' + escAttr(u.username) + '" style="margin-left:6px;font-size:0.75rem;color:var(--muted)"></span></div>' +
-            '<div style="display:flex;align-items:center;gap:8px">' +
+            '<div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;flex:1 1 300px;min-width:0">' +
             lastActive +
             roleControl +
             expiryControl +
