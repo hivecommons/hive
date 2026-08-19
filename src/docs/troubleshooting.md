@@ -46,7 +46,7 @@ When no token or App credentials are usable, v2 starts the dashboard but disable
 - `GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.`
 - `persisted user token is invalid or expired`
 
-Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls the GitHub/GHE app the **Forge App** (Governor Config → Forge App).
+Check the configured `github:` block, the `HIVE_GITHUB_TOKEN` secret/env var, or the GitHub App `app_id`, `installation_id`, and `key_file`. For App setup, use the dashboard banner or `/gh-setup`; details are in [GitHub App setup](github-app-setup.md). Note the dashboard calls this the **Forge App** — the app for your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — under Governor Config → Forge App.
 
 ## Hosted hive disappeared or its URL times out
 
@@ -56,7 +56,7 @@ Hosted hives that never complete setup or go inactive are **reaped on a timer**:
 2. **Install the Forge App immediately** on the new hive — the GitHub App on GitHub.com, or the same app on your GHE host for enterprise. See [GitHub App setup](github-app-setup.md) and the [getting-started guide's Step 0](getting-started.md#step-0--before-you-start-do-this-first).
 3. An installed Forge App plus regular heartbeats keeps the new hive from being reaped again.
 
-On GitHub Enterprise, a 404 from the install link usually means the hive is pointed at github.com instead of your GHE host (or vice versa) — check the configured forge host under Governor Config → Forge App.
+On GitHub Enterprise, a 404 from the install link usually means the hive is pointed at github.com instead of your GHE host (or vice versa) — check which source control host is configured under Governor Config → Forge App.
 
 ## Agents are stuck, paused, or need CLI login
 
