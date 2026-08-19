@@ -302,14 +302,32 @@ const AGY_GEMINI_WORKING_PANE = [
 // directory" and a backend needing a resolvable cwd dies shortly after its
 // first task — agy exits 2 that way. The Justfile pins the cwd for the first
 // launch; a relaunch that dropped the cd would silently undo it.
-test('a relaunch cds into the relay cwd before starting the CLI', () => {
+test('a relaunch cds somewhere resolvable before starting the CLI', () => {
   const relay = loadRelay({ backend: 'agy' });
   try {
     const launched = relay.launchCommandWithCwd('agy --dangerously-skip-permissions');
     assert.match(launched, /^cd .+ && agy --dangerously-skip-permissions$/,
       `relaunch must pin the cwd, got: ${launched}`);
+    // With no HIVE_AGENT_CWD exported (an older entrypoint), the relay's own
+    // cwd remains the fallback, so this keeps its previous behaviour.
     assert.ok(launched.includes(process.cwd()),
-      `the cd target must be the relay's own cwd: ${launched}`);
+      `without HIVE_AGENT_CWD the cd target must be the relay's cwd: ${launched}`);
+  } finally { teardown(relay); }
+});
+
+// In local mode the relay's own cwd IS the hive checkout `just contribute-hive`
+// was run from — which is also a clone of the repo the agent is assigned to
+// work on. Relaunching there puts the agent back in the one tree it must not
+// adopt as its checkout, undoing the launch-side fix on the first stall
+// recovery. Both entrypoints export HIVE_AGENT_CWD ($HOME) for this.
+test('a relaunch prefers HIVE_AGENT_CWD over the relay cwd', () => {
+  const relay = loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent' } });
+  try {
+    const launched = relay.launchCommandWithCwd('agy --dangerously-skip-permissions');
+    assert.match(launched, /^cd '?\/home\/agent'? && agy --dangerously-skip-permissions$/,
+      `relaunch must cd into HIVE_AGENT_CWD, got: ${launched}`);
+    assert.ok(!launched.includes(`cd ${process.cwd()} `),
+      `relaunch must not land back in the relay's own checkout: ${launched}`);
   } finally { teardown(relay); }
 });
 

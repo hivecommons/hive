@@ -468,7 +468,7 @@ fi
 # recreates — so the CLI always starts somewhere resolvable regardless of what
 # happens to the workspace subtree underneath it; the CLI's own per-task `cd`
 # into $HIVE_WORKSPACE_DIR/<repo> (per the assignment prompt) is unchanged.
-HIVE_AGENT_CWD="${HOME}"
+export HIVE_AGENT_CWD="${HOME}"
 mkdir -p "$HIVE_AGENT_CWD"
 
 # Start the relay in the background

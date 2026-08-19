@@ -47,6 +47,10 @@ const BACKEND = process.env.AGENT_BACKEND || 'claude';
 const MODEL = process.env.AGENT_MODEL || process.env.GOOSE_MODEL || '';
 const REASONING_EFFORT = process.env.AGENT_REASONING_EFFORT || '';
 const AGENT_ROLE = (process.env.HIVE_AGENT_ROLE || '').trim();
+// Neutral directory both entrypoints launch the CLI from ($HOME). Used to pin
+// the cwd on relaunch; see launchCommandWithCwd for why the relay's own cwd is
+// the wrong answer in local mode.
+const AGENT_CWD = (process.env.HIVE_AGENT_CWD || '').trim();
 const TMUX_SESSION = process.env.HIVE_AGENT_SESSION || 'contributor';
 // Where the hub-delivered, task-scoped token is written (injectGhToken). This
 // deliberately does NOT default to /var/run/hive-metrics/gh-app-token.cache:
@@ -1665,8 +1669,17 @@ function checkTmuxPaneState() {
 // shortly after its first task (agy exits 2; claude/codex/goose tolerate it).
 // The Justfile pins the cwd for the FIRST launch; without this, the first
 // relaunch would silently undo that.
+//
+// Prefer HIVE_AGENT_CWD, which both entrypoints export for exactly this: it is
+// the neutral directory they launch the CLI from ($HOME). process.cwd() is the
+// RELAY's directory, which in local mode is the hive checkout `just
+// contribute-hive` was run from — also a clone of the repo the agent is
+// assigned to work on. Relaunching there puts the agent back in the tree it
+// must not treat as its checkout, silently undoing the launch-side fix on the
+// first stall recovery. Fall back to process.cwd() so an older entrypoint that
+// does not export the variable keeps its previous behaviour.
 function launchCommandWithCwd(launchCmd) {
-  const cwd = process.cwd();
+  const cwd = AGENT_CWD || process.cwd();
   if (!cwd) return launchCmd;
   return `cd ${shellQuote(cwd)} && ${launchCmd}`;
 }

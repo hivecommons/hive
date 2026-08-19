@@ -527,9 +527,29 @@ contribute-hive backend="" mode="docker": check-version
       # directory (verified against tmux on Fedora 44). It is passed anyway
       # because it IS correct on a healthy server; the cd is what carries the
       # fix.
+      # ...but that cd must NOT land in this repo. In local mode $PWD is the hive
+      # checkout the relay was launched from — which is also a clone of the repo
+      # the agent is assigned to work on. The assignment prompt says to reuse an
+      # existing clone rather than re-fork ("if that directory already has a
+      # clone from a prior task, 'cd' into it"), so an agent that starts there
+      # reasonably concludes it is already in its checkout and works in place.
+      #
+      # Observed live on kubestellar/hive#4167 with HIVE_WORKSPACE_DIR correctly
+      # set and its directory present: agy never ran `gh repo fork` at all, and
+      # edited the relay's own source tree instead. An earlier task branch-
+      # switched the checkout out from under the running relay.
+      #
+      # The container entrypoint does not have this problem: it roots the
+      # session at the workspace and launches the CLI from $HOME
+      # (bin/contributor-agent.sh). Mirror that here so both paths agree. $HOME
+      # also satisfies the #4046 constraint above — nothing in the task
+      # lifecycle deletes or recreates it, unlike the workspace subtree the
+      # agent clones into.
+      export HIVE_AGENT_CWD="${HOME}"
+      mkdir -p "$HIVE_AGENT_CWD"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$PWD"
-      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$PWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
+      tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
+      tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && ${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
 
       # Surface a poisoned tmux server rather than letting the backend die a
       # silent, unexplained death 30 seconds into its first task.
