@@ -499,6 +499,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/request-access", s.requireAuth(s.handleRequestAccess))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/requests", s.requireAuth(s.handleGetRequests))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/timeline", s.requireAuth(s.handleHiveTimeline))
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/access-log", s.requireAuth(s.handleAccessLog))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/requests/{username}/approve", s.requireAuth(s.handleApproveRequest))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/requests/{username}/deny", s.requireAuth(s.handleDenyRequest))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/approve-access/{username}", s.requireAuth(s.handleApproveAccess))
@@ -6243,11 +6244,24 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := ensureSaaSUser(body.Username)
+	// Distinguish a fresh grant from a role change so the audit trail answers
+	// "who changed X's role, from what, and when" (#4148) — a bare "granted as
+	// merger" entry hides the fact the user was previously an owner.
+	prevRole := target.Hives[hiveID]
 	target.Hives[hiveID] = body.Role
 	saveSaaSUser(target)
-	s.logger.Info("audit: access granted", "hive", hiveID, "target", body.Username, "role", body.Role, "by", username)
-	s.recordTimeline(hiveID, TimelineAccess,
-		fmt.Sprintf("access granted to %s as %s", body.Username, body.Role), username)
+	switch {
+	case prevRole == "":
+		s.logger.Info("audit: access granted", "hive", hiveID, "target", body.Username, "role", body.Role, "by", username)
+		s.recordTimeline(hiveID, TimelineAccess,
+			fmt.Sprintf("access granted to %s as %s", body.Username, body.Role), username)
+	case prevRole != body.Role:
+		s.logger.Info("audit: role changed", "hive", hiveID, "target", body.Username, "from", prevRole, "to", body.Role, "by", username)
+		s.recordTimeline(hiveID, TimelineAccess,
+			fmt.Sprintf("role for %s changed: %s → %s", body.Username, prevRole, body.Role), username)
+	default:
+		// Same role re-granted: a no-op — do not pollute the append-only log.
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "granted"})
 }
@@ -18501,6 +18515,11 @@ const dashboardHTML = `<!DOCTYPE html>
         <h3 style="font-size:0.9rem;margin-bottom:8px;color:var(--accent)">Pending Requests</h3>
         <div id="pending-requests"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
       </div>
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+        <h3 style="font-size:0.9rem;margin-bottom:4px;color:var(--accent)">Audit Log</h3>
+        <p style="font-size:0.72rem;color:var(--muted);margin:0 0 8px">Every grant, role change and removal — who did it and when. Append-only.</p>
+        <div id="access-audit-log" style="max-height:180px;overflow-y:auto"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
+      </div>
       <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
         <h3 style="font-size:0.9rem;margin-bottom:8px;color:var(--text)">Add User</h3>
         <input id="access-user-search" type="text" placeholder="Search users..." autocomplete="off"
@@ -18661,6 +18680,41 @@ const dashboardHTML = `<!DOCTYPE html>
       await loadAccessList();
       await loadAccessUserDropdown();
       await loadPendingRequests();
+      await loadAccessAuditLog();
+    }
+
+    /* Audit log for permission changes (#4148): a read-only, append-only view
+       sourced from the hive timeline, filtered server-side to access/ownership
+       events. Only owners can open Manage Access, and the endpoint enforces
+       the same rule, so a non-owner never sees this. */
+    async function loadAccessAuditLog() {
+      var el = document.getElementById('access-audit-log');
+      if (!el) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access-log');
+        if (!resp.ok) {
+          el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Audit log unavailable</span>';
+          return;
+        }
+        var data = await resp.json();
+        var events = (data && data.events) || [];
+        if (!events.length) {
+          el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No permission changes recorded yet</span>';
+          return;
+        }
+        /* Server returns newest first; render in that order. */
+        el.innerHTML = events.map(function(ev) {
+          var actor = ev.actor
+            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actor) + '</span>'
+            : '';
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="font-size:0.78rem;color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
+            '<div style="font-size:0.66rem;color:var(--muted);margin-top:2px" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
+            '</div>';
+        }).join('');
+      } catch(e) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">Audit log unavailable</span>';
+      }
     }
 
     async function loadPendingRequests() {
@@ -18698,6 +18752,7 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         loadPendingRequests();
         loadAccessList();
+        loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
@@ -18705,6 +18760,7 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/requests/' + encodeURIComponent(username) + '/deny', {method: 'POST'});
         loadPendingRequests();
+        loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
@@ -18879,6 +18935,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) { var d = await resp.json(); hiveToast(d.error || 'Failed', 'error'); return; }
         document.getElementById('access-username').value = '';
         loadAccessList();
+        loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
@@ -18898,6 +18955,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) { var d = await resp.json().catch(function(){return {};}); hiveToast(d.error || 'Failed to change role', 'error'); loadAccessList(); return; }
         hiveToast(username + ' is now ' + newRole, 'success');
         loadAccessList();
+        loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadAccessList(); }
     }
 
@@ -18906,6 +18964,7 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access/' + encodeURIComponent(username), {method: 'DELETE'});
         loadAccessList();
+        loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
