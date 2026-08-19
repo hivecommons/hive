@@ -50,6 +50,13 @@ services:
       - ./secrets:/secrets:ro
     env_file:
       - ./env.compose
+    environment:
+      - HIVE_GITHUB_TOKEN=${HIVE_GITHUB_TOKEN:-}
+      - HIVE_DASHBOARD_TOKEN=${HIVE_DASHBOARD_TOKEN:-}
+      - NTFY_SERVER=${NTFY_SERVER:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
+      - HIVE_LEVEL=${HIVE_LEVEL:-}
+      - HIVE_REPO=${HIVE_REPO:-}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
