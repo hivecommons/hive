@@ -504,6 +504,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	// requireAuth so the unauthenticated answer is the exact 401 JSON shape the
 	// dibs bridge expects rather than the generic middleware error.
 	s.mux.HandleFunc("GET /api/saas/whoami", s.handleSaaSWhoami)
+	// Sibling-product repo registry (#4193): dibs polls this server-to-server
+	// (no session) every ~5 minutes to learn which repos hives manage. Public
+	// by design, so it returns ONLY already-public data — see handleDibsRepos.
+	s.mux.HandleFunc("GET /api/saas/dibs/repos", s.handleDibsRepos)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
 	s.mux.HandleFunc("GET /api/saas/grantable-users", s.requireAuth(s.handleGrantableUsers))
@@ -8595,6 +8599,106 @@ func (s *HubServer) handleSaaSWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(data)
+}
+
+// dibsRepoEntry is one hive-managed repo in the feed dibs's registry syncs
+// from (GET /api/saas/dibs/repos, #4193). The field set and JSON names match
+// dibs's pkg/registry RepoProfile contract exactly:
+//
+//	[{"repoID":"org/name","hiveID":"...","owner":"github-login","description":"..."}]
+//
+// Owner-editable dibs fields (topics, acceptingIdeas, appetite) are dibs-local
+// state and deliberately absent here.
+type dibsRepoEntry struct {
+	RepoID      string `json:"repoID"`
+	HiveID      string `json:"hiveID"`
+	Owner       string `json:"owner"`
+	Description string `json:"description,omitempty"`
+}
+
+// handleDibsRepos lists the PUBLIC hive-managed repos for dibs's idea-matching
+// registry (#4193). Dibs polls this server-to-server with no browser session,
+// so the endpoint is deliberately unauthenticated — which is safe only because
+// every fact it returns is already public, and the inclusion rules below are
+// what make that true. A hive contributes its repos only when ALL hold:
+//
+//   - is_public: the operator opted the hive into registry visibility (the
+//     same flag that gates the public hive registry), so its project identity
+//     is already published;
+//   - it lives on PUBLIC github.com — the GitHub-family forge with no GHE
+//     host pinned at hive or cluster level (effectiveGitHubBaseURL == "").
+//     An enterprise repo's very NAME can be confidential, so GHE hives are
+//     excluded outright;
+//   - it has a real assigned identity: a non-placeholder org (the synthetic
+//     "available-<id>" inventory org never names a repo) and at least one
+//     repo recorded.
+//
+// owner is the hive owner's stable identity key — bare GitHub login for
+// GitHub users, canonical provider:sub otherwise — byte-identical to the
+// username /api/saas/whoami reports, so dibs can match a signed-in user to
+// the repos they own.
+//
+// Cache-Control allows short shared caching: the answer is public, identical
+// for every caller, and dibs re-syncs every ~5 minutes anyway.
+func (s *HubServer) handleDibsRepos(w http.ResponseWriter, r *http.Request) {
+	entries := []dibsRepoEntry{}
+	seen := map[string]bool{}
+	for _, sh := range listSaaSHives() {
+		if !sh.IsPublic {
+			continue
+		}
+		// GitHub family only — the pkg/forge adapters (gitlab/gitea) never
+		// point at github.com repos.
+		if sh.Forge != "" && sh.Forge != "github" {
+			continue
+		}
+		// GHE anywhere in the resolution chain (heartbeat-recorded host,
+		// hive-level pin, or cluster default) excludes the hive.
+		if sh.GitHubHost != "" {
+			continue
+		}
+		cluster := s.clusters[sh.ClusterID]
+		if effectiveGitHubBaseURL(&sh, &cluster) != "" {
+			continue
+		}
+		if sh.Org == "" || strings.HasPrefix(sh.Org, placeholderOrgPrefix) {
+			continue
+		}
+		// Same stable-key normalization as handleSaaSWhoami, so the two
+		// endpoints can never disagree about who a user is.
+		owner := sh.Owner
+		if provider, subject, ok := parseCanonical(canonicalizeLegacy(owner)); ok && provider == legacyProvider {
+			owner = subject
+		}
+		for _, repo := range append([]string{sh.PrimaryRepo}, sh.Repos...) {
+			if repo == "" {
+				continue
+			}
+			// A primary_repo may already carry "owner/repo" (GHE/legacy
+			// records do) — that pair IS the repo ID; otherwise the hive's
+			// org is the owner half.
+			repoID := repo
+			if !strings.Contains(repo, "/") {
+				repoID = sh.Org + "/" + repo
+			}
+			if seen[repoID] {
+				continue
+			}
+			seen[repoID] = true
+			entries = append(entries, dibsRepoEntry{
+				RepoID:      repoID,
+				HiveID:      sh.ID,
+				Owner:       owner,
+				Description: sh.ProjectName,
+			})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].RepoID < entries[j].RepoID })
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	if err := json.NewEncoder(w).Encode(entries); err != nil {
+		s.logger.Warn("dibs repos: encoding response", "error", err)
+	}
 }
 
 func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) {

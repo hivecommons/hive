@@ -756,6 +756,22 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, c
 		http.Error(w, "session unavailable", http.StatusInternalServerError)
 		return false
 	}
+	setSessionCookies(w, r, cookieValue)
+	return true
+}
+
+// setSessionCookies issues the Set-Cookie pair for an already-minted session
+// value: the live hive_hub_user cookie scoped to sessionCookieDomain(r.Host),
+// preceded by an expiry of the legacy .hive.kubestellar.io-scoped copy.
+//
+// Factored out of mintSessionCookies (#4193) so the SAME cookies can be
+// re-issued outside the login callback: a session minted BEFORE the #4171
+// domain widening still rides a host-only or .hive.kubestellar.io-scoped
+// cookie the browser never sends to dibs.kubestellar.io, and only a fresh
+// Set-Cookie can rescope it. handleAuthUser re-issues the verified value on
+// every authenticated dashboard load for exactly that reason — no new crypto,
+// just the delivery scope.
+func setSessionCookies(w http.ResponseWriter, r *http.Request, cookieValue string) {
 	// AUDIT F4, DELIBERATELY NOT CHANGED — read before "fixing" this.
 	//
 	// The audit asks for a host-only `__Host-` session cookie. That is correct
@@ -834,7 +850,6 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, c
 		SameSite: http.SameSiteLaxMode,
 	}
 	http.SetCookie(w, cookie)
-	return true
 }
 
 // oidcNonceFromCookie returns the OIDC replay nonce this browser was issued at
@@ -896,10 +911,11 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	// F10: also enforces a v3 cookie's signed expiry and revocation state.
 	// #4171: every hive_hub_user copy is tried (the domain-widening rollout can
 	// briefly leave two in the jar), matching getRealAuthUser.
-	var username string
+	var username, sessionValue string
 	for _, value := range hubSessionCookieValues(r) {
 		if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
 			username = u
+			sessionValue = value
 			break
 		}
 	}
@@ -908,6 +924,24 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
+	// #4193: re-scope the session cookie on every authenticated dashboard load.
+	// A session minted BEFORE the #4171 domain widening still rides a cookie
+	// scoped host-only or to .hive.kubestellar.io, which the browser never
+	// sends to dibs.kubestellar.io — SSO silently fails for exactly the users
+	// who were already signed in when the widening shipped, until they happen
+	// to log out and back in. Re-issuing the SAME verified value with
+	// Domain=sessionCookieDomain(r.Host) (plus the legacy-scope expiry) here
+	// converges those sessions without new crypto or a forced re-login.
+	//
+	// This endpoint and not every API call: the dashboard fetches
+	// /api/auth/user exactly once on load, so the Set-Cookie pair rides one
+	// cheap request per page view instead of spamming every poll. Re-setting
+	// an already-wide cookie is a no-op for the jar (same name/domain/path),
+	// and the refreshed MaxAge is only the browser-side hint — the session's
+	// real lifetime is the SIGNED expiry inside the value, which this does not
+	// touch. Dev/localhost hosts keep their host-only cookie via
+	// sessionCookieDomain, same as the login callback.
+	setSessionCookies(w, r, sessionValue)
 	isAdmin := isHubAdmin(username)
 	displayLogin, avatar := s.displayIdentity(username)
 	// Fold impersonation status into the auth payload the dashboard already
