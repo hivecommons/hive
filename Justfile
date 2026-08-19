@@ -443,6 +443,28 @@ contribute-hive backend="" mode="docker": check-version
         exit 1
       fi
 
+      # The hub's assignment prompt tells the agent to clone into
+      # "$HIVE_WORKSPACE_DIR/<owner>/<repo>" (buildTaskPrompt in
+      # src/pkg/dashboard/contribute_ws.go). Only the CONTAINER entrypoint
+      # (bin/contributor-agent.sh, via Dockerfile.contributor) ever gave that
+      # variable a value, and local mode does not run that script — so on this
+      # path it was unset and the prompt expanded to "/<owner>/<repo>", an
+      # unwritable path at filesystem root.
+      #
+      # What each agent did with that was its own improvisation. Observed live:
+      # agy silently worked in $PWD instead — which in local mode IS the hive
+      # checkout the relay was launched from, so a task branch-switched the
+      # relay's own source tree and left a nested clone inside it.
+      #
+      # agy is local-only (its Google OAuth flow cannot authenticate in a
+      # container, see contribute-k8s below), so every agy contributor is
+      # forced onto the one path that lacked this default.
+      #
+      # Same default and mkdir as the container entrypoint, so both paths agree.
+      export HIVE_WORKSPACE_DIR="${HIVE_WORKSPACE_DIR:-${HOME}/workspace}"
+      mkdir -p "$HIVE_WORKSPACE_DIR"
+      echo "Workspace: ${HIVE_WORKSPACE_DIR}"
+
       # Start ollama silently if needed for goose
       if [[ "$BACKEND" == "goose" && "${GOOSE_PROVIDER:-}" == "ollama" ]]; then
         if ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
