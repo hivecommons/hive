@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -6107,14 +6108,105 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	names := make([]string, 0)
+	entries := make([]grantableUserEntry, 0)
 	for _, u := range listAllSaaSUsers() {
-		if u.GitHubUsername != "" {
-			names = append(names, u.GitHubUsername)
+		if u.GitHubUsername == "" {
+			continue
 		}
+		u := u
+		names = append(names, u.GitHubUsername)
+		entries = append(entries, grantableUserEntry{
+			ID:       u.GitHubUsername,
+			Label:    grantableUserLabel(&u),
+			Provider: grantableUserProvider(&u),
+		})
 	}
 	sort.Strings(names)
+	// Sort by the label an owner actually reads in the picker, falling back to
+	// the stable ID so two identical display names still order deterministically.
+	sort.Slice(entries, func(i, j int) bool {
+		li, lj := strings.ToLower(entries[i].Label), strings.ToLower(entries[j].Label)
+		if li != lj {
+			return li < lj
+		}
+		return entries[i].ID < entries[j].ID
+	})
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"users": names})
+	// "users" (bare stable IDs) is kept for back-compat with older dashboards;
+	// "entries" adds the normalized display label alongside the same stable ID
+	// so the picker can show a human name while still granting by identity key.
+	json.NewEncoder(w).Encode(map[string]any{"users": names, "entries": entries})
+}
+
+// grantableUserEntry is one row of the Manage Access "Add User" picker: the
+// stable identity key used for permission grants plus the friendly label an
+// owner should see instead of a raw provider ID.
+type grantableUserEntry struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Provider string `json:"provider,omitempty"`
+}
+
+// identityProviderPrefixRE matches wire-form provider-prefixed identity keys
+// like "google:107812...", "ibmid:6500...", "microsoft:AAAA...". A plain
+// GitHub login can never match: GitHub logins cannot contain ":".
+var identityProviderPrefixRE = regexp.MustCompile(`^([a-z][a-z0-9_-]*):(.+)$`)
+
+// splitIdentityKey breaks a provider-prefixed identity key ("google:1078")
+// into its provider and raw subject. A plain login returns ("", key).
+func splitIdentityKey(key string) (provider, sub string) {
+	if m := identityProviderPrefixRE.FindStringSubmatch(key); m != nil {
+		return m[1], m[2]
+	}
+	return "", key
+}
+
+// grantableUserProvider reports the identity provider for a roster entry,
+// preferring the stored Provider field and falling back to the prefix of the
+// identity key so legacy records still classify correctly.
+func grantableUserProvider(u *SaaSUser) string {
+	if u.Provider != "" {
+		return u.Provider
+	}
+	if p, _ := splitIdentityKey(u.GitHubUsername); p != "" {
+		return p
+	}
+	return "github"
+}
+
+// maxOpaqueIDLabelLen bounds how much of a raw opaque subject the fallback
+// label shows before truncating — enough to disambiguate, short enough that a
+// token-like Microsoft sub doesn't blow out the dropdown.
+const maxOpaqueIDLabelLen = 12
+
+// grantableUserLabel derives the friendly display label for a user in the
+// Manage Access picker. It NEVER changes the identity key used for grants —
+// display only. Preference order:
+//  1. provider-asserted DisplayName from the OIDC name claim
+//  2. a plain GitHub login (already human-recognizable)
+//  3. the provider email claim (display only, never the key)
+//  4. an optional linked GitHub login
+//  5. a truncated "provider: subject…" rendering of the raw key, so even a
+//     record with no human-readable claims stays scannable instead of a wall
+//     of token characters.
+func grantableUserLabel(u *SaaSUser) string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	provider, sub := splitIdentityKey(u.GitHubUsername)
+	if provider == "" || provider == "github" {
+		return sub
+	}
+	if u.Email != "" {
+		return u.Email
+	}
+	if u.LinkedGitHubLogin != "" {
+		return u.LinkedGitHubLogin
+	}
+	if len(sub) > maxOpaqueIDLabelLen {
+		sub = sub[:maxOpaqueIDLabelLen] + "…"
+	}
+	return provider + ": " + sub
 }
 
 func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
@@ -18402,6 +18494,9 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
         <h3 style="font-size:0.9rem;margin-bottom:8px;color:var(--text)">Add User</h3>
+        <input id="access-user-search" type="text" placeholder="Search users..." autocomplete="off"
+          oninput="filterAccessUserDropdown()"
+          style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
         <div style="display:flex;gap:8px">
           <select id="access-username" style="flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"><option value="">Select user...</option></select>
           <select id="access-role" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
@@ -18604,27 +18699,75 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
+    /* The roster fetched from grantable-users, kept so the search box can
+       re-filter without another network round trip. Each entry carries the
+       stable identity key (id — what the grant POST sends) and the normalized
+       human label (label — what the owner reads). */
+    var _grantableUsers = [];
+
+    /* accessOptionText renders one dropdown row: the friendly label, plus a
+       short parenthesised hint of the underlying ID when the two differ so an
+       owner can tell two "Jane Doe"s apart without seeing a full raw token. */
+    function accessOptionText(e) {
+      if (!e.id || e.id === e.label) return e.label;
+      var hint = e.id.length > 24 ? e.id.slice(0, 24) + '…' : e.id;
+      return e.label + ' (' + hint + ')';
+    }
+
+    /* renderAccessUserOptions rebuilds the select from _grantableUsers,
+       keeping only entries whose label OR raw id matches the filter
+       (case-insensitive). The current selection is preserved when it
+       survives the filter so typing never silently discards a choice. */
+    function renderAccessUserOptions(filter) {
+      var sel = document.getElementById('access-username');
+      if (!sel) return;
+      var prev = sel.value;
+      var q = (filter || '').toLowerCase();
+      var matches = _grantableUsers.filter(function(e) {
+        if (!q) return true;
+        return e.label.toLowerCase().indexOf(q) !== -1 || e.id.toLowerCase().indexOf(q) !== -1;
+      });
+      if (!_grantableUsers.length) {
+        sel.innerHTML = '<option value="">No users yet — they must sign in to the hub once</option>';
+        return;
+      }
+      if (!matches.length) {
+        sel.innerHTML = '<option value="">No users match "' + esc(filter) + '"</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">Select user...</option>' + matches.map(function(e) {
+        return '<option value="' + esc(e.id) + '">' + esc(accessOptionText(e)) + '</option>';
+      }).join('');
+      if (prev && matches.some(function(e) { return e.id === prev; })) sel.value = prev;
+    }
+
+    function filterAccessUserDropdown() {
+      var box = document.getElementById('access-user-search');
+      renderAccessUserOptions(box ? box.value : '');
+    }
+
     async function loadAccessUserDropdown() {
       var sel = document.getElementById('access-username');
       if (!sel) return;
+      var box = document.getElementById('access-user-search');
+      if (box) box.value = '';
       try {
         // grantable-users, NOT admin/users: the latter is admin-only, so every
         // non-admin owner got a 403 and an empty dropdown with no explanation.
         var resp = await fetch('/api/saas/grantable-users');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         var data = await resp.json();
-        var users = (data.users || []);
-        if (!users.length) {
-          sel.innerHTML = '<option value="">No users yet — they must sign in to the hub once</option>';
-          return;
-        }
-        sel.innerHTML = '<option value="">Select user...</option>' + users.map(function(u) {
-          return '<option value="' + esc(u) + '">' + esc(u) + '</option>';
-        }).join('');
+        // Prefer the enriched entries (stable id + normalized label); fall back
+        // to the bare username list from an older hub, where id doubles as label.
+        _grantableUsers = (data.entries || (data.users || []).map(function(u) {
+          return { id: u, label: u };
+        })).filter(function(e) { return e && e.id; });
+        renderAccessUserOptions('');
       } catch(e) {
         // Never leave the control looking merely empty — an empty dropdown is
         // indistinguishable from "no such users", which is what made this
         // confusing in the first place.
+        _grantableUsers = [];
         sel.innerHTML = '<option value="">Could not load users</option>';
       }
     }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -193,6 +194,163 @@ func TestHandleGrantableUsersSkipsRecordsWithoutUsername(t *testing.T) {
 	for _, u := range decodeUsers(t, rec) {
 		if u == "" {
 			t.Errorf("roster contains an empty username: %v", decodeUsers(t, rec))
+		}
+	}
+}
+
+// TestGrantableUserLabel pins the display-label preference order for the
+// Manage Access picker: provider-asserted display name, then a plain GitHub
+// login, then email, then linked GitHub login, then a truncated
+// "provider: subject…" fallback. The label is display-only — the identity key
+// used for grants is always the record's GitHubUsername and never changes.
+func TestGrantableUserLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		user SaaSUser
+		want string
+	}{
+		{
+			name: "plain github login stays as-is",
+			user: SaaSUser{GitHubUsername: "octocat"},
+			want: "octocat",
+		},
+		{
+			name: "github-prefixed key drops the prefix",
+			user: SaaSUser{GitHubUsername: "github:octocat"},
+			want: "octocat",
+		},
+		{
+			name: "display name wins over everything",
+			user: SaaSUser{GitHubUsername: "google:107812345678901234567", DisplayName: "Jane Doe", Email: "jane@example.com"},
+			want: "Jane Doe",
+		},
+		{
+			name: "email beats the raw google id",
+			user: SaaSUser{GitHubUsername: "google:107812345678901234567", Email: "jane@example.com"},
+			want: "jane@example.com",
+		},
+		{
+			name: "linked github login beats the raw ibmid",
+			user: SaaSUser{GitHubUsername: "ibmid:650001ABCD", LinkedGitHubLogin: "jane-gh"},
+			want: "jane-gh",
+		},
+		{
+			name: "opaque microsoft token-like sub is truncated with provider prefix",
+			user: SaaSUser{GitHubUsername: "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+			want: "microsoft: AAAAAAAAAAAA…",
+		},
+		{
+			name: "short opaque sub is shown whole",
+			user: SaaSUser{GitHubUsername: "ibmid:65001"},
+			want: "ibmid: 65001",
+		},
+		{
+			name: "display name wins for a plain github user too",
+			user: SaaSUser{GitHubUsername: "octocat", DisplayName: "The Octocat"},
+			want: "The Octocat",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			u := tc.user
+			if got := grantableUserLabel(&u); got != tc.want {
+				t.Errorf("grantableUserLabel(%+v) = %q, want %q", tc.user, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGrantableUserProvider pins provider classification: the stored Provider
+// field wins, else the identity-key prefix, else github (legacy plain login).
+func TestGrantableUserProvider(t *testing.T) {
+	tests := []struct {
+		name string
+		user SaaSUser
+		want string
+	}{
+		{name: "stored provider wins", user: SaaSUser{GitHubUsername: "google:123", Provider: "google"}, want: "google"},
+		{name: "prefix classifies a legacy record", user: SaaSUser{GitHubUsername: "ibmid:650"}, want: "ibmid"},
+		{name: "plain login defaults to github", user: SaaSUser{GitHubUsername: "octocat"}, want: "github"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			u := tc.user
+			if got := grantableUserProvider(&u); got != tc.want {
+				t.Errorf("grantableUserProvider(%+v) = %q, want %q", tc.user, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHandleGrantableUsersEntriesCarryNormalizedLabels checks the enriched
+// payload: each entry pairs the STABLE identity key (id — what the grant POST
+// must send) with the normalized human label, entries sort by that label, and
+// the legacy "users" array still carries the raw IDs for older dashboards.
+func TestHandleGrantableUsersEntriesCarryNormalizedLabels(t *testing.T) {
+	withTempSaaSDirs(t)
+	putUser(t, "alice")
+	putHiveOwnedBy(t, "hive-1", "alice")
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "google:107812345678901234567", DisplayName: "Jane Doe"}); err != nil {
+		t.Fatalf("saveSaaSUser: %v", err)
+	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}); err != nil {
+		t.Fatalf("saveSaaSUser: %v", err)
+	}
+
+	rec := getGrantableUsers(t, grantableTestServer(), "alice")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Users   []string             `json:"users"`
+		Entries []grantableUserEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (body=%q)", err, rec.Body.String())
+	}
+	wantEntries := []grantableUserEntry{
+		{ID: "alice", Label: "alice", Provider: "github"},
+		{ID: "google:107812345678901234567", Label: "Jane Doe", Provider: "google"},
+		{ID: "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Label: "microsoft: AAAAAAAAAAAA…", Provider: "microsoft"},
+	}
+	if len(resp.Entries) != len(wantEntries) {
+		t.Fatalf("entries = %+v, want %+v", resp.Entries, wantEntries)
+	}
+	for i, want := range wantEntries {
+		if resp.Entries[i] != want {
+			t.Errorf("entries[%d] = %+v, want %+v", i, resp.Entries[i], want)
+		}
+	}
+	// Legacy field unchanged: raw stable IDs, sorted.
+	wantUsers := []string{"alice", "google:107812345678901234567", "microsoft:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+	if len(resp.Users) != len(wantUsers) {
+		t.Fatalf("users = %v, want %v", resp.Users, wantUsers)
+	}
+	for i := range wantUsers {
+		if resp.Users[i] != wantUsers[i] {
+			t.Errorf("users = %v, want %v", resp.Users, wantUsers)
+			break
+		}
+	}
+}
+
+// TestManageAccessDialogHasUserSearch pins the search affordance in the
+// Manage Access dialog: a search input wired to the client-side filter, and a
+// dropdown renderer that matches case-insensitively against both the friendly
+// label and the raw identity key.
+func TestManageAccessDialogHasUserSearch(t *testing.T) {
+	for _, want := range []string{
+		`id="access-user-search"`,
+		`oninput="filterAccessUserDropdown()"`,
+		`function filterAccessUserDropdown()`,
+		`function renderAccessUserOptions(filter)`,
+		`e.label.toLowerCase().indexOf(q) !== -1 || e.id.toLowerCase().indexOf(q) !== -1`,
+		// Fallback for older hub payloads that only carry bare usernames.
+		`data.entries || (data.users || []).map`,
+	} {
+		if !strings.Contains(dashboardHTML, want) {
+			t.Errorf("dashboardHTML missing %q", want)
 		}
 	}
 }
