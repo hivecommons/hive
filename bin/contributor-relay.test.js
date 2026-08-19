@@ -320,6 +320,28 @@ test('a relaunch cds somewhere resolvable before starting the CLI', () => {
 // work on. Relaunching there puts the agent back in the one tree it must not
 // adopt as its checkout, undoing the launch-side fix on the first stall
 // recovery. Both entrypoints export HIVE_AGENT_CWD ($HOME) for this.
+// The agent runs unattended with its backend's skip-permissions flag, so its
+// cwd is where every relative `ls`, `grep -r` and relative write lands. On the
+// host, $HOME holds .ssh, .gnupg and the contributor's own registration token
+// (.config/hive/contributor.env). cwd is not a security boundary — the process
+// runs as the user regardless — but the default blast radius should not be the
+// user's home. Both entrypoints export a dedicated empty directory instead.
+test('a relaunch does not root the agent at $HOME', () => {
+  const home = process.env.HOME || '/home/nobody';
+  const relay = loadRelay({
+    backend: 'agy',
+    env: { HIVE_AGENT_CWD: `${home}/.local/state/hive/agent-cwd` },
+  });
+  try {
+    const launched = relay.launchCommandWithCwd('agy --dangerously-skip-permissions');
+    const target = launched.replace(/^cd '?/, '').replace(/'? && .*$/, '');
+    assert.notStrictEqual(target, home,
+      `the agent must not be rooted at $HOME: ${launched}`);
+    assert.ok(target.startsWith(home + '/'),
+      `expected a directory beneath $HOME, got: ${target}`);
+  } finally { teardown(relay); }
+});
+
 test('a relaunch prefers HIVE_AGENT_CWD over the relay cwd', () => {
   const relay = loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent' } });
   try {

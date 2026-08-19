@@ -540,12 +540,22 @@ contribute-hive backend="" mode="docker": check-version
       # switched the checkout out from under the running relay.
       #
       # The container entrypoint does not have this problem: it roots the
-      # session at the workspace and launches the CLI from $HOME
-      # (bin/contributor-agent.sh). Mirror that here so both paths agree. $HOME
-      # also satisfies the #4046 constraint above — nothing in the task
-      # lifecycle deletes or recreates it, unlike the workspace subtree the
-      # agent clones into.
-      export HIVE_AGENT_CWD="${HOME}"
+      # session at the workspace and launches the CLI from a dedicated
+      # directory (bin/contributor-agent.sh). Mirror that here so both paths
+      # agree. That directory also satisfies the #4046 constraint above —
+      # nothing in the task lifecycle deletes or recreates it, unlike the
+      # workspace subtree the agent clones into.
+      #
+      # It is deliberately NOT $HOME, and local mode is why. In a container
+      # $HOME is /home/dev inside an ephemeral image with three read-only
+      # mounts; on the host it is the user's real home, holding .ssh, .gnupg
+      # and the contributor's own registration token in
+      # .config/hive/contributor.env. The agent runs unattended with its
+      # backend's skip-permissions flag, so its cwd is where every relative
+      # `ls`, `grep -r` and relative write lands. cwd is not a boundary — the
+      # process runs as the user regardless — but an empty dedicated directory
+      # costs nothing and keeps the default blast radius off the user's home.
+      export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
       mkdir -p "$HIVE_AGENT_CWD"
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"

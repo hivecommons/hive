@@ -463,12 +463,23 @@ fi
 # directory HIVE_WORKSPACE_DIR is: agents clone into subdirectories of it
 # (contribute_ws.go's assignment prompt), so pinning the launch's `cd` at
 # HIVE_WORKSPACE_DIR itself would re-create the trap the moment that directory
-# is ever removed and recreated out from under a still-running server. `cd`
-# into $HOME instead — a directory nothing in the task lifecycle deletes or
-# recreates — so the CLI always starts somewhere resolvable regardless of what
-# happens to the workspace subtree underneath it; the CLI's own per-task `cd`
-# into $HIVE_WORKSPACE_DIR/<repo> (per the assignment prompt) is unchanged.
-export HIVE_AGENT_CWD="${HOME}"
+# is ever removed and recreated out from under a still-running server. Use a
+# dedicated directory instead — nothing in the task lifecycle deletes or
+# recreates it — so the CLI always starts somewhere resolvable regardless of
+# what happens to the workspace subtree underneath it; the CLI's own per-task
+# `cd` into $HIVE_WORKSPACE_DIR/<repo> (per the assignment prompt) is unchanged.
+#
+# NOT $HOME. The requirement above is only "stable", and $HOME satisfies it, but
+# the agent is launched with its backend's skip-permissions flag and runs
+# unattended, so its cwd is where every relative `ls`, `grep -r`, `find .` and
+# relative write lands by default. On the host (local mode) $HOME holds .ssh,
+# .gnupg and the contributor's own registration token in
+# .config/hive/contributor.env. Rooting an unattended agent there makes reaching
+# them the path of least resistance. This is defence in depth, not a boundary —
+# cwd grants nothing, the process runs as the user either way — but an empty
+# dedicated directory costs nothing and is not a git repo, which is what keeps
+# the agent from adopting its cwd as a checkout (#4168).
+export HIVE_AGENT_CWD="${XDG_STATE_HOME:-${HOME}/.local/state}/hive/agent-cwd"
 mkdir -p "$HIVE_AGENT_CWD"
 
 # Start the relay in the background
