@@ -9526,6 +9526,30 @@ const dashboardHTML = `<!DOCTYPE html>
       return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
+    /* One-line description of what each grantable role allows. Shown as the
+       native tooltip on every role <option>/<select> and as the inline hint
+       under the Manage Access "Add User" role dropdown (#4144), so an owner
+       understands what a role grants BEFORE granting it. Keep in sync with
+       the role validation in hub.handleAccessAdd / config.ValidRole. */
+    var ROLE_DESCRIPTIONS = {
+      'read': 'View-only: dashboard, agents and config. Cannot change anything.',
+      'read-write': 'Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.',
+      'merger': 'Everything Read-Write grants, plus approve and queue other contributors\' work for auto-merge.',
+      'owner': 'Full control: manage access, settings and budget for this hive.'
+    };
+    function roleDescription(role) {
+      return ROLE_DESCRIPTIONS[role] || '';
+    }
+    /* updateAccessRoleHint repaints the inline description under the Add User
+       role dropdown to match the currently selected role. */
+    function updateAccessRoleHint() {
+      var sel = document.getElementById('access-role');
+      var hint = document.getElementById('access-role-hint');
+      if (!sel || !hint) return;
+      var d = roleDescription(sel.value);
+      hint.textContent = d ? sel.options[sel.selectedIndex].text + ' \u2014 ' + d : '';
+    }
+
     /* Faces shown inline before collapsing the rest into a "+N" chip. The hive
        table is 16 columns and already dense; four 16px faces plus the chip fit
        beside the role badge without widening the name column, and a hive with
@@ -18508,14 +18532,15 @@ const dashboardHTML = `<!DOCTYPE html>
           style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
         <div style="display:flex;gap:8px">
           <select id="access-username" style="flex:1;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"><option value="">Select user...</option></select>
-          <select id="access-role" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="read">Read</option>
-            <option value="read-write">Read-Write</option>
-            <option value="merger">Merger</option>
-            <option value="owner">Owner</option>
+          <select id="access-role" onchange="updateAccessRoleHint()" title="Permission level to grant" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+            <option value="read" title="View-only: dashboard, agents and config. Cannot change anything.">Read</option>
+            <option value="read-write" title="Everything Read grants, plus contribute: queue work, manage the queue and open a terminal.">Read-Write</option>
+            <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
+            <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
           </select>
           <button onclick="addAccess()" class="btn-primary" style="padding:8px 16px;font-size:0.8rem">Add</button>
         </div>
+        <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
       </div>
       </div>
       <div style="display:flex;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
@@ -18658,6 +18683,7 @@ const dashboardHTML = `<!DOCTYPE html>
         urlEl.style.display = 'none';
       }
       document.getElementById('access-modal').style.display = 'flex';
+      updateAccessRoleHint();
       await loadAccessList();
       await loadAccessUserDropdown();
       await loadPendingRequests();
@@ -18682,7 +18708,7 @@ const dashboardHTML = `<!DOCTYPE html>
             '<div style="display:flex;align-items:center;justify-content:space-between">' +
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(r.username) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span></div>' +
             '<div style="display:flex;gap:4px">' +
-            '<select id="req-role-' + esc(r.username) + '" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read">Read</option><option value="read-write">Read-Write</option><option value="merger">Merger</option></select>' +
+            '<select id="req-role-' + esc(r.username) + '" title="Role to grant on approval" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read" title="' + escAttr(roleDescription('read')) + '">Read</option><option value="read-write" title="' + escAttr(roleDescription('read-write')) + '">Read-Write</option><option value="merger" title="' + escAttr(roleDescription('merger')) + '">Merger</option></select>' +
             '<button onclick="approveRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
             '<button onclick="denyRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
             '</div></div>' + noteHtml + '</div>';
@@ -18851,7 +18877,7 @@ const dashboardHTML = `<!DOCTYPE html>
           var roleControl = isLastOwner ?
             '<span class="role-badge role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem" title="The last owner\'s role cannot be changed">' + esc(u.role) + '</span>' :
             '<select class="role-select role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem;padding:2px 6px;border-radius:9999px;cursor:pointer" title="Change this user\'s permission" onchange="changeAccessRole(\'' + esc(u.username) + '\', this.value, \'' + esc(u.role) + '\')">' +
-              ROLES.map(function(r) { return '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
+              ROLES.map(function(r) { return '<option value="' + r + '" title="' + escAttr(roleDescription(r)) + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
             '</select>';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div>' + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span></div>' +
