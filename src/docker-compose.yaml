@@ -4,7 +4,7 @@ services:
     # supply-chain risk (mirrors the watchtower pin below). Refresh deliberately:
     #   TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/nginx:pull" | jq -r .token)
     #   curl -sI -H "Authorization: Bearer $TOKEN" \
-    #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+    #     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v1+json" \
     #     https://registry-1.docker.io/v2/library/nginx/manifests/alpine | grep -i docker-content-digest
     # and update both the tag and the @sha256 digest together.
     image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
@@ -48,13 +48,8 @@ services:
       - ./hive.yaml:/etc/hive/hive.yaml
       - hive-data:/data
       - ./secrets:/secrets:ro
-    environment:
-      - HIVE_GITHUB_TOKEN=${HIVE_GITHUB_TOKEN}
-      - HIVE_DASHBOARD_TOKEN=${HIVE_DASHBOARD_TOKEN}
-      - NTFY_SERVER=${NTFY_SERVER}
-      - NTFY_TOPIC=${NTFY_TOPIC}
-      - HIVE_LEVEL=${HIVE_LEVEL:-}
-      - HIVE_REPO=${HIVE_REPO:-}
+    env_file:
+      - ./env.compose
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
@@ -77,36 +72,18 @@ services:
   # able to create and start containers to do its job, and that permission is
   # itself host-root-equivalent. The doc states exactly what survives.
   docker-socket-proxy:
-    # Pinned by digest for the same reason watchtower is, and more so: this is
-    # now the container holding the socket. The digest is the multi-arch OCI
-    # index (linux/amd64 + linux/arm64 both resolve). Bump deliberately by
-    # verifying the release at
-    # https://github.com/Tecnativa/docker-socket-proxy/releases and updating
-    # BOTH the tag and the @sha256 digest together.
     image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     container_name: hive-docker-socket-proxy
     restart: unless-stopped
     volumes:
-      # :ro is deliberate but is NOT the control here — a unix socket mounted
-      # read-only still accepts writes, because the restriction applies to the
-      # inode, not to the API spoken over it. The control is the allowlist
-      # below. Do not "harden" this by adding :ro to watchtower and calling it
-      # done; see src/docs/auto-update-profile.md.
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      # ── ALLOWED: the minimum Watchtower needs ──────────────────────────────
-      - CONTAINERS=1 # list/inspect the containers it manages
-      - IMAGES=1 # inspect and pull replacement images
-      - POST=1 # create/start/stop — without this it can only look
-      - DELETE=1 # required by WATCHTOWER_CLEANUP=true (old images)
-      - PING=1 # daemon liveness
-      - VERSION=1 # API version negotiation on connect
-      # ── DENIED: set to 0 explicitly, not left to the image's defaults ──────
-      # These are already the upstream defaults. They are written out so that a
-      # future image whose defaults change cannot silently widen this, and so a
-      # reviewer sees the boundary rather than having to infer it.
-      # EXEC is the important one: it is the direct path to the App private key
-      # and every agent credential inside the hive container.
+      - CONTAINERS=1
+      - IMAGES=1
+      - POST=1
+      - DELETE=1
+      - PING=1
+      - VERSION=1
       - EXEC=0
       - AUTH=0
       - BUILD=0
@@ -127,27 +104,14 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      # ONLY the internal network. The proxy speaks an unauthenticated Docker
-      # API on :2375 — anything that can route to it inherits that API. It must
-      # never be published to the host, and it must never be reachable from the
-      # default network, where the hive container runs semi-trusted agent code.
       - docker-proxy
     profiles:
       - auto-update
 
   watchtower:
-    # Pinned to v1.7.1 to prevent floating-tag supply-chain risk.
-    # Bump deliberately by verifying the release at
-    # https://github.com/containrrr/watchtower/releases and updating BOTH the
-    # tag and the @sha256 digest below. The digest is the multi-arch
-    # manifest-list digest, so amd64/arm64 pulls both still resolve.
-    # src/deploy/test_supply_chain_pins.sh fails the build if the digest is dropped.
     image: containrrr/watchtower:1.7.1@sha256:6dd50763bbd632a83cb154d5451700530d1e44200b268a4e9488fefdfcf2b038
     container_name: hive-watchtower
     restart: unless-stopped
-    # NO docker.sock bind (#3865). Watchtower reaches the daemon only through
-    # the filtered proxy above. src/deploy/test_watchtower_socket_contract.sh
-    # fails the build if the raw socket comes back.
     environment:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - WATCHTOWER_CLEANUP=true
@@ -158,16 +122,12 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      # default: reach registries. docker-proxy: reach the filtered daemon.
       - default
       - docker-proxy
     profiles:
       - auto-update
 
 networks:
-  # internal: true keeps this network off the host and unroutable to the
-  # outside — it exists only so watchtower can reach the socket proxy. Every
-  # other service stays on `default` and cannot see the Docker API at all.
   docker-proxy:
     internal: true
 

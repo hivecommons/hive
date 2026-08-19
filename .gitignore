@@ -1,6 +1,8 @@
 *.swp
 *.bak
 .DS_Store
+.env
+/src/env.compose
 /agent.env
 /config/agent.env
 examples/kubestellar/agents/agent.env
