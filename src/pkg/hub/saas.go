@@ -10098,7 +10098,7 @@ const dashboardHTML = `<!DOCTYPE html>
         lines.push('– Unassigned — GitHub auth not configured by design');
       }
       else if (h.repoTargetMisconfigured) {
-        lines.push('⚠ ' + (h.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Governor Config → Repos.'));
+        lines.push('⚠ ' + (h.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Settings → Repos.'));
         if (st === 'ok' || st === 'unknown') {
           st = 'warning'; c = colors.warning; ic = icons.warning; statusLabel = 'Warning'; lines[0] = statusLabel;
         }
@@ -14470,7 +14470,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
            All THREE original branches survive unchanged — the owner toggle
            (with its 'vis-<id>' element id and onchange handler), the local
-           link into Governor Config, and the read-only ✓/— for everyone else.
+           link into Settings, and the read-only ✓/— for everyone else.
            They are deliberately NOT flattened: each answers a different
            question about who may change the setting. */
         var visibilityCell = (function() {
@@ -14499,7 +14499,7 @@ const dashboardHTML = `<!DOCTYPE html>
             var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : '';
             var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>';
             return dh
-              ? '<a href="' + escAttr(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>'
+              ? '<a href="' + escAttr(dh) + '#config/governor/Hub" target="_blank" title="Change in Settings → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>'
               : badge;
           }
           /* Branch 3 — everyone else: read-only state, no affordance implied. */

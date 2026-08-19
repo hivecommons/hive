@@ -4104,7 +4104,7 @@ func main() {
 		}
 	}
 	// Clear any legacy "not configured" banner alert persisted by an older
-	// build. The half-configured state is shown inline in Governor Config →
+	// build. The half-configured state is shown inline in Settings →
 	// General, not in the top banner.
 	dashSrv.ReconcileTrajectoryAlert(&cfg.Governor)
 

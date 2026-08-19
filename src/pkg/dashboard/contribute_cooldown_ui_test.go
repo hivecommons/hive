@@ -9,7 +9,7 @@ import (
 )
 
 // TestGovernorHubTabHasCooldownControl pins the "Task cooldown" control (enable
-// toggle + period number input) in the Governor Config Hub tab (embedded
+// toggle + period number input) in the Settings Hub tab (embedded
 // static/index.html), mirroring the existing suspend/skip controls. This is the
 // canonical editor; the Management-tab mirror is pinned separately below.
 func TestGovernorHubTabHasCooldownControl(t *testing.T) {

@@ -321,6 +321,22 @@
     .oc-topbar-ts { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
     .oc-topbar .git-version { color: var(--muted); }
     .oc-health-badge, #welcome-topbar-btn, #oc-gh-avatar-wrap { flex: 0 0 auto; }
+    /* Guide button — the Getting Started reopen affordance. Deliberately the
+       most prominent control in the topbar (amber accent tint on the shared
+       .btn base, ID specificity wins over the ghost recipe) so new operators
+       discover the hive-journey checklist. It also gets the one-shot
+       attn-shimmy on load — see triggerAttentionShimmy(). */
+    #welcome-topbar-btn {
+      background: color-mix(in srgb, var(--amber) 16%, transparent);
+      border-color: var(--amber);
+      color: var(--amber);
+      font-weight: 600;
+    }
+    #welcome-topbar-btn:hover {
+      background: color-mix(in srgb, var(--amber) 28%, transparent);
+      border-color: var(--amber);
+      color: var(--amber);
+    }
 
     /* Fleet breaker — circular play/pause control + status pill in the topbar.
        Mirrors the Ready-work queue's #queue-suspend-btn / .pill pattern from the
@@ -2478,7 +2494,7 @@
 
     /* ══ One-shot attention shimmy ══
        A gentle single-run wiggle applied on page load to draw the eye to an
-       interactive affordance (the ACMM badge, the topbar ? button). The class
+       interactive affordance (the ACMM badge, the topbar Guide button). The class
        is added shortly after load and removed on animationend, so it plays
        exactly once per page load. Honors prefers-reduced-motion. */
     @keyframes attn-shimmy {
@@ -2530,7 +2546,7 @@
       .welcome-step-body { padding-left: 12px; }
     }
     /* ── Genie minimize ──
-       On dismiss the panel scales down and flies toward the top-bar ? button
+       On dismiss the panel scales down and flies toward the top-bar Guide button
        so the user sees where the checklist went (and how to reopen it). The
        transform target is computed at runtime; only the timing/easing live
        here as tokens. GENIE_MS below must match --welcome-genie-ms. */
@@ -2544,7 +2560,7 @@
       transition: background var(--welcome-genie-ms) var(--welcome-genie-ease);
       background: transparent;
     }
-    /* One-shot pulse on the ? button when the panel lands on it. */
+    /* One-shot pulse on the Guide button when the panel lands on it. */
     @keyframes welcome-target-pulse {
       0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 55%, transparent); }
       50% { transform: scale(1.18); box-shadow: 0 0 0 6px color-mix(in srgb, var(--blue) 0%, transparent); }
@@ -2868,7 +2884,7 @@
     <div class="config-body welcome-body" id="welcome-body"></div>
     <div class="config-footer welcome-footer">
       <button class="hive-dialog-btn" onclick="closeWelcomeDialog()" title="Close for now — the checklist opens again on the next dashboard load">Remind me next time</button>
-      <button class="hive-dialog-btn primary" onclick="dismissWelcomeDialog()" title="Stop opening this checklist on load — reopen it any time from Getting Started in the sidebar or the ? button in the top bar">Don't show on load</button>
+      <button class="hive-dialog-btn primary" onclick="dismissWelcomeDialog()" title="Stop opening this checklist on load — reopen it any time from Getting Started in the sidebar or the Guide button in the top bar">Don't show on load</button>
     </div>
   </div>
 </div>
@@ -2979,7 +2995,7 @@
       </span>
     </div>
     <div class="oc-topbar-center">
-      <span class="oc-tb-link" onclick="openConfigDialog('governor')" title="Config — governor, agents, thresholds, and all hive settings" aria-label="Config">⚙️</span>
+      <button type="button" class="btn" id="oc-settings-btn" onclick="openConfigDialog('governor')" title="Settings — governor, agents, thresholds, and all hive settings" aria-label="Settings">⚙️ Settings</button>
       <span id="dashboard-custom-style-note" class="dashboard-custom-style-note" style="display:none" role="status"></span>
       <span class="oc-tb-link" onclick="ocNavigate('debug-section')" title="System Diagnostics — health checks and troubleshooting" aria-label="System Diagnostics"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
@@ -2989,7 +3005,7 @@
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
       <span id="oc-hive-id" class="git-version" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" onclick="openConfigDialog('governor')"></span>
       <span class="oc-topbar-ts" id="oc-ts"></span>
-      <button class="btn" id="welcome-topbar-btn" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist">?</button>
+      <button class="btn" id="welcome-topbar-btn" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started guide" aria-label="Guide">🧭 Guide</button>
       <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
         <img id="oc-gh-avatar" src="" alt="" style="width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid var(--green);vertical-align:middle" onclick="toggleGHUserMenu()">
@@ -3011,7 +3027,7 @@
                check, so hiding this is UX, not the security boundary. -->
           <button type="button" id="oc-gh-menu-backup" onclick="downloadHiveBackup()" style="display:none;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem;line-height:1.35">
             Back up this hive
-            <span style="display:block;font-size:0.68rem;color:var(--muted)">Encrypted · includes beads · needs a backup key (Governor → Security)</span>
+            <span style="display:block;font-size:0.68rem;color:var(--muted)">Encrypted · includes beads · needs a backup key (Settings → Security)</span>
           </button>
           <a href="/api/docs" target="_blank" style="display:block;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">API Docs ↗</a>
           <button onclick="ghLogout()" style="display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem">Sign out</button>
@@ -3382,7 +3398,7 @@
           <li><strong>Pause agents you are not using.</strong> Each agent card on the Agents page has a <strong>⏸ pause</strong> button
               — a paused agent is never kicked by the governor until you resume it. You can also set a mode's cadence to
               <code>0</code> to switch an agent off in just that mode, which is a scalpel where pausing is a hammer.</li>
-          <li><strong>Set a real budget.</strong> <em>Governor Config → Budget</em> → <strong>Total Tokens</strong> is the cap
+          <li><strong>Set a real budget.</strong> <em>Settings → Budget</em> → <strong>Total Tokens</strong> is the cap
               (<code>0</code> disables budget tracking entirely). The enforcement that actually bites is kick suppression: a soft
               warning fires at 90% of the limit, and at 100% the governor <strong>stops kicking agents</strong> until the window rolls.
               <strong>Per-Agent Exemptions</strong> lets chosen agents keep running through an exhausted budget.
@@ -3454,7 +3470,7 @@
         <strong>count of actionable open issues</strong> — cross a threshold and it escalates idle → quiet → busy → surge, and every agent
         switches to that mode's (shorter) cadence column. So a growing backlog raises spend on its own, without you changing any
         setting. <strong>Working the backlog down lowers the mode, and the mode drives the pace.</strong> The thresholds themselves are
-        editable under <em>Governor Config → Thresholds</em>.</p>
+        editable under <em>Settings → Thresholds</em>.</p>
         <p style="margin:0 0 16px">Two cadence values in the grid are not durations. <strong>paused</strong> means the governor never kicks
         that agent until you resume it. <strong>on demand</strong> means the agent is only ever kicked manually — it has no automatic
         schedule at all.</p>
@@ -6495,7 +6511,7 @@
       if (!banner) return;
       if (data && data.repoTargetMisconfigured) {
         var desc = document.getElementById('repo-target-banner-desc');
-        if (desc) desc.textContent = data.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Governor Config → Repos.';
+        if (desc) desc.textContent = data.repoTargetIssue || 'Repo target misconfigured — expected org/repo. Fix in Settings → Repos.';
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -7176,7 +7192,7 @@
         govAction = '<span style="color:var(--muted)">Budget enforcement disabled by operator</span>';
       } else if (exhausted) {
         const windowEnds = budget.WINDOW_ENDS_AT ? new Date(budget.WINDOW_ENDS_AT).toLocaleString() : 'the next window';
-        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span> <button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend restarts at 0 and suspended kicks resume. Budget enforcement stays on — raise Total Tokens in Governor Config first if the limit itself was too small." style="margin-left:8px;padding:1px 8px;font-size:0.66rem;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--fg);cursor:pointer">reset window now</button>`;
+        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span> <button onclick="resetBudgetWindow()" title="Open a fresh budget window now: spend restarts at 0 and suspended kicks resume. Budget enforcement stays on — raise Total Tokens in Settings first if the limit itself was too small." style="margin-left:8px;padding:1px 8px;font-size:0.66rem;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--fg);cursor:pointer">reset window now</button>`;
       } else if (pctUsed >= PCT_BUDGET_WARN) {
         govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of weekly limit used; kicks suspend at 100%</span>`;
       } else if (projPct > PCT_WARN) {
@@ -7212,7 +7228,7 @@
     const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter', 'watsonx'];
-    // Names of Model Gateways configured under Governor Config → Model Gateways
+    // Names of Model Gateways configured under Settings → Model Gateways
     // (e.g. 'openrouter'). Agent routing already resolves a gateway name, but
     // the backend pickers only listed KNOWN_BACKENDS — so a configured gateway
     // was never selectable. Populated by fetchConfiguredGateways() at load and
@@ -13562,7 +13578,7 @@ function burnAreaChart() {
       const why = gw
         ? `The ${method} gateway has no API key — ${method} needs one before this agent can run.`
         : `No ${method} gateway is configured — ${method} needs ${GATEWAY_KEY_REQUIRED_METHODS.includes(method) ? 'an endpoint and API key' : 'an endpoint'} before this agent can run.`;
-      if (!(await hiveConfirm(`${why}\n\nOpen Governor Config → Model Gateways to set it up? Unsaved changes in this dialog will be discarded.`))) {
+      if (!(await hiveConfirm(`${why}\n\nOpen Settings → Model Gateways to set it up? Unsaved changes in this dialog will be discarded.`))) {
         return false;
       }
       // Land directly on a NEW gateway form pre-set to this method's kind
@@ -13575,7 +13591,7 @@ function burnAreaChart() {
 
     // Prompts for the LiteLLM endpoint + API key when litellm is picked in
     // the agent-config dialog flows (CLI pin / create), where navigating to
-    // Governor Config would discard unsaved edits. The agent-card METHOD
+    // Settings would discard unsaved edits. The agent-card METHOD
     // dropdown instead saves the choice and navigates (maybeOpenMethodConfig).
     // Resolves true when litellm is (or has just been) configured; false when
     // the user cancels. The
@@ -13596,7 +13612,7 @@ function burnAreaChart() {
         overlay.className = 'gh-auth-overlay cred-dialog-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
-          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Governor Config → LiteLLM).</p>
+          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Settings → LiteLLM).</p>
           <div class="config-field">
             <label>Endpoint URL</label>
             <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%;box-sizing:border-box">
@@ -13686,9 +13702,9 @@ function burnAreaChart() {
 
 
     // Methods that need hive-side configuration before they can actually run:
-    // bob needs its API key (Governor Config → Bob); the gateway-backed
-    // methods need a Model Gateway configured FOR THAT method (Governor
-    // Config → Model Gateways). The check is per-method — an openrouter
+    // bob needs its API key (Settings → Bob); the gateway-backed
+    // methods need a Model Gateway configured FOR THAT method (Settings
+    // → Model Gateways). The check is per-method — an openrouter
     // gateway does not satisfy a vllm selection.
     const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d', 'watsonx'];
     // Hosted gateway kinds that cannot work without an API key (watsonx mints
@@ -13699,7 +13715,7 @@ function burnAreaChart() {
 
     // maybeOpenMethodConfig runs AFTER a method switch is saved: the choice is
     // never blocked, but when the selected method's backing config is absent
-    // the Governor Configuration dialog opens directly on the tab that fixes
+    // the Settings dialog opens directly on the tab that fixes
     // it. Presence comes from data the dashboard already serves — the bob key
     // status endpoint (presence only, never material) and the configured
     // gateway list — plus the live model-discovery cache (a non-fallback
@@ -13713,7 +13729,7 @@ function burnAreaChart() {
           if (!r.ok) return;
           const d = await r.json();
           if (d.configured !== true) {
-            showToast('bob needs an API key — opening Governor Config → Bob', 'info');
+            showToast('bob needs an API key — opening Settings → Bob', 'info');
             openConfigDialog('governor', null, GOVERNOR_BOB_TAB);
           }
           return;
@@ -13736,7 +13752,7 @@ function burnAreaChart() {
         if (!gw || (!gw.hasKey && GATEWAY_KEY_REQUIRED_METHODS.includes(backend))) {
           const why = gw ? 'The ' + backend + ' gateway has no API key'
             : 'No ' + backend + ' gateway configured';
-          showToast(why + ' — opening Governor Config → Model Gateways', 'info');
+          showToast(why + ' — opening Settings → Model Gateways', 'info');
           // Guided jump: land the user directly on a NEW gateway form pre-set to
           // this method's kind (endpoint/preset already filled) instead of an
           // empty list they must then "+ Add" from. Consumed by loadGateways().
@@ -13761,7 +13777,7 @@ function burnAreaChart() {
         // Model Gateways form pre-set to this kind instead, like every other
         // unconfigured gateway method.
         if (GATEWAY_METHODS.includes(backend)) {
-          dismissToast(toast, `No ${backend} gateway configured — opening Governor Config → Model Gateways`, 'info');
+          dismissToast(toast, `No ${backend} gateway configured — opening Settings → Model Gateways`, 'info');
           _pendingGatewayPresetKind = backend;
           openConfigDialog('governor', null, 'Model Gateways');
           return;
@@ -13771,7 +13787,7 @@ function burnAreaChart() {
       }
       dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
       // The selection is saved; if its backing config is missing, land the
-      // user on the Governor Config tab that fixes it (never blocks).
+      // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
       await updateModelDropdown(agent, backend);
       if (window._lastAgents) {
@@ -14698,8 +14714,8 @@ function burnAreaChart() {
       if (ocEl && repoDisplay) ocEl.textContent = repoDisplay;
       if (repoDisplay) window._primaryRepo = repoDisplay;
       // Read-only issue-filter note under Repositories. Present in /api/config
-      // only when project.issue_filter is configured (edit it on Governor
-      // Configuration → Labels, "Required labels"); textContent (never
+      // only when project.issue_filter is configured (edit it on Settings
+      // → Labels, "Required labels"); textContent (never
       // innerHTML) because label names are repo-controlled text.
       const iflt = cfg.issue_filter || null;
       const ifltReq = (iflt && iflt.require_labels) || [];
@@ -14773,7 +14789,7 @@ function burnAreaChart() {
       // open and on close, so Cancel/X/Escape discard it like any other field.
       _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
-      const title = type === 'governor' ? 'Governor Configuration' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
+      const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
       document.querySelector('.config-title').textContent = title;
       const tabs = type === 'governor' ? GOVERNOR_CONFIG_TABS : (isCreate ? AGENT_CREATE_TABS : AGENT_CONFIG_TABS);
       const tabsEl = document.getElementById('config-tabs');
@@ -18278,7 +18294,8 @@ function burnAreaChart() {
       else if (trajReady) { trajStatus = 'On — active'; trajStatusColor = 'var(--green)'; }
       else { trajStatus = 'On — no reviewer endpoint (not running)'; trajStatusColor = 'var(--amber)'; }
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">General hive instance settings.</p>
+        <h3 style="margin:0 0 4px;font-size:0.9rem;color:var(--text)">Governor</h3>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">General hive instance settings. The governor's controls — agents, thresholds, budget, notifications, and more — live in the tabs above.</p>
         <div class="config-field">
           <label>Hive ID <span class="config-info">i<span class="config-tooltip">Unique identifier for this hive instance. Stamped into beads and available as \${HIVE_ID} in agent CLAUDE.md templates. Persists across container restarts.</span></span></label>
           <div style="display:flex;gap:8px;align-items:center">
@@ -20307,7 +20324,7 @@ function burnAreaChart() {
        POSTs (not a plain link) because the response body carries GitHub App
        private keys: keeping it fetch-only keeps it off the cross-origin
        navigation path. The archive arrives already encrypted with this hive's
-       backup encryption key — set in Governor Config → Security → Backup, or
+       backup encryption key — set in Settings → Security → Backup, or
        supplied by the deployment as HIVE_BACKUP_KEY. The browser never sees
        that key, and it is NOT in the file, so the owner must have it escrowed
        to restore. With no key configured the server refuses (412) rather than
@@ -20357,7 +20374,7 @@ function burnAreaChart() {
         showToast(
           'Encrypted backup downloaded — ' + files + ' files, ' + beadDirs +
           ' bead ledgers. Decrypt with this hive’s backup encryption key ' +
-          '(Governor Config → Security → Backup); the key is not in the file.',
+          '(Settings → Security → Backup); the key is not in the file.',
           'success');
       } catch (e) {
         showToast('Backup failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -20919,7 +20936,7 @@ function burnAreaChart() {
     // ── Welcome / Getting Started dialog ──────────────────────────────
     // A living checklist for new hive owners: opens on every dashboard
     // load (write-access users only) until dismissed, and stays reachable
-    // from the sidebar Resources list and the topbar ? button.
+    // from the sidebar Resources list and the topbar Guide button.
 
     // Per-browser persistence blob: {dismissed: bool, checks: {stepId: bool}}
     // (same localStorage pattern as hive-layout-mode / hive-section-collapsed-*).
@@ -20999,7 +21016,7 @@ function burnAreaChart() {
     // panel can be display:none'd mid-flight if the tab is backgrounded).
     const WELCOME_GENIE_MS = 400;
     const WELCOME_GENIE_FALLBACK_MS = WELCOME_GENIE_MS + 80;
-    // Scale the panel down to roughly the ? button's footprint as it flies in.
+    // Scale the panel down to roughly the Guide button's footprint as it flies in.
     const WELCOME_GENIE_MIN_SCALE = 0.06;
 
     function _prefersReducedMotion() {
@@ -21035,7 +21052,7 @@ function burnAreaChart() {
       const panelRect = panel.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
       if (!panelRect.width || !panelRect.height) { _finishWelcomeGenie(overlay, panel); return; }
-      // Translate the panel's centre to the ? button's centre, then shrink it.
+      // Translate the panel's centre to the Guide button's centre, then shrink it.
       const panelCX = panelRect.left + panelRect.width / 2;
       const panelCY = panelRect.top + panelRect.height / 2;
       const targetCX = targetRect.left + targetRect.width / 2;
@@ -21055,7 +21072,7 @@ function burnAreaChart() {
         if (done) return;
         done = true;
         _finishWelcomeGenie(overlay, panel);
-        // Pulse the ? button once so the eye lands on where it went.
+        // Pulse the Guide button once so the eye lands on where it went.
         target.classList.remove('welcome-target-pulse');
         void target.offsetWidth; // restart the animation
         target.classList.add('welcome-target-pulse');
@@ -21137,7 +21154,7 @@ function burnAreaChart() {
           if (agents.length === 0) return false;
           return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
         },
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Governor Config → LiteLLM). Mix and match per agent.',
+        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → LiteLLM). Mix and match per agent.',
         autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', onclick: 'welcomeShowAgentCard()' }]
       },
@@ -21175,7 +21192,7 @@ function burnAreaChart() {
         id: 'repos',
         title: 'Add repos &amp; mark the primary',
         auto: () => window._primaryRepo ? true : false,
-        body: 'Governor Config → <strong>Repos</strong>: add every repository the agents should watch, and set the <strong>primary</strong> repo — it hosts the advisory issue and default markings.',
+        body: 'Settings → <strong>Repos</strong>: add every repository the agents should watch, and set the <strong>primary</strong> repo — it hosts the advisory issue and default markings.',
         autoNote: 'Checks itself once a primary repo is set.',
         actions: [{ label: 'Show me', onclick: "welcomeShowConfigTab('Repos')" }]
       },
@@ -21203,7 +21220,7 @@ function burnAreaChart() {
       }
     ];
 
-    // Governor Config tab hosting the Trajectory Review controls (toggle,
+    // Settings tab hosting the Trajectory Review controls (toggle,
     // reviewer endpoint/model, on-divergence mode) — see renderGovGeneral().
     // Named so the Getting Started deep link cannot drift from the tab list
     // in GOVERNOR_CONFIG_TABS.
@@ -21214,13 +21231,13 @@ function burnAreaChart() {
     // updateWelcomeProgress() counts only WELCOME_STEPS, so nothing listed
     // here can inflate the "N of M done" counter or read as a required step.
     const WELCOME_MORE_ITEMS = [
-      { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
-      { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
+      { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
+      { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
       { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
-      { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
-      { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Governor Config → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', onclick: "welcomeShowConfigTab('Security')" },
-      { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Governor Config → General).', onclick: `welcomeShowConfigTab('${TRAJECTORY_CONFIG_TAB}')` },
+      { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
+      { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', onclick: "welcomeShowConfigTab('Security')" },
+      { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Settings → General).', onclick: `welcomeShowConfigTab('${TRAJECTORY_CONFIG_TAB}')` },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];
 
@@ -21366,7 +21383,7 @@ function burnAreaChart() {
       if (btn) { btn.disabled = false; btn.textContent = installed ? 'Installed ✓' : 'Re-check'; }
       refreshWelcomeAutoChecks(window._lastStatus || null);
     }
-    /** Jump to a Governor Config tab (Repos, Agents, Budget, …). */
+    /** Jump to a Settings tab (Repos, Agents, Budget, …). */
     function welcomeShowConfigTab(tab) {
       closeWelcomeDialog();
       openConfigDialog('governor', null, tab);
@@ -21414,13 +21431,13 @@ function burnAreaChart() {
 
     // ── One-shot attention shimmy ──────────────────────────────────────
     // Draw the eye, once per page load, to two interactive affordances users
-    // often miss: the ACMM level badge and the topbar ? (Getting Started
+    // often miss: the ACMM level badge and the topbar Guide (Getting Started
     // reopen) button. Fires after the page has settled, staggered so the two
     // wiggles read as one intentional gesture rather than a glitch. The class
     // is removed on animationend so it can re-trigger on the next page load.
     // Skipped entirely under prefers-reduced-motion.
     const SHIMMY_INITIAL_DELAY_MS = 1500; // let first paint + layout settle
-    const SHIMMY_STAGGER_MS = 250;        // gap between badge and ? button
+    const SHIMMY_STAGGER_MS = 250;        // gap between badge and Guide button
     function _prefersReducedMotionShimmy() {
       return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     }

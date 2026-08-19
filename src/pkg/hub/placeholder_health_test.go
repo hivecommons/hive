@@ -223,7 +223,7 @@ func TestPlaceholderRowGreenWhenRepoTargetEmpty(t *testing.T) {
 		"warns":  1,
 		"checks": []any{
 			map[string]any{"name": "ready", "status": "pass"},
-			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Governor Config → Repos."},
+			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Settings → Repos."},
 		},
 	})
 	rows := []MyHiveEntry{e}
@@ -251,7 +251,7 @@ func TestPlaceholderRowKeepsMalformedRepoTargetWarning(t *testing.T) {
 	e := placeholderEntryWithHealth(map[string]any{
 		"status": "warning",
 		"checks": []any{
-			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Governor Config → Repos."},
+			map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: org 'github.ibm.com' looks like a forge host — expected org/repo. Fix in Settings → Repos."},
 		},
 	})
 	rows := []MyHiveEntry{e}
@@ -276,7 +276,7 @@ func TestClaimedRowKeepsEmptyRepoTargetWarning(t *testing.T) {
 		Health: map[string]any{
 			"status": "warning",
 			"checks": []any{
-				map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Governor Config → Repos."},
+				map[string]any{"name": healthCheckRepoTarget, "status": "warn", "detail": "Repo target misconfigured: repo is empty — expected org/repo. Fix in Settings → Repos."},
 			},
 		},
 	}}
