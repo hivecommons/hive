@@ -142,19 +142,19 @@ The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.r
 Back up the named volume and the secrets directory from the host:
 
 ```bash
-docker run --rm -v v2_hive-data:/data -v "$(pwd)":/backup alpine tar czf /backup/hive-data-$(date +%F).tar.gz -C /data .
-tar czf secrets-$(date +%F).tar.gz ./secrets
+docker run --rm -v src_hive-data:/data -v "$(pwd)":/backup alpine tar czf /backup/hive-data-$(date +%F).tar.gz -C /data .
+tar czf secrets-$(date +%F).tar.gz ./src/secrets
 ```
 
-Docker Compose prefixes named volumes with the project name. With `cd v2 && docker compose up -d`, the project is `v2`, so the volume is `v2_hive-data`. `docker volume ls` shows the real name.
+Docker Compose prefixes named volumes with the project name. When running `docker compose -f src/docker-compose.yaml up -d`, the volume is `src_hive-data`. `docker volume ls` shows the real name.
 
 To restore:
 
-1. Create a fresh named volume with `docker volume create v2_hive-data`. `docker compose up -d` also creates it when it is missing.
+1. Create a fresh named volume with `docker volume create src_hive-data`. `docker compose -f src/docker-compose.yaml up -d` also creates it when it is missing.
 2. Extract the volume tarball into the volume:
 
    ```bash
-   docker run --rm -v v2_hive-data:/data -v "$(pwd)":/backup alpine tar xzf /backup/hive-data-$(date +%F).tar.gz -C /data
+   docker run --rm -v src_hive-data:/data -v "$(pwd)":/backup alpine tar xzf /backup/hive-data-$(date +%F).tar.gz -C /data
    ```
 
    Use the archive name from the backup step. The example recreates the current-date name.
@@ -165,7 +165,7 @@ To restore:
    tar xzf secrets-$(date +%F).tar.gz
    ```
 
-4. Run `docker compose up -d`.
+4. Run `docker compose -f src/docker-compose.yaml up -d`.
 
 The entrypoint restores the runtime config at boot. Escrow the backup encryption key outside the host — the dashboard-set key lives on the `hive-data` volume, so losing the volume loses both the backups' key and the data it protects.
 

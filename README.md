@@ -13,12 +13,12 @@ Hive separates decisions into two layers: a **deterministic pipeline** of shell 
 - `git`, and a GitHub token (PAT or App) for the org you want the hive to work on
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
-cd hive/v2
+git clone https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose up -d
+cp src/hive.yaml.example src/hive.yaml
+echo "HIVE_GITHUB_TOKEN=ghp_..." > .env
+docker compose -f src/docker-compose.yaml up -d
 ```
 
 Dashboard at `http://localhost:3001`.
@@ -28,8 +28,8 @@ The pre-built image tag is documented in [src/docs/operator-reference.md#image-p
 To build from source instead of pulling the pre-built image:
 
 ```bash
-docker compose build
-docker compose up -d
+docker compose -f src/docker-compose.yaml build
+docker compose -f src/docker-compose.yaml up -d
 ```
 
 ## Kubernetes Deployment
@@ -303,7 +303,7 @@ running on your own machine:
 
 ```bash
 brew install just gh
-git clone -b v2 https://github.com/kubestellar/hive && cd hive
+git clone https://github.com/kubestellar/hive && cd hive
 just contribute-setup claude
 just contribute-hive
 ```

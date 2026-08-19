@@ -9,10 +9,9 @@ Start most investigations from the dashboard and the service logs, then drop to 
 Docker Compose deployments define `hive` and `gateway` services in `src/docker-compose.yaml`. The Hive process healthcheck calls `http://127.0.0.1:3002/api/health`; the gateway publishes `3001` and proxies to Hive. Start with:
 
 ```bash
-cd v2
-docker compose ps
-docker compose logs hive --tail=200
-docker compose logs gateway --tail=100
+docker compose -f src/docker-compose.yaml ps
+docker compose -f src/docker-compose.yaml logs hive --tail=200
+docker compose -f src/docker-compose.yaml logs gateway --tail=100
 ```
 
 Kubernetes deployments use namespace `hive`, Deployment `hive`, Service `hive`, and probes on `/api/health` and `/api/livez` in `src/deploy/k8s/deployment.yaml`:
@@ -158,8 +157,8 @@ There is no `uninstall.sh`/`install.sh` on the containerized runtime. To start f
 
 ```bash
 # Docker Compose (deletes the named /data volume — see Backup & restore first)
-docker compose down -v
-docker compose up -d
+docker compose -f src/docker-compose.yaml down -v
+docker compose -f src/docker-compose.yaml up -d
 
 # Kubernetes (deletes the PVC-backed state)
 kubectl -n hive delete deploy/hive

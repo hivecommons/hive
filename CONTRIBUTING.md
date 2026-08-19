@@ -30,13 +30,13 @@ Thank you for helping improve KubeStellar Hive. This guide is for contributing c
 
 ## Branches
 
-Use `v2` as the base branch for Hive v2 work and PRs unless a maintainer asks otherwise. The `main` branch is not the active target for v2 changes. The `v4` branch is a separate forward-looking/synchronization line; do not target it for ordinary v2 fixes.
+Use `v4` as the base branch for Hive work and PRs unless a maintainer asks otherwise. The `main` branch is not the active target for changes.
 
 Before starting work:
 
 ```bash
 git fetch origin
-git switch -c <topic-branch> origin/v2
+git switch -c <topic-branch> origin/v4
 ```
 
 ## Local development
@@ -44,7 +44,7 @@ git switch -c <topic-branch> origin/v2
 See [docs/development.md](docs/development.md) for the full local setup guide. The short path is:
 
 ```bash
-cd v2
+cd src
 go build ./...
 go test ./...
 ```

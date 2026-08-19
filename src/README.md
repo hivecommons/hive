@@ -7,14 +7,14 @@ AI agent orchestrator for GitHub repositories. A single Go binary that enumerate
 ### Option A: Pre-built image (recommended)
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
-cd hive/v2
+git clone https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
-# Edit hive.yaml — set your org, repos, and agent config
+cp src/hive.yaml.example src/hive.yaml
+# Edit src/hive.yaml — set your org, repos, and agent config
 
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose up -d
+echo "HIVE_GITHUB_TOKEN=ghp_..." > .env
+docker compose -f src/docker-compose.yaml up -d
 
 # Dashboard at http://localhost:3001
 ```
@@ -22,29 +22,29 @@ docker compose up -d
 ### Option B: Build from source
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
-cd hive/v2
+git clone https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
-# Edit hive.yaml — set your org, repos, and agent config
+cp src/hive.yaml.example src/hive.yaml
+# Edit src/hive.yaml — set your org, repos, and agent config
 
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose build
-docker compose up -d
+echo "HIVE_GITHUB_TOKEN=ghp_..." > .env
+docker compose -f src/docker-compose.yaml build
+docker compose -f src/docker-compose.yaml up -d
 ```
 
 ### Pre-built image
 
-The default `docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:v2-latest`. To build from source instead, run `docker compose build` before `docker compose up -d`.
+The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:v2-latest`. To build from source instead, run `docker compose -f src/docker-compose.yaml build` before `docker compose -f src/docker-compose.yaml up -d`.
 
 For tag provenance, digest pinning, and the release/tagging flow, see [docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
 
 ### Troubleshooting
 
 - **Rancher Desktop / Lima**: Volume mounts from `/tmp` may fail silently (file appears as directory inside container). Clone the repo under your home directory instead.
-- **Gateway won't start**: The gateway depends on the hive health check (120s start period). If it times out, run the hive container directly: `docker run -d --name hive --cap-add NET_ADMIN -p 3001:3001 -v ./hive.yaml:/etc/hive/hive.yaml -e HIVE_GITHUB_TOKEN=$HIVE_GITHUB_TOKEN ghcr.io/kubestellar/hive:v2-latest` (the `--cap-add NET_ADMIN` enables the full forced-proxy-egress gate — see below).
+- **Gateway won't start**: The gateway depends on the hive health check (120s start period). If it times out, run the hive container directly: `docker run -d --name hive --cap-add NET_ADMIN -p 3001:3001 -v ./src/hive.yaml:/etc/hive/hive.yaml -e HIVE_GITHUB_TOKEN=$HIVE_GITHUB_TOKEN ghcr.io/kubestellar/hive:v2-latest` (the `--cap-add NET_ADMIN` enables the full forced-proxy-egress gate — see below).
 - **Forced-proxy-egress gate is degraded / `SO_MARK unavailable` in logs**: the container runs fine without `NET_ADMIN`, but the proxy's SO_MARK self-exemption needs it. Grant `NET_ADMIN` (`--cap-add NET_ADMIN` for docker/podman, `securityContext.capabilities.add: ["NET_ADMIN"]` for Kubernetes) for the full egress gate; without it the spoke stays in best-effort/degraded egress mode. See [docs/net-admin-requirement.md](docs/net-admin-requirement.md).
-- **Policy clone errors in logs**: The example config has a placeholder policy repo. Comment out the `policies:` section in `hive.yaml` if you don't have a custom policy repo.
+- **Policy clone errors in logs**: The example config has a placeholder policy repo. Comment out the `policies:` section in `src/hive.yaml` if you don't have a custom policy repo.
 
 ## Command-line client
 
@@ -76,7 +76,7 @@ See [docs/README.md](docs/README.md) for the full v2 documentation index, includ
 kubectl apply -f deploy/k8s/namespace.yaml
 kubectl -n hive create secret generic hive-secrets \
   --from-literal=HIVE_GITHUB_TOKEN=ghp_...
-kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
+kubectl create configmap hive-config -n hive --from-file=hive.yaml=src/hive.yaml
 kubectl apply -f deploy/k8s/pvc.yaml
 kubectl apply -f deploy/k8s/deployment.yaml
 kubectl apply -f deploy/k8s/service.yaml
@@ -89,7 +89,7 @@ hub-fronted URL probing, and alert hysteresis.
 
 ## Configuration
 
-All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs, token scopes, and image provenance, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [AGENT-DEFINITION.md](AGENT-DEFINITION.md) for the portable agent YAML format, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
+All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `src/hive.yaml.example` for the commented example, [docs/operator-reference.md](docs/operator-reference.md) for operator-only knobs, token scopes, and image provenance, [docs/config-layering.md](docs/config-layering.md) for runtime precedence/provenance, [docs/agent-configuration.md](docs/agent-configuration.md) for agent fields and ACMM packs, [AGENT-DEFINITION.md](AGENT-DEFINITION.md) for the portable agent YAML format, [../docs/backend-setup.md](../docs/backend-setup.md) for CLI backend setup, and [../docs/migration-v1-v2.md](../docs/migration-v1-v2.md) for migration from v1.
 
 ```yaml
 project:
