@@ -6394,6 +6394,11 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 	})
 	saveAccessRequests(hiveID, reqs)
 
+	// Push-notify the owner (Slack DM where configured — access_notify.go).
+	// Placed after the pending-duplicate rejection above, so a request that was
+	// already pending can never fire a second notification.
+	s.notifyOwnerAccessRequest(hiveID, h.Owner, username, note)
+
 	s.logger.Info("audit: access requested", "hive", hiveID, "by", username)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "requested"})
@@ -15478,6 +15483,14 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function autoRequestAccessFromUrl() {
       var params = new URLSearchParams(window.location.search);
+      // Deep link from an access-request notification (access_notify.go):
+      // open Manage Access directly so the owner lands on the pending request.
+      var manageId = params.get('manage_access');
+      if (manageId) {
+        window.history.replaceState({}, '', '/dashboard');
+        openAccessModal(manageId, '');
+        return;
+      }
       var hiveId = params.get('request_hive');
       if (!hiveId) return;
       window.history.replaceState({}, '', '/dashboard');
