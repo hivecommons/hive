@@ -78,10 +78,10 @@ There is no public `just lint` recipe in the current root `Justfile`; use `go ve
 The quickest operator path remains Docker Compose from the root README:
 
 ```bash
-cd v2
-cp hive.yaml.example hive.yaml
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose up -d
+cp src/hive.yaml.example src/hive.yaml
+cp src/env.compose.example src/env.compose
+# Edit src/env.compose and set HIVE_GITHUB_TOKEN.
+docker compose -f src/docker-compose.yaml up -d
 ```
 
 For source-level debugging, build with `go build ./cmd/hive` and run the generated binary with a local `hive.yaml`. Keep real tokens in your shell or local ignored files, never in commits.

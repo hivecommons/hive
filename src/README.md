@@ -7,14 +7,15 @@ AI agent orchestrator for GitHub repositories. A single Go binary that enumerate
 ### Option A: Pre-built image (recommended)
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
-cd hive/v2
+git clone -b v4 https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
+cp src/hive.yaml.example src/hive.yaml
 # Edit hive.yaml — set your org, repos, and agent config
 
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose up -d
+cp src/env.compose.example src/env.compose
+# Edit src/env.compose and set HIVE_GITHUB_TOKEN.
+docker compose -f src/docker-compose.yaml up -d
 
 # Dashboard at http://localhost:3001
 ```
@@ -22,20 +23,21 @@ docker compose up -d
 ### Option B: Build from source
 
 ```bash
-git clone -b v2 https://github.com/kubestellar/hive.git
-cd hive/v2
+git clone -b v4 https://github.com/kubestellar/hive.git
+cd hive
 
-cp hive.yaml.example hive.yaml
+cp src/hive.yaml.example src/hive.yaml
 # Edit hive.yaml — set your org, repos, and agent config
 
-export HIVE_GITHUB_TOKEN=ghp_...
-docker compose build
-docker compose up -d
+cp src/env.compose.example src/env.compose
+# Edit src/env.compose and set HIVE_GITHUB_TOKEN.
+docker compose -f src/docker-compose.yaml build
+docker compose -f src/docker-compose.yaml up -d
 ```
 
 ### Pre-built image
 
-The default `docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:v2-latest`. To build from source instead, run `docker compose build` before `docker compose up -d`.
+The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/hive:v2-latest`. To build from source instead, run the Compose commands above with `build` before `up -d`.
 
 For tag provenance, digest pinning, and the release/tagging flow, see [docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest](docs/operator-reference.md#image-provenance-for-ghcriokubestellarhivev2-latest).
 
