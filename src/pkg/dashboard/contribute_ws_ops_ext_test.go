@@ -254,3 +254,26 @@ func TestFleetSnapshot_LabelInterestsOmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("label_interests should be omitted when empty: %s", raw)
 	}
 }
+
+// TestBuildTaskPrompt_InstructsDCOSignoff: DCO is enforced on this repo
+// (CONTRIBUTING.md) and an unsigned commit blocks the merge, but the prompt
+// used to leave sign-off entirely to whatever each agent inferred. That varies
+// even within one backend — two agy tasks produced one unsigned PR (#4127) and
+// one signed (#4176). Every other required step is spelled out in the prompt;
+// this pins that sign-off is too.
+func TestBuildTaskPrompt_InstructsDCOSignoff(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	if !strings.Contains(prompt, "git commit -s") {
+		t.Errorf("prompt must tell the agent to commit with -s; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Signed-off-by") {
+		t.Errorf("prompt must name the Signed-off-by trailer; got: %q", prompt)
+	}
+	// The DCO bot compares the trailer's email to the commit author's, so a
+	// prompt that omits that turns a passing-looking sign-off into a failing
+	// check the contributor has to debug.
+	if !strings.Contains(prompt, "author") {
+		t.Errorf("prompt must state the trailer email matches the author; got: %q", prompt)
+	}
+}

@@ -3893,6 +3893,16 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"from a prior task, 'cd' into it and 'git fetch' instead of "+
 			"re-forking). Then 'cd' into that checkout, read the issue, "+
 			"understand what's needed, and take action. "+
+			// DCO is enforced on this repo (CONTRIBUTING.md) and an unsigned
+			// commit blocks the merge, but the prompt used to leave sign-off
+			// entirely to whatever each agent inferred from the repo. That
+			// varies even within one backend: two agy tasks produced one
+			// unsigned PR (#4127, fixed by hand) and one signed (#4176). Every
+			// other required step here is spelled out; this one was the
+			// exception, so say it.
+			"Commit with 'git commit -s' so every commit carries a Signed-off-by "+
+			"trailer — the DCO check blocks the merge without it, and the trailer's "+
+			"email must match the commit author's email. "+
 			"Push your branch to your fork remote, then open a PR from your fork. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
 			// #3987: the no_work_needed sentinel. The relay scrapes this exact
