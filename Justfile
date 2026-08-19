@@ -626,7 +626,9 @@ contribute-hive backend="" mode="docker": check-version
       # on the contributor's HOST at their next CLI run.
       #
       # Networking: the relay only dials OUT (hub + GitHub + optional LiteLLM),
-      # so the default bridge network is sufficient. No host networking.
+      # so the default bridge network is sufficient. No host networking —
+      # with one narrow exception for the pi backend (see the pi) case below),
+      # which needs host networking to discover the host-local LLM server.
       NET_FLAGS=""
       if [[ "$RUNTIME" == "podman" ]]; then
         RUNTIME_FLAGS="--userns=keep-id"
@@ -700,6 +702,19 @@ contribute-hive backend="" mode="docker": check-version
             stage_copy "${HOME}/.pi" ".pi"
             CLI_MOUNTS="-v ${CLI_STAGE}/.pi:/home/dev/.pi${VOLSUF}"
           fi
+          # SECURITY (H6 / CWE-668) EXCEPTION: pi alone gets host networking.
+          # The lemonade-pi-plugin discovers host-local LLM models via a UDP
+          # beacon on port 13305 and HTTP fallbacks on localhost:8000/1234/
+          # 9000/8080. Under bridge networking, "localhost" inside the
+          # container is the container itself, so discovery fails with
+          # "No models available". Host networking lets the plugin reach the
+          # LLM server running on the contributor's host. The H6 protection
+          # that matters — never letting the container write into the
+          # contributor's real host CLI configs — is unaffected: ~/.pi is
+          # still copied into an ephemeral staging dir (above) that is
+          # destroyed in cleanup_container, so a poisoned agent still cannot
+          # plant config on the host.
+          NET_FLAGS="--network host"
           ;;
         agy)
           # agy 1.1.x keeps its state under ${HOME}/.gemini/antigravity-cli,
