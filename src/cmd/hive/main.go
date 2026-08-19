@@ -4710,6 +4710,42 @@ func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAut
 	return d.Message(), github.AppStateWriteForbidden
 }
 
+// primaryAdvisoryRepo returns the repo the advisory digest is posted to: the
+// configured primary repo, falling back to the first listed repo. Shared by the
+// boot ensure, the per-cycle re-ensure, and the post path so all three can never
+// disagree about WHICH repo's pinned issue the digest belongs to.
+func primaryAdvisoryRepo(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if cfg.Project.PrimaryRepo != "" {
+		return cfg.Project.PrimaryRepo
+	}
+	if len(cfg.Project.Repos) > 0 {
+		return cfg.Project.Repos[0]
+	}
+	return ""
+}
+
+// advisoryIssueUnresolved reports whether the pinned advisory issue for repo is
+// still unknown, i.e. the digest has nowhere to go. A recorded 0 counts as
+// unresolved: it is the zero value a failed ensure would leave behind, and
+// posting to issue 0 is not a thing.
+func advisoryIssueUnresolved(advisoryIssues map[string]int, repo string) bool {
+	num, ok := advisoryIssues[repo]
+	return !ok || num <= 0
+}
+
+// advisoryIssueMissingError is the error recorded (and reported to the hub) when
+// a hive has findings to publish but no advisory issue to publish them to. It is
+// deliberately an ERROR rather than a silent skip: the hub's staleness gate
+// treats a hive reporting neither a post time nor an error as "not an advisory
+// participant" and never alarms, which is how a wedged digest went unnoticed for
+// six days in #4167.
+func advisoryIssueMissingError(repo string) string {
+	return fmt.Sprintf("no advisory issue resolved for %s — digest not posted", repo)
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -4745,17 +4781,25 @@ func runEvalCycle(
 		return
 	}
 
-	if dashSrv.IsGitHubAppRequired() {
-		primaryRepo := cfg.Project.PrimaryRepo
-		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
-			primaryRepo = cfg.Project.Repos[0]
-		}
-		if primaryRepo != "" && ghClient != nil {
+	// Re-ensure the pinned advisory issue whenever it is still unresolved, not
+	// only while the App banner is up (#4167). The startup ensure can fail for
+	// reasons that deliberately do NOT raise that banner — a rate limit, a 5xx,
+	// a search-API blip — and the old gate meant such a hive kept an empty
+	// advisoryIssues map for the rest of the process lifetime: every later
+	// digest silently found no issue to post to, so the pinned comment froze at
+	// whatever it last said. Retrying here is cheap (one search per eval cycle
+	// only while unresolved, nothing once resolved) and is the difference
+	// between a transient boot error and a permanently wedged digest.
+	if primaryRepo := primaryAdvisoryRepo(cfg); primaryRepo != "" && ghClient != nil {
+		if advisoryIssueUnresolved(advisoryIssues, primaryRepo) {
 			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
 			if retryErr == nil {
 				advisoryIssues[primaryRepo] = num
 				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
-				logger.Info("advisory issue created on retry", "repo", primaryRepo, "number", num)
+				logger.Info("advisory issue resolved on retry", "repo", primaryRepo, "number", num)
+			} else {
+				logger.Warn("advisory issue still unresolved — digest cannot be posted this cycle",
+					"repo", primaryRepo, "error", retryErr)
 			}
 		}
 	}
@@ -5141,10 +5185,7 @@ func runEvalCycle(
 				"resolved_count", len(digest.RecentlyResolved),
 			)
 
-			primaryRepo := cfg.Project.PrimaryRepo
-			if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
-				primaryRepo = cfg.Project.Repos[0]
-			}
+			primaryRepo := primaryAdvisoryRepo(cfg)
 			// Repo entries may be org-qualified ("org/repo"); the digest
 			// linkifier needs the bare repo name alongside the org.
 			org, repoName := cfg.Project.Org, primaryRepo
@@ -5293,6 +5334,20 @@ func runEvalCycle(
 								"count", len(healed), "titles", strings.Join(healed, "; "))
 						}
 					}
+				} else {
+					// No pinned advisory issue for this repo, yet there IS
+					// something to publish. This used to be a completely silent
+					// skip (#4167): the digest stopped updating, the spoke
+					// reported neither a post time nor an error, and the hub's
+					// staleness gate therefore read the hive as "not an advisory
+					// participant" and never raised the pill — a wedged digest
+					// that looked exactly like a healthy PR-only hive. Record it
+					// as a post FAILURE so the hub flags the hive stale with the
+					// real cause, and log it once per cycle for the operator.
+					msg := advisoryIssueMissingError(primaryRepo)
+					dashSrv.RecordAdvisoryError(msg)
+					logger.Warn("advisory digest not posted: no pinned advisory issue",
+						"repo", primaryRepo, "findings", digest.TotalCount)
 				}
 			}
 		}

@@ -289,7 +289,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		State:       "open",
 		Sort:        "created",
 		Direction:   "desc",
-		ListOptions: gh.ListOptions{PerPage: 50},
+		ListOptions: gh.ListOptions{PerPage: 50, Page: 1},
 	}
 	for page := 0; page < maxPagesToScan; page++ {
 		allIssues, _, scanErr := c.client.Issues.ListByRepo(ctx, owner, repo, listOpts)
@@ -311,5 +311,52 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		}
 		listOpts.ListOptions.Page++
 	}
+
+	// Fallback 3: a CLOSED advisory issue is REUSED, not replaced (#4167).
+	// The issue says "do not close this issue", but people close it anyway —
+	// and creating a fresh one then splits the digest: the hive writes to the
+	// new issue while everyone who subscribed to the old one watches a comment
+	// that never updates again, which reads exactly like a wedged digest. So
+	// reopen the most recent closed one and keep posting to the URL people
+	// already follow. Only after this finds nothing does the caller create.
+	if num, ok := c.findClosedAdvisoryIssue(ctx, owner, repo); ok {
+		if _, _, err := c.client.Issues.Edit(ctx, owner, repo, num, &gh.IssueRequest{State: gh.Ptr("open")}); err != nil {
+			// Cannot reopen (permissions, locked). Report NOT-FOUND rather than
+			// the closed number: posting a digest to a closed issue would be
+			// invisible, and the caller's create path at least yields a live one.
+			c.logger.Warn("found closed advisory issue but could not reopen it",
+				slog.Int("number", num), slog.String("error", err.Error()))
+			return 0, nil
+		}
+		c.logger.Info("reopened closed advisory issue instead of creating a duplicate",
+			slog.String("repo", repo), slog.Int("number", num))
+		c.ensureAdvisoryLabel(ctx, owner, repo, num)
+		return num, nil
+	}
 	return 0, nil
+}
+
+// findClosedAdvisoryIssue returns the most recently updated CLOSED advisory
+// issue for a repo, if one exists. Split out from findAdvisoryIssue so the
+// "reuse the issue people already subscribe to" rule is testable on its own.
+func (c *Client) findClosedAdvisoryIssue(ctx context.Context, owner, repo string) (int, bool) {
+	opts := &gh.IssueListByRepoOptions{
+		State:       "closed",
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: 50, Page: 1},
+	}
+	issues, _, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+	if err != nil {
+		return 0, false
+	}
+	for _, issue := range issues {
+		if issue.IsPullRequest() {
+			continue
+		}
+		if issue.GetTitle() == advisoryTitle {
+			return issue.GetNumber(), true
+		}
+	}
+	return 0, false
 }

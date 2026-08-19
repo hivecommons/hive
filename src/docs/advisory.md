@@ -98,6 +98,33 @@ may render under one finding type in a single severity section — that one exis
 to keep the comment inside GitHub's 65,536-character limit and is not
 configurable.
 
+## The digest stopped updating
+
+The digest is posted to one pinned issue per repo, titled **🐝 Hive Advisory
+Report**. Three things can stop it, and all three now surface rather than fail
+quietly:
+
+- **The pinned issue could not be resolved.** The hive ensures the issue at boot;
+  if that call fails (rate limit, 5xx, search-API blip) it is retried on every
+  eval cycle until it succeeds. While it is unresolved and there are findings to
+  publish, the spoke records a post error — `no advisory issue resolved for
+  <repo>` — so the hub flags the hive's digest stale with that cause instead of
+  reading it as a hive that simply does not post advisories.
+- **Someone closed the pinned issue.** The hive reopens the existing issue rather
+  than filing a new one. Filing a new one splits the digest: the hive writes to
+  the new issue while everyone subscribed to the old one watches a comment that
+  never changes again — which looks exactly like a wedged digest. If a repo
+  already has several `🐝 Hive Advisory Report` issues from before this behavior,
+  close the stale duplicates and keep the one the hive is currently updating (the
+  one with the newest digest comment).
+- **The App cannot write.** A 403 on the digest post raises the App banner with
+  its specific cause; the hub pill carries the same string.
+
+To check freshness: the hive's row on the hub shows the last successful post
+time and any error; on the spoke, `posted advisory digest` is logged at INFO on
+every successful update, and `advisory digest not posted` at WARN when there is
+nothing to post to.
+
 ## Related
 
 - [`bd` beads CLI](beads-cli.md) — inspecting advisory beads directly, including
