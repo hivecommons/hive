@@ -20,6 +20,10 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+  packages: read  # only to list versions; deletion uses GHCR_PRUNE_TOKEN
+
 jobs:
   prune:
     runs-on: ubuntu-latest
