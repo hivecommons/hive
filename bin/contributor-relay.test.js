@@ -441,6 +441,54 @@ test('agy idle pane with a closing rule under the input box is COMPLETE', () => 
 // The opposite direction, and the one that must never regress: an in-flight
 // turn renders "esc to cancel" on the footer line. Reporting THAT complete
 // would hand the hub a half-done task and abandon real work.
+// A FINISHED agy turn whose completion summary happens to contain one of the
+// activity verbs. Reproduced from the pane of a task that opened
+// kubestellar/hive#4181: the summary line says "...with writing
+// HIVE_GITHUB_TOKEN to a local .env file". The verb is in the last 15 lines by
+// construction, because it is the summary, so a bare word match reads a done
+// turn as busy — and isWorking short-circuits before hasIdlePrompt is
+// consulted, so the idle chrome below never gets a vote.
+const AGY_DONE_SUMMARY_WITH_VERB = [
+  '  I have completed work on issue kubestellar/hive#4179 and submitted pull request kubestellar/hive#4181.',
+  '  ### Key Updates',
+  '  • Docker Compose Quick Start: Updated commands across README.md and get-started.html.',
+  '  • Environment file (.env): Replaced inline token export instructions with writing',
+  '    HIVE_GITHUB_TOKEN to a local .env file, and added .env patterns to .gitignore.',
+  '────────────────────────────────────────────',
+  '>',
+  '',
+  '',
+  '────────────────────────────────────────────',
+  '                                        Gemini 3.7 Flash · high',
+].join('\n');
+
+// Neither marker present — an agy build whose chrome we do not recognise. The
+// verb fallback must still apply here, so an unknown UI errs toward "busy"
+// rather than reporting a working agent complete.
+const AGY_UNKNOWN_CHROME_WORKING = [
+  '● Edit(/home/dev/workspace/owner/repo/main.go)',
+  '⣷  Editing files...',
+  '  some unrecognised footer',
+].join('\n');
+
+test('a finished agy turn is COMPLETE even when its summary contains an activity verb', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_DONE_SUMMARY_WITH_VERB), relay.PANE_STATE_IDLE_COMPLETE,
+      'prose in a completion summary must not pin a finished pane to WORKING');
+  } finally { teardown(relay); }
+});
+
+test('agy with no recognisable chrome still falls back to the verb heuristic', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_UNKNOWN_CHROME_WORKING), relay.PANE_STATE_WORKING,
+      'an unknown agy UI must err toward busy, never toward complete');
+  } finally { teardown(relay); }
+});
+
 test('agy pane still working ("esc to cancel") is not COMPLETE', () => {
   const relay = loadRelay({ backend: 'agy' });
   try {

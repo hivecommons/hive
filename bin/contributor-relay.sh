@@ -1623,7 +1623,33 @@ function classifyTmuxPane(text) {
     hasIdlePrompt = /\? for shortcuts/.test(text) ||
       /(?:^|\n)>\s*\n[\s─]*\n?\s*Gemini\b[^\n]*\s*$/m.test(agyTail);
     hasCompletionMarker = true;
-    isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
+    // Prefer agy's OWN state markers over guessing from prose.
+    //
+    // The bare verb scan below is a case-insensitive word match, and agy
+    // narrates in plain English — including in the summary it prints when a
+    // turn FINISHES. Observed live: a completed task that opened
+    // kubestellar/hive#4181 ended with "Replaced inline token export
+    // instructions with writing HIVE_GITHUB_TOKEN to a local .env file". That
+    // "writing" is in the last 15 lines by construction (it is the summary),
+    // so isWorking stayed true, and because isWorking short-circuits before
+    // hasIdlePrompt is consulted the finished pane classified WORKING and the
+    // stall backstop failed a task whose PR was already open.
+    //
+    // Narrowing the verb list is the wrong lever: any word list will collide
+    // with prose eventually, and getting it wrong the other way (a busy agent
+    // read as idle) is the worse bug. Use the status bar instead, which agy
+    // renders itself and which says exactly one thing at a time:
+    //   in flight -> "esc to cancel"
+    //   at rest   -> "? for shortcuts", or the bare model footer
+    //
+    // Order matters. An explicit busy marker wins. Failing that, an explicit
+    // idle prompt means not working, whatever the transcript above it says.
+    // Only when neither marker is present — an agy build whose chrome we do
+    // not recognise — fall back to the verb heuristic, so an unknown UI still
+    // errs toward "busy" rather than reporting a working agent complete.
+    const agyBusyMarker = /esc to cancel/.test(agyTail);
+    isWorking = agyBusyMarker ||
+      (!hasIdlePrompt && /Running|Searching|Reading|Writing|Editing/i.test(agyTail));
   } else {
     hasIdlePrompt = />\s*$|\$\s*$/.test(text);
     hasCompletionMarker = /completed|done|finished/i.test(text);
