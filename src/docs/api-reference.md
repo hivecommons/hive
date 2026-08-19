@@ -424,6 +424,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/auth/callback` | Hub handler-specific | OAuth Callback | `pkg/hub/oauth.go:38` |
 | `GET` | `/api/auth/user` | Hub handler-specific | Auth User | `pkg/hub/oauth.go:39` |
 | `POST` | `/api/auth/logout` | Hub handler-specific | Logout | `pkg/hub/oauth.go:40` |
+| `GET` | `/api/saas/whoami` | Hub handler-specific | Whoami SSO Identity | `pkg/hub/saas.go:500` |
 | `GET` | `/api/openrouter/connect/start` | Hub auth | Hub Open Router Start | `pkg/hub/openrouter.go:49` |
 | `GET` | `/api/openrouter/qr` | Hub auth | Hub Open Router QR | `pkg/hub/openrouter.go:50` |
 | `GET` | `/api/openrouter/models` | Hub auth | Hub Open Router Models | `pkg/hub/openrouter.go:51` |

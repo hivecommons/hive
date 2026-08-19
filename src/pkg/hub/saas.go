@@ -497,6 +497,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/upgrade-pause", s.requireAdmin(s.handleGetUpgradePause))
 	s.mux.HandleFunc("POST /api/saas/upgrade-pause", s.requireAdmin(s.handleSetUpgradePause))
 	s.mux.HandleFunc("GET /api/saas/auth-check", s.handleSaaSAuthCheck)
+	s.mux.HandleFunc("GET /api/saas/whoami", s.handleWhoami)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
 	s.mux.HandleFunc("GET /api/saas/grantable-users", s.requireAuth(s.handleGrantableUsers))
@@ -766,8 +767,10 @@ func isNonBrowserAPIRequest(r *http.Request) bool {
 	// presence, not by validity: an INVALID cookie still means a browser sent
 	// one, and letting a bogus cookie value re-enable the bearer bypass would be
 	// a trivially attacker-satisfiable condition.
-	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
-		return false
+	for _, c := range r.Cookies() {
+		if c.Name == "hive_hub_user" && c.Value != "" {
+			return false
+		}
 	}
 	return true
 }
@@ -855,18 +858,21 @@ func originHost(raw string) (string, bool) {
 // resolveIdentity — never inside it — so the write-block and the admin gate can
 // always reason about who is really driving the request.
 func (s *HubServer) getRealAuthUser(r *http.Request) string {
-	cookie, err := r.Cookie("hive_hub_user")
-	if err == nil && cookie.Value != "" {
-		// The cookie value is only trusted when its HMAC signature verifies
-		// against the hub secret. A legacy unsigned cookie or a forged value
-		// fails here and is treated as logged out, so the user re-authenticates
-		// through the normal login flow (which re-mints a signed cookie).
-		// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
-		// F10: verifyHubUserCookie additionally enforces a v3 cookie's SIGNED
-		// expiry and its revocation state, which MaxAge alone never did.
-		if username, ok := s.verifyHubUserCookie(cookie.Value); ok {
-			if loadSaaSUser(username) != nil {
-				return username
+	// The cookie value is only trusted when its signature verifies against
+	// the hub secret. A legacy unsigned cookie or a forged value fails here
+	// and is treated as logged out, so the user re-authenticates through the
+	// normal login flow (which re-mints a signed cookie).
+	// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
+	// F10: verifyHubUserCookie additionally enforces a v3 cookie's SIGNED
+	// expiry and its revocation state, which MaxAge alone never did.
+	// #4171: Accept either cookie copy during transition (browsers may hold both
+	// .hive.kubestellar.io and .kubestellar.io).
+	for _, cookie := range r.Cookies() {
+		if cookie.Name == "hive_hub_user" && cookie.Value != "" {
+			if username, ok := s.verifyHubUserCookie(cookie.Value); ok {
+				if loadSaaSUser(username) != nil {
+					return username
+				}
 			}
 		}
 	}
@@ -8546,6 +8552,69 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
+type whoamiResponse struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	AvatarURL   string `json:"avatar_url"`
+}
+
+// handleWhoami serves GET /api/saas/whoami. Sibling first-party products (like
+// Dibs at dibs.kubestellar.io) call this endpoint with the ambient hive_hub_user
+// session cookie to resolve the authenticated user's stable identity key and profile.
+func (s *HubServer) handleWhoami(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	username := s.getRealAuthUser(r)
+	if username == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	u := loadSaaSUser(username)
+	if u == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	provider, subject, _ := parseCanonical(canonicalizeLegacy(username))
+	var stableKey string
+	if provider == legacyProvider {
+		stableKey = subject
+	} else {
+		stableKey = canonicalizeLegacy(username)
+	}
+
+	displayName := u.DisplayName
+	if displayName == "" && u.FullName != "" {
+		displayName = u.FullName
+	}
+
+	avatarURL := u.AvatarURL
+	if avatarURL == "" && provider == legacyProvider {
+		avatarURL = fmt.Sprintf("https://github.com/%s.png", subject)
+	}
+
+	resp := whoamiResponse{
+		Username:    stableKey,
+		DisplayName: displayName,
+		Email:       u.Email,
+		AvatarURL:   avatarURL,
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
 func isUnfurlBot(ua string) bool {
 	bots := []string{"Slackbot", "Slack-ImgProxy", "Discordbot", "Twitterbot", "facebookexternalhit", "LinkedInBot", "WhatsApp", "TelegramBot"}
 	for _, b := range bots {
@@ -8573,8 +8642,14 @@ func (s *HubServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(ogFallbackHTML))
 		return
 	}
-	cookie, err := r.Cookie("hive_hub_user")
-	if err != nil || cookie.Value == "" {
+	var hasCookie bool
+	for _, cookie := range r.Cookies() {
+		if cookie.Name == "hive_hub_user" && cookie.Value != "" {
+			hasCookie = true
+			break
+		}
+	}
+	if !hasCookie {
 		http.Redirect(w, r, "/login", http.StatusTemporaryRedirect)
 		return
 	}

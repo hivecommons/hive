@@ -116,6 +116,50 @@ paths:
       summary: Logout
       description: Clears the authentication cookie.
 
+  /api/saas/whoami:
+    get:
+      tags: [Auth]
+      summary: Whoami identity info
+      description: Resolves the authenticated user's stable identity key and profile from session cookie.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Authenticated user identity and profile
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    description: Stable identity key (bare GitHub login or provider:sub)
+                  display_name:
+                    type: string
+                  email:
+                    type: string
+                  avatar_url:
+                    type: string
+        '401':
+          description: Unauthenticated
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
   /api/saas/my-hives:
     get:
       tags: [Dashboard]
