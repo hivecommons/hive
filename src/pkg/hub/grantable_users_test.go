@@ -269,7 +269,11 @@ func TestGrantableUserProvider(t *testing.T) {
 		want string
 	}{
 		{name: "stored provider wins", user: SaaSUser{GitHubUsername: "google:123", Provider: "google"}, want: "google"},
+		{name: "stored ms alias normalizes to microsoft", user: SaaSUser{GitHubUsername: "ms:AAAA", Provider: "ms"}, want: "microsoft"},
 		{name: "prefix classifies a legacy record", user: SaaSUser{GitHubUsername: "ibmid:650"}, want: "ibmid"},
+		{name: "microsoft prefix", user: SaaSUser{GitHubUsername: "microsoft:AAAA"}, want: "microsoft"},
+		{name: "ms prefix normalizes to microsoft", user: SaaSUser{GitHubUsername: "ms:AAAA"}, want: "microsoft"},
+		{name: "github.com/ prefixed key classifies as github", user: SaaSUser{GitHubUsername: "github.com/octocat"}, want: "github"},
 		{name: "plain login defaults to github", user: SaaSUser{GitHubUsername: "octocat"}, want: "github"},
 	}
 	for _, tc := range tests {
@@ -348,6 +352,38 @@ func TestManageAccessDialogHasUserSearch(t *testing.T) {
 		`e.label.toLowerCase().indexOf(q) !== -1 || e.id.toLowerCase().indexOf(q) !== -1`,
 		// Fallback for older hub payloads that only carry bare usernames.
 		`data.entries || (data.users || []).map`,
+	} {
+		if !strings.Contains(dashboardHTML, want) {
+			t.Errorf("dashboardHTML missing %q", want)
+		}
+	}
+}
+
+// TestManageAccessProviderIcons pins the provider-icon UI: the dashboard must
+// classify raw identity keys by prefix, carry inline SVG marks (no external
+// fetches, CSP-safe) for known providers, render an icon beside each name in
+// the existing access rows, and prepend an emoji mark (native <option>
+// elements cannot render SVG) in the Add User picker.
+func TestManageAccessProviderIcons(t *testing.T) {
+	for _, want := range []string{
+		// Prefix classification logic, including the ms → microsoft alias and
+		// the github.com/ + bare-login → github fallbacks.
+		`function identityProviderFromKey(key)`,
+		`if (key.indexOf('github.com/') === 0) return 'github';`,
+		`if (p === 'ms') return 'microsoft';`,
+		// Inline SVG marks for the known providers.
+		`var PROVIDER_ICON_SVG = {`,
+		`github: '<svg viewBox="0 0 16 16"`,
+		`google: '<svg viewBox="0 0 48 48"`,
+		`microsoft: '<svg viewBox="0 0 23 23"`,
+		`ibmid: '<svg viewBox="0 0 16 16"`,
+		// Emoji fallbacks for the <select>, plus the generic-person default.
+		`var PROVIDER_EMOJI = { google: '🔵', ibmid: '🔷', microsoft: '🟦', github: '🐙' };`,
+		`PROVIDER_ICON_SVG[provider] || '👤'`,
+		`(PROVIDER_EMOJI[provider] || '👤')`,
+		// Icons applied in both the existing rows and the Add User picker.
+		`providerIconHTML(identityProviderFromKey(u.username))`,
+		`providerOptionEmoji(e.provider || identityProviderFromKey(e.id))`,
 	} {
 		if !strings.Contains(dashboardHTML, want) {
 			t.Errorf("dashboardHTML missing %q", want)
