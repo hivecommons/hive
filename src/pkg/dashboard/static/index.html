@@ -20926,7 +20926,7 @@ function burnAreaChart() {
       },
       {
         id: 'github-app',
-        title: 'Install the GitHub App',
+        title: 'Install the Forge App (GitHub App)',
         // An operator-side credential failure is not an unfinished user step.
         // Return null ("cannot tell") rather than false, so the checklist does
         // not mark the user as having something left to do when the missing
@@ -20936,7 +20936,7 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The GitHub App unlocks issues, advisory reports, and PRs on your primary repo — without it the hive can only observe.',
+        body: 'The <strong>Forge App</strong> — a GitHub App on GitHub.com and GitHub Enterprise — unlocks issues, advisory reports, and PRs on your primary repo; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GHE the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
         autoNote: 'Checks itself once the app is detected on your repository.',
         actions: [
           { label: 'Install GitHub App', onclick: 'welcomeInstallGitHubApp()' },
@@ -21056,7 +21056,7 @@ function burnAreaChart() {
         _welcomeOpenSteps.add(firstUndone ? firstUndone.id : WELCOME_STEPS[0].id);
       }
       let html = '';
-      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a></div>';
+      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App (step 2) in your first session — and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
       let n = 0;
       for (const step of WELCOME_STEPS) {
         n++;

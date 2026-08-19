@@ -2,7 +2,7 @@
 
 Documentation for the current Hive line (branch `v4`; the code and docs live under the `src/` directory). The `v2` branch was retired in August 2026.
 
-Start with [Architecture](architecture.md) for the system overview, then use the topic guides below.
+Start with [Architecture](architecture.md) for the system overview, then use the topic guides below. New users should start with the [getting-started guide](getting-started.md) — it covers Forge App (GitHub/GHE app) setup and what to do if an inactive hosted hive is reaped.
 
 ## Operations
 
@@ -49,7 +49,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Knowledge curator](https://github.com/kubestellar/hive/blob/v4/src/docs/knowledge-curator.md) — automatic fact extraction and promotion knobs.
 - [Agent peer-awareness logging (pluk)](https://github.com/kubestellar/hive/blob/v4/src/docs/agent-logging.md) — pluk log format, `hive-panes`, availability, and retention.
 - [Strategy Lab (Nous)](https://github.com/kubestellar/hive/blob/v4/src/docs/strategy-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
-- [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md) — app creation, permissions, Setup URL, and `/gh-setup`.
+- [GitHub App setup](https://github.com/kubestellar/hive/blob/v4/src/docs/github-app-setup.md) — the Forge App on GitHub/GHE: app creation, permissions, Setup URL, and `/gh-setup`.
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [Inception](https://github.com/kubestellar/hive/blob/v4/src/docs/inception.md) — operator guide to the L1 brainstorm/inception workflow: phases, API, and template variables.
 - [ACMM policy fragments](https://github.com/kubestellar/hive/blob/v4/examples/acmm/README.md) — per-level ACMM policy references.
