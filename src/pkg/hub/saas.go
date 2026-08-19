@@ -6269,7 +6269,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if ownerCount <= 1 {
-			http.Error(w, `{"error":"cannot remove the last owner"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"at least one owner is required — cannot remove the last owner"}`, http.StatusBadRequest)
 			return
 		}
 	}
@@ -18546,6 +18546,9 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <script>
     var _accessHiveId = '';
+    // Last-loaded access list for the open manage-access modal; lets
+    // removeAccess() detect self-removal and last-owner cases client-side.
+    var _accessUsers = [];
     var _timelineHiveId = '';
 
     /* Per-event presentation: a colour and a short label per event kind, so the
@@ -18777,6 +18780,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access');
         var data = await resp.json();
         var users = data.access || [];
+        _accessUsers = users;
         if (!users.length) {
           document.getElementById('access-list').innerHTML = '<div style="color:var(--muted);font-size:0.85rem">No users have access yet</div>';
           return;
@@ -18850,9 +18854,31 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function removeAccess(username) {
-      if (!await hiveConfirm('Remove access for ' + username + '?')) return;
+      var entry = _accessUsers.filter(function(u) { return u.username === username; })[0];
+      var isOwner = !!(entry && entry.role === 'owner');
+      if (isOwner) {
+        // Block removing the last owner client-side (mirrors the server check)
+        // so the user gets a clear error instead of a silent no-op.
+        var ownerCount = _accessUsers.filter(function(u) { return u.role === 'owner'; }).length;
+        if (ownerCount <= 1) {
+          hiveToast('At least one owner is required — cannot remove the last owner', 'error');
+          return;
+        }
+      }
+      var isSelf = _currentUser && String(username || '').toLowerCase() === _currentUser;
+      if (isOwner && isSelf) {
+        // Removing yourself as owner is irreversible from your side — confirm
+        // explicitly. Non-self removal keeps the ordinary confirmation below.
+        if (!await hiveConfirm('You will lose owner access to this hive — are you sure you want to remove yourself?')) return;
+      } else {
+        if (!await hiveConfirm('Remove access for ' + username + '?')) return;
+      }
       try {
-        await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access/' + encodeURIComponent(username), {method: 'DELETE'});
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access/' + encodeURIComponent(username), {method: 'DELETE'});
+        if (!resp.ok) {
+          var d = await resp.json().catch(function(){return {};});
+          hiveToast(d.error || 'Failed to remove access', 'error');
+        }
         loadAccessList();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
