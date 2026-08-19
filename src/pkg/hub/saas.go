@@ -18583,6 +18583,17 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="flex:1;overflow-y:auto;padding:0 32px 32px">
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:16px" id="access-hive-label"></p>
       <div id="access-list"><div class="loading">Loading...</div></div>
+      <div id="access-bulk-bar" style="display:none;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px">
+        <span id="access-bulk-count" style="font-size:0.75rem;color:var(--muted);flex:1"></span>
+        <select id="access-bulk-role" style="padding:4px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem">
+          <option value="read">Read</option>
+          <option value="read-write">Read-Write</option>
+          <option value="merger">Merger</option>
+          <option value="owner">Owner</option>
+        </select>
+        <button onclick="bulkChangeAccessRole()" class="btn-primary" style="padding:4px 10px;font-size:0.7rem">Change Role</button>
+        <button onclick="bulkRemoveAccess()" style="padding:4px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Remove</button>
+      </div>
       <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
         <h3 style="font-size:0.9rem;margin-bottom:8px;color:var(--accent)">Pending Requests</h3>
         <div id="pending-requests"><span style="color:var(--muted);font-size:0.8rem">Loading...</span></div>
@@ -18754,6 +18765,8 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       document.getElementById('access-modal').style.display = 'flex';
       updateAccessRoleHint();
+      _bulkAccessSel = {};
+      updateBulkAccessBar();
       await loadAccessList();
       await loadAccessUserDropdown();
       await loadPendingRequests();
@@ -19067,8 +19080,13 @@ const dashboardHTML = `<!DOCTYPE html>
         var data = await resp.json();
         var users = data.access || [];
         _accessUsers = users;
+        // Drop selections for users no longer on the roster.
+        Object.keys(_bulkAccessSel).forEach(function(name) {
+          if (!users.some(function(u) { return u.username === name; })) delete _bulkAccessSel[name];
+        });
         if (!users.length) {
           document.getElementById('access-list').innerHTML = '<div style="color:var(--muted);font-size:0.85rem">No users have access yet</div>';
+          updateBulkAccessBar();
           return;
         }
         var ownerCount = users.filter(function(u) { return u.role === 'owner'; }).length;
@@ -19079,6 +19097,13 @@ const dashboardHTML = `<!DOCTYPE html>
           // orphan the hive with no one able to manage access.
           var isLastOwner = (u.role === 'owner' && ownerCount <= 1);
           var canRemove = !isLastOwner;
+          // The last owner gets no checkbox: it can't be bulk-removed or
+          // bulk-demoted, so offering to select it would only mislead.
+          var checkbox = isLastOwner ?
+            '<span style="display:inline-block;width:13px;margin-right:8px"></span>' :
+            '<input type="checkbox" class="access-bulk-cb" style="margin:0 8px 0 0;cursor:pointer;vertical-align:middle"' +
+              (_bulkAccessSel[u.username] ? ' checked' : '') +
+              ' onchange="toggleBulkAccess(this, \'' + esc(u.username) + '\')" title="Select for bulk actions">';
           var removeBtn = canRemove ?
             '<button onclick="removeAccess(\'' + esc(u.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Remove</button>' :
             '<span style="font-size:0.6rem;color:var(--muted)">last owner</span>';
@@ -19098,7 +19123,7 @@ const dashboardHTML = `<!DOCTYPE html>
             '<span style="font-size:0.7rem;color:var(--muted)" title="Last active ' + esc(fmtUserTS(u.last_active)) + '">' + esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active)) + '</span>' :
             '<span style="font-size:0.7rem;color:var(--muted)" title="Never active on this hub">—</span>';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<div>' + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span>' +
+            '<div>' + checkbox + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span>' +
             /* Empty placeholder the async GitHub profile lookup fills in
                (#4145): display name lands beside the username when it arrives,
                and stays empty on any failure — the login always renders first. */
@@ -19111,6 +19136,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }).join('');
         document.getElementById('access-list').innerHTML = rows;
         enrichGhDisplayNames(document.getElementById('access-list'));
+        updateBulkAccessBar();
       } catch(e) {
         document.getElementById('access-list').innerHTML = '<div style="color:var(--red)">Failed to load</div>';
       }
@@ -19182,6 +19208,94 @@ const dashboardHTML = `<!DOCTYPE html>
         loadAccessList();
         loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    /* Bulk selection state for the Manage Access list: username -> true.
+       _accessUsers (declared above) mirrors the last roster fetch so the
+       bulk guards can count owners without another network round trip. */
+    var _bulkAccessSel = {};
+
+    function toggleBulkAccess(cb, username) {
+      if (cb.checked) { _bulkAccessSel[username] = true; } else { delete _bulkAccessSel[username]; }
+      updateBulkAccessBar();
+    }
+
+    /* The bulk bar only appears once 2+ users are selected — a single
+       selection is served just as well by the per-row controls. */
+    function updateBulkAccessBar() {
+      var bar = document.getElementById('access-bulk-bar');
+      if (!bar) return;
+      var count = Object.keys(_bulkAccessSel).length;
+      if (count >= 2) {
+        bar.style.display = 'flex';
+        document.getElementById('access-bulk-count').textContent = count + ' users selected';
+      } else {
+        bar.style.display = 'none';
+      }
+    }
+
+    /* wouldOrphanOwners: true when acting on the selection would leave the
+       hive with zero owners. The per-row last-owner lock already hides the
+       single-owner case; this catches "select every owner at once". */
+    function wouldOrphanOwners(selected) {
+      var owners = _accessUsers.filter(function(u) { return u.role === 'owner'; });
+      if (!owners.length) return false;
+      return owners.every(function(o) { return selected.indexOf(o.username) !== -1; });
+    }
+
+    async function bulkChangeAccessRole() {
+      var selected = Object.keys(_bulkAccessSel);
+      if (selected.length < 2) return;
+      var newRole = document.getElementById('access-bulk-role').value;
+      if (newRole !== 'owner' && wouldOrphanOwners(selected)) {
+        hiveToast('Cannot demote all owners — the hive must keep at least one', 'error');
+        return;
+      }
+      if (newRole === 'owner' && !await hiveConfirm('Make ' + selected.length + ' users owners? Owners can manage access and delete the hive.')) return;
+      var failed = [];
+      for (var i = 0; i < selected.length; i++) {
+        try {
+          var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username: selected[i], role: newRole})
+          });
+          if (!resp.ok) failed.push(selected[i]);
+        } catch(e) { failed.push(selected[i]); }
+      }
+      if (failed.length) {
+        hiveToast('Failed to change role for: ' + failed.join(', '), 'error');
+      } else {
+        hiveToast(selected.length + ' users are now ' + newRole, 'success');
+      }
+      _bulkAccessSel = {};
+      updateBulkAccessBar();
+      loadAccessList();
+    }
+
+    async function bulkRemoveAccess() {
+      var selected = Object.keys(_bulkAccessSel);
+      if (selected.length < 2) return;
+      if (wouldOrphanOwners(selected)) {
+        hiveToast('Cannot remove all owners — the hive must keep at least one', 'error');
+        return;
+      }
+      if (!await hiveConfirm('Remove access for ' + selected.length + ' users (' + selected.join(', ') + ')?')) return;
+      var failed = [];
+      for (var i = 0; i < selected.length; i++) {
+        try {
+          var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access/' + encodeURIComponent(selected[i]), {method: 'DELETE'});
+          if (!resp.ok) failed.push(selected[i]);
+        } catch(e) { failed.push(selected[i]); }
+      }
+      if (failed.length) {
+        hiveToast('Failed to remove: ' + failed.join(', '), 'error');
+      } else {
+        hiveToast('Removed ' + selected.length + ' users', 'success');
+      }
+      _bulkAccessSel = {};
+      updateBulkAccessBar();
+      loadAccessList();
     }
 
     /* Banner text is NEUTRAL (matches the spoke's banner-contrast rule);
