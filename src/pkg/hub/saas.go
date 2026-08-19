@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -497,6 +498,12 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/upgrade-pause", s.requireAdmin(s.handleGetUpgradePause))
 	s.mux.HandleFunc("POST /api/saas/upgrade-pause", s.requireAdmin(s.handleSetUpgradePause))
 	s.mux.HandleFunc("GET /api/saas/auth-check", s.handleSaaSAuthCheck)
+	// Sibling-product identity bridge (#4171): dibs.kubestellar.io forwards the
+	// browser's hive_hub_user cookie here server-to-server to resolve the
+	// session. Registered GET-only via the method pattern, and WITHOUT
+	// requireAuth so the unauthenticated answer is the exact 401 JSON shape the
+	// dibs bridge expects rather than the generic middleware error.
+	s.mux.HandleFunc("GET /api/saas/whoami", s.handleSaaSWhoami)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
 	s.mux.HandleFunc("GET /api/saas/grantable-users", s.requireAuth(s.handleGrantableUsers))
@@ -774,6 +781,62 @@ const hubCanonicalHost = "hive.kubestellar.io"
 // isTrustedRedirectTarget — and deliberately NOT a CSRF or CORS boundary.
 const hubDomainSuffix = ".hive.kubestellar.io"
 
+// sessionCookieParentDomain is the registrable parent domain the hub session
+// cookie is scoped to, so first-party sibling products on other kubestellar.io
+// subdomains (dibs.kubestellar.io) receive it and can SSO against the hub via
+// GET /api/saas/whoami. Derived from hubCanonicalHost (its parent domain)
+// rather than spelled out so the two can never disagree.
+func sessionCookieParentDomain() string {
+	if _, parent, ok := strings.Cut(hubCanonicalHost, "."); ok {
+		return parent
+	}
+	return hubCanonicalHost
+}
+
+// sessionCookieDomain returns the Domain attribute the hub session cookie
+// (hive_hub_user) must carry for a request served on host, or "" for a
+// host-only cookie.
+//
+// Production (any host under kubestellar.io, including the hub itself) gets
+// Domain=.kubestellar.io so that BOTH consumers of the cookie receive it:
+//   - every hosted spoke's Node proxy on <id>.hive.kubestellar.io, which
+//     independently verifies it for the tenant dashboard and terminal (the
+//     original reason the cookie carried Domain=.hive.kubestellar.io); and
+//   - sibling first-party products such as dibs.kubestellar.io, which read it
+//     and call back to /api/saas/whoami (#4171).
+//
+// Local/dev hosts (localhost, 127.0.0.1, anything not under kubestellar.io)
+// get a host-only cookie: a browser rejects a Set-Cookie whose Domain does not
+// cover the request host, so widening there would break local login outright.
+func sessionCookieDomain(host string) string {
+	h := host
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		h = hp
+	}
+	parent := sessionCookieParentDomain()
+	if h == parent || strings.HasSuffix(h, "."+parent) {
+		return "." + parent
+	}
+	return ""
+}
+
+// hubSessionCookieValues returns every hive_hub_user value on the request, in
+// jar order. During the .kubestellar.io domain-widening rollout (#4171) a
+// browser may briefly hold TWO copies of the cookie — the legacy
+// .hive.kubestellar.io-scoped one and the new parent-scoped one — and it sends
+// both under the same name. Callers must try each candidate rather than
+// trusting whichever copy the jar happens to order first, or a stale legacy
+// cookie would shadow a fresh session (and vice versa) until re-login.
+func hubSessionCookieValues(r *http.Request) []string {
+	var vals []string
+	for _, c := range r.Cookies() {
+		if c.Name == "hive_hub_user" && c.Value != "" {
+			vals = append(vals, c.Value)
+		}
+	}
+	return vals
+}
+
 // isSameOriginAsHub reports whether raw names the hub's own origin, i.e. the
 // only origin permitted to drive a state-changing request or to receive a
 // credentialed CORS response.
@@ -846,8 +909,9 @@ func originHost(raw string) (string, bool) {
 // resolveIdentity — never inside it — so the write-block and the admin gate can
 // always reason about who is really driving the request.
 func (s *HubServer) getRealAuthUser(r *http.Request) string {
-	cookie, err := r.Cookie("hive_hub_user")
-	if err == nil && cookie.Value != "" {
+	// Every hive_hub_user copy is tried, not just the first (see
+	// hubSessionCookieValues — the domain-widening rollout can leave two).
+	for _, value := range hubSessionCookieValues(r) {
 		// The cookie value is only trusted when its HMAC signature verifies
 		// against the hub secret. A legacy unsigned cookie or a forged value
 		// fails here and is treated as logged out, so the user re-authenticates
@@ -855,7 +919,7 @@ func (s *HubServer) getRealAuthUser(r *http.Request) string {
 		// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
 		// F10: verifyHubUserCookie additionally enforces a v3 cookie's SIGNED
 		// expiry and its revocation state, which MaxAge alone never did.
-		if username, ok := s.verifyHubUserCookie(cookie.Value); ok {
+		if username, ok := s.verifyHubUserCookie(value); ok {
 			if loadSaaSUser(username) != nil {
 				return username
 			}
@@ -8463,6 +8527,65 @@ func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
 	s.spokeProxyAuthMu.Unlock()
 
 	return token
+}
+
+// handleSaaSWhoami resolves the hub session for a sibling first-party product
+// (#4171). Dibs (dibs.kubestellar.io) has no login of its own: it forwards the
+// browser's hive_hub_user cookie here server-to-server and expects
+//
+//	200 {"username","display_name","email","avatar_url"}
+//
+// for a valid session, or 401 JSON otherwise.
+//
+// username is the STABLE identity key: the bare GitHub login for GitHub users
+// (byte-identical to what every pre-multi-provider consumer keys on), or the
+// hub's canonical "provider:sub" form for OIDC users — never a display name,
+// never an email (emails are reassignable; subs are not). display_name/email/
+// avatar_url come from the enriched SaaSUser record (DisplayName et al are
+// refreshed on every completed login).
+//
+// Deliberately no CORS headers: the caller is a server, not a browser, and
+// adding credentialed CORS here would hand the session identity to scripts.
+// Cache-Control: no-store because the answer is per-session and revocable.
+func (s *HubServer) handleSaaSWhoami(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	username := s.getAuthUser(r)
+	if username == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"not authenticated"}`))
+		return
+	}
+	user := loadSaaSUser(username)
+	if user == nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"not authenticated"}`))
+		return
+	}
+	// Bare login for GitHub identities, canonical provider:sub for the rest —
+	// exactly the key SaaSUser records are stored and looked up under.
+	stableKey := username
+	if provider, subject, ok := parseCanonical(canonicalizeLegacy(username)); ok && provider == legacyProvider {
+		stableKey = subject
+	}
+	displayLogin, avatar := s.displayIdentity(username)
+	displayName := user.DisplayName
+	if displayName == "" {
+		// GitHub users have no provider-asserted name claim stored; the display
+		// login (their bare GitHub login) is the established fallback.
+		displayName = displayLogin
+	}
+	data, err := json.Marshal(map[string]string{
+		"username":     stableKey,
+		"display_name": displayName,
+		"email":        user.Email,
+		"avatar_url":   avatar,
+	})
+	if err != nil {
+		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Write(data)
 }
 
 func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) {

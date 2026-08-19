@@ -513,7 +513,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	// From here the two paths converge: mint the session cookie over the
 	// canonical id (the Ed25519 signing machinery signs an opaque string, so
 	// this is provider-agnostic) and persist the user record.
-	if !s.mintSessionCookies(w, canonicalID) {
+	if !s.mintSessionCookies(w, r, canonicalID) {
 		return // mintSessionCookies wrote the error
 	}
 
@@ -732,7 +732,7 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 // but has no revocation store, so a revoked session can still reach a spoke
 // until its expiry. Closing that requires the spoke to ask the hub on the
 // terminal path; it is tracked separately and called out in hub_session_revocation.go.
-func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string) bool {
+func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, canonicalID string) bool {
 	// ROTATION (master-key-rotation.md, follow-on PR #1): mint under the CURRENT
 	// generation and stamp its ID into the signed claims, so the verifier can
 	// select one key instead of trying each and so telemetry can see which key
@@ -787,11 +787,47 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, canonicalID string
 	// hostile tenant can read it only if some other bug lets them (it stays
 	// HttpOnly + Secure), which is why the spoke-scoped-session redesign is
 	// tracked as follow-up rather than closed.
+	//
+	// #4171 WIDENS the Domain one level, from .hive.kubestellar.io to
+	// .kubestellar.io (derived, not hard-coded — sessionCookieDomain in
+	// saas.go), so first-party sibling products (dibs.kubestellar.io) receive
+	// the cookie and can SSO against /api/saas/whoami. This does not change the
+	// F4 analysis above: every host that received the cookie before (all
+	// *.hive.kubestellar.io spoke dashboards — deeper subdomains of the new
+	// parent scope) still receives it, and the hosts ADDED are exclusively
+	// hive-operated first-party services on *.kubestellar.io, not tenant-
+	// controlled origins. The tenant-side risk profile is therefore unchanged,
+	// and the same isSameOriginAsHub containment applies. Local/dev hosts get
+	// a host-only cookie instead (a browser rejects a non-covering Domain).
+	// SameSite=Lax stays correct: dibs.kubestellar.io and the hub are
+	// same-SITE (same registrable domain), so the browser attaches the cookie
+	// to dibs requests without needing SameSite=None.
+	domain := sessionCookieDomain(r.Host)
+	// Rollout hygiene (#4171): a pre-widening session cookie scoped
+	// Domain=.hive.kubestellar.io is a SEPARATE jar entry from the one minted
+	// below, and the browser would send both under the same name. Expire the
+	// legacy-scoped copy in the same response so a fresh login converges to
+	// exactly one session cookie. (Requests that still carry both in the
+	// interim are handled by hubSessionCookieValues, which tries every copy.)
+	// Emitted BEFORE the real cookie so anything scanning Set-Cookie in order
+	// finds the live session last.
+	if domain != "" && domain != hubDomainSuffix {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "hive_hub_user",
+			Value:    "",
+			Path:     "/",
+			Domain:   hubDomainSuffix,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 	cookie := &http.Cookie{
 		Name:     "hive_hub_user",
 		Value:    cookieValue,
 		Path:     "/",
-		Domain:   ".hive.kubestellar.io",
+		Domain:   domain,
 		MaxAge:   86400 * cookieMaxAgeDays,
 		HttpOnly: true,
 		Secure:   true,
@@ -854,18 +890,20 @@ func (s *HubServer) displayIdentity(identity string) (login, avatarURL string) {
 }
 
 func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("hive_hub_user")
-	if err != nil || cookie.Value == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"authenticated":false}`))
-		return
-	}
-	// Trust the carried username only when its signature verifies; a legacy
+	// Trust a carried username only when its signature verifies; a legacy
 	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
 	// N2: accept v2 (Ed25519) or, during rollout only, the legacy HMAC format.
 	// F10: also enforces a v3 cookie's signed expiry and revocation state.
-	username, ok := s.verifyHubUserCookie(cookie.Value)
-	if !ok || loadSaaSUser(username) == nil {
+	// #4171: every hive_hub_user copy is tried (the domain-widening rollout can
+	// briefly leave two in the jar), matching getRealAuthUser.
+	var username string
+	for _, value := range hubSessionCookieValues(r) {
+		if u, ok := s.verifyHubUserCookie(value); ok && loadSaaSUser(u) != nil {
+			username = u
+			break
+		}
+	}
+	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))
 		return
@@ -928,9 +966,13 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	//
 	// The browser's copy is cleared unconditionally regardless, below: a client
 	// with a corrupt or expired cookie must still be able to clear it.
-	if c, err := r.Cookie("hive_hub_user"); err == nil && c.Value != "" {
-		if _, ok := s.verifyHubUserCookie(c.Value); ok {
-			s.revokeHubSessionCookie(c.Value)
+	// #4171: revoke EVERY verifiable copy — the domain-widening rollout can
+	// leave two hive_hub_user cookies (legacy .hive.kubestellar.io scope and
+	// the new parent scope) carrying different session IDs, and logging out
+	// must kill both sessions, not just whichever the jar sent first.
+	for _, value := range hubSessionCookieValues(r) {
+		if _, ok := s.verifyHubUserCookie(value); ok {
+			s.revokeHubSessionCookie(value)
 		} else {
 			// Not an error path worth surfacing to the client — an expired or
 			// already-revoked cookie logging out is entirely normal — but it is
@@ -939,16 +981,26 @@ func (s *HubServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 			s.logger.Debug("logout: unverifiable session cookie, nothing to revoke")
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "hive_hub_user",
-		Value:    "",
-		Path:     "/",
-		Domain:   ".hive.kubestellar.io",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Clear the browser's copy under the SAME Domain minting used — a deletion
+	// only removes the jar entry whose domain matches. Also clear the legacy
+	// .hive.kubestellar.io-scoped entry (#4171 rollout: a pre-widening session
+	// is a separate jar entry that a parent-scoped deletion cannot remove).
+	clearDomains := []string{sessionCookieDomain(r.Host)}
+	if clearDomains[0] != "" && clearDomains[0] != hubDomainSuffix {
+		clearDomains = append(clearDomains, hubDomainSuffix)
+	}
+	for _, domain := range clearDomains {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "hive_hub_user",
+			Value:    "",
+			Path:     "/",
+			Domain:   domain,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
 }

@@ -174,7 +174,8 @@ const SNAPSHOT_FRAME_ANCESTORS_FALLBACK = parseSnapshotFrameAncestors(process.en
 // HIVE_ID is this spoke's own hive identity, injected by the hub at provision
 // time (mirrors the HIVE_ID env the Go dashboard reads). It is the anchor for
 // per-hive terminal authorization: a hub-user cookie is authenticated hub-wide
-// (the `hive_hub_user` cookie is scoped to .hive.kubestellar.io, so ANY hive's
+// (the `hive_hub_user` cookie is scoped to .kubestellar.io — widened from
+// .hive.kubestellar.io for sibling-product SSO, hive#4171 — so ANY hive's
 // domain receives it), so the signature check alone proves only "some hub user",
 // never "a user allowed on THIS hive".
 const HIVE_ID = process.env.HIVE_ID || '';
