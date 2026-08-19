@@ -1012,6 +1012,20 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				if isOwnerRole(sess.Role) {
 					r.Header.Set(ownerRoleVerifiedHeader, "true")
 				}
+			} else {
+				// No per-user session to scope this request down: the shared
+				// internal token IS the operator credential on this path (the
+				// local gateway authenticates the browser with the same token,
+				// strips client identity headers, then injects X-Hive-Internal).
+				// Grant owner with the server-set verified marker so owner-only
+				// mutations (budget save, pause, etc.) work for the operator.
+				// Inbound identity headers were already stripped above, so this
+				// cannot be reached by spoofing — only by presenting the secret,
+				// which is owner-equivalent by definition. Without this, the F14
+				// provenance hardening locked the real owner out of owner-gated
+				// endpoints on every shared-token deployment (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 
@@ -1092,6 +1106,15 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			expected := "Bearer " + s.authToken
 			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
 				trusted = true
+				// Same reasoning as the X-Hive-Internal path above: the shared
+				// dashboard token is the operator credential, and the dashboard
+				// UI itself authenticates with it (Authorization: Bearer from
+				// localStorage) on token-secured spokes reached directly. The
+				// per-user session path already ran and did not match, and
+				// inbound identity headers were stripped, so granting owner here
+				// requires possession of the secret — nothing less (#4134).
+				r.Header.Set("X-Hive-Role", config.RoleOwner)
+				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
 		}
 

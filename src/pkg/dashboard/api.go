@@ -1389,10 +1389,11 @@ func pauseToggleResponse(w http.ResponseWriter, status, agent string, changed, p
 // requireOwnerRole returns true when authenticate established owner-level access.
 // A client-supplied X-Hive-Role is not enough: authenticate strips inbound role
 // headers before auth and sets ownerRoleVerifiedHeader only for trusted owner
-// sessions or proof-verified hub proxy identities. Owner-only mutations must
-// require its server-only verification marker, so legacy/proofless proxy
-// headers and shared-token requests fail closed instead of trusting spoofable
-// client input.
+// sessions, proof-verified hub proxy identities, or shared-token operators
+// (X-Hive-Internal / bearer token — possession of the secret is the owner
+// credential on those deployments). Owner-only mutations must require its
+// server-only verification marker, so legacy/proofless proxy headers fail
+// closed instead of trusting spoofable client input.
 func requireOwnerRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
 	if !isOwnerRole(role) || r.Header.Get(ownerRoleVerifiedHeader) != "true" {
