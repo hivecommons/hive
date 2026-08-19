@@ -553,6 +553,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	// names hives fleet-wide — the same exposure class as cluster-health
 	// directly above, so the same requireAdmin gate.
 	s.mux.HandleFunc("GET /api/reach", s.requireAdmin(s.handleReach))
+	// Advisory-staleness diagnostics (#4167): the read-only fleet view of WHICH
+	// gate decided each hive's advisory verdict, and how many stale digests no
+	// pill is reporting. Names hives fleet-wide with their App state, so the
+	// same requireAdmin gate as cluster-health and /api/reach above.
+	s.mux.HandleFunc("GET /api/saas/admin/advisory-diagnostics", s.requireAdmin(s.handleAdvisoryDiagnostics))
 	// Acknowledging a fleet alert is an operator action on the operator's own
 	// view, so it is admin-only (see alerts.go).
 	s.mux.HandleFunc("POST /api/saas/admin/alert-ack", s.requireAdmin(s.handleAlertAck))
@@ -587,6 +592,10 @@ func (s *HubServer) registerSaaSRoutes() {
 		// Periodically probe every spoke's unauthenticated /api/status and alert
 		// on any that answer 200 (wide open) — catches auth drift automatically.
 		go s.StartAuthAudit(context.Background())
+		// Advisory-suppression profile (#4167): one structured log line every
+		// cycle saying how many hives are stale and how many are stale but
+		// UNREPORTED. Read-only measurement — no alert, no registry write.
+		go s.StartAdvisoryDiagnostics(context.Background())
 	}
 }
 

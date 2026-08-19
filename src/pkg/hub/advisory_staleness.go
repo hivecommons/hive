@@ -46,6 +46,65 @@ func appCanWriteForAdvisory(e RegistryEntry) bool {
 	}
 }
 
+// appAwaitingDelivery reports whether a hive's App has not been DELIVERED yet —
+// never installed, never assigned, or its key never handed over. This is the
+// narrow subset of "cannot write" whose silence is an ONBOARDING state rather
+// than a fault: nobody has finished wiring the hive up, so nothing about it is
+// broken and nothing should alarm.
+//
+// It exists because appCanWriteForAdvisory is too broad to gate a REPORTED post
+// error (#4167). A spoke only records AdvisoryError from a real post attempt,
+// and the most common such error — a 403 on the digest comment — makes the
+// spoke raise GitHubAppRequired and classify itself "write-forbidden" in the
+// SAME cycle. Gating the error on appCanWriteForAdvisory therefore let the
+// failure suppress its own alarm: the hive proved it is an advisory participant
+// AND that its digest is wedged, and the pill went dark anyway. An App that has
+// been delivered but cannot write is a fault the operator must see; an App that
+// was never delivered is not.
+//
+// An unclassified state ("" — a spoke too old to report one) counts as awaiting
+// delivery only when the install banner is up, which is the one signal such a
+// spoke does report.
+func appAwaitingDelivery(e RegistryEntry) bool {
+	if e.PendingGitHubAppInstall {
+		return true
+	}
+	switch e.GitHubAppState {
+	case "not-installed", "no-app-assigned", "key-missing":
+		return true
+	case "":
+		return e.GitHubAppRequired
+	default:
+		return false
+	}
+}
+
+// carryAdvisoryPostTime preserves the last known advisory-post time on a
+// heartbeat that reports none (#4167).
+//
+// advisoryLastPostedAt lives ONLY in the spoke's memory, so every restart
+// reports it empty until the next SUCCESSFUL post — and an empty value is
+// exactly what the hub's staleness gate reads as "not an advisory participant".
+// A hive whose digest path wedges across a restart therefore went silent
+// forever: it could never post (so the field never came back) and the hub could
+// never tell it apart from a healthy PR-only hive. Preserving the previous value
+// lets the timestamp keep AGEING across the restart, which is the whole signal.
+//
+// Guarded on the hive still pointing at the same primary repo: a reclaimed or
+// reassigned placeholder is a DIFFERENT project on the same hive ID, and must
+// start from a clean advisory history rather than inherit — and be alarmed for —
+// the previous tenant's post time. A fresh report always wins; the spoke is the
+// source of truth whenever it has one.
+func carryAdvisoryPostTime(entry *RegistryEntry, prev RegistryEntry) {
+	if entry == nil {
+		return
+	}
+	if entry.AdvisoryLastPostedAt == "" && prev.AdvisoryLastPostedAt != "" &&
+		entry.PrimaryRepo == prev.PrimaryRepo {
+		entry.AdvisoryLastPostedAt = prev.AdvisoryLastPostedAt
+	}
+}
+
 // advisoryStale reports whether a hive's advisory digest should be flagged as
 // stale as of now, together with a short human-readable reason for the pill's
 // tooltip. It is THE discriminator between "genuinely broken" (the signal an
@@ -59,11 +118,16 @@ func appCanWriteForAdvisory(e RegistryEntry) bool {
 //     is skipped here. This is why the gate needs no separate "is advisory mode"
 //     flag from the hub: participation is proven by the spoke having reported
 //     one of these fields at all.
-//  2. The hive's App can WRITE (appCanWriteForAdvisory). A not-installed hive,
-//     one running without credentials, or one whose key was never delivered
-//     legitimately cannot post and must not alarm.
-//  3. Either the last successful post is older than advisoryStaleThreshold, OR
+//  2. Either the last successful post is older than advisoryStaleThreshold, OR
 //     the most recent post attempt errored (AdvisoryError set).
+//  3. The suppression that applies to the branch taken:
+//     - a reported ERROR is suppressed only while the App is still awaiting
+//     delivery (appAwaitingDelivery) — an undelivered App's failure is an
+//     onboarding symptom, but a delivered App that cannot write is a fault the
+//     operator must see, even though the same failure raises the App banner.
+//     - an AGED timestamp is suppressed whenever the App cannot write at all
+//     (appCanWriteForAdvisory): with no error reported there is no proof the
+//     hive even tried, so its silence is expected.
 //
 // An empty/unparseable AdvisoryLastPostedAt with no AdvisoryError is UNKNOWN and
 // returns false — never a false alarm — matching the rule the codebase already
@@ -76,18 +140,25 @@ func advisoryStale(e RegistryEntry, now time.Time) (stale bool, reason string) {
 		return false, ""
 	}
 
-	// Gate 2: an App that cannot write is expected to be quiet, not broken.
+	// Gate 2a: a failed post attempt is a stale signal on its own, and the most
+	// specific one — surface the reported cause. Only an App that was never
+	// delivered suppresses it (#4167): gating this on the broader
+	// appCanWriteForAdvisory let a write-forbidden digest failure raise the App
+	// banner and thereby silence the very pill it should have lit.
+	if e.AdvisoryError != "" {
+		if appAwaitingDelivery(e) {
+			return false, ""
+		}
+		return true, "last advisory post failed: " + e.AdvisoryError
+	}
+
+	// Gate 2b: with no error reported, an App that cannot write is expected to
+	// be quiet, not broken.
 	if !appCanWriteForAdvisory(e) {
 		return false, ""
 	}
 
-	// Gate 3a: a failed post attempt is a stale signal on its own, and the most
-	// specific one — surface the reported cause.
-	if e.AdvisoryError != "" {
-		return true, "last advisory post failed: " + e.AdvisoryError
-	}
-
-	// Gate 3b: no error, so decide on age. An unparseable timestamp is treated
+	// Gate 3: no error, so decide on age. An unparseable timestamp is treated
 	// as UNKNOWN (not stale) so a malformed spoke value never false-alarms.
 	postedAt, err := time.Parse(time.RFC3339, e.AdvisoryLastPostedAt)
 	if err != nil {

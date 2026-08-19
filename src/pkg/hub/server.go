@@ -1881,6 +1881,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.ComponentReach == nil && h.ComponentReach != nil {
 				entry.ComponentReach = h.ComponentReach
 			}
+			// Advisory post time survives a spoke restart — see
+			// carryAdvisoryPostTime for why that is the difference between a
+			// wedged digest being flagged and being invisible forever.
+			carryAdvisoryPostTime(&entry, h)
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
 				branchForLatest = "v2"
