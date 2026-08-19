@@ -5978,6 +5978,38 @@ type HiveAccessEntry struct {
 	// the stats above, and omitempty/absent for records without data yet.
 	EngagedSeconds int64  `json:"engaged_seconds,omitempty"`
 	LastActionAt   string `json:"last_action_at,omitempty"`
+	// LastActive is the RFC3339 time of this user's most recent hub activity —
+	// the latest of their last login, last engaged beat, and last audited
+	// action (see latestUserActivity). Unlike the engagement stats above it
+	// rides for EVERY owner-visible row, not just for admins: "is this account
+	// dormant?" is exactly the owner-level question the Manage Access list
+	// answers when deciding on access changes (#4146). omitempty — absent means
+	// the user has never been active, which the UI renders as "—".
+	LastActive string `json:"last_active,omitempty"`
+}
+
+// latestUserActivity returns the RFC3339 timestamp of u's most recent hub
+// activity — the latest of LastLogin, LastEngagedAt, and LastActionAt — or ""
+// when the user has never been active. Timestamps are parsed rather than
+// compared lexically so legacy records with mixed UTC offsets still order
+// correctly; an unparseable value is skipped, never surfaced.
+func latestUserActivity(u *SaaSUser) string {
+	var best time.Time
+	var bestStr string
+	for _, ts := range []string{u.LastLogin, u.LastEngagedAt, u.LastActionAt} {
+		if strings.TrimSpace(ts) == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, ts)
+		if err != nil {
+			continue
+		}
+		if t.After(best) {
+			best = t
+			bestStr = ts
+		}
+	}
+	return bestStr
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -5998,6 +6030,9 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 				Role:     role,
 				FullName: u.FullName,
 				SlackID:  u.SlackID,
+				// Coarse last-active rides for every viewer of the row (see the
+				// field doc) — only the granular stats below stay admin-only.
+				LastActive: latestUserActivity(&u),
 			}
 			if includeAdminOnly {
 				entry.Notes = u.Notes
@@ -18801,9 +18836,16 @@ const dashboardHTML = `<!DOCTYPE html>
             '<select class="role-select role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem;padding:2px 6px;border-radius:9999px;cursor:pointer" title="Change this user\'s permission" onchange="changeAccessRole(\'' + esc(u.username) + '\', this.value, \'' + esc(u.role) + '\')">' +
               ROLES.map(function(r) { return '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
             '</select>';
+          /* Last-active is coarse and relative on purpose ("3d ago") — the
+             owner's question is "is this account dormant?", not "when exactly".
+             The absolute time rides in the title. "—" means never active. */
+          var lastActive = u.last_active ?
+            '<span style="font-size:0.7rem;color:var(--muted)" title="Last active ' + esc(fmtUserTS(u.last_active)) + '">' + esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active)) + '</span>' :
+            '<span style="font-size:0.7rem;color:var(--muted)" title="Never active on this hub">—</span>';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(u.username) + '</span></div>' +
             '<div style="display:flex;align-items:center;gap:8px">' +
+            lastActive +
             roleControl +
             removeBtn +
             '</div></div>';

@@ -116,3 +116,81 @@ func TestAccessAvatarTitleCarriesStats(t *testing.T) {
 		t.Error("the live-ring wrapper still hard-codes a title that shadows the avatar tooltip")
 	}
 }
+
+// TestLatestUserActivity pins the "last active" derivation for the Manage
+// Access list (#4146): the latest of LastLogin / LastEngagedAt / LastActionAt
+// wins, blanks and unparseable values are skipped, and a user with no activity
+// at all yields "" (which the UI renders as "—").
+func TestLatestUserActivity(t *testing.T) {
+	cases := []struct {
+		name string
+		u    SaaSUser
+		want string
+	}{
+		{"never active", SaaSUser{GitHubUsername: "ghost"}, ""},
+		{"login only", SaaSUser{LastLogin: "2026-01-02T03:04:05Z"}, "2026-01-02T03:04:05Z"},
+		{"action beats login", SaaSUser{
+			LastLogin:    "2026-01-02T03:04:05Z",
+			LastActionAt: "2026-02-01T00:00:00Z",
+		}, "2026-02-01T00:00:00Z"},
+		{"engaged beats both", SaaSUser{
+			LastLogin:     "2026-01-02T03:04:05Z",
+			LastEngagedAt: "2026-03-01T00:00:00Z",
+			LastActionAt:  "2026-02-01T00:00:00Z",
+		}, "2026-03-01T00:00:00Z"},
+		{"garbage skipped, valid wins", SaaSUser{
+			LastLogin:    "not-a-timestamp",
+			LastActionAt: "2026-02-01T00:00:00Z",
+		}, "2026-02-01T00:00:00Z"},
+		{"all garbage yields never", SaaSUser{LastLogin: "yesterday-ish"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := latestUserActivity(&tc.u); got != tc.want {
+				t.Errorf("latestUserActivity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAccessForHiveLastActive pins that LastActive rides for EVERY viewer of an
+// access row — unlike the admin-only engagement stats — because "is this
+// account dormant?" is the owner-level question Manage Access answers (#4146).
+func TestAccessForHiveLastActive(t *testing.T) {
+	users := []SaaSUser{
+		{
+			GitHubUsername: "active-user",
+			Hives:          map[string]string{"h1": "owner"},
+			LastLogin:      "2026-01-02T03:04:05Z",
+			LastActionAt:   "2026-02-01T00:00:00Z",
+		},
+		{GitHubUsername: "dormant-user", Hives: map[string]string{"h1": "read"}},
+	}
+	for _, admin := range []bool{true, false} {
+		got := accessForHive("h1", users, admin)
+		if len(got) != 2 {
+			t.Fatalf("admin=%v: want 2 entries, got %d", admin, len(got))
+		}
+		if got[0].LastActive != "2026-02-01T00:00:00Z" {
+			t.Errorf("admin=%v: active user LastActive = %q, want 2026-02-01T00:00:00Z", admin, got[0].LastActive)
+		}
+		if got[1].LastActive != "" {
+			t.Errorf("admin=%v: dormant user LastActive = %q, want empty (never)", admin, got[1].LastActive)
+		}
+	}
+}
+
+// TestManageAccessRowShowsLastActive pins the Manage Access row markup: a
+// relative last-active span for users with activity, and a "—" placeholder for
+// users who have never been active.
+func TestManageAccessRowShowsLastActive(t *testing.T) {
+	for _, snippet := range []string{
+		"esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active))",
+		`title="Last active ' + esc(fmtUserTS(u.last_active)) + '"`,
+		`title="Never active on this hub">—</span>`,
+	} {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML missing %q", snippet)
+		}
+	}
+}
