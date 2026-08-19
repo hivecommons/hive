@@ -18708,11 +18708,112 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
+    /* ── GitHub display-name enrichment (#4145) ─────────────────────────
+       The Manage Access rows and the Add User picker key on the stable login,
+       but a human recognizes "Andy Anderson" faster than "clubanderson". The
+       GitHub profile API carries that name, so we fetch it lazily and paint it
+       in AFTER the username is already on screen — enrichment only ever ADDS
+       information, so a failed/rate-limited lookup leaves the UI exactly as it
+       was (graceful fallback to username, no blocking delay).
+
+       Results are cached twice: in-memory for this page, and in localStorage
+       for a day so re-opening the dialog doesn't re-spend the unauthenticated
+       api.github.com rate budget (60 req/hr/IP). Confirmed misses (404) are
+       cached like hits; transient failures (rate limit, network) are cached
+       for this page only so the next page load can retry. */
+    var GH_NAME_CACHE_KEY = 'hiveGhDisplayNames';
+    var GH_NAME_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    var _ghNameMem = {};      /* login(lower) -> name string | null (known-none) */
+    var _ghNamePending = {};  /* login(lower) -> in-flight Promise (dedupes) */
+
+    function ghNameCacheRead() {
+      try { return JSON.parse(localStorage.getItem(GH_NAME_CACHE_KEY) || '{}') || {}; }
+      catch (e) { return {}; }
+    }
+    function ghNameCacheWrite(login, name) {
+      try {
+        var c = ghNameCacheRead();
+        c[login] = { n: name, t: Date.now() };
+        localStorage.setItem(GH_NAME_CACHE_KEY, JSON.stringify(c));
+      } catch (e) {}
+    }
+    /* Only plain github.com logins have a profile to ask about; OIDC identity
+       keys ("google:1078…") never do — same ":" rule as splitIdentityKey. */
+    function isPlainGitHubLogin(username) {
+      var u = String(username || '');
+      return u !== '' && u.indexOf(':') === -1;
+    }
+    /* fetchGitHubDisplayName resolves to the profile name for a github.com
+       login, or null when there is none / it cannot be fetched. Never rejects. */
+    function fetchGitHubDisplayName(username) {
+      var login = String(username || '').toLowerCase();
+      if (!isPlainGitHubLogin(login)) return Promise.resolve(null);
+      if (login in _ghNameMem) return Promise.resolve(_ghNameMem[login]);
+      var cached = ghNameCacheRead()[login];
+      if (cached && (Date.now() - (cached.t || 0)) < GH_NAME_CACHE_TTL_MS) {
+        _ghNameMem[login] = cached.n || null;
+        return Promise.resolve(_ghNameMem[login]);
+      }
+      if (_ghNamePending[login]) return _ghNamePending[login];
+      var p = fetch('https://api.github.com/users/' + encodeURIComponent(login))
+        .then(function(r) {
+          if (r.status === 404) return null;      /* confirmed no such user: cache the miss */
+          if (!r.ok) return undefined;            /* transient (rate limit etc): don't persist */
+          return r.json().then(function(d) { return (d && d.name) ? String(d.name) : null; },
+                               function() { return undefined; });
+        }, function() { return undefined; })
+        .then(function(name) {
+          delete _ghNamePending[login];
+          if (name === undefined) { _ghNameMem[login] = null; return null; }
+          _ghNameMem[login] = name;
+          ghNameCacheWrite(login, name);
+          return name;
+        });
+      _ghNamePending[login] = p;
+      return p;
+    }
+    /* enrichGhDisplayNames fills every .gh-display-name placeholder under root
+       once its profile name arrives. The placeholder is rendered empty next to
+       the username, so nothing shifts or blocks while lookups are in flight,
+       and a name identical to the login is skipped (it would only repeat). */
+    function enrichGhDisplayNames(root) {
+      if (!root) return;
+      var els = root.querySelectorAll('.gh-display-name[data-gh-login]');
+      Array.prototype.forEach.call(els, function(el) {
+        var login = el.getAttribute('data-gh-login') || '';
+        fetchGitHubDisplayName(login).then(function(name) {
+          if (!name || name.toLowerCase() === login.toLowerCase()) return;
+          if (!el.isConnected) return; /* the list re-rendered meanwhile */
+          el.textContent = name;
+        });
+      });
+    }
+
     /* The roster fetched from grantable-users, kept so the search box can
        re-filter without another network round trip. Each entry carries the
        stable identity key (id — what the grant POST sends) and the normalized
        human label (label — what the owner reads). */
     var _grantableUsers = [];
+
+    /* enrichGrantableUserLabels upgrades GitHub rows whose label is still the
+       bare login with the profile display name, then re-renders the dropdown
+       ONCE after the batch settles — preserving the active filter and any
+       selection (renderAccessUserOptions already restores both). Rows the hub
+       already labeled (OIDC display_name) are left alone. */
+    function enrichGrantableUserLabels() {
+      var updated = false, waiting = 0;
+      _grantableUsers.forEach(function(e) {
+        if (!e || e.id !== e.label) return;
+        if (e.provider && e.provider !== 'github') return;
+        if (!isPlainGitHubLogin(e.id)) return;
+        waiting++;
+        fetchGitHubDisplayName(e.id).then(function(name) {
+          waiting--;
+          if (name && name !== e.label) { e.label = name; updated = true; }
+          if (waiting === 0 && updated) filterAccessUserDropdown();
+        });
+      });
+    }
 
     /* identityProviderFromKey classifies a raw identity key by its prefix so
        the UI can show a provider mark next to the name: "google:…" → google,
@@ -18815,6 +18916,9 @@ const dashboardHTML = `<!DOCTYPE html>
           return { id: u, label: u };
         })).filter(function(e) { return e && e.id; });
         renderAccessUserOptions('');
+        // Usernames are on screen already; profile names swap in when they
+        // arrive (#4145) — never block the dropdown on the GitHub API.
+        enrichGrantableUserLabels();
       } catch(e) {
         // Never leave the control looking merely empty — an empty dropdown is
         // indistinguishable from "no such users", which is what made this
@@ -18854,13 +18958,18 @@ const dashboardHTML = `<!DOCTYPE html>
               ROLES.map(function(r) { return '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
             '</select>';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<div>' + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span></div>' +
+            '<div>' + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span>' +
+            /* Empty placeholder the async GitHub profile lookup fills in
+               (#4145): display name lands beside the username when it arrives,
+               and stays empty on any failure — the login always renders first. */
+            '<span class="gh-display-name" data-gh-login="' + escAttr(u.username) + '" style="margin-left:6px;font-size:0.75rem;color:var(--muted)"></span></div>' +
             '<div style="display:flex;align-items:center;gap:8px">' +
             roleControl +
             removeBtn +
             '</div></div>';
         }).join('');
         document.getElementById('access-list').innerHTML = rows;
+        enrichGhDisplayNames(document.getElementById('access-list'));
       } catch(e) {
         document.getElementById('access-list').innerHTML = '<div style="color:var(--red)">Failed to load</div>';
       }

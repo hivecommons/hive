@@ -390,3 +390,32 @@ func TestManageAccessProviderIcons(t *testing.T) {
 		}
 	}
 }
+
+// TestManageAccessShowsGitHubDisplayNames pins the async display-name
+// enrichment (#4145): Manage Access user rows carry an empty placeholder the
+// GitHub profile lookup fills in AFTER the username is already on screen, and
+// the Add User picker upgrades bare-login labels the same way. Both surfaces
+// must render the username first and only ever ADD the display name — a
+// failed or rate-limited lookup leaves the UI untouched. Results are cached
+// (in-memory + localStorage) so re-opening the dialog does not re-spend the
+// unauthenticated GitHub API rate budget.
+func TestManageAccessShowsGitHubDisplayNames(t *testing.T) {
+	for _, want := range []string{
+		// Cache + fetch plumbing.
+		`var GH_NAME_CACHE_KEY = 'hiveGhDisplayNames'`,
+		`function fetchGitHubDisplayName(username)`,
+		`https://api.github.com/users/` + `' + encodeURIComponent(login)`,
+		// OIDC identity keys ("google:1078…") have no GitHub profile to ask about.
+		`function isPlainGitHubLogin(username)`,
+		// User rows: placeholder rendered next to the username, filled async.
+		`class="gh-display-name" data-gh-login=`,
+		`enrichGhDisplayNames(document.getElementById('access-list'))`,
+		// Add User picker: labels upgraded in place, dropdown re-rendered once.
+		`function enrichGrantableUserLabels()`,
+		`enrichGrantableUserLabels();`,
+	} {
+		if !strings.Contains(dashboardHTML, want) {
+			t.Errorf("dashboardHTML missing %q", want)
+		}
+	}
+}
