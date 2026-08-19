@@ -5984,7 +5984,8 @@ type HiveAccessEntry struct {
 	// rides for EVERY owner-visible row, not just for admins: "is this account
 	// dormant?" is exactly the owner-level question the Manage Access list
 	// answers when deciding on access changes (#4146). omitempty — absent means
-	// the user has never been active, which the UI renders as "—".
+	// the user has never been active, which the UI renders as "—". It also
+	// feeds the Manage Access CSV export's last-active column (#4152).
 	LastActive string `json:"last_active,omitempty"`
 }
 
@@ -18566,7 +18567,8 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
       </div>
       </div>
-      <div style="display:flex;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
+        <button id="access-export-btn" onclick="exportAccessCSV()" title="Download this hive's access list as CSV for audit/compliance" style="padding:8px 16px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:0.8rem">&#11015;&#65039; Export CSV</button>
         <button onclick="document.getElementById('access-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
       </div>
     </div>
@@ -19032,6 +19034,44 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) {
         document.getElementById('access-list').innerHTML = '<div style="color:var(--red)">Failed to load</div>';
       }
+    }
+
+    /* RFC-4180-style field quoting: wrap in double quotes when the value
+       contains a comma, quote, or newline; embedded quotes double up. */
+    function csvField(v) {
+      var s = String(v == null ? '' : v);
+      if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    }
+
+    /* exportAccessCSV downloads the currently loaded access list (_accessUsers,
+       cached by loadAccessList) as CSV, entirely client-side (Blob + synthetic
+       <a> click) — no extra round trip and, critically, no server-side file is
+       ever written (#4152). Columns follow the audit shape from #4152:
+       username, role, granted date (blank — grants are not timestamped today,
+       the column keeps exports forward-compatible) and last-active (the user's
+       most recent hub activity — see latestUserActivity). Only owners can
+       load the list at all, so the button is inherently owner-scoped. */
+    function exportAccessCSV() {
+      if (!_accessUsers.length) { hiveToast('Nothing to export yet', 'error'); return; }
+      var lines = ['username,role,granted_at,last_active'];
+      _accessUsers.forEach(function(u) {
+        lines.push([
+          csvField(u.username),
+          csvField(u.role),
+          '', // granted date: not tracked per-grant yet
+          csvField(u.last_active || '')
+        ].join(','));
+      });
+      var blob = new Blob([lines.join('\r\n') + '\r\n'], {type: 'text/csv;charset=utf-8'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'hive-access-' + (_accessHiveId || 'unknown') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      hiveToast('Access list exported', 'success');
     }
 
     async function addAccess() {
