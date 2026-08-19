@@ -197,7 +197,22 @@ func cmdCreate(args []string) {
 	}
 
 	store := openStore()
-	b, err := store.Create(*title, beads.BeadType(*beadType), beads.Priority(*priority), *actor, *extRef)
+	// ADVISORY beads upsert rather than create. An advisory agent re-files a
+	// finding every cycle for as long as its condition holds, and each re-file
+	// used to become a separate bead — which is both how the digest filled with
+	// restatements of one problem and why a finding could never be told apart
+	// from a stale one. Upsert refreshes the existing bead's last-seen stamp
+	// instead, which is the signal the staleness prune consumes. Every other
+	// bead type keeps plain Create: two tasks with similar titles are two tasks.
+	var (
+		b   *beads.Bead
+		err error
+	)
+	if beads.BeadType(*beadType) == beads.TypeAdvisory {
+		b, err = store.Upsert(*title, beads.TypeAdvisory, beads.Priority(*priority), *actor, *extRef)
+	} else {
+		b, err = store.Create(*title, beads.BeadType(*beadType), beads.Priority(*priority), *actor, *extRef)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bd create: %v\n", err)
 		os.Exit(1)

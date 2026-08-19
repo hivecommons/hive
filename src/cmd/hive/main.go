@@ -3224,6 +3224,17 @@ func main() {
 					_, _, errMsg := dashSrv.AdvisoryState()
 					return errMsg
 				}(),
+				// Digest SHAPE: how many findings went out, and how many the
+				// top-N cap withheld. The hub renders the pair so a capped
+				// digest never reads as the complete picture.
+				AdvisoryFindingCount: func() int {
+					findings, _ := dashSrv.AdvisoryCounts()
+					return findings
+				}(),
+				AdvisoryOverflowCount: func() int {
+					_, overflow := dashSrv.AdvisoryCounts()
+					return overflow
+				}(),
 				// Inference-backend auth-failure signal (repeated 401s from a
 				// stale gateway key). Reported as its own field so the hub can
 				// raise a dedicated inference-auth alert whose ROOT cause an
@@ -5082,7 +5093,23 @@ func runEvalCycle(
 
 	// Advisory digest: build from beads (the source of truth) before status broadcast.
 	if len(beadStores) > 0 {
-		digest := advisory.BuildDigestFromBeads(beadStores, string(govState.Mode))
+		// Retire findings no agent has re-reported inside the staleness window
+		// BEFORE the digest is built, so a stale finding never appears in the
+		// comment one last time after it has been proven gone. Agents re-file a
+		// finding for as long as its condition holds (beads.Store.Upsert), so
+		// silence is the evidence here.
+		advCfg := cfg.Governor.Advisory
+		if advCfg.StalenessDays > 0 {
+			if pruned := advisory.PruneStaleAdvisoryBeads(beadStores, time.Duration(advCfg.StalenessDays)*24*time.Hour); len(pruned) > 0 {
+				logger.Info("closed stale advisory findings not re-reported within the staleness window",
+					"count", len(pruned), "staleness_days", advCfg.StalenessDays, "titles", strings.Join(pruned, "; "))
+			}
+		}
+		digestOpts := advisory.DigestOptions{
+			MaxFindings: advCfg.MaxFindings,
+			ShowAll:     advCfg.ShowAll,
+		}
+		digest := advisory.BuildDigestFromBeads(beadStores, string(govState.Mode), digestOpts)
 		if advisoryStore != nil {
 			advisoryStore.SetLatestDigest(digest)
 		}
@@ -5168,7 +5195,12 @@ func runEvalCycle(
 				}
 			}
 
-			md := advisory.FormatDigestMarkdown(digest, org, repoName)
+			md := advisory.FormatDigestMarkdown(digest, advisory.DigestOptions{
+				MaxFindings: digestOpts.MaxFindings,
+				ShowAll:     digestOpts.ShowAll,
+				Org:         org,
+				PrimaryRepo: repoName,
+			})
 			if md != "" {
 				if issueNum, ok := advisoryIssues[primaryRepo]; ok && issueNum > 0 {
 					// Prefer the App client as the PRIMARY poster. The App
@@ -5236,6 +5268,7 @@ func runEvalCycle(
 						// Record the fresh, successful digest post so the hub's
 						// advisory-staleness gate stays satisfied for this hive.
 						dashSrv.RecordAdvisoryPost(digest.TotalCount)
+						dashSrv.RecordAdvisoryOverflow(digest.OverflowCount)
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the
 						// app-required banner flag. Previously only the perm

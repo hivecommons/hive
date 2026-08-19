@@ -131,6 +131,12 @@ type RegistryEntry struct {
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
 	AdvisoryError string `json:"advisoryError,omitempty"`
+	// AdvisoryFindingCount is the finding count in the spoke's last posted
+	// digest; AdvisoryOverflowCount is how many further findings the top-N cap
+	// withheld from it (0 = nothing capped, or an old spoke that does not report
+	// it). My Hives renders the pair so a capped digest never reads as complete.
+	AdvisoryFindingCount  int `json:"advisoryFindingCount,omitempty"`
+	AdvisoryOverflowCount int `json:"advisoryOverflowCount,omitempty"`
 	// InferenceAuthError is the log-safe cause set when the spoke's inference
 	// backend has rejected several consecutive calls with 401 (a stale gateway
 	// key). Empty = inference auth healthy / no inference backend / old spoke,
@@ -1569,8 +1575,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
 		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
 		// it as UNKNOWN rather than stale.
-		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryError:        sanitizeProseField(payload.AdvisoryError),
+		AdvisoryLastPostedAt:  sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryFindingCount:  payload.AdvisoryFindingCount,
+		AdvisoryOverflowCount: payload.AdvisoryOverflowCount,
+		AdvisoryError:         sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),

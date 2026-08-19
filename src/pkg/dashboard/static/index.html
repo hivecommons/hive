@@ -14764,7 +14764,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Advisory', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -15373,6 +15373,7 @@ function burnAreaChart() {
         case 'Security': return renderGovSecurity(d.security || {});
         case 'Access': return renderGovSecurity(d.security || {});
         case 'Features': return renderGovFeatures(d.features || {});
+        case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Forge App': return renderGovForgeApp();
         case 'Model Gateways': return renderGovGateways();
@@ -19367,6 +19368,45 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-plan from label <span class="config-info">i<span class="config-tooltip">When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.</span></span></span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>`;
+    }
+
+    // renderGovAdvisory renders the advisory digest settings: how many findings
+    // the digest shows, and the lifecycle controls that stop findings from
+    // accumulating forever once the condition behind them is gone.
+    //
+    // Values are marked dirty under the 'advisory' section, which the generic
+    // Save dispatcher PUTs to /api/config/governor/advisory; they are prefilled
+    // from the same GET /api/config/governor payload every other tab uses.
+    function renderGovAdvisory(a) {
+      a = a || {};
+      const maxFindings = a.max_findings === undefined ? 10 : a.max_findings;
+      const stalenessDays = a.staleness_days === undefined ? 7 : a.staleness_days;
+      return `
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Controls the advisory digest posted to your repo: how much of it is shown, and when findings nobody re-reports are retired.</p>
+
+        <div style="margin:18px 0">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">What is shown</div>
+          <div class="config-field">
+            <label>Max findings shown <span class="config-info">i<span class="config-tooltip">The digest renders this many findings, ranked by severity then recency across all agents. The remainder is counted in a note, never dropped silently. To render every finding, turn on "Show all findings" below.</span></span></label>
+            <input type="number" min="1" step="1" value="${maxFindings}" onchange="markDirty('advisory','max_findings',Number(this.value))">
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${a.show_all ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="show_all"></div>
+            <span class="config-toggle-label">Show all findings <span style="color:var(--muted);font-weight:400">— override the max and show everything</span></span>
+          </div>
+        </div>
+
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Keeping findings current</div>
+          <div class="config-field">
+            <label>Staleness window (days) <span class="config-info">i<span class="config-tooltip">Agents re-report a finding for as long as its condition holds. A finding no agent has re-reported within this many days is auto-closed and leaves the digest.</span></span></label>
+            <input type="number" min="1" step="1" value="${stalenessDays}" onchange="markDirty('advisory','staleness_days',Number(this.value))">
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${a.pr_autoclose === false ? '' : 'on'}" data-action="toggleConfigSwitch" data-section="advisory" data-key="pr_autoclose"></div>
+            <span class="config-toggle-label">Close findings fixed by a merged PR <span style="color:var(--muted);font-weight:400">— match merged PR titles against open findings</span></span>
+          </div>
         </div>`;
     }
 

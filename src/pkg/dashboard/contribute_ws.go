@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/kubestellar/hive/pkg/advisory"
 	"github.com/kubestellar/hive/pkg/config"
 	ghpkg "github.com/kubestellar/hive/pkg/github"
 )
@@ -1368,15 +1369,23 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 // user-driven event, the relay can re-report on a later completion, and a
 // blocking retry would hold the hub read loop.
 func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsername string) bool {
+	return h.verifyReportedPRDetail(assignedRepo, prURL, contributorUsername).Verified
+}
+
+// verifyReportedPRDetail is verifyReportedPR's full result. Callers that need
+// more than the trust verdict — notably "was this PR actually MERGED, and what
+// was its title" — use this; everything about the verification itself is
+// identical, so the contract documented on verifyReportedPR holds unchanged.
+func (h *ContributeWSHub) verifyReportedPRDetail(assignedRepo, prURL, contributorUsername string) ghpkg.PRVerification {
 	if prURL == "" {
-		return false
+		return ghpkg.PRVerification{Reason: "no PR URL reported"}
 	}
 	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
 		// No GitHub client (hive booted without credentials, or a bare test hub):
 		// we cannot verify, so we must not grant trust. Degrade to unverified.
 		h.logger.Warn("[contribute-ws] PR verification skipped: no github client",
 			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername)
-		return false
+		return ghpkg.PRVerification{Reason: "no github client configured"}
 	}
 	ctx := h.server.deps.Ctx
 	if ctx == nil {
@@ -1386,8 +1395,8 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 	if res.Verified {
 		h.logger.Info("[contribute-ws] reported PR verified",
 			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername,
-			"author", res.Author, "base_repo", res.BaseRepo)
-		return true
+			"author", res.Author, "base_repo", res.BaseRepo, "merged", res.Merged)
+		return res
 	}
 	// Distinguish a clean negative from an API error only in the log; both
 	// downgrade to unverified.
@@ -1396,7 +1405,31 @@ func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsern
 		logArgs = append(logArgs, "error", res.Err.Error())
 	}
 	h.logger.Warn("[contribute-ws] reported PR NOT verified — treating completion as no-PR", logArgs...)
-	return false
+	return res
+}
+
+// closeAdvisoryForMergedPR retires open advisory findings that a just-verified
+// PR addresses, matching on title similarity (see ClosePRLinkedAdvisoryBeads).
+//
+// Gated by governor.advisory.pr_autoclose (default on) so an operator who does
+// not want title-based closing can turn it off. Entirely best-effort: it never
+// affects the completion outcome, and a finding closed in error comes straight
+// back the next time an agent files it.
+func (h *ContributeWSHub) closeAdvisoryForMergedPR(prTitle string) {
+	if prTitle == "" || h.server == nil || h.server.deps == nil {
+		return
+	}
+	deps := h.server.deps
+	if len(deps.BeadStores) == 0 {
+		return
+	}
+	if deps.Config != nil && !deps.Config.Governor.Advisory.PRAutoCloseEnabled() {
+		return
+	}
+	if closed := advisory.ClosePRLinkedAdvisoryBeads(deps.BeadStores, prTitle); len(closed) > 0 {
+		h.logger.Info("[contribute-ws] closed advisory findings addressed by merged PR",
+			"pr_title", prTitle, "count", len(closed), "titles", strings.Join(closed, "; "))
+	}
 }
 
 // prAttributionReconcileTimeout bounds the detached reconcile. Two GitHub round
@@ -3046,7 +3079,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						h.revokeLease(identityOf(contributor), completedTask.TaskID)
 					}
 					verifiedPR := ""
-					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
+					var prDetail ghpkg.PRVerification
+					if completedTask != nil {
+						prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername)
+					}
+					if prDetail.Verified {
 						verifiedPR = msg.PRURL
 						// Off the read loop, deliberately. This is cosmetic
 						// best-effort work that gates NOTHING — unlike
@@ -3059,6 +3096,17 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						// push a perfectly healthy contributor to `Stale` in the
 						// fleet view for the sake of a PR-body edit.
 						go h.reconcilePRAttribution(msg.PRURL, contributor)
+						// A MERGED fix retires the finding it addresses, so the
+						// digest stops carrying work that is already done. Gated
+						// on prDetail.Merged, not on verification alone: a PR
+						// that merely exists is a fix in review, and closing
+						// findings on it would retire them before anything
+						// landed. The PR's OWN title is matched — the
+						// assignment's issue title would match the finding it
+						// was minted from on the mere existence of a PR.
+						if prDetail.Merged {
+							h.closeAdvisoryForMergedPR(prDetail.Title)
+						}
 					}
 					// #3987: normalize the completion's verdict. A verified PR always
 					// wins (shipped); with none, only an explicit no_work_needed is

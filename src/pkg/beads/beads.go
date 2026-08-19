@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,7 +94,14 @@ type Bead struct {
 	CreatedAt   flexTime               `json:"created_at"`
 	UpdatedAt   flexTime               `json:"updated_at"`
 	ClosedAt    *flexTime              `json:"closed_at,omitempty"`
-	DependsOn   []string               `json:"depends_on,omitempty"`
+	// LastSeenAt is when this bead's underlying condition was last CONFIRMED
+	// to still hold — set by Upsert every time an agent re-files the same
+	// finding. It is deliberately distinct from UpdatedAt, which any edit
+	// touches: staleness pruning needs "nobody has re-reported this", not
+	// "nothing has written to this". nil means the bead predates Upsert and is
+	// never pruned for staleness.
+	LastSeenAt *flexTime `json:"last_seen_at,omitempty"`
+	DependsOn  []string  `json:"depends_on,omitempty"`
 }
 
 // Meta returns a metadata value as a string, or "" if missing/non-string.
@@ -203,6 +211,105 @@ func (s *Store) Create(title string, beadType BeadType, priority Priority, actor
 	s.beads[b.ID] = b
 	s.evictOldClosed()
 	return b, s.persist(b)
+}
+
+// upsertTitleKey collapses a title to a match key for Upsert: lowercase,
+// letters only, digits and punctuation dropped. Agents re-file a persistent
+// finding with cosmetic drift ("run #3279" -> "run #3291"), and matching on the
+// exact string would create a fresh bead for every re-report — which is how
+// advisory beads accumulated forever. Nothing semantic is folded, so two
+// findings that differ in WORDS never collide.
+func upsertTitleKey(title string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(title) {
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return strings.TrimSpace(strings.ToLower(title))
+	}
+	return b.String()
+}
+
+// Upsert records a finding without duplicating it: if an OPEN bead of the same
+// type already carries an equivalent title, its LastSeenAt is refreshed (and
+// its priority raised if this report is more severe) and that bead is returned;
+// otherwise a new bead is created with LastSeenAt set.
+//
+// This is what lets advisory agents re-file the same finding every cycle: the
+// re-report is the signal that the condition still holds, and it is exactly
+// that signal PruneStaleAdvisoryBeads uses to retire findings nobody reports
+// anymore. Closed/done beads never match, so a condition that recurs after
+// being resolved opens a fresh bead.
+func (s *Store) Upsert(title string, beadType BeadType, priority Priority, actor string, externalRef string) (*Bead, error) {
+	if !validBeadTypes[beadType] {
+		return nil, fmt.Errorf("invalid bead type %q", beadType)
+	}
+	key := upsertTitleKey(title)
+
+	s.mu.RLock()
+	var match *Bead
+	for _, b := range s.beads {
+		if b.Type != beadType {
+			continue
+		}
+		if b.Status == StatusClosed || b.Status == StatusDone {
+			continue
+		}
+		if upsertTitleKey(b.Title) != key {
+			continue
+		}
+		match = b
+		break
+	}
+	s.mu.RUnlock()
+
+	if match != nil {
+		if err := s.Update(match.ID, func(b *Bead) {
+			now := flexTime{time.Now().UTC()}
+			b.LastSeenAt = &now
+			// Priority is an ORDER: Critical is 0, Minor is 4. A more severe
+			// re-report must be able to raise the bead, never lower it.
+			if priority < b.Priority {
+				b.Priority = priority
+			}
+		}); err != nil {
+			return nil, err
+		}
+		return s.Get(match.ID)
+	}
+
+	created, err := s.Create(title, beadType, priority, actor, externalRef)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.SetLastSeenAt(created.ID, time.Now()); err != nil {
+		return nil, err
+	}
+	return s.Get(created.ID)
+}
+
+// SetLastSeenAt stamps when a bead's condition was last confirmed to hold.
+// Upsert does this on every re-report; this is the explicit form for callers
+// that already hold a bead ID (and the only way to set the stamp to a time
+// other than now, which staleness tests need). flexTime stays unexported, so
+// this is also the package's sole entry point for writing the field.
+func (s *Store) SetLastSeenAt(id string, t time.Time) error {
+	return s.Update(id, func(b *Bead) {
+		ft := flexTime{t.UTC()}
+		b.LastSeenAt = &ft
+	})
+}
+
+// LastSeen returns when the bead's condition was last confirmed, and whether it
+// has ever been stamped. Callers outside the package cannot read the unexported
+// flexTime, so this is how they ask.
+func (b *Bead) LastSeen() (time.Time, bool) {
+	if b == nil || b.LastSeenAt == nil {
+		return time.Time{}, false
+	}
+	return b.LastSeenAt.Time, true
 }
 
 func (s *Store) evictOldClosed() {

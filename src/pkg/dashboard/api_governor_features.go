@@ -203,3 +203,103 @@ func firstStringPtr(primary, fallback *string) *string {
 	}
 	return fallback
 }
+
+// Bounds for the advisory settings the dashboard may set.
+//
+// MaxFindings has a floor of 1: 0 is the UNSET sentinel that config defaulting
+// resolves back to 10, so accepting it here would silently discard the
+// operator's edit on the next reload. Rendering everything is ShowAll's job.
+// StalenessDays has a floor of one day because a sub-day window would close
+// findings between eval cycles, before the agent that reports them has had a
+// chance to run again.
+const (
+	minAdvisoryMaxFindings   = 1
+	minAdvisoryStalenessDays = 1
+)
+
+// handleGovernorAdvisoryGet returns the advisory digest settings so the Governor
+// dialog can prefill its controls.
+//
+// OWNER-ONLY, matching the write side and the rest of the governor-config
+// surface: these settings decide what the hive reports to repo owners, and
+// lowering max_findings or shortening the staleness window is a way to make real
+// findings disappear from the digest.
+func (s *Server) handleGovernorAdvisoryGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, advisorySectionResponse(s.deps.Config))
+}
+
+// handleGovernorAdvisoryPut updates the advisory digest settings. Every field is
+// a pointer, so an absent key leaves that setting untouched — the same "only
+// what you send is changed" contract the other governor-config writers use.
+func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		MaxFindings   *int  `json:"max_findings"`
+		ShowAll       *bool `json:"show_all"`
+		StalenessDays *int  `json:"staleness_days"`
+		PRAutoClose   *bool `json:"pr_autoclose"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// --- validate before mutating anything ---
+	if body.MaxFindings != nil && *body.MaxFindings < minAdvisoryMaxFindings {
+		jsonError(w, "max_findings must be 1 or greater — use show_all to render every finding", http.StatusBadRequest)
+		return
+	}
+	if body.StalenessDays != nil && *body.StalenessDays < minAdvisoryStalenessDays {
+		jsonError(w, "staleness_days must be 1 or greater", http.StatusBadRequest)
+		return
+	}
+
+	// --- apply ---
+	cfg := s.deps.Config
+	if body.MaxFindings != nil {
+		cfg.Governor.Advisory.MaxFindings = *body.MaxFindings
+	}
+	if body.ShowAll != nil {
+		cfg.Governor.Advisory.ShowAll = *body.ShowAll
+	}
+	if body.StalenessDays != nil {
+		cfg.Governor.Advisory.StalenessDays = *body.StalenessDays
+	}
+	if body.PRAutoClose != nil {
+		v := *body.PRAutoClose
+		cfg.Governor.Advisory.PRAutoClose = &v
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after advisory update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_advisory", auditDetail("section", "advisory"), "")
+	s.refreshAndPersist()
+	jsonResponse(w, advisorySectionResponse(cfg))
+}
+
+// advisorySectionResponse renders AdvisoryConfig for the dashboard, resolving
+// pr_autoclose's tri-state to the boolean the hive actually acts on so the UI
+// never has to know the default.
+func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
+	a := cfg.Governor.Advisory
+	return map[string]interface{}{
+		"max_findings":   a.MaxFindings,
+		"show_all":       a.ShowAll,
+		"staleness_days": a.StalenessDays,
+		"pr_autoclose":   a.PRAutoCloseEnabled(),
+	}
+}

@@ -129,6 +129,11 @@ type Server struct {
 	// carries key material.
 	advisoryLastPostedAt time.Time
 	advisoryLastFindings int
+	// advisoryLastOverflow is how many findings the top-N cap held BACK from the
+	// digest that was last posted (0 when nothing was capped). It rides to the
+	// hub alongside the finding count so My Hives can say "12 findings (top 10)"
+	// rather than implying the ten shown are all there are.
+	advisoryLastOverflow int
 	advisoryLastError    string
 
 	// decomposeKickerOverride is a test-only seam for the Phase 4 plan-from-issue
@@ -2468,6 +2473,24 @@ func (s *Server) RecordAdvisoryPost(findings int) {
 	s.advisoryLastPostedAt = time.Now()
 	s.advisoryLastFindings = findings
 	s.advisoryLastError = ""
+}
+
+// RecordAdvisoryOverflow records how many findings the top-N cap withheld from
+// the digest just posted. Kept separate from RecordAdvisoryPost so the
+// long-standing "a post happened, with this many findings" contract (and every
+// caller of it) is untouched; a hive that never caps simply reports 0.
+func (s *Server) RecordAdvisoryOverflow(n int) {
+	s.advisoryMu.Lock()
+	defer s.advisoryMu.Unlock()
+	s.advisoryLastOverflow = n
+}
+
+// AdvisoryCounts returns the finding count that went out in the last posted
+// digest and how many further findings the cap withheld.
+func (s *Server) AdvisoryCounts() (findings, overflow int) {
+	s.advisoryMu.RLock()
+	defer s.advisoryMu.RUnlock()
+	return s.advisoryLastFindings, s.advisoryLastOverflow
 }
 
 // RecordAdvisoryError records that a digest post ATTEMPT failed, with a

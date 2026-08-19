@@ -138,6 +138,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
+	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
+	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
 	// Backup encryption key: presence-only status, set, and clear. The key
 	// value is never returned by any of these (#4129).
@@ -4115,6 +4117,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
 		"classifier": classifierSectionResponse(),
 		"features":   featuresSectionResponse(cfg),
+		"advisory":   advisorySectionResponse(cfg),
 		"security":   securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{
 			// Effective value (default ON when unset) — the UI renders the

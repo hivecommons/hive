@@ -977,6 +977,46 @@ type GovernorConfig struct {
 	// See EffectiveThreshold for the resolution rules and why linear is the
 	// default.
 	ThresholdScaling string `yaml:"threshold_scaling,omitempty" json:"threshold_scaling,omitempty"`
+
+	// Advisory tunes the advisory digest experience: how many findings the
+	// digest shows, and how long a finding may go un-reconfirmed before the
+	// hive retires it. See AdvisoryConfig.
+	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
+}
+
+// AdvisoryConfig controls the advisory digest's size and the lifecycle of the
+// beads behind it.
+//
+// Two operator complaints motivate it: advisory beads never closed once filed,
+// so healed findings accumulated in the digest forever; and every finding was
+// rendered, so a repo owner opening the digest met dozens of items with no
+// indication of which few mattered.
+type AdvisoryConfig struct {
+	// MaxFindings caps how many findings the digest renders, chosen by severity
+	// then recency across all agents.
+	//
+	// 0 means UNSET and resolves to defaultAdvisoryMaxFindings on load — a
+	// plain int cannot tell "the operator asked for zero" from "the key is
+	// absent", and defaulting is the behavior an untouched hive must get. The
+	// way to lift the cap is therefore ShowAll, not max_findings: 0, which
+	// would silently revert to 10 on the next config reload.
+	MaxFindings int `yaml:"max_findings" json:"max_findings"`
+	// ShowAll bypasses MaxFindings entirely — the opt-in for owners who want
+	// the full list, and the ONLY supported way to render an uncapped digest.
+	ShowAll bool `yaml:"show_all" json:"show_all"`
+	// StalenessDays is how long an open advisory bead may go without being
+	// re-reported before the hive auto-closes it. Default
+	// defaultAdvisoryStalenessDays.
+	StalenessDays int `yaml:"staleness_days" json:"staleness_days"`
+	// PRAutoClose retires an advisory finding when a merged PR's title is
+	// close enough to the finding's title. *bool so absent is distinct from an
+	// explicit false; default true.
+	PRAutoClose *bool `yaml:"pr_autoclose,omitempty" json:"pr_autoclose,omitempty"`
+}
+
+// PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
+func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
+	return a.PRAutoClose == nil || *a.PRAutoClose
 }
 
 // Default governor mode thresholds, in queue items (actionable issues + open
@@ -3550,6 +3590,15 @@ const (
 	defaultLogMaxAgeDays          = 7
 	defaultLogMaxBackups          = 10
 	defaultLogLevel               = "info"
+
+	// defaultAdvisoryMaxFindings is the digest's default top-N cap. Ten fits
+	// in a screenful, which is the point: the digest is a "what should I look
+	// at next" list, not an inventory.
+	defaultAdvisoryMaxFindings = 10
+	// defaultAdvisoryStalenessDays is how long an advisory bead survives
+	// without being re-reported. Advisory agents re-scan far more often than
+	// weekly, so a finding untouched for a week is one no agent still sees.
+	defaultAdvisoryStalenessDays = 7
 )
 
 func (c *Config) applyDefaults() {
@@ -3784,6 +3833,16 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.Logging.Level == "" {
 		c.Governor.Logging.Level = defaultLogLevel
+	}
+	if c.Governor.Advisory.MaxFindings == 0 {
+		c.Governor.Advisory.MaxFindings = defaultAdvisoryMaxFindings
+	}
+	if c.Governor.Advisory.StalenessDays == 0 {
+		c.Governor.Advisory.StalenessDays = defaultAdvisoryStalenessDays
+	}
+	if c.Governor.Advisory.PRAutoClose == nil {
+		on := true
+		c.Governor.Advisory.PRAutoClose = &on
 	}
 
 	if c.Knowledge.Enabled {

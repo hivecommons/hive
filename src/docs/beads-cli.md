@@ -29,6 +29,8 @@ bd update bead-123 --set-metadata reviewer=guide
 bd close bead-123
 ```
 
+`--type advisory` is the one type that **upserts**: re-creating an advisory bead whose title matches an open one refreshes that bead's last-seen stamp (and raises its priority if the new report is more severe) instead of adding a duplicate. That re-report is what keeps the finding alive — an advisory bead nobody re-files within `governor.advisory.staleness_days` is auto-closed. See [Advisory digest](advisory.md).
+
 ## Knowledge commands
 
 `bd kb` talks to the dashboard API (`BD_DASHBOARD_URL`, default `http://localhost:3001`) rather than the local bead store.
