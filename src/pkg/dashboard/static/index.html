@@ -3011,7 +3011,7 @@
                check, so hiding this is UX, not the security boundary. -->
           <button type="button" id="oc-gh-menu-backup" onclick="downloadHiveBackup()" style="display:none;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem;line-height:1.35">
             Back up this hive
-            <span style="display:block;font-size:0.68rem;color:var(--muted)">Encrypted · includes beads</span>
+            <span style="display:block;font-size:0.68rem;color:var(--muted)">Encrypted · includes beads · needs a backup key (Governor → Security)</span>
           </button>
           <a href="/api/docs" target="_blank" style="display:block;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">API Docs ↗</a>
           <button onclick="ghLogout()" style="display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem">Sign out</button>
@@ -19104,6 +19104,12 @@ function burnAreaChart() {
         </div>
         <p style="font-size:0.72rem;color:var(--muted);margin:6px 0 0">Per-agent opt-in lives on each agent's General tab. Current effective posture: ${Number(sec.sandboxedAgents || 0)}/${Number(sec.totalAgents || 0)} agents sandboxed.</p>`;
 
+      /* Backup encryption key: painted asynchronously from presence-only
+         status so the key value never travels to the browser. */
+      loadBackupKeyStatus();
+      const backupKey = `
+        <div id="gov-backup-key-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
+
       return `
         ${securityModelDatalistHtml()}${agentList}
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:10px">Security posture and access controls saved through the dashboard overlay.</p>
@@ -19112,7 +19118,176 @@ function burnAreaChart() {
         ${renderSecuritySection('Access', renderGovAccess())}
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
-        ${renderSecuritySection('Isolation', isolation)}`;
+        ${renderSecuritySection('Isolation', isolation)}
+        ${renderSecuritySection('Backup', backupKey)}`;
+    }
+
+    /* loadBackupKeyStatus fetches presence-only backup-key status and paints
+       the Backup panel. The response carries `configured`/`usable` and a safe
+       `source` string ("file:<path>" / "env:<NAME>") — never the key value.
+       The DOM target is resolved AFTER the await, because the caller assigns
+       the tab HTML only once this function has already started. */
+    async function loadBackupKeyStatus() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/governor/backup');
+        host = document.getElementById('gov-backup-key-host');
+        if (!host) return;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderBackupKeyPanel(host, d);
+      } catch (e) {
+        host = host || document.getElementById('gov-backup-key-host');
+        if (host) host.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Failed to load backup key status: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    /* renderBackupKeyPanel paints the backup credential card. Only presence,
+       the safe source label and the operator-chosen key NAME reach this
+       function; the key value never does. */
+    function renderBackupKeyPanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      const configured = d.configured === true;
+      const usable = d.usable === true;
+      const source = d.source || '';
+      const nameLabel = configured && d.keyName
+        ? ' <strong style="color:var(--fg)">' + esc(d.keyName) + '</strong>'
+        : '';
+      let statusLine;
+      if (configured && usable) {
+        statusLine = '<span style="color:var(--green)">✓ Key set — backups are enabled</span>' + nameLabel +
+          (source ? ' <span style="color:var(--muted)">(' + esc(source) + ')</span>' : '');
+      } else if (configured) {
+        statusLine = '<span style="color:var(--red)">✗ Key is unusable — backups are refused.</span>' +
+          (d.reason ? ' <span style="color:var(--muted)">' + esc(d.reason) + '</span>' : '');
+      } else {
+        statusLine = '<span style="color:var(--muted)">No key set — backups are refused, because an unencrypted backup would expose this hive\u2019s GitHub App private keys.</span>';
+      }
+      host.innerHTML = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <span style="font-weight:600;font-size:0.9rem">Backup encryption key</span>
+            <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid #4589ff;color:#4589ff">AES-256-GCM</span>
+            <span style="flex:1"></span>
+            ${configured ? '<button data-action="backupKeyClear" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Clear key</button>' : ''}
+            <button data-action="backupKeySet" style="padding:4px 12px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.74rem;font-weight:600">${configured ? 'Replace key' : 'Set key'}</button>
+          </div>
+          <div style="font-size:0.78rem;margin-bottom:8px">${statusLine}</div>
+          <div style="font-size:0.74rem;color:var(--muted);line-height:1.5">
+            Sets the key that seals <b>Back up this hive</b> archives. Setting it here needs no
+            deployment or cluster access, so hosted hive owners can turn on their own backups.
+            The value is written to a 0600 file on this hive and never appears in hive.yaml,
+            logs, or any API response — and it is <b>not inside the archive</b>, so escrow it
+            somewhere safe: without it a backup cannot be restored. Clearing it disables
+            backups again rather than producing an unencrypted one.
+          </div>
+          <div id="backup-key-inline-status" style="font-size:0.74rem;min-height:18px;margin-top:8px"></div>
+        </div>`;
+
+      const setBtn = host.querySelector('[data-action="backupKeySet"]');
+      if (setBtn) setBtn.addEventListener('click', () => openBackupKeyDialog(configured));
+      const clearBtn = host.querySelector('[data-action="backupKeyClear"]');
+      if (clearBtn) clearBtn.addEventListener('click', clearBackupKey);
+    }
+
+    /* openBackupKeyDialog collects a 64-character hex key. The field is a
+       password input and its value is sent once, over the same-origin PUT —
+       it is never read back, so a replace is a blind overwrite by design. */
+    function openBackupKeyDialog(configured) {
+      let overlay = document.getElementById('backup-key-overlay');
+      if (overlay) overlay.remove();
+      overlay = document.createElement('div');
+      overlay.id = 'backup-key-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
+      overlay.innerHTML =
+        '<div class="gh-auth-modal" style="max-width:560px;text-align:left">' +
+        '<h3 style="margin:0 0 8px">' + (configured ? 'Replace' : 'Set') + ' backup encryption key</h3>' +
+        '<p style="color:var(--muted);font-size:0.8rem;line-height:1.5;margin:0 0 8px">' +
+        'Generate one with <code>openssl rand -hex 32</code> and store it outside this hive. ' +
+        'Backups are encrypted with it and the key is not included in the archive, so a lost key means an unrestorable backup.' +
+        (configured ? ' Replacing the key does not re-encrypt existing archives — keep the old key to restore them.' : '') +
+        '</p>' +
+        '<label for="backup-key-name-input" style="display:block;font-size:0.78rem;color:var(--muted);margin:8px 0 4px">Key label (optional, e.g. "escrowed in 1Password")</label>' +
+        '<input id="backup-key-name-input" type="text" autocomplete="off" spellcheck="false" maxlength="128" ' +
+        'style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">' +
+        '<label for="backup-key-input" style="display:block;font-size:0.78rem;color:var(--muted);margin:10px 0 4px">Encryption key (64 hex characters)</label>' +
+        '<input id="backup-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="64 hex characters" ' +
+        'style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-family:var(--font-mono)">' +
+        '<div id="backup-key-status" style="color:var(--muted);font-size:0.8rem;min-height:20px;margin:6px 0"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button id="backup-key-cancel" class="gh-cancel" style="margin-top:0">Cancel</button>' +
+        '<button id="backup-key-save" style="background:#0f62fe;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer">Save key</button>' +
+        '</div></div>';
+      document.body.appendChild(overlay);
+      overlay.style.display = 'flex';
+
+      const input = document.getElementById('backup-key-input');
+      const statusEl = document.getElementById('backup-key-status');
+      const setStatus = (msg, color) => {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      };
+      if (input) input.focus();
+
+      const close = () => { overlay.remove(); };
+      const cancelBtn = document.getElementById('backup-key-cancel');
+      if (cancelBtn) cancelBtn.addEventListener('click', close);
+
+      const saveBtn = document.getElementById('backup-key-save');
+      if (saveBtn) saveBtn.addEventListener('click', async () => {
+        const key = (input && input.value || '').trim();
+        if (!key) { setStatus('Paste a 64-character hex key.', 'var(--red)'); return; }
+        if (!/^[0-9a-fA-F]{64}$/.test(key)) {
+          setStatus('A backup key is exactly 64 hex characters (openssl rand -hex 32).', 'var(--red)');
+          return;
+        }
+        const nameInput = document.getElementById('backup-key-name-input');
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const resp = await fetch('/api/config/governor/backup', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ encryptionKey: key, keyName: (nameInput && nameInput.value || '').trim() })
+          });
+          const d = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(d && d.error ? d.error : 'HTTP ' + resp.status);
+          if (input) input.value = '';
+          close();
+          showToast('Backup encryption key saved — backups are enabled for this hive', 'success');
+          refreshBackupKeyPanel();
+        } catch (e) {
+          setStatus('Save failed: ' + e.message, 'var(--red)');
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+
+    /* clearBackupKey removes the stored key. Fail-closed: after this, backups
+       are refused again (unless the deployment still supplies HIVE_BACKUP_KEY). */
+    async function clearBackupKey() {
+      if (!confirm('Clear the backup encryption key?\n\nBackups will be refused until a new key is set, and archives sealed with the old key still need that old key to restore.')) return;
+      const statusEl = document.getElementById('backup-key-inline-status');
+      const setStatus = (msg, color) => {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      };
+      try {
+        const resp = await fetch('/api/config/governor/backup', { method: 'DELETE' });
+        const d = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(d && d.error ? d.error : 'HTTP ' + resp.status);
+        setStatus('');
+        showToast('Backup encryption key cleared — backups are now refused', 'success');
+        refreshBackupKeyPanel();
+      } catch (e) {
+        setStatus('Clear failed: ' + e.message, 'var(--red)');
+      }
+    }
+
+    /* refreshBackupKeyPanel repaints the Backup panel after a set/clear, but
+       only if the Security tab is still mounted. */
+    function refreshBackupKeyPanel() {
+      if (document.getElementById('gov-backup-key-host')) loadBackupKeyStatus();
     }
 
     // renderGovFeatures renders operational features that are not security posture
@@ -20131,9 +20306,12 @@ function burnAreaChart() {
     /* Owner-only self-service backup.
        POSTs (not a plain link) because the response body carries GitHub App
        private keys: keeping it fetch-only keeps it off the cross-origin
-       navigation path. The archive arrives already encrypted with the hive's
-       HIVE_BACKUP_KEY — the browser never sees that key, and it is NOT in the
-       file, so the owner must have it escrowed to restore. */
+       navigation path. The archive arrives already encrypted with this hive's
+       backup encryption key — set in Governor Config → Security → Backup, or
+       supplied by the deployment as HIVE_BACKUP_KEY. The browser never sees
+       that key, and it is NOT in the file, so the owner must have it escrowed
+       to restore. With no key configured the server refuses (412) rather than
+       producing an unencrypted archive. */
     async function downloadHiveBackup() {
       const btn = document.getElementById('oc-gh-menu-backup');
       if (btn && btn.dataset.busy === '1') return;
@@ -20151,6 +20329,13 @@ function burnAreaChart() {
           let msg = 'Backup failed (' + resp.status + ')';
           try { const d = await resp.json(); if (d && d.error) msg = d.error; } catch (e) { /* non-JSON body */ }
           showToast(msg, 'error');
+          /* 412 is the fail-closed refusal: no encryption key is configured.
+             Take the owner straight to the setting they can change themselves
+             instead of leaving them with an error about a deployment they may
+             have no access to. */
+          if (resp.status === 412 && typeof welcomeShowConfigTab === 'function') {
+            welcomeShowConfigTab('Security');
+          }
           return;
         }
         const blob = await resp.blob();
@@ -20171,7 +20356,8 @@ function burnAreaChart() {
         const files = resp.headers.get('X-Hive-Backup-Files') || '0';
         showToast(
           'Encrypted backup downloaded — ' + files + ' files, ' + beadDirs +
-          ' bead ledgers. Decrypt with this hive’s HIVE_BACKUP_KEY; the key is not in the file.',
+          ' bead ledgers. Decrypt with this hive’s backup encryption key ' +
+          '(Governor Config → Security → Backup); the key is not in the file.',
           'success');
       } catch (e) {
         showToast('Backup failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -21033,6 +21219,7 @@ function burnAreaChart() {
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
       { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
+      { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Governor Config → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', onclick: "welcomeShowConfigTab('Security')" },
       { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Governor Config → General).', onclick: `welcomeShowConfigTab('${TRAJECTORY_CONFIG_TAB}')` },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];

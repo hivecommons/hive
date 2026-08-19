@@ -944,7 +944,12 @@ type GovernorConfig struct {
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
-	Bob        BobConfig        `yaml:"bob"`
+	Bob BobConfig `yaml:"bob"`
+	// Backup holds the location of the self-service backup encryption key.
+	// It records a PATH only, never the key value: hosted spoke owners have no
+	// deployment-env access, so the key has to be settable through this
+	// (governor) config surface rather than only through HIVE_BACKUP_KEY.
+	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Trajectory TrajectoryConfig `yaml:"trajectory"`
 	Replan     ReplanConfig     `yaml:"replan"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints

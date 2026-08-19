@@ -63,7 +63,33 @@ Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, e
 
 ## Owner-triggered spoke backup
 
-`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It is encrypted with the same `HIVE_BACKUP_KEY` mechanism and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`; it skips bulk/derived data and live dashboard sessions.
+`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It uses the same AES-256-GCM sealing as the hub path and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`; it skips bulk/derived data and live dashboard sessions.
+
+### Setting the backup encryption key (hosted flow)
+
+A hive owner sets the key from the dashboard: **Governor Config → Security → Backup → Set key**. This is the supported path for hosted hives, whose owners have no deployment-env or cluster access.
+
+```bash
+openssl rand -hex 32   # paste the 64-hex-character result into the dialog
+```
+
+What happens on save:
+
+- the value is written to `/data/secrets/backup_encryption_key`, mode `0600`;
+- `hive.yaml` records only the **path** (`governor.backup.key_file`) and the optional label (`governor.backup.key_name`) — never the value;
+- the key never appears in an API response, in a log line, or in the archive itself.
+
+Resolution order at backup time is governor config first, then the environment:
+
+1. `governor.backup.key_file` (set by the dialog above);
+2. `/data/secrets/backup_encryption_key` (the PVC default);
+3. `/secrets/backup_encryption_key` (an admin-managed Kubernetes Secret mount);
+4. `governor.backup.key_env`, if named;
+5. `HIVE_BACKUP_KEY` on the deployment — the original path, still supported.
+
+**Security note.** There is no default key and no plaintext fallback: with no key from any source, `GET /api/backup/status` reports `available: false` and `POST /api/backup` returns `412` — a backup is refused rather than written unencrypted, because the archive carries this hive's GitHub App private keys. Clearing the key (**Clear key** in the same panel) restores that refusal.
+
+**Escrow the key.** It is not stored inside the archive, so a backup without its key is unrestorable. Replacing the key does not re-encrypt existing archives; keep the old key to restore them.
 
 ## Docker Compose
 
@@ -101,7 +127,13 @@ The `pkg/spokebackup` path works for a Compose spoke. It reads the data director
 - `GET /api/backup/status` reports whether a backup can run.
 - `POST /api/backup` builds and streams an encrypted archive.
 
-Both endpoints are owner-only. They require the `X-Hive-Role: owner` header. They require `HIVE_BACKUP_KEY` in the container environment, a 64-character hex AES-256 key. The shipped compose files do not pass `HIVE_BACKUP_KEY`. Add it to `.env` and add `HIVE_BACKUP_KEY=${HIVE_BACKUP_KEY}` to the `environment` block of the `hive` service.
+Both endpoints are owner-only. They require the `X-Hive-Role: owner` header. They require a 64-character hex AES-256 key from either source: set it from **Governor Config → Security → Backup** (stored on the `/data` volume, so it survives `docker compose up` cycles), or pass `HIVE_BACKUP_KEY` in the container environment. The shipped compose files do not pass `HIVE_BACKUP_KEY`; to use the env path, add it to `.env` and add `HIVE_BACKUP_KEY=${HIVE_BACKUP_KEY}` to the `environment` block of the `hive` service.
+
+Managing the key from the dashboard is also owner-only:
+
+- `GET /api/config/governor/backup` — presence, usability, and a safe source label (`file:<path>` / `env:<NAME>`); never the value.
+- `PUT /api/config/governor/backup` — `{"encryptionKey":"<64 hex>","keyName":"escrowed in 1Password"}`.
+- `DELETE /api/config/governor/backup` — removes the stored key; backups are refused again.
 
 The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, and `beads/`. It is encrypted and sized for browser download, not nightly fleet DR.
 
@@ -135,7 +167,7 @@ To restore:
 
 4. Run `docker compose up -d`.
 
-The entrypoint restores the runtime config at boot. Escrow `HIVE_BACKUP_KEY` outside the host.
+The entrypoint restores the runtime config at boot. Escrow the backup encryption key outside the host — the dashboard-set key lives on the `hive-data` volume, so losing the volume loses both the backups' key and the data it protects.
 
 Fixes #2986.
 Fixes #2942.

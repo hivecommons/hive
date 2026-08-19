@@ -90,6 +90,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/governor/hub` | Dashboard auth/session | Governor Hub | `pkg/dashboard/api.go:130` |
 | `PUT` | `/api/config/governor/litellm` | Dashboard auth/session | Governor Lite LLM | `pkg/dashboard/api.go:131` |
 | `PUT` | `/api/config/governor/trajectory` | Dashboard auth/session | Governor Trajectory | `pkg/dashboard/api.go:132` |
+| `GET` | `/api/config/governor/backup` | Owner only | Backup Key Status (presence + safe source label; never the key value) | `pkg/dashboard/backup_key.go` |
+| `PUT` | `/api/config/governor/backup` | Owner only | Backup Key Set (64-hex AES-256 key; stored 0600, path-only in `hive.yaml`) | `pkg/dashboard/backup_key.go` |
+| `DELETE` | `/api/config/governor/backup` | Owner only | Backup Key Clear (backups are refused again) | `pkg/dashboard/backup_key.go` |
 | `GET` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Status | `pkg/dashboard/api.go:136` |
 | `PUT` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key | `pkg/dashboard/api.go:137` |
 | `DELETE` | `/api/config/governor/bob` | Dashboard auth/session | Governor Bob Key Clear | `pkg/dashboard/api.go:138` |
@@ -319,8 +322,8 @@ always resolved server-side from the validated token.
 | `POST` | `/api/presence` | Dashboard auth/session | Presence | `pkg/dashboard/api.go:48` |
 | `GET` | `/api/prompt-history` | Dashboard auth/session | Prompt History | `pkg/dashboard/api.go:49` |
 | `POST` | `/api/self-upgrade` | Dashboard auth/session | Self Upgrade | `pkg/dashboard/api.go:50` |
-| `GET` | `/api/backup/status` | Dashboard auth/session | Backup Status | `pkg/dashboard/api.go:53` |
-| `POST` | `/api/backup` | Dashboard auth/session | Backup Download | `pkg/dashboard/api.go:54` |
+| `GET` | `/api/backup/status` | Owner only | Backup Status — `available:false` with a reason when no encryption key is configured | `pkg/dashboard/api.go:53` |
+| `POST` | `/api/backup` | Owner only | Backup Download — `412` when no encryption key is configured (never an unencrypted archive) | `pkg/dashboard/api.go:54` |
 | `POST` | `/api/banner-dismissed` | Dashboard auth/session | Banner Dismissed | `pkg/dashboard/api.go:55` |
 | `GET` | `/api/history` | Dashboard auth/session | History | `pkg/dashboard/api.go:59` |
 | `GET` | `/api/timeline` | Dashboard auth/session | Timeline | `pkg/dashboard/api.go:61` |

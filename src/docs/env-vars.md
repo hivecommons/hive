@@ -84,7 +84,7 @@ This reference is generated from the v2 source, deployment manifests, and the to
 | `HIVE_HUB_SLACK_BOT_TOKEN` | No | none | Slack bot token for hub Slack notifications. |
 | `HIVE_NTFY_SERVER` | No | none | ntfy server for hub auth-audit alerts. |
 | `HIVE_NTFY_TOPIC` | No | none | ntfy topic for hub auth-audit alerts. |
-| `HIVE_BACKUP_KEY` | Yes for hub DR backups and browser spoke backups | none | 64-character hex or base64 AES-256 key. Unset makes backup creation fail. |
+| `HIVE_BACKUP_KEY` | Yes for hub DR backups; optional for spoke backups | none | 64-character hex AES-256 key. For spoke backups it is now a **fallback**: owners set the key from Governor Config → Security → Backup (`governor.backup.key_file`), which takes precedence and needs no deployment access. With no key from any source, backup creation fails rather than writing plaintext. |
 | `HIVE_BACKUP_BUCKET` | Required for OCI upload mode | none | OCI Object Storage bucket for hub backup archives. |
 | `HIVE_BACKUP_DATA_DIR` | No | `/data` | Hub data directory used by `hive-backup`. |
 | `HIVE_BACKUP_RETENTION` | No | `30` | Number of backup archives to retain. |

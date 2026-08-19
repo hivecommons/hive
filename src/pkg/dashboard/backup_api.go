@@ -23,6 +23,11 @@ import (
 // read cannot hold a dashboard connection open indefinitely.
 const backupBuildTimeout = spokebackup.BuildTimeout
 
+// backupKeyConfigPath is the dashboard location of the backup-encryption-key
+// setting, returned to the UI so an owner who cannot reach deployment env
+// still learns where to configure it.
+const backupKeyConfigPath = "governor:Security"
+
 // Owner checks below mirror handleConfigDownload and handleSelfUpgrade: an
 // empty role means no per-user identity is in play (an open/dev spoke), which
 // those handlers already treat as owner.
@@ -43,17 +48,22 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "owner access required", http.StatusForbidden)
 		return
 	}
-	_, err := hubbackup.LoadKey()
+	_, source, err := hubbackup.ResolveKeyWithSource(s.backupKeyConfig())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{
 			"available": false,
 			// The reason is operator-facing configuration state, not a secret:
-			// it names the missing environment variable, never a key value.
-			"reason": "backup encryption key is not configured on this hive",
+			// it names where to set a key, never a key value.
+			"reason": "backup encryption key is not configured on this hive — " +
+				"set one in Settings → Governor → Security → Backup encryption key",
+			// configPath lets the UI deep-link to the setting instead of
+			// telling a hosted owner to edit a deployment they cannot see.
+			"configPath": backupKeyConfigPath,
 		})
 		return
 	}
-	jsonResponse(w, map[string]interface{}{"available": true})
+	// source is the safe "file:<path>" / "env:<NAME>" label, never the key.
+	jsonResponse(w, map[string]interface{}{"available": true, "source": source})
 }
 
 // handleBackupDownload builds an encrypted backup of this spoke and streams it
@@ -73,12 +83,15 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No key means no backup. Refusing here is deliberate: the alternative is
-	// streaming GitHub App private keys to a browser in plaintext.
-	key, err := hubbackup.LoadKey()
+	// streaming GitHub App private keys to a browser in plaintext. The key is
+	// resolved from governor config first so a hosted owner can configure it
+	// without deployment-env access, with HIVE_BACKUP_KEY as the fallback.
+	key, err := hubbackup.ResolveKey(s.backupKeyConfig())
 	if err != nil {
 		jsonError(w,
 			"backup encryption key is not configured on this hive, so a backup "+
-				"would be unencrypted; refusing", http.StatusPreconditionFailed)
+				"would be unencrypted; refusing — set a key in Settings → Governor "+
+				"→ Security → Backup encryption key", http.StatusPreconditionFailed)
 		return
 	}
 

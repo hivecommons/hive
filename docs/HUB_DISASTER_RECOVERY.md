@@ -481,9 +481,15 @@ in.
 The archive contains GitHub App private keys, so it is **always** sealed with
 AES-256-GCM using the same code path as the hub backup.
 
-- The key comes from **`HIVE_BACKUP_KEY`** on the spoke, with **no default**.
-  If it is unset the endpoint returns `412 Precondition Failed` and refuses —
-  it never streams plaintext credentials to a browser.
+- The key comes from **governor config** (`governor.backup.key_file`, set by the
+  hive owner in the dashboard under **Governor Config → Security → Backup**), or
+  from **`HIVE_BACKUP_KEY`** on the spoke as a fallback. There is **no default**.
+  Governor config exists because hosted spoke owners have no deployment-env
+  access, so an env-only key made backup unavailable to them (#4129). The value
+  is written to `/data/secrets/backup_encryption_key` (mode `0600`); `hive.yaml`
+  records the path only, and the value is never returned by an API or logged.
+  If no source supplies a key the endpoint returns `412 Precondition Failed` and
+  refuses — it never streams plaintext credentials to a browser.
 - The key is **not in the archive** and is not derivable from it. An artifact
   carrying its own decryption key is not encrypted. The owner must have the key
   escrowed separately, or the backup is unreadable.
@@ -491,7 +497,9 @@ AES-256-GCM using the same code path as the hub backup.
   it cannot be pulled by a cross-origin navigation or `<img>` tag.
 
 The UI states plainly that the file is encrypted and that the key is not
-included.
+included, and a `412` refusal deep-links the owner to the Governor Config panel
+where they can set the key themselves. Clearing the key from that panel restores
+the refusal — there is no path that produces an unencrypted archive.
 
 ## Authorization
 
@@ -509,7 +517,9 @@ control. The archive shares the hub format, so the same tooling reads it.
 ```bash
 # 0. Decrypt and verify. Uses the SAME archive format as the hub backup,
 #    so hive-backup verifies and extracts it unchanged.
-export HIVE_BACKUP_KEY=<the key escrowed for THIS hive>
+export HIVE_BACKUP_KEY=<the key escrowed for THIS hive — the same value set in
+                        Governor Config → Security → Backup, if that is where
+                        it was configured>
 hive-backup verify -file hive-spoke-backup-<id>-<ts>.tar.gz.enc
 hive-backup extract -file hive-spoke-backup-<id>-<ts>.tar.gz.enc -dest ./restore
 
@@ -585,8 +595,11 @@ ownership to match the surrounding directories rather than loosening the mode.
   build refuses with no key; missing files recorded rather than silently
   dropped; hostile hive IDs cannot escape the filename.
 - Handler tests cover: `403` for `read`/`read-write`/`write`/`viewer` on both
-  endpoints, `412` with no `HIVE_BACKUP_KEY` and no download offered,
-  `no-store` caching, and an `.enc` attachment.
+  endpoints and on all three backup-key config endpoints, `412` with no key from
+  any source and no download offered, `no-store` caching, an `.enc` attachment,
+  a backup that succeeds (and decrypts) with a key set only through governor
+  config, a `412` again after the key is cleared, and no key value in any
+  response, in `hive.yaml`, or in the stored config struct.
 - Archives are extracted through `hubbackup.Extract`, proving both backups
   share one format and one restore path.
 - Spoke layout, `hive.yaml`/`hive.yaml.runtime` divergence, bead directory names

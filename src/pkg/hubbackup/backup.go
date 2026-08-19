@@ -13,9 +13,11 @@
 //
 // # Encryption
 //
-// The archive is a tar.gz sealed with AES-256-GCM. The key comes from the
-// HIVE_BACKUP_KEY environment variable and has NO default — an unset key is a
-// hard error, never a silent plaintext write.
+// The archive is a tar.gz sealed with AES-256-GCM. The key comes from governor
+// config (governor.backup.key_file, settable from the dashboard by a hosted
+// spoke owner) or, as a fallback, the HIVE_BACKUP_KEY environment variable. It
+// has NO default — an unresolvable key is a hard error, never a silent
+// plaintext write.
 //
 // HIVE_BACKUP_KEY is deliberately INDEPENDENT of /data/saas/hmac.key. hmac.key
 // is itself part of the backup payload; deriving the backup key from it would
@@ -40,13 +42,17 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/pkg/config"
 )
 
 // Environment variable names. No secret has a default value.
 const (
-	// EnvBackupKey holds the hex- or base64-encoded AES-256 key used to seal
-	// the archive. Unset is a fatal error.
-	EnvBackupKey = "HIVE_BACKUP_KEY"
+	// EnvBackupKey holds the hex-encoded AES-256 key used to seal the archive.
+	// It is the deployment-level fallback; governor.backup.key_file takes
+	// precedence so hosted owners can configure a key without env access.
+	// No key from any source is a fatal error.
+	EnvBackupKey = config.BackupKeyEnv
 
 	// EnvDataDir overrides the hub data directory (test seam).
 	EnvDataDir = "HIVE_BACKUP_DATA_DIR"
@@ -180,23 +186,52 @@ type Manifest struct {
 // LoadKey reads and validates the AES-256 backup key from the environment.
 // It returns an error when unset so callers fail loudly rather than writing
 // an unencrypted archive.
+//
+// Callers that have a hive config in hand should prefer ResolveKey, which also
+// honours the governor-config key file a hosted spoke owner can set without
+// deployment-env access (#4129). LoadKey stays strictly env-only: the hub cron
+// backup and the hive-backup CLI seal and open archives with the key an
+// operator escrowed, and a key file that happened to exist on a mounted volume
+// must never outrank it.
 func LoadKey() ([]byte, error) {
-	raw := strings.TrimSpace(os.Getenv(EnvBackupKey))
+	return ResolveKey(nil)
+}
+
+// ResolveKey validates the backup key located by cfg (governor config file
+// first, HIVE_BACKUP_KEY as the fallback). A nil cfg resolves the environment
+// only.
+//
+// Fail-closed is the whole point: every failure path returns an error and no
+// key, so a caller can never proceed to write a plaintext archive.
+func ResolveKey(cfg *config.BackupConfig) ([]byte, error) {
+	key, _, err := ResolveKeyWithSource(cfg)
+	return key, err
+}
+
+// ResolveKeyWithSource additionally reports WHERE the key came from, in the
+// safe-to-log "file:<path>" / "env:<NAME>" form. The value is never returned
+// as a string and never appears in an error message.
+func ResolveKeyWithSource(cfg *config.BackupConfig) ([]byte, string, error) {
+	raw, source := cfg.ResolveKeyWithSource()
 	if raw == "" {
-		return nil, fmt.Errorf(
-			"%s is not set: refusing to write an unencrypted backup "+
-				"(generate one with: openssl rand -hex 32)", EnvBackupKey)
+		return nil, "", fmt.Errorf(
+			"no backup encryption key is configured: refusing to write an "+
+				"unencrypted backup (set one in Settings → Governor → Security → "+
+				"Backup encryption key, or set %s on the deployment; generate one "+
+				"with: openssl rand -hex 32)", EnvBackupKey)
 	}
 	key, err := hex.DecodeString(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s must be %d hex characters (%d-byte AES-256 key): %w",
-			EnvBackupKey, aesKeySize*2, aesKeySize, err)
+		// The decode error from hex reports the offending BYTE, so it is
+		// deliberately not wrapped in: it would echo part of the key.
+		return nil, "", fmt.Errorf("backup encryption key (%s) must be %d hex characters (%d-byte AES-256 key)",
+			source, aesKeySize*2, aesKeySize)
 	}
 	if len(key) != aesKeySize {
-		return nil, fmt.Errorf("%s decoded to %d bytes, want %d (AES-256)",
-			EnvBackupKey, len(key), aesKeySize)
+		return nil, "", fmt.Errorf("backup encryption key (%s) decoded to %d bytes, want %d (AES-256)",
+			source, len(key), aesKeySize)
 	}
-	return key, nil
+	return key, source, nil
 }
 
 // Seal encrypts plaintext with AES-256-GCM, returning nonce||ciphertext.
@@ -232,7 +267,7 @@ func Open(key, data []byte) ([]byte, error) {
 	}
 	plaintext, err := gcm.Open(nil, data[:gcm.NonceSize()], data[gcm.NonceSize():], nil)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt failed (wrong %s, or archive corrupted): %w",
+		return nil, fmt.Errorf("decrypt failed (wrong backup encryption key — governor.backup.key_file or %s — or archive corrupted): %w",
 			EnvBackupKey, err)
 	}
 	return plaintext, nil

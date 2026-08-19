@@ -139,6 +139,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)
+	// Backup encryption key: presence-only status, set, and clear. The key
+	// value is never returned by any of these (#4129).
+	s.mux.HandleFunc("GET /api/config/governor/backup", s.handleBackupKeyStatus)
+	s.mux.HandleFunc("PUT /api/config/governor/backup", s.handleBackupKeySet)
+	s.mux.HandleFunc("DELETE /api/config/governor/backup", s.handleBackupKeyClear)
 	// bob API key: PUT sets/replaces, DELETE revokes. Both are non-GET, so the
 	// roleEnforcement middleware already 403s a read-only role — no separate
 	// authorization rule is needed or wanted here.

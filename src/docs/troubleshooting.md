@@ -158,3 +158,7 @@ kubectl -n hive delete pvc -l app.kubernetes.io/name=hive
 ```
 
 `/data` holds the dashboard config overlay, persisted tokens, logs, and other state; deleting it discards dashboard edits and cached credentials. Back up first if you need any of it — see [Backup & restore](backup-restore.md).
+
+### "backup encryption key is not configured on this hive, so a backup would be unencrypted; refusing"
+
+Expected, and deliberate: the archive carries this hive's GitHub App private keys, so hive refuses to build one without a key. Set one in **Governor Config → Security → Backup → Set key** (`openssl rand -hex 32`) and retry — no deployment or cluster access is needed. `HIVE_BACKUP_KEY` on the deployment still works as a fallback for self-hosted hives. Escrow the key: it is not inside the archive, so a backup without it cannot be restored.
