@@ -8388,6 +8388,8 @@ function burnAreaChart() {
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-grid">
             <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
+            <div class="cost-stat"><div class="cval" title="${cost.merged_prs ? `${fmtUSD(est.total_usd)} ÷ ${cost.merged_prs} merged PRs` : 'no merged PRs yet'}">${cost.merged_prs ? fmtUSD(est.total_usd / cost.merged_prs) : '—'}</div><div class="clabel">cost / PR — all-time total ÷ merged PRs</div></div>
+            <div class="cost-stat"><div class="cval" title="${cost.closed_issues ? `${fmtUSD(est.total_usd)} ÷ ${cost.closed_issues} closed issues` : 'no closed issues yet'}">${cost.closed_issues ? fmtUSD(est.total_usd / cost.closed_issues) : '—'}</div><div class="clabel">cost / issue — all-time total ÷ closed issues</div></div>
           </div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}

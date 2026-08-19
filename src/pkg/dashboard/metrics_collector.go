@@ -20,20 +20,23 @@ const (
 	httpTimeout            = 10 * time.Second
 	metricsCacheFile       = "/data/metrics/agent-metrics-cache.json"
 	mttrCacheFile          = "/data/metrics/issue-to-merge.json"
+	prIssueCountsCacheFile = "/data/metrics/pr-issue-counts.json"
 )
 
 type MetricsCollector struct {
-	ghClient    *ghpkg.Client
-	org         string
-	repo        string
-	badgeURL    string
-	aiAuthor    string
-	projectName string
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	metrics     map[string]any
-	mttrMu      sync.RWMutex
-	mttr        *ghpkg.MTTRResult
+	ghClient      *ghpkg.Client
+	org           string
+	repo          string
+	badgeURL      string
+	aiAuthor      string
+	projectName   string
+	logger        *slog.Logger
+	mu            sync.RWMutex
+	metrics       map[string]any
+	mttrMu        sync.RWMutex
+	mttr          *ghpkg.MTTRResult
+	prIssueMu     sync.RWMutex
+	prIssueCounts *ghpkg.PRIssueCounts
 }
 
 func NewMetricsCollector(ghClient *ghpkg.Client, org, primaryRepo, badgeURL, aiAuthor, projectName string, logger *slog.Logger) *MetricsCollector {
@@ -52,6 +55,7 @@ func NewMetricsCollector(ghClient *ghpkg.Client, org, primaryRepo, badgeURL, aiA
 	}
 	mc.loadFromDisk()
 	mc.loadMTTRFromDisk()
+	mc.loadPRIssueCountsFromDisk()
 	return mc
 }
 
@@ -86,6 +90,14 @@ func (mc *MetricsCollector) GetMTTR() *ghpkg.MTTRResult {
 	return mc.mttr
 }
 
+// GetPRIssueCounts returns the latest merged-PR / closed-issue counts, or nil
+// if no data is available yet.
+func (mc *MetricsCollector) GetPRIssueCounts() *ghpkg.PRIssueCounts {
+	mc.prIssueMu.RLock()
+	defer mc.prIssueMu.RUnlock()
+	return mc.prIssueCounts
+}
+
 func (mc *MetricsCollector) collect(ctx context.Context) {
 	metrics := make(map[string]any)
 
@@ -99,6 +111,7 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 	metrics["architect"] = architect
 
 	mc.collectMTTR(ctx)
+	mc.collectPRIssueCounts(ctx)
 
 	mc.mu.Lock()
 	mc.metrics = metrics
@@ -133,6 +146,31 @@ func (mc *MetricsCollector) collectMTTR(ctx context.Context) {
 		"avg_minutes", result.AvgMinutes,
 		"median_minutes", result.MedianMinutes,
 		"count", result.Count,
+	)
+}
+
+// collectPRIssueCounts fetches the total merged-PR and closed-issue counts for
+// the primary repo, persists the result to disk, and stores it in memory. Used
+// by the dashboard's Cost section to derive cost-per-PR / cost-per-issue.
+func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
+	if mc.ghClient == nil || mc.repo == "" {
+		return
+	}
+
+	result, err := mc.ghClient.ComputePRIssueCounts(ctx, mc.repo)
+	if err != nil {
+		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
+		return
+	}
+
+	mc.prIssueMu.Lock()
+	mc.prIssueCounts = result
+	mc.prIssueMu.Unlock()
+
+	mc.savePRIssueCountsToDisk(result)
+	mc.logger.Info("PR/issue counts computed",
+		"merged_prs", result.MergedPRs,
+		"closed_issues", result.ClosedIssues,
 	)
 }
 
@@ -345,5 +383,32 @@ func (mc *MetricsCollector) saveMTTRToDisk(result *ghpkg.MTTRResult) {
 	tmpPath := mttrCacheFile + ".tmp"
 	if os.WriteFile(tmpPath, data, 0o644) == nil {
 		_ = os.Rename(tmpPath, mttrCacheFile)
+	}
+}
+
+func (mc *MetricsCollector) loadPRIssueCountsFromDisk() {
+	data, err := os.ReadFile(prIssueCountsCacheFile)
+	if err != nil {
+		return
+	}
+	var result ghpkg.PRIssueCounts
+	if json.Unmarshal(data, &result) == nil && result.UpdatedAt != "" {
+		mc.prIssueCounts = &result
+		mc.logger.Info("PR/issue counts loaded from disk cache",
+			"merged_prs", result.MergedPRs,
+			"closed_issues", result.ClosedIssues,
+		)
+	}
+}
+
+func (mc *MetricsCollector) savePRIssueCountsToDisk(result *ghpkg.PRIssueCounts) {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll("/data/metrics", 0o755)
+	tmpPath := prIssueCountsCacheFile + ".tmp"
+	if os.WriteFile(tmpPath, data, 0o644) == nil {
+		_ = os.Rename(tmpPath, prIssueCountsCacheFile)
 	}
 }
