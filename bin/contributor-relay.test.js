@@ -246,9 +246,16 @@ const AGY_WEDGED_PANE = [
   '? for shortcuts',
 ].join('\n');
 
-// Live agy/Gemini pane after opening kubestellar/hive#4079. Newer builds no
-// longer print "? for shortcuts" at rest: their idle chrome is a bare input
-// prompt followed by the selected-model footer.
+// Live agy/Gemini pane after opening a PR. Newer builds no longer print
+// "? for shortcuts" at rest: their idle chrome is a bare input prompt followed
+// by the selected-model footer. The chrome below (both rules, the blank rows,
+// and the right-aligned footer) is reproduced from a real
+// `tmux capture-pane -p` of a finished turn; the PR line stays synthetic
+// because a sibling test asserts URL extraction against it.
+//
+// The earlier version of this fixture omitted the rule that CLOSES the input
+// box, and the footer padding, so it matched a regex that the real pane did
+// not. That is how the wedge below shipped green.
 const AGY_GEMINI_IDLE_PANE = [
   '● Bash(gh pr create --repo kubestellar/hive ...)',
   ...Array.from({ length: 20 }, (_, i) => `  completed test step ${i}`),
@@ -257,7 +264,25 @@ const AGY_GEMINI_IDLE_PANE = [
   '────────────────────────────────────────────',
   '>',
   '',
-  'Gemini 3.7 Flash · high',
+  '',
+  '────────────────────────────────────────────',
+  '                                        Gemini 3.7 Flash · high',
+].join('\n');
+
+// The same pane while the turn is still IN FLIGHT. agy replaces the idle hint
+// with "esc to cancel" on the footer line, so this must NOT read as idle: a
+// busy agent reported complete is the worse direction of this bug.
+const AGY_GEMINI_WORKING_PANE = [
+  '● Read(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml)',
+  '● Edit(/home/dev/workspace/kubestellar/hive/.github/workflows/prune-ghcr.yml) (ctrl+o to expand)',
+  '⣷  Editing files...',
+  '└ Tip: Use /diff to view uncommitted changes in your workspace.',
+  '────────────────────────────────────────────',
+  '>',
+  '',
+  '',
+  '────────────────────────────────────────────',
+  'esc to cancel                           Gemini 3.7 Flash · high',
 ].join('\n');
 
 // --- CLI liveness: ask the PANE, not the process table --------------------
@@ -356,6 +381,32 @@ test('agy Gemini footer with a bare prompt is COMPLETE', () => {
     assert.strictEqual(
       relay.classifyTmuxPane(AGY_GEMINI_IDLE_PANE), relay.PANE_STATE_IDLE_COMPLETE,
       'a finished current agy/Gemini pane must not remain working because its old footer changed');
+  } finally { teardown(relay); }
+});
+
+// Regression for the wedge that shipped past the fixture above: the input box
+// is closed by a second rule, so the gap between ">" and the footer is not pure
+// whitespace. Live, this classified WORKING after the turn opened
+// kubestellar/hive#4127, and the stall backstop failed the task 20 minutes
+// later as `environment` — a shipped PR recorded as a failure.
+test('agy idle pane with a closing rule under the input box is COMPLETE', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane(AGY_GEMINI_IDLE_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'the rule closing agy\'s input box must not hide the model footer');
+  } finally { teardown(relay); }
+});
+
+// The opposite direction, and the one that must never regress: an in-flight
+// turn renders "esc to cancel" on the footer line. Reporting THAT complete
+// would hand the hub a half-done task and abandon real work.
+test('agy pane still working ("esc to cancel") is not COMPLETE', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    assert.notStrictEqual(
+      relay.classifyTmuxPane(AGY_GEMINI_WORKING_PANE), relay.PANE_STATE_IDLE_COMPLETE,
+      'an in-flight agy turn must never be reported as a finished one');
   } finally { teardown(relay); }
 });
 

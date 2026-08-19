@@ -1409,8 +1409,20 @@ function classifyTmuxPane(text) {
     // builds render a bare input line followed by the model footer instead.
     // Keep the bare ">" constrained to that footer so a Markdown quote in
     // an in-flight response cannot be mistaken for an idle prompt.
+    //
+    // The input box is CLOSED by a second box-drawing rule between the ">" and
+    // the footer, so the gap is not pure whitespace and "\s*" cannot cross it.
+    // Observed live: a turn that finished and opened kubestellar/hive#4127 sat
+    // at this exact idle chrome, classified WORKING, and was killed 20 minutes
+    // later by the progressTick() stall backstop and reported as an
+    // `environment` FAILURE — for a task that had shipped a real PR. Allow the
+    // rule character (U+2500) in the gap so the footer is reachable.
+    //
+    // Safety direction is preserved by the footer itself: while a turn is in
+    // flight agy renders "esc to cancel" on that same line, which is neither
+    // whitespace nor a rule, so a busy pane still cannot match here.
     hasIdlePrompt = /\? for shortcuts/.test(text) ||
-      /(?:^|\n)>\s*\n\s*\n\s*Gemini\b[^\n]*\s*$/m.test(agyTail);
+      /(?:^|\n)>\s*\n[\s─]*\n?\s*Gemini\b[^\n]*\s*$/m.test(agyTail);
     hasCompletionMarker = true;
     isWorking = /Running|Searching|Reading|Writing|Editing/i.test(agyTail);
   } else {
