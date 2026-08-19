@@ -21,25 +21,44 @@ permissions:
   issues: write
 
 jobs:
-  # The unit tests are sharded into two parallel jobs to cut PR wall-clock:
-  # ./pkg/hub is by far the largest single package (it alone dominates the
-  # serial run), so it gets a shard to itself and EVERYTHING ELSE runs in the
-  # other shard. The "rest" shard's package list is computed with `go list`
-  # by EXCLUDING pkg/hub — never by enumerating inclusions — so a newly added
-  # package always lands in a shard automatically and can never be silently
-  # untested. Both shards use the exact same flags as the old single job:
-  # -short -race -count=1.
+  # Computes the full package list and dynamically partitions it into N
+  # balanced shards based on measured cost weights (kubestellar/hive#4118).
+  # Exclusion + exhaustive partition guarantees new packages always land in a
+  # shard automatically, while keeping hub in its own dedicated shard.
+  list-packages:
+    name: list-packages
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    outputs:
+      matrix: ${{ steps.partition.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'
+          cache-dependency-path: src/go.sum
+
+      - name: Partition packages
+        id: partition
+        run: |
+          python3 ../bin/partition-tests.py --shards=3 --github-output
+
+  # The unit tests are sharded into parallel jobs to cut PR wall-clock (#4118):
+  # ./pkg/hub is by far the largest single package, so it gets a dedicated
+  # shard (hub) and the rest of ./pkg/... and ./cmd/... is partitioned into
+  # balanced rest shards (rest-1, rest-2, rest-3) emitted by list-packages.
+  # Both hub and rest shards use the exact same flags: -short -race -count=1.
   #
-  # Each shard also emits -coverprofile from the SAME invocation. The
-  # `coverage` job below consumes those artifacts, so the per-package
-  # coverage-floor gate no longer needs its own duplicate test run on PRs
-  # (coverage-hourly.yml is schedule/dispatch-only now; its hourly monitoring
-  # and issue-filing behavior is unchanged).
+  # Each shard emits -coverprofile from the SAME invocation. The `coverage`
+  # job below merges those artifacts across all shards via globs.
   test-shard:
+    needs: list-packages
     strategy:
       fail-fast: false
-      matrix:
-        shard: [hub, rest]
+      matrix: ${{ fromJSON(needs.list-packages.outputs.matrix) }}
     name: test (${{ matrix.shard }})
     runs-on: ubuntu-latest
     defaults:
@@ -62,20 +81,8 @@ jobs:
       - name: Test
         run: |
           set -o pipefail
-          case "${{ matrix.shard }}" in
-            hub)
-              PKGS="./pkg/hub/..."
-              ;;
-            rest)
-              # Everything except pkg/hub (which the other shard runs).
-              # Exclusion, not enumeration: new packages are picked up here
-              # automatically. The anchored regex only drops pkg/hub and its
-              # subpackages — pkg/hubbackup et al. stay in this shard.
-              PKGS=$(go list ./pkg/... ./cmd/... | grep -Ev '^github\.com/kubestellar/hive/pkg/hub(/|$)')
-              ;;
-          esac
-          # shellcheck disable=SC2086 # PKGS is a deliberate word-split list
-          go test $PKGS -short -race -count=1 -coverprofile=coverage-${{ matrix.shard }}.out \
+          # shellcheck disable=SC2086 # matrix.pkgs is a deliberate word-split list
+          go test ${{ matrix.pkgs }} -short -race -count=1 -coverprofile=coverage-${{ matrix.shard }}.out \
             2>&1 | tee test-${{ matrix.shard }}.log
 
       # Uploaded even on failure so the coverage job (and humans) can inspect
@@ -95,17 +102,19 @@ jobs:
 
   # Stable aggregate context named "test", preserved from the pre-shard job so
   # anything keyed on the check name (branch protection, tide, humans' muscle
-  # memory) keeps working. Fails iff any shard failed.
+  # memory) keeps working. Fails iff list-packages or any shard failed.
   test:
     if: always()
     runs-on: ubuntu-latest
-    needs: test-shard
+    needs: [list-packages, test-shard]
     steps:
       - name: Check shard results
         run: |
-          result="${{ needs.test-shard.result }}"
-          echo "shard matrix result: $result"
-          [ "$result" = "success" ]
+          list_pkg_result="${{ needs.list-packages.result }}"
+          shard_result="${{ needs.test-shard.result }}"
+          echo "list-packages result: $list_pkg_result"
+          echo "shard matrix result: $shard_result"
+          [ "$list_pkg_result" = "success" ] && [ "$shard_result" = "success" ]
 
   # Per-package coverage-floor gate, moved here from coverage-hourly.yml's
   # pull_request trigger (#4112) so PRs run the test suite exactly ONCE: this
@@ -115,7 +124,7 @@ jobs:
   coverage:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    needs: test-shard
+    needs: [list-packages, test-shard]
     defaults:
       run:
         working-directory: src
@@ -188,9 +197,9 @@ jobs:
           #
           # Only ./pkg/... is subject to floors, matching the historical gate
           # (coverage-hourly measured ./pkg/... only); ./cmd/... lines from the
-          # rest shard are ignored here — the shards themselves already fail on
+          # rest shards are ignored here — the shards themselves already fail on
           # any cmd test failure.
-          cat test-hub.log test-rest.log > cover-run.log
+          cat test-*.log > cover-run.log
 
           while IFS= read -r line; do
             case "$line" in
@@ -231,8 +240,11 @@ jobs:
           # duplicate mode: header is a valid merged profile. Restricting to
           # pkg/ lines keeps the total comparable to the historical gate,
           # which measured ./pkg/... only.
-          head -n 1 coverage-hub.out > coverage.out
-          grep -h '^github.com/kubestellar/hive/pkg/' coverage-hub.out coverage-rest.out >> coverage.out
+          FIRST_COV=$(ls coverage-*.out 2>/dev/null | head -n 1)
+          if [ -n "$FIRST_COV" ]; then
+            head -n 1 "$FIRST_COV" > coverage.out
+            grep -h '^github.com/kubestellar/hive/pkg/' coverage-*.out >> coverage.out
+          fi
 
           TOTAL=$(go tool cover -func=coverage.out 2>/dev/null | grep '^total:' | awk '{print $3}')
           echo "Total coverage: ${TOTAL:-unavailable}"
@@ -262,7 +274,7 @@ jobs:
   create-issue-on-failure:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    needs: test-shard
+    needs: [list-packages, test-shard]
     permissions:
       contents: read
       issues: write
@@ -273,7 +285,7 @@ jobs:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const sha = context.sha.substring(0, 7);
-            const wasCancelled = '${{ needs.test-shard.result }}' === 'cancelled';
+            const wasCancelled = '${{ needs.test-shard.result }}' === 'cancelled' || '${{ needs.list-packages.result }}' === 'cancelled';
             const kind = wasCancelled ? 'cancelled (likely timed out)' : 'failure';
             const title = `[Tests] v2 test ${wasCancelled ? 'cancelled' : 'failure'} on ${sha}`;
 
