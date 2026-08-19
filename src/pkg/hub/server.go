@@ -937,6 +937,14 @@ type HubServer struct {
 	// whether or not this sweep ever runs — so a missed tick delays rewriting
 	// hub-generations.json, never extends the acceptance window.
 	lastGenerationRetire time.Time
+	// lastAccessExpirySweep throttles the expired-access persistence sweep
+	// (access_expiry.go). Same rationale and same guarding mutex as the sweeps
+	// above: poller-loop-only state.
+	//
+	// NOTE this throttles PERSISTENCE AND THE TIMELINE EVENT ONLY. An expired
+	// grant stops being honored at read time via loadSaaSUser's prune, on the
+	// wall clock, whether or not this sweep ever runs.
+	lastAccessExpirySweep time.Time
 	// perHiveEnvSeen is the Deployment-SOURCED convergence view backing
 	// PerHiveEnvSnapshot: hive ID → what the hub last actually read off that
 	// hive's Deployment. Deliberately NOT derived from heartbeat recency (see

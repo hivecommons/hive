@@ -258,6 +258,12 @@ type SaaSUser struct {
 	CreatedAt      string            `json:"created_at"`
 	LastLogin      string            `json:"last_login"`
 	Hives          map[string]string `json:"hives"`
+	// HiveExpiry optionally bounds a grant in Hives: hive ID → RFC3339 UTC
+	// instant after which that grant is revoked (#4150). Grants without an
+	// entry are permanent — omitempty keeps every pre-expiry record
+	// byte-identical on disk. Enforced at read time by loadSaaSUser's prune
+	// and persisted/audited by sweepExpiredAccess (access_expiry.go).
+	HiveExpiry     map[string]string `json:"hive_expiry,omitempty"`
 	SaaSQuota      int               `json:"saas_quota"`
 	Blocked        bool              `json:"blocked"`
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
@@ -1067,6 +1073,12 @@ func loadSaaSUser(username string) *SaaSUser {
 	if u.LoginCount == 0 && strings.TrimSpace(u.LastLogin) != "" {
 		u.LoginCount = 1
 	}
+	// On-access expiry enforcement (#4150): drop expired grants at READ time so
+	// every consumer of a role — auth gates, accessForHive, the heartbeat's
+	// authorized-users push — sees the revocation the instant it is due, on the
+	// wall clock. Read-time only, never written here; sweepExpiredAccess
+	// (access_expiry.go) persists the prune and stamps the timeline event.
+	pruneExpiredHiveGrants(&u, time.Now())
 	return &u
 }
 
@@ -5121,6 +5133,12 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// expired generation at every verify, on the wall clock, whether or not
 	// this ever runs. See hub_generations_retire.go.
 	s.retireExpiredGenerationsIfDue()
+	// Persist and audit the revocation of expired Manage Access grants (#4150).
+	// Throttled internally to accessExpirySweepInterval. This lane PERSISTS the
+	// prune and stamps the timeline event; it is not what enforces expiry —
+	// loadSaaSUser already drops an expired grant at every read, on the wall
+	// clock, whether or not this ever runs. See access_expiry.go.
+	s.sweepExpiredAccessIfDue()
 	// Record the per-release image-pulls snapshot (external-adoption chart). The
 	// call is internally guarded to snapshot only when the v2 release SHA advances,
 	// so ticking it alongside the frequent SHA poll is cheap — no separate
@@ -5150,6 +5168,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		s.reconcileNetAdminIfDue()
 		s.reconcilePerHiveEnvIfDue()
 		s.retireExpiredGenerationsIfDue()
+		s.sweepExpiredAccessIfDue()
 		s.maybeSnapshotImagePulls(ctx, time.Now())
 		changed := false
 		for branch, sha := range newSHAs {
@@ -5957,6 +5976,10 @@ func authorizedUsersForHiveID(hiveID string) []string {
 type HiveAccessEntry struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// ExpiresAt is the grant's optional expiry (RFC3339 UTC, #4150) copied from
+	// the user's HiveExpiry so Manage Access can show and edit it. omitempty —
+	// a permanent grant renders exactly as before.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// Contact metadata copied from the user's record so the My Hives avatar hover
 	// can show WHO someone is, not just their GitHub handle. FullName and SlackID
 	// ride for every owner/admin-visible access row. Notes is admin-maintained CRM
@@ -6028,10 +6051,11 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 	for _, u := range users {
 		if role, ok := u.Hives[hiveID]; ok {
 			entry := HiveAccessEntry{
-				Username: u.GitHubUsername,
-				Role:     role,
-				FullName: u.FullName,
-				SlackID:  u.SlackID,
+				Username:  u.GitHubUsername,
+				Role:      role,
+				ExpiresAt: u.HiveExpiry[hiveID],
+				FullName:  u.FullName,
+				SlackID:   u.SlackID,
 				// Coarse last-active rides for every viewer of the row (see the
 				// field doc) — only the granular stats below stay admin-only.
 				LastActive: latestUserActivity(&u),
@@ -6270,6 +6294,13 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
 		Role     string `json:"role"`
+		// ExpiresAt is the grant's optional expiry (#4150). Pointer semantics:
+		//   absent (nil)  → preserve the target's existing expiry, so a plain
+		//                   role change never silently clears a time limit
+		//   ""            → clear the expiry (grant becomes permanent)
+		//   "YYYY-MM-DD"  → valid through that day, UTC
+		//   RFC3339       → exact instant
+		ExpiresAt *string `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Role == "" {
 		http.Error(w, `{"error":"username and role required"}`, http.StatusBadRequest)
@@ -6279,22 +6310,83 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"role must be read, read-write, merger, or owner"}`, http.StatusBadRequest)
 		return
 	}
+	var expiresAt string
+	if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
+		t, err := parseAccessExpiry(*body.ExpiresAt)
+		if err != nil {
+			http.Error(w, `{"error":"expiry must be a YYYY-MM-DD date or RFC3339 timestamp"}`, http.StatusBadRequest)
+			return
+		}
+		if !t.After(time.Now()) {
+			http.Error(w, `{"error":"expiry must be in the future"}`, http.StatusBadRequest)
+			return
+		}
+		expiresAt = t.Format(time.RFC3339)
+	}
+	// An expiring owner grant on the hive's ONLY owner would auto-revoke into
+	// an ownerless hive — the same orphaning handleAccessRemove refuses. Block
+	// it here rather than special-casing the sweep, so the owner learns at set
+	// time instead of the hive silently degrading later.
+	if expiresAt != "" && body.Role == "owner" {
+		ownerCount := 0
+		for _, u := range listAllSaaSUsers() {
+			if u.Hives[hiveID] == "owner" && !canonicalEqual(u.GitHubUsername, body.Username) {
+				ownerCount++
+			}
+		}
+		if ownerCount == 0 {
+			http.Error(w, `{"error":"cannot set an expiry on the only owner"}`, http.StatusBadRequest)
+			return
+		}
+	}
 	target := ensureSaaSUser(body.Username)
 	// Distinguish a fresh grant from a role change so the audit trail answers
 	// "who changed X's role, from what, and when" (#4148) — a bare "granted as
 	// merger" entry hides the fact the user was previously an owner.
 	prevRole := target.Hives[hiveID]
+	prevExpiry := target.HiveExpiry[hiveID]
 	target.Hives[hiveID] = body.Role
+	switch {
+	case body.ExpiresAt == nil:
+		// Preserve any existing expiry: a role change is not an extension.
+	case expiresAt == "":
+		delete(target.HiveExpiry, hiveID)
+	default:
+		if target.HiveExpiry == nil {
+			target.HiveExpiry = map[string]string{}
+		}
+		target.HiveExpiry[hiveID] = expiresAt
+	}
 	saveSaaSUser(target)
+	// The stored (possibly preserved) expiry after the update, for the audit
+	// trail; "" means permanent.
+	newExpiry := target.HiveExpiry[hiveID]
+	auditExpiry := newExpiry
+	if auditExpiry == "" {
+		auditExpiry = "never"
+	}
+	expiryNote := ""
+	if newExpiry != "" {
+		expiryNote = " (expires " + newExpiry + ")"
+	}
 	switch {
 	case prevRole == "":
-		s.logger.Info("audit: access granted", "hive", hiveID, "target", body.Username, "role", body.Role, "by", username)
+		s.logger.Info("audit: access granted", "hive", hiveID, "target", body.Username, "role", body.Role, "expires", auditExpiry, "by", username)
 		s.recordTimeline(hiveID, TimelineAccess,
-			fmt.Sprintf("access granted to %s as %s", body.Username, body.Role), username)
+			fmt.Sprintf("access granted to %s as %s%s", body.Username, body.Role, expiryNote), username)
 	case prevRole != body.Role:
-		s.logger.Info("audit: role changed", "hive", hiveID, "target", body.Username, "from", prevRole, "to", body.Role, "by", username)
+		s.logger.Info("audit: role changed", "hive", hiveID, "target", body.Username, "from", prevRole, "to", body.Role, "expires", auditExpiry, "by", username)
 		s.recordTimeline(hiveID, TimelineAccess,
-			fmt.Sprintf("role for %s changed: %s → %s", body.Username, prevRole, body.Role), username)
+			fmt.Sprintf("role for %s changed: %s → %s%s", body.Username, prevRole, body.Role, expiryNote), username)
+	case newExpiry != prevExpiry:
+		// Expiry-only change (extend, shorten, or clear): still a permission
+		// change, so it belongs in the append-only log like any other.
+		detail := fmt.Sprintf("access expiry for %s cleared (now permanent)", body.Username)
+		if newExpiry != "" {
+			detail = fmt.Sprintf("access for %s now expires %s", body.Username, newExpiry)
+		}
+		s.logger.Info("audit: access expiry changed", "hive", hiveID, "target", body.Username, "expires", auditExpiry, "by", username)
+		s.recordTimeline(hiveID, TimelineAccess, detail, username)
 	default:
 		// Same role re-granted: a no-op — do not pollute the append-only log.
 	}
@@ -6333,6 +6425,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	delete(target.Hives, hiveID)
+	delete(target.HiveExpiry, hiveID)
 	saveSaaSUser(target)
 	s.logger.Info("audit: access revoked", "hive", hiveID, "target", targetUsername, "by", username)
 	s.recordTimeline(hiveID, TimelineAccess,
@@ -18606,6 +18699,8 @@ const dashboardHTML = `<!DOCTYPE html>
             <option value="merger" title="Everything Read-Write grants, plus approve and queue other contributors' work for auto-merge.">Merger</option>
             <option value="owner" title="Full control: manage access, settings and budget for this hive.">Owner</option>
           </select>
+          <input id="access-expiry" type="date" title="Optional expiry — leave empty for permanent access. Access is revoked automatically after this date (UTC)."
+            style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
           <button onclick="addAccess()" class="btn-primary" style="padding:8px 16px;font-size:0.8rem">Add</button>
         </div>
         <div id="access-role-hint" style="margin-top:6px;font-size:0.72rem;color:var(--muted);line-height:1.4"></div>
@@ -19099,6 +19194,15 @@ const dashboardHTML = `<!DOCTYPE html>
           var lastActive = u.last_active ?
             '<span style="font-size:0.7rem;color:var(--muted)" title="Last active ' + esc(fmtUserTS(u.last_active)) + '">' + esc(timelineAgo(u.last_active) || fmtUserTS(u.last_active)) + '</span>' :
             '<span style="font-size:0.7rem;color:var(--muted)" title="Never active on this hub">—</span>';
+          // The expiry editor doubles as the display: it shows the grant's
+          // last valid day when set, and empty means permanent. Changing it
+          // extends (or clears) the expiry; the last owner cannot be expired
+          // for the same reason they cannot be removed or demoted.
+          var expiryControl = isLastOwner ? '' :
+            '<input type="date" class="access-expiry-input" value="' + esc(expiryToDateInput(u.expires_at)) + '"' +
+            ' onchange="changeAccessExpiry(\'' + esc(u.username) + '\', \'' + esc(u.role) + '\', this.value)"' +
+            ' title="Optional expiry — empty means permanent. Access is revoked automatically after this date (UTC)."' +
+            ' style="font-size:0.65rem;padding:2px 4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:' + (u.expires_at ? 'var(--amber)' : 'var(--muted)') + '">';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div>' + avatar + providerIconHTML(identityProviderFromKey(u.username)) + '<span style="font-size:0.85rem">' + esc(u.username) + '</span>' +
             /* Empty placeholder the async GitHub profile lookup fills in
@@ -19108,6 +19212,7 @@ const dashboardHTML = `<!DOCTYPE html>
             '<div style="display:flex;align-items:center;gap:8px">' +
             lastActive +
             roleControl +
+            expiryControl +
             removeBtn +
             '</div></div>';
         }).join('');
@@ -19156,21 +19261,54 @@ const dashboardHTML = `<!DOCTYPE html>
       hiveToast('Access list exported', 'success');
     }
 
+    /* expiryToDateInput maps a stored RFC3339 expiry to the value a
+       <input type=date> shows: the grant's LAST VALID day (UTC). The server
+       canonicalizes a picked date D to midnight UTC of D+1, so stepping the
+       instant back one second always lands on the through-day, for exact
+       midnights and arbitrary timestamps alike. Empty in → empty out. */
+    function expiryToDateInput(iso) {
+      if (!iso) return '';
+      var t = Date.parse(iso);
+      if (isNaN(t)) return '';
+      return new Date(t - 1000).toISOString().slice(0, 10);
+    }
+
     async function addAccess() {
       var username = document.getElementById('access-username').value;
       var role = document.getElementById('access-role').value;
+      var expiry = document.getElementById('access-expiry').value;
       if (!username) { hiveToast('Select a user', 'error'); return; }
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({username: username, role: role})
+          // expires_at always rides on the Add path: the picked date, or ""
+          // (permanent) when the picker was left empty — never omitted, so a
+          // re-add of an existing user resets the expiry to what the form shows.
+          body: JSON.stringify({username: username, role: role, expires_at: expiry || ''})
         });
         if (!resp.ok) { var d = await resp.json(); hiveToast(d.error || 'Failed', 'error'); return; }
         document.getElementById('access-username').value = '';
+        document.getElementById('access-expiry').value = '';
         loadAccessList();
         loadAccessAuditLog();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    /* changeAccessExpiry sets, extends, or clears (empty value) the expiry on
+       an existing grant. The role is re-sent unchanged — the add endpoint
+       upserts — and expires_at carries the new bound ("" = permanent). */
+    async function changeAccessExpiry(username, role, value) {
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({username: username, role: role, expires_at: value || ''})
+        });
+        if (!resp.ok) { var d = await resp.json().catch(function(){return {};}); hiveToast(d.error || 'Failed to change expiry', 'error'); loadAccessList(); return; }
+        hiveToast(value ? username + '\'s access now expires ' + value : username + '\'s access is now permanent', 'success');
+        loadAccessList();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadAccessList(); }
     }
 
     async function changeAccessRole(username, newRole, oldRole) {
