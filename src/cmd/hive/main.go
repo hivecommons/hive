@@ -1361,6 +1361,9 @@ func main() {
 		PolicyDir:       policyDir,
 		AppAuthoredPRs:  cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
+	if cfg.GitHub.IsGHE() {
+		projectCtx.GHHost = cfg.GitHub.HostLabel()
+	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).

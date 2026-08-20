@@ -237,6 +237,14 @@ type ProjectContext struct {
 	ACMMLevel       int
 	PRsAllowed      bool
 	PolicyDir       string
+	// GHHost is the bare hostname of the source forge when it is NOT public
+	// github.com (e.g. "github.ibm.com" for a GHE spoke), derived from the
+	// configured github.api_url. Exported to agents as GH_HOST so the gh CLI
+	// targets the right host — without it every agent gh call went to
+	// api.github.com where the project's repos do not exist (root-caused live
+	// 2026-08-20: the security agent's issue/PR creation failed silently on
+	// every GHE-hosted hive). Empty ⇒ public github.com, nothing exported.
+	GHHost string
 	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
 	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
@@ -6559,6 +6567,32 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	if advisory := os.Getenv("HIVE_ADVISORY_ISSUE"); advisory != "" {
 		vars = append(vars, agentEnvPair{"HIVE_ADVISORY_ISSUE", advisory, false})
+	}
+	// HIVE_REPO / HIVE_REPOS: the shipped policy templates instruct agents to
+	// run `gh issue create --repo "$HIVE_REPO"`, but nothing ever exported it
+	// to hosted agents (only the OSS scheduler set a hardcoded "<org>/hive").
+	// Root-caused on a live hosted hive (2026-08-20): the sec-check agent saw
+	// HIVE_REPO unset, fell back to the git remote of its own workdir, and
+	// silently scanned only the primary repo — the other project repos were
+	// never touched. Export the primary repo and the full project repo list so
+	// templates and agents can target every configured repo.
+	if m.project.Org != "" && len(m.project.Repos) != 0 {
+		primary := m.project.PrimaryRepo()
+		if primary == "" {
+			primary = m.project.Repos[0]
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPO", m.project.Org + "/" + primary, false})
+		full := make([]string, len(m.project.Repos))
+		for i, r := range m.project.Repos {
+			full[i] = m.project.Org + "/" + r
+		}
+		vars = append(vars, agentEnvPair{"HIVE_REPOS", strings.Join(full, ","), false})
+	}
+	// GH_HOST: point the gh CLI at the configured forge host for GHE spokes.
+	// See ProjectContext.GHHost. The gh wrapper pairs this with
+	// GH_ENTERPRISE_TOKEN so the per-agent scoped token authenticates there.
+	if m.project.GHHost != "" {
+		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
 	}
 	if IsInferenceBackend(backend) {
 		const inferenceTranslatePort = 18444

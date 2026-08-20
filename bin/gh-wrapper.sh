@@ -95,6 +95,17 @@ if ! _contributor_mode; then
   # login"), instead of the fail-loud this gate promises.
   if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" && -r "${HIVE_AGENT_TOKEN_CACHE}" && -s "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
     export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
+    # GHE spokes (github.ibm.com etc.): gh only reads GH_TOKEN for github.com;
+    # any other GH_HOST authenticates from GH_ENTERPRISE_TOKEN. Exporting both
+    # is harmless on github.com and makes the scoped token work on GHE — the
+    # missing export left every GHE gh call unauthenticated (401) even though
+    # token delivery itself worked (root-caused live 2026-08-20).
+    export GH_ENTERPRISE_TOKEN="$GH_TOKEN"
+    # Agents are non-interactive by definition: a gh command that would prompt
+    # (e.g. `gh issue create` with no --title after the agent's shell tool
+    # mangled a multiline command) hung until the tool timeout and read as a
+    # network failure. Fail loud and instant instead.
+    export GH_PROMPT_DISABLED=1
   else
     echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
     echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
