@@ -133,6 +133,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/governor/budget/reset", s.handleGovernorBudgetReset)
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
+	// Escalation breaker is a top-level Config field (not GovernorConfig), but
+	// its UI lives on the governor Health tab — see api_escalation.go.
+	s.mux.HandleFunc("GET /api/config/escalation", s.handleEscalationGet)
+	s.mux.HandleFunc("PUT /api/config/escalation", s.handleEscalationPut)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
