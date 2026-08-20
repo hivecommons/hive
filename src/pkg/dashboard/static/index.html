@@ -20175,6 +20175,15 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
+          } else if (_configState.type === 'governor' && section === 'review') {
+            // review is a TOP-LEVEL config block, not under governor —
+            // it saves through its own /api/config/review endpoint.
+            const rvRes = await fetch('/api/config/review', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!rvRes.ok) throw new Error(await saveErrorMessage(rvRes));
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

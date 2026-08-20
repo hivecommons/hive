@@ -138,6 +138,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// its UI lives on the governor Health tab — see api_escalation.go.
 	s.mux.HandleFunc("GET /api/config/escalation", s.handleEscalationGet)
 	s.mux.HandleFunc("PUT /api/config/escalation", s.handleEscalationPut)
+	// Review-swarm merge gate is a top-level Config field (not GovernorConfig),
+	// but its UI lives on the governor Features tab — see api_config_review.go.
+	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)
+	s.mux.HandleFunc("PUT /api/config/review", s.handleReviewConfigPut)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
@@ -4129,6 +4133,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"trajectory":  trajectorySectionResponse(&cfg.Governor),
 		"classifier":  classifierSectionResponse(),
 		"features":    featuresSectionResponse(cfg),
+		"review":      cfg.Review,
 		"advisory":    advisorySectionResponse(cfg),
 		"replan":      replanSectionResponse(cfg),
 		"work_source": workSourceSectionResponse(cfg),
