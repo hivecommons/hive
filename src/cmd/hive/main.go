@@ -5314,6 +5314,16 @@ func runEvalCycle(
 		}
 	}
 
+	// #4247 (parent #3845): observe the shared convergence admission at the
+	// internal-kick dispatch boundary — AFTER governor policy evaluated the raw
+	// queue, BEFORE the scheduler caches and renders issues. Gated by the
+	// convergence feature toggle: with mode "off" (the default) this is
+	// entirely inert, and even in "shadow" it only LOGS what the shared
+	// evaluator would withhold — the raw actionable population is always what
+	// SetLastActionable and BuildKickMessages receive. Enforcement is a later,
+	// explicit increment (#4263).
+	observeConvergenceKickAdmission(cfg, dashSrv, actionable, logger)
+
 	sched.SetLastActionable(actionable)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, logger)
 	messages := sched.BuildKickMessages(actionable, agentsDue)
