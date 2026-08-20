@@ -126,6 +126,16 @@ hosted runners are ephemeral and single-use. It must never be combined with
 
 ### 3. `arm64`, hosted
 
+> **Built (#4336):** `.github/workflows/podman-arm64-lane.yml` runs
+> `src/deploy/probe_arm64_image_startup.sh` per PR on `ubuntu-24.04-arm`. It
+> asserts the runner really is arm64, prints the runtime and network backend
+> for comparison against the amd64 lanes, then checks four things and no more:
+> the tag advertises a `linux/arm64` image, that image pulls and really is
+> arm64, `/usr/local/bin/hive` executes, and the container answers
+> `GET /api/health`. A missing arm64 manifest fails the job rather than
+> skipping, and the lane does not build an image ad hoc — the arm64 build is
+> already a per-push gate in `docker.yml`.
+
 `ubuntu-24.04-arm` is already used by `.github/workflows/docker.yml` for the
 multi-architecture image build, so the runner label is proven in this
 repository. The probe shows it is capability-identical to amd64 for Podman.
