@@ -471,8 +471,19 @@ if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" 
   elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
   else
-    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
-    echo "Read /var/run/hive-metrics/actionable.json instead." >&2
+    # Root-caused in a live hive (2026-08-20): agents read this two-line
+    # message as "all gh $subcmd commands are blocked" and silently skipped
+    # `gh issue create` / PR creation for confirmed findings, and the single
+    # hardcoded path pointed at a file that (a) does not exist on the
+    # container-hosted model (which writes /data/last-actionable.json) and
+    # (b) sits outside the agent CLI's workspace sandbox for file-read tools.
+    # Be explicit: only LIST/enumeration is blocked, writes remain allowed,
+    # and point at whichever work-queue snapshot actually exists here.
+    _actionable_hint="/var/run/hive-metrics/actionable.json"
+    [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
+    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
+    echo "Write commands like 'gh issue create' and PR creation via 'hive-open-pr' are still ALLOWED — do not skip them because of this message." >&2
+    echo "For the pre-filtered issue/PR queue, read ${_actionable_hint} (use a shell command like 'cat', not a workspace file-read tool)." >&2
     exit 1
   fi
 fi
