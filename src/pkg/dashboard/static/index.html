@@ -2101,29 +2101,6 @@
     .kb-vault-status-value { font-size: 0.78rem; font-weight: 600; color: var(--fg); }
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 
-    /* Right info sidebar */
-    #hive-info-sidebar {
-      position: fixed; right: 0; top: 0; width: 220px; height: 100vh;
-      background: var(--card-bg); border-left: 1px solid var(--border);
-      padding: 20px 16px; box-sizing: border-box; z-index: 100;
-      overflow-y: auto; font-size: 0.82rem; color: var(--fg);
-    }
-    #hive-info-sidebar h3 { font-size: var(--fs-md); margin: 0 0 10px 0; color: var(--text); }
-    #hive-info-sidebar p { line-height: 1.5; margin: 0 0 16px 0; color: var(--muted); }
-    #hive-info-sidebar .sidebar-links { list-style: none; padding: 0; margin: 0; }
-    #hive-info-sidebar .sidebar-links li { margin-bottom: 10px; }
-    #hive-info-sidebar .sidebar-links a {
-      color: var(--blue); text-decoration: none; display: flex; align-items: center; gap: 6px;
-    }
-    #hive-info-sidebar .sidebar-links a:hover { text-decoration: underline; }
-    body.has-info-sidebar { margin-right: 220px; }
-    body.has-info-sidebar #oc-topbar { right: 220px; }
-    @media (max-width: 1200px) {
-      #hive-info-sidebar { display: none; }
-      body.has-info-sidebar { margin-right: 0; }
-      body.has-info-sidebar #oc-topbar { right: 0; }
-    }
-
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -2651,7 +2628,6 @@
   if(m==='openclaw')m='light';
   if(m==='classic')m='dark';
   if(!m)m='light';
-  document.body.classList.add('has-info-sidebar');
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
   document.body.style.transition='opacity 0.15s ease-in';
@@ -3545,43 +3521,6 @@
     </div>
   </div>
 
-  <aside id="hive-info-sidebar">
-    <h3>What is Hive?</h3>
-    <p>Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintain GitHub repositories &mdash; triaging issues, writing fixes, opening PRs, and merging on green CI. A governor dynamically adjusts agent pace based on issue queue depth across four modes (idle/quiet/busy/surge). ACMM maturity levels (1&ndash;6) control which agents are active and what actions they can take.</p>
-    <h4 style="font-size:0.82rem;color:var(--text);margin:14px 0 6px 0;">Agents</h4>
-    <ul style="list-style:none;padding:0;margin:0 0 14px 0;font-size:0.78rem;color:var(--muted);line-height:1.6;">
-      <li><strong style="color:var(--text);">Supervisor</strong> &mdash; agent health monitoring, sweep analysis, stall detection, escalation</li>
-      <li><strong style="color:var(--text);">Scanner</strong> &mdash; triages issues, dispatches fixes, opens and merges PRs</li>
-      <li><strong style="color:var(--text);">Guide</strong> &mdash; documentation gaps, onboarding analysis, advisory reviews</li>
-      <li><strong style="color:var(--text);">CI-Maintainer</strong> &mdash; CI/CD health, workflow fixes, build monitoring</li>
-      <li><strong style="color:var(--text);">Quality</strong> &mdash; test coverage, integration tests, quality gates</li>
-      <li><strong style="color:var(--text);">Sec-Check</strong> &mdash; security scanning, PR security gate, contributor vetting</li>
-      <li><strong style="color:var(--text);">Architect</strong> &mdash; cross-cutting RFCs, refactors, new features</li>
-      <li><strong style="color:var(--text);">Strategist</strong> &mdash; experiment design, A/B testing, strategy lab</li>
-      <li><strong style="color:var(--text);">Outreach</strong> &mdash; ADOPTERS outreach, ACMM badge campaigns, community engagement</li>
-      <li><strong style="color:var(--text);">Brainstorm</strong> &mdash; on-demand ideation via Inception; proposes features and architecture directions</li>
-    </ul>
-    <h4 style="font-size:0.82rem;color:var(--text);margin:14px 0 6px 0;">Key Features</h4>
-    <ul style="list-style:none;padding:0;margin:0 0 14px 0;font-size:0.78rem;color:var(--muted);line-height:1.6;">
-      <li><strong style="color:var(--text);">ACMM Levels</strong> &mdash; 6 maturity levels from advisory-only (L1) to fully autonomous (L6)</li>
-      <li><strong style="color:var(--text);">Governor</strong> &mdash; dynamic mode switching with per-agent cadences and budget controls</li>
-      <li><strong style="color:var(--text);">Inception</strong> &mdash; interactive project scaffolding via brainstorm agent; generates llm-wiki knowledge vaults and spec-kit project specifications through clarify/structure/scaffold phases</li>
-      <li><strong style="color:var(--text);">Knowledge Base</strong> &mdash; shared facts, wiki vaults, and cross-agent knowledge priming</li>
-      <li><strong style="color:var(--text);">Audit Logging</strong> &mdash; all agent state changes logged with who/when/why for diagnostics</li>
-      <li><strong style="color:var(--text);">ACMM Proxy</strong> &mdash; per-agent HTTP proxy enforcing mode-based action restrictions</li>
-      <li><strong style="color:var(--text);">Contributing</strong> &mdash; community agent contribution system; submit, review, and install custom agents from a shared registry</li>
-    </ul>
-    <ul class="sidebar-links">
-      <li><a href="https://arxiv.org/abs/2604.09388" target="_blank" rel="noopener">&#128196; ACMM Paper</a></li>
-      <li><a href="https://console.kubestellar.io" target="_blank" rel="noopener">&#128421; Console Live Demo</a></li>
-      <li><a href="https://github.com/kubestellar/hive" target="_blank" rel="noopener">&#128230; Source Code</a></li>
-      <li><a href="https://kubestellar.io/en/acmm-leaderboard" target="_blank" rel="noopener">&#128202; ACMM Leaderboard</a></li>
-      <li><a href="https://kubestellar.io/en/leaderboard" target="_blank" rel="noopener">&#127942; Contributor Leaderboard</a></li>
-      <li><a href="https://kubestellar.medium.com/plaque-the-silent-killer-of-ai-agent-reliability-f5c5318c4e9c" target="_blank" rel="noopener">&#128221; Blog: Plaque &mdash; Silent Killer</a></li>
-      <li><a href="https://kubestellar.medium.com/intentional-amnesia-why-i-wipe-my-ai-agents-memories-every-15-minutes-1c27e9dcbf0a" target="_blank" rel="noopener">&#128221; Blog: Intentional Amnesia</a></li>
-      <li><a href="https://medium.com/p/b9381a7e9773" target="_blank" rel="noopener">&#128221; Blog: ACMM Framework</a></li>
-    </ul>
-  </aside>
 </div><!-- /#hive-dashboard-root -->
 
   <script>
@@ -3827,7 +3766,6 @@
     function setLayout(mode) { localStorage.setItem(LAYOUT_KEY, mode); }
     function applyLayout(mode) {
       document.body.classList.toggle('light-mode', mode === 'light');
-      document.body.classList.add('has-info-sidebar');
       const customStyleRoot = document.getElementById('hive-dashboard-root');
       if (customStyleRoot) { customStyleRoot.classList.toggle('light-mode', mode === 'light'); customStyleRoot.classList.toggle('dark-mode', mode !== 'light'); }
       const lbl = LAYOUT_LABELS[mode] || LAYOUT_LABELS.dark;
@@ -15128,7 +15066,6 @@ function burnAreaChart() {
       const sidebarGroups = document.querySelectorAll('.oc-nav-group');
       const sidebarItems = document.querySelectorAll('.oc-nav-item');
 
-      const infoSidebar = document.getElementById('hive-info-sidebar');
       const agentCards = document.getElementById('agents');
       const agentDetail = document.getElementById('oc-agent-detail');
 
@@ -15145,7 +15082,6 @@ function burnAreaChart() {
 
         show(agentCards, '');
         show(agentDetail, '');
-        show(infoSidebar, '');
         sidebarGroups.forEach(g => show(g, ''));
         sidebarItems.forEach(item => show(item, ''));
 
