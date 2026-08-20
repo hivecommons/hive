@@ -12010,7 +12010,12 @@ const dashboardHTML = `<!DOCTYPE html>
       /* The hive's inference gateway is rejecting every call with 401 (a stale
          key) — the ROOT cause of an otherwise silent outage where the hive
          looks online but every agent is dead in the water. */
-      'inference-auth-failed': 'Inference auth failing'
+      'inference-auth-failed': 'Inference auth failing',
+      /* GitHub App credentials are in an operator-side state (key-missing /
+         key-invalid / no-app-assigned). The owner cannot fix these — the App
+         key is hub-distributed — so this alert is the operator's only active
+         signal (#4316). The reason carries the PUT remedy. */
+      'app-creds-undelivered': 'App credentials undelivered'
     };
 
     /* How many alert rows are listed before the panel collapses the remainder
