@@ -1213,6 +1213,202 @@ test('codex numbered startup menus get explicit safe selections', () => {
 });
 
 // ---------------------------------------------------------------------------
+// kubestellar/hive#4267 — direct unit tests for previously-uncovered pure/leaf
+// helpers: redactTokens (security), shellQuote, detectPRURL, taskKey,
+// recentPaneLines, injectGhToken, resolveBackend, paneLooksBlockedOnHuman.
+// ---------------------------------------------------------------------------
+
+const TOK36 = 'A'.repeat(36);
+
+test('redactTokens scrubs gho_/ghp_/ghs_ tokens embedded in text', () => {
+  const relay = loadRelay();
+  try {
+    for (const prefix of ['gho_', 'ghp_', 'ghs_']) {
+      const line = `Authorization: Bearer ${prefix}${TOK36} sent to hub`;
+      const out = relay.redactTokens(line);
+      assert.ok(!out.includes(TOK36), `${prefix} token leaked: ${out}`);
+      assert.ok(out.includes(`${prefix}***REDACTED***`), `expected redaction marker for ${prefix}, got: ${out}`);
+      // Surrounding text must survive.
+      assert.match(out, /^Authorization: Bearer .* sent to hub$/);
+    }
+  } finally { teardown(relay); }
+});
+
+test('redactTokens scrubs multiple tokens in one string', () => {
+  const relay = loadRelay();
+  try {
+    const out = relay.redactTokens(`a gho_${TOK36} b ghp_${'b'.repeat(36)} c`);
+    assert.strictEqual(out, 'a gho_***REDACTED*** b ghp_***REDACTED*** c');
+  } finally { teardown(relay); }
+});
+
+test('redactTokens leaves non-token text and short lookalikes alone', () => {
+  const relay = loadRelay();
+  try {
+    // 35 chars — one short of a real token — must not match.
+    const short = `gho_${'A'.repeat(35)} end`;
+    assert.strictEqual(relay.redactTokens(short), short);
+    assert.strictEqual(relay.redactTokens('plain log line'), 'plain log line');
+    assert.strictEqual(relay.redactTokens(''), '');
+  } finally { teardown(relay); }
+});
+
+test('shellQuote wraps and escapes embedded single quotes', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.shellQuote('plain'), "'plain'");
+    assert.strictEqual(relay.shellQuote("it's"), "'it'\\''s'");
+    assert.strictEqual(relay.shellQuote(''), "''");
+    // A quoted payload with $(...) must stay inert inside single quotes.
+    assert.strictEqual(relay.shellQuote('$(rm -rf /)'), "'$(rm -rf /)'");
+  } finally { teardown(relay); }
+});
+
+test('detectPRURL prefers a URL under the task repo over an earlier foreign one', () => {
+  const relay = loadRelay();
+  try {
+    const lines = [
+      'see https://github.com/other/repo/pull/1 for context',
+      'opened https://github.com/kubestellar/hive/pull/42',
+    ];
+    assert.strictEqual(
+      relay.detectPRURL(lines, 'kubestellar/hive'),
+      'https://github.com/kubestellar/hive/pull/42'
+    );
+  } finally { teardown(relay); }
+});
+
+test('detectPRURL falls back to the first PR URL when repo does not match', () => {
+  const relay = loadRelay();
+  try {
+    const lines = ['a https://github.com/other/repo/pull/7 b'];
+    assert.strictEqual(relay.detectPRURL(lines, 'kubestellar/hive'), 'https://github.com/other/repo/pull/7');
+    assert.strictEqual(relay.detectPRURL(lines), 'https://github.com/other/repo/pull/7');
+  } finally { teardown(relay); }
+});
+
+test('detectPRURL returns empty string on no match, empty, or non-array input', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.detectPRURL(['no links here'], 'o/r'), '');
+    assert.strictEqual(relay.detectPRURL([], 'o/r'), '');
+    assert.strictEqual(relay.detectPRURL(null, 'o/r'), '');
+    assert.strictEqual(relay.detectPRURL('not-an-array', 'o/r'), '');
+    // Issue URLs must not be mistaken for PR URLs.
+    assert.strictEqual(relay.detectPRURL(['https://github.com/o/r/issues/3'], 'o/r'), '');
+  } finally { teardown(relay); }
+});
+
+test('taskKey keys by repo#number and falls back to task_id then unknown', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.taskKey({ repo: 'o/r', number: 5, task_id: 't-1' }), 'o/r#5');
+    assert.strictEqual(relay.taskKey({ task_id: 't-1' }), 't-1');
+    assert.strictEqual(relay.taskKey(null), 'unknown');
+    assert.strictEqual(relay.taskKey({}), 'unknown');
+  } finally { teardown(relay); }
+});
+
+test('recentPaneLines trims, drops blanks and keeps only the last N lines', () => {
+  const relay = loadRelay();
+  try {
+    const text = Array.from({ length: 20 }, (_, i) => `line${i}`).join('\n') + '\n\n  \n';
+    const lines = relay.recentPaneLines(text);
+    assert.strictEqual(lines.length, 12);
+    assert.strictEqual(lines[0], 'line8');
+    assert.strictEqual(lines[11], 'line19');
+    assert.deepStrictEqual(relay.recentPaneLines('  a  \n\n b ', 5), ['a', 'b']);
+    assert.deepStrictEqual(relay.recentPaneLines(''), []);
+  } finally { teardown(relay); }
+});
+
+test('injectGhToken writes the token cache with 0600 permissions', () => {
+  const relay = loadRelay();
+  try {
+    relay.injectGhToken('ghs_test_token_value');
+    const cache = path.join(relay.__tmpDir, 'gh-token.cache');
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), 'ghs_test_token_value');
+    assert.strictEqual(fs.statSync(cache).mode & 0o777, 0o600);
+    // Overwrite must replace, not append.
+    relay.injectGhToken('ghs_second');
+    assert.strictEqual(fs.readFileSync(cache, 'utf8'), 'ghs_second');
+  } finally { teardown(relay); }
+});
+
+test('resolveBackend maps backend via backends.conf and caches the result', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    const r1 = relay.resolveBackend();
+    assert.deepStrictEqual(r1, { cmd: 'copilot', perm: '--allow-all' });
+    const callsAfterFirst = relay.__commands.filter(c => /backend_binary/.test(c)).length;
+    const r2 = relay.resolveBackend();
+    assert.strictEqual(r2, r1, 'expected cached object identity');
+    const callsAfterSecond = relay.__commands.filter(c => /backend_binary/.test(c)).length;
+    assert.strictEqual(callsAfterSecond, callsAfterFirst, 'second call must not re-shell-out');
+  } finally { teardown(relay); }
+});
+
+test('paneLooksBlockedOnHuman: trailing question on the last real line blocks', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('Which branch should I use?\n> '), true);
+  } finally { teardown(relay); }
+});
+
+test('paneLooksBlockedOnHuman: numbered choice menu blocks', () => {
+  const relay = loadRelay();
+  try {
+    const pane = 'Select an option:\n1) apply the fix\n2) skip this file\n❯ 1) apply the fix';
+    assert.strictEqual(relay.paneLooksBlockedOnHuman(pane), true);
+  } finally { teardown(relay); }
+});
+
+test('paneLooksBlockedOnHuman: y/N confirmation and permission prompts block', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('Overwrite existing file? [y/N]'), true);
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('Do you trust this folder'), true);
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('Allow this command to run'), true);
+  } finally { teardown(relay); }
+});
+
+test('paneLooksBlockedOnHuman: elicitation form (lead-in + fields) blocks', () => {
+  const relay = loadRelay();
+  try {
+    const pane = 'I need the following information to proceed:\nUsername: [        ]\nRegion: [        ]\n> Enter to send';
+    assert.strictEqual(relay.paneLooksBlockedOnHuman(pane), true);
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('Elicitation request timed out'), true);
+  } finally { teardown(relay); }
+});
+
+test('paneLooksBlockedOnHuman: ordinary finished output does not block', () => {
+  const relay = loadRelay();
+  try {
+    assert.strictEqual(relay.paneLooksBlockedOnHuman(''), false);
+    assert.strictEqual(relay.paneLooksBlockedOnHuman('All tests passed.\nDone.'), false);
+    // A "label: value" line alone (the /login false-positive lesson) must not block.
+    assert.strictEqual(
+      relay.paneLooksBlockedOnHuman('opened a PR: https://github.com/o/r/pull/9\nDone.'),
+      false
+    );
+  } finally { teardown(relay); }
+});
+
+test('classifyTmuxPane reports blocked-on-human ahead of idle/working', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    assert.strictEqual(
+      relay.classifyTmuxPane('Which file should I edit?\n/ commands for help'),
+      relay.PANE_STATE_BLOCKED_ON_HUMAN
+    );
+    assert.strictEqual(
+      relay.classifyTmuxPane('done\n/ commands for help'),
+      relay.PANE_STATE_IDLE_COMPLETE
+    );
+  } finally { teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
 
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
