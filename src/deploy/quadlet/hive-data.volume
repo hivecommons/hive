@@ -1,0 +1,24 @@
+# Hive's persistent state volume (#4354).
+#
+# Everything Hive must keep across a restart lives in /data: the bead ledger,
+# agent working state, and the proxy CA it generates on first boot. The Docker
+# Compose stack calls the same volume `hive-data`; this is the Podman half of
+# that, and the two are deliberately separate volumes on separate engines
+# rather than a shared one.
+#
+# VolumeName= is set explicitly so the volume is `hive-data` rather than the
+# `systemd-hive-data` Quadlet would otherwise derive. An operator who has to
+# `podman volume inspect` it during an incident should find the name the
+# documentation uses.
+#
+# Persistence and SELinux volume semantics are deliberately NOT characterised
+# here — that is its own slice. This unit defines the volume and nothing more.
+
+[Unit]
+Description=Hive persistent state volume
+
+[Volume]
+VolumeName=hive-data
+
+[Install]
+WantedBy=default.target
