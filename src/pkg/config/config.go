@@ -3221,28 +3221,30 @@ func RoleAtLeast(role, tier string) bool {
 	return okRole && okTier && roleRank >= tierRank
 }
 
-// AuthorizedRole resolves a GitHub username against the spoke's authorized-users
+// AuthorizedRole resolves a username against the spoke's authorized-users
 // allowlist and returns the user's role and whether they are authorized.
 //
 // Each entry is either "username" or "username:role" (role = "owner" or "read").
 // An entry without an explicit role defaults to "owner" for the first entry
 // (the hive owner) and "read" for the rest (granted viewers). Matching is
-// case-insensitive because GitHub usernames are case-insensitive.
-//
-// A spoke with an empty AuthorizedUsers list is NOT a direct-route spoke that
-// enforces device-flow authz (it is either hub-proxied or misconfigured); the
-// caller decides how to treat that case — see IsDirectRouteAuthzEnabled.
+// case-insensitive because GitHub usernames are case-insensitive, and tolerant
+// of the hub's canonical identity form: a bare login and its "github:<login>"
+// wire form denote the SAME user (the hub's legacy shim), so an allowlist entry
+// in either form matches a session username in either form. Without this, a
+// hub-delivered "github:alice:owner" entry silently failed to authorize the
+// device-flow login "alice" — one more variant of the recurring
+// "granted owner still gets 'owner access required'" class.
 func (d DashboardConfig) AuthorizedRole(username string) (string, bool) {
 	if username == "" {
 		return "", false
 	}
-	want := strings.ToLower(username)
+	want := identityMatchKey(username)
 	for i, entry := range d.AuthorizedUsers {
 		name, role := splitAuthorizedEntry(entry)
 		if name == "" {
 			continue
 		}
-		if strings.ToLower(name) != want {
+		if identityMatchKey(name) != want {
 			continue
 		}
 		if role == "" {
@@ -3255,6 +3257,17 @@ func (d DashboardConfig) AuthorizedRole(username string) (string, bool) {
 		return role, true
 	}
 	return "", false
+}
+
+// identityMatchKey normalizes an identity string for allowlist comparison:
+// lower-cased (GitHub logins are case-insensitive, and the pre-existing
+// allowlist match always folded case), with the legacy-GitHub provider prefix
+// stripped so "github:alice" and "alice" compare equal. Other providers'
+// prefixes ("ibmid:", "google:", ...) are kept — those subjects are only ever
+// delivered and presented in their full canonical form.
+func identityMatchKey(id string) string {
+	key := strings.ToLower(strings.TrimSpace(id))
+	return strings.TrimPrefix(key, "github:")
 }
 
 // IsDirectRouteAuthzEnabled reports whether this hive must enforce per-user

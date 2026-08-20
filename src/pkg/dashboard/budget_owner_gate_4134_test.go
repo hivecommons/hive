@@ -92,7 +92,9 @@ func TestBudgetSave4134_OwnerViaSession(t *testing.T) {
 
 // Non-owner denial — a read-role session must still be blocked.
 func TestBudgetSave4134_ReadSessionDenied(t *testing.T) {
-	s := newDirectRouteServer(t, "readuser")
+	// Explicit ":read": the allowlist is the live role authority
+	// (liveSessionRole), and a bare first entry would default to owner.
+	s := newDirectRouteServer(t, "readuser:read")
 	seedBudget4134(s)
 	sid := s.createUserSession("readuser", "read")
 
@@ -109,7 +111,9 @@ func TestBudgetSave4134_ReadSessionDenied(t *testing.T) {
 
 // Non-owner denial — a non-owner (read-write) session lacks the owner gate.
 func TestBudgetSave4134_NonOwnerSessionDenied(t *testing.T) {
-	s := newDirectRouteServer(t, "rwuser")
+	// Explicit ":read-write": the allowlist is the live role authority
+	// (liveSessionRole), and a bare first entry would default to owner.
+	s := newDirectRouteServer(t, "rwuser:read-write")
 	seedBudget4134(s)
 	sid := s.createUserSession("rwuser", "read-write")
 

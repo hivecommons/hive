@@ -124,7 +124,10 @@ func TestOwnerOnlyMutationsAllowInternalSharedToken(t *testing.T) {
 // A per-user session always scopes an internal-token request DOWN: a read-role
 // session riding alongside X-Hive-Internal must not inherit owner.
 func TestOwnerOnlyMutationsRejectReadSessionWithInternalAuth(t *testing.T) {
-	s := newDirectRouteServer(t, "readuser")
+	// Explicit ":read" — the allowlist is the live role authority now
+	// (liveSessionRole), so the entry itself must say this user is a reader; a
+	// bare first entry would default to owner and elevate the session.
+	s := newDirectRouteServer(t, "readuser:read")
 	sid := s.createUserSession("readuser", "read")
 	req := httptest.NewRequest(http.MethodPost, "/api/breaker/engage", nil)
 	req.Header.Set("X-Hive-Internal", s.authToken)
