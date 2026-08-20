@@ -1643,6 +1643,39 @@ func (s *Server) githubAppNotInstalled() bool {
 	return s.githubAppRequired && s.githubAppState == githubAppStateNotInstalledToken
 }
 
+// Operator-side pkg/github AppAuthState wire tokens (AppAuthState.
+// OperatorActionable()): credential failures only the hub operator can fix.
+// Kept as literals for the same reason as githubAppStateNotInstalledToken.
+const (
+	githubAppStateKeyMissingToken    = "key-missing"
+	githubAppStateKeyInvalidToken    = "key-invalid"
+	githubAppStateNoAppAssignedToken = "no-app-assigned"
+)
+
+// githubAppCredsUndelivered is the config-truth rule for the OPERATOR-SIDE
+// credential states, the exact sibling of githubAppNotInstalled: an App whose
+// private key never arrived (or cannot sign for it) can never mint, so
+// github_auth must fail in BOTH health surfaces even while a token-based
+// GHClient still works. Before this, a hive stuck on key-missing showed
+// github_auth ✓ ("token-based") for 8 days while its agents could not act as
+// the App at all — the green check is what let kelly-headwaters sit degraded
+// and unexamined (2026-08-12 → 2026-08-20). Returns the failure detail, or ""
+// when no operator-side state is in force.
+func (s *Server) githubAppCredsUndelivered() string {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	if !s.githubAppRequired {
+		return ""
+	}
+	switch s.githubAppState {
+	case githubAppStateKeyMissingToken, githubAppStateNoAppAssignedToken:
+		return "GitHub App credentials not delivered by the hub — agents cannot act as the App (operator action; no action needed from the hive owner)"
+	case githubAppStateKeyInvalidToken:
+		return "GitHub App private key does not match the App it authenticates as — GitHub rejects its JWT (operator must push the correct key)"
+	}
+	return ""
+}
+
 func (s *Server) SetGitHubAppRequired(required bool) {
 	s.githubAppMu.Lock()
 	defer s.githubAppMu.Unlock()
@@ -1947,9 +1980,14 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		failCount++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		overall = "degraded"
+		failCount++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail}
 		overall = "degraded"
 		failCount++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
@@ -2664,9 +2702,13 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		fails++
 	}
 
-	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
+	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		fails++
+	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {

@@ -10627,7 +10627,7 @@ const dashboardHTML = `<!DOCTYPE html>
            about an installation that is already correct. */
         lines.push(h.githubAppState === GH_APP_STATE_KEY_INVALID
           ? '⚠ GitHub App: key does not match the App (operator must push the correct key)'
-          : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
+          : '⚠ GitHub App: credentials not yet delivered by the hub (operator action: upload the App key — PUT /api/saas/admin/cluster-app-keys/{cluster})');
         st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
       }
       else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: ' + ghAppPermIssueLabel(h.githubAppState)); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
