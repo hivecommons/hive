@@ -81,6 +81,7 @@ import (
 	"github.com/kubestellar/hive/pkg/tracing"
 	"github.com/kubestellar/hive/pkg/trajectory"
 	"github.com/kubestellar/hive/pkg/watsonx"
+	"github.com/kubestellar/hive/pkg/worksource"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -3252,7 +3253,12 @@ func main() {
 				PrimaryRepo:             cfg.Project.PrimaryRepo,
 				ACMMLevel:               acmmLvl,
 				Agents:                  agents,
-				Governor:                hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				Governor: hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, WorkSource: func() string {
+					if t := cfg.Governor.WorkSource.Type; t != "" && t != "github" {
+						return t
+					}
+					return ""
+				}()},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -4810,6 +4816,27 @@ func runEvalCycle(
 	if err != nil {
 		logger.Error("failed to enumerate actionable items", "error", err)
 		return
+	}
+
+	// If a non-default work source is configured, overlay its issues onto
+	// the actionable result. PRs always come from GitHub.
+	if wsType := cfg.Governor.WorkSource.Type; wsType != "" && wsType != "github" {
+		ghToken := cfg.GitHub.Token
+		if ghToken == "" {
+			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+		}
+		ws, wsErr := worksource.FromConfig(cfg.Governor.WorkSource, ghClient, ghToken, cfg.Project.Org, logger)
+		if wsErr != nil {
+			logger.Warn("work_source config error, falling back to GitHub Issues", "error", wsErr)
+		} else if wsIssues, listErr := ws.ListIssues(ctx); listErr != nil {
+			logger.Warn("work_source enumeration failed, falling back to GitHub Issues", "source", ws.SourceType(), "error", listErr)
+		} else {
+			// Replace the Issues portion of actionable with worksource results.
+			actionable.Issues = github.IssueResult{
+				Count: len(wsIssues),
+				Items: worksource.ToGitHubIssues(wsIssues),
+			}
+		}
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)

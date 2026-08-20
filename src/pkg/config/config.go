@@ -982,6 +982,60 @@ type GovernorConfig struct {
 	// digest shows, and how long a finding may go un-reconfirmed before the
 	// hive retires it. See AdvisoryConfig.
 	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
+
+	// WorkSource selects where hive reads work items (Step 01 of the loop).
+	// Absent or type="" defaults to GitHub Issues — backward-compatible for
+	// all existing hives.
+	WorkSource WorkSourceConfig `yaml:"work_source,omitempty" json:"work_source,omitempty"`
+}
+
+// WorkSourceConfig selects where hive reads work items (Step 01 of the loop).
+// Absent or type="" defaults to GitHub Issues — backward-compatible for all
+// existing hives.
+type WorkSourceConfig struct {
+	// Type selects the work source: "" | "github" | "github_projects" | "linear" | "jira"
+	Type string `yaml:"type" json:"type"`
+	// GitHubProjects configures the GitHub Projects v2 adapter.
+	GitHubProjects GitHubProjectsSourceConfig `yaml:"github_projects,omitempty" json:"github_projects,omitempty"`
+	// Linear configures the Linear GraphQL adapter.
+	Linear LinearSourceConfig `yaml:"linear,omitempty" json:"linear,omitempty"`
+	// Jira configures the Jira Cloud REST v3 adapter.
+	Jira JiraSourceConfig `yaml:"jira,omitempty" json:"jira,omitempty"`
+}
+
+// GitHubProjectsSourceConfig configures the GitHub Projects v2 work source.
+type GitHubProjectsSourceConfig struct {
+	ProjectNumber  int      `yaml:"project_number" json:"project_number"`
+	Org            string   `yaml:"org,omitempty" json:"org,omitempty"`
+	States         []string `yaml:"states,omitempty" json:"states,omitempty"`
+	PriorityField  string   `yaml:"priority_field,omitempty" json:"priority_field,omitempty"`
+	IterationField string   `yaml:"iteration_field,omitempty" json:"iteration_field,omitempty"`
+	DefaultRepo    string   `yaml:"default_repo,omitempty" json:"default_repo,omitempty"`
+}
+
+// LinearSourceConfig configures the Linear GraphQL work source.
+type LinearSourceConfig struct {
+	APIKey     string                   `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Teams      []LinearTeamSourceConfig `yaml:"teams,omitempty" json:"teams,omitempty"`
+	HoldLabels []string                 `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
+}
+
+// LinearTeamSourceConfig maps one Linear team to the GitHub repo agents work in.
+type LinearTeamSourceConfig struct {
+	Key    string   `yaml:"key" json:"key"`
+	Repo   string   `yaml:"repo" json:"repo"`
+	States []string `yaml:"states,omitempty" json:"states,omitempty"`
+}
+
+// JiraSourceConfig configures the Jira Cloud REST v3 work source.
+type JiraSourceConfig struct {
+	BaseURL     string   `yaml:"base_url" json:"base_url"`
+	Email       string   `yaml:"email" json:"email"`
+	APIToken    string   `yaml:"api_token,omitempty" json:"api_token,omitempty"`
+	ProjectKeys []string `yaml:"project_keys,omitempty" json:"project_keys,omitempty"`
+	JQL         string   `yaml:"jql,omitempty" json:"jql,omitempty"`
+	Repo        string   `yaml:"repo,omitempty" json:"repo,omitempty"`
+	HoldLabels  []string `yaml:"hold_labels,omitempty" json:"hold_labels,omitempty"`
 }
 
 // AdvisoryConfig controls the advisory digest's size and the lifecycle of the

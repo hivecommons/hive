@@ -350,6 +350,10 @@ type GovernorSummary struct {
 	Mode   string `json:"mode"`
 	Issues int    `json:"issues"`
 	PRs    int    `json:"prs"`
+	// WorkSource is the configured work source type ("github_projects",
+	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
+	// dashboard only badges non-default sources.
+	WorkSource string `json:"work_source,omitempty"`
 }
 
 type ContributorSummary struct {

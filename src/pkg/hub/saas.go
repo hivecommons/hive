@@ -9002,6 +9002,12 @@ const dashboardHTML = `<!DOCTYPE html>
     .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--muted); }
     .table-wrap.has-scroll { padding-bottom: 4px; border-bottom: 2px solid var(--line); }
     .hive-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    /* Work-source badge: shown next to the issue count when a hive reads work
+       from a non-default source (GitHub Projects, Linear, Jira). */
+    .ws-badge { display:inline-block; font-size:10px; font-weight:600; padding:1px 6px; border-radius:3px; margin-left:4px; vertical-align:middle; }
+    .ws-badge--github_projects { background:#1a3a5c; color:#58a6ff; }
+    .ws-badge--linear { background:#2d1b69; color:#a78bfa; }
+    .ws-badge--jira { background:#0052cc; color:#fff; }
     .hive-table th { text-align: center; padding: 10px 12px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 600; font-size: 0.75rem; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
     .hive-table td { padding: 12px; border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
@@ -9383,6 +9389,15 @@ const dashboardHTML = `<!DOCTYPE html>
     // spoke-reported, i.e. untrusted. Use escAttr for anything interpolated
     // into an attribute; esc() remains correct for text nodes.
     function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+    /* wsBadge renders a small work-source badge ("Linear", "Jira", "GH Projects")
+       next to a hive's issue count when the spoke reads work from a non-default
+       source. Empty/default ("", "github") renders nothing. */
+    function wsBadge(ws) {
+      if (!ws || ws === 'github') return '';
+      var labels = { github_projects: 'GH Projects', linear: 'Linear', jira: 'Jira' };
+      var cls = /^[a-z_]+$/.test(ws) ? ws : 'unknown';
+      return '<span class="ws-badge ws-badge--' + cls + '" title="Work source: ' + escAttr(ws) + '">' + esc(labels[ws] || ws) + '</span>';
+    }
 
     /* ---- Clickable user avatars ---------------------------------------
        Every face in this dashboard is a link to that person's GitHub profile.
@@ -14939,7 +14954,7 @@ const dashboardHTML = `<!DOCTYPE html>
              controls (actionableIssues, actionablePRs, activeContributors). */
           '<td style="font-size:0.72rem">' +
             '<div style="' + STACKED_CELL_STYLE + ';align-items:flex-start">' +
-              '<div style="' + STACKED_LINE_STYLE + '" title="Actionable issues"><span style="color:var(--muted);min-width:24px;display:inline-block">Iss</span>' + sparkline(h.issueHistory, '#f59e0b', 40, 12) + (h.actionableIssues || 0) + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="Actionable issues"><span style="color:var(--muted);min-width:24px;display:inline-block">Iss</span>' + sparkline(h.issueHistory, '#f59e0b', 40, 12) + (h.actionableIssues || 0) + wsBadge(h.workSource) + '</div>' +
               '<div style="' + STACKED_LINE_STYLE + '" title="Actionable PRs"><span style="color:var(--muted);min-width:24px;display:inline-block">PRs</span>' + sparkline(h.prHistory, '#3b82f6', 40, 12) + (h.actionablePRs || 0) + '</div>' +
               '<div style="' + STACKED_LINE_STYLE + '" title="Active contributors"><span style="color:var(--muted);min-width:24px;display:inline-block">Ctr</span>' + (h.activeContributors || 0) + '</div>' +
             '</div>' +

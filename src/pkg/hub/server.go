@@ -155,14 +155,18 @@ type RegistryEntry struct {
 	// RouteExists is the spoke's in-cluster confirmation that an Ingress or
 	// OpenShift Route exists for DashboardURL's host. Nil means an old spoke
 	// did not report it; unknown means it could not verify (for example RBAC).
-	RouteExists        *RouteExistenceCheck  `json:"routeExists,omitempty"`
-	SnapshotURL        string                `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int                   `json:"acmmLevel"`
-	AgentCount         int                   `json:"agentCount"`
-	GovernorMode       string                `json:"governorMode"`
-	TotalTokens24h     int64                 `json:"totalTokens24h"`
-	ActionableIssues   int                   `json:"actionableIssues"`
-	ActionablePRs      int                   `json:"actionablePRs"`
+	RouteExists      *RouteExistenceCheck `json:"routeExists,omitempty"`
+	SnapshotURL      string               `json:"snapshotUrl,omitempty"`
+	ACMMLevel        int                  `json:"acmmLevel"`
+	AgentCount       int                  `json:"agentCount"`
+	GovernorMode     string               `json:"governorMode"`
+	TotalTokens24h   int64                `json:"totalTokens24h"`
+	ActionableIssues int                  `json:"actionableIssues"`
+	ActionablePRs    int                  `json:"actionablePRs"`
+	// WorkSource is the spoke's configured non-default work source type
+	// ("github_projects", "linear", "jira"). Empty for GitHub Issues (the
+	// default) — the dashboard only shows a badge when non-empty.
+	WorkSource         string                `json:"workSource,omitempty"`
 	ContributorCount   int                   `json:"contributorCount"`
 	ActiveContributors int                   `json:"activeContributors"`
 	Owner              string                `json:"owner,omitempty"`
@@ -1600,6 +1604,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:   clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:      clampInt(payload.Governor.PRs, 0, 10_000),
+		WorkSource:         sanitizeHeartbeatField(payload.Governor.WorkSource),
 		ContributorCount:   clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:              sanitizeHeartbeatField(payload.Owner),
