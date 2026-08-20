@@ -67,6 +67,9 @@ type Config struct {
 	// AgentSandbox configures the phase-1 credential-free sandbox runner. It is
 	// disabled by default and agents must opt in individually.
 	AgentSandbox AgentSandboxConfig `yaml:"agent_sandbox,omitempty" json:"agent_sandbox,omitempty"`
+	// Convergence toggles the convergence-driven admission surfaces
+	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
+	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record

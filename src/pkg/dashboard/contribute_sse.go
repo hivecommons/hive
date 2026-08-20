@@ -62,6 +62,13 @@ type sseEvent struct {
 	Activity *ActivityEntry   `json:"activity,omitempty"` // set when Type=="activity"
 	Replay   []ActivityEntry  `json:"replay,omitempty"`   // set when Type=="hello"
 	Queue    []ReadyQueueItem `json:"queue,omitempty"`    // set when Type=="hello"
+	// Withheld and AdmissionCoverage are the #4246 convergence admission
+	// diagnostics, set on the "hello" frame ONLY when the convergence toggle is
+	// in shadow mode (default off → both absent, payload unchanged). They come
+	// from the SAME sweep that produced Queue, so the two cannot disagree.
+	// Existing SSE clients ignore additive fields.
+	Withheld          []AdmissionWithheldItem `json:"withheld,omitempty"`
+	AdmissionCoverage *AdmissionCoverage      `json:"admission_coverage,omitempty"`
 }
 
 // ReadyQueueItem is one admissible/ready issue in the "queue waiting to be picked
@@ -208,19 +215,35 @@ func (h *ContributeWSHub) broadcastActivity(entry ActivityEntry) {
 // draws from, minus the per-contributor own-work reshuffle. That is the documented
 // "simple recent/top-N is acceptable" fallback the spec permits.
 func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
+	return h.admissionQueueSnapshot(limit, false).queue
+}
+
+// admissionQueueSnapshot is the single admission pass behind ReadyQueue and the
+// #4246 diagnostics surface. One sweep produces BOTH the offerable queue and —
+// when withDiagnostics is true (convergence shadow mode) — the withheld
+// collection for convergence-blocked/unknown candidates, retaining the exact
+// Decision each refusal computed rather than re-evaluating it. The snapshot is
+// ephemeral: built per call, never cached, so every request re-observes current
+// authoritative state.
+func (h *ContributeWSHub) admissionQueueSnapshot(limit int, withDiagnostics bool) queueAdmissionSnapshot {
 	if limit <= 0 {
 		limit = readyQueueDefaultLimit
 	}
-	out := []ReadyQueueItem{}
+	snap := queueAdmissionSnapshot{queue: []ReadyQueueItem{}}
+	if withDiagnostics {
+		snap.withheld = []AdmissionWithheldItem{}
+		snap.coverage.Policy = admissionCoveragePolicy
+	}
+	out := snap.queue
 	if h == nil || h.server == nil {
-		return out
+		return snap
 	}
 
 	h.server.statusMu.RLock()
 	status := h.server.status
 	h.server.statusMu.RUnlock()
 	if status == nil {
-		return out
+		return snap
 	}
 
 	// Which issues are already being worked right now — exclude them from "ready"
@@ -248,6 +271,9 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	// candidate — so the dependency gate stays cheap, and discarded when the pass
 	// ends so the next call re-observes current state.
 	sweep := h.newAdmissionSweep()
+	if withDiagnostics {
+		snap.coverage = h.admissionCoverageFromSweep(sweep)
+	}
 
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
@@ -323,6 +349,19 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 				ref:      ref,
 			})
 			if !decision.admitted {
+				// #4246: retain the convergence Decision behind this refusal
+				// instead of discarding it. Only convergence refusals are
+				// collected (an open-PR claim never reaches the dependency gate
+				// and carries a zero Decision), only in shadow mode, and only up
+				// to the same bound as the queue so a pathological ledger can
+				// never blow out the payload. Blocked/unknown work stays OUT of
+				// the queue and out of assignment exactly as before.
+				if withDiagnostics && decision.reason != contributorAdmissionReasonOpenPRClaim && len(snap.withheld) < limit {
+					title, _ := issue["title"].(string)
+					url, _ := issue["url"].(string)
+					snap.withheld = append(snap.withheld,
+						withheldItemFromDecision(repo.Full, ref, title, url, decision.convergence))
+				}
 				continue
 			}
 			title, _ := issue["title"].(string)
@@ -385,7 +424,8 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 	// operator's parked rows off-screen — the operator must always be able to see and
 	// Resume what they held.
 	out = append(out, heldItems...)
-	return out
+	snap.queue = out
+	return snap
 }
 
 // queueOrderIndex builds a "owner/repo#number" -> priority-rank map from the
@@ -510,10 +550,19 @@ func (s *Server) handleContributeEvents(w http.ResponseWriter, r *http.Request) 
 	if len(replay) > sseReplayCap {
 		replay = replay[len(replay)-sseReplayCap:]
 	}
+	// One snapshot feeds queue AND (in shadow mode) the #4246 diagnostics, so
+	// the hello frame's queue and withheld collections come from the same sweep.
+	diag := s.convergenceDiagnosticsEnabled()
+	snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, diag)
 	hello := sseEvent{
 		Type:   "hello",
 		Replay: replay,
-		Queue:  s.contributeHub.ReadyQueue(readyQueueDefaultLimit),
+		Queue:  snap.queue,
+	}
+	if diag {
+		hello.Withheld = snap.withheld
+		cov := snap.coverage
+		hello.AdmissionCoverage = &cov
 	}
 	if !writeSSE(w, hello) {
 		return

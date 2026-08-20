@@ -6475,10 +6475,21 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 // the SSE "hello" frame carries, so the queue renders even if the stream drops.
 func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	queue := []ReadyQueueItem{}
+	resp := map[string]any{}
 	if s.contributeHub != nil {
-		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
+		// One snapshot serves the queue and — only when the convergence toggle
+		// is in shadow mode (#4246, default off) — the additive withheld /
+		// coverage diagnostics from the SAME sweep. With the toggle off the
+		// response is exactly the pre-diagnostics payload.
+		diag := s.convergenceDiagnosticsEnabled()
+		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, diag)
+		queue = snap.queue
+		if diag {
+			resp["withheld"] = snap.withheld
+			resp["admission_coverage"] = snap.coverage
+		}
 	}
-	resp := map[string]any{"queue": queue}
+	resp["queue"] = queue
 	// Label-affinity (#2637): if we can identify the viewer server-side and they
 	// have declared label interests, personalise THIS response — tag matching
 	// issues and float them to the front for them. Soft signal only: nothing is
