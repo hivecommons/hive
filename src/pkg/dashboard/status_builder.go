@@ -112,6 +112,10 @@ var (
 
 	inferenceAuthMu sync.RWMutex
 	inferenceAuthFn func() (errMsg string, since time.Time)
+	// inferenceBudget* carry the PROVIDER spending-limit signal (#4294) —
+	// distinct from the auth signal above and from the hive's own token budget.
+	inferenceBudgetMu sync.RWMutex
+	inferenceBudgetFn func() (errMsg string, since time.Time, rebuffs int)
 )
 
 // SetEntitledModelsProvider registers a function that reports the per-key
@@ -148,6 +152,35 @@ func getInferenceAuthFn() func() (errMsg string, since time.Time) {
 	inferenceAuthMu.RLock()
 	defer inferenceAuthMu.RUnlock()
 	return inferenceAuthFn
+}
+
+// SetInferenceBudgetProvider registers a function reporting the proxy's current
+// PROVIDER spending-limit signal (kubestellar/hive#4294): a non-empty log-safe
+// cause, when it latched, and how many rebuffs have been seen — only while the
+// provider is refusing on a money limit.
+//
+// This is deliberately a separate provider from the auth one: an operator
+// facing "the gateway rejects our key" and one facing "the gateway will not
+// spend more money today" take different actions, and folding them into one
+// signal would tell neither of them which they have. Wired to the proxy's
+// InferenceBudgetExceeded; nil in tests and on spokes with no proxy, which the
+// accessor tolerates.
+func SetInferenceBudgetProvider(fn func() (errMsg string, since time.Time, rebuffs int)) {
+	inferenceBudgetMu.Lock()
+	defer inferenceBudgetMu.Unlock()
+	inferenceBudgetFn = fn
+}
+
+// InferenceBudgetExceeded returns the current provider spending-limit signal,
+// or zero values when no provider is registered or the provider is serving.
+func InferenceBudgetExceeded() (errMsg string, since time.Time, rebuffs int) {
+	inferenceBudgetMu.RLock()
+	fn := inferenceBudgetFn
+	inferenceBudgetMu.RUnlock()
+	if fn == nil {
+		return "", time.Time{}, 0
+	}
+	return fn()
 }
 
 // InferenceAuthError returns the current inference-backend auth-failure signal

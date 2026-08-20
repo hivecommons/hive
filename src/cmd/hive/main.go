@@ -2840,6 +2840,10 @@ func main() {
 		// and the heartbeat builder reports it to the hub (both as an immediate
 		// advisory-staleness cause and as a dedicated inference-auth alert).
 		dashboard.SetInferenceAuthProvider(githubProxy.InferenceAuthError)
+		// #4294: the provider spending-limit signal, read by the eval cycle to
+		// raise an advisory and stop kicking agents at a gateway that is
+		// refusing on a money limit.
+		dashboard.SetInferenceBudgetProvider(githubProxy.InferenceBudgetExceeded)
 
 		// Wire the inference token sink so the translator records per-agent
 		// usage (from the gateway's OpenAI usage block) into the same metrics
@@ -4346,6 +4350,10 @@ func main() {
 const (
 	budgetWarnAlertID      = "budget-warn"
 	budgetExhaustedAlertID = "budget-exhausted"
+	// providerBudgetAlertID is the PROVIDER spend rebuff (#4294), kept distinct
+	// from the two token-budget alerts above so an operator can tell "we used
+	// our token allowance" from "the gateway will not spend more money".
+	providerBudgetAlertID = "provider-budget-exceeded"
 )
 
 // applyBudgetAlerts turns budget threshold crossings into dashboard system
@@ -5025,6 +5033,28 @@ func runEvalCycle(
 	}
 	agentsDue = filteredDue
 
+	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
+	// money limit, every kick launched this cycle is a run that cannot buy a
+	// single token — precisely the failure this addresses: a hive that kept
+	// firing its cadence into a gateway rejecting 100% of requests until
+	// midnight, all day, silently.
+	//
+	// The alert is raised HERE, before kick assembly, so an operator is told
+	// even on a cycle where nothing happened to be due. The actual suppression
+	// happens after every kick source has contributed — see below.
+	providerBudgetCause, providerBudgetSince, providerBudgetRebuffs := dashboard.InferenceBudgetExceeded()
+	if providerBudgetCause != "" {
+		msg := fmt.Sprintf("provider spending limit reached — agent kicks suspended until the provider window resets: %s", providerBudgetCause)
+		if providerBudgetRebuffs > 1 {
+			msg = fmt.Sprintf("provider spending limit reached (%d refused calls since %s) — agent kicks suspended until the provider window resets: %s",
+				providerBudgetRebuffs, providerBudgetSince.Format(time.RFC1123), providerBudgetCause)
+		}
+		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", msg)
+		providerBudgetCause = msg
+	} else {
+		dashSrv.ClearSystemAlert(providerBudgetAlertID)
+	}
+
 	// ADDITIVE CEL routing: evaluate operator-defined CEL trigger rules
 	// (cfg.Triggers, pkg/celtrigger) against the items enumerated this cycle and
 	// UNION any matched, gated agents into agentsDue. This runs alongside — never
@@ -5057,6 +5087,32 @@ func runEvalCycle(
 		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
 		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
 	}
+	// #4294: drop EVERY assembled kick while the provider is refusing on a
+	// spending limit. Placed after all three sources have contributed —
+	// governor-due agents, the CEL union, and the review swarm — because gating
+	// only `agentsDue` earlier would still let a CEL match or a review kick fire
+	// into the same clipped key.
+	//
+	// Suppression is total rather than per-agent because the limit is on the
+	// KEY: no agent can succeed while it is clipped. It self-heals — the first
+	// inference call that succeeds after the provider's window resets clears the
+	// signal — so there is no timer to tune and no operator action required.
+	//
+	// Deliberately does NOT force-pause agents. Operator pause state is a human
+	// decision (#2573) and must not be forged by an automatic signal that will
+	// clear itself; withholding kicks achieves the saving without leaving paused
+	// agents behind for a human to un-pause by hand.
+	if providerBudgetCause != "" && len(messages) > 0 {
+		withheld := make([]string, 0, len(messages))
+		for _, msg := range messages {
+			withheld = append(withheld, msg.Agent)
+		}
+		logger.Warn("provider spending limit: withholding agent kicks",
+			"withheld", withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince)
+		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
+		messages = nil
+	}
+
 	var deliveredReviewKicks []review.DispatchKick
 	if len(messages) > 0 {
 		for _, msg := range messages {
