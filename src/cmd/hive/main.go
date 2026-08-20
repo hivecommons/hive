@@ -4791,8 +4791,17 @@ func advisoryIssueUnresolved(advisoryIssues map[string]int, repo string) bool {
 // treats a hive reporting neither a post time nor an error as "not an advisory
 // participant" and never alarms, which is how a wedged digest went unnoticed for
 // six days in #4167.
-func advisoryIssueMissingError(repo string) string {
-	return fmt.Sprintf("no advisory issue resolved for %s — digest not posted", repo)
+func advisoryIssueMissingError(repo string, cause error) string {
+	base := fmt.Sprintf("no advisory issue resolved for %s — digest not posted", repo)
+	// Issues-disabled is the one ensure failure with a remedy the OPERATOR of
+	// the target repo owns (#4329): flipping a repo setting, not fixing App
+	// auth. Fold its actionable message into the alert text so the fleet
+	// stale-advisory pill says so instead of reading like an auth failure.
+	var disabled *github.IssuesDisabledError
+	if errors.As(cause, &disabled) {
+		return base + ": " + disabled.Error()
+	}
+	return base
 }
 
 func runEvalCycle(
@@ -4839,6 +4848,11 @@ func runEvalCycle(
 	// whatever it last said. Retrying here is cheap (one search per eval cycle
 	// only while unresolved, nothing once resolved) and is the difference
 	// between a transient boot error and a permanently wedged digest.
+	//
+	// advisoryEnsureErr keeps this cycle's ensure failure so the post-path
+	// error recorded below can name the CAUSE (e.g. Issues disabled on a fork,
+	// #4329) instead of only the symptom.
+	var advisoryEnsureErr error
 	if primaryRepo := primaryAdvisoryRepo(cfg); primaryRepo != "" && ghClient != nil {
 		if advisoryIssueUnresolved(advisoryIssues, primaryRepo) {
 			num, retryErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
@@ -4847,6 +4861,7 @@ func runEvalCycle(
 				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
 				logger.Info("advisory issue resolved on retry", "repo", primaryRepo, "number", num)
 			} else {
+				advisoryEnsureErr = retryErr
 				logger.Warn("advisory issue still unresolved — digest cannot be posted this cycle",
 					"repo", primaryRepo, "error", retryErr)
 			}
@@ -5461,7 +5476,7 @@ func runEvalCycle(
 					// that looked exactly like a healthy PR-only hive. Record it
 					// as a post FAILURE so the hub flags the hive stale with the
 					// real cause, and log it once per cycle for the operator.
-					msg := advisoryIssueMissingError(primaryRepo)
+					msg := advisoryIssueMissingError(primaryRepo, advisoryEnsureErr)
 					dashSrv.RecordAdvisoryError(msg)
 					logger.Warn("advisory digest not posted: no pinned advisory issue",
 						"repo", primaryRepo, "findings", digest.TotalCount)

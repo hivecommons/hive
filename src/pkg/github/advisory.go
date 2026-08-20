@@ -20,6 +20,30 @@ const (
 	advisoryLabelClr  = "0e8a16"
 )
 
+// IssuesDisabledError reports that the advisory issue cannot be created or
+// resolved because the target repo has its Issues feature turned off
+// (has_issues=false). GitHub disables Issues on forks by default, so this is
+// the common failure mode when a hive is pointed at a fork (#4329). It is a
+// distinct class from the 403 "Resource not accessible by integration"
+// App-permission failure: no amount of App reconfiguration fixes it, only a
+// repo-settings change (or repointing the hive) does, so the message names
+// that remedy.
+type IssuesDisabledError struct {
+	// Repo is the owner/name of the repo with Issues disabled.
+	Repo string
+	// Fork records whether the repo is a GitHub fork, the usual reason
+	// Issues are off.
+	Fork bool
+}
+
+func (e *IssuesDisabledError) Error() string {
+	why := "common on forks"
+	if e.Fork {
+		why = "it is a fork, and GitHub disables Issues on forks by default"
+	}
+	return fmt.Sprintf("Issues are disabled on %s (%s) — enable Issues in the repo's Settings > General > Features, or point the hive at the upstream repo", e.Repo, why)
+}
+
 // EnsureAdvisoryIssue finds or creates the pinned advisory issue for a repo.
 // Returns the issue number.
 func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, error) {
@@ -39,6 +63,21 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 	if num > 0 {
 		c.logger.Info("found existing advisory issue", slog.String("repo", repo), slog.Int("number", num))
 		return num, nil
+	}
+
+	// Before attempting to create, check whether the repo can hold issues at
+	// all. A fork (or any repo with the Issues feature off) has no Issues tab:
+	// the create below would fail with a 410 that reads like an auth problem,
+	// and the fleet alert would blame the App. Name the real cause instead
+	// (#4329). A failed metadata probe fails OPEN — the create attempt then
+	// produces its own, real error.
+	if ghRepo, _, repoErr := c.client.Repositories.Get(ctx, owner, repo); repoErr == nil {
+		if ghRepo != nil && !ghRepo.GetHasIssues() {
+			return 0, &IssuesDisabledError{Repo: owner + "/" + repo, Fork: ghRepo.GetFork()}
+		}
+	} else {
+		c.logger.Warn("could not check repo has_issues before advisory issue create",
+			slog.String("repo", repo), slog.String("error", repoErr.Error()))
 	}
 
 	c.logger.Info("creating advisory issue", slog.String("repo", repo))

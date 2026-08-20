@@ -110,6 +110,12 @@ quietly:
   publish, the spoke records a post error — `no advisory issue resolved for
   <repo>` — so the hub flags the hive's digest stale with that cause instead of
   reading it as a hive that simply does not post advisories.
+- **The repo has Issues disabled.** Forks have `has_issues=false` by default —
+  there is no Issues tab, so the pinned issue can neither be found nor created.
+  The hive checks the flag before attempting the create and records a distinct
+  post error naming the remedy: enable Issues in the repo's **Settings >
+  General > Features**, or point the hive at the upstream repo. This is not an
+  App-permission problem; the App banner stays down.
 - **Someone closed the pinned issue.** The hive reopens the existing issue rather
   than filing a new one. Filing a new one splits the digest: the hive writes to
   the new issue while everyone subscribed to the old one watches a comment that
