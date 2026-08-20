@@ -3124,7 +3124,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						h.markTaskCompletedVerdict(completedTask.Repo, completedTask.Number, verifiedPR,
 							verdict, contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 					}
-					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, msg.TaskID)
+					completedDesc := msg.TaskID
+					if completedTask != nil && completedTask.Number > 0 {
+						completedDesc = fmt.Sprintf("%s %s#%d: %s", completedTask.Kind, completedTask.Repo, completedTask.Number, completedTask.Title)
+					}
+					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, completedDesc)
 					h.logger.Info("[contribute-ws] task complete",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
@@ -3254,7 +3258,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					contributor.mu.Unlock()
 
-					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, msg.TaskID)
+					failedDesc := msg.TaskID
+					if failedTask != nil && failedTask.Number > 0 {
+						failedDesc = fmt.Sprintf("%s %s#%d: %s", failedTask.Kind, failedTask.Repo, failedTask.Number, failedTask.Title)
+					}
+					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, contributor.reasoningEffort, failedDesc)
 					h.logger.Info("[contribute-ws] task failed",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,

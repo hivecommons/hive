@@ -5541,8 +5541,8 @@ function ccNarrate(e){
     case 'joined': body=who+' entered the hive'; break;
     case 'left': body=who+' left the hive'; break;
     case 'picked up': body=who+' grabbed'+pickedRef; break;
-    case 'completed': body=who+' completed'+ref; break;
-    case 'failed': body=who+' hit a snag on'+ref; break;
+    case 'completed': body=who+' completed'+(e.task?' '+ccTaskRefLink(e.task):''); break;
+    case 'failed': body=who+' hit a snag on'+(e.task?' '+ccTaskRefLink(e.task):''); break;
     case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
     default: body=who+' '+esc(e.action)+ref;
   }
