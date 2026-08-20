@@ -126,6 +126,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
 	s.mux.HandleFunc("PUT /api/config/governor/sensing", s.handleGovernorSensing)
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
+	s.mux.HandleFunc("GET /api/config/governor/threshold-scaling", s.handleGovernorThresholdScalingGet)
 	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/labels", s.handleGovernorLabels)
 	s.mux.HandleFunc("PUT /api/config/governor/budget", s.handleGovernorBudget)
@@ -4327,6 +4328,23 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorThresholdScalingGet returns the configured threshold-scaling
+// curve (with its default applied) so the Thresholds tab can prefill its
+// select without loading the whole governor config payload. OWNER-ONLY,
+// matching the write side and the rest of the governor-config surface.
+func (s *Server) handleGovernorThresholdScalingGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, map[string]string{
+		"threshold_scaling": s.deps.Config.Governor.ThresholdScalingMode(),
+	})
+}
+
 // handleGovernorThresholdScaling sets how the DEFAULT mode thresholds scale
 // with the hive's repo count (#3498).
 //
@@ -4341,13 +4359,20 @@ func (s *Server) handleGovernorThresholdScaling(w http.ResponseWriter, r *http.R
 
 	var body struct {
 		ThresholdScaling string `json:"thresholdScaling"`
+		// Snake-case alias so callers can send the same key the GET returns
+		// and the YAML config uses.
+		ThresholdScalingSnake string `json:"threshold_scaling"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	scaling := sanitizeString(body.ThresholdScaling)
+	raw := body.ThresholdScaling
+	if raw == "" {
+		raw = body.ThresholdScalingSnake
+	}
+	scaling := sanitizeString(raw)
 	// Same gate as config.validate, so the write path cannot persist a value
 	// that fails the next config load.
 	if !config.ValidateThresholdScaling(scaling) {

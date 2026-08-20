@@ -18473,6 +18473,13 @@ function burnAreaChart() {
       const bPct = (b / THRESH_BAR_MAX) * 100;
       const sPct = (s / THRESH_BAR_MAX) * 100;
       return `
+        <div class="config-field" style="margin-bottom:20px">
+          <label title="How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.">Multi-repo threshold scaling <span class="config-info">i<span class="config-tooltip">How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.</span></span></label>
+          <select id="cfg-threshold-scaling" onchange="markDirty('threshold-scaling','thresholdScaling',this.value)">
+            ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
+              .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:20px">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}
         <div class="thresh-bar-wrap">
@@ -18504,13 +18511,6 @@ function burnAreaChart() {
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-quiet" value="${q}" oninput="setThreshFromInput('quiet',this.value)"></div>
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-busy" value="${b}" oninput="setThreshFromInput('busy',this.value)"></div>
           <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${THRESH_BAR_MAX}" id="thresh-in-surge" value="${s}" oninput="setThreshFromInput('surge',this.value)"></div>
-        </div>
-        <div class="config-field" style="margin-top:20px">
-          <label title="How the thresholds above scale with the number of repos this hive watches. Queue depth grows with repo count, so a fixed threshold means a large hive sits in surge permanently while a small one idles. Linear (default) compares per-repo pressure. Sqrt is gentler for hives with many quiet repos. None uses the numbers above as absolute queue depths. A threshold you set explicitly is never scaled.">Threshold scaling <span class="config-info">i<span class="config-tooltip">Scales the thresholds above by how many repos the hive watches, so the mode ladder means the same thing on a 3-repo hive as on a 39-repo one. Linear multiplies by the repo count (equivalent to comparing per-repo queue pressure). Sqrt multiplies by ceil(sqrt(repos)) — gentler, reaches surge sooner. None uses absolute numbers, the behavior from before this option existed. Thresholds you set by hand are never scaled.</span></span></label>
-          <select id="cfg-threshold-scaling" onchange="markDirty('threshold-scaling','thresholdScaling',this.value)">
-            ${[['linear', 'linear — × repo count (default)'], ['sqrt', 'sqrt — × ceil(√repos), gentler'], ['none', 'none — absolute queue depths']]
-              .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
         </div>`;
     }
 
