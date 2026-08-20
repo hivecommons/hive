@@ -29,6 +29,9 @@ func inferenceAuthSectionResponse(c config.InferenceAuthConfig) map[string]inter
 // handleGovernorInferenceAuthGet returns the vllm/llm-d discovery-auth
 // configuration. References only — never a key value.
 func (s *Server) handleGovernorInferenceAuthGet(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
 	gov := &s.deps.Config.Governor
 	jsonResponse(w, map[string]interface{}{
 		"vllm": inferenceAuthSectionResponse(gov.VLLM),

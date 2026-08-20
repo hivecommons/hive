@@ -10,7 +10,11 @@ import (
 
 func TestInferenceAuth_Get(t *testing.T) {
 	s := covApiServer(t)
-	rec := doGet(s, "/api/config/governor/inference-auth")
+	// Owner-only: unauthenticated GET is rejected.
+	if rec := doGet(s, "/api/config/governor/inference-auth"); rec.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated inference-auth get: %d", rec.Code)
+	}
+	rec := doOwnerGet(s, "/api/config/governor/inference-auth")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("inference-auth get: %d", rec.Code)
 	}
