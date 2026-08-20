@@ -51,7 +51,10 @@ src/deploy/probe_podman_rootless_netadmin.sh --bypass
 
 It creates its own throwaway store by default, removes only the containers it
 created, by name, and exits non-zero if any case stops matching the contract
-recorded here. It stops with `EX_CONFIG` (78) and names the missing
+recorded here. It deletes its own store with `podman unshare rm -rf`, because
+files the containers wrote are owned by mapped subordinate UIDs and a plain
+`rm -rf` cannot remove them. A store passed with `--store` is kept, and needs
+the same `podman unshare rm -rf` when you are done with it. It stops with `EX_CONFIG` (78) and names the missing
 prerequisite if Podman is absent, is not rootless, or the image cannot be
 pulled — it never falls back to Docker.
 

@@ -72,7 +72,13 @@ cleanup() {
     podman rm -f "$name" >/dev/null 2>&1
   done
   rm -rf "$WORK"
-  [[ "$OWN_STORE" == "true" && -n "$STORE" ]] && rm -rf "$STORE"
+
+  # Files the containers wrote are owned by mapped subordinate UIDs, so a plain
+  # rm -rf cannot remove a store this script created. Delete it from inside the
+  # user namespace instead, and fall back to rm for the pre-container case.
+  if [[ "$OWN_STORE" == "true" && -n "$STORE" ]]; then
+    podman unshare rm -rf "$STORE" 2>/dev/null || rm -rf "$STORE" 2>/dev/null
+  fi
   return 0
 }
 trap cleanup EXIT
