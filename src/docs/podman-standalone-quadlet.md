@@ -26,6 +26,14 @@ host it runs on.
 **Docker is untouched.** `src/docker-compose.yaml` is unchanged and remains the
 default, fully supported runtime.
 
+Both units carry the [#4210 ownership labels](podman-ownership-cleanup.md) —
+`io.kubestellar.hive.owned=true` plus the component, instance, and runtime
+keys — so the container and the volume are visible to
+`bin/hive-podman-teardown.sh`, whose selection is those labels and nothing
+else. The instance label is the contract's default (`default`); a second Hive
+deployment on the same host needs its own unit files with their own instance
+value.
+
 ## `systemctl start` returning means *healthy*
 
 This is the property ADR-0017 chose Quadlet for, so it is worth being precise.

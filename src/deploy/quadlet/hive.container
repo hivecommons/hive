@@ -40,6 +40,18 @@ Documentation=https://github.com/kubestellar/hive/blob/v4/src/docs/podman-standa
 Image=ghcr.io/kubestellar/hive:stable
 ContainerName=hive
 
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh. They are what makes this container visible to
+# bin/hive-podman-teardown.sh (#4343), whose selection is the ownership label
+# set and nothing else — an unlabelled container is invisible to it and would
+# survive every teardown. A Quadlet unit is static, so the instance label is
+# the contract's default; a second deployment on one host needs its own unit
+# with its own instance value.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=hive
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
 # CAP_NET_ADMIN is what the entrypoint needs to install the forced-proxy egress
 # redirect. Without it the entrypoint fails closed with exit 77 unless
 # HIVE_PROXY_ADVISORY_OK=true is set deliberately — see the support matrix.

@@ -20,5 +20,15 @@ Description=Hive persistent state volume
 [Volume]
 VolumeName=hive-data
 
+# The #4210 ownership labels, matching hive_podman_labels in
+# bin/hive-podman-cleanup.sh — bin/hive-podman-teardown.sh (#4343) selects by
+# these and nothing else, so a volume without them would survive every
+# teardown. The instance label is the contract's default, as in
+# hive.container.
+Label=io.kubestellar.hive.owned=true
+Label=io.kubestellar.hive.component=hive
+Label=io.kubestellar.hive.instance=default
+Label=io.kubestellar.hive.runtime=podman
+
 [Install]
 WantedBy=default.target
