@@ -42,6 +42,18 @@ case "$*" in
 esac
 EOF
 
+# uutils coreutils has no %C: it prints an error to STDOUT and exits 0, so a
+# `|| fallback` never fires and the sentence flows on as if it were a context
+# (#4359). Everything else delegates, because uutils implements the rest.
+cat >"${FAKE_BIN}/uustat" <<EOF
+#!${BASH_BIN}
+case "\$*" in
+  *%C*) printf 'unsupported for this operating system\n'; exit 0 ;;
+esac
+exec "${FAKE_BIN}/stat" "\$@"
+EOF
+chmod +x "${FAKE_BIN}/uustat"
+
 cat >"${FAKE_BIN}/getenforce" <<'EOF'
 #!/bin/sh
 [ "${FAKE_ENFORCE:-}" = "__ERR__" ] && exit 1
@@ -82,20 +94,28 @@ while [ \$# -gt 0 ]; do
   esac
 done
 
+if [ -n "\${FAKE_LABEL_PROBE:-}" ] && [ "\$path" = "\$FAKE_LABEL_PROBE" ]; then
+  case "\$fmt" in
+    *%C*) printf '%s\\n' "\${FAKE_LABEL_PROBE_CONTEXT:-system_u:object_r:etc_t:s0}"; exit 0 ;;
+  esac
+fi
+
 line="\$(grep -F -- "\${path}|" "\$FAKE_STAT_MAP" 2>/dev/null | head -1)"
-IFS='|' read -r _p mode uid user label <<<"\$line"
+IFS='|' read -r _p mode uid user label gid <<<"\$line"
 
 real() { "${REAL_STAT}" -c "\$1" "\$path" 2>/dev/null; }
 [ -n "\$mode" ]  || mode="\$(real %a)"
 [ -n "\$uid" ]   || uid="\$(real %u)"
 [ -n "\$user" ]  || user="\$(real %U)"
 [ -n "\$label" ] || label="\$(real %C)"
+[ -n "\$gid" ]   || gid="\$(real %g)"
 
 out="\$fmt"
 out="\${out//%a/\$mode}"
 out="\${out//%u/\$uid}"
 out="\${out//%U/\$user}"
 out="\${out//%C/\$label}"
+out="\${out//%g/\$gid}"
 printf '%s\n' "\$out"
 EOF
 
@@ -112,8 +132,26 @@ mkdir -p "${SRC_FIXTURE}/deploy" "${SRC_FIXTURE}/secrets"
 echo "levels: []" >"${SRC_FIXTURE}/hive.yaml"
 echo "events {}" >"${SRC_FIXTURE}/deploy/nginx.conf"
 echo "-----BEGIN PRIVATE KEY-----" >"${SRC_FIXTURE}/secrets/gh-app-key.pem"
-chmod 700 "${SRC_FIXTURE}/secrets"
+# 0750, not 0700: the container's hive-launch group needs the traverse bit
+# (#4359). Nothing for "other" either way.
+chmod 750 "${SRC_FIXTURE}/secrets"
 chmod 600 "${SRC_FIXTURE}/secrets/gh-app-key.pem"
+
+# The rootless mapping under test: container GID 1002 comes out of the
+# subordinate range, so it is SUBGID_START + 1001 on the host — 525289 for a
+# range starting at 524288, which is what podman itself computes. chgrp to that
+# group is not available to an unprivileged test, so the stub stat reports the
+# ownership instead and the arithmetic is exercised for real.
+# Resolving "can this host read a label at all" must not be answered by a
+# deployment path: that is exactly the conflation #4359 is about. The probe is
+# its own file, and the stub answers it regardless of the label map in force.
+LABEL_PROBE="${TEST_TMP}/label-probe"
+: >"$LABEL_PROBE"
+
+SUBGID_START=524288
+SUBGID_FIXTURE="${TEST_TMP}/subgid"
+printf '%s:%s:65536\n' "$(id -un)" "$SUBGID_START" >"$SUBGID_FIXTURE"
+MAPPED_LAUNCH_GID=$(( SUBGID_START + 1001 ))
 
 # Default map: every bind source already carries a container-readable label, so
 # a case that says nothing about labels gets a clean labeling report.
@@ -121,7 +159,7 @@ label_all_container_readable() {
   cat >"$STAT_MAP" <<EOF
 ${SRC_FIXTURE}/hive.yaml||||system_u:object_r:container_file_t:s0
 ${SRC_FIXTURE}/deploy/nginx.conf||||system_u:object_r:container_file_t:s0
-${SRC_FIXTURE}/secrets||||system_u:object_r:container_file_t:s0
+${SRC_FIXTURE}/secrets||||system_u:object_r:container_file_t:s0|${MAPPED_LAUNCH_GID}
 ${SRC_FIXTURE}/secrets/gh-app-key.pem||||system_u:object_r:container_file_t:s0
 EOF
 }
@@ -160,7 +198,9 @@ run_preflight() {
   before="$(fixture_snapshot)"
   set +e
   RUN_OUT="$(env PATH="$TEST_PATH" PODMAN_CALL_LOG="$CALL_LOG" FAKE_STAT_MAP="$STAT_MAP" \
-    HIVE_SRC_DIR="$SRC_FIXTURE" "$@" "$BASH_BIN" "$PREFLIGHT" 2>&1)"
+    HIVE_SRC_DIR="$SRC_FIXTURE" HIVE_PFH_SUBGID_FILE="$SUBGID_FIXTURE" \
+    HIVE_PFH_LABEL_PROBES="$LABEL_PROBE" FAKE_LABEL_PROBE="$LABEL_PROBE" \
+    "$@" "$BASH_BIN" "$PREFLIGHT" 2>&1)"
   RUN_STATUS=$?
   set -e
   RUN_CALLS="$(cat "$CALL_LOG")"
@@ -292,6 +332,64 @@ assert_contains "$RUN_OUT" "security xattrs" "unlabeled source explains why"
 
 label_all_container_readable
 
+# --- #4359: the label reader is resolved, never assumed ------------------------
+#
+# Both cases run with no SELinux on the host: the defect is in how the label is
+# READ, so it reproduces anywhere uutils coreutils shadows GNU. #4211 measured
+# that hosted runners have no SELinux at all, which is exactly why this half is
+# the half that can be covered in CI.
+
+label_all_container_readable
+
+# The Bluefin/Universal Blue shape: uutils first, GNU still reachable. The
+# fallback has to be taken, and correctly-labelled paths reported as correct.
+run_preflight env HIVE_DEPLOY_RUNTIME=podman HIVE_PFH_LABEL_READERS="uustat stat"
+assert_eq "0" "$RUN_STATUS" "uutils-with-fallback exit"
+assert_contains "$RUN_OUT" "already container-readable" "uutils falls back and reads the real label"
+assert_not_contains "$RUN_OUT" "unsupported for this operating system" \
+  "uutils error string never reaches the report"
+assert_not_contains "$RUN_OUT" "a container cannot read it as-is" \
+  "a correctly labelled path is not warned about under uutils"
+
+# uutils alone. There is no label to be had, and saying so is the only honest
+# answer — "unlabelled" would be a different claim, and a pass would be a lie.
+run_preflight env HIVE_DEPLOY_RUNTIME=podman HIVE_PFH_LABEL_READERS="uustat"
+assert_eq "0" "$RUN_STATUS" "no-reader exit"
+assert_contains "$RUN_OUT" "no tool on this host can read an SELinux label" \
+  "no working reader is reported as its own outcome"
+assert_contains "$RUN_OUT" "UNCHECKED" "no working reader does not read as a pass"
+assert_not_contains "$RUN_OUT" "unsupported for this operating system" \
+  "no-reader case still never prints the error string as a label"
+assert_not_contains "$RUN_OUT" "already container-readable" \
+  "no working reader cannot claim a path is fine"
+assert_not_contains "$RUN_OUT" "carries no SELinux label" \
+  "cannot-read is not reported as unlabelled"
+
+# --- #4359: the secrets directory the container can actually traverse ---------
+
+label_all_container_readable
+
+# Group-owned by the mapped launch gid, with the traverse bit: the state the
+# remediation reaches, verified on an enforcing host to be readable by dev.
+run_preflight env HIVE_DEPLOY_RUNTIME=podman
+assert_contains "$RUN_OUT" "traversable by the container's hive-launch group" \
+  "correctly prepared secrets dir passes the reach check"
+
+# Owned by the operator's own group: the state `mkdir -m 700` produces, where
+# SELinux is satisfied and the read still fails, with no AVC to explain it.
+cat >"$STAT_MAP" <<EOF
+${SRC_FIXTURE}/hive.yaml||||system_u:object_r:container_file_t:s0
+${SRC_FIXTURE}/deploy/nginx.conf||||system_u:object_r:container_file_t:s0
+${SRC_FIXTURE}/secrets|700|||system_u:object_r:container_file_t:s0|$(id -g)
+${SRC_FIXTURE}/secrets/gh-app-key.pem||||system_u:object_r:container_file_t:s0
+EOF
+run_preflight env HIVE_DEPLOY_RUNTIME=podman
+assert_contains "$RUN_OUT" "Secrets reach:" "unreachable secrets dir is reported"
+assert_contains "$RUN_OUT" "podman unshare chown" "rootless remedy uses the id translation"
+assert_not_contains "$RUN_OUT" "chmod 0755" "remedy never widens the secrets directory"
+assert_not_contains "$RUN_OUT" "setenforce" "remedy never disables SELinux"
+label_all_container_readable
+
 # --- Configuration and secrets ------------------------------------------------
 
 # Config that is not there yet fails: the bind mount has nothing to bind.
@@ -313,7 +411,8 @@ mv "${SRC_FIXTURE}/secrets" "${TEST_TMP}/secrets.stash"
 run_preflight env HIVE_DEPLOY_RUNTIME=podman
 assert_eq "0" "$RUN_STATUS" "absent secrets dir is not a failure"
 assert_contains "$RUN_OUT" "does not exist" "absent secrets dir reported"
-assert_contains "$RUN_OUT" "mkdir -m 700" "absent secrets dir remedy creates it narrow"
+assert_contains "$RUN_OUT" "mkdir -m 750" "absent secrets dir remedy creates it traversable"
+assert_not_contains "$RUN_OUT" "mkdir -m 700" "absent secrets dir remedy no longer excludes the container"
 mv "${TEST_TMP}/secrets.stash" "${SRC_FIXTURE}/secrets"
 
 # An over-permissive secret is reported and left alone. The only command
@@ -329,10 +428,10 @@ assert_eq "644" "$("$REAL_STAT" -c '%a' "${SRC_FIXTURE}/secrets/gh-app-key.pem")
   "secret mode untouched by preflight"
 chmod 600 "${SRC_FIXTURE}/secrets/gh-app-key.pem"
 
-chmod 755 "${SRC_FIXTURE}/secrets"
+chmod 775 "${SRC_FIXTURE}/secrets"
 run_preflight env HIVE_DEPLOY_RUNTIME=podman
-assert_contains "$RUN_OUT" "wider than 700" "over-permissive secrets dir reported"
-chmod 700 "${SRC_FIXTURE}/secrets"
+assert_contains "$RUN_OUT" "wider than 750" "over-permissive secrets dir reported"
+chmod 750 "${SRC_FIXTURE}/secrets"
 
 # 0400 is narrower than the 0600 maximum and must not be flagged.
 chmod 400 "${SRC_FIXTURE}/secrets/gh-app-key.pem"

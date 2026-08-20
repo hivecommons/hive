@@ -112,6 +112,30 @@ A source that carries no label at all is reported separately: that usually
 means the filesystem underneath it does not support security xattrs, and the
 deployment needs to move rather than be relabeled.
 
+### Reading the label at all
+
+`stat -c '%C'` is not assumed to work. Under **uutils coreutils** — the default
+on Fedora-atomic hosts such as Bluefin — `stat` has no `%C` and answers
+`unsupported for this operating system` on *stdout*, with exit status `0`. A
+`|| fallback` never fires, and that sentence used to flow into the report as if
+it were a context, so no path could ever match a container type and every
+source was warned about, including one the operator had already labelled
+correctly (#4359).
+
+Preflight now resolves a reader once per run — `stat`, then `/usr/bin/stat`,
+then `getfattr` — and requires the output to look like a real context
+(`user:role:type:level`) before trusting it. When none of them works, that is
+reported as its own outcome:
+
+```
+△ Mount labeling: no tool on this host can read an SELinux label
+  → Install GNU coreutils or attr (getfattr), then re-run. Mount labeling is
+    UNCHECKED until then — this is not a pass.
+```
+
+"Cannot read a label" and "this path has no label" are deliberately different
+messages. Only the second one means the filesystem is the problem.
+
 ## 3. Configuration and secrets readability
 
 Readable by the process that needs it, and by nobody else. Both halves are
@@ -120,7 +144,8 @@ reported; **neither is repaired**.
 * A missing `hive.yaml` or `deploy/nginx.conf` fails — the bind mount has
   nothing to bind.
 * A missing `secrets/` warns rather than fails: token-only deployments never
-  create it. The suggested `mkdir -m 700` creates it narrow.
+  create it. The suggested command creates it **traversable by the container**,
+  not merely narrow — see below.
 * A source the invoking user cannot read fails. Rootless Podman opens bind
   mounts with that user's credentials, so an unreadable source is an unreadable
   mount.
@@ -129,8 +154,47 @@ reported; **neither is repaired**.
   inside the user namespace. That is a latent failure even when the file reads
   fine today. Rootful Podman does not map UIDs that way, so the check does not
   apply there.
-* A secrets directory wider than `0700`, or a secret file wider than `0600`,
+* A secrets directory wider than `0750`, or a secret file wider than `0600`,
   warns and prints the `chmod` that **narrows** it.
+
+### The secrets directory the container can actually traverse
+
+`0700` looks like the safe choice and is not. The image reads GitHub App keys
+as `dev` (UID 1001) through the `hive-launch` supplementary group (GID 1002,
+pinned in `src/Dockerfile`). A `0700` directory owned by the operator grants
+`dev` nothing — **not even the traverse bit** — so the key is unreadable
+however it is labelled. The refusal is DAC and never reaches SELinux, so it
+produces **no AVC at all**: it presents as `Permission denied` on a key file on
+an enforcing host, reads as a labeling problem, and no relabeling fixes it
+(#4359).
+
+The Kubernetes path already gets this right with `fsGroup: 1002` in
+`src/deploy/k8s/deployment.yaml`. Preflight now checks the standalone
+equivalent — whether the directory is group-owned by the group container GID
+1002 actually maps to, with the group-execute bit set — and prints the
+remediation for the root mode in use.
+
+Rootless, the mapping is the catch. The invoking user maps to container root
+and everything above comes out of the subordinate range, so container GID 1002
+is `subgid_start + 1001` on the host — **not** 1002. A plain
+`chgrp 1002` therefore targets the wrong group, and is not even permitted for a
+user who is not a member of it. `podman unshare` does the translation:
+
+```bash
+chmod 0750 /opt/hive/src/secrets
+podman unshare chown -R 0:1002 /opt/hive/src/secrets
+```
+
+Rootful maps identity, so there it is simply:
+
+```bash
+sudo chgrp -R 1002 /opt/hive/src/secrets
+sudo chmod 0750 /opt/hive/src/secrets
+```
+
+Key files stay `0640`. Nothing here grants anything to *other*, so the
+narrowing-only rule is intact: `0750` is not a widening of `0700` toward the
+world, it is the group bit the container needs and nothing more.
 
 Preflight never widens permissions, and the test suite asserts both that no
 output path proposes `chmod 777`, `chmod a+r`, or similar, and that the

@@ -194,6 +194,90 @@ HIVE_PODMAN_BIND_SOURCES=(
   "secrets|secrets directory|Z"
 )
 
+# --- Reading an SELinux label ------------------------------------------------
+#
+# `stat -c '%C'` is not a reliable reader. Under uutils coreutils — the default
+# on the Fedora-atomic hosts this lane targets — `stat` has no %C and answers
+# "unsupported for this operating system" on STDOUT with exit status 0. A
+# `|| fallback` therefore never fires and the sentence flows onward as if it
+# were a context, so no path can ever match a container type and the check
+# warns even about a path the operator has already labelled correctly (#4359).
+#
+# So the reader is RESOLVED, not assumed: each candidate is tried against a
+# real file and its output must look like a context before it is trusted. When
+# none does, "cannot read a label" is reported as its own outcome rather than
+# being mistaken for "unlabelled" — the check says what it does not know.
+#
+# Overridable only so the contract test can present a host carrying just one of
+# them; operators have no reason to set it.
+HIVE_PFH_LABEL_READERS="${HIVE_PFH_LABEL_READERS:-stat /usr/bin/stat getfattr}"
+
+# Resolved once per run: a reader command, or "none".
+HIVE_PFH_LABEL_READER=""
+
+# An SELinux context is user:role:type:level. Requiring the role field is what
+# makes this a validator rather than a non-empty test — it is exactly the check
+# the uutils sentence fails.
+_pfh_looks_like_context() {
+  case "$1" in
+    *:object_r:*) return 0 ;;
+  esac
+  return 1
+}
+
+# Runs one candidate reader against one path. getfattr spells the request
+# differently from stat; everything else takes stat's format flag.
+_pfh_run_label_reader() {
+  local reader="$1" path="$2"
+
+  case "${reader##*/}" in
+    getfattr) "$reader" -n security.selinux --only-values --absolute-names "$path" 2>/dev/null ;;
+    *) "$reader" -c '%C' "$path" 2>/dev/null ;;
+  esac
+}
+
+# Where the reader is probed. Deliberately NOT a deployment path: probing on
+# one would conflate the two outcomes this whole change exists to separate — a
+# reader that does not work, and a path that genuinely has no label. On an
+# SELinux host these always carry a context, whatever the deployment sits on.
+HIVE_PFH_LABEL_PROBES="${HIVE_PFH_LABEL_PROBES:-/etc /}"
+
+# Picks the first candidate that returns something context-shaped. Returns 1
+# when none does, and remembers that so later paths do not re-probe.
+_pfh_resolve_label_reader() {
+  local reader probe out
+
+  if [[ -n "$HIVE_PFH_LABEL_READER" ]]; then
+    [[ "$HIVE_PFH_LABEL_READER" != "none" ]]
+    return
+  fi
+
+  for reader in $HIVE_PFH_LABEL_READERS; do
+    command -v "$reader" >/dev/null 2>&1 || continue
+    for probe in $HIVE_PFH_LABEL_PROBES; do
+      [[ -e "$probe" ]] || continue
+      out="$(_pfh_run_label_reader "$reader" "$probe")" || continue
+      _pfh_looks_like_context "$out" || continue
+      HIVE_PFH_LABEL_READER="$reader"
+      return 0
+    done
+  done
+
+  HIVE_PFH_LABEL_READER="none"
+  return 1
+}
+
+# The label of $1, or empty when this path has none. A reader that succeeded on
+# the probe can still return nothing useful here — a filesystem without security
+# xattrs is the usual reason — so the shape is re-checked every time rather than
+# assumed from the probe.
+_pfh_read_label() {
+  local out
+  out="$(_pfh_run_label_reader "$HIVE_PFH_LABEL_READER" "$1")" || return 1
+  _pfh_looks_like_context "$out" || return 1
+  printf '%s\n' "$out"
+}
+
 # Labels a container process can read without a relabel. container_file_t is
 # what :Z/:z and the container_file_t fcontext produce; container_share_t is
 # the read-only shared variant.
@@ -218,8 +302,9 @@ _pfh_regex_escape() {
 }
 
 hive_podman_check_mount_labels() {
-  local selinux_mode entry rel desc opt path label stat_out
+  local selinux_mode entry rel desc opt path label
   local unlabeled=0 checked=0
+  local -a present=()
 
   selinux_mode="$(_pfh_selinux_mode)"
 
@@ -231,14 +316,29 @@ hive_podman_check_mount_labels() {
   for entry in "${HIVE_PODMAN_BIND_SOURCES[@]}"; do
     IFS='|' read -r rel desc opt <<<"$entry"
     path="${HIVE_SRC_DIR}/${rel}"
-
     # Existence and readability are the config/secrets check's job; a path that
     # is not there yet has no label to judge.
-    [[ -e "$path" ]] || continue
+    [[ -e "$path" ]] && present+=("$entry")
+  done
+
+  # Resolved once, before any path is judged, so a host with no working reader
+  # says so once instead of repeating a complaint per bind source.
+  if [[ "${#present[@]}" -gt 0 ]]; then
+    if ! _pfh_resolve_label_reader; then
+      _pfh_warn "Mount labeling: no tool on this host can read an SELinux label"
+      _pfh_hint "Tried: ${HIVE_PFH_LABEL_READERS}. Under uutils coreutils, 'stat -c %C' prints an error to stdout and exits 0, so a label read that way is not a label."
+      _pfh_hint "Install GNU coreutils or attr (getfattr), then re-run. Mount labeling is UNCHECKED until then — this is not a pass."
+      _pfh_hint "Nothing here requires weakening SELinux; the kernel stays enforcing either way."
+      return 0
+    fi
+  fi
+
+  for entry in "${present[@]}"; do
+    IFS='|' read -r rel desc opt <<<"$entry"
+    path="${HIVE_SRC_DIR}/${rel}"
 
     checked=$((checked + 1))
-    stat_out="$(stat -c '%C' "$path" 2>/dev/null)" || stat_out=""
-    label="$stat_out"
+    label="$(_pfh_read_label "$path")" || label=""
 
     if [[ -z "$label" || "$label" == "?" ]]; then
       _pfh_warn "Mount label: ${rel} (${desc}) carries no SELinux label"
@@ -336,6 +436,87 @@ _pfh_check_readable() {
   return 0
 }
 
+# --- Secrets the container can actually reach --------------------------------
+#
+# The image reads GitHub App keys as `dev` (UID 1001) through the `hive-launch`
+# supplementary group, GID 1002 — pinned in src/Dockerfile. The Kubernetes path
+# spells the same requirement as `fsGroup: 1002` in
+# src/deploy/k8s/deployment.yaml; the standalone path had no equivalent, so its
+# advice ("mkdir -m 700") produced a directory the container cannot traverse
+# (#4359). A 0700 directory owned by the operator grants `dev` nothing — not
+# even the traverse bit — and no amount of relabeling changes that, because the
+# refusal is DAC and never reaches SELinux. It presents as Permission denied on
+# a key file on an enforcing host, which reads as a labeling problem and is not
+# one.
+HIVE_PFH_LAUNCH_GID="${HIVE_PFH_LAUNCH_GID:-1002}"
+
+# Where the subordinate ID ranges live. Overridable for the contract test.
+HIVE_PFH_SUBGID_FILE="${HIVE_PFH_SUBGID_FILE:-/etc/subgid}"
+
+# The HOST gid that a given CONTAINER gid maps to.
+#
+# Rootful maps identity, so 1002 is 1002. Rootless does not: the invoking user
+# maps to container root and everything above it comes out of the subordinate
+# range, so container GID 1002 is subgid_start + 1001 on the host. That is why
+# a plain `chgrp 1002` is both wrong and — for an unprivileged user who is not
+# in group 1002 — not even permitted. `podman unshare` exists to do this
+# translation, and is what the remediation below uses.
+_pfh_mapped_gid() {
+  local cgid="$1" line start count
+
+  if [[ "$(_pfh_rootless)" != "true" ]]; then
+    printf '%s\n' "$cgid"
+    return 0
+  fi
+
+  line="$(awk -F: -v u="$(id -un)" '$1 == u { print $2 ":" $3; exit }' \
+    "$HIVE_PFH_SUBGID_FILE" 2>/dev/null)"
+  [[ -n "$line" ]] || return 1
+
+  start="${line%%:*}"
+  count="${line##*:}"
+  [[ "$start" =~ ^[0-9]+$ && "$count" =~ ^[0-9]+$ ]] || return 1
+  (( cgid >= 1 && cgid <= count )) || return 1
+
+  printf '%s\n' "$(( start + cgid - 1 ))"
+}
+
+# Reports whether the container's launch group can traverse the secrets
+# directory and read what is in it. Read-only: it computes the mapping and
+# compares ownership, and starts no container.
+_pfh_check_secrets_reachable() {
+  local dir="$1" want_gid dir_gid dir_mode rootless
+
+  rootless="$(_pfh_rootless)"
+
+  if ! want_gid="$(_pfh_mapped_gid "$HIVE_PFH_LAUNCH_GID")"; then
+    _pfh_warn "Secrets reach: cannot tell which host group maps to container GID ${HIVE_PFH_LAUNCH_GID}"
+    _pfh_hint "No usable range for $(id -un) in ${HIVE_PFH_SUBGID_FILE}; subordinate IDs are #4208's check."
+    return 0
+  fi
+
+  dir_gid="$(stat -c '%g' "$dir" 2>/dev/null)" || return 0
+  dir_mode="$(stat -c '%a' "$dir" 2>/dev/null)" || return 0
+
+  # Group-execute on a directory is the traverse bit. Without it the group
+  # ownership is decoration.
+  if [[ "$dir_gid" == "$want_gid" ]] && (( 8#$dir_mode & 8#010 )); then
+    _pfh_pass "Secrets reach: ${dir} is traversable by the container's hive-launch group (host gid ${want_gid})"
+    return 0
+  fi
+
+  _pfh_warn "Secrets reach: ${dir} is group ${dir_gid} mode ${dir_mode} — the container reads keys as gid ${HIVE_PFH_LAUNCH_GID}, which is host gid ${want_gid} here"
+  _pfh_hint "A 0700 directory owned by you grants the container's 'dev' user nothing, not even traverse, so the key is unreadable however it is labeled."
+  if [[ "$rootless" == "true" ]]; then
+    _pfh_hint "Rootless, the translation needs podman (a plain chgrp ${HIVE_PFH_LAUNCH_GID} is the wrong gid, and is not permitted unless you are in that group):"
+    _pfh_hint "  chmod 0750 '${dir}' && podman unshare chown -R 0:${HIVE_PFH_LAUNCH_GID} '${dir}'"
+  else
+    _pfh_hint "  chgrp -R ${HIVE_PFH_LAUNCH_GID} '${dir}' && chmod 0750 '${dir}'"
+  fi
+  _pfh_hint "Key files stay 0640; this widens nothing to the world and is the standalone analogue of fsGroup: ${HIVE_PFH_LAUNCH_GID} in src/deploy/k8s/deployment.yaml."
+  return 0
+}
+
 hive_podman_check_config_secrets() {
   local secrets_dir="${HIVE_SRC_DIR}/secrets" key
   local rc=0
@@ -346,13 +527,21 @@ hive_podman_check_config_secrets() {
   if [[ ! -d "$secrets_dir" ]]; then
     # Token-only deployments never create it; a GitHub App deployment must.
     _pfh_warn "Secrets: ${secrets_dir} does not exist"
-    _pfh_hint "Only needed for GitHub App key auth. Create it narrow: mkdir -m 700 -p '${secrets_dir}'"
+    _pfh_hint "Only needed for GitHub App key auth. Create it so the container can traverse it, not merely narrow:"
+    if [[ "$(_pfh_rootless)" == "true" ]]; then
+      _pfh_hint "  mkdir -m 750 -p '${secrets_dir}' && podman unshare chown -R 0:${HIVE_PFH_LAUNCH_GID} '${secrets_dir}'"
+    else
+      _pfh_hint "  mkdir -m 750 -p '${secrets_dir}' && chgrp ${HIVE_PFH_LAUNCH_GID} '${secrets_dir}'"
+    fi
+    _pfh_hint "A 0700 directory looks safer and is not: it also excludes the container, and the failure then reads as an SELinux problem it is not."
     return "$rc"
   fi
 
-  # 0700: the directory is bind-mounted read-only, but the host copy is the
-  # thing an unrelated local account would read.
-  _pfh_check_readable "$secrets_dir" "Secrets dir" "700" "required" || rc=1
+  # 0750, not 0700: the container's launch group needs the traverse bit, and
+  # 0700 excludes it (#4359). Still nothing for "other" — the host copy is what
+  # an unrelated local account would read.
+  _pfh_check_readable "$secrets_dir" "Secrets dir" "750" "required" || rc=1
+  _pfh_check_secrets_reachable "$secrets_dir"
 
   local had_nullglob=0
   shopt -q nullglob && had_nullglob=1
