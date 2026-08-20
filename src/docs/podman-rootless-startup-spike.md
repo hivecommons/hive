@@ -226,5 +226,6 @@ that rootless cannot enforce; it does not finish the argument.
 ## References
 
 - [`src/deploy/entrypoint.sh`](https://github.com/kubestellar/hive/blob/v4/src/deploy/entrypoint.sh) — `EXIT_NET_ADMIN_REQUIRED`, the bounding-set probe, and the fail-closed branch.
+- [Podman support matrix](podman-support-matrix.md) — the support decision this spike feeds: rootless + enforcing is **experimental**, and the promotion criteria are the three unproven items below.
 - [NET_ADMIN requirement](https://github.com/kubestellar/hive/blob/v4/src/docs/net-admin-requirement.md)
 - [Security model](https://github.com/kubestellar/hive/blob/v4/src/docs/security-model.md)

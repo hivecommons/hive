@@ -152,6 +152,7 @@ exemptions should stay.
 ## References
 
 - [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — the rootless counterpart (#4199).
+- [Podman support matrix](podman-support-matrix.md) — the support decision this baseline feeds: rootful + enforcing is the **supported** reference cell.
 - `src/deploy/probe_podman_rootful_netadmin.sh` — the probe that produces every number above.
 - `src/deploy/entrypoint.sh` — the gate itself, and the `#2678` regression history in its comments.
 - `src/pkg/proxy/somark_linux.go` — where `SO_MARK` is stamped.
