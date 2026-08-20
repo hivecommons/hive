@@ -24,7 +24,10 @@ The hive process runs as a **non-root** user (`dev`). The MITM proxy uses
 `CAP_NET_ADMIN` to `setsockopt(SO_MARK)` on its **own** upstream dials, which is
 how the proxy's traffic is exempted from the **forced-proxy-egress** gate: the
 entrypoint installs an iptables `REDIRECT` of all outbound `:443` through the
-proxy, and on OpenShift/OVN — where the `-m owner` UID match is unavailable —
+proxy (and, since #4319, an `ip6tables` `REJECT` of outbound IPv6 `:443` with
+the same exemptions, so a dual-stack network cannot carry agent traffic around
+the redirect — the proxy listens on `127.0.0.1` only, so the IPv6 family is
+closed rather than redirected), and on OpenShift/OVN — where the `-m owner` UID match is unavailable —
 the `SO_MARK` packet mark is the **only** self-exemption. `setsockopt(SO_MARK)`
 requires `CAP_NET_ADMIN` in the calling process's **effective** set.
 

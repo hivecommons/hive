@@ -125,11 +125,13 @@ exemptions should stay.
 
 ## What remains unproven
 
-- **IPv6.** The gate is IPv4-only — the entrypoint has no `ip6tables` path at
-  all. On this configuration the container gets no global IPv6 address, so there
-  is nothing to bypass; on a host or network that does hand out IPv6, an agent
-  could reach `:443` over v6 and miss the redirect entirely. **This is the
-  bypass-resistance test that needs its own follow-up issue.**
+- **IPv6.** ~~The gate is IPv4-only — the entrypoint has no `ip6tables` path at
+  all.~~ *Resolved by #4319:* the entrypoint now closes the IPv6 family with an
+  `ip6tables` filter-table `REJECT` carrying the same three exemptions (the
+  proxy listens on `127.0.0.1` only, so a v6 `REDIRECT` had nowhere to
+  deliver). On this configuration the container gets no global IPv6 address, so
+  there was nothing to bypass here; `src/deploy/probe_podman_ipv6_egress.sh`
+  observes the dual-stack case on a Linux host.
 - **Kernels without `xt_owner`.** Deleting the owner rules emulates the shape
   but not the kernel. This host has `xt_owner`.
 - **Restart, reboot, and recreate.** Single `podman run` only; nothing about
