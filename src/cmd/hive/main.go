@@ -1075,9 +1075,17 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	// preShutdownHook, when set, runs in the signal handler before the context
+	// is canceled. It is stored after the agent manager exists and archives
+	// every agent's in-flight kick log to /data so a pod roll or hive upgrade
+	// does not destroy the latest run's scrollback (#4296).
+	var preShutdownHook atomic.Pointer[func()]
 	go func() {
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig)
+		if fn := preShutdownHook.Load(); fn != nil {
+			(*fn)()
+		}
 		cancel()
 	}()
 
@@ -1343,6 +1351,10 @@ func main() {
 		AppAuthoredPRs:  cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
+	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
+	// the in-flight kick's scrollback; archive it to /data first (#4296).
+	archiveOnShutdown := func() { agentMgr.ArchiveAllKickLogs("shutdown") }
+	preShutdownHook.Store(&archiveOnShutdown)
 	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
 	// Treat any configured gateway name as an inference-routable backend so an
 	// agent with backend: <gateway> routes through it. Resolution is live

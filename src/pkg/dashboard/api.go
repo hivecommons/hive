@@ -68,6 +68,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
 	s.mux.HandleFunc("GET /api/agents/{name}/log", s.handleAgentFullLog)
+	// Durable per-kick run-log history (#4296, #4295): list archived kick
+	// logs, fetch one, and a minimal HTML index page linked from agent cards.
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks", s.handleAgentKickLogList)
+	s.mux.HandleFunc("GET /api/agents/{name}/kicks/{id}", s.handleAgentKickLog)
+	s.mux.HandleFunc("GET /agents/{name}/kicks", s.handleAgentKickHistoryPage)
 
 	s.mux.HandleFunc("GET /api/role", s.handleRole)
 
