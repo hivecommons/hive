@@ -99,6 +99,64 @@ The hub's SaaS provisioner creates or records:
 
 For heartbeat-only clusters where the hub cannot run `kubectl`, follow the manifest-level workflow in `manual-provisioning.md`; this guide intentionally keeps the hub setup consistent with that battle-tested path.
 
+## Cluster GitHub App keys (and the `app-creds-undelivered` alert)
+
+The hub is the authority for GitHub App private keys. Each cluster has one PEM
+in the hub's own store:
+
+```
+/data/saas/app-keys/<clusterID>.pem
+```
+
+At claim time the hub delivers the App *identity* (`app_id`) to the spoke, and
+then reconciles the *key* to it on every heartbeat. **If the hub holds no key
+for that cluster, the identity is delivered with `key_delivered=false` and every
+subsequent beat resolves to "no cluster key" and delivers nothing — forever,
+until an operator uploads one.** The spoke sits in `key-missing`, does no work,
+and burns no tokens.
+
+Upload a key for a cluster:
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $HUB_ADMIN_TOKEN" \
+  --data-binary @app-private-key.pem \
+  https://<hub>/api/saas/admin/cluster-app-keys/<clusterID>
+```
+
+List which clusters currently have one:
+
+```bash
+curl -H "Authorization: Bearer $HUB_ADMIN_TOKEN" \
+  https://<hub>/api/saas/admin/cluster-app-keys
+```
+
+Both routes are hub-admin only.
+
+### Why this has its own alert
+
+These credential states are classified **operator-side**, because the key is
+hub-distributed and the hive's owner cannot fix it. Every owner-facing surface
+therefore deliberately stands down: the spoke banner says "no action needed from
+you", journey nudges are suppressed, and advisory staleness is not flagged. All
+of that is correct — and the combined effect was that nobody was told at all.
+One hosted hive sat in `key-missing` for eight days with zero tokens consumed
+before an operator happened to hover its fleet row
+([#4316](https://github.com/kubestellar/hive/issues/4316)).
+
+The fleet now raises a **critical** `app-creds-undelivered` alert for a claimed
+hive reporting an operator-side App state, and the alert text names the upload
+endpoint above, with the cluster id filled in. It clears by itself once the key
+reaches the spoke.
+
+The three states it covers need different repairs:
+
+| State | What it means | Repair |
+| --- | --- | --- |
+| `key-missing` | No key ever reached the spoke; the hub holds none for the cluster. | Upload the PEM. |
+| `key-invalid` | A key is present but signs a JWT GitHub rejects — it belongs to a *different* App. | Upload the key for the App this hive is actually assigned. Re-uploading the same key does nothing. |
+| `no-app-assigned` | The hive still carries the placeholder `app_id`; no App was ever assigned. | Assign an App to the hive first, *then* upload the key. |
+
 ## API surface to know
 
 The hub registers heartbeat, registry, SaaS, contributor, OAuth, webhook, backup, and callback-related routes from the Go hub packages. Operators normally interact through the dashboard, but the important external contracts are:

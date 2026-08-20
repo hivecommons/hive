@@ -121,6 +121,23 @@ const (
 	// only after several consecutive 401s and clears on the next success — so
 	// the alert self-heals when the key is fixed.
 	AlertTypeInferenceAuthFailed = "inference-auth-failed"
+	// AlertTypeAppCredsUndelivered — the hive needs a GitHub App credential the
+	// HUB never delivered: key-missing, key-invalid, or no-app-assigned.
+	//
+	// This exists because those states are classified operator-side, and every
+	// other surface then correctly stands down. The owner banner says "no action
+	// needed from you", journey nudges are blocked, and advisory staleness is
+	// suppressed — all right, because the App private key is hub-distributed and
+	// the owner cannot fix it. The effect is that the ONLY actor who can repair
+	// it is the one actor no signal reached. kelly-headwaters was provisioned on
+	// 2026-08-12 and found degraded on 2026-08-20, eight days and zero tokens
+	// later, by an operator who happened to hover a fleet row.
+	//
+	// Critical, not warning: this is not a degraded hive, it is a hive that has
+	// provably never worked and cannot work until someone uploads a key. The
+	// reason carries the remedy, because an alert that names a condition an
+	// operator has to go research is most of the way to the silence it replaces.
+	AlertTypeAppCredsUndelivered = "app-creds-undelivered"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -525,6 +542,16 @@ type alertHive struct {
 	// the alert when it is non-empty and drops it when it clears. Never carries
 	// key material.
 	InferenceAuthError string
+
+	// GitHubAppRequired / GitHubAppState / ClusterID back the
+	// app-creds-undelivered rule (#4316). Carried verbatim from the entry like
+	// every pair above: appStateIsOperatorSide is the single predicate the
+	// journey and drift paths already use, so the alert cannot disagree with the
+	// surfaces that deliberately stand down for these states. ClusterID is here
+	// only so the reason can name the exact upload endpoint.
+	GitHubAppRequired bool
+	GitHubAppState    string
+	ClusterID         string
 }
 
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
@@ -554,6 +581,9 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		InactiveAgentsReason: h.InactiveAgentsReason,
 
 		InferenceAuthError: h.InferenceAuthError,
+		GitHubAppRequired:  h.GitHubAppRequired,
+		GitHubAppState:     h.GitHubAppState,
+		ClusterID:          h.ClusterID,
 	}
 }
 
@@ -906,6 +936,24 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 			}
 		}
 
+		// --- Rule: the hub never delivered the App credential. ---
+		// The condition is NOT re-derived here: the spoke reports
+		// GitHubAppState, and appStateIsOperatorSide is the same predicate the
+		// journey and drift paths already use to decide "the owner cannot fix
+		// this" — so the alert cannot disagree with the surfaces that stood down.
+		// It self-heals: once a key is uploaded and reaches the spoke, the next
+		// beat reports a non-operator-side state and the alert clears.
+		//
+		// Deliberately NOT gated on the hive being online. An offline hive raises
+		// its own offline alert, and gating here would drop the credential alert
+		// exactly when the hive is worst off — still keyless, and now not even
+		// heartbeating. The two alerts answer different questions and an operator
+		// needs both.
+		if !h.IsPlaceholder && h.GitHubAppRequired && appStateIsOperatorSide(h.GitHubAppState) {
+			add(h.ID, h.Name, AlertTypeAppCredsUndelivered, AlertSeverityCritical,
+				appCredsUndeliveredReason(h.GitHubAppState, h.ClusterID))
+		}
+
 		// --- Rule: agents are running but not working. ---
 		// The condition is NOT re-derived here: it is precomputed by
 		// evaluateInactiveAgents(), which already excludes paused and
@@ -1250,6 +1298,51 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeURLUnreachable:      true,
 	AlertTypeURLPrivateNetwork:   true,
 	AlertTypeInferenceAuthFailed: true,
+	AlertTypeAppCredsUndelivered: true,
 }
 
 func isKnownAlertType(t string) bool { return knownAlertTypes[t] }
+
+// appCredsUndeliveredReason renders the operator-facing cause for
+// AlertTypeAppCredsUndelivered (kubestellar/hive#4316).
+//
+// It names the remedy, not just the condition. The endpoint that fixes this
+// (PUT /api/saas/admin/cluster-app-keys/{clusterID}) exists but is documented
+// nowhere and has no UI, so an alert that said only "credentials undelivered"
+// would leave the operator exactly as stuck as the silence did — they would
+// have to go read cluster_app_key.go to find out what to do.
+//
+// The three states have genuinely different repairs, so they get genuinely
+// different sentences rather than one generic line:
+//
+//   - key-missing: the hub holds no key for this hive's cluster. Upload one.
+//   - key-invalid: a key IS present but signs a JWT GitHub rejects, i.e. it
+//     belongs to a different App than the hive claims to be. Replacing it is
+//     the fix; uploading the same key again is not.
+//   - no-app-assigned: the hive still carries the placeholder app_id and was
+//     never assigned a real App at all, which a key upload alone does not fix.
+//
+// clusterID is interpolated when known so the operator can act without first
+// looking it up; when the record carries none, the path is shown with its
+// placeholder rather than a misleading empty segment.
+func appCredsUndeliveredReason(state, clusterID string) string {
+	target := strings.TrimSpace(clusterID)
+	if target == "" {
+		target = "{clusterID}"
+	}
+	upload := "upload the App private key: PUT /api/saas/admin/cluster-app-keys/" + target
+
+	switch strings.TrimSpace(state) {
+	case appStateKeyMissingToken:
+		return "GitHub App key was never delivered by the hub — the hive cannot authenticate and will do no work until it is; " + upload
+	case appStateKeyInvalidToken:
+		return "GitHub App key delivered by the hub is rejected by GitHub (it signs a JWT for a different App) — " + upload + " with the key for the App this hive is assigned"
+	case appStateNoAppAssignedToken:
+		return "hive was never assigned a GitHub App (still on the placeholder app_id) — assign an App to this hive, then " + upload
+	default:
+		// Not reached while the caller gates on appStateIsOperatorSide, but a
+		// future token added to that set must still produce a usable sentence
+		// rather than an empty reason.
+		return "GitHub App credentials are undelivered (state " + state + ") — " + upload
+	}
+}
