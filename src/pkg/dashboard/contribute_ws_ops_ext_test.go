@@ -277,3 +277,23 @@ func TestBuildTaskPrompt_InstructsDCOSignoff(t *testing.T) {
 		t.Errorf("prompt must state the trailer email matches the author; got: %q", prompt)
 	}
 }
+
+// TestBuildTaskPrompt_ForbidsDraftPR: a draft PR is auto-labelled
+// do-not-merge/work-in-progress and tide will not merge one, so a draft left
+// behind is a PR nobody is waiting on and nothing will land. The prompt used to
+// say only "open a PR", which `gh pr create --draft` satisfies perfectly well.
+//
+// Observed live: the task for #4188 scoped down to child #4205, ran
+// `gh pr create --draft`, verified isDraft: true, and reported "Draft PR #4242
+// is open" as a successful handoff. The contributor had to say "don't make them
+// draft" by hand.
+func TestBuildTaskPrompt_ForbidsDraftPR(t *testing.T) {
+	prompt := buildTaskPrompt("myorg/repo1", 101, "Actionable issue")
+
+	if !strings.Contains(prompt, "ready for review") {
+		t.Errorf("prompt must ask for a PR ready for review; got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "--draft") {
+		t.Errorf("prompt must name the --draft flag it is forbidding; got: %q", prompt)
+	}
+}

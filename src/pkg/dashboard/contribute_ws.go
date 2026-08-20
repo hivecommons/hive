@@ -3911,7 +3911,22 @@ func buildTaskPrompt(repoFull string, number int, title string) string {
 			"Commit with 'git commit -s' so every commit carries a Signed-off-by "+
 			"trailer — the DCO check blocks the merge without it, and the trailer's "+
 			"email must match the commit author's email. "+
+			// Open it READY, not draft. A draft trips the repo's
+			// do-not-merge/work-in-progress automation and tide will not merge
+			// one, so a draft left behind is a PR nobody is waiting on and
+			// nothing will land. The prompt used to say only "open a PR", which
+			// an agent can satisfy perfectly well with `gh pr create --draft`.
+			//
+			// Observed live: the task for #4188 scoped down to child #4205 and
+			// ran `gh pr create --draft`, then verified `isDraft: true` and
+			// reported "Draft PR #4242 is open" as a SUCCESSFUL handoff — it had
+			// no reason to think otherwise. The contributor had to intervene by
+			// hand ("don't make them draft. Make sure they are submitted and
+			// ready for review") to get it marked ready.
 			"Push your branch to your fork remote, then open a PR from your fork. "+
+			"Open it ready for review, not as a draft (do not pass --draft): a draft "+
+			"is auto-labelled do-not-merge/work-in-progress and cannot merge. If a PR "+
+			"is already open as a draft, mark it ready for review. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
 			// #3987: the no_work_needed sentinel. The relay scrapes this exact
 			// marker from the agent's output and reports it as the completion
