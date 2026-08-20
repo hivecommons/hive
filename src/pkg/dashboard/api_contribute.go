@@ -4888,7 +4888,14 @@ function ccInitInterestsEditor(){
   }).catch(function(){});
 }
 
-function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
+// ccQueueKey is the identity the operator's HOLD and REORDER controls persist,
+// so it must be the server's canonical key (kubestellar/hive#4245). The server
+// now sends it as q.key: "owner/repo#42" for GitHub-backed work (unchanged) and
+// "owner/repo!ENG-123" for a string-keyed source. The fallback keeps rows from a
+// pre-#4245 server working; without the q.key preference an external item
+// produced "owner/repo#" — a key the server can never match, so holding or
+// reordering it silently did nothing.
+function ccQueueKey(q){return q.key||((q.repo||'')+'#'+(q.number||''));}
 
 // ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
 // is SHOWN — never the persisted order. Empty = show all. The reorder ACTIONS below
@@ -5003,10 +5010,13 @@ function ccRenderQueue(flip){
     // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
-    var prBadge=ccPRBadgeHTML((q.repo||'')+'#'+(q.number||''));
+    // PR links are a GitHub-only observer: an item with no issue number has no
+    // GitHub issue for a PR to close, so it gets no badge rather than a lookup
+    // on a fabricated key (kubestellar/hive#4245).
+    var prBadge=q.number?ccPRBadgeHTML((q.repo||'')+'#'+q.number):'';
     var enterCls=isNewQ?' cc-q-enter':'';
     return '<div class="cc-q-item'+mineCls+heldCls+enterCls+'"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
-      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,(q.repo||'')+'#'+(q.number||''))+mineTag+heldTag+'</div>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+ccIssueLinkHTML(q,ccQueueKey(q))+mineTag+heldTag+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+prBadge+'</div>'+next+menu+'</div>';
   }).join('');
   // Adopt the freshly-painted key set so the NEXT render only pops-in new arrivals.

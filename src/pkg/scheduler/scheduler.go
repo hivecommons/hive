@@ -19,6 +19,7 @@ import (
 	"github.com/kubestellar/hive/pkg/policies"
 	"github.com/kubestellar/hive/pkg/promptsrc"
 	"github.com/kubestellar/hive/pkg/resolve"
+	"github.com/kubestellar/hive/pkg/worksource"
 )
 
 type Scheduler struct {
@@ -338,8 +339,8 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		}
 		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels)
 		failClosed = failClosed || labelsFailClosed
-		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s] %s\n",
-			issue.AgeMinutes, issue.Repo, issue.Number,
+		b.WriteString(fmt.Sprintf("  %dm %s [%s] %s\n",
+			issue.AgeMinutes, issueDisplayRef(issue),
 			strings.Join(labels, ","), title))
 		shown++
 	}
@@ -450,17 +451,49 @@ func issueRefsForAgent(agentName string, issues []github.Issue) []string {
 	refs := make([]string, 0, len(agentIssues))
 	seen := make(map[string]bool, len(agentIssues))
 	for _, issue := range agentIssues {
-		if issue.Repo == "" || issue.Number <= 0 {
-			continue
-		}
-		ref := fmt.Sprintf("%s#%d", issue.Repo, issue.Number)
-		if seen[ref] {
+		// One canonical key implementation (kubestellar/hive#4245). The old
+		// `Number <= 0` skip dropped every Linear and Jira item on the floor:
+		// they reach here with Number == 0, so no non-GitHub work was ever
+		// referenced in an internal-agent kick at all. issueKey keeps
+		// GitHub-backed refs byte-identical "repo#number" and gives external
+		// work its own "repo!EXT-1" identity instead of a shared "repo#0".
+		ref := issueKey(issue)
+		if ref == "" || seen[ref] {
 			continue
 		}
 		seen[ref] = true
 		refs = append(refs, ref)
 	}
 	return refs
+}
+
+// issueKey is the scheduler's single entry point to the canonical work
+// identity. It delegates to pkg/worksource so the scheduler cannot drift into a
+// second key format — the parity test in scheduler_worksource_identity_test.go
+// pins that it produces exactly what worksource.Ref.Key() does.
+func issueKey(issue github.Issue) string {
+	return worksource.Ref{
+		SourceType: issue.SourceType,
+		Repo:       issue.Repo,
+		ExternalID: issue.ExternalID,
+		Number:     issue.Number,
+		URL:        issue.URL,
+	}.Key()
+}
+
+// issueDisplayRef is the human-facing form written into kick message bodies:
+// "owner/repo#42" for GitHub-backed work, "owner/repo!ENG-123" for a
+// string-keyed source. It exists so no rendering site formats "%s#%d" directly
+// and prints "owner/repo#0" for an item that simply has no issue number.
+//
+// It falls back to the bare repo when an item carries no usable identity at
+// all, which keeps a malformed enumeration readable in the message rather than
+// rendering a key nothing can match.
+func issueDisplayRef(issue github.Issue) string {
+	if key := issueKey(issue); key != "" {
+		return key
+	}
+	return issue.Repo
 }
 
 // BuildAgentMessageFromLastActionable builds a kick message for the named
@@ -618,8 +651,8 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
-		b.WriteString(fmt.Sprintf("  %dm %s#%d [%s/%s] [%s] %s%s\n",
-			issue.AgeMinutes, issue.Repo, issue.Number,
+		b.WriteString(fmt.Sprintf("  %dm %s [%s/%s] [%s] %s%s\n",
+			issue.AgeMinutes, issueDisplayRef(issue),
 			tier, issue.ModelRec,
 			strings.Join(issue.Labels, ","),
 			title, tracker))
@@ -867,7 +900,7 @@ func (s *Scheduler) buildGenericMessage(agentName string, issues []github.Issue,
 	if len(agentIssues) > 0 {
 		b.WriteString(fmt.Sprintf("Work items (%d):\n", len(agentIssues)))
 		for _, issue := range agentIssues {
-			b.WriteString(fmt.Sprintf("  %s#%d %s\n", issue.Repo, issue.Number, issue.Title))
+			b.WriteString(fmt.Sprintf("  %s %s\n", issueDisplayRef(issue), issue.Title))
 		}
 	}
 
@@ -902,8 +935,8 @@ func (s *Scheduler) buildQualityMessage(issues []github.Issue, actionable *githu
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d [%s] %s\n",
-				issue.Repo, issue.Number,
+			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
+				issueDisplayRef(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++
@@ -960,8 +993,8 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 			if runes := []rune(title); len(runes) > maxTitleRunes {
 				title = string(runes[:maxTitleRunes])
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d [%s] %s\n",
-				issue.Repo, issue.Number,
+			b.WriteString(fmt.Sprintf("  %s [%s] %s\n",
+				issueDisplayRef(issue),
 				strings.Join(issue.Labels, ","),
 				title))
 			shown++

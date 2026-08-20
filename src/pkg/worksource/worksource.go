@@ -7,7 +7,6 @@ package worksource
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
 
@@ -45,24 +44,6 @@ type Issue struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// URL is the canonical web URL of the issue.
 	URL string `json:"url"`
-}
-
-// TaskKey returns a collision-free identity key for task admission, claim
-// ledger, and contributor-relay active-task tracking.
-//
-// For GitHub issues it produces "repo#number" (e.g. "my-org/my-repo#42"),
-// preserving backward compatibility with the 30 sites that used
-// fmt.Sprintf("%s#%d", repo, num) directly.
-//
-// For string-keyed sources (Linear, Jira) it produces "repo!externalID"
-// (e.g. "my-org/my-repo!ENG-123"). The "!" separator is chosen because it
-// cannot appear in a GitHub issue number or a Linear/Jira key, so keys from
-// different sources never collide even if two teams share an integer.
-func TaskKey(issue Issue) string {
-	if issue.Number > 0 {
-		return fmt.Sprintf("%s#%d", issue.Repo, issue.Number)
-	}
-	return fmt.Sprintf("%s!%s", issue.Repo, issue.ExternalID)
 }
 
 // WorkSource is the Step 01 abstraction: it enumerates actionable work items

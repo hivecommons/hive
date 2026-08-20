@@ -170,13 +170,29 @@ type Issue struct {
 	// so fresh activity on a previously "nothing to ship" issue re-opens it for
 	// offers. Zero when produced by an older enumerator; consumers must fail
 	// OPEN (treat activity as unknown → do not suppress) in that case.
-	UpdatedAt      time.Time `json:"updated_at,omitempty"`
-	AgeMinutes     int       `json:"age_minutes"`
-	URL            string    `json:"url"`
-	IsTracker      bool      `json:"is_tracker"`
-	ComplexityTier string    `json:"complexity_tier,omitempty"`
-	ModelRec       string    `json:"model_recommendation,omitempty"`
-	Lane           string    `json:"lane,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	AgeMinutes int       `json:"age_minutes"`
+	URL        string    `json:"url"`
+	IsTracker  bool      `json:"is_tracker"`
+	// SourceType and ExternalID carry the work source's own identity through
+	// this GitHub-shaped compatibility envelope (kubestellar/hive#4245).
+	//
+	// Non-default work sources (Linear, Jira) are projected into this struct by
+	// worksource.ToGitHubIssues so the scheduler, governor and dashboard keep
+	// ONE actionable list. Those items have no GitHub issue number, so Number is
+	// 0 — and before these fields existed that was ALL that survived the
+	// projection. Every downstream identity site then formatted "repo#0", so two
+	// unrelated Linear items shared one hold, one cooldown, one active-task slot.
+	//
+	// Both are additive and omitempty: an envelope written by GitHub enumeration
+	// leaves them empty, and an empty SourceType reads as "github". Consumers
+	// must build identity through worksource.Ref rather than reading these
+	// directly, so there is a single key implementation.
+	SourceType     string `json:"source_type,omitempty"`
+	ExternalID     string `json:"external_id,omitempty"`
+	ComplexityTier string `json:"complexity_tier,omitempty"`
+	ModelRec       string `json:"model_recommendation,omitempty"`
+	Lane           string `json:"lane,omitempty"`
 }
 
 type PullRequest struct {
