@@ -119,19 +119,22 @@ func TestBudgetRebuffRequiresBothStatusAndBody(t *testing.T) {
 
 func TestBudgetStateLatchesOnFirstRebuffAndSelfHeals(t *testing.T) {
 	var st inferenceBudgetState
-	if cause, _, _ := st.snapshot(); cause != "" {
+	if cause, _, _, _ := st.snapshot(); cause != "" {
 		t.Fatalf("zero value must not report a rebuff, got %q", cause)
 	}
 
 	t0 := time.Now()
 	st.recordRebuff("litellm refused on a spending limit (429)", t0)
 
-	cause, since, rebuffs := st.snapshot()
+	cause, since, lastRebuff, rebuffs := st.snapshot()
 	if cause == "" {
 		t.Fatal("the FIRST rebuff must latch — waiting for more would burn more runs to learn what is already known")
 	}
 	if !since.Equal(t0) {
 		t.Errorf("since = %v, want the first-rebuff time %v", since, t0)
+	}
+	if !lastRebuff.Equal(t0) {
+		t.Errorf("lastRebuff = %v, want the first-rebuff time %v", lastRebuff, t0)
 	}
 	if rebuffs != 1 {
 		t.Errorf("rebuffs = %d, want 1", rebuffs)
@@ -140,9 +143,15 @@ func TestBudgetStateLatchesOnFirstRebuffAndSelfHeals(t *testing.T) {
 	// A later rebuff counts but must not move `since` — an operator needs to
 	// know how long the hive has been clipped, not when it last tried.
 	st.recordRebuff("litellm refused on a spending limit (429)", t0.Add(time.Hour))
-	_, since2, rebuffs2 := st.snapshot()
+	_, since2, lastRebuff2, rebuffs2 := st.snapshot()
 	if !since2.Equal(t0) {
 		t.Errorf("since moved to %v; it must stay at the first latch %v", since2, t0)
+	}
+	// lastRebuff, unlike since, MUST move — it is the freshness stamp the eval
+	// cycle uses to decide between suppressing and probing. Were it pinned to
+	// the first latch, every cycle after the probe interval would probe.
+	if !lastRebuff2.Equal(t0.Add(time.Hour)) {
+		t.Errorf("lastRebuff = %v; it must move forward to the latest rebuff %v", lastRebuff2, t0.Add(time.Hour))
 	}
 	if rebuffs2 != 2 {
 		t.Errorf("rebuffs = %d, want 2", rebuffs2)
@@ -151,8 +160,8 @@ func TestBudgetStateLatchesOnFirstRebuffAndSelfHeals(t *testing.T) {
 	// The self-heal: the provider window resets, a call succeeds, the hive
 	// resumes with no operator action.
 	st.recordSuccess()
-	if cause, _, n := st.snapshot(); cause != "" || n != 0 {
-		t.Errorf("a successful call must clear the latch, got cause=%q rebuffs=%d", cause, n)
+	if cause, _, last, n := st.snapshot(); cause != "" || n != 0 || !last.IsZero() {
+		t.Errorf("a successful call must clear the latch, got cause=%q rebuffs=%d lastRebuff=%v", cause, n, last)
 	}
 }
 
@@ -201,32 +210,35 @@ func TestRecordInferenceErrorLatchesBudgetOnProductionPath(t *testing.T) {
 	}
 	route := &InferenceRoute{Backend: "litellm", Endpoint: "https://gw.example/v1", Model: "gpt-4o"}
 
-	if cause, _, _ := p.InferenceBudgetExceeded(); cause != "" {
+	if cause, _, _, _ := p.InferenceBudgetExceeded(); cause != "" {
 		t.Fatalf("fresh proxy reports a rebuff: %q", cause)
 	}
 
 	// An ordinary throttle must leave the signal clear.
 	p.recordInferenceError(route, "quality", http.StatusTooManyRequests,
 		[]byte(`{"error":{"message":"Rate limit reached for requests"}}`))
-	if cause, _, _ := p.InferenceBudgetExceeded(); cause != "" {
+	if cause, _, _, _ := p.InferenceBudgetExceeded(); cause != "" {
 		t.Fatalf("a transient throttle latched a spend rebuff: %q", cause)
 	}
 
 	// The field-report body must latch on the production path.
 	p.recordInferenceError(route, "quality", http.StatusTooManyRequests,
 		[]byte(`{"error":{"message":"Budget has been exceeded! Current cost: 100.02, Max budget: 100.0"}}`))
-	cause, since, rebuffs := p.InferenceBudgetExceeded()
+	cause, since, lastRebuff, rebuffs := p.InferenceBudgetExceeded()
 	if cause == "" {
 		t.Fatal("recordInferenceError did not latch the spend rebuff — the translator's error path is not wired to the detector")
 	}
 	if since.IsZero() || rebuffs != 1 {
 		t.Errorf("since=%v rebuffs=%d, want a stamped time and 1", since, rebuffs)
 	}
+	if lastRebuff.IsZero() {
+		t.Error("lastRebuff is unset — the eval cycle would treat the latch as un-probeable")
+	}
 
 	// A success clears it, which is how the hive resumes after the provider's
 	// window resets.
 	p.recordInferenceSuccess()
-	if cause, _, _ := p.InferenceBudgetExceeded(); cause != "" {
+	if cause, _, _, _ := p.InferenceBudgetExceeded(); cause != "" {
 		t.Errorf("a successful inference call did not clear the latch: %q", cause)
 	}
 }
@@ -245,7 +257,7 @@ func TestBudgetSignalIsIndependentOfAuthSignal(t *testing.T) {
 	p.recordInferenceError(route, "quality", http.StatusTooManyRequests,
 		[]byte(`{"error":{"message":"Budget has been exceeded! Max budget: 100"}}`))
 
-	if cause, _, _ := p.InferenceBudgetExceeded(); cause == "" {
+	if cause, _, _, _ := p.InferenceBudgetExceeded(); cause == "" {
 		t.Fatal("spend rebuff did not latch")
 	}
 	if authErr, _ := p.InferenceAuthError(); authErr != "" {

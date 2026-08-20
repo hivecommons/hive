@@ -4356,6 +4356,70 @@ const (
 	providerBudgetAlertID = "provider-budget-exceeded"
 )
 
+// providerBudgetNotify is the one-shot guard for the provider spend-rebuff
+// notification (#4294). runEvalCycle sees the CONDITION every cycle for as long
+// as the provider stays clipped, but an operator only needs to be paged on the
+// CROSSING — the dashboard banner is what carries the ongoing state. Keyed on
+// the latch time (which does not move forward while latched) so a fresh clip
+// after a recovery pages again, while the same clip never pages twice.
+//
+// Package-level because runEvalCycle is a function called once per tick with no
+// state of its own; mutex-guarded because it also runs from the startup and
+// restart call sites.
+var providerBudgetNotify providerBudgetNotifyState
+
+type providerBudgetNotifyState struct {
+	mu sync.Mutex
+	// notifiedSince is the latch time already notified about; zero when the
+	// provider is serving or the current latch has not been notified yet.
+	notifiedSince time.Time
+}
+
+// shouldSend reports whether this latch still owes the operator a notification,
+// and records that it has been sent. Returns true at most once per latch.
+func (p *providerBudgetNotifyState) shouldSend(since time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.notifiedSince.IsZero() && p.notifiedSince.Equal(since) {
+		return false
+	}
+	p.notifiedSince = since
+	return true
+}
+
+// reset forgets the notified latch so the next clip pages again. Called on
+// every cycle where the provider is serving.
+func (p *providerBudgetNotifyState) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.notifiedSince = time.Time{}
+}
+
+// providerBudgetSuppresses reports whether a latched spend rebuff should
+// withhold this cycle's kicks, or whether the cycle is a PROBE that must be let
+// through.
+//
+// The latch alone is not enough to keep suppressing, and that is the whole
+// subtlety: the only thing that clears the latch is a successful inference
+// call, and the only thing that produces inference calls is a kick. Suppressing
+// purely on the latch is therefore self-sustaining — on a cadence-only hive it
+// would mute the hive permanently while its alert promised recovery at the
+// provider's next window reset. Freshness breaks that loop: evidence of being
+// clipped expires, and when it does one cycle is spent finding out whether it
+// is still true.
+func providerBudgetSuppresses(latched bool, lastRebuff, now time.Time, probeInterval time.Duration) bool {
+	if !latched {
+		return false
+	}
+	// A latched signal with no stamp (an older snapshot, or a state restored
+	// without one) probes immediately rather than suppressing indefinitely:
+	// spending one run is recoverable, muting the hive forever is not.
+	if lastRebuff.IsZero() {
+		return false
+	}
+	return now.Sub(lastRebuff) < probeInterval
+}
+
 // applyBudgetAlerts turns budget threshold crossings into dashboard system
 // alerts and notifications. Crossings fire once per window (governor tracks
 // the one-shot flags); alerts are cleared when the threshold no longer
@@ -5042,17 +5106,42 @@ func runEvalCycle(
 	// The alert is raised HERE, before kick assembly, so an operator is told
 	// even on a cycle where nothing happened to be due. The actual suppression
 	// happens after every kick source has contributed — see below.
-	providerBudgetCause, providerBudgetSince, providerBudgetRebuffs := dashboard.InferenceBudgetExceeded()
-	if providerBudgetCause != "" {
-		msg := fmt.Sprintf("provider spending limit reached — agent kicks suspended until the provider window resets: %s", providerBudgetCause)
+	providerBudgetCause, providerBudgetSince, providerBudgetLastRebuff, providerBudgetRebuffs := dashboard.InferenceBudgetExceeded()
+	// Suppress only while the latch is FRESH. Withholding kicks also withholds
+	// the inference calls that clear the latch, so a hive whose only kick source
+	// is the governor cadence would never learn the provider's window reset and
+	// would stay muted forever — the exact topology in the field report. Once
+	// the last rebuff is older than the probe interval, this cycle's kicks go
+	// through as a probe: still clipped re-freshens the stamp and suppression
+	// resumes, served clears the latch outright.
+	providerBudgetProbeInterval := cfg.Governor.ProviderBudget.EffectiveProbeInterval()
+	providerBudgetLatched := providerBudgetCause != ""
+	suppressKicks := providerBudgetSuppresses(providerBudgetLatched, providerBudgetLastRebuff, time.Now(), providerBudgetProbeInterval)
+	if providerBudgetLatched {
+		state := "agent kicks suspended"
+		if !suppressKicks {
+			state = "probing with one cycle of agent kicks to test whether the provider window has reset"
+		}
+		msg := fmt.Sprintf("provider spending limit reached — %s: %s", state, providerBudgetCause)
 		if providerBudgetRebuffs > 1 {
-			msg = fmt.Sprintf("provider spending limit reached (%d refused calls since %s) — agent kicks suspended until the provider window resets: %s",
-				providerBudgetRebuffs, providerBudgetSince.Format(time.RFC1123), providerBudgetCause)
+			msg = fmt.Sprintf("provider spending limit reached (%d refused calls since %s) — %s: %s",
+				providerBudgetRebuffs, providerBudgetSince.Format(time.RFC1123), state, providerBudgetCause)
 		}
 		dashSrv.AddSystemAlert(providerBudgetAlertID, "error", msg)
 		providerBudgetCause = msg
 	} else {
 		dashSrv.ClearSystemAlert(providerBudgetAlertID)
+	}
+	// Notify ONCE per latch, not once per cycle. The deduped banner above
+	// already carries the ongoing state; a high-priority notification repeated
+	// every eval cycle for as long as the provider stays clipped is a day of
+	// pages saying the same thing. Keyed on the latch time, which recordRebuff
+	// deliberately does not move forward, so a genuinely new clip after a
+	// recovery notifies again. Matches applyBudgetAlerts, which notifies on the
+	// crossing rather than on the condition.
+	notifyProviderBudget := providerBudgetLatched && providerBudgetNotify.shouldSend(providerBudgetSince)
+	if !providerBudgetLatched {
+		providerBudgetNotify.reset()
 	}
 
 	// ADDITIVE CEL routing: evaluate operator-defined CEL trigger rules
@@ -5102,15 +5191,26 @@ func runEvalCycle(
 	// decision (#2573) and must not be forged by an automatic signal that will
 	// clear itself; withholding kicks achieves the saving without leaving paused
 	// agents behind for a human to un-pause by hand.
-	if providerBudgetCause != "" && len(messages) > 0 {
+	if suppressKicks && len(messages) > 0 {
 		withheld := make([]string, 0, len(messages))
 		for _, msg := range messages {
 			withheld = append(withheld, msg.Agent)
 		}
 		logger.Warn("provider spending limit: withholding agent kicks",
-			"withheld", withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince)
-		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
+			"withheld", withheld, "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
+			"next_probe_in", (providerBudgetProbeInterval - time.Since(providerBudgetLastRebuff)).Truncate(time.Second))
 		messages = nil
+	} else if providerBudgetLatched && len(messages) > 0 {
+		// Probe cycle: the last rebuff has gone stale, so these kicks are
+		// deliberately allowed through to find out whether the provider is
+		// serving again. Their inference calls are what clear the latch (on a
+		// 2xx) or re-freshen it (on another rebuff) — nothing else can.
+		logger.Info("provider spending limit: probing with one cycle of agent kicks",
+			"kicks", len(messages), "rebuffs", providerBudgetRebuffs, "since", providerBudgetSince,
+			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
+	}
+	if notifyProviderBudget {
+		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
 
 	var deliveredReviewKicks []review.DispatchKick

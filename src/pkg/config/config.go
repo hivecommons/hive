@@ -991,6 +991,48 @@ type GovernorConfig struct {
 	// Rotation configures automatic provider failover when a provider's
 	// subscription or credit is exhausted. See RFC #3958.
 	Rotation RotationConfig `yaml:"rotation,omitempty" json:"rotation,omitempty"`
+
+	// ProviderBudget tunes the response to a PROVIDER spending-limit refusal
+	// (#4294) — the gateway declining to spend more money, as distinct from the
+	// hive's own token Budget above. See ProviderBudgetConfig.
+	ProviderBudget ProviderBudgetConfig `yaml:"provider_budget,omitempty" json:"provider_budget,omitempty"`
+}
+
+// ProviderBudgetConfig tunes how long the hive keeps agent kicks suspended
+// after the inference provider refuses on a spending limit (#4294).
+//
+// There is exactly one knob because there is exactly one judgement call: how
+// much wasted spend to accept in exchange for noticing sooner that the
+// provider's window has reset. The hive cannot observe the reset passively —
+// the suppression that saves the money also withholds the inference calls that
+// would reveal the money is available again — so it periodically lets one
+// cycle's kicks through as a probe.
+type ProviderBudgetConfig struct {
+	// ProbeIntervalS is how long a spend rebuff suppresses kicks before one
+	// cycle is allowed through to test whether the provider is serving again.
+	// Default 1800 (30 min).
+	//
+	// Shorter probes recover faster after a reset but burn a run each time on a
+	// provider that is still clipped; longer probes waste less and notice later.
+	// 30 minutes costs at most ~48 rebuffed runs across a day-long clip — set
+	// against the field report's entire cadence firing all day, and against a
+	// daily window where being half an hour late to notice midnight is cheap.
+	ProbeIntervalS int `yaml:"probe_interval_s,omitempty" json:"probe_interval_s,omitempty"`
+}
+
+// defaultProviderBudgetProbeIntervalS is the spend-rebuff probe interval when
+// unset: 30 minutes.
+const defaultProviderBudgetProbeIntervalS = 1800
+
+// EffectiveProbeInterval returns the spend-rebuff probe interval, applying the
+// default when unset. A negative or zero value means "unset" rather than
+// "never probe": never probing is the deadlock this knob exists to prevent, so
+// it is not a reachable configuration.
+func (p ProviderBudgetConfig) EffectiveProbeInterval() time.Duration {
+	if p.ProbeIntervalS > 0 {
+		return time.Duration(p.ProbeIntervalS) * time.Second
+	}
+	return defaultProviderBudgetProbeIntervalS * time.Second
 }
 
 // RotationConfig configures automatic provider failover (RFC #3958). When a

@@ -115,7 +115,7 @@ var (
 	// inferenceBudget* carry the PROVIDER spending-limit signal (#4294) —
 	// distinct from the auth signal above and from the hive's own token budget.
 	inferenceBudgetMu sync.RWMutex
-	inferenceBudgetFn func() (errMsg string, since time.Time, rebuffs int)
+	inferenceBudgetFn func() (errMsg string, since, lastRebuff time.Time, rebuffs int)
 )
 
 // SetEntitledModelsProvider registers a function that reports the per-key
@@ -165,7 +165,7 @@ func getInferenceAuthFn() func() (errMsg string, since time.Time) {
 // signal would tell neither of them which they have. Wired to the proxy's
 // InferenceBudgetExceeded; nil in tests and on spokes with no proxy, which the
 // accessor tolerates.
-func SetInferenceBudgetProvider(fn func() (errMsg string, since time.Time, rebuffs int)) {
+func SetInferenceBudgetProvider(fn func() (errMsg string, since, lastRebuff time.Time, rebuffs int)) {
 	inferenceBudgetMu.Lock()
 	defer inferenceBudgetMu.Unlock()
 	inferenceBudgetFn = fn
@@ -173,12 +173,17 @@ func SetInferenceBudgetProvider(fn func() (errMsg string, since time.Time, rebuf
 
 // InferenceBudgetExceeded returns the current provider spending-limit signal,
 // or zero values when no provider is registered or the provider is serving.
-func InferenceBudgetExceeded() (errMsg string, since time.Time, rebuffs int) {
+//
+// lastRebuff (the most recent rebuff, which moves forward; since does not) is
+// carried through because the eval cycle suppresses kicks only while it is
+// fresh — suppressing on the latch alone would withhold the very traffic that
+// clears the latch. See pkg/proxy/inference_budget.go.
+func InferenceBudgetExceeded() (errMsg string, since, lastRebuff time.Time, rebuffs int) {
 	inferenceBudgetMu.RLock()
 	fn := inferenceBudgetFn
 	inferenceBudgetMu.RUnlock()
 	if fn == nil {
-		return "", time.Time{}, 0
+		return "", time.Time{}, time.Time{}, 0
 	}
 	return fn()
 }

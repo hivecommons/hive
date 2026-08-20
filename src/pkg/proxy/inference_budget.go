@@ -31,6 +31,23 @@ import (
 // of this file: matching 429 broadly here would suppress agents for ordinary
 // rate limits, which would be a worse bug than the one being fixed.
 
+// HOW RECOVERY WORKS, AND WHY IT NEEDS A PROBE. The latch clears on the first
+// successful inference call — but the caller's response to a latched signal is
+// to withhold agent kicks, and agent kicks are what produce inference calls.
+// On a hive whose only kick source is the governor's cadence (the topology in
+// the field report), suppressing every kick therefore suppresses the very
+// traffic that would observe the provider's window resetting at midnight: the
+// signal would stay latched forever, and an alert promising recovery "when the
+// provider window resets" would describe something the mechanism cannot do.
+//
+// So recovery is not left to chance. recordRebuff stamps lastRebuff on EVERY
+// rebuff, and the caller suppresses only while that stamp is fresh. Once it
+// goes stale the caller lets one cycle's kicks through as a probe: if the key
+// is still clipped, the first rebuff re-freshens the stamp and suppression
+// resumes; if the window reset, the first success clears the latch outright.
+// The cost of being wrong is bounded to roughly one run per probe interval
+// instead of a full day of them, which is the saving this file exists for.
+
 // inferenceBudgetStatuses are the statuses on which a spend rebuff is even
 // plausible. LiteLLM returns budget errors as 429 (its rate-limit-ish family)
 // and as 400 (BudgetExceededError surfaced as a bad request); OpenAI uses 429
@@ -114,6 +131,14 @@ type inferenceBudgetState struct {
 	// since is when the signal first latched. Not moved forward by later
 	// rebuffs, so an operator can see how long the hive has been clipped.
 	since time.Time
+	// lastRebuff is when the MOST RECENT rebuff arrived, and unlike since it
+	// does move forward. It is what makes recovery possible at all: because a
+	// latched signal suppresses the kicks that would produce the inference
+	// traffic that clears it, a purely latch-based gate can never learn that
+	// the provider's window reset. Callers therefore suppress only while this
+	// is FRESH and let a probe through once it goes stale — see the recovery
+	// note below.
+	lastRebuff time.Time
 	// rebuffs counts matched rebuffs while latched, so the alert can say how
 	// many runs hit the wall rather than just that one did.
 	rebuffs int
@@ -129,6 +154,7 @@ func (s *inferenceBudgetState) recordRebuff(errMsg string, now time.Time) {
 		s.exceeded = true
 	}
 	s.lastError = errMsg
+	s.lastRebuff = now
 	s.rebuffs++
 }
 
@@ -142,18 +168,26 @@ func (s *inferenceBudgetState) recordSuccess() {
 	s.exceeded = false
 	s.lastError = ""
 	s.since = time.Time{}
+	s.lastRebuff = time.Time{}
 	s.rebuffs = 0
 }
 
 // snapshot returns the current spend-rebuff signal: a non-empty cause, when it
-// latched, and how many rebuffs have been seen — only while latched.
-func (s *inferenceBudgetState) snapshot() (errMsg string, since time.Time, rebuffs int) {
+// first latched, when the most recent rebuff arrived, and how many rebuffs have
+// been seen — all zero-valued unless latched.
+//
+// lastRebuff is returned separately from since because callers need both
+// answers and they are different questions: since is "how long has this hive
+// been clipped", which is what an operator wants to read, while lastRebuff is
+// "how long since we last had EVIDENCE it is still clipped", which is what
+// decides whether to keep suppressing or send a probe.
+func (s *inferenceBudgetState) snapshot() (errMsg string, since, lastRebuff time.Time, rebuffs int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.exceeded {
-		return "", time.Time{}, 0
+		return "", time.Time{}, time.Time{}, 0
 	}
-	return s.lastError, s.since, s.rebuffs
+	return s.lastError, s.since, s.lastRebuff, s.rebuffs
 }
 
 // inferenceBudgetMessage builds the log-safe operator-facing cause string.

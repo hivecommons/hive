@@ -1635,15 +1635,19 @@ func (p *GitHubProxy) InferenceAuthError() (errMsg string, since time.Time) {
 }
 
 // InferenceBudgetExceeded reports the current provider spending-limit signal:
-// a non-empty log-safe cause, when it first latched, and how many rebuffs have
-// been observed since — all zero-valued while the provider is serving normally.
+// a non-empty log-safe cause, when it first latched, when the most recent
+// rebuff arrived, and how many rebuffs have been observed since — all
+// zero-valued while the provider is serving normally.
 //
 // Callers use a non-empty cause as "this hive cannot buy inference right now",
 // which is a reason to stop kicking agents and to tell the operator, NOT a
-// reason to retry in a few minutes. Safe on a nil receiver/tracker.
-func (p *GitHubProxy) InferenceBudgetExceeded() (errMsg string, since time.Time, rebuffs int) {
+// reason to retry in a few minutes. lastRebuff is what bounds that: because
+// withholding kicks also withholds the calls that would clear the latch,
+// callers suppress only while lastRebuff is fresh and send a probe once it is
+// stale (see inference_budget.go). Safe on a nil receiver/tracker.
+func (p *GitHubProxy) InferenceBudgetExceeded() (errMsg string, since, lastRebuff time.Time, rebuffs int) {
 	if p == nil || p.inferenceBudget == nil {
-		return "", time.Time{}, 0
+		return "", time.Time{}, time.Time{}, 0
 	}
 	return p.inferenceBudget.snapshot()
 }
