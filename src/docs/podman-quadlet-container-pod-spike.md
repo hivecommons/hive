@@ -318,5 +318,6 @@ WantedBy=default.target
 ## References
 
 - [`podman-systemd.unit(5)`](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+- [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](adr/0017-podman-quadlet-lifecycle.md) — the decision this spike settles, with the minimum Podman version it implies.
 - [`podman-auto-update(1)`](https://docs.podman.io/en/latest/markdown/podman-auto-update.1.html)
 - Sibling spike for #4203: Podman Quadlet `.kube` compatibility (`src/docs/podman-quadlet-kube-spike.md`, PR #4259), which recommends explicit `.container`/`.pod` units over replaying the Kubernetes overlay.

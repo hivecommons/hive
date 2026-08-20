@@ -214,5 +214,6 @@ floor needs a second host at older versions and is listed as a follow-up.
 ## References
 
 - [`podman-compose(1)`](https://docs.podman.io/en/latest/markdown/podman-compose.1.html)
+- [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](adr/0017-podman-quadlet-lifecycle.md) — why Compose is kept for the development loop and not chosen for persistence.
 - [`containers.conf(5)`](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)
 - Sibling spike for #4202: the Quadlet `.container`/`.pod` feasibility result, which recommends Quadlet for persistent installations.

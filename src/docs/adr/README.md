@@ -52,3 +52,4 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0014: Hub/spoke fleet over heartbeat callbacks](0014-hub-spoke.md)
 - [ADR-0015: Scope `style-src` as two directives and accept inline style attributes](0015-csp-style-src-scope.md)
 - [ADR-0016: Scope `script-src` as two directives, close the element half with hashes](0016-csp-script-src-scope.md)
+- [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](0017-podman-quadlet-lifecycle.md)

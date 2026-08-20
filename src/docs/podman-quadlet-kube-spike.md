@@ -140,3 +140,8 @@ That is a second deployment definition with its own drift surface, not reuse of
 the existing Kubernetes path. No `.kube` implementation follow-up is
 recommended from this spike; #4202 can consume the result when choosing the
 native Quadlet unit layout.
+
+## References
+
+- [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](adr/0017-podman-quadlet-lifecycle.md) — the decision that records this result as the rejection of `.kube` reuse.
+- [Podman Quadlet `.container`/`.pod` feasibility spike](podman-quadlet-container-pod-spike.md) — the sibling result this one defers to (#4202).

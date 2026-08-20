@@ -191,3 +191,4 @@ Neither supported cell is currently defended by CI.
 - [`CAP_NET_ADMIN` requirement](net-admin-requirement.md)
 - [Security model — operator guide](security-model.md)
 - [Podman CI runner map](podman-ci-runner-map.md) — #4211.
+- [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](adr/0017-podman-quadlet-lifecycle.md) — the mechanism a supported cell gets installed with.
