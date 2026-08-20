@@ -1322,22 +1322,43 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 	if s == nil || payload == nil {
 		return nil
 	}
-	clusterID := payload.ClusterID
 	// Load the hive's own meta once: it carries the GitHub-host pin
 	// (github_base_url) that decides whether this hive is public github.com, and
-	// it is also the fallback source for the cluster ID when the spoke did not
-	// report one.
+	// it is the AUTHORITATIVE source for the cluster ID — see below.
 	sh := loadSaaSHive(payload.HiveID)
+	// CLUSTER PRECEDENCE: the hub's own SaaS record first, the spoke's
+	// self-report only as a fallback. Every other surface already resolves it
+	// that way — the registry heartbeat handler (server.go) stamps
+	// entry.ClusterID from sh.ClusterID first, and it is THAT ID the
+	// app-creds-undelivered alert checks the PEM store under and names in its
+	// PUT /api/saas/admin/cluster-app-keys/{id} remedy. This delivery path was
+	// the one place that trusted the spoke first, so a spoke provisioned under
+	// an old cluster ID kept reporting it forever and the two paths split:
+	// the operator uploaded the key exactly where the alert said (the hub
+	// record's cluster, "hive-oke"), the alert then confirmed "the hub holds a
+	// key" — and every beat this function looked the key up under the spoke's
+	// stale ID ("oke-260812-8yiz"), found nothing, and delivered nothing.
+	// That is how kelly-headwaters stayed keyless AFTER the operator did the
+	// documented remedy (#4316/#4323). The spoke's report still serves hives
+	// with no SaaS record (bare/BYO spokes).
+	clusterID := ""
+	if sh != nil {
+		clusterID = sh.ClusterID
+	}
 	if clusterID == "" {
-		// The spoke did not report a cluster. Fall back to the hub's own record
-		// for this hive rather than guessing the default cluster: guessing would
-		// aim a GitHub Enterprise key at a public-GitHub hive.
-		if sh != nil {
-			clusterID = sh.ClusterID
-		}
+		clusterID = payload.ClusterID
 	}
 	if clusterID == "" {
 		return nil
+	}
+	if spokeCluster := payload.ClusterID; spokeCluster != "" && spokeCluster != clusterID && s.logger != nil {
+		// Say the disagreement out loud: a spoke carrying a stale cluster ID
+		// is exactly the state that made key delivery silently undeliverable.
+		s.logger.Warn("heartbeat: spoke reports a different cluster than the hub records for it — app-key reconcile follows the hub record",
+			"hive_id", payload.HiveID,
+			"spoke_cluster_id", spokeCluster,
+			"hub_cluster_id", clusterID,
+		)
 	}
 	// Is this hive pinned to public github.com while its cluster defaults to a
 	// GHE App? effectiveGitHubBaseURL honours the hive's github_base_url:"public"
