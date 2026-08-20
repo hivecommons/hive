@@ -150,6 +150,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/features", s.handleGovernorFeatures)
 	s.mux.HandleFunc("GET /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedGet)
 	s.mux.HandleFunc("PUT /api/config/governor/general-advanced", s.handleGovernorGeneralAdvancedPut)
+
+	// auto_merge is a top-level Config field (not GovernorConfig), but its UI
+	// lives on the governor Features tab — see api_config_automerge.go.
+	s.mux.HandleFunc("GET /api/config/auto-merge", s.handleAutoMergeGet)
+	s.mux.HandleFunc("PUT /api/config/auto-merge", s.handleAutoMergePut)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
 	s.mux.HandleFunc("GET /api/config/governor/replan", s.handleGovernorReplanGet)
@@ -4134,6 +4139,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"classifier":  classifierSectionResponse(),
 		"features":    featuresSectionResponse(cfg),
 		"review":      cfg.Review,
+		"auto_merge":  autoMergeSectionResponse(cfg),
 		"advisory":    advisorySectionResponse(cfg),
 		"replan":      replanSectionResponse(cfg),
 		"work_source": workSourceSectionResponse(cfg),
