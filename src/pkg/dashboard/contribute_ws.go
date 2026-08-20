@@ -4414,6 +4414,29 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			lane, _ := issue["lane"].(string)
 			labels := stringSliceFromAny(issue["labels"])
 			assignees := stringSliceFromAny(issue["assignees"])
+
+			// A tracker/umbrella issue is coordination-only: its children carry
+			// the work and are queued independently, so handing the parent to one
+			// contributor is never right. The enumerator has flagged these all
+			// along (github.Issue.IsTracker) and this queue simply never read it —
+			// scheduler.go consumed the flag for a "[TRACKER]" prompt annotation
+			// and nothing else.
+			//
+			// Live cost of the omission: kubestellar/hive#4188 ("coordination-only
+			// umbrella. Do not assign #4188 as one Hive task", per its own body,
+			// above a 13-item child task list) was offered to a contributor, which
+			// spent the full 30-minute MAX_TASK_DURATION budget and booked a
+			// failure on an issue that only final integration can close. The agent
+			// behaved correctly throughout — it triaged the children and shipped
+			// one — but no agent can "complete" a parent like this.
+			//
+			// Logged rather than skipped silently: an issue that is never offered
+			// should not be a mystery to the operator watching the queue.
+			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
+				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
+					"repo", repo.Full, "number", number, "title", title)
+				continue
+			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {
 				continue
 			}

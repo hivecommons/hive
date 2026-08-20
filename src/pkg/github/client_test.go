@@ -573,21 +573,64 @@ func TestIsTracker(t *testing.T) {
 	tests := []struct {
 		title  string
 		labels []string
+		body   string
 		want   bool
 	}{
-		{"[Tracker] big epic", []string{}, true},
-		{"[Tracker]", []string{}, true},
-		{"regular issue", []string{"meta-tracker"}, true},
-		{"regular issue", []string{"bug", "meta-tracker"}, true},
-		{"regular issue", []string{"bug"}, false},
-		{"regular issue", []string{}, false},
-		{"", []string{}, false},
-		{"Not a tracker", []string{"tracker"}, false}, // label must be exactly "meta-tracker"
+		{"[Tracker] big epic", []string{}, "", true},
+		{"[Tracker]", []string{}, "", true},
+		{"regular issue", []string{"meta-tracker"}, "", true},
+		{"regular issue", []string{"bug", "meta-tracker"}, "", true},
+		{"regular issue", []string{"bug"}, "", false},
+		{"regular issue", []string{}, "", false},
+		{"", []string{}, "", false},
+		{"Not a tracker", []string{"tracker"}, "", false}, // label must be exactly "meta-tracker"
 	}
 	for _, tt := range tests {
-		got := isTracker(tt.title, tt.labels)
+		got := isTracker(tt.title, tt.labels, tt.body)
 		if got != tt.want {
-			t.Errorf("isTracker(%q, %v) = %v, want %v", tt.title, tt.labels, got, tt.want)
+			t.Errorf("isTracker(%q, %v, body=%d bytes) = %v, want %v", tt.title, tt.labels, len(tt.body), got, tt.want)
+		}
+	}
+}
+
+// A coordination-only umbrella carries its children as a Markdown task list of
+// issue references. kubestellar/hive#4188 is the live case: no labels, an
+// ordinary "feature:" title, and a 13-item child list — offered to a
+// contributor, which burned the whole 30-minute budget on work no single agent
+// can complete.
+//
+// The threshold matters in both directions, so both are pinned here: three or
+// more refs is a tracking list by construction, while one or two are ordinary
+// on real work (a blocked-on note, an acceptance criterion) and must stay
+// claimable.
+func TestIsTrackerFromBodyTaskList(t *testing.T) {
+	umbrella := `## Linked 30-minute work items
+
+- [ ] #4199 — Capture rootless startup and exit-77 behavior.
+- [ ] #4200 — Verify the rootful egress-gate baseline.
+- [ ] #4205 — Add explicit runtime selection with Docker as the default.
+`
+	twoRefs := "Blocked until these land:\n\n- [ ] #101\n- [x] #102\n"
+	oneRef := "Acceptance:\n\n- [ ] #101 must merge first\n"
+	prose := "We should track #101, #102, #103 and #104 before shipping.\n"
+	checklistNoRefs := "- [ ] write the tests\n- [ ] update docs\n- [x] file the issue\n"
+
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"umbrella with a child task list", umbrella, true},
+		{"cross-repo refs count too", "- [ ] owner/repo#1\n- [x] owner/repo#2\n* [ ] other/repo#3\n", true},
+		{"two refs stay claimable", twoRefs, false},
+		{"one ref stays claimable", oneRef, false},
+		{"bare prose mentions are not a task list", prose, false},
+		{"a checklist without issue refs is not a tracker", checklistNoRefs, false},
+		{"empty body", "", false},
+	}
+	for _, tt := range tests {
+		if got := isTracker("feature: something", nil, tt.body); got != tt.want {
+			t.Errorf("%s: isTracker(body) = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

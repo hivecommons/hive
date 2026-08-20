@@ -572,7 +572,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 			UpdatedAt:  issue.GetUpdatedAt().Time,
 			AgeMinutes: ageMinutes,
 			URL:        issue.GetHTMLURL(),
-			IsTracker:  isTracker(issue.GetTitle(), labels),
+			IsTracker:  isTracker(issue.GetTitle(), labels, issue.GetBody()),
 		})
 	}
 
@@ -1082,7 +1082,36 @@ func (c *Client) isExempt(labels []string) bool {
 	return false
 }
 
-func isTracker(title string, labels []string) bool {
+// trackerTaskListRe matches a Markdown task-list item whose subject is an issue
+// reference — "- [ ] #4199", "* [x] owner/repo#12". This is deliberately
+// STRUCTURAL rather than a prose match: GitHub renders these lists specially
+// (the "N of M" tracked-task-list widget), so the pattern is a first-class
+// convention an author opts into, not a phrase they happened to write. Prose
+// gets reworded; structure does not.
+var trackerTaskListRe = regexp.MustCompile(`(?m)^\s*[-*]\s*\[[ xX]\]\s*(?:[\w.-]+/[\w.-]+)?#\d+`)
+
+// trackerTaskListMin is how many task-list issue references a body needs before
+// the issue counts as a tracker. One or two can legitimately appear on ordinary
+// work (a blocked-on note, an acceptance criterion); three or more is a
+// tracking list by construction.
+const trackerTaskListMin = 3
+
+// isTracker reports whether an issue is coordination-only — an umbrella whose
+// children carry the actual work — and so must never be handed out as a single
+// task.
+//
+// body is consulted because the title/label markers below miss the common case.
+// kubestellar/hive#4188 carried no labels and an ordinary "✨ feature:" title
+// while its body said, in a callout, "This is a coordination-only umbrella. Do
+// not assign #4188 as one Hive task", above a 13-item task list of children. It
+// was offered to a contributor anyway, which burned the full 30-minute task
+// budget and booked a failure on work that cannot be completed by one agent
+// (only final integration closes such a parent).
+//
+// The callout text itself is NOT matched — free-text matching is brittle in the
+// direction that hurts. The task list is enough, and it is what GitHub itself
+// treats as the tracking signal.
+func isTracker(title string, labels []string, body string) bool {
 	if strings.HasPrefix(title, "[Tracker]") {
 		return true
 	}
@@ -1090,6 +1119,11 @@ func isTracker(title string, labels []string) bool {
 		if l == "meta-tracker" {
 			return true
 		}
+	}
+	// FindAllString with a cap: we only care whether the threshold is reached,
+	// not how many refs a long umbrella body carries.
+	if len(trackerTaskListRe.FindAllString(body, trackerTaskListMin)) >= trackerTaskListMin {
+		return true
 	}
 	return false
 }
