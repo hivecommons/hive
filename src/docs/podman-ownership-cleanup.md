@@ -12,7 +12,8 @@ remove. It is the contract that the Podman lifecycle work in
 [#4188](https://github.com/kubestellar/hive/issues/4188) must build on.
 
 The contract lives in `bin/hive-podman-cleanup.sh` and is enforced by
-`bin/test_hive_podman_cleanup.sh` in CI.
+`bin/test_hive_podman_cleanup.sh` in CI. `bin/hive-podman-teardown.sh` is the
+teardown built on it (#4326) — see [Teardown](#teardown).
 
 > Docker cleanup behavior is unchanged. `src/deploy/blue-green-deploy.sh` still
 > prunes Docker images and build cache on the dedicated deployment host. This
@@ -107,9 +108,65 @@ It also scans every tracked file for the broad commands above, so a future
 change cannot reintroduce `podman system prune` or `buildah rm --all` into Hive
 tooling without the test failing.
 
+## Teardown
+
+`bin/hive-podman-teardown.sh` removes one standalone Podman deployment. It is
+the only supported way to tear a Hive deployment down under Podman, and it is
+built on the contract above rather than beside it.
+
+```bash
+bin/hive-podman-teardown.sh plan             # print what would go; removes nothing
+bin/hive-podman-teardown.sh run --yes        # remove it
+bin/hive-podman-teardown.sh run --yes --images
+```
+
+What it does, in order: containers, then pods, then volumes, then networks.
+Images are opt-in behind `--images`, because an image is shared with every
+other deployment that pulled the same reference. `HIVE_DEPLOY_INSTANCE` scopes
+the whole run to one deployment, so two Hive installs on one host tear down
+separately.
+
+Three properties are worth stating explicitly, because they are what the
+teardown is for:
+
+- **Selection is the ownership label and nothing else.** Every listing is built
+  from `hive_podman_filters`. An unlabelled container, pod, volume, or network
+  is not merely skipped — it is never returned, so there is no code path in
+  which it could be removed.
+- **Every command goes through the guard before it runs**, reads included. A
+  command the guard rejects aborts the teardown with `70`; it is never adjusted
+  and retried. That matters because the resource IDs come from the engine and
+  are therefore input: if a listing ever returned something that would turn
+  `podman rm --force <ids>` into a store-wide removal, the guard is what stops
+  it, and `bin/test_hive_podman_teardown.sh` asserts exactly that case.
+- **Removal names operands.** No `prune` and no `--all` appears anywhere in the
+  path. The commands name the exact IDs the label filter returned.
+
+`run` requires `--yes`, and the teardown refuses to run at all when
+`HIVE_DEPLOY_RUNTIME` selects a runtime other than Podman. Docker deployments
+are torn down through their own Compose path, which this script does not touch.
+
+### What is not labelled yet
+
+The teardown can only remove what the create side labelled, and the standalone
+Podman deployment asset does not exist yet — it is its own slice of
+[#4188](https://github.com/kubestellar/hive/issues/4188), and
+[ADR-0017](adr/0017-podman-quadlet-lifecycle.md) records Quadlet as the
+mechanism it will use. When it lands, every container, pod, network, and volume
+it creates must carry the label set above, applied through
+`hive-podman-cleanup.sh labels <component>`.
+
+That is not left to reviewer memory. `bin/test_hive_podman_teardown.sh` scans
+the tracked deployment assets for anything that creates a Podman resource and
+fails if the file does not go through the labels seam. The scan passes
+vacuously today and stops being vacuous the moment an asset lands. Spike probes
+and tests are deliberately out of its scope: they run against a throwaway store
+with a private graphroot and remove what they create by exact name.
+
 ## Scope
 
-This is the ownership and cleanup contract only. Applying the labels to real
-deployment assets, and implementing the teardown itself, belong to the later
-Podman lifecycle slices of #4188 — which must use this module rather than
-inventing a second label scheme.
+This document is the ownership contract, its guard, and the teardown built on
+them. It does not create anything. The standalone Podman deployment assets —
+the units that will carry these labels at create time — belong to the service
+asset slice of #4188, which must use `hive-podman-cleanup.sh labels` rather
+than inventing a second label scheme.

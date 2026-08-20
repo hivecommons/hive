@@ -227,11 +227,12 @@ broad_patterns=(
   'buildah rmi -a'
 )
 
-# The contract module, this test, and the contract documentation quote those
-# commands in order to reject and explain them.
+# The contract module, this test, the teardown's own test, and the contract
+# documentation quote those commands in order to reject and explain them.
 exempt=(
   'bin/hive-podman-cleanup.sh'
   'bin/test_hive_podman_cleanup.sh'
+  'bin/test_hive_podman_teardown.sh'
   'src/docs/podman-ownership-cleanup.md'
 )
 

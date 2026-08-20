@@ -165,6 +165,17 @@ jobs:
         working-directory: .
         run: bash bin/test_hive_podman_cleanup.sh
 
+      # #4326: #4210 defined the ownership contract but nothing performed a
+      # teardown through it, and a cleanup path that is defined but not
+      # implemented is the dangerous state — the guard only protects
+      # operations that go through it. This drives the teardown against a fake
+      # Podman whose store holds Hive's resources next to a Distrobox and an
+      # unrelated development container, asserts the unowned ones survive, and
+      # replays every command the teardown issued back through the #4210 guard.
+      - name: Podman teardown through the ownership contract (#4326)
+        working-directory: .
+        run: bash bin/test_hive_podman_teardown.sh
+
       # #4209: SELinux labeling, configuration/secrets readability, and host
       # port conflicts are the operator-facing Podman failures that surface
       # only after `podman run` has started making changes. Every input is
