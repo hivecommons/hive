@@ -242,12 +242,47 @@ func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issu
 	if err != nil {
 		return 0, err
 	}
+	var botAuthored int64
 	for _, comment := range comments {
-		if strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
+		if !strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
+			continue
+		}
+		if c.appAuth == nil {
+			// Token (PAT) client: historical prefix-only match. The credential
+			// may legitimately be the human who authored the comment, and
+			// authorship cannot be verified without an extra /user round trip.
 			return int(comment.GetID()), nil
 		}
+		login := comment.GetUser().GetLogin()
+		if c.appBotLogin != "" && login == c.appBotLogin {
+			// Exactly our own bot comment — the one credential-safe choice.
+			return int(comment.GetID()), nil
+		}
+		if strings.HasSuffix(login, "[bot]") || comment.GetUser().GetType() == "Bot" {
+			// Bot-authored but not provably ours (bot login unknown, or a slug
+			// mismatch between config and the real App). Remember the first as
+			// a fallback rather than skipping it: refusing our own comment on
+			// a misconfigured slug would create a duplicate every cycle.
+			if botAuthored == 0 {
+				botAuthored = comment.GetID()
+			}
+			continue
+		}
+		// A digest comment this App can never edit — e.g. one left behind by
+		// the removed user-token fallback (#1927), authored by a human. GitHub
+		// hard-forbids an App from editing a foreign-authored comment (403
+		// "Resource not accessible by integration") no matter what the
+		// installation grants, so adopting it wedges the digest forever
+		// (kalantar-msb/soft-reflective#1). Skip it; if no bot-authored digest
+		// comment exists a fresh App-authored one is created and every later
+		// cycle edits THAT one, so nothing is duplicated per cycle.
+		c.logger.Warn("skipping advisory digest comment not authored by this App — an installation token can never edit it",
+			slog.String("repo", owner+"/"+repo),
+			slog.Int("issue", issueNum),
+			slog.Int64("comment_id", comment.GetID()),
+			slog.String("author", login))
 	}
-	return 0, nil
+	return int(botAuthored), nil
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {
