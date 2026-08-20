@@ -54,6 +54,12 @@ data:
       </div>
     </body>
     </html>
+  # The machine-readable twin of error.html, served to API callers so a client
+  # that parses JSON never has to guess what an HTML body means. It must stay
+  # valid JSON and must never describe the intercepted request as successful:
+  # "ok": false is the field clients key off (issue #4241).
+  error.json: |
+    {"ok":false,"error":"hive unavailable","detail":"This hive is restarting or its API is temporarily unreachable. The request was NOT applied - retry shortly."}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -62,15 +68,73 @@ metadata:
   namespace: ingress-nginx
 data:
   default.conf: |
+    # Custom error backend for ingress-nginx.
+    #
+    # ingress-nginx sends a request here when a hive Ingress intercepts one of
+    # the upstream statuses named in its custom-http-errors annotation ("502,503"
+    # -- see the hive Ingress in src/pkg/hub/saas_provision.go). It rewrites the
+    # URI to "/" and passes the original request's metadata in headers:
+    #
+    #   X-Code          the intercepted upstream status, e.g. "502"
+    #   X-Format        the original request's Accept header
+    #   X-Original-URI  the original request URI
+    #
+    # Reproducing X-Code is this backend's contract, and it used to break it:
+    # `try_files /error.html =404` answered every intercepted request with an
+    # unconditional 200 text/html. nginx's static module serves POST as well as
+    # GET, so a failed mutation came back as a bare `200 text/html` -- and a
+    # client that checks only the status code read that failure as SUCCESS.
+    #
+    # That is issue #4241: POST /api/v1/prs/{owner}/{repo}/{n}/queue-automerge
+    # for a repository this hive manages reaches the API, the API answers 502
+    # (GetPRAuthor could not resolve the PR), the Ingress intercepts the 502, and
+    # the caller was handed 200 + an HTML page with nothing in it saying the
+    # merge was never queued. The same POST for an UNMANAGED repo answered 403,
+    # which is not an intercepted status, so it passed through as JSON -- which
+    # is why the failure looked like it depended on the repository name.
+    #
+    # Two rules follow, and both are enforced below: never answer 200, and never
+    # hand an API caller an HTML document.
+
+    # Choose the error document by content type. The original URI decides first
+    # -- an /api/ request is an API request whatever it put in Accept -- and the
+    # Accept header is the fallback for every other path.
+    map $http_x_format $hive_error_ext_by_accept {
+        default   "html";
+        "~*json"  "json";
+    }
+    map $http_x_original_uri $hive_error_ext {
+        default   $hive_error_ext_by_accept;
+        "~^/api/" "json";
+    }
+
     server {
       listen 8080;
-      location / {
-        root /usr/share/nginx/html;
-        try_files /error.html =404;
-      }
+      root /usr/share/nginx/html;
+
+      # error_page without "=" preserves the status of the `return` that
+      # triggered it, so these documents are served AS the upstream's status
+      # rather than as 200.
+      error_page 500 502 503 504 /error.$hive_error_ext;
+      location = /error.html { internal; }
+      location = /error.json { internal; }
+
+      # Probed by the kubelet directly, never through the Ingress, so it is not
+      # affected by the status mapping below.
       location /healthz {
+        default_type text/plain;
         return 200 "ok";
-        add_header Content-Type text/plain;
+      }
+
+      location / {
+        # Reflect the intercepted status back to the caller. `return` answers
+        # every method, so a POST is no longer served a static file with 200.
+        if ($http_x_code = "500") { return 500; }
+        if ($http_x_code = "502") { return 502; }
+        if ($http_x_code = "504") { return 504; }
+        # 503 is the remaining intercepted status and the fail-safe default for
+        # a missing or unrecognised X-Code: "retry", never "it worked".
+        return 503;
       }
     }
 ---
