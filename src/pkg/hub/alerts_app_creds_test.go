@@ -260,3 +260,30 @@ func TestAppCredsUndeliveredAlertHasADashboardLabel(t *testing.T) {
 		t.Errorf("ALERT_TYPE_LABELS has no entry for %q", AlertTypeAppCredsUndelivered)
 	}
 }
+
+// TestAppCredsUndelivered_RepoNotCoveredDoesNotFire (#4360) pins the fix for
+// the misdiagnosis this alert produced on kelly-headwaters.
+//
+// That hive's App was correct, its org was correct, and its key had arrived
+// and minted tokens fine. The only thing wrong was that `headwaters` was not
+// ticked in the installation's selected repositories, so every call against it
+// answered 404. Nothing classified that, so the spoke reported an
+// operator-side credential state and this alert told the operator to re-upload
+// a key — a remedy that could not possibly have helped, and which sent the
+// only person who could act down the wrong path.
+//
+// The spoke now reports "repo-not-covered" for that shape. It is owner-side —
+// an org owner ticks a checkbox — so this operator alert must stay silent, and
+// the coverage banner carries the real message instead.
+func TestAppCredsUndelivered_RepoNotCoveredDoesNotFire(t *testing.T) {
+	h := appCredsHive("kelly-headwaters", "repo-not-covered")
+
+	summary := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+
+	if _, fired := findAlert(summary.Alerts, "kelly-headwaters", AlertTypeAppCredsUndelivered); fired {
+		t.Fatal("repo-not-covered raised app-creds-undelivered: the key is fine and re-uploading it cannot help")
+	}
+	if appStateIsOperatorSide("repo-not-covered") {
+		t.Error("repo-not-covered must not be operator-side: only an org owner can change repository access")
+	}
+}

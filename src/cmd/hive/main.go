@@ -2422,6 +2422,20 @@ func main() {
 					dashSrv.AuditLog("system", "github_app_check", "result=no GitHub client: "+appAuthFailure, "")
 					return false
 				}
+				// #4360: ask about repo COVERAGE before attempting a read.
+				// A repo the installation does not cover answers 404, which is
+				// indistinguishable from "no such repo" and used to be reported
+				// as "app not installed / no read" — sending the operator after
+				// credentials that were never broken. Checking first means the
+				// specific, correct message wins over the generic one.
+				if raise, diag, state := classifyGitHubAppRepoCoverage(ctx, ghClient.AppAuth(), cfg.Project.Org, cfg.Project.Repos, logger); raise {
+					dashSrv.SetGitHubAppPermIssue(diag)
+					dashSrv.SetGitHubAppState(state.String())
+					logger.Warn("github app recheck: installation does not cover every configured repo",
+						"org", cfg.Project.Org, "state", state.String(), "detail", diag)
+					dashSrv.AuditLog("system", "github_app_check", "result=repos not in installation: "+diag, "")
+					return false
+				}
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, recheckRepo)
 				if err != nil {
 					logger.Debug("github app recheck: not accessible", "repo", recheckRepo, "error", err)
@@ -4893,6 +4907,51 @@ func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAut
 		Repo:            repo,
 	}
 	return d.Message(), github.AppStateWriteForbidden
+}
+
+// classifyGitHubAppRepoCoverage (#4360) asks the deterministic question the
+// other classifiers cannot: does this installation actually COVER the repos
+// this hive is configured to work on?
+//
+// Everything else here reasons from a failed call. diagnoseGitHubApp inspects
+// installation-level PERMISSIONS and never repo scope, and
+// classifyGitHubAppWriteForbidden infers scope from a 403 after a write has
+// already failed. Neither can see the case that prompted this: a hive pointed
+// at a second repo in the right org, on the right installation, simply not
+// ticked in the App's selected repos. GitHub answers 404 for that — the same
+// answer it gives for a repo that does not exist — so the read path reported
+// "app not installed / no read" and the dashboard blamed an undelivered
+// private key that had in fact arrived. The operator was sent to re-upload a
+// key, which could not possibly help.
+//
+// An error here is NOT a verdict. If the listing cannot be fetched the
+// credentials themselves are the more likely story, and the existing checks
+// tell it better; this returns raise=false and lets them run.
+func classifyGitHubAppRepoCoverage(ctx context.Context, appAuth *github.AppAuth, org string, repos []string, logger *slog.Logger) (raise bool, msg string, state github.AppAuthState) {
+	if appAuth == nil || len(repos) == 0 {
+		return false, "", github.AppStateUnknown
+	}
+
+	cov, err := appAuth.InstallationCoverage(ctx)
+	if err != nil {
+		logger.Debug("github app repo coverage: could not list installation repositories — deferring to the credential checks",
+			"org", org, "error", err)
+		return false, "", github.AppStateUnknown
+	}
+
+	missing := cov.Missing(org, repos)
+	if len(missing) == 0 {
+		return false, "", github.AppStateOK
+	}
+
+	d := github.AppAuthDiagnosis{
+		State:           github.AppStateRepoNotCovered,
+		ExpectedAccount: org,
+		InstallationID:  appAuth.InstallationID(),
+		APIURL:          appAuth.APIURL(),
+		Repos:           missing,
+	}
+	return true, d.Message(), github.AppStateRepoNotCovered
 }
 
 // primaryAdvisoryRepo returns the repo the advisory digest is posted to: the
