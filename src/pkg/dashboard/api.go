@@ -520,8 +520,15 @@ func (s *Server) handleRole(w http.ResponseWriter, r *http.Request) {
 	role := r.Header.Get("X-Hive-Role")
 	user := r.Header.Get("X-Hive-User")
 	if sess := s.sessionFromRequest(r); sess != nil {
-		user = sess.Username
-		role = sess.Role
+		// Live allowlist role, never the role frozen into the session at login
+		// (session_live_role.go): this endpoint drives what the UI believes the
+		// user may do, so a Manage Access grant/downgrade must show up here the
+		// moment the heartbeat delivers it — the same rule authenticate applies
+		// to every gated request. A revoked session reports no identity.
+		if live, ok := s.liveSessionRole(sess); ok {
+			user = sess.Username
+			role = live
+		}
 	}
 	if role == "" {
 		role = "owner"
@@ -1846,9 +1853,15 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 	// persisted token. On a direct-route spoke, resolving from the per-user
 	// session is the only correct answer — otherwise every visitor would see
 	// the last-authenticated user's identity (the reported vulnerability).
+	// The role is the LIVE allowlist role (session_live_role.go), not the one
+	// frozen into the session at login, so the UI's idea of the user's
+	// capabilities always matches what the gated endpoints will enforce; a
+	// revoked session reports logged-out rather than a ghost identity.
 	if sess := s.sessionFromRequest(r); sess != nil {
-		jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": sess.Role})
-		return
+		if live, ok := s.liveSessionRole(sess); ok {
+			jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": live})
+			return
+		}
 	}
 	// Hub-proxied path: nginx injects the per-user X-Hive-User/X-Hive-Role, so
 	// report THAT user rather than the single shared persisted token (which
@@ -6379,7 +6392,12 @@ func (s *Server) persistGitHubSetupInstallation(r *http.Request, installationID 
 
 func (s *Server) requestHasGitHubSetupAdmin(r *http.Request) bool {
 	if sess := s.sessionFromRequest(r); sess != nil {
-		return config.RoleAtLeast(sess.Role, config.RoleReadWrite)
+		// Authz decision: use the LIVE allowlist role (session_live_role.go),
+		// never the role frozen into the session at login — a downgrade or
+		// revocation must strip GitHub-setup admin immediately, and a granted
+		// owner must gain it without re-login (same class as #4299).
+		live, ok := s.liveSessionRole(sess)
+		return ok && config.RoleAtLeast(live, config.RoleReadWrite)
 	}
 	role := r.Header.Get("X-Hive-Role")
 	if !config.RoleAtLeast(role, config.RoleReadWrite) {

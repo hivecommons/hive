@@ -1602,10 +1602,14 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the acting user: a direct-route spoke has a per-user session
 	// cookie; a hub-proxied spoke gets identity injected as X-Hive-User /
-	// X-Hive-Role by nginx. Either establishes an authenticated user.
+	// X-Hive-Role by nginx. Either establishes an authenticated user. The role
+	// is the LIVE allowlist role (session_live_role.go): a revoked session
+	// must not keep dismissing banners under its stale identity.
 	username, role := "", ""
 	if sess := s.sessionFromRequest(r); sess != nil {
-		username, role = sess.Username, sess.Role
+		if live, ok := s.liveSessionRole(sess); ok {
+			username, role = sess.Username, live
+		}
 	} else if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
 		username, role = hubUser, r.Header.Get("X-Hive-Role")
 	}
