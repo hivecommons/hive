@@ -59,6 +59,7 @@ Start with [Architecture](architecture.md) for the system overview, then use the
 - [Podman rootless CI](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-rootless-ci.md) — rootless Podman contract for `contribute-hive`.
 - [Podman Quadlet `.kube` compatibility spike](podman-quadlet-kube-spike.md) — why the standalone Kubernetes overlay is not a safe direct source for Podman units.
 - [Podman ownership and cleanup contract](https://github.com/kubestellar/hive/blob/v4/src/docs/podman-ownership-cleanup.md) — the labels that mark a resource Hive-owned and the guard that keeps Podman/Buildah cleanup from reaching the operator's other containers, Distroboxes, and images.
+- [Podman preflight: SELinux, mounts, secrets, and ports](podman-preflight-host.md) — read-only diagnostics for SELinux state and mount labeling, configuration/secrets readability, and published host-port availability, with remediation that never disables SELinux or widens a secret.
 - [CLI backend setup](https://github.com/kubestellar/hive/blob/v4/docs/backend-setup.md) — setup notes for Claude, Copilot, Goose, Bob, Pi, Codex, and Aider.
 - [Inference backends](https://github.com/kubestellar/hive/blob/v4/docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
 - [apiproxy](https://github.com/kubestellar/hive/blob/v4/src/docs/apiproxy.md) — Anthropic-compatible proxy logging and deployment notes.

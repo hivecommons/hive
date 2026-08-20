@@ -58,6 +58,7 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `hive-standalone-runtime.sh` | Deploy | Selects the standalone container engine from `HIVE_DEPLOY_RUNTIME` (`docker` by default) and runs commands against it without ever falling back to the other engine. |
 | `hive-podman-cleanup.sh` | Deploy | Defines the Hive ownership labels for Podman containers, pods, networks, volumes, and images, and guards cleanup so it can never widen into a store-wide Podman/Buildah operation. See [`src/docs/podman-ownership-cleanup.md`](../src/docs/podman-ownership-cleanup.md). |
 | `hive-podman-preflight.sh` | Bootstrap | Read-only Podman diagnostics before a lifecycle runs: engine/version, the connection it is actually talking to, rootless vs rootful, and cgroup version. Runs only when `HIVE_DEPLOY_RUNTIME` selects podman; `hive-prereq-check.sh` invokes it. |
+| `hive-podman-preflight-host.sh` | Deploy | Read-only Podman preflight for SELinux state and mount labeling, configuration/secrets readability, and published host-port availability. Runs only when `HIVE_DEPLOY_RUNTIME=podman`. See [`src/docs/podman-preflight-host.md`](../src/docs/podman-preflight-host.md). |
 | `federation-heartbeat.sh` | Federation | Sends live contributor and actionable-work stats to the Hive federation registry. |
 | `notify.sh` | Notifications | Shared Bash notification library for ntfy, Slack incoming webhooks, and Discord webhooks. |
 
@@ -90,3 +91,4 @@ Most production scripts are installed under `/usr/local/bin` by `bin/hive-deploy
 | `test_hive_standalone_runtime.sh` | `hive-standalone-runtime.sh` engine selection: Docker default, explicit Podman, and no silent fallback. |
 | `test_hive_podman_cleanup.sh` | `hive-podman-cleanup.sh` ownership labels and cleanup guard. Analyses arguments only: it contacts no container engine and deletes nothing. |
 | `test_hive_podman_preflight.sh` | `hive-podman-preflight.sh` engine, connection, root-mode, and cgroup checks. Drives a stub engine, so the whole matrix runs on a host with no Podman installed. |
+| `test_hive_podman_preflight_host.sh` | `hive-podman-preflight-host.sh` across enforcing, permissive, and disabled SELinux, wrong and missing mount labels, unreadable and over-permissive secrets, and occupied and sub-floor ports. Every input is mocked; it runs no container and changes nothing on the host. |
